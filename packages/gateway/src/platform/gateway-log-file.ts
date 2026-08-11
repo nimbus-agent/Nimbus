@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { platform } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Logger } from "pino";
 import pino from "pino";
 
@@ -17,6 +17,24 @@ export function gatewayLogBasename(): string {
 
 export function gatewayDailyLogPath(logDir: string): string {
   return join(logDir, gatewayLogBasename());
+}
+
+/**
+ * Today's daily-log path for the host OS, or `null` on an unsupported platform. The single
+ * per-OS resolution used by both the emergency logger and the lifecycle diagnostics — the
+ * platform branching lives here, in the one file already sanctioned for it.
+ */
+export function platformDailyLogPath(): string | null {
+  switch (platform()) {
+    case "win32":
+      return gatewayDailyLogPath(createWindowsPaths().logDir);
+    case "darwin":
+      return gatewayDailyLogPath(createDarwinPaths().logDir);
+    case "linux":
+      return gatewayDailyLogPath(createLinuxPaths().logDir);
+    default:
+      return null;
+  }
 }
 
 const PINO_REDACT_PATHS: readonly string[] = [
@@ -181,23 +199,11 @@ export function createGatewayPinoLoggerForStream(
 
 export function emergencyGatewayLog(err: unknown): void {
   try {
-    const p = platform();
-    let logDir: string;
-    switch (p) {
-      case "win32":
-        logDir = createWindowsPaths().logDir;
-        break;
-      case "darwin":
-        logDir = createDarwinPaths().logDir;
-        break;
-      case "linux":
-        logDir = createLinuxPaths().logDir;
-        break;
-      default:
-        return;
+    const path = platformDailyLogPath();
+    if (path === null) {
+      return;
     }
-    mkdirSync(logDir, { recursive: true });
-    const path = gatewayDailyLogPath(logDir);
+    mkdirSync(dirname(path), { recursive: true });
     const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
     appendFileSync(path, `[${new Date().toISOString()}] [gateway] fatal: ${msg}\n`, "utf8");
   } catch {

@@ -19,6 +19,7 @@ interface PostedMessage {
 
 interface FakeWorkerHandle {
   fire: (data: unknown, origin?: string) => void;
+  fireError: (init: { message: string; filename?: string; lineno?: number }) => void;
   posted: () => readonly PostedMessage[];
   terminated: () => boolean;
 }
@@ -28,6 +29,7 @@ const handles: FakeWorkerHandle[] = [];
 function installFakeWorker(opts: { throwOnConstruct?: boolean } = {}): void {
   class FakeWorker {
     public onmessage: ((ev: MessageEvent) => void) | null = null;
+    public onerror: ((ev: ErrorEvent) => void) | null = null;
     private readonly _posted: PostedMessage[] = [];
     private _terminated = false;
     constructor(_url: string) {
@@ -43,6 +45,13 @@ function installFakeWorker(opts: { throwOnConstruct?: boolean } = {}): void {
             data,
             origin: origin ?? "",
           } as MessageEvent);
+        },
+        fireError: (init): void => {
+          this.onerror?.({
+            message: init.message,
+            filename: init.filename ?? "",
+            lineno: init.lineno ?? 0,
+          } as ErrorEvent);
         },
         posted: (): readonly PostedMessage[] => this._posted,
         terminated: (): boolean => this._terminated,
@@ -106,6 +115,59 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
       logger,
     );
     expect(bridge).toBeNull();
+  });
+
+  test("a worker error flips readiness from 'warming' to 'unavailable' with the reason", () => {
+    // Without an onerror handler a dying Bun worker is COMPLETELY silent — the parent neither
+    // crashes nor logs — so readiness would sit at 'warming' for the full 600 s init window and
+    // read as "still downloading the model" rather than "dead".
+    installFakeWorker();
+    const bridge = makeBridge();
+    try {
+      expect(bridge.getReadiness().state).toBe("warming");
+      currentHandle().fireError({ message: "onnxruntime failed to load" });
+      const r = bridge.getReadiness();
+      expect(r.state).toBe("unavailable");
+      expect(r.reason).toBe("onnxruntime failed to load");
+    } finally {
+      bridge.terminate();
+    }
+  });
+
+  test("a worker error settles the init gate instead of leaving it pending forever", async () => {
+    installFakeWorker();
+    const bridge = makeBridge();
+    try {
+      currentHandle().fireError({ message: "worker died" });
+      // embedQuery must stop throwing EmbeddingWarmingError once the worker is known dead.
+      await expect(bridge.embedQuery("hello")).resolves.toBeNull();
+    } finally {
+      bridge.terminate();
+    }
+  });
+
+  test("an empty worker error message still yields a usable reason", () => {
+    installFakeWorker();
+    const bridge = makeBridge();
+    try {
+      currentHandle().fireError({ message: "" });
+      expect(bridge.getReadiness().reason).toBe("embedding worker errored");
+    } finally {
+      bridge.terminate();
+    }
+  });
+
+  test("a worker error AFTER ready does not un-ready a working runtime", () => {
+    installFakeWorker();
+    const bridge = makeBridge();
+    try {
+      currentHandle().fire({ type: "ready" });
+      expect(bridge.getReadiness().state).toBe("ready");
+      currentHandle().fireError({ message: "late blip" });
+      expect(bridge.getReadiness().state).toBe("ready");
+    } finally {
+      bridge.terminate();
+    }
   });
 
   test("posts init message synchronously to the worker", () => {
