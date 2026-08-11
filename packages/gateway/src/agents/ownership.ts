@@ -173,8 +173,9 @@ function buildGaps(args: {
   gaps.push({
     category: "missing_relation_emit",
     detail:
-      "Blame measures who wrote lines, not who is accountable. There is no CODEOWNERS, no " +
-      "reviewer data and no on-call rotation in the index, so this is authorship-derived " +
+      "Blame measures who wrote lines, not who is accountable. There is no CODEOWNERS and no " +
+      "on-call rotation in the index — reviewer data now exists (`reviewed` edges from GitHub " +
+      "PR reviews) but is not yet factored into this ranking — so this is authorship-derived " +
       "ownership.",
     remediation: "Treat the ranking as a starting point for who to ask, not as an approval list.",
   });
