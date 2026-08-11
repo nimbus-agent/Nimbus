@@ -12,7 +12,7 @@ import {
   supportsClose,
   supportsNotifications,
 } from "./client-surface.ts";
-import { GATEWAY_DOWN_MESSAGE, GatewayUnavailableError, isDisconnectError } from "./errors.ts";
+import { GatewayUnavailableError, isDisconnectError } from "./errors.ts";
 import {
   type AdapterDeps,
   AGENT_TOOLS_UNSUPPORTED_MESSAGE,
@@ -24,16 +24,16 @@ import {
 } from "./tool-runtime.ts";
 
 export type { ClosableClient, IpcCallable, NotifyingClient } from "./client-surface.ts";
+// `export … from`, not import-then-export: this name is a pure pass-through with no use anywhere
+// in this module, so importing it only to re-export it binds it locally for nothing (Sonar S7763).
+// The three value re-exports at the bottom of this block stay import-bound because they genuinely
+// ARE used here.
+export { GATEWAY_DOWN_MESSAGE } from "./errors.ts";
 export type { AdapterDeps, ToolResult, ToolSpec } from "./tool-runtime.ts";
 // Re-exported so existing importers (and tests) keep reaching these through `adapter.ts`. The
 // declarations themselves live in `errors.ts` / `client-surface.ts` / `tool-runtime.ts` to keep
 // `agent-tools.ts` free of a runtime import back into this module.
-export {
-  AGENT_TOOLS_UNSUPPORTED_MESSAGE,
-  GATEWAY_DOWN_MESSAGE,
-  GatewayUnavailableError,
-  isDisconnectError,
-};
+export { AGENT_TOOLS_UNSUPPORTED_MESSAGE, GatewayUnavailableError, isDisconnectError };
 
 const MCP_LIMIT_DEFAULT = 20;
 const MCP_LIMIT_MAX = 50;

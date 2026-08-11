@@ -171,7 +171,7 @@ describe("http-route-auth", () => {
     // `RE.exec(...)` IS used (BRIEF_GET_RE). Pin the count so a SECOND regex-matched route has to
     // be added to REGEX_ROUTED_GET deliberately rather than joining the surface unguarded.
     const execMatches = [...src.matchAll(/\w+_RE\.exec\(/g)];
-    expect(execMatches.length).toBe(REGEX_ROUTED_GET.size);
+    expect(execMatches).toHaveLength(REGEX_ROUTED_GET.size);
   });
 
   test("the agent invoke route requires the agents scope", () => {

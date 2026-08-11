@@ -157,7 +157,7 @@ test("an unknown service id with zero services bound fires only the existing no-
   const relationGaps = brief.gaps.filter(
     (g) => g.category === "missing_relation_emit" && g.detail.includes("No service is bound"),
   );
-  expect(relationGaps.length).toBe(1);
+  expect(relationGaps).toHaveLength(1);
   // Not double-reported: the id-naming branch (requires servicesBound > 0)
   // must stay silent here.
   expect(brief.gaps.some((g) => g.detail.includes("nonexistent"))).toBe(false);

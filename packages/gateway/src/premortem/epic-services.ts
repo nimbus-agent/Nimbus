@@ -126,7 +126,7 @@ export function affectedServicesForEpics(
     const services = result.get(r.epicItemId) ?? [];
     // DISTINCT per epic: rows arrive service-sorted, so a plain de-dupe
     // preserves the same sorted order the single-epic function returns.
-    if (services[services.length - 1] !== r.service) {
+    if (services.at(-1) !== r.service) {
       services.push(r.service);
     }
     result.set(r.epicItemId, services);

@@ -530,34 +530,36 @@ describe("listAllExpectations — filesystem walk", () => {
     expect(rows[0]?.suiteName).toBe("normal");
   });
 
-  it("gracefully handles unreadable directories during walk", async () => {
-    if (process.platform === "win32") {
-      // chmod 000 does not block directory reading for administrators/owners on Windows
-      return;
-    }
-    const sub = join(dir, "unreadable");
-    await mkdir(sub, { recursive: true });
+  // `skipIf`, not an early `return`: a bare return reports the test as PASSED on
+  // Windows, so a run there claims coverage it never had. Skipped is the truth.
+  // chmod 000 does not block directory reading for administrators/owners on Windows.
+  it.skipIf(process.platform === "win32")(
+    "gracefully handles unreadable directories during walk",
+    async () => {
+      const sub = join(dir, "unreadable");
+      await mkdir(sub, { recursive: true });
 
-    // Write a dummy JSON expectation file inside the sub-directory first
-    const doc = {
-      meta: { expectation_suite_name: "unreadable-dummy" },
-      results: [
-        { success: true, expectation_config: { expectation_type: "t", kwargs: {} }, result: {} },
-      ],
-    };
-    await writeFile(join(sub, "dummy.json"), JSON.stringify(doc), "utf8");
+      // Write a dummy JSON expectation file inside the sub-directory first
+      const doc = {
+        meta: { expectation_suite_name: "unreadable-dummy" },
+        results: [
+          { success: true, expectation_config: { expectation_type: "t", kwargs: {} }, result: {} },
+        ],
+      };
+      await writeFile(join(sub, "dummy.json"), JSON.stringify(doc), "utf8");
 
-    // This will cause readdir to fail on this directory
-    await import("node:fs/promises").then((fs) => fs.chmod(sub, 0o000));
+      // This will cause readdir to fail on this directory
+      await import("node:fs/promises").then((fs) => fs.chmod(sub, 0o000));
 
-    try {
-      const rows = await listAllExpectations();
-      expect(rows).toEqual([]);
-    } finally {
-      // Restore permissions so cleanup works
-      await import("node:fs/promises").then((fs) => fs.chmod(sub, 0o755));
-    }
-  });
+      try {
+        const rows = await listAllExpectations();
+        expect(rows).toEqual([]);
+      } finally {
+        // Restore permissions so cleanup works
+        await import("node:fs/promises").then((fs) => fs.chmod(sub, 0o755));
+      }
+    },
+  );
 
   it("throws when GREAT_EXPECTATIONS_RESULTS_DIR is unset", async () => {
     delete process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];

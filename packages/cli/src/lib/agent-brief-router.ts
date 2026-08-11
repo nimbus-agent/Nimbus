@@ -114,7 +114,10 @@ export class AgentBriefRouter {
    * reports it under the wrong error.
    */
   failAll(err: Error): void {
-    for (const w of [...this.waiters]) this.finish(w, err);
+    // Snapshot into an array FIRST: `finish` deletes from `this.waiters`, and
+    // mutating a Set mid-iteration is exactly the footgun a bare `for…of` over
+    // the live Set would introduce here.
+    for (const w of Array.from(this.waiters)) this.finish(w, err);
     this.buffered.clear();
   }
 

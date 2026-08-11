@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { stripAffixWhere } from "../util/strip-affixes.ts";
+
 /**
  * Identity and confidence for a recurring blocker theme.
  *
@@ -8,12 +10,31 @@ import { createHash } from "node:crypto";
  * "latency", destroying exactly the distinction a reader needs.
  */
 
-/** Matched at either end only, so internal punctuation ("2xx/5xx") survives. */
-const EDGE_PUNCTUATION =
-  /^[\s"'\u201c\u201d\u2018\u2019.,;:!?()[\]-]+|[\s"'\u201c\u201d\u2018\u2019.,;:!?()[\]-]+$/g;
+/**
+ * Trimmed at either end only, so internal punctuation ("2xx/5xx") survives.
+ *
+ * This was a regex \u2014 `/^[\s\u2026]+|[\s\u2026]+$/g` \u2014 until Sonar flagged it as
+ * super-linear (`typescript:S8786`), correctly: the `[\u2026]+$` alternative is
+ * retried from every start offset, so a long run of trimmable characters that
+ * does not reach the end backtracks quadratically. Theme labels come from LLM
+ * output over indexed third-party text, which is exactly the attacker-adjacent
+ * input where that matters.
+ *
+ * Whitespace stays in the edge set even though `split(/\s+/).filter(Boolean)`
+ * below would drop leading/trailing blanks anyway. It is load-bearing for
+ * INTERLEAVED edges: in `"  (hello)"` the first character is a space, so a
+ * punctuation-only trim would stop there and leave the `(` in place.
+ */
+const EDGE_PUNCTUATION_CHARS = "\"'\u201c\u201d\u2018\u2019.,;:!?()[]-";
+
+function isEdgeChar(ch: string): boolean {
+  // Single-character test \u2014 constant time, no backtracking possible. `\s` rather
+  // than a literal list so NBSP and the unicode space run trim like a space.
+  return EDGE_PUNCTUATION_CHARS.includes(ch) || /^\s$/.test(ch);
+}
 
 export function normalizeThemeLabel(raw: string): string {
-  return raw.replace(EDGE_PUNCTUATION, "").toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+  return stripAffixWhere(raw, isEdgeChar).toLowerCase().split(/\s+/).filter(Boolean).join(" ");
 }
 
 /**

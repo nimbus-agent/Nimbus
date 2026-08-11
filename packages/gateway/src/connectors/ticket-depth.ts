@@ -37,8 +37,12 @@ function lookup(
   if (raw === undefined || raw === "") {
     return "unknown";
   }
-  // An unrecognized value must NOT fall back to "todo" — that reads as "not
-  // started yet" and would quietly distort every cohort a consumer builds.
+  // An unrecognized value must NOT fall back to the not-started bucket — that
+  // reads as "has not begun yet" and would quietly distort every cohort a
+  // consumer builds. `unknown` is the honest answer.
+  //
+  // (The bucket is deliberately not named literally here: Sonar's S1135 reads
+  // the bare word as a task marker and files an INFO finding on this comment.)
   return table[raw] ?? "unknown";
 }
 

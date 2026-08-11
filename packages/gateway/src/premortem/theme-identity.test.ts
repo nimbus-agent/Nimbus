@@ -61,3 +61,26 @@ test("a digit-only service and label cannot collide across the boundary", () => 
   // to fifteen '1' characters. The ":" terminator closes that class.
   expect(themeId("1", "1".repeat(11))).not.toBe(themeId("1".repeat(11), "1"));
 });
+
+/**
+ * Sonar `typescript:S8786`: the edge-trim was a regex whose `[…]+$` alternative
+ * backtracks quadratically. Theme labels are LLM output over indexed
+ * third-party text, so the input is attacker-adjacent.
+ *
+ * Time-bounded on purpose. The regex version returned the CORRECT string — only
+ * slowly — so every correctness assertion in this file passed against it, and
+ * would pass again if someone reintroduced it. A clock is the only detector.
+ */
+test("normalizeThemeLabel stays linear on a degenerate punctuation run", () => {
+  // THE LEADING "a" IS THE WHOLE TEST. Without it the run is at the start, the
+  // old regex's `^[…]+` alternative swallows it in one step, and the quadratic
+  // `[…]+$` alternative is never reached — measured at 0.3 ms against the old
+  // code, i.e. a test that cannot fail. With the leading non-edge character the
+  // `^` alternative fails and `[…]+$` is retried from all 200k offsets: 20.2 s
+  // against the old regex, ~1 ms against the current linear scan.
+  const hostile = `a${".".repeat(200_000)}x`;
+  const started = performance.now();
+  // Nothing trims: neither end is an edge character. The output is the input.
+  expect(normalizeThemeLabel(hostile)).toHaveLength(hostile.length);
+  expect(performance.now() - started).toBeLessThan(1000);
+});
