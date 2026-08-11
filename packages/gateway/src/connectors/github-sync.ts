@@ -93,6 +93,12 @@ export function extractPrMetadataForIndex(
     out["mergeable_state"] = mergeableState;
     out["mergeable_state_fetched_at_ms"] = nowMs;
   }
+  for (const key of ["additions", "deletions", "changed_files", "commits"] as const) {
+    const v = numberField(pr, key);
+    if (v !== undefined) {
+      out[key] = v;
+    }
+  }
   if (merged) {
     const mergedAtIso = stringField(pr, "merged_at");
     if (mergedAtIso !== undefined) {

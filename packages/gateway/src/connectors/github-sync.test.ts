@@ -11,7 +11,7 @@ import {
   silentSyncContextExtras,
   syncTestContext,
 } from "./connector-sync-test-helpers.ts";
-import { createGithubSyncable, processEvent } from "./github-sync.ts";
+import { createGithubSyncable, extractPrMetadataForIndex, processEvent } from "./github-sync.ts";
 
 function ctxWithPat(db: ReturnType<typeof createMemoryIndexDb>, pat: string | null) {
   return {
@@ -422,4 +422,36 @@ test("a review event whose pull_request has no usable number is skipped without 
   expect(processEvent(ctx, ev, Date.now())).toBe(false);
   expectServiceItemCount(db, "github", 0);
   db.close();
+});
+
+test("PR stats are captured from a pull-detail payload", () => {
+  const meta = extractPrMetadataForIndex("acme/app", {
+    number: 1,
+    title: "Add rate limiter",
+    state: "open",
+    user: { login: "author" },
+    additions: 120,
+    deletions: 30,
+    changed_files: 7,
+    commits: 3,
+  });
+
+  expect(meta["additions"]).toBe(120);
+  expect(meta["deletions"]).toBe(30);
+  expect(meta["changed_files"]).toBe(7);
+  expect(meta["commits"]).toBe(3);
+});
+
+test("PR stats are absent, not null, when the payload omits them", () => {
+  const meta = extractPrMetadataForIndex("acme/app", {
+    number: 1,
+    title: "Add rate limiter",
+    state: "open",
+    user: { login: "author" },
+  });
+
+  expect("additions" in meta).toBe(false);
+  expect("deletions" in meta).toBe(false);
+  expect("changed_files" in meta).toBe(false);
+  expect("commits" in meta).toBe(false);
 });
