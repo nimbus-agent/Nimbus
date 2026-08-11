@@ -490,6 +490,24 @@ describe("formatClipList", () => {
     expect(s).toContain("rust");
     expect(s).toContain("https://blog.ex.com/rust-async");
   });
+
+  it("adds no footnote when every clip is complete", () => {
+    const s = formatClipList([CLIP_ROW], undefined);
+    expect(s).not.toContain("16 KiB");
+    expect(s.split("\n")).toHaveLength(2); // header + one row, nothing else
+  });
+
+  it("footnotes partial clips with a count (#1005)", () => {
+    const s = formatClipList(
+      [{ ...CLIP_ROW, truncated: true, sourceWordCount: 20_000, wordCount: 8_192 }, CLIP_ROW],
+      undefined,
+    );
+    expect(s).toContain("1 of 2 clips exceeded the 16 KiB body cap");
+    expect(s).toContain("sourceWordCount");
+    // The rows themselves keep their fixed-width layout — the disclosure is
+    // appended, not squeezed into a column.
+    expect(s).toContain("Understanding Rust Async");
+  });
 });
 
 describe("runClipList", () => {

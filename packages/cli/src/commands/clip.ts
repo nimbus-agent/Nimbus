@@ -134,7 +134,12 @@ export interface ClipListEntry {
   readonly clippedAt: number;
   readonly tags: string[];
   readonly mode: string;
+  /** Words in the body the index STORES — not in the text the extension sent. */
   readonly wordCount: number;
+  /** True when the submitted article exceeded the 16 KiB body cap and was clamped. */
+  readonly truncated?: boolean;
+  /** Words in the submitted text, present only when `truncated`. */
+  readonly sourceWordCount?: number;
 }
 
 export function parseLimit(raw: string | undefined): number {
@@ -160,7 +165,21 @@ export function formatClipList(clips: ClipListEntry[], tag: string | undefined):
     const tags = c.tags.length > 0 ? c.tags.join(", ") : "-";
     return `${when.padEnd(16)}  ${truncPad(c.title, 32)}  ${truncPad(tags, 16)}  ${c.url ?? ""}`.trimEnd();
   });
-  return [header, ...rows].join("\n");
+  // Disclose partial indexing as a footnote rather than a column: the loss is
+  // rare, and widening the fixed-width layout for it would cost every row. A
+  // caller that wants the numbers reads `wordCount` / `sourceWordCount` from
+  // `--json`; this line exists so the table never implies whole articles are
+  // held when some are not (#1005).
+  const clamped = clips.filter((c) => c.truncated === true).length;
+  const footer =
+    clamped === 0
+      ? []
+      : [
+          "",
+          `${clamped} of ${clips.length} clips exceeded the 16 KiB body cap and are indexed in part.`,
+          "Their wordCount reflects what is stored; --json also carries sourceWordCount.",
+        ];
+  return [header, ...rows, ...footer].join("\n");
 }
 
 export async function runClipList(

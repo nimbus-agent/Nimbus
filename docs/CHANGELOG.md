@@ -8,6 +8,55 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-11 — Web clips embed locally, and the index stops advertising text it discarded
+  (#1006 + #1005).** Two defects that had to be fixed together, because the obvious fix for
+  either one regressed the other.
+
+  **#1006 — clip text was reaching OpenAI.** `nimbus:web_clip` was in `PROSE_HEAVY_TYPES`, which
+  `RoutingEmbeddingPipeline` reads to send an item to the 1536-dim OpenAI embedder whenever
+  `openai.api_key` is set. Both web-clipper store listings state the opposite — the Chrome listing
+  says clips go "into your private, local-first Nimbus index", and both it and the AMO privacy
+  policy say there are "no remote servers, no telemetry, and no cloud". The listings describe the
+  *extension*, which does only talk to loopback, so each sentence was narrowly true while the
+  system as a whole was not. `nimbus:web_clip` is now removed from `PROSE_HEAVY_TYPES`: clips
+  always embed on-device via MiniLM-384, whether or not a key is configured. Retrieval quality on
+  long articles is the deliberate price. **Note this was live, not theoretical** — the issue was
+  filed when clips were never embedded at all, but `scheduleEmbedding` has been wired through
+  `assemble.ts` → `clip-ingest.ts` since, so the egress was actually occurring.
+
+  **The coupling that made this a two-part fix.** `bodyCapForItemType` derived the 16 KiB body cap
+  *from `PROSE_HEAVY_TYPES`*, so simply removing the clip type — the fix #1006 recommends — would
+  have silently cut the clip body cap back to 512 characters and re-opened #1005, with no test
+  between the two to notice. Storage shape and embedding destination are now separate questions:
+  `body-caps.ts` owns `LONG_BODY_TYPES`, the explicit union of `PROSE_HEAVY_TYPES` (prose-heavy
+  for routing) and the new `LOCAL_ONLY_PROSE_TYPES` (prose-shaped but pinned to local embedding).
+  The two source sets must stay disjoint — absence from `PROSE_HEAVY_TYPES` is the *whole* of the
+  privacy enforcement, so a key in both would read as "pinned local" while routing remotely — and
+  `routing.test.ts` pins that disjointness. `body-caps.test.ts` asserts the cap and the routing
+  together in one test, since each passes alone precisely when the coupling breaks.
+
+  **#1005 — `wordCount` described text the index had thrown away.** `POST /v1/clips` accepts 1 MiB;
+  the store clamps the body to 16,384. `wordCount` was computed on the submitted text, so a 34,000-
+  character article was stored at 16 KiB while its metadata advertised the full length, and no
+  field let a caller detect the loss. `wordCount` now measures the **stored** body — what a search
+  can actually return — and an over-cap clip additionally carries `sourceWordCount` + `truncated:
+  true`. A clip that fits carries neither, so the common shape is unchanged. Both keys surface
+  through `clip.list`, and `nimbus clip list` footnotes the count of partial clips rather than
+  widening its fixed-width table. A legacy row carrying neither key reads as *not* truncated,
+  which is what absence meant when it was written. The counts reuse the store's own
+  `bodyCapForItemType` + `clampBody`, so they cannot drift from the storage rule, and the clamp
+  runs only on the rare over-cap clip.
+
+  **Migration.** Clips already embedded through OpenAI keep their 1536-dim vectors: `index.reembed`
+  is model-targeted and `embedItem` deletes only the chunks for the model it is writing, so
+  re-embedding locally would *add* MiniLM vectors beside the existing OpenAI ones rather than
+  replace them (and `vectorSearchChunksDual` concatenates both tables without deduping by item).
+  To move an existing clip fully local, `nimbus clip delete <id|url>` and re-clip it —
+  `embedding_chunk.item_id` is `ON DELETE CASCADE`, so that drops every model's chunks and the
+  `AFTER DELETE` triggers clear both vec tables. **Text already sent to OpenAI cannot be recalled**;
+  this change stops future egress, it does not undo past egress. No migration, no schema change,
+  no new invariant.
+
 - **2026-08-11 — `nimbus pre-mortem`: the thirteenth built-in agent (PR B of the S1 pre-mortem
   work).** Reads the schema + background pass PR A shipped 2026-08-09 (V53) and adds the missing
   reader: `agents.premortem`, `nimbus pre-mortem <epic-ref> [--service <name>]… [--json]

@@ -40,7 +40,17 @@ export interface ClipListEntry {
   readonly clippedAt: number;
   readonly tags: string[];
   readonly mode: string;
+  /** Words in the body the index STORES — not in the text the extension sent. */
   readonly wordCount: number;
+  /** True when the submitted article exceeded the 16 KiB body cap and was clamped. */
+  readonly truncated: boolean;
+  /**
+   * Words in the submitted text, present only when `truncated`. Together with
+   * `wordCount` this is what makes the loss detectable by a caller (#1005);
+   * before it existed, `wordCount` reported the pre-clamp figure and nothing
+   * disclosed that the index held less than it advertised.
+   */
+  readonly sourceWordCount?: number;
 }
 
 function asRecord(p: unknown): Record<string, unknown> {
@@ -76,6 +86,13 @@ function rowToClipEntry(row: Record<string, unknown>): ClipListEntry {
     tags,
     mode: typeof meta["mode"] === "string" ? meta["mode"] : "",
     wordCount: typeof meta["wordCount"] === "number" ? meta["wordCount"] : 0,
+    // Derived from `sourceWordCount` rather than from the sibling `truncated`
+    // flag: a clip ingested before this field existed has neither key, and a
+    // legacy row must read as "not truncated" rather than as missing data.
+    truncated: typeof meta["sourceWordCount"] === "number",
+    ...(typeof meta["sourceWordCount"] === "number"
+      ? { sourceWordCount: meta["sourceWordCount"] }
+      : {}),
   };
 }
 

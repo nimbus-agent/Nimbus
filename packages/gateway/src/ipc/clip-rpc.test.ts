@@ -268,6 +268,64 @@ describe("dispatchClipRpc — clip.list", () => {
     db.close();
   });
 
+  test("a clip that fits reports truncated:false and omits sourceWordCount", async () => {
+    const db = seededDb();
+    seedClip(db, {
+      url: "https://a.com/1",
+      title: "Short",
+      body: "one two three",
+      mode: "article",
+      tags: [],
+      capturedAt: 1000,
+    });
+    const out = await dispatchClipRpc("clip.list", {}, { ...deps(), db });
+    const clips = (out as { value: { clips: Array<Record<string, unknown>> } }).value.clips;
+    expect(clips[0]?.["truncated"]).toBe(false);
+    expect(clips[0]).not.toHaveProperty("sourceWordCount");
+    db.close();
+  });
+
+  test("an over-cap clip reports truncated:true with both word counts (#1005)", async () => {
+    const db = seededDb();
+    seedClip(db, {
+      url: "https://a.com/long",
+      title: "Long",
+      body: Array.from({ length: 20_000 }, () => "w").join(" "),
+      mode: "article",
+      tags: [],
+      capturedAt: 1000,
+    });
+    const out = await dispatchClipRpc("clip.list", {}, { ...deps(), db });
+    const clips = (out as { value: { clips: Array<Record<string, unknown>> } }).value.clips;
+    expect(clips[0]?.["truncated"]).toBe(true);
+    expect(clips[0]?.["sourceWordCount"]).toBe(20_000);
+    // The whole point: the two numbers disagree, and a caller can see that they do.
+    expect(clips[0]?.["wordCount"]).toBeLessThan(clips[0]?.["sourceWordCount"] as number);
+    db.close();
+  });
+
+  test("a legacy row with no truncation keys reads as not truncated", async () => {
+    const db = seededDb();
+    const id = seedClip(db, {
+      url: "https://a.com/legacy",
+      title: "Legacy",
+      body: "one two",
+      mode: "article",
+      tags: [],
+      capturedAt: 1000,
+    });
+    // Rewrite the metadata to the pre-#1005 shape — no `truncated`, no
+    // `sourceWordCount`. Absent keys must read as "complete", not as unknown.
+    db.query("UPDATE item SET metadata = ? WHERE id = ?").run(
+      JSON.stringify({ tags: [], mode: "article", wordCount: 2, clippedAt: 1000 }),
+      id,
+    );
+    const out = await dispatchClipRpc("clip.list", {}, { ...deps(), db });
+    const clips = (out as { value: { clips: Array<Record<string, unknown>> } }).value.clips;
+    expect(clips[0]?.["truncated"]).toBe(false);
+    db.close();
+  });
+
   test("--tag filters in SQL and survives past the LIMIT boundary", async () => {
     const db = seededDb();
     // 3 newest UNTAGGED clips + 1 OLDER tagged clip. An in-memory filter after LIMIT 2

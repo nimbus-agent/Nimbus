@@ -38,16 +38,38 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   // events (apple:event) stay on local MiniLM 384-dim — short structured
   // summary/notes, not paragraph-shaped.
   "apple:email",
-  // Web-clipper readable-article / selection bodies are prose paragraphs — same
-  // hybrid posture as gmail:email: MiniLM-384 fallback when openai.api_key is absent.
-  "nimbus:web_clip",
-  // Saved research-brief reports are prose synthesis (summary/findings/gaps), like
-  // nimbus:web_clip. MiniLM-only fallback when openai.api_key is absent.
+  // Saved research-brief reports are prose synthesis (summary/findings/gaps).
+  // MiniLM-only fallback when openai.api_key is absent.
   "nimbus:research_brief",
   // Consolidated glossary definitions are prose synthesis, like
   // nimbus:research_brief. MiniLM-only fallback when openai.api_key is absent.
   "nimbus:glossary_term",
 ]);
+
+/**
+ * Paragraph-shaped types that are deliberately kept OFF the remote (OpenAI)
+ * embedder — always MiniLM-384, whether or not `openai.api_key` is configured.
+ *
+ * This is NOT the same question as `PROSE_HEAVY_TYPES`, and conflating the two
+ * is what made #1006 possible. Two independent questions were being answered by
+ * one set:
+ *
+ *   1. Is this type's body paragraph-shaped, so it deserves the 16 KiB store
+ *      rather than the 512-char default? (`body-caps.ts` → `LONG_BODY_TYPES`)
+ *   2. Should its embedding be computed remotely for retrieval quality?
+ *      (this module → `PROSE_HEAVY_TYPES`)
+ *
+ * `nimbus:web_clip` answers YES to (1) and NO to (2): both web-clipper store
+ * listings state that clipped content stays on the user's machine ("no remote
+ * servers, no telemetry, and no cloud"), so routing clip text to OpenAI would
+ * contradict a public claim on the Chrome Web Store and AMO. Retrieval quality
+ * on long articles is the deliberate price; the claim is not negotiable.
+ *
+ * The two sets MUST stay disjoint — membership here is the whole enforcement,
+ * so adding a key to both would silently re-enable remote egress for it.
+ * `routing.test.ts` pins that disjointness.
+ */
+export const LOCAL_ONLY_PROSE_TYPES: ReadonlySet<string> = new Set(["nimbus:web_clip"]);
 
 export function routingKey(service: string, type: string): string {
   return `${service}:${type}`;

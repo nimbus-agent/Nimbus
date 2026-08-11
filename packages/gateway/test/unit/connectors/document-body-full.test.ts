@@ -26,9 +26,15 @@ import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner
  * is the single place that applies the per-type length cap (`body-caps.ts`).
  *
  * `obsidian:obsidian_note`, `zoom:transcript`, `nimbus:web_clip`, and
- * `nimbus:research_brief` are all in `PROSE_HEAVY_TYPES` (cap =
- * `BODY_MAX_PROSE` = 16,384), so a 4,000-char document fits whole and
- * `body_complete` becomes 1 for all four.
+ * `nimbus:research_brief` are all in `LONG_BODY_TYPES` (cap = `BODY_MAX_PROSE`
+ * = 16,384), so a 4,000-char document fits whole and `body_complete` becomes 1
+ * for all four.
+ *
+ * Three of them earn that cap by being in `PROSE_HEAVY_TYPES`; `nimbus:web_clip`
+ * earns it via `LOCAL_ONLY_PROSE_TYPES` instead, because clips are deliberately
+ * kept off the remote embedder (#1006) while still being paragraph-shaped. The
+ * two sets are unioned in `body-caps.ts` precisely so this file's expectations
+ * do not depend on which of them a type came from.
  */
 
 type ItemBodyRow = {

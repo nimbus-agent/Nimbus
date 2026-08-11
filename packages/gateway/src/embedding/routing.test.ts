@@ -3,6 +3,7 @@ import {
   EMBEDDING_DIM_LOCAL,
   EMBEDDING_DIM_OPENAI,
   isProseHeavy,
+  LOCAL_ONLY_PROSE_TYPES,
   PROSE_HEAVY_TYPES,
   routingKey,
   SUPPORTED_EMBEDDING_DIMS,
@@ -17,7 +18,7 @@ describe("embedding/routing", () => {
     expect(SUPPORTED_EMBEDDING_DIMS.has(512)).toBe(false);
   });
 
-  test("PROSE_HEAVY_TYPES exact membership (23 entries)", () => {
+  test("PROSE_HEAVY_TYPES exact membership (22 entries)", () => {
     const expected = new Set([
       "slack:message",
       "discord:message",
@@ -39,7 +40,6 @@ describe("embedding/routing", () => {
       "fastmail:email",
       "protonmail:email",
       "apple:email",
-      "nimbus:web_clip",
       "nimbus:research_brief",
       "nimbus:glossary_term",
     ]);
@@ -109,10 +109,41 @@ describe("embedding/routing", () => {
 });
 
 describe("routing — web clip", () => {
-  test("nimbus:web_clip routes prose-heavy (OpenAI 1536)", () => {
-    expect(isProseHeavy("nimbus", "web_clip")).toBe(true);
+  // #1006. Both web-clipper store listings state that clipped content stays on
+  // the user's machine. `isProseHeavy` false is the whole of what keeps that
+  // true: the routing pipeline sends prose-heavy items to OpenAI whenever
+  // `openai.api_key` is set, so a `true` here would put clip text on the wire
+  // and contradict a public claim on two stores.
+  test("nimbus:web_clip is NOT prose-heavy — clips never reach the remote embedder", () => {
+    expect(isProseHeavy("nimbus", "web_clip")).toBe(false);
+    expect(PROSE_HEAVY_TYPES.has("nimbus:web_clip")).toBe(false);
+  });
+  test("nimbus:web_clip is pinned local-only", () => {
+    expect(LOCAL_ONLY_PROSE_TYPES.has("nimbus:web_clip")).toBe(true);
   });
   test("a non-prose nimbus type is not prose-heavy", () => {
     expect(isProseHeavy("nimbus", "other")).toBe(false);
+  });
+});
+
+describe("routing — local-only prose types", () => {
+  /**
+   * Stated as what CANNOT hold rather than as an allow-list: membership in
+   * `LOCAL_ONLY_PROSE_TYPES` is not itself enforcement — it only feeds the body
+   * cap. What keeps a type off the remote embedder is its ABSENCE from
+   * `PROSE_HEAVY_TYPES`, so a key present in both sets would read as "pinned
+   * local" while routing remotely. That is the exact silent regression this
+   * pins, and it is invisible to every other test in the file.
+   */
+  test("no type is in both PROSE_HEAVY_TYPES and LOCAL_ONLY_PROSE_TYPES", () => {
+    const both = [...LOCAL_ONLY_PROSE_TYPES].filter((k) => PROSE_HEAVY_TYPES.has(k));
+    expect(both).toEqual([]);
+  });
+
+  test("every local-only type routes to MiniLM-384", () => {
+    for (const key of LOCAL_ONLY_PROSE_TYPES) {
+      const [service, type] = key.split(":");
+      expect(isProseHeavy(service as string, type as string)).toBe(false);
+    }
   });
 });

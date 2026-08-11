@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { BODY_MAX_PROSE } from "../index/body-caps.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { canonicalizeUrl } from "../util/url-canonical.ts";
 import { ClipValidationError, ingestClip, validateClipInput } from "./clip-ingest.ts";
@@ -122,6 +123,46 @@ describe("ingestClip", () => {
     const res = ingestClip(db, { ...base, body: "   " });
     const meta = JSON.parse(String(getItem(res.id)?.["metadata"])) as Record<string, unknown>;
     expect(meta["wordCount"]).toBe(0);
+  });
+
+  test("a clip that fits carries no truncation keys", () => {
+    const res = ingestClip(db, base);
+    const meta = JSON.parse(String(getItem(res.id)?.["metadata"])) as Record<string, unknown>;
+    expect(meta["truncated"]).toBeUndefined();
+    expect(meta["sourceWordCount"]).toBeUndefined();
+  });
+
+  describe("over-cap article (#1005)", () => {
+    // 20,000 single-char words: length 39,999 > BODY_MAX_PROSE (16,384), so the
+    // store clamps. Space-separated so a word count is exactly derivable at any
+    // cut point rather than approximated.
+    const WORDS = 20_000;
+    const bigBody = Array.from({ length: WORDS }, () => "w").join(" ");
+
+    test("stores a clamped body and marks it incomplete", () => {
+      const res = ingestClip(db, { ...base, body: bigBody });
+      const row = getItem(res.id);
+      expect(String(row?.["body"])).toHaveLength(BODY_MAX_PROSE);
+      expect(row?.["body_complete"]).toBe(0);
+    });
+
+    test("wordCount describes the STORED body, not the submitted text", () => {
+      const res = ingestClip(db, { ...base, body: bigBody });
+      const meta = JSON.parse(String(getItem(res.id)?.["metadata"])) as Record<string, unknown>;
+      // 16,384 chars of "w " pairs → 8,192 whole words, and the clamp lands on a
+      // space so no partial word is counted. The point of the assertion is that
+      // it is nowhere near WORDS: the old code reported all 20,000.
+      expect(meta["wordCount"]).toBe(8_192);
+      expect(meta["wordCount"]).not.toBe(WORDS);
+    });
+
+    test("the loss is detectable — truncated + sourceWordCount disclose it", () => {
+      const res = ingestClip(db, { ...base, body: bigBody });
+      const meta = JSON.parse(String(getItem(res.id)?.["metadata"])) as Record<string, unknown>;
+      expect(meta["truncated"]).toBe(true);
+      expect(meta["sourceWordCount"]).toBe(WORDS);
+      expect(meta["sourceWordCount"]).toBeGreaterThan(meta["wordCount"] as number);
+    });
   });
 
   test("caller-supplied canonicalUrl is canonicalized and used", () => {

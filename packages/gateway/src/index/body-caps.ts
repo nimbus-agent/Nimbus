@@ -1,6 +1,6 @@
-import { PROSE_HEAVY_TYPES } from "../embedding/routing.ts";
+import { LOCAL_ONLY_PROSE_TYPES, PROSE_HEAVY_TYPES } from "../embedding/routing.ts";
 
-/** Cap for paragraph-shaped item types (`PROSE_HEAVY_TYPES`). */
+/** Cap for paragraph-shaped item types (`LONG_BODY_TYPES`). */
 export const BODY_MAX_PROSE = 16_384;
 
 /** Cap for everything else — unchanged from the pre-V48 behaviour. */
@@ -9,8 +9,28 @@ export const BODY_MAX_DEFAULT = 512;
 /** `item.body_preview` is always this many code units of `item.body`. */
 export const BODY_PREVIEW_MAX = 512;
 
+/**
+ * Every type whose body is paragraph-shaped enough to earn `BODY_MAX_PROSE`.
+ *
+ * This deliberately does NOT read `PROSE_HEAVY_TYPES` alone. That set answers a
+ * different question — "may this type's embedding be computed remotely?" — and
+ * deriving the storage cap from it coupled a privacy decision to a storage one.
+ * Dropping `nimbus:web_clip` from `PROSE_HEAVY_TYPES` to keep clips on-device
+ * (#1006) would, under the old derivation, have silently cut the clip body cap
+ * from 16,384 back to 512 and re-opened #1005 — a privacy fix regressing a data
+ * fix, with no test between them to say so.
+ *
+ * So the union is explicit: a type gets the long cap if it is prose-heavy for
+ * routing OR prose-shaped but pinned to local embedding. A future type added to
+ * either set gets the correct cap without a second edit here.
+ */
+export const LONG_BODY_TYPES: ReadonlySet<string> = new Set([
+  ...PROSE_HEAVY_TYPES,
+  ...LOCAL_ONLY_PROSE_TYPES,
+]);
+
 export function bodyCapForItemType(service: string, type: string): number {
-  return PROSE_HEAVY_TYPES.has(`${service}:${type}`) ? BODY_MAX_PROSE : BODY_MAX_DEFAULT;
+  return LONG_BODY_TYPES.has(`${service}:${type}`) ? BODY_MAX_PROSE : BODY_MAX_DEFAULT;
 }
 
 /**

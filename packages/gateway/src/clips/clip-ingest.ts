@@ -1,7 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { bodyCapForItemType, clampBody } from "../index/body-caps.ts";
 import { itemPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import { canonicalizeUrl } from "../util/url-canonical.ts";
+
+const CLIP_SERVICE = "nimbus";
+const CLIP_TYPE = "web_clip";
 
 export interface ClipInput {
   readonly url: string;
@@ -79,6 +83,41 @@ function wordCount(text: string): number {
   return t === "" ? 0 : t.split(/\s+/).length;
 }
 
+interface BodyExtent {
+  /** Words in the text the index actually stores and can return. */
+  readonly storedWords: number;
+  /** Words in the text the extension sent, present only when it exceeded the cap. */
+  readonly sourceWords: number | undefined;
+}
+
+/**
+ * Word counts that describe what is STORED, not what was submitted.
+ *
+ * `POST /v1/clips` accepts up to 1 MiB, but `upsertIndexedItem` clamps the body
+ * to `bodyCapForItemType` (16,384 for `nimbus:web_clip`). Counting the
+ * submitted text and reporting it as `wordCount` made the index advertise
+ * content it had discarded, with no field a caller could read to detect the
+ * loss (#1005).
+ *
+ * So `wordCount` now measures the stored body — the thing a search can actually
+ * return — and an over-cap clip additionally carries `sourceWordCount` +
+ * `truncated: true`, which makes the discrepancy explicit rather than invisible.
+ * A clip that fits (the overwhelming majority) carries neither, so the common
+ * shape is unchanged.
+ *
+ * `bodyCapForItemType` + `clampBody` are the SAME functions the store applies,
+ * not a reimplementation of them — the count cannot drift from the storage rule.
+ * The clamp itself only runs on the rare over-cap clip; the length comparison
+ * decides that, so a normal clip never pays to copy a large string.
+ */
+function bodyExtent(body: string): BodyExtent {
+  const cap = bodyCapForItemType(CLIP_SERVICE, CLIP_TYPE);
+  if (body.length <= cap) {
+    return { storedWords: wordCount(body), sourceWords: undefined };
+  }
+  return { storedWords: wordCount(clampBody(body, cap)), sourceWords: wordCount(body) };
+}
+
 export function ingestClip(
   db: Database,
   input: ClipInput,
@@ -91,9 +130,10 @@ export function ingestClip(
   const id = itemPrimaryKey("nimbus", externalId);
   // `get` returns null (never undefined) when no row matches — one read suffices.
   const existed = db.query("SELECT 1 FROM item WHERE id = ?").get(id) !== null;
+  const extent = bodyExtent(input.body);
   upsertIndexedItem(db, {
-    service: "nimbus",
-    type: "web_clip",
+    service: CLIP_SERVICE,
+    type: CLIP_TYPE,
     externalId,
     title: input.title,
     body: input.body,
@@ -104,7 +144,10 @@ export function ingestClip(
     metadata: {
       tags: input.tags,
       mode: input.mode,
-      wordCount: wordCount(input.body),
+      wordCount: extent.storedWords,
+      ...(extent.sourceWords === undefined
+        ? {}
+        : { sourceWordCount: extent.sourceWords, truncated: true }),
       clippedAt: input.capturedAt,
     },
   });
