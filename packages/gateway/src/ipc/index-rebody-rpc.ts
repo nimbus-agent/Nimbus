@@ -306,26 +306,17 @@ const rebodyRegistry = new LongRunningJobRegistry();
  * becoming a real run is the worst version of this failure mode. So a
  * malformed value is a hard error, never a fallback to the default.
  */
-function readOptionalNonEmptyString(
-  rec: Record<string, unknown>,
-  key: string,
-): string | undefined {
+function readOptionalNonEmptyString(rec: Record<string, unknown>, key: string): string | undefined {
   if (!(key in rec)) return undefined;
   const v = rec[key];
   if (typeof v !== "string" || v === "") {
-    throw new IndexRebodyRpcError(
-      -32602,
-      `params.${key} must be a non-empty string when provided`,
-    );
+    throw new IndexRebodyRpcError(-32602, `params.${key} must be a non-empty string when provided`);
   }
   return v;
 }
 
 /** Floored to an integer; rejects non-finite, non-positive and non-number. */
-function readOptionalPositiveInt(
-  rec: Record<string, unknown>,
-  key: string,
-): number | undefined {
+function readOptionalPositiveInt(rec: Record<string, unknown>, key: string): number | undefined {
   if (!(key in rec)) return undefined;
   const v = rec[key];
   if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
