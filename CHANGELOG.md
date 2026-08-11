@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.29.1](https://github.com/nimbus-agent/Nimbus/compare/v1.29.0...v1.29.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **quality:** close two ReDoS regexes and clear 25 SonarCloud findings ([#1152](https://github.com/nimbus-agent/Nimbus/issues/1152)) ([1f89379](https://github.com/nimbus-agent/Nimbus/commit/1f893798d6466c8a860fcda2141f5832acdda9c2))
+
 ## [1.29.0](https://github.com/nimbus-agent/Nimbus/compare/v1.28.0...v1.29.0) (2026-08-11)
 
 
