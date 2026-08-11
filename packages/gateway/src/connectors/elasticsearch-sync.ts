@@ -85,6 +85,66 @@ interface WalkResult {
   readonly bytes: number;
 }
 
+type IndexRow = { row: unknown; name: string };
+type MappingsByIndex = Record<string, { fields: Array<{ name: string; type: string }> }>;
+
+/**
+ * Step 1 — the indices worth indexing, capped at `MAX_INDICES`.
+ *
+ * The cap is applied while filtering rather than after it, so a cluster whose
+ * first thousand indices are all system indices still yields `MAX_INDICES` real
+ * ones instead of an empty result.
+ */
+function selectIndexableRows(rows: readonly unknown[]): IndexRow[] {
+  const out: IndexRow[] = [];
+  for (const row of rows) {
+    if (out.length >= MAX_INDICES) {
+      break;
+    }
+    const name = indexNameOf(row);
+    if (name !== null && !isSystemIndex(name)) {
+      out.push({ row, name });
+    }
+  }
+  return out;
+}
+
+/**
+ * Step 2 — field mappings for the first `MAX_INDEX_DETAIL` indices, fetched in
+ * batches of 50 so one request covers many indices.
+ *
+ * A failed batch is SKIPPED, not fatal: `detail.kind !== "ok"` simply leaves
+ * those names absent from the result, and step 3 falls back to `[]` fields for
+ * them. An index still gets indexed without its field list — losing the whole
+ * sync because one mapping request failed would be the worse trade. `bytes` is
+ * accumulated whether or not the batch parsed, since the transfer happened
+ * either way and the caller meters real traffic.
+ */
+async function fetchIndexMappings(
+  ctx: SyncContext,
+  creds: ElasticsearchCreds,
+  validRows: readonly IndexRow[],
+): Promise<{ mappings: MappingsByIndex; bytes: number }> {
+  const mappings: MappingsByIndex = {};
+  let bytes = 0;
+  const withDetails = validRows.slice(0, MAX_INDEX_DETAIL);
+  const BATCH_SIZE = 50;
+
+  for (let i = 0; i < withDetails.length; i += BATCH_SIZE) {
+    const batch = withDetails.slice(i, i + BATCH_SIZE);
+    const names = batch.map((b) => encodeURIComponent(b.name)).join(",");
+    const detail = await esGet(ctx, creds, `/${names}/_mapping`);
+    bytes += detail.bytes;
+
+    if (detail.kind === "ok") {
+      for (const { name } of batch) {
+        mappings[name] = { fields: flattenMappingFields(detail.parsed, name) };
+      }
+    }
+  }
+  return { mappings, bytes };
+}
+
 async function walkIndices(
   ctx: SyncContext,
   creds: ElasticsearchCreds,
@@ -92,37 +152,9 @@ async function walkIndices(
   now: number,
 ): Promise<WalkResult> {
   let upserted = 0;
-  let bytes = 0;
 
-  // 1. Filter and cap the valid indices
-  const validRows: { row: unknown; name: string }[] = [];
-  for (const row of rows) {
-    if (validRows.length >= MAX_INDICES) {
-      break;
-    }
-    const name = indexNameOf(row);
-    if (name !== null && !isSystemIndex(name)) {
-      validRows.push({ row, name });
-    }
-  }
-
-  // 2. Fetch details in batches of 50 for the first MAX_INDEX_DETAIL indices
-  const mappingResults: Record<string, { fields: Array<{ name: string; type: string }> }> = {};
-  const indicesWithDetails = validRows.slice(0, MAX_INDEX_DETAIL);
-  const BATCH_SIZE = 50;
-
-  for (let i = 0; i < indicesWithDetails.length; i += BATCH_SIZE) {
-    const batch = indicesWithDetails.slice(i, i + BATCH_SIZE);
-    const names = batch.map((b) => encodeURIComponent(b.name)).join(",");
-    const detail = await esGet(ctx, creds, `/${names}/_mapping`);
-    bytes += detail.bytes;
-
-    if (detail.kind === "ok") {
-      for (const { name } of batch) {
-        mappingResults[name] = { fields: flattenMappingFields(detail.parsed, name) };
-      }
-    }
-  }
+  const validRows = selectIndexableRows(rows);
+  const { mappings: mappingResults, bytes } = await fetchIndexMappings(ctx, creds, validRows);
 
   // 3. Process and upsert items
   for (const item of validRows) {

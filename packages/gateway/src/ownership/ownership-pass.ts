@@ -7,7 +7,7 @@ import {
   upsertGraphEntity,
   upsertGraphRelation,
 } from "../graph/relationship-graph.ts";
-import { aggregateBlameForRoot } from "./blame-aggregate.ts";
+import { aggregateBlameForRoot, type FileAuthorWeight } from "./blame-aggregate.ts";
 import { isBotAuthor, resolveOwner } from "./owner-identity.ts";
 import { type RemoteSpawn, resolveRepoRemote } from "./repo-remote.ts";
 
@@ -335,6 +335,101 @@ function reapOrphansForRoot(db: Database, rootMarker: string): number {
 }
 
 /**
+ * Fold one root's blame rows into per-file and per-directory owner weights.
+ *
+ * Split out of `runOwnershipPass` for cognitive complexity (Sonar S3776) — that
+ * function scored 55, and this fold plus `bindRootRemote` were the two
+ * self-contained regions in it. Extracting them leaves the caller as what it
+ * actually is: a per-root sequence of clear → aggregate → accumulate → bind →
+ * emit.
+ *
+ * Pure accumulation, no graph writes. `resolveOwner` reads the person table,
+ * which is why `db` is still needed here.
+ */
+function accumulateOwnerWeights(
+  db: Database,
+  rows: readonly FileAuthorWeight[],
+): {
+  fileWeights: Map<string, Map<string, number>>;
+  dirWeights: Map<string, Map<string, number>>;
+  ownerLabels: Map<string, string>;
+} {
+  // file -> ownerExternalId -> weight ; and dir -> ownerExternalId -> weight
+  const fileWeights = new Map<string, Map<string, number>>();
+  const dirWeights = new Map<string, Map<string, number>>();
+  const ownerLabels = new Map<string, string>();
+
+  for (const r of rows) {
+    // NOTE the argument order: `isBotAuthor(name, email)` is the REVERSE of
+    // `resolveOwner(db, email, name)`. Both take two strings, so a swap here
+    // would compile.
+    if (isBotAuthor(r.authorName, r.authorEmail)) continue;
+    const owner = resolveOwner(db, r.authorEmail, r.authorName);
+    ownerLabels.set(owner.entityExternalId, owner.label);
+
+    const fw = fileWeights.get(r.filePath) ?? new Map<string, number>();
+    fw.set(owner.entityExternalId, (fw.get(owner.entityExternalId) ?? 0) + r.weightedLines);
+    fileWeights.set(r.filePath, fw);
+
+    for (const dir of directoryAncestors(r.filePath)) {
+      const dw = dirWeights.get(dir) ?? new Map<string, number>();
+      dw.set(owner.entityExternalId, (dw.get(owner.entityExternalId) ?? 0) + r.weightedLines);
+      dirWeights.set(dir, dw);
+    }
+  }
+  return { fileWeights, dirWeights, ownerLabels };
+}
+
+/**
+ * Write the workspace → repo → service bridge for a root that has a remote, and
+ * return the service id it binds to (or `undefined` when the remote maps to no
+ * configured service).
+ *
+ * The `tracks_remote` edge is written whether or not a service match exists —
+ * knowing which repo a workspace tracks is useful on its own, and is what
+ * `--service` lookups traverse once a binding does appear. `servicesSeen` is
+ * mutated rather than returned because the caller accumulates it across roots.
+ */
+function bindRootRemote(
+  db: Database,
+  args: {
+    root: string;
+    remote: { service: string; ownerName: string };
+    urnToService: ReadonlyMap<string, string>;
+    nowMs: number;
+    servicesSeen: Set<string>;
+  },
+): string | undefined {
+  const { root, remote, urnToService, nowMs, servicesSeen } = args;
+  const wsId = upsertGraphEntity(db, {
+    type: "workspace",
+    externalId: `filesystem:${root}`,
+    label: root,
+    service: "filesystem",
+  });
+  const repoId = upsertGraphEntity(db, {
+    type: "repo",
+    externalId: `${remote.service}:${remote.ownerName}`,
+    label: remote.ownerName,
+    service: remote.service,
+  });
+  upsertGraphRelation(db, wsId, repoId, "tracks_remote", nowMs);
+
+  const boundServiceId = urnToService.get(`${remote.service}:${remote.ownerName}`);
+  if (boundServiceId !== undefined) {
+    const svcId = upsertGraphEntity(db, {
+      type: "service",
+      externalId: `service:${boundServiceId}`,
+      label: boundServiceId,
+      service: "nimbus",
+    });
+    upsertGraphRelation(db, repoId, svcId, "belongs_to", nowMs);
+    servicesSeen.add(boundServiceId);
+  }
+  return boundServiceId;
+}
+
+/**
  * Derive the ownership graph for `opts.roots` and persist the pass summary.
  *
  * `opts.roots` MUST be the COMPLETE set of git-aware roots, not a subset.
@@ -419,59 +514,19 @@ export async function runOwnershipPass(
       filesExcluded += agg.filesExcluded;
       if (agg.rows.length > 0) rootsCovered += 1;
 
-      // file -> ownerExternalId -> weight ; and dir -> ownerExternalId -> weight
-      const fileWeights = new Map<string, Map<string, number>>();
-      const dirWeights = new Map<string, Map<string, number>>();
-      const ownerLabels = new Map<string, string>();
-
-      for (const r of agg.rows) {
-        // NOTE the argument order: `isBotAuthor(name, email)` is the REVERSE of
-        // `resolveOwner(db, email, name)`. Both take two strings, so a swap here
-        // would compile.
-        if (isBotAuthor(r.authorName, r.authorEmail)) continue;
-        const owner = resolveOwner(db, r.authorEmail, r.authorName);
-        ownerLabels.set(owner.entityExternalId, owner.label);
-
-        const fw = fileWeights.get(r.filePath) ?? new Map<string, number>();
-        fw.set(owner.entityExternalId, (fw.get(owner.entityExternalId) ?? 0) + r.weightedLines);
-        fileWeights.set(r.filePath, fw);
-
-        for (const dir of directoryAncestors(r.filePath)) {
-          const dw = dirWeights.get(dir) ?? new Map<string, number>();
-          dw.set(owner.entityExternalId, (dw.get(owner.entityExternalId) ?? 0) + r.weightedLines);
-          dirWeights.set(dir, dw);
-        }
-      }
+      const { fileWeights, dirWeights, ownerLabels } = accumulateOwnerWeights(db, agg.rows);
 
       const remote = remoteByRoot.get(root) ?? null;
       let boundServiceId: string | undefined;
       if (remote !== null) {
         rootsWithRemote += 1;
-        const wsId = upsertGraphEntity(db, {
-          type: "workspace",
-          externalId: `filesystem:${root}`,
-          label: root,
-          service: "filesystem",
+        boundServiceId = bindRootRemote(db, {
+          root,
+          remote,
+          urnToService,
+          nowMs: opts.nowMs,
+          servicesSeen,
         });
-        const repoId = upsertGraphEntity(db, {
-          type: "repo",
-          externalId: `${remote.service}:${remote.ownerName}`,
-          label: remote.ownerName,
-          service: remote.service,
-        });
-        upsertGraphRelation(db, wsId, repoId, "tracks_remote", opts.nowMs);
-
-        boundServiceId = urnToService.get(`${remote.service}:${remote.ownerName}`);
-        if (boundServiceId !== undefined) {
-          const svcId = upsertGraphEntity(db, {
-            type: "service",
-            externalId: `service:${boundServiceId}`,
-            label: boundServiceId,
-            service: "nimbus",
-          });
-          upsertGraphRelation(db, repoId, svcId, "belongs_to", opts.nowMs);
-          servicesSeen.add(boundServiceId);
-        }
       }
 
       const emitOwners = (targetEntityId: string, weights: Map<string, number>): void => {

@@ -43,6 +43,45 @@ function asRecord(v: unknown): Record<string, unknown> | undefined {
 }
 
 /**
+ * Every reason a model-returned entry is dropped, in one place.
+ *
+ * Split out of `extractThemes` for cognitive complexity (Sonar S3776): the
+ * surrounding function is a linear pipeline of early returns — no model, no
+ * response, unparseable response — and this loop was the one branchy region in
+ * it, contributing most of the score on its own. Keeping it here also puts all
+ * SEVEN rejection rules under one name, so the answer to "why did the model's
+ * theme not appear?" is a single function rather than a scan of the caller.
+ *
+ * Every rule drops rather than repairs. A malformed entry is a model defect,
+ * and guessing at what it meant is how fabricated corroboration gets in.
+ */
+function collectValidThemes(
+  list: readonly unknown[],
+  epics: readonly DiscoveredEpic[],
+): ExtractedTheme[] {
+  const known = new Set(epics.map((e) => e.itemId));
+  const out: ExtractedTheme[] = [];
+  for (const entry of list) {
+    const t = asRecord(entry);
+    if (t === undefined) continue;
+    const label = t["label"];
+    if (typeof label !== "string") continue;
+    // Normalize to test emptiness, not `trim()`: a label of "..." passes a trim
+    // check but normalizes to "", which would key a theme on the empty string
+    // and render as a blank bullet.
+    if (normalizeThemeLabel(label) === "") continue;
+    const sources = t["sources"];
+    if (!Array.isArray(sources)) continue;
+    // A source the model invented would fabricate corroboration, and
+    // corroboration IS the confidence score — so filter, never trust.
+    const valid = sources.filter((s): s is string => typeof s === "string" && known.has(s));
+    if (valid.length === 0) continue;
+    out.push({ label: label.trim(), sourceItemIds: [...new Set(valid)] });
+  }
+  return out;
+}
+
+/**
  * NO snippet fallback exists, by decision. `glossary` can fall back to picking a
  * snippet because it already holds the term and needs only a definition; here
  * discovery IS the task, so there is nothing to look up. Without a model the
@@ -115,24 +154,5 @@ export async function extractThemes(
     return { kind: "ok", themes: [] };
   }
 
-  const known = new Set(epics.map((e) => e.itemId));
-  const out: ExtractedTheme[] = [];
-  for (const entry of list) {
-    const t = asRecord(entry);
-    if (t === undefined) continue;
-    const label = t["label"];
-    if (typeof label !== "string") continue;
-    // Normalize to test emptiness, not `trim()`: a label of "..." passes a trim
-    // check but normalizes to "", which would key a theme on the empty string
-    // and render as a blank bullet.
-    if (normalizeThemeLabel(label) === "") continue;
-    const sources = t["sources"];
-    if (!Array.isArray(sources)) continue;
-    // A source the model invented would fabricate corroboration, and
-    // corroboration IS the confidence score — so filter, never trust.
-    const valid = sources.filter((s): s is string => typeof s === "string" && known.has(s));
-    if (valid.length === 0) continue;
-    out.push({ label: label.trim(), sourceItemIds: [...new Set(valid)] });
-  }
-  return { kind: "ok", themes: out };
+  return { kind: "ok", themes: collectValidThemes(list, epics) };
 }
