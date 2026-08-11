@@ -2,6 +2,23 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.0.0](https://github.com/nimbus-agent/Nimbus/compare/v1.29.0...v2.0.0) (2026-08-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **egress:** remove the EgressCompleteness.tier compat shim ([#1156](https://github.com/nimbus-agent/Nimbus/issues/1156))
+
+### Bug Fixes
+
+* **clips:** embed web clips locally and stop advertising discarded text ([#1151](https://github.com/nimbus-agent/Nimbus/issues/1151)) ([0e3b183](https://github.com/nimbus-agent/Nimbus/commit/0e3b18336d1e1cb79080d09b660f20ca785c57ca))
+* **quality:** close two ReDoS regexes and clear 25 SonarCloud findings ([#1152](https://github.com/nimbus-agent/Nimbus/issues/1152)) ([1f89379](https://github.com/nimbus-agent/Nimbus/commit/1f893798d6466c8a860fcda2141f5832acdda9c2))
+
+
+### Code Refactoring
+
+* **egress:** remove the EgressCompleteness.tier compat shim ([#1156](https://github.com/nimbus-agent/Nimbus/issues/1156)) ([7b530dc](https://github.com/nimbus-agent/Nimbus/commit/7b530dcc15930a208d63af43ad3af9dd46f44d07))
+
 ## [1.29.0](https://github.com/nimbus-agent/Nimbus/compare/v1.28.0...v1.29.0) (2026-08-11)
 
 
