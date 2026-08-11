@@ -277,6 +277,58 @@ async function subPrAuthored(db: Database, input: string): Promise<SubAgentResul
   return winner === undefined ? {} : { stream: winner };
 }
 
+/**
+ * Resolution-aware probe for the `reviewed` lane.
+ *
+ * `detectMissingRelationEmit` only checks that *some* `graph_relation` row of
+ * type `reviewed` exists — it does not require that row to resolve through
+ * the person/pr/item join chain `subPrReviewed`'s real query needs. Without
+ * this check, a `reviewed` edge whose `pr` graph_entity has no backing `item`
+ * row (or whose `person` graph_entity has no backing `person` row) makes the
+ * real query return 0 rows AND makes `detectMissingRelationEmit` report "all
+ * clear" — the exact "silently empty instead of explaining itself"
+ * regression `subIncidentResolved`'s neighbouring comment (see below) already
+ * warns about, here triggered by partial-join failure rather than by zero
+ * edges.
+ *
+ * Returns:
+ *   - the "no `reviewed` edges at all" gap if none exist,
+ *   - a distinct "edges exist but none resolve" gap if edges exist but the
+ *     join chain never completes for any of them (a real indexing gap),
+ *   - `null` if at least one edge resolves — the real query's zero-row
+ *     result is then just "no match for this search topic", not a data gap.
+ */
+function detectUnresolvedReviewedRelation(db: Database): GapNote | null {
+  const missingEmit = detectMissingRelationEmit(
+    db,
+    "reviewed",
+    "Reviews are indexed from the GitHub events feed — sync the connector, or run `nimbus index backfill --service github` for history.",
+  );
+  if (missingEmit !== null) return missingEmit;
+
+  const resolvedRow = db
+    .query(
+      `SELECT 1 AS n
+         FROM graph_relation gr
+         JOIN graph_entity  pe  ON pe.id = gr.from_id AND pe.type = 'person'
+         JOIN person        p   ON p.id = pe.external_id
+         JOIN graph_entity  pre ON pre.id = gr.to_id AND pre.type = 'pr'
+         JOIN item          i   ON i.id = pre.external_id
+        WHERE gr.type = 'reviewed'
+        LIMIT 1`,
+    )
+    .get() as { n?: number } | null;
+  if (resolvedRow !== null) return null;
+
+  return {
+    category: "missing_relation_emit",
+    detail:
+      "`reviewed` edges exist in the graph but none resolve to an indexed PR and reviewer — the referenced PRs or reviewers are not (yet) indexed.",
+    remediation:
+      "Sync the GitHub connector so the reviewed PRs and their authors are indexed, then run `nimbus index backfill --service github` for history.",
+  };
+}
+
 export async function subPrReviewed(db: Database, input: string): Promise<SubAgentResult> {
   const rows = db
     .query(
@@ -307,11 +359,7 @@ export async function subPrReviewed(db: Database, input: string): Promise<SubAge
   }>;
 
   if (rows.length === 0) {
-    const gap = detectMissingRelationEmit(
-      db,
-      "reviewed",
-      "Reviews are indexed from the GitHub events feed — sync the connector, or run `nimbus index backfill --service github` for history.",
-    );
+    const gap = detectUnresolvedReviewedRelation(db);
     return gap === null ? {} : { gap };
   }
 

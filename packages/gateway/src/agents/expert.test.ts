@@ -458,10 +458,20 @@ describe("runExpert — subPrReviewed / subIncidentResolved suppressed gaps", ()
   test("existing reviewed + resolves relations and an incident entity produce no gap for those", async () => {
     const db = makePopulatedDb();
     const now = Date.now();
-    // Populate graph with 'reviewed' relation so subPrReviewed returns {}
+    // Populate graph with a 'reviewed' relation whose endpoints genuinely
+    // resolve through the join chain `subPrReviewed` reads — a real `item`
+    // row backing the `pr` graph_entity (id matches its external_id) and a
+    // real `person` row backing the `person` graph_entity (id matches its
+    // external_id) — so `subPrReviewed`'s resolution-aware probe finds a
+    // resolvable edge and stays quiet.
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["github:pr:1", "github", "pr", "pr:1", "auth overhaul", now, now],
+    );
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:1", "Person"]);
     db.run(
       "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
-      ["ge:pr:1", "pr", "pr:1", "PR", "github"],
+      ["ge:pr:1", "pr", "github:pr:1", "PR", "github"],
     );
     db.run(
       "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
