@@ -1,5 +1,17 @@
 # Targeted Fetch Miss Reason & Credential Validation — Design Review & Feedback
 
+> **HISTORICAL — do not read as current contract.** A point-in-time review of
+> the design, kept for provenance; its open questions were answered during
+> implementation. The health-state question in particular is settled: a
+> successful probe clears a stuck `unauthenticated` state and the scheduled sync
+> path resumes. The shipped contract lives in
+> `packages/gateway/src/connectors/health.ts` (the `reauthenticated` event),
+> `packages/gateway/src/index/local-index.ts`
+> (`markConnectorReauthenticated`, which fires only from `unauthenticated`), and
+> `packages/gateway/test/integration/connector-auth-unsticks-scheduler.test.ts`
+> (which proves the scheduler actually dispatches again). The code is
+> authoritative.
+
 ## Open Questions
 
 1. **OAuth Scopes verification vs. PATs:**

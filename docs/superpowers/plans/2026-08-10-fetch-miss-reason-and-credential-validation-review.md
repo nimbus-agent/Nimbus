@@ -1,5 +1,13 @@
 # Actionable Targeted-Fetch and Connector-Auth Failures — Plan Review & Feedback
 
+> **HISTORICAL — do not read as current contract.** This is a point-in-time
+> review of the implementation plan, kept for provenance. It records open
+> questions as they stood *before* implementation; several were answered
+> differently in the shipped code. In particular it calls the probe's
+> timeout/transport verdict `unreachable`; the shipped verdict is
+> **`unconfirmed`** (`connectors/credential-probe.ts`), and `unreachable` is
+> reserved for a targeted-fetch miss reason. The code is authoritative.
+
 ## Open Questions
 
 1. **Dependency Injection test seam in handlers:**

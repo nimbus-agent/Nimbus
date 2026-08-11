@@ -77,40 +77,45 @@ describe("connector re-auth unsticks a scheduler stuck on unauthenticated health
     expect(getConnectorHealth(db, "github").state).toBe("unauthenticated");
 
     scheduler.start();
-    // Several 25ms tick cycles pass; SKIP_HEALTH_STATES + the unconditional-true
-    // arm for "unauthenticated" must keep every one of them from dispatching.
-    await sleep(180);
-    expect(counter.runs).toBe(0);
-    expect(getConnectorHealth(db, "github").state).toBe("unauthenticated");
+    // Everything past `start()` runs inside try/finally: an assertion failing below would
+    // otherwise skip `stop()` and leak a live 25ms interval into whatever test runs next,
+    // turning one real failure into unrelated downstream noise (or a suite-wide timeout).
+    try {
+      // Several 25ms tick cycles pass; SKIP_HEALTH_STATES + the unconditional-true
+      // arm for "unauthenticated" must keep every one of them from dispatching.
+      await sleep(180);
+      expect(counter.runs).toBe(0);
+      expect(getConnectorHealth(db, "github").state).toBe("unauthenticated");
 
-    // 2. The user runs `nimbus connector auth github` with a good token. This
-    // goes through the SAME `verifyBeforeStore` → `markConnectorReauthenticated`
-    // path Task 3 wired, with the real credential-probe network call replaced by
-    // the injected test seam so nothing leaves the machine.
-    const authCtx: ConnectorRpcHandlerContext = {
-      rec: { service: "github", token: "fresh-pat" },
-      vault,
-      localIndex,
-      openUrl: async (_url: string): Promise<void> => {},
-      syncScheduler: undefined,
-      connectorMesh: undefined,
-      runCredentialProbe: async () => ({ kind: "valid" }),
-    };
-    await handleConnectorAuth(authCtx);
+      // 2. The user runs `nimbus connector auth github` with a good token. This
+      // goes through the SAME `verifyBeforeStore` → `markConnectorReauthenticated`
+      // path Task 3 wired, with the real credential-probe network call replaced by
+      // the injected test seam so nothing leaves the machine.
+      const authCtx: ConnectorRpcHandlerContext = {
+        rec: { service: "github", token: "fresh-pat" },
+        vault,
+        localIndex,
+        openUrl: async (_url: string): Promise<void> => {},
+        syncScheduler: undefined,
+        connectorMesh: undefined,
+        runCredentialProbe: async () => ({ kind: "valid" }),
+      };
+      await handleConnectorAuth(authCtx);
 
-    // 3. The health event fired synchronously inside handleConnectorAuth.
-    expect(getConnectorHealth(db, "github").state).toBe("healthy");
+      // 3. The health event fired synchronously inside handleConnectorAuth.
+      expect(getConnectorHealth(db, "github").state).toBe("healthy");
 
-    // 4. Without Task 1's `reauthenticated` event (and Task 3's call to it) this
-    // stays stuck forever: SKIP_HEALTH_STATES contains "unauthenticated" and the
-    // gate returns an unconditional true for it — only a FORCED sync bypasses
-    // that gate, and the scheduled (tick-driven) path never does. The scheduler
-    // is still running from step 1 (never stopped/restarted — `start()` is a
-    // no-op once `stop()` has been called), so the very next tick must now pick
-    // the connector back up on its own.
-    await waitForRuns(counter, 1);
-    expect(counter.runs).toBeGreaterThanOrEqual(1);
-
-    await scheduler.stop();
+      // 4. Without Task 1's `reauthenticated` event (and Task 3's call to it) this
+      // stays stuck forever: SKIP_HEALTH_STATES contains "unauthenticated" and the
+      // gate returns an unconditional true for it — only a FORCED sync bypasses
+      // that gate, and the scheduled (tick-driven) path never does. The scheduler
+      // is still running from step 1 (never stopped/restarted — `start()` is a
+      // no-op once `stop()` has been called), so the very next tick must now pick
+      // the connector back up on its own.
+      await waitForRuns(counter, 1);
+      expect(counter.runs).toBeGreaterThanOrEqual(1);
+    } finally {
+      await scheduler.stop();
+    }
   });
 });

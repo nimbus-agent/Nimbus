@@ -2,7 +2,10 @@
 
 **Date:** 2026-08-10
 **Branch:** `dev/asaf/fetch-miss-reason`
-**Status:** design approved, awaiting implementation plan
+**Status:** implemented. Where this document and the code disagree, the code is
+authoritative — notably the probe verdict is `unconfirmed`, not `unreachable`
+(that name is reserved for a targeted-fetch miss reason), and `reason` is
+required rather than optional.
 
 ## Problem
 

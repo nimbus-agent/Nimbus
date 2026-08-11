@@ -636,8 +636,9 @@ describe("targetedFetch", () => {
     // `fetchOne` deterministically never runs past the acquire timeout, so claiming egress here
     // would over-claim — this is the SECOND provenance of rate_limited, and it must append
     // NOTHING, unlike the provider-429 case above.
-    test("an acquire timeout answers rate_limited with NO egress row", async () => {
+    test("an acquire timeout answers rate_limited with NO egress row and no fetch", async () => {
       const rows: EgressRow[] = [];
+      let fetched = false;
       const deps = depsWith({
         hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
         tryAcquire: async () => false, // always saturated
@@ -647,12 +648,21 @@ describe("targetedFetch", () => {
           return undefined;
         },
         syncable: {
-          fetchOne: async (): Promise<FetchOneResult> => ({ status: "rate_limited" }),
+          fetchOne: async (): Promise<FetchOneResult> => {
+            fetched = true;
+            return { status: "rate_limited" };
+          },
         },
       });
       const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
       expect(out).toEqual({ status: "rate_limited" });
       expect(rows).toEqual([]);
+      // Asserting the absent row is not enough on its own: a future change that called `fetchOne`
+      // after a failed acquire while skipping the append would still satisfy `rows == []`, and that
+      // is outbound traffic with no I29 egress row. Pin the no-call directly. The sibling
+      // provider-429 test makes the mirror-image assertion (`fetched === true` WITH one row), so the
+      // two provenances of `rate_limited` cannot quietly merge.
+      expect(fetched).toBe(false);
     });
   });
 });
