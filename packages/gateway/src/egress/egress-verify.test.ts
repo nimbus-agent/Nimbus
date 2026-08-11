@@ -136,7 +136,6 @@ describe("proveWindow", () => {
       coverage: THIS_BINARY_COVERAGE,
       outboundEgressEvents: 0,
       indeterminate: false,
-      tier: "authorized-actions",
     });
   });
   test("a window with one dispatch reports exactly that row", () => {

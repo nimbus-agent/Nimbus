@@ -8,6 +8,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-11 — `EgressCompleteness.tier` is gone; the coverage vector is the only claim (#1057).**
+  The last step of a three-repo sequence. `tier: "authorized-actions"` was a deprecated additive
+  wire shim, kept because the published `@nimbus-dev/client@0.15.x`'s `validateEgressCompleteness`
+  hard-throws when the field is absent — so a gateway that simply dropped it would have broken
+  every published-client consumer, nimbus-vscode included.
+
+  **Why it had to go rather than be corrected.** Its own precondition was that `THIS_BINARY_COVERAGE`
+  had exactly ONE non-`none` class (`task` at `per-call`), so that "authorized gated-connector
+  actions, one row per call" described the whole of what the binary observed. That stopped being
+  true three times over — `mcp`, then `http`, then `sync` — and a single scalar cannot describe four
+  classes at two granularities. It misstated coverage in exactly the way the pre-vector scalar
+  `tier` had, which is the defect the `coverage`/`indeterminate` shape was introduced to fix.
+
+  **The sequence, in order:** `@nimbus-dev/client` dropped its dependency on the field and published
+  (nimbus-client#58 → **0.16.0**, not the 1.0.0 the issue anticipated — the `Release-As` trailer was
+  written into the PR description per the Nimbus convention, but the satellite repos squash the
+  LOCAL commit message, so it never reached `main` and `bump-minor-pre-major` applied; the effect is
+  the same, since `^0.15.x` does not resolve to `0.16.0`). nimbus-vscode then bumped to `^0.16.0`
+  and rewrote the half of its proof artifact that READ the field — it had rendered "Completeness
+  tier: authorized-actions — every gateway-authorized outbound action in the window", a totality
+  claim that was never true for a class at `none`. Only then does the gateway stop emitting it.
+
+  **What is removed here:** the field from `EgressCompleteness` and from `proveWindow`'s literal;
+  its assertion in `egress-verify.test.ts`; the tolerant optional `tier?: string` on the CLI's
+  `ProveCompleteness` (which was documented never to be read for a decision, and was not); the
+  "Outstanding debt this change creates" paragraph in `docs/SECURITY-INVARIANTS.md` § I29; and the
+  matching "Related debt" sentence in the `nimbus-egress` skill. Per the repo rule, retiring a
+  defence means deleting the row rather than leaving drift behind. No schema change, no invariant
+  change — I29 itself is untouched, since `tier` was never part of what it enforces.
+
 - **2026-08-11 — Web clips embed locally, and the index stops advertising text it discarded
   (#1006 + #1005).** Two defects that had to be fixed together, because the obvious fix for
   either one regressed the other.
