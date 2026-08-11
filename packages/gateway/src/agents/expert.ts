@@ -277,14 +277,67 @@ async function subPrAuthored(db: Database, input: string): Promise<SubAgentResul
   return winner === undefined ? {} : { stream: winner };
 }
 
-async function subPrReviewed(db: Database, _input: string): Promise<SubAgentResult> {
-  const gap = detectMissingRelationEmit(
-    db,
-    "reviewed",
-    "Tracked as a graph-populator follow-up; not gated on a specific Phase 5 wave.",
-  );
-  if (gap !== null) return { gap };
-  return {};
+export async function subPrReviewed(db: Database, input: string): Promise<SubAgentResult> {
+  const rows = db
+    .query(
+      `SELECT
+         p.id                           AS person_id,
+         COALESCE(p.display_name, p.id) AS display_name,
+         i.id                           AS item_id,
+         i.title                        AS title,
+         i.modified_at                  AS modified_at,
+         i.service                      AS service_id
+       FROM graph_relation gr
+       JOIN graph_entity  pe ON pe.id = gr.from_id AND pe.type = 'person'
+       JOIN person        p  ON p.id = pe.external_id
+       JOIN graph_entity  pre ON pre.id = gr.to_id AND pre.type = 'pr'
+       JOIN item          i  ON i.id = pre.external_id
+       WHERE gr.type = 'reviewed'
+         AND (i.title LIKE '%' || ? || '%' OR i.body_preview LIKE '%' || ? || '%')
+       ORDER BY i.modified_at DESC
+       LIMIT 50`,
+    )
+    .all(input, input) as Array<{
+    person_id: string;
+    display_name: string;
+    item_id: string;
+    title: string;
+    modified_at: number;
+    service_id: string;
+  }>;
+
+  if (rows.length === 0) {
+    const gap = detectMissingRelationEmit(
+      db,
+      "reviewed",
+      "Reviews are indexed from the GitHub events feed — sync the connector, or run `nimbus index backfill --service github` for history.",
+    );
+    return gap === null ? {} : { gap };
+  }
+
+  const merged = new Map<string, ExpertEvidenceStream>();
+  for (const r of rows) {
+    const ev: Evidence = {
+      itemId: r.item_id,
+      type: "pr_reviewed",
+      serviceId: r.service_id,
+      title: r.title.slice(0, 512),
+      modifiedAt: r.modified_at,
+      weight: 0.6,
+    };
+    const existing = merged.get(r.person_id);
+    if (existing === undefined) {
+      merged.set(r.person_id, {
+        personId: r.person_id,
+        displayName: r.display_name,
+        evidence: [ev],
+      });
+    } else {
+      existing.evidence.push(ev);
+    }
+  }
+  const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
+  return winner === undefined ? {} : { stream: winner };
 }
 
 async function subIncidentResolved(db: Database, _input: string): Promise<SubAgentResult> {

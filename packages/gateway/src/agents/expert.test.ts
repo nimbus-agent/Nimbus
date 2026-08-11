@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { emitExpertBrief, rankExpertFindings, runExpert } from "./expert.ts";
+import { emitExpertBrief, rankExpertFindings, runExpert, subPrReviewed } from "./expert.ts";
 
 describe("rankExpertFindings", () => {
   test("merges evidence from multiple streams by personId, summing weights", () => {
@@ -229,6 +229,58 @@ describe("runExpert gap-note coverage", () => {
     const brief = await runExpert({ topicOrFile: "noop" }, ctx);
     const cats = brief.gaps.map((g) => g.category);
     expect(cats).toContain("missing_relation_emit");
+  });
+});
+
+describe("subPrReviewed", () => {
+  test("subPrReviewed surfaces a reviewer as pr_reviewed evidence", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:author", "Author"]);
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:reviewer", "Reviewer"]);
+
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#1",
+      title: "Add rate limiter",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      authorId: "person:author",
+      metadata: { repo: "acme/app", number: 1 },
+    });
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "review",
+      externalId: "acme/app#1#review-500",
+      title: "Review on acme/app#1",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      authorId: "person:reviewer",
+      metadata: { repo: "acme/app", pr_number: 1 },
+    });
+
+    const result = await subPrReviewed(db, "rate limiter");
+
+    expect(result.gap).toBeUndefined();
+    expect(result.stream?.personId).toBe("person:reviewer");
+    expect(result.stream?.displayName).toBe("Reviewer");
+    expect(result.stream?.evidence).toHaveLength(1);
+    expect(result.stream?.evidence[0]?.type).toBe("pr_reviewed");
+    expect(result.stream?.evidence[0]?.itemId).toBe("github:acme/app#1");
+    db.close();
+  });
+
+  test("subPrReviewed still reports the gap when no reviewed edges exist", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const result = await subPrReviewed(db, "anything");
+    expect(result.gap?.category).toBe("missing_relation_emit");
+    expect(result.stream).toBeUndefined();
+    db.close();
   });
 });
 
