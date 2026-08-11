@@ -33,6 +33,13 @@ the existing enrichment pass already fetches and currently discards.
 - **`bun run typecheck:tests` before pushing.** It is advisory on Windows and gating on CI-Linux, and
   this PR adds test files. Read the "N new" line.
 - **Cross-platform paths.** Use `path.join()`; never hardcode separators.
+- **Line numbers are as of 2026-08-11 and drift as tasks land.** They locate code; they are not
+  addresses to edit blindly. **Tasks 4–7 all modify `github-sync.ts` in sequence**, and Task 4 inserts
+  roughly 70 lines (`githubReviewExternalId`, `upsertReview`, `processPullRequestReviewPayload`)
+  before the regions Tasks 6 and 7 cite — so every `github-sync.ts` line number in Tasks 6 and 7 is
+  stale by the time you reach them. **Locate by symbol name, then confirm the surrounding code matches
+  what the task quotes before editing.** If it does not match, stop and re-read the file: the plan was
+  written against a specific tree and something has moved.
 
 ## Scope note
 
@@ -184,6 +191,16 @@ test("a reviewed edge survives the PR being re-populated", () => {
 
   // The PR is re-synced (title edit, state change, any later PullRequestEvent).
   seedPr(db, "acme/app#1", "Add rate limiter v2", "person-author", now + 1000);
+
+  // PROVE THE RE-POPULATION ACTUALLY RAN. Without this the test is vacuous: if
+  // `upsertIndexedItem` ever skipped graph population for an unchanged row, the
+  // edge would "survive" because nothing touched it, and the assertion below
+  // would stay green even with `reviewed` absent from CROSS_ITEM_RELATION_TYPES
+  // — the precise defect this test exists to catch.
+  const prLabel = db
+    .query("SELECT label FROM graph_entity WHERE type = 'pr' AND external_id = ?")
+    .get("github:acme/app#1") as { label: string };
+  expect(prLabel.label).toBe("Add rate limiter v2");
 
   expect(reviewedPairs(db)).toEqual([
     { person: "person-reviewer", pr: "github:acme/app#1" },
@@ -569,8 +586,14 @@ not a roadmap one.
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/gateway/src/agents/expert.test.ts`
-Expected: PASS, including pre-existing tests. If an existing test asserted the old remediation string,
-update it to the new text.
+Expected: PASS, including pre-existing tests.
+
+**No existing test asserts the remediation string — verified.** The one test covering this lane,
+`expert.test.ts:220` ("missing reviewed relation surfaces a missing_relation_emit gap note"), asserts
+only `cats).toContain("missing_relation_emit")`, and it seeds its fixture with a raw
+`INSERT INTO item` that bypasses the populator entirely — so it creates no graph rows, no `reviewed`
+edges exist, and the gap still fires. **That test must keep passing unchanged.** If it goes red, your
+lane is returning a stream where there is no evidence, which means the query is wrong.
 
 - [ ] **Step 5: Preflight and commit**
 
@@ -704,7 +727,13 @@ is a one-line string, not a list.
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `bun test packages/gateway/src/agents/why.test.ts`
-Expected: PASS. Update any existing test asserting the old remediation string.
+Expected: PASS.
+
+**`why.test.ts:159` is safe — verified.** It asserts
+`g.category === "missing_relation_emit" && g.detail.includes("reviewed")`. That matches on `detail`,
+which `detectMissingRelationEmit` generates (`gap-notes.ts:64`) and which this task does **not**
+change — only the `remediation` argument changes. Its fixture seeds no review items, so the gap still
+fires and the assertion still holds.
 
 - [ ] **Step 6: Preflight and commit**
 
@@ -1332,6 +1361,11 @@ Replace the 403 branch (`:371-380`) with:
 
 The `penalise("github", ...)` bucket stays hardcoded in this PR — parameterising it belongs with PR
 2's `github_search` path, where a second bucket first exists.
+
+**Note for PR 2:** `throwGithubRateLimitErrorIfApplicable` and `retryAfterDateFromHeader` are the
+shared helpers the search backfill must reuse — the only change it needs is the bucket key becoming a
+parameter. Do not fork a second rate-limit parser for search; GitHub's 403/429 + `retry-after`
+semantics are identical on both surfaces, and two parsers would drift.
 
 - [ ] **Step 4: Add the saturation log**
 
