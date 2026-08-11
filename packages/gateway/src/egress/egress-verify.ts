@@ -364,47 +364,6 @@ export type EgressCompleteness = {
    * evidence any egress class was being observed. NEVER report a bare zero in this state.
    */
   readonly indeterminate: boolean;
-  /**
-   * DEPRECATED additive compatibility shim, owner-decided, for one cycle: the published
-   * `@nimbus-dev/client@0.15.0`'s `validateEgressCompleteness` hard-throws unless a `tier` field
-   * equal to `"authorized-actions"` is present (it predates the `coverage`/`indeterminate` shape),
-   * so any published-client consumer — including nimbus-vscode — hard-fails against a gateway that
-   * dropped it outright. Emitted ALONGSIDE `coverage`/`outboundEgressEvents`/`indeterminate`, never
-   * in place of them.
-   *
-   * THIS VALUE IS NOW OVERDUE FOR REMOVAL, not merely deprecated. It was true only while
-   * `THIS_BINARY_COVERAGE` had exactly one non-"none" class (`task`, at `"per-call"`), so that
-   * "authorized gated-connector actions, one row per call" was the whole of what this binary
-   * observed. The agents-as-MCP-tools / HTTP-agents-route work raised a SECOND and THIRD class —
-   * `mcp` then `http`, both `"per-call"` and sharing one appender
-   * (`egress/agent-brief-egress.ts`, I29/D22(c)) — so the binary observed more than
-   * "authorized-actions" describes well before this comment was next revisited, and this field
-   * misstates coverage exactly the way the old scalar `tier` used to.
-   *
-   * It was NOT deleted in that commit on purpose: removing it is a breaking wire change for
-   * published-client consumers (nimbus-vscode included), a cross-repo release decision rather than
-   * part of wiring an appender. Nothing in the gateway or CLI reads this field for a decision, and
-   * `coverage`/`indeterminate` are emitted alongside it and remain the authoritative claim — so
-   * the misstatement is inert locally. Remove it, and the client's `validateEgressCompleteness`
-   * dependency on it, at the next client major. Tracked as
-   * https://github.com/nimbus-agent/Nimbus/issues/1057 — a removal condition that names no owner
-   * is a comment, not a plan. See `docs/SECURITY-INVARIANTS.md` § I29 ("Outstanding debt").
-   *
-   * `sync` (`egress/egress-coverage.ts`) was raised to `"per-run"` in the task that added this
-   * paragraph (the targeted-fetch-on-miss route), making it the FOURTH non-`none` class —
-   * `sync/scheduler.ts`'s `appendSyncEgress` and `sync/targeted-fetch.ts`'s `appendEgress` both
-   * landed as closures around ONE appender, `egress/sync-egress.ts`'s `recordSyncEgress`, in the
-   * SAME commit as the raise (no unwired seam, per the vector's own rule). #1057 IS EXPLICITLY
-   * DEFERRED AGAIN HERE, DELIBERATELY, rather than raised past silently: removing `tier` is still a
-   * breaking wire change for published-client consumers, still a cross-repo release decision, and
-   * still orthogonal to wiring an appender — none of which changed by this raise. The
-   * mismatch between `tier` and reality has only widened (now three classes wider, not one), which
-   * is a reason to schedule the client-major removal, not a reason to block this commit on it.
-   * Whoever lands the FIFTH non-`none` class (`model`, `peer`, or `session`) must make the SAME
-   * choice explicitly here — settle #1057, or defer it again by name — rather than letting this
-   * paragraph go stale a second time.
-   */
-  readonly tier: "authorized-actions";
 };
 
 /**
@@ -436,14 +395,7 @@ export function proveWindow(
   const indeterminate = COVERAGE_CLASSES.every((c) => coverage[c] === "none");
   return {
     rows,
-    // `tier: "authorized-actions"` is the deprecated additive compat shim documented on
-    // `EgressCompleteness` — see that doc comment before touching this literal.
-    completeness: {
-      coverage,
-      outboundEgressEvents: outbound,
-      indeterminate,
-      tier: "authorized-actions",
-    },
+    completeness: { coverage, outboundEgressEvents: outbound, indeterminate },
     verify: verifyEgressChain(db),
   };
 }

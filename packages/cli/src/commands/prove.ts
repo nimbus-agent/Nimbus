@@ -11,15 +11,6 @@ export interface ProveCompleteness {
   readonly coverage: Readonly<Record<string, string>>;
   readonly outboundEgressEvents: number;
   readonly indeterminate: boolean;
-  /**
-   * DEPRECATED compatibility shim for `@nimbus-dev/client` <= 0.15.x, whose
-   * `validateEgressCompleteness` throws unless `tier === "authorized-actions"` is present. The
-   * gateway emits it additively (see `EgressCompleteness` in
-   * `packages/gateway/src/egress/egress-verify.ts`) — the CLI tolerates it on the wire but MUST NOT
-   * read it for any decision; all logic here stays on `coverage`/`indeterminate`. Optional because
-   * older/newer gateways are not guaranteed to send it.
-   */
-  readonly tier?: string;
 }
 
 type ProveResult = {
