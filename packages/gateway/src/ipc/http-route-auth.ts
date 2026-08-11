@@ -119,7 +119,7 @@ function hasScope(granted: readonly ApiScope[], required: ApiScope): boolean {
  */
 export function clipScopeFor(routeKey: string): ApiScope | null {
   const auth = HTTP_ROUTE_AUTH[routeKey];
-  return auth !== undefined && auth.kind === "clip" ? auth.scope : null;
+  return auth?.kind === "clip" ? auth.scope : null;
 }
 
 export function insufficientScopeBody(

@@ -169,7 +169,7 @@ export async function runPremortemPass(
       }
     }
 
-    const last = batch[batch.length - 1];
+    const last = batch.at(-1);
     if (last === undefined) break;
     watermarkMs = last.modifiedAt;
     watermarkId = last.itemId;

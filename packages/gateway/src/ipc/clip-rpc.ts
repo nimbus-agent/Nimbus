@@ -165,12 +165,12 @@ function resolveClipIdsToDelete(db: Database, rec: Record<string, unknown>): str
 function readScopes(v: unknown): readonly ApiScope[] {
   if (v === undefined) return LEGACY_SCOPES;
   if (!Array.isArray(v)) {
-    throw new Error(`scopes must be an array of: ${API_SCOPES.join(", ")}`);
+    throw new TypeError(`scopes must be an array of: ${API_SCOPES.join(", ")}`);
   }
   const invalid = v.filter((s) => !isApiScope(s));
   if (invalid.length > 0) {
     throw new Error(
-      `unknown scope(s): ${invalid.map((s) => String(s)).join(", ")} — valid scopes are: ${API_SCOPES.join(", ")}`,
+      `unknown scope(s): ${invalid.map(String).join(", ")} — valid scopes are: ${API_SCOPES.join(", ")}`,
     );
   }
   if (v.length === 0) {

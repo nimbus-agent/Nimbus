@@ -160,3 +160,24 @@ describe("resolveRepoRemote", () => {
     await expect(resolveRepoRemote("/r", throwingSpawn)).resolves.toBeNull();
   });
 });
+
+/**
+ * Sonar `typescript:S8786`: the trailing-slash strip was `/\/+$/`, retried from
+ * every start offset. Remote URLs come from `git remote -v` in a repository the
+ * user may not control.
+ *
+ * Time-bounded for the same reason as the theme-label case: the regex produced
+ * the right answer, so no correctness test could distinguish it.
+ */
+test("parseRemoteUrl stays linear on a degenerate slash run", () => {
+  // THE SLASH RUN MUST BE INTERIOR. The old code stripped LEADING slashes first
+  // (`^\/+`, linear and anchored), so a leading or trailing run never reached
+  // the quadratic `\/+$` — both measured at ~0.1 ms against the old code, i.e.
+  // tests that cannot fail. A run between two path segments does reach it:
+  // 9.1 s against the old regex, ~1 ms against the current linear scan.
+  const hostile = `https://github.com/a${"/".repeat(200_000)}x`;
+  const started = performance.now();
+  // Empty segments drop out, so this still parses as the repo `a/x`.
+  expect(parseRemoteUrl(hostile)).toEqual({ service: "github", ownerName: "a/x" });
+  expect(performance.now() - started).toBeLessThan(1000);
+});

@@ -142,15 +142,6 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     expect(resolveItemByUrl(db, callerUrl)).toMatchObject({ found: true, matchKind: "exact" });
   });
 
-  test("jenkins fetchOne declines a job url with no build number", async () => {
-    const ctx = ctxWithCreds(createMemoryIndexDb(), "https://ci.corp.example");
-    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
-
-    const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/");
-
-    expect(out).toEqual({ status: "unsupported_url" });
-  });
-
   test("reports absent for a 404", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
@@ -273,20 +264,22 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("declines a job segment that percent-decodes to contain a slash", async () => {
+  // Every URL shape `fetchOne` must DECLINE outright, before it makes a request.
+  // Declining is the safe answer for all three: a job url with no build number
+  // identifies no single build, and a segment that decodes to a slash or is
+  // malformed percent-encoding cannot be re-encoded to a stable request path.
+  test.each([
+    ["a job url with no build number", "https://ci.corp.example/job/build/"],
+    [
+      "a job segment that percent-decodes to contain a slash",
+      "https://ci.corp.example/job/a%2Fb/12/",
+    ],
+    ["a job segment with malformed percent-encoding", "https://ci.corp.example/job/%E0%A4%A/12/"],
+  ])("declines %s", async (_case, url) => {
     const ctx = ctxWithCreds(createMemoryIndexDb(), "https://ci.corp.example");
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
 
-    const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/a%2Fb/12/");
-
-    expect(out).toEqual({ status: "unsupported_url" });
-  });
-
-  test("declines a job segment with malformed percent-encoding", async () => {
-    const ctx = ctxWithCreds(createMemoryIndexDb(), "https://ci.corp.example");
-    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
-
-    const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/%E0%A4%A/12/");
+    const out = await syncable.fetchOne?.(ctx, url);
 
     expect(out).toEqual({ status: "unsupported_url" });
   });

@@ -125,64 +125,26 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     });
   });
 
-  test("reports absent for a 404", async () => {
+  // Five upstream status codes, one shape: mock the status, assert the mapped
+  // result. The mapping is the whole point — a 403 must read as `unauthorized`
+  // and NOT as `absent`, or a permissions problem looks like a deleted MR.
+  // `pat` varies only to keep the expired-token narrative on the 401 row.
+  test.each([
+    [404, "t", { status: "not_found", reason: "absent" }],
+    [401, "expired-pat", { status: "not_found", reason: "unauthorized" }],
+    [403, "t", { status: "not_found", reason: "unauthorized" }],
+    [429, "t", { status: "rate_limited" }],
+    [500, "t", { status: "not_found", reason: "upstream_error" }],
+  ] as const)("maps upstream %i to the right fetchOne result", async (code, pat, expected) => {
     const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "t");
+    const ctx = ctxWithPat(db, pat);
     globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("nope", { status: 404 }))) as unknown as typeof fetch;
-
-    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/999");
-
-    expect(out).toEqual({ status: "not_found", reason: "absent" });
-  });
-
-  test("reports unauthorized for a 401", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "expired-pat");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("Unauthorized", { status: 401 }))) as unknown as typeof fetch;
+      Promise.resolve(new Response("body", { status: code }))) as unknown as typeof fetch;
 
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
 
-    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
-  });
-
-  test("reports unauthorized for a 403", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "t");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("forbidden", { status: 403 }))) as unknown as typeof fetch;
-
-    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
-
-    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
-  });
-
-  test("reports rate_limited for a 429", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "t");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("slow down", { status: 429 }))) as unknown as typeof fetch;
-
-    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
-
-    expect(out).toEqual({ status: "rate_limited" });
-  });
-
-  test("reports upstream_error for a 500", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "t");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("boom", { status: 500 }))) as unknown as typeof fetch;
-
-    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
-
-    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
+    expect(out).toEqual(expected);
   });
 
   test("reports unreachable when fetch itself throws (DNS/TLS/connect failure)", async () => {

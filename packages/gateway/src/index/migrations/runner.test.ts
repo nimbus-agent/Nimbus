@@ -877,7 +877,7 @@ test("V52 backfill leaves FTS search working for a row that existed before the m
   const hits = db
     .query("SELECT rowid FROM item_fts WHERE item_fts MATCH 'frobnicator'")
     .all() as Array<{ rowid: number }>;
-  expect(hits.length).toBe(1);
+  expect(hits).toHaveLength(1);
   db.close();
 });
 

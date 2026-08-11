@@ -1,4 +1,5 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
+import { stripAffixChars } from "../util/strip-affixes.ts";
 
 export type RemoteRef = { readonly service: string; readonly ownerName: string };
 export type RemoteSpawn = typeof Bun.spawn;
@@ -59,7 +60,11 @@ export function parseRemoteUrl(url: string): RemoteRef | null {
   const service = HOST_TO_SERVICE.get(host.toLowerCase());
   if (service === undefined) return null;
 
-  let p = path.replace(/^\/+/, "").replace(/\/+$/, "");
+  // A linear scan, not `.replace(/\/+$/, "")`: that trailing-anchored form is
+  // retried from every start offset, so a long run of slashes that does not
+  // reach the end backtracks quadratically (Sonar `typescript:S8786`). Remote
+  // URLs come from `git remote -v` in a repo the user may not control.
+  let p = stripAffixChars(path, "/");
   if (p.toLowerCase().endsWith(".git")) p = p.slice(0, -4);
   const parts = p.split("/").filter((s) => s !== "");
   if (parts.length !== 2) return null;

@@ -125,11 +125,7 @@ async function walkIndices(
   }
 
   // 3. Process and upsert items
-  for (let i = 0; i < validRows.length; i++) {
-    const item = validRows[i];
-    if (item === undefined) {
-      continue;
-    }
+  for (const item of validRows) {
     const { row, name } = item;
     const fields = mappingResults[name]?.fields ?? [];
 

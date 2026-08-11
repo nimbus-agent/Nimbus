@@ -31,6 +31,7 @@ import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import {
   dispatchByMethod,
   type RpcMethodHandlerMap,
@@ -813,12 +814,15 @@ export const HTTP_AGENT_NAMES: readonly string[] = Object.freeze(
   Object.keys(AGENTS_RPC_HANDLERS)
     .filter((m) => !HTTP_EXCLUDED_AGENT_METHODS.has(m))
     .map((m) => m.slice(AGENTS_METHOD_PREFIX.length))
+    // The SHARED `codeUnitCompare` (`util/code-unit-compare.ts`), not an inline
+    // `(a, b) => a < b ? -1 : a > b ? 1 : 0` — that nested ternary was S3358, and the same ordering
+    // rule already had one home, used by the share canonicalizer.
     // Explicit code-unit comparator, NOT `localeCompare` (which S2871's message suggests) and not a
     // bare `.sort()` (whose implicit string coercion is what S2871 flags). This array is a WIRE
     // RESPONSE: `localeCompare` is locale-sensitive, so two gateways under different locales could
     // publish the same eleven agents in different orders. The names are ASCII identifiers, so a
     // code-unit comparison is total, stable and identical on every machine.
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    .sort(codeUnitCompare),
 );
 
 /**

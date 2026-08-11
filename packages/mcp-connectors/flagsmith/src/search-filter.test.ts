@@ -10,22 +10,17 @@ describe("filterFlagsmithFeatures", () => {
     "not-an-object",
   ];
 
-  test("matches by name", () => {
-    const result = filterFlagsmithFeatures(features, { query: "feature_one" });
+  // One assertion shape over the fields the filter searches. Named per case so a
+  // failure still says WHICH field stopped matching, which is the only thing the
+  // separate copies bought.
+  test.each([
+    ["name", "feature_one", "feature_one"],
+    ["description", "second", "feature_two"],
+    ["string tags", "frontend", "feature_one"],
+  ])("matches by %s", (_field, query, expected) => {
+    const result = filterFlagsmithFeatures(features, { query });
     expect(result).toHaveLength(1);
-    expect((result[0] as { name?: string }).name).toBe("feature_one");
-  });
-
-  test("matches by description", () => {
-    const result = filterFlagsmithFeatures(features, { query: "second" });
-    expect(result).toHaveLength(1);
-    expect((result[0] as { name?: string }).name).toBe("feature_two");
-  });
-
-  test("matches by string tags", () => {
-    const result = filterFlagsmithFeatures(features, { query: "frontend" });
-    expect(result).toHaveLength(1);
-    expect((result[0] as { name?: string }).name).toBe("feature_one");
+    expect((result[0] as { name?: string }).name).toBe(expected);
   });
 
   test("matches by number tags", () => {
