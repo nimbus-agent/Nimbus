@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import type { ServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { evaluateWatchersAfterSync, evaluateWatchersStartupCatchUp } from "./watcher-engine.ts";
 import { insertWatcher, listWatchers } from "./watcher-store.ts";
 
@@ -641,5 +642,178 @@ describe("watcher-engine", () => {
     );
 
     expect(calls).toBe(0);
+  });
+  describe("filter.affectedService", () => {
+    const T0 = 5_300_000_000_000;
+
+    /** One `[ci.service.billing]` block claiming both the repo and the PagerDuty service. */
+    const resolver: ServiceIdentityResolver = (item) =>
+      item.metadata["pagerduty_service_id"] === "PBILLING"
+        ? { kind: "bound", serviceId: "billing" }
+        : { kind: "unknown" };
+
+    function insertAffectedServiceWatcher(
+      db: Database,
+      conditionType: string,
+      affectedService: string,
+    ): string {
+      return insertWatcher(db, {
+        name: `${conditionType}-on-${affectedService}`,
+        enabled: 1,
+        condition_type: conditionType,
+        condition_json: JSON.stringify({ filter: { affectedService } }),
+        action_type: "notify",
+        action_json: "{}",
+        created_at: T0,
+      });
+    }
+
+    /**
+     * Written through the PRODUCTION path so `graph-populator.ts` creates the incident entity
+     * and resolves its `affectedService` — never a hand-seeded graph entity, which would keep
+     * passing if the populator stopped writing the field.
+     */
+    function insertTriggeredIncident(
+      db: Database,
+      externalId: string,
+      pagerdutyServiceId: string,
+    ): void {
+      upsertIndexedItem(
+        db,
+        {
+          service: "pagerduty",
+          type: "incident",
+          externalId,
+          title: `incident ${externalId}`,
+          modifiedAt: T0 + 1000,
+          syncedAt: T0 + 1000,
+          metadata: { status: "triggered", pagerduty_service_id: pagerdutyServiceId },
+        },
+        resolver,
+      );
+    }
+
+    function fireBodies(db: Database): string[] {
+      const bodies: string[] = [];
+      evaluateWatchersAfterSync(db, "pagerduty", T0 + 2000, (_title, body) => {
+        bodies.push(body);
+      });
+      return bodies;
+    }
+
+    test("fires when the incident entity names the same affected service", () => {
+      const db = makeDb();
+      insertAffectedServiceWatcher(db, "incident_opened", "billing");
+      insertTriggeredIncident(db, "INC-A", "PBILLING");
+      expect(fireBodies(db)).toHaveLength(1);
+    });
+
+    test("does not fire when the incident entity names a different affected service", () => {
+      const db = makeDb();
+      insertAffectedServiceWatcher(db, "incident_opened", "payments");
+      insertTriggeredIncident(db, "INC-B", "PBILLING");
+      expect(fireBodies(db)).toEqual([]);
+    });
+
+    test("does not fire on the raw connector id — filter.service and filter.affectedService are different axes", () => {
+      // The bug this filter exists to fix, pinned in reverse: `pagerduty` is what
+      // `item.service` holds, and it is NOT an affected service.
+      const db = makeDb();
+      insertAffectedServiceWatcher(db, "incident_opened", "pagerduty");
+      insertTriggeredIncident(db, "INC-C", "PBILLING");
+      expect(fireBodies(db)).toEqual([]);
+    });
+
+    test("an unfiltered watcher still fires on the same incident", () => {
+      // Proves the two tests above fail on the FILTER, not on a broken fixture.
+      const db = makeDb();
+      insertWatcher(db, {
+        name: "any-incident",
+        enabled: 1,
+        condition_type: "incident_opened",
+        condition_json: JSON.stringify({ filter: {} }),
+        action_type: "notify",
+        action_json: "{}",
+        created_at: T0,
+      });
+      insertTriggeredIncident(db, "INC-D", "PBILLING");
+      expect(fireBodies(db)).toHaveLength(1);
+    });
+
+    test("fails CLOSED on a condition kind with no timeline entity", () => {
+      // `alert_fired` has no graph entity carrying an affectedService. Ignoring the filter would
+      // WIDEN the watcher to every alert — the opposite of what the author asked for.
+      const db = makeDb();
+      insertAffectedServiceWatcher(db, "alert_fired", "billing");
+      insertSentryAlert(db, "A-1", "some alert", T0);
+      const bodies: string[] = [];
+      evaluateWatchersAfterSync(db, "sentry", T0 + 2000, (_t, b) => {
+        bodies.push(b);
+      });
+      expect(bodies).toEqual([]);
+    });
+
+    test("the same alert_fired watcher without the filter DOES fire", () => {
+      // Discriminates the fail-closed test above from a fixture that never matched anyway.
+      const db = makeDb();
+      insertAlertFiredWatcher(db, "any-alert", JSON.stringify({ filter: {} }), T0);
+      insertSentryAlert(db, "A-2", "some alert", T0);
+      const bodies: string[] = [];
+      evaluateWatchersAfterSync(db, "sentry", T0 + 2000, (_t, b) => {
+        bodies.push(b);
+      });
+      expect(bodies).toHaveLength(1);
+    });
+
+    test("a non-JSON graph_entity.metadata does not take down the evaluation loop", () => {
+      // json_extract RAISES "malformed JSON" on non-JSON TEXT, and the exception would escape
+      // evaluateOneWatcher and kill EVERY watcher in the loop, not just this one. No production
+      // writer can produce this today, so it is forced directly — same shape as the item-level
+      // json_valid test above.
+      const db = makeDb();
+      insertAffectedServiceWatcher(db, "incident_opened", "billing");
+      insertTriggeredIncident(db, "INC-POISON", "PBILLING");
+      insertTriggeredIncident(db, "INC-GOOD", "PBILLING");
+      db.run("UPDATE graph_entity SET metadata = 'not json' WHERE external_id = ?", [
+        "pagerduty:INC-POISON",
+      ]);
+
+      const bodies = fireBodies(db);
+
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).toContain("INC-GOOD");
+    });
+
+    test("filter.service and filter.affectedService compose — both must match", () => {
+      const db = makeDb();
+      insertWatcher(db, {
+        name: "both",
+        enabled: 1,
+        condition_type: "incident_opened",
+        condition_json: JSON.stringify({
+          filter: { service: "pagerduty", affectedService: "billing" },
+        }),
+        action_type: "notify",
+        action_json: "{}",
+        created_at: T0,
+      });
+      insertTriggeredIncident(db, "INC-E", "PBILLING");
+      expect(fireBodies(db)).toHaveLength(1);
+
+      const db2 = makeDb();
+      insertWatcher(db2, {
+        name: "both-wrong-connector",
+        enabled: 1,
+        condition_type: "incident_opened",
+        condition_json: JSON.stringify({
+          filter: { service: "opsgenie", affectedService: "billing" },
+        }),
+        action_type: "notify",
+        action_json: "{}",
+        created_at: T0,
+      });
+      insertTriggeredIncident(db2, "INC-F", "PBILLING");
+      expect(fireBodies(db2)).toEqual([]);
+    });
   });
 });

@@ -13,6 +13,26 @@ export type WatcherProposal = {
 };
 
 /**
+ * Translates an affected service (a PR repo path, e.g. `acme/billing-api` —
+ * `epic-services.ts`'s vocabulary) into a `[metrics.dora.<id>]` /
+ * `[ci.service.<id>]` config id, or `null` when nothing in the config claims
+ * it. A plain function type, not a `ServiceIdentityResolver` import, so
+ * `premortem/` keeps no `metrics/` dependency — the same reason
+ * `graph/graph-populator.ts` declares its resolver structurally.
+ */
+export type ResolveConfigServiceId = (repo: string) => string | null;
+
+export type WatcherProposalResult = {
+  proposals: WatcherProposal[];
+  /**
+   * Affected services that resolved to NO config id, in input order. Nothing
+   * was proposed for them and nothing was written — the caller reports them
+   * as a named gap. Never silently folded into `proposals`.
+   */
+  unmappedServices: string[];
+};
+
+/**
  * Content-derived identity: hash(epicItemId, riskKind, service). Same scheme
  * as `decisionRowId` (`decisions/cue-mining.ts`) and `themeId`
  * (`premortem/theme-identity.ts`) — length-prefixed fields so a boundary
@@ -29,15 +49,30 @@ function proposedWatcherId(epicItemId: string, riskKind: string, service: string
 }
 
 /**
- * Propose one paused `incident_opened` watcher per service.
+ * Propose one paused `incident_opened` watcher per affected service that
+ * resolves to a configured deployment-service id.
  *
- * Only incident-coupling watchers are proposed: a deployment item's
- * `item.service` is the annotate provider slug (`github-actions`,
- * `gitlab`, …) while the watcher engine matches syncable service ids, so a
- * service-filtered deploy-failure watcher could never fire. The
- * deploy-failure risk is still computed and reported by Task 2's
- * calculators — it simply proposes nothing here, exactly as cycle time,
- * size overrun and review drag do.
+ * THE TRANSLATION IS LOAD-BEARING, not a nicety. `services` here are PR repo
+ * paths (`acme/billing-api`), and the watcher engine's `filter.affectedService`
+ * matches `graph_entity.metadata.affectedService`, which
+ * `graph/graph-populator.ts` resolves to a `[ci.service.<id>]` CONFIG id. An
+ * earlier version wrote the raw repo path into `filter.service`, which the
+ * engine matches against the `item.service` COLUMN — always the connector id
+ * (`pagerduty`) for an incident — so every proposal it wrote was inert even
+ * once armed. `agents/premortem.ts`'s incident-coupling query already did this
+ * exact translation; that asymmetry between the two paths was the bug.
+ *
+ * A service that resolves to nothing gets NO watcher and NO row: it is
+ * returned in `unmappedServices` for the caller to name in the brief. Falling
+ * back to the repo path would recreate the inert proposal.
+ *
+ * Only incident-coupling watchers are proposed. The engine can now scope a
+ * `deploy_failed` watcher the same way, so the old vocabulary-mismatch
+ * justification no longer holds; the reason it is not proposed today is that
+ * `deployment/annotate.ts` — the only writer of the `metadata.conclusion` that
+ * condition matches — INSERTs its `item` row directly and creates no
+ * `deployment` graph entity, so such a watcher matches nothing until an index
+ * regraph. The deploy-failure risk is still computed and reported.
  *
  * Every proposed id is recorded in `premortem_watcher_proposal`, INCLUDING
  * the `already_present` case, so the tombstone stays complete across runs.
@@ -48,12 +83,26 @@ function proposedWatcherId(epicItemId: string, riskKind: string, service: string
  */
 export function proposeWatchers(
   db: Database,
-  input: { epicItemId: string; services: readonly string[]; nowMs: number },
-): WatcherProposal[] {
+  input: {
+    epicItemId: string;
+    services: readonly string[];
+    nowMs: number;
+    resolveConfigServiceId: ResolveConfigServiceId;
+  },
+): WatcherProposalResult {
   const riskKind = "incident_coupling" as const;
   const out: WatcherProposal[] = [];
+  const unmappedServices: string[] = [];
 
   for (const service of input.services) {
+    const configServiceId = input.resolveConfigServiceId(service);
+    if (configServiceId === null) {
+      unmappedServices.push(service);
+      continue;
+    }
+    // Keyed on the REPO, not the config id: the tombstone identity must stay
+    // stable across a config edit that renames or re-points a service id, or
+    // a deliberate deletion would silently un-suppress itself.
     const watcherId = proposedWatcherId(input.epicItemId, riskKind, service);
 
     const wasTombstoned =
@@ -82,7 +131,7 @@ export function proposeWatchers(
         name: `Pre-mortem: incidents on ${service}`,
         enabled: 0,
         condition_type: "incident_opened",
-        condition_json: JSON.stringify({ filter: { service } }),
+        condition_json: JSON.stringify({ filter: { affectedService: configServiceId } }),
         action_type: "notify",
         action_json: "{}",
         created_at: input.nowMs,
@@ -104,7 +153,7 @@ export function proposeWatchers(
     });
   }
 
-  return out;
+  return { proposals: out, unmappedServices };
 }
 
 /**

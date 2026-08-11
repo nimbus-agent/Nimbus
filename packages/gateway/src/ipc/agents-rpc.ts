@@ -623,6 +623,16 @@ async function handleOwnership(
  * --repropose` (Task 5): clears this epic's watcher-proposal tombstones before the proposal path
  * runs. Both optional; omitting `services` lets the agent derive affected services itself.
  */
+/**
+ * Cap on `services`, which the per-entry 64-char bound does not provide.
+ *
+ * `agents.premortem` is the one renderer-callable agent that WRITES: every accepted service
+ * becomes a `watcher` row plus a `premortem_watcher_proposal` tombstone. Without a length bound a
+ * single call could ask for an unbounded number of both. 32 is comfortably above any real epic —
+ * `affectedServicesForEpic` derives one service per distinct repo the epic's child PRs touch.
+ */
+const MAX_PREMORTEM_SERVICES = 32;
+
 function requirePremortemParams(params: unknown): PremortemInput {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new AgentsRpcError(-32602, "agents.premortem requires { epicRef: string }");
@@ -645,6 +655,12 @@ function requirePremortemParams(params: unknown): PremortemInput {
   if (p.services !== undefined) {
     if (!Array.isArray(p.services)) {
       throw new AgentsRpcError(-32602, "services must be an array of strings");
+    }
+    if (p.services.length > MAX_PREMORTEM_SERVICES) {
+      throw new AgentsRpcError(
+        -32602,
+        `services accepts at most ${MAX_PREMORTEM_SERVICES} entries`,
+      );
     }
     const out: string[] = [];
     for (const v of p.services) {

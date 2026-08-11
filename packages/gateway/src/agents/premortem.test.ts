@@ -2,7 +2,11 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import { deleteWatcher } from "../automation/watcher-store.ts";
-import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
+import {
+  deterministicGraphEntityId,
+  upsertGraphEntity,
+  upsertGraphRelation,
+} from "../graph/relationship-graph.ts";
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -35,6 +39,17 @@ function fakeResolveServiceId(repoToServiceId: Record<string, string>): ServiceI
   };
 }
 
+/**
+ * A context whose repos DO map to configured deployment-service ids — required for a watcher to
+ * be proposed at all, since a proposal is scoped by `filter.affectedService` and an unmapped repo
+ * has no such id. The config ids are deliberately different strings from the repo paths.
+ */
+function ctxMapped(db: Database, repoToServiceId: Record<string, string>): PremortemContext {
+  return { ...ctx(db), resolveServiceId: fakeResolveServiceId(repoToServiceId) };
+}
+
+const BILLING_MAP = { "acme/billing-api": "billing-svc-id" };
+
 /** A target-epic-only seed: an epic item with NO children in the index at all. */
 function seedChildlessEpic(db: Database, key: string, createdAtMs: number): void {
   upsertIndexedItem(db, {
@@ -55,6 +70,15 @@ function seedChildlessEpic(db: Database, key: string, createdAtMs: number): void
  * it. `openedAtMs`/`mergedAtMs` are optional: omitting them seeds a PR that
  * is genuinely linked but carries no timing metadata — the "PRs exist, no
  * connector recorded when they opened" shape, distinct from "no PRs at all".
+ *
+ * HONESTY NOTE for anyone reading a passing measured-review-drag test here:
+ * `opened_at_ms` on a `pr` item is FIXTURE-ONLY today. No connector writes it —
+ * `github-sync.ts` writes `merged_at` and nothing else timing-related, and the
+ * only `opened_at_ms` writers in the tree are `pagerduty-sync.ts` (incidents)
+ * and greenhouse (jobs). So the measured path these tests exercise is real code
+ * that activates the day a connector starts recording the field, and reaches
+ * zero real indexes until then. Every production brief takes the
+ * cannot-be-measured branch; the docs say so in those words.
  */
 function seedChildWithPr(
   db: Database,
@@ -111,6 +135,64 @@ function seedChildWithPr(
 }
 
 /**
+ * The GitLab shape of `seedChildWithPr`: a merge-request ITEM carrying
+ * `metadata.project` and NO `metadata.repo` (`connectors/_lib/gitlab/events.ts`
+ * writes `{ iid, project, action }`, nothing else).
+ *
+ * The `pr` graph entity is left to the REAL populator, which runs inside
+ * `upsertIndexedItem` and stores `repo: repoPathFromMetadata(metadata)` =
+ * `repo ?? project`. That asymmetry — coalesced on the entity, not on the item
+ * — is exactly what the queries under test have to account for, so hand-writing
+ * the entity here would erase the thing being tested.
+ */
+function seedChildWithGitlabMr(
+  db: Database,
+  opts: {
+    epicKey: string;
+    childSuffix: string;
+    project: string;
+    openedAtMs?: number;
+    mergedAtMs?: number;
+  },
+): void {
+  const childExternalId = `${opts.epicKey}-${opts.childSuffix}`;
+  const modifiedAt = opts.mergedAtMs ?? NOW;
+  upsertIndexedItem(db, {
+    service: "jira",
+    type: "issue",
+    externalId: childExternalId,
+    title: childExternalId,
+    metadata: { parent_key: opts.epicKey },
+    modifiedAt,
+    syncedAt: modifiedAt,
+  });
+  const childItemId = itemPrimaryKey("jira", childExternalId);
+
+  const mrExternalId = `${opts.project}!${opts.childSuffix}`;
+  const mrMetadata: Record<string, unknown> = { iid: 7, project: opts.project, action: "open" };
+  if (opts.openedAtMs !== undefined) mrMetadata["opened_at_ms"] = opts.openedAtMs;
+  if (opts.mergedAtMs !== undefined) mrMetadata["merged_at"] = opts.mergedAtMs;
+  upsertIndexedItem(db, {
+    service: "gitlab",
+    type: "pr",
+    externalId: mrExternalId,
+    title: mrExternalId,
+    metadata: mrMetadata,
+    modifiedAt,
+    syncedAt: modifiedAt,
+  });
+  const mrItemId = itemPrimaryKey("gitlab", mrExternalId);
+
+  upsertGraphRelation(
+    db,
+    deterministicGraphEntityId("pr", mrItemId),
+    deterministicGraphEntityId("issue", childItemId),
+    "resolves",
+    modifiedAt,
+  );
+}
+
+/**
  * `service` here is the ALREADY-TRANSLATED DORA config id (e.g. `orders-svc`),
  * matching what `graph-populator.ts` actually writes into
  * `metadata.affectedService` in production — never a raw repo name.
@@ -160,7 +242,7 @@ describe("runPremortem", () => {
       evidence: [{ itemId: "jira:HIST-0", evidenceKey: "jira:HIST-0", label: "HIST-0" }],
     });
 
-    const brief = await runPremortem({ epicRef: "PROJ-120" }, ctx(db));
+    const brief = await runPremortem({ epicRef: "PROJ-120" }, ctxMapped(db, BILLING_MAP));
 
     expect(brief.kind).toBe("premortem");
     expect(brief.epic?.key).toBe("PROJ-120");
@@ -197,12 +279,12 @@ describe("runPremortem", () => {
     test("without --repropose, a deleted watcher stays suppressed", async () => {
       const db = makeDb();
       seedComparableEpic(db, "PROJ-REPRO-1");
-      const first = await runPremortem({ epicRef: "PROJ-REPRO-1" }, ctx(db));
+      const first = await runPremortem({ epicRef: "PROJ-REPRO-1" }, ctxMapped(db, BILLING_MAP));
       const watcherId = first.watchers[0]?.watcherId as string;
       expect(first.watchers[0]?.state).toBe("created");
       deleteWatcher(db, watcherId);
 
-      const second = await runPremortem({ epicRef: "PROJ-REPRO-1" }, ctx(db));
+      const second = await runPremortem({ epicRef: "PROJ-REPRO-1" }, ctxMapped(db, BILLING_MAP));
       expect(second.watchers[0]?.state).toBe("suppressed");
       expect(second.watchers[0]?.watcherId).toBe(watcherId);
     });
@@ -210,14 +292,20 @@ describe("runPremortem", () => {
     test("with --repropose, a deleted watcher is re-created fresh (paused)", async () => {
       const db = makeDb();
       seedComparableEpic(db, "PROJ-REPRO-2");
-      const first = await runPremortem({ epicRef: "PROJ-REPRO-2" }, ctx(db));
+      const first = await runPremortem({ epicRef: "PROJ-REPRO-2" }, ctxMapped(db, BILLING_MAP));
       const watcherId = first.watchers[0]?.watcherId as string;
       deleteWatcher(db, watcherId);
       // Confirm the tombstone is really in place before repropose clears it.
-      const suppressed = await runPremortem({ epicRef: "PROJ-REPRO-2" }, ctx(db));
+      const suppressed = await runPremortem(
+        { epicRef: "PROJ-REPRO-2" },
+        ctxMapped(db, BILLING_MAP),
+      );
       expect(suppressed.watchers[0]?.state).toBe("suppressed");
 
-      const reproposed = await runPremortem({ epicRef: "PROJ-REPRO-2", repropose: true }, ctx(db));
+      const reproposed = await runPremortem(
+        { epicRef: "PROJ-REPRO-2", repropose: true },
+        ctxMapped(db, BILLING_MAP),
+      );
       expect(reproposed.watchers[0]?.state).toBe("created");
       expect(reproposed.watchers[0]?.watcherId).toBe(watcherId);
     });
@@ -225,7 +313,10 @@ describe("runPremortem", () => {
     test("--repropose on an epic with NO prior tombstone is a harmless no-op (still created)", async () => {
       const db = makeDb();
       seedComparableEpic(db, "PROJ-REPRO-3");
-      const brief = await runPremortem({ epicRef: "PROJ-REPRO-3", repropose: true }, ctx(db));
+      const brief = await runPremortem(
+        { epicRef: "PROJ-REPRO-3", repropose: true },
+        ctxMapped(db, BILLING_MAP),
+      );
       expect(brief.watchers[0]?.state).toBe("created");
     });
   });
@@ -467,6 +558,16 @@ describe("runPremortem", () => {
         expect(brief.gaps.some((g) => g.detail.includes(statement))).toBe(true);
       }
     }
+
+    // The deploy-watcher note must state the cause that is STILL true. The engine now supports
+    // `filter.affectedService` for `deploy_failed`, so the old "a deployment item's item.service
+    // is the annotate provider slug" reasoning is obsolete — repeating it would be a false cause,
+    // the exact defect this brief's honesty rules exist to prevent.
+    const deployNote = fullBrief.gaps.find((g) =>
+      g.detail.includes("No deploy-failure watcher is proposed"),
+    );
+    expect(deployNote?.detail).toContain("creates no `deployment` graph entity");
+    expect(deployNote?.detail).not.toMatch(/could never fire/);
   });
 
   test("--service overrides derivation entirely, not merges with it", async () => {
@@ -618,15 +719,18 @@ describe("runPremortem", () => {
       );
     });
 
-    test("keeps the 'no pull requests' message when the cohort truly links none", async () => {
+    test("keeps the 'no pull requests' message for the state nimbus data delete leaves behind", async () => {
+      // The previous version of this test built the "no PRs" state by hand: a `pr` graph entity
+      // with NO backing `item` row, which production never writes — `graph-populator.ts` only
+      // creates a PR entity while writing that PR's item, and `deleteItemByPrimaryKey` clears the
+      // entity alongside the item. So it proved a message against an impossible state.
+      //
+      // This is the REAL producer: `commands/data-delete.ts` (`nimbus data delete --service
+      // github`) runs a bare `DELETE FROM item WHERE service = ?` and does NOT clear graph
+      // entities, so the PR entities survive their items. The cohort still derives (it reads the
+      // entity), the PR items are genuinely gone, and "no pull requests were found" is then the
+      // literal truth rather than a stand-in for a vocabulary mismatch.
       const db = makeDb();
-      // `seedEpicWithServices` derives a service through a GRAPH-ONLY PR stub
-      // (`upsertGraphEntity`, no backing `item` row) — real enough to satisfy
-      // `selectCohort`'s overlap gate and `affectedServicesForEpic`, but
-      // invisible to `cohortPrTimings`'s `JOIN item pr_item`, which is
-      // exactly the "no pull requests were found" shape: a cohort that
-      // shares a service but links no PR ITEM at all, as opposed to the
-      // `seedChildWithPr` cases above which always create one.
       seedEpicWithServices(db, {
         key: "PROJ-611",
         services: ["acme/noprs"],
@@ -639,12 +743,96 @@ describe("runPremortem", () => {
         resolvedAtMs: NOW - 40 * DAY_MS,
         createdAtMs: NOW - 70 * DAY_MS,
       });
+      seedChildWithPr(db, {
+        epicKey: "HIST-611",
+        childSuffix: "c1",
+        service: "acme/noprs",
+        openedAtMs: NOW - 50 * DAY_MS,
+        mergedAtMs: NOW - 45 * DAY_MS,
+      });
+      // Sanity: with the PR item present, review drag IS measurable — so the assertion below
+      // fails on the deletion, not on a fixture that never linked a PR in the first place.
+      const before = await runPremortem({ epicRef: "PROJ-611" }, ctx(db));
+      expect(before.risks.find((r) => r.kind === "review_drag")?.value).not.toBeNull();
+
+      // Verbatim the statement `runDataDelete` issues.
+      db.run(`DELETE FROM item WHERE service = ?`, ["github"]);
 
       const brief = await runPremortem({ epicRef: "PROJ-611" }, ctx(db));
 
       const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
       expect(reviewDrag?.value).toBeNull();
       expect(reviewDrag?.summary).toContain("No pull requests were found for this cohort");
+    });
+
+    // C2: `epic-services.ts` reads the PR GRAPH ENTITY's `metadata.repo`, which
+    // `graph-populator.ts` fills from the item's `repo ?? project`. A GitLab merge-request ITEM
+    // carries `metadata.project` and no `repo` at all, so matching only `$.repo` selected zero
+    // rows and the brief denied the very merge requests the cohort was built from.
+    test("a GitLab cohort (metadata.project, no metadata.repo) is not reported as having no PRs", async () => {
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-GL",
+        services: ["acme/gitlab-svc"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      seedEpicWithServices(db, {
+        key: "HIST-GL",
+        services: ["acme/gitlab-svc"],
+        resolvedAtMs: NOW - 40 * DAY_MS,
+        createdAtMs: NOW - 70 * DAY_MS,
+      });
+      seedChildWithGitlabMr(db, {
+        epicKey: "HIST-GL",
+        childSuffix: "c1",
+        project: "acme/gitlab-svc",
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-GL" }, ctx(db));
+
+      const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
+      expect(reviewDrag?.value).toBeNull();
+      expect(reviewDrag?.summary).not.toContain("No pull requests were found");
+      // GitLab MR items carry no timestamps either (`connectors/_lib/gitlab/events.ts` writes
+      // only `iid`/`project`/`action`), so the honest post-fix message is the OTHER unmeasurable
+      // cause: the merge requests are there, the timestamps are not.
+      expect(reviewDrag?.summary).toContain(
+        "does not record both an opened and a merged timestamp",
+      );
+    });
+
+    test("a GitLab merge request counts toward the repo-wide baseline too", async () => {
+      // `repoPrDurations` had the SAME `$.repo`-only filter, so a GitLab repo's baseline was
+      // empty even when its merge requests did carry both timestamps. Proven through the
+      // baseline's own effect: with a timed GitLab MR on both sides, review drag becomes
+      // measurable rather than null.
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-GL2",
+        services: ["acme/gitlab-timed"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      seedEpicWithServices(db, {
+        key: "HIST-GL2",
+        services: ["acme/gitlab-timed"],
+        resolvedAtMs: NOW - 40 * DAY_MS,
+        createdAtMs: NOW - 70 * DAY_MS,
+      });
+      seedChildWithGitlabMr(db, {
+        epicKey: "HIST-GL2",
+        childSuffix: "c1",
+        project: "acme/gitlab-timed",
+        openedAtMs: NOW - 50 * DAY_MS,
+        mergedAtMs: NOW - 45 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-GL2" }, ctx(db));
+
+      const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
+      expect(reviewDrag?.value).not.toBeNull();
+      expect(reviewDrag?.summary).toContain("across the repo over the same window");
     });
   });
 
@@ -1001,7 +1189,7 @@ describe("runPremortem", () => {
     await expect(runPremortem({ epicRef: "PROJ-9999" }, ctx(db))).rejects.toThrow(/not found/);
   });
 
-  test("a target epic with no recorded creation date falls back to now for cycle-time comparison", async () => {
+  test("a target epic with no recorded creation date names THAT, not 'brand new'", async () => {
     const db = makeDb();
     // No createdAtMs at all — `seedEpicWithServices` leaves `created_at_ms`
     // absent from the target's own metadata.
@@ -1020,9 +1208,119 @@ describe("runPremortem", () => {
     const brief = await runPremortem({ epicRef: "PROJ-770" }, ctx(db));
 
     const cycleTime = brief.risks.find((r) => r.kind === "cycle_time");
-    // `targetCreatedAtMs` falls back to `now` (age ~ 0), so this reads as an
-    // expectation about a brand-new epic, not a comparison against elapsed time.
+    // `expectationOnly` stays true — the figure genuinely is not a comparison — but the SENTENCE
+    // must not let the reader infer a young epic. The previous behaviour defaulted the missing
+    // date to `now`, producing an age of ~0 and a `(expectation)` label whose only available
+    // explanation was "this epic is brand new". The epic's age is unknown, not zero.
     expect(cycleTime?.expectationOnly).toBe(true);
+    expect(cycleTime?.summary).toContain("no recorded creation date");
+    expect(cycleTime?.summary).toContain("not a young epic");
+    // The cohort median is still measurable and still reported.
+    expect(cycleTime?.value).not.toBeNull();
+    // And it must NOT claim an elapsed-days comparison it could not make.
+    expect(cycleTime?.summary).not.toMatch(/days elapsed so far/);
+  });
+
+  test("a genuinely young epic still reads as a young epic", async () => {
+    // Discriminates the test above: `expectationOnly` alone cannot tell the two apart, which is
+    // precisely why the old test passed while the message was wrong.
+    const db = makeDb();
+    seedEpicWithServices(db, {
+      key: "PROJ-771",
+      services: ["acme/young"],
+      resolvedAtMs: NOW - 5 * DAY_MS,
+      createdAtMs: NOW - 1_000,
+    });
+    seedEpicWithServices(db, {
+      key: "HIST-771",
+      services: ["acme/young"],
+      resolvedAtMs: NOW - 40 * DAY_MS,
+      createdAtMs: NOW - 70 * DAY_MS,
+    });
+
+    const brief = await runPremortem({ epicRef: "PROJ-771" }, ctx(db));
+
+    const cycleTime = brief.risks.find((r) => r.kind === "cycle_time");
+    expect(cycleTime?.expectationOnly).toBe(true);
+    expect(cycleTime?.summary).not.toContain("no recorded creation date");
+  });
+
+  describe("watcher proposals are a function of the TARGET's services, not the cohort", () => {
+    test("an epic with NO comparable cohort still gets its watcher proposed", async () => {
+      // The proposal used to sit inside the `cohort.members.length > 0` branch, so a
+      // first-of-its-kind epic — the one whose risks are least knowable from history — silently
+      // got nothing, while the docs promised one watcher per affected service unconditionally.
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-NOCOHORT",
+        services: ["acme/billing-api"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-NOCOHORT" }, ctxMapped(db, BILLING_MAP));
+
+      expect(brief.cohort.members).toHaveLength(0);
+      expect(brief.watchers).toHaveLength(1);
+      expect(brief.watchers[0]?.state).toBe("created");
+    });
+
+    test("--repropose works on an epic with no comparable cohort", async () => {
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-NOCOHORT-2",
+        services: ["acme/billing-api"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      const first = await runPremortem({ epicRef: "PROJ-NOCOHORT-2" }, ctxMapped(db, BILLING_MAP));
+      deleteWatcher(db, first.watchers[0]?.watcherId as string);
+      const suppressed = await runPremortem(
+        { epicRef: "PROJ-NOCOHORT-2" },
+        ctxMapped(db, BILLING_MAP),
+      );
+      expect(suppressed.watchers[0]?.state).toBe("suppressed");
+
+      const reproposed = await runPremortem(
+        { epicRef: "PROJ-NOCOHORT-2", repropose: true },
+        ctxMapped(db, BILLING_MAP),
+      );
+      expect(reproposed.watchers[0]?.state).toBe("created");
+    });
+
+    test("no watcher for a repo with no configured service mapping, and the gap names why", async () => {
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-UNMAPPED",
+        services: ["acme/billing-api", "acme/unmapped"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-UNMAPPED" }, ctxMapped(db, BILLING_MAP));
+
+      expect(brief.watchers.map((w) => w.service)).toEqual(["acme/billing-api"]);
+      const gap = brief.gaps.find((g) => g.detail.includes("acme/unmapped"));
+      expect(gap?.detail).toContain("no `[metrics.dora.<id>]` / `[ci.service.<id>]` block claims");
+      // The real cause, not a repo-path fallback that writes a watcher which can never fire.
+      expect(gap?.detail).not.toContain("no deployment-service mapping ... is configured at all");
+    });
+
+    test("with NO resolver at all, nothing is proposed and the gap says so", async () => {
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-NORESOLVER",
+        services: ["acme/billing-api"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-NORESOLVER" }, ctx(db));
+
+      expect(brief.watchers).toEqual([]);
+      const gap = brief.gaps.find((g) => g.detail.includes("acme/billing-api"));
+      expect(gap?.detail).toContain("is configured at all");
+    });
   });
 
   test("emitPremortemBrief routes through the configured LLM for markdown synthesis", async () => {

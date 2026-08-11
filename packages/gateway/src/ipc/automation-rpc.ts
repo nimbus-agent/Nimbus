@@ -12,7 +12,10 @@ import {
   listCandidateGraphRelations,
   parseGraphPredicate,
 } from "../automation/graph-predicate.ts";
-import { isKnownWatcherConditionType } from "../automation/watcher-condition-kinds.ts";
+import {
+  supportsAffectedServiceFilter,
+  watcherConditionKind,
+} from "../automation/watcher-condition-kinds.ts";
 import { listWatcherHistory } from "../automation/watcher-history.ts";
 import {
   deleteWatcher,
@@ -106,6 +109,28 @@ type AutomationHandler = (
   ctx: AutomationCtx,
 ) => Hit | Promise<Hit>;
 
+/**
+ * Does this `conditionJson` carry a `filter.affectedService`?
+ *
+ * Deliberately narrow, and deliberately NOT a general condition-JSON validator: `conditionJson`
+ * has always been stored as an opaque string here, and tightening that wholesale would reject
+ * rows this endpoint accepts today. Unparseable JSON, a non-object filter, or a non-string
+ * `affectedService` all answer `false` and leave the pre-existing behaviour exactly as it was —
+ * the only NEW rejection is the one case that is provably inert: a real `affectedService` string
+ * on a condition kind whose items have no graph entity to match it against.
+ */
+function declaresAffectedServiceFilter(conditionJson: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(conditionJson);
+  } catch {
+    return false;
+  }
+  const cond = asRecord(parsed);
+  const filter = cond === undefined ? undefined : asRecord(cond["filter"]);
+  return filter !== undefined && typeof filter["affectedService"] === "string";
+}
+
 const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "watcher.list": (_rec, ctx) => ({
     kind: "hit",
@@ -119,17 +144,26 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
         : null;
     const name = requireString(rec, "name");
     const conditionType = requireString(rec, "conditionType");
-    if (!isKnownWatcherConditionType(conditionType)) {
+    const kind = watcherConditionKind(conditionType);
+    if (kind === undefined) {
       throw new AutomationRpcError(
         -32602,
         `Unsupported conditionType "${conditionType}" — the watcher engine cannot evaluate it`,
+      );
+    }
+    const conditionJson = requireString(rec, "conditionJson");
+    if (declaresAffectedServiceFilter(conditionJson) && !supportsAffectedServiceFilter(kind)) {
+      throw new AutomationRpcError(
+        -32602,
+        `conditionType "${conditionType}" does not support a filter.affectedService — ` +
+          "no graph entity carries an affected service for it, so the watcher could never fire",
       );
     }
     const id = insertWatcher(ctx.db, {
       name,
       enabled: 1,
       condition_type: conditionType,
-      condition_json: requireString(rec, "conditionJson"),
+      condition_json: conditionJson,
       action_type: requireString(rec, "actionType"),
       action_json: requireString(rec, "actionJson"),
       created_at: Date.now(),

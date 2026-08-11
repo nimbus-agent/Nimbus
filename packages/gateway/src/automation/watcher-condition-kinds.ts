@@ -17,12 +17,55 @@ export type WatcherConditionKind = {
   readonly itemType: string;
   /** Constant SQL ANDed into the item query, or "" for none. */
   readonly extraSql: string;
+  /**
+   * The `graph_entity.type` whose `metadata.affectedService` a
+   * `filter.affectedService` condition matches, or `null` when this kind has
+   * no such entity and the filter is therefore unsupported.
+   *
+   * `item.service` is the SYNCABLE connector id (`pagerduty`, `github`), not
+   * the service the event is ABOUT: every PagerDuty incident in the index has
+   * `item.service = 'pagerduty'`, so `filter.service` can only ever scope a
+   * watcher to a whole connector. The affected service lives one hop away, on
+   * the graph entity `graph/graph-populator.ts`'s `syncTimelineEventGraph`
+   * writes for `incident` and `deployment` items: `metadata.affectedService`,
+   * resolved through `[metrics.dora.<id>]` / `[ci.service.<id>]` to a config
+   * service id (falling back to the item's own `metadata.service`). That is
+   * the only place the vocabulary a human means by "watch billing-api" lives.
+   *
+   * This is NOT expressible as an `extraSql` row: the filter value is
+   * per-watcher DATA, while `extraSql` is a constant fragment carrying no
+   * bound parameters (see the note on the closing `as const`). The EXISTS
+   * subquery and its two bound parameters therefore live in
+   * `watcher-engine.ts`, which consults this field to decide whether the
+   * filter can be honored at all.
+   */
+  readonly affectedServiceEntityType: string | null;
 };
+
+/**
+ * Does this condition kind support a `filter.affectedService`? A watcher
+ * carrying one for a kind that does not is inert by construction, so the
+ * engine fails it closed (matches nothing) and `watcher.create` rejects it up
+ * front, rather than storing a row that can never fire.
+ */
+export function supportsAffectedServiceFilter(kind: WatcherConditionKind): boolean {
+  return kind.affectedServiceEntityType !== null;
+}
 
 export const WATCHER_CONDITION_KINDS = [
   // Preserved as-is. NOTE: no connector indexes `item.type = 'alert'` today, so this condition
   // cannot currently fire. That is the pre-existing state, recorded rather than silently fixed.
-  { conditionType: "alert_fired", itemType: "alert", extraSql: "" },
+  // `affectedServiceEntityType: null` — `graph-populator.ts` has no dispatch branch for
+  // `type = 'alert'` at all (`syncGraphFromIndexedItem` returns without writing anything), so
+  // there is no entity carrying an `affectedService` to match. A service-scoped alert watcher
+  // would need a populator change first; until then the filter is rejected rather than accepted
+  // and silently matched against nothing.
+  {
+    conditionType: "alert_fired",
+    itemType: "alert",
+    extraSql: "",
+    affectedServiceEntityType: null,
+  },
   // PagerDuty indexes `type: "incident"` (connectors/pagerduty-sync.ts), writing the incident's
   // current status to `metadata.status`. The narrowing to 'triggered' is LOAD-BEARING for the name:
   // pagerduty-sync fetches `/incidents` with no `statuses[]` filter and sets `modifiedAt` from
@@ -33,6 +76,13 @@ export const WATCHER_CONDITION_KINDS = [
     itemType: "incident",
     // `json_valid(metadata)` is load-bearing here for the same reason as on `deploy_failed` below.
     extraSql: "AND json_valid(metadata) AND json_extract(metadata, '$.status') = 'triggered'",
+    // pagerduty-sync writes the incident through `upsertIndexedItemForSync`, so
+    // `syncGraphFromIndexedItem` runs on the same write and `syncTimelineEventGraph` creates the
+    // `incident` entity carrying `metadata.affectedService`. A PagerDuty incident's own metadata
+    // has no `service` key (only `pagerduty_service_id`), so that value comes from the configured
+    // resolver — the SAME `[ci.service.<id>]` id a repo resolves to. That symmetry is what lets
+    // `premortem/watcher-proposals.ts` scope a proposal to one service and have it actually fire.
+    affectedServiceEntityType: "incident",
   },
   // CI-annotated deployments only: `deployment/annotate.ts` writes metadata.conclusion. Vercel
   // records its outcome under metadata.state, and Prefect indexes deployment DEFINITIONS with no
@@ -54,6 +104,15 @@ export const WATCHER_CONDITION_KINDS = [
     conditionType: "deploy_failed",
     itemType: "deployment",
     extraSql: "AND json_valid(metadata) AND json_extract(metadata, '$.conclusion') = 'failure'",
+    // The ENGINE supports the filter here — `syncTimelineEventGraph` writes `affectedService` for
+    // `deployment` entities exactly as it does for incidents. The DATA does not follow yet, and
+    // that gap is stated rather than papered over: `deployment/annotate.ts`, the only writer of
+    // the `metadata.conclusion` this kind matches, INSERTs its `item` row directly instead of
+    // going through `index/item-store.ts`, so no `deployment` graph entity is created at
+    // annotation time. Such a deployment only becomes matchable after `nimbus index regraph`
+    // (which does route it through the populator). So a service-scoped `deploy_failed` watcher is
+    // expressible and correct, and matches nothing on an index that has never been regraphed.
+    affectedServiceEntityType: "deployment",
   },
   // `as const` keeps each `extraSql` a literal type rather than widening it to `string`. That
   // matters because the engine binds exactly four positional parameters around this fragment: an

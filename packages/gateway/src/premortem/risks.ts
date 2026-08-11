@@ -1,4 +1,5 @@
 import type { CohortCandidate } from "./cohort.ts";
+import { median } from "./median.ts";
 
 export type RiskKind =
   | "cycle_time"
@@ -19,28 +20,23 @@ export type Risk = {
 
 const DAY_MS = 86_400_000;
 
-/** Median of a numeric array, over a sorted COPY — never mutates the input. */
-function median(values: readonly number[]): number | null {
-  if (values.length === 0) {
-    return null;
-  }
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    const lower = sorted.at(mid - 1) ?? 0;
-    const upper = sorted.at(mid) ?? 0;
-    return (lower + upper) / 2;
-  }
-  return sorted.at(mid) ?? 0;
-}
-
+/**
+ * `targetCreatedAtMs === null` means the target epic's own sync never recorded
+ * a creation date — NOT that it was created just now. The distinction is the
+ * whole point: an earlier version defaulted the missing value to `nowMs`,
+ * which produced `ageMs ≈ 0`, flipped `expectationOnly` on, and made the brief
+ * read as "this epic is brand new" to a reader whose epic might be a year old.
+ * The cohort median is still perfectly measurable in that case — only the
+ * comparison against elapsed time is not — so the figure is still reported,
+ * with the real cause named in the sentence.
+ */
 function computeCycleTime(input: {
   cohort: readonly CohortCandidate[];
-  targetCreatedAtMs: number;
+  targetCreatedAtMs: number | null;
   nowMs: number;
 }): Risk {
-  const ageMs = input.nowMs - input.targetCreatedAtMs;
-  const expectationOnly = ageMs < DAY_MS;
+  const ageMs = input.targetCreatedAtMs === null ? null : input.nowMs - input.targetCreatedAtMs;
+  const expectationOnly = ageMs === null || ageMs < DAY_MS;
 
   const cycleTimesMs = input.cohort
     .filter((c) => c.createdAtMs !== null)
@@ -58,6 +54,18 @@ function computeCycleTime(input: {
 
   const medianDays = medianMs / DAY_MS;
   const medianDaysRounded = Math.round(medianDays * 10) / 10;
+
+  if (ageMs === null) {
+    return {
+      kind: "cycle_time",
+      summary:
+        `Across ${cycleTimesMs.length} comparable epics, the median time to close was ` +
+        `${medianDaysRounded} days. This epic has no recorded creation date in the index, so ` +
+        "elapsed time could not be compared against it — this is a missing date, not a young epic.",
+      value: medianMs,
+      expectationOnly: true,
+    };
+  }
 
   if (expectationOnly) {
     return {
@@ -272,7 +280,8 @@ function computeAbandonment(input: {
 export function computeRisks(input: {
   cohort: readonly CohortCandidate[];
   targetChildCount: number;
-  targetCreatedAtMs: number;
+  /** `null` when the index recorded no creation date — never substituted with `nowMs`. */
+  targetCreatedAtMs: number | null;
   nowMs: number;
   reviewDragMedianMs: number | null;
   repoReviewMedianMs: number | null;

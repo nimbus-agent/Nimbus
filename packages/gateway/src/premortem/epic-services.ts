@@ -38,6 +38,17 @@ export function affectedServicesForEpic(
   epicItemId: string,
   epicKey: string,
 ): string[] {
+  // `$.repo` HERE is the GRAPH ENTITY's metadata, NOT the PR item's, and the two are not the
+  // same shape. `graph-populator.ts` writes the PR entity as
+  // `metadata: { repo: repoPathFromMetadata(row.metadata) }`, and `repoPathFromMetadata` is
+  // `repo ?? project` — so a GitLab merge request, whose ITEM carries only `metadata.project`
+  // (`connectors/_lib/gitlab/events.ts`), is already stored under the entity's `repo` key.
+  // That coalescing is what makes this query provider-neutral.
+  //
+  // Do NOT "fix" this to `COALESCE(..., '$.project')`: nothing writes a `project` key onto a
+  // graph entity, so it would be a no-op that falsely implies one exists. The identical-looking
+  // expression against ITEM metadata DOES need the coalesce, and `agents/premortem.ts`'s
+  // `PR_REPO_SQL` carries it — one expression, two sources, only one of them pre-coalesced.
   const rows = db
     .query(
       `SELECT DISTINCT json_extract(pr.metadata, '$.repo') AS service
@@ -90,6 +101,9 @@ export function affectedServicesForEpics(
     return result;
   }
   const placeholders = epicItemIds.map(() => "?").join(", ");
+  // Same `$.repo`-on-the-GRAPH-ENTITY rule as the single-epic query above: already
+  // `repo ?? project` via `graph-populator.ts`'s `repoPathFromMetadata`, so no COALESCE belongs
+  // here, and one against ITEM metadata would be a different (and necessary) expression.
   const rows = db
     .query(
       `SELECT epic.id AS epicItemId, json_extract(pr.metadata, '$.repo') AS service

@@ -21,9 +21,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   No `linear:project` items are indexed at all, so a `linear:` reference is reported as an
   unsupported-tracker gap, never silently ignored.
   **The one built-in agent that is not purely read-only.** `proposeWatchers`
-  (`premortem/watcher-proposals.ts`) writes exactly two things per affected service: a `watcher`
-  row always inserted with `enabled = 0` (paused), and its `premortem_watcher_proposal` tombstone
-  — both in one transaction, so a watcher row can never exist without its tombstone. This is
+  (`premortem/watcher-proposals.ts`) writes exactly two things per affected service that resolves
+  to a configured deployment-service id: a `watcher` row always inserted with `enabled = 0`
+  (paused), and its `premortem_watcher_proposal` tombstone — both in one transaction, so a watcher
+  row can never exist without its tombstone. A service that resolves to nothing gets neither row. This is
   **not** an I2/HITL matter: I2 governs `HITL_REQUIRED_BACKING` action types that leave the
   machine via `engine/executor.ts`'s `gate()`, and a local SQLite insert never reaches that gate —
   the same shape as `glossary`/`decisions`/`ownership`'s own local writes, and the egress
@@ -33,14 +34,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   anything itself. `--repropose` deletes only the target epic's tombstones before proposing, so a
   deliberately-deleted watcher is re-created (paused) rather than staying `suppressed`; never a
   global clear.
-  **No deploy-failure watcher is ever proposed**, even though the deploy-failure risk is computed
-  and reported alongside the other four: a deployment item's `item.service` is the annotate
-  provider slug (e.g. `github-actions`), while the watcher engine matches syncable service ids, so
-  a service-filtered deploy-failure watcher could never fire. Reconciling the two vocabularies is
-  a separate, undone change.
-  **Review drag cannot currently be measured for most repos**: no connector indexes a pull
+  **A proposal is scoped by AFFECTED SERVICE, and the watcher engine learned that axis in this
+  same change.** The condition carries `filter.affectedService` — the `[metrics.dora.<id>]` /
+  `[ci.service.<id>]` id the repo resolves to — which `automation/watcher-engine.ts` matches
+  against the incident's `graph_entity.metadata.affectedService` (written by
+  `graph/graph-populator.ts`'s `syncTimelineEventGraph`) through an EXISTS subquery with bound
+  parameters. The pre-existing `filter.service` axis matches the `item.service` COLUMN, which for
+  an incident is always the connector id `pagerduty`, so it could only ever scope a watcher to a
+  whole connector; a proposal written on that axis was inert even once armed. The new filter is
+  declared per condition kind (`affectedServiceEntityType`) and FAILS CLOSED: a kind with no
+  timeline entity (`alert_fired`) matches nothing rather than silently widening, and
+  `watcher.create` rejects it up front. **A repo with no configured deployment-service mapping
+  gets no watcher at all**, named in the brief — falling back to the repo path is what produced
+  the inert proposal. Proposals also no longer depend on the cohort: they are a function of the
+  target's own services, so a first-of-its-kind epic still gets them.
+  **No deploy-failure watcher is proposed**, even though the deploy-failure risk is computed and
+  reported alongside the other four. The engine now supports the same scoping for `deploy_failed`,
+  so the old `item.service`-is-the-provider-slug reason no longer applies; what still does is that
+  `deployment/annotate.ts` — the only writer of the `metadata.conclusion` that condition matches —
+  inserts its `item` row directly and creates no `deployment` graph entity, so such a watcher
+  matches nothing until `nimbus index regraph` runs.
+  **Review drag cannot currently be measured for ANY repo**: no connector indexes a pull
   request's *opened* timestamp (only `merged_at`), so the brief states this and reports a named
-  gap rather than a fabricated figure wherever the data is missing.
+  gap rather than a fabricated figure. The measured path is real and activates the moment a
+  connector records that field. The cohort/baseline queries match
+  `COALESCE(metadata.repo, metadata.project)`, so a GitLab merge request (which carries only
+  `project`) is counted in the population the cohort was selected from — previously the brief
+  built a GitLab cohort and then reported "no pull requests were found" for it.
+  **A missing epic creation date is reported as a missing date**, not as a brand-new epic: the
+  cycle-time risk no longer substitutes `now`, so the brief no longer implies youth it never
+  measured.
   **Incident coupling** translates a cohort repo to a DORA `[ci.service.<id>]` config id via the
   injected `ServiceIdentityResolver`, denominates its rate on `measured` — cohort members actually
   queried (a resolvable service AND a usable window) — never on the full cohort, and states the

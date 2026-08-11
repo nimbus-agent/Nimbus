@@ -19,6 +19,32 @@ export type WatcherEvalOptions = {
   graphConditionsEnabled?: boolean;
 };
 
+/**
+ * Narrows the item query to items whose timeline graph entity names a given affected service.
+ *
+ * Lives here, not in `watcher-condition-kinds.ts`, precisely because it takes bound parameters:
+ * that table's `extraSql` is a constant fragment with none, and a test pins the absence of `?` in
+ * it, since the engine's positional binds sit around it. This fragment is still a compile-time
+ * constant — the two values are BOUND (I9), never interpolated.
+ *
+ * `graph_entity.external_id` holds the ITEM PRIMARY KEY (`item.id`) for every entity
+ * `graph-populator.ts` writes from an indexed item (`upsertGraphEntity({ externalId: row.id })`),
+ * which is why this joins on `item.id` and not `item.external_id`.
+ *
+ * `json_valid(ge.metadata)` is LOAD-BEARING for the same reason it is on the condition table's own
+ * fragments: SQLite's `json_extract` RAISES "malformed JSON" on non-JSON TEXT, and the exception
+ * would propagate out of `evaluateOneWatcher` and kill evaluation for EVERY watcher in the loop,
+ * not just this one. `graph_entity.metadata` is nullable and written by more than one populator
+ * path, so this is a live risk, not a hypothetical.
+ */
+const AFFECTED_SERVICE_EXISTS_SQL = `AND EXISTS (
+           SELECT 1 FROM graph_entity ge
+            WHERE ge.type = ?
+              AND ge.external_id = item.id
+              AND json_valid(ge.metadata)
+              AND json_extract(ge.metadata, '$.affectedService') = ?
+         )`;
+
 function asRecord(json: string): Record<string, unknown> | undefined {
   try {
     const v = JSON.parse(json) as unknown;
@@ -102,6 +128,18 @@ function evaluateOneWatcher(
     return null;
   }
 
+  // `filter.affectedService` scopes on the service the EVENT IS ABOUT, which `filter.service`
+  // structurally cannot: `item.service` is the syncable connector id, so every PagerDuty incident
+  // carries `pagerduty` there. Fail closed on a kind with no timeline entity — an
+  // `affectedService` the engine cannot evaluate must match nothing, never be ignored (ignoring it
+  // silently WIDENS the watcher to every item of its type, the opposite of what was asked for).
+  const affectedService =
+    typeof f["affectedService"] === "string" ? f["affectedService"] : undefined;
+  const affectedServiceEntityType = kind.affectedServiceEntityType;
+  if (affectedService !== undefined && affectedServiceEntityType === null) {
+    return null;
+  }
+
   const since = w.last_checked_at ?? w.created_at;
   const rows = db
     .query(
@@ -110,10 +148,21 @@ function evaluateOneWatcher(
          AND modified_at > ?
          AND (? IS NULL OR service = ?)
          ${kind.extraSql}
+         ${affectedService === undefined ? "" : AFFECTED_SERVICE_EXISTS_SQL}
        ORDER BY modified_at DESC
        LIMIT 5`,
     )
-    .all(kind.itemType, since, service ?? null, service ?? null) as Array<{
+    .all(
+      kind.itemType,
+      since,
+      service ?? null,
+      service ?? null,
+      // Appended, never interleaved: the four positional parameters above keep their positions,
+      // and this pair is bound only when the fragment that consumes it is present.
+      ...(affectedService === undefined
+        ? []
+        : [affectedServiceEntityType as string, affectedService]),
+    ) as Array<{
     id: string;
     title: string;
     service: string;

@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
@@ -56,6 +57,28 @@ function seedComparableHistory(db: Database): void {
   });
 }
 
+/**
+ * A real `nimbus.toml` on disk carrying the `[ci.service.<id>]` block that binds SERVICE to a
+ * deployment-service id. Required for a watcher proposal to exist at all: a proposal is scoped by
+ * `filter.affectedService` (the config id), and a repo that resolves to nothing gets no watcher —
+ * deliberately, since one scoped to an unmapped service could never fire once armed.
+ *
+ * Written to disk rather than injected, so this exercises the same
+ * `loadNimbusServiceConfigsFromConfigDir` -> `buildServiceIdentityResolver` path production uses.
+ * The config id (`billing-svc`) is deliberately NOT the repo path.
+ */
+function configDirWithServiceBinding(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "nimbus-premortem-e2e-"));
+  writeFileSync(
+    path.join(dir, "nimbus.toml"),
+    `[ci.service.billing-svc]
+repos = ["github:${SERVICE}"]
+`,
+    "utf8",
+  );
+  return dir;
+}
+
 describe("nimbus pre-mortem (e2e, in-process)", () => {
   test("the premortem agent source is read-only", () => {
     // Anchored to this file, not the CWD — mirrors decisions.e2e.test.ts/glossary.e2e.test.ts.
@@ -81,7 +104,11 @@ describe("nimbus pre-mortem (e2e, in-process)", () => {
       const out = await dispatchAgentsRpc(
         "agents.premortem",
         { epicRef: "TARGET-1" },
-        { db, notify: (method, params) => seen.push({ method, params }) },
+        {
+          db,
+          notify: (method, params) => seen.push({ method, params }),
+          configDir: configDirWithServiceBinding(),
+        },
       );
       expect(out.kind).toBe("hit");
 
@@ -118,9 +145,23 @@ describe("nimbus pre-mortem (e2e, in-process)", () => {
       expect(params.findings.services).toContain(SERVICE);
       // A real cohort member (PAST-1), not the empty degraded path.
       expect(params.findings.cohort.members.length).toBeGreaterThan(0);
-      // A first-run watcher proposal is paused ("created"), never auto-armed.
+      // A first-run watcher proposal is paused ("created"), never auto-armed. It exists only
+      // because the config dir above binds SERVICE to a deployment-service id.
       expect(params.findings.watchers.length).toBeGreaterThan(0);
       expect(params.findings.watchers.every((w) => w.state === "created")).toBe(true);
+      // Scoped by the CONFIG id read off nimbus.toml (`billing-svc`), never by the repo path
+      // (`acme/billing`) and never by `filter.service`, which the engine matches against the
+      // `item.service` column — always the connector id for an incident, so a proposal on that
+      // axis was inert even once armed. This asserts the whole chain: TOML on disk -> resolver ->
+      // repo translation -> the condition the watcher engine will actually evaluate.
+      const watcherRow = db
+        .query(`SELECT condition_type, condition_json, enabled FROM watcher`)
+        .get() as { condition_type: string; condition_json: string; enabled: number };
+      expect(watcherRow.enabled).toBe(0);
+      expect(watcherRow.condition_type).toBe("incident_opened");
+      expect(JSON.parse(watcherRow.condition_json)).toEqual({
+        filter: { affectedService: "billing-svc" },
+      });
       // The unconditional honesty gaps are always present, regardless of branch.
       expect(params.findings.gaps.length).toBeGreaterThan(0);
     },

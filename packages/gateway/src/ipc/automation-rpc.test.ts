@@ -300,6 +300,77 @@ describe("watcher.create / pause / resume / delete", () => {
     ).rejects.toThrow(AutomationRpcError);
   });
 
+  test("create accepts filter.affectedService on a condition kind that supports it", async () => {
+    const db = seededDb();
+    const out = await dispatchAutomationRpc({
+      method: "watcher.create",
+      params: {
+        name: "billing incidents",
+        conditionType: "incident_opened",
+        conditionJson: JSON.stringify({ filter: { affectedService: "billing" } }),
+        actionType: "notify",
+        actionJson: "{}",
+      },
+      db,
+    });
+    expect(out.kind).toBe("hit");
+  });
+
+  test("create rejects filter.affectedService on a kind with no timeline entity", async () => {
+    // `alert_fired` has no graph entity carrying an affected service, so such a watcher would be
+    // inert forever. Rejecting at creation is the same rule the unknown-conditionType check
+    // already enforces: never store a watcher the engine cannot evaluate.
+    const db = seededDb();
+    await expect(
+      dispatchAutomationRpc({
+        method: "watcher.create",
+        params: {
+          name: "impossible",
+          conditionType: "alert_fired",
+          conditionJson: JSON.stringify({ filter: { affectedService: "billing" } }),
+          actionType: "notify",
+          actionJson: "{}",
+        },
+        db,
+      }),
+    ).rejects.toThrow(/affectedService/);
+  });
+
+  test("the new rejection loosens nothing — a non-JSON conditionJson is still accepted", async () => {
+    // `conditionJson` has always been an opaque string here. Tightening it wholesale would reject
+    // rows this endpoint accepts today, so the affectedService check answers `false` for anything
+    // it cannot parse rather than erroring.
+    const db = seededDb();
+    const out = await dispatchAutomationRpc({
+      method: "watcher.create",
+      params: {
+        name: "opaque",
+        conditionType: "alert_fired",
+        conditionJson: "not json at all",
+        actionType: "notify",
+        actionJson: "{}",
+      },
+      db,
+    });
+    expect(out.kind).toBe("hit");
+  });
+
+  test("a non-string affectedService is not treated as a declared filter", async () => {
+    const db = seededDb();
+    const out = await dispatchAutomationRpc({
+      method: "watcher.create",
+      params: {
+        name: "numeric",
+        conditionType: "alert_fired",
+        conditionJson: JSON.stringify({ filter: { affectedService: 7 } }),
+        actionType: "notify",
+        actionJson: "{}",
+      },
+      db,
+    });
+    expect(out.kind).toBe("hit");
+  });
+
   test("pause / resume toggle enabled", async () => {
     const db = seededDb();
     const create = await dispatchAutomationRpc({

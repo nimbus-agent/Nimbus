@@ -274,6 +274,13 @@ const DEFS: readonly AgentToolDef[] = [
     schema: { namespace: z.string().optional() },
     build: (a) => withOptional({}, { namespace: a["namespace"] }),
   },
+  // DELIBERATELY ABSENT: `agents.premortem`. It is the one built-in agent that WRITES (paused
+  // watcher rows plus their deliberate-deletion tombstones, and `--repropose` DELETES those
+  // tombstones), with no HITL gate on those writes, so it is excluded from BOTH the MCP tool
+  // surface and the HTTP agent surface — matching `agents.preflight`, absent here for the same
+  // reason. `HTTP_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts` is the gateway-side half; a
+  // gateway test pins the exclusion. Adding it here would let an external model trigger those
+  // writes unprompted.
 ];
 
 export const AGENT_TOOL_SPECS: ToolSpec[] = DEFS.map((d) => ({

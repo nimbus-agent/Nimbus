@@ -3,11 +3,13 @@ import type { Database } from "bun:sqlite";
 import type { ServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { type CohortCandidate, type CohortResult, selectCohort } from "../premortem/cohort.ts";
 import { affectedServicesForEpic } from "../premortem/epic-services.ts";
+import { median } from "../premortem/median.ts";
 import { computeRisks, type Risk } from "../premortem/risks.ts";
 import { type PremortemTheme, themesForServices } from "../premortem/theme-store.ts";
 import {
   clearProposalTombstones,
   proposeWatchers,
+  type ResolveConfigServiceId,
   type WatcherProposal,
 } from "../premortem/watcher-proposals.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
@@ -52,20 +54,6 @@ function parseEpicRef(ref: string): { trackerPrefix: string | null; key: string 
 
 function isoDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
-}
-
-function median(values: readonly number[]): number | null {
-  if (values.length === 0) {
-    return null;
-  }
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    const lower = sorted.at(mid - 1) ?? 0;
-    const upper = sorted.at(mid) ?? 0;
-    return (lower + upper) / 2;
-  }
-  return sorted.at(mid) ?? 0;
 }
 
 type RawJiraItemRow = {
@@ -122,6 +110,28 @@ function toDurations(rows: readonly PrDurationRow[]): number[] {
 }
 
 /**
+ * The service vocabulary this whole module compares against.
+ *
+ * `services` come from `epic-services.ts`, which reads the PR GRAPH ENTITY's
+ * `metadata.repo` — and `graph-populator.ts` fills that from the item's
+ * `repo ?? project` (`repoPathFromMetadata`). So the population every query
+ * here selects must be derived the same way: GitHub and Bitbucket PR items
+ * carry `metadata.repo`, GitLab merge-request items carry `metadata.project`
+ * and NO `repo` at all (`connectors/_lib/gitlab/events.ts`). Matching only
+ * `$.repo` selected zero GitLab rows, so a GitLab epic built a cohort fine and
+ * the brief then denied the very merge requests the cohort was selected with
+ * ("No pull requests were found for this cohort"). Two derivations of one
+ * vocabulary is the defect; this is the single one.
+ */
+const PR_REPO_SQL =
+  "COALESCE(json_extract(#.metadata, '$.repo'), json_extract(#.metadata, '$.project'))";
+
+/** `PR_REPO_SQL` bound to a table alias. The alias is a compile-time literal, never caller data (I9). */
+function prRepoExpr(alias: "pr_item" | "item"): string {
+  return PR_REPO_SQL.replaceAll("#", alias);
+}
+
+/**
  * The shared epic → child (`parent_key`, own-service) → `graph_entity`
  * (`issue`) → `resolves` edge → `graph_entity` (`pr`) → `item` traversal
  * `affectedServicesForEpic` established, extended one hop further to the PR's
@@ -143,7 +153,7 @@ function cohortPrJoinSql(epicPlaceholders: string, repoPlaceholders: string): st
          JOIN item pr_item           ON pr_item.id = pr_ent.external_id
         WHERE epic.id IN (${epicPlaceholders})
           AND json_valid(pr_item.metadata)
-          AND json_extract(pr_item.metadata, '$.repo') IN (${repoPlaceholders})`;
+          AND ${prRepoExpr("pr_item")} IN (${repoPlaceholders})`;
 }
 
 type CohortPrTiming = { id: string; opened_at_ms: number | null; merged_at: number | null };
@@ -191,7 +201,7 @@ function repoPrDurations(
          FROM item
         WHERE type = 'pr'
           AND json_valid(metadata)
-          AND json_extract(metadata, '$.repo') IN (${placeholders})
+          AND ${prRepoExpr("item")} IN (${placeholders})
           AND json_extract(metadata, '$.opened_at_ms') IS NOT NULL
           AND json_extract(metadata, '$.merged_at') IS NOT NULL
           AND json_extract(metadata, '$.merged_at') BETWEEN ? AND ?`,
@@ -275,6 +285,36 @@ function repoToConfigServiceId(
 }
 
 /**
+ * ONE memoized repo → config-id translation, shared by every consumer in this
+ * module: the incident-coupling query below and the watcher proposals in
+ * `runPremortem`.
+ *
+ * Sharing it is the fix for a real bug, not tidiness. The two paths used to
+ * disagree — incident coupling translated the repo, the watcher proposal wrote
+ * the raw repo path into `filter.service` — and the result was a watcher that
+ * could never fire once armed, while the brief beside it reported a correctly
+ * translated coupling rate. One function, one vocabulary, no room for the two
+ * to drift again.
+ *
+ * `null` (never `undefined`) for an unresolvable repo, so the memo can cache
+ * the negative answer without `has`/`get` ambiguity.
+ */
+function makeConfigServiceIdResolver(
+  resolveServiceId: ServiceIdentityResolver,
+): ResolveConfigServiceId {
+  const cache = new Map<string, string | null>();
+  return (repo: string): string | null => {
+    const cached = cache.get(repo);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const resolved = repoToConfigServiceId(resolveServiceId, repo);
+    cache.set(repo, resolved);
+    return resolved;
+  };
+}
+
+/**
  * `coupled` — cohort epics having an incident `correlates_with` a deploy of
  * one of THAT epic's own services, during THAT epic's own window
  * (`createdAtMs` .. `resolvedAtMs`). `measured` — how many cohort members
@@ -301,22 +341,12 @@ function repoToConfigServiceId(
 function countIncidentCoupledEpics(
   db: Database,
   members: readonly CohortCandidate[],
-  resolveServiceId: ServiceIdentityResolver | undefined,
+  configIdFor: ResolveConfigServiceId | undefined,
 ): { coupled: number; measured: number } | null {
-  if (resolveServiceId === undefined) {
+  if (configIdFor === undefined) {
     return null;
   }
 
-  const repoToConfigIdCache = new Map<string, string | null>();
-  const configIdFor = (repo: string): string | null => {
-    const cached = repoToConfigIdCache.get(repo);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const resolved = repoToConfigServiceId(resolveServiceId, repo);
-    repoToConfigIdCache.set(repo, resolved);
-    return resolved;
-  };
   const configIdsFor = (member: CohortCandidate): string[] =>
     member.services.map(configIdFor).filter((id): id is string => id !== null);
 
@@ -434,11 +464,44 @@ function pushUnconditionalGaps(gaps: GapNote[]): void {
     {
       category: "missing_relation_emit",
       detail:
-        "No deploy-failure watcher is proposed: a deployment item's `item.service` is the " +
-        "annotate provider slug (e.g. `github-actions`), while the watcher engine matches " +
-        "syncable service ids, so a service-filtered deploy-failure watcher could never fire.",
+        "No deploy-failure watcher is proposed. The watcher engine can now scope one by " +
+        "affected service (the same `filter.affectedService` the incident proposals use), so " +
+        "the old reason — a deployment item's `item.service` being the annotate provider slug " +
+        "— no longer applies. What still does: `deployment/annotate.ts`, the only writer of " +
+        "the `metadata.conclusion` a `deploy_failed` watcher matches, inserts its `item` row " +
+        "directly and creates no `deployment` graph entity, so such a watcher would match " +
+        "nothing until `nimbus index regraph` runs. The deploy-failure risk itself is still " +
+        "computed and reported above.",
     },
   );
+}
+
+/**
+ * The affected services that resolve to no configured deployment-service id,
+ * reported as a named gap rather than silently proposing nothing.
+ *
+ * Two distinct causes, told apart rather than hedged: no resolver at all
+ * (nothing configured / no config dir) versus a configured map that does not
+ * claim these particular repos. Falling back to the repo path instead — the
+ * previous behaviour — wrote a watcher whose `filter.service` the engine
+ * matches against `item.service`, always `pagerduty` for an incident, so it
+ * could never fire once armed. A watcher that cannot fire is worse than none:
+ * the reader arms it and believes they are covered.
+ */
+function unmappedWatcherServicesGap(unmapped: readonly string[], hasResolver: boolean): GapNote {
+  const list = unmapped.join(", ");
+  return {
+    category: "missing_relation_emit",
+    detail: hasResolver
+      ? `No incident watcher was proposed for ${list}: no \`[metrics.dora.<id>]\` / ` +
+        "`[ci.service.<id>]` block claims that repo, and a watcher scoped to an unmapped " +
+        "service would match no incident once armed."
+      : `No incident watcher was proposed for ${list}: no deployment-service mapping ` +
+        "(`[metrics.dora.<id>]` / `[ci.service.<id>]`) is configured at all, and an incident " +
+        "watcher is scoped by the configured service id an incident resolves to.",
+    remediation:
+      "Add a `[ci.service.<id>]` block whose `repos` names this repository, then re-run.",
+  };
 }
 
 function emptyCohort(): CohortResult {
@@ -458,7 +521,12 @@ function emptyCohort(): CohortResult {
  * entirely. Lane 2: `selectCohort`. Lane 3: `computeRisks`, fed the three
  * queries this module owns (`reviewDragMedianMs`, `repoReviewMedianMs`,
  * `incidentCoupledCount`). Lane 4: `themesForServices` — no model call on
- * this path; `proposeWatchers` runs alongside it.
+ * this path.
+ *
+ * `proposeWatchers` is NOT a lane: it depends only on lane 1's `services`, so
+ * it runs as soon as those exist, before the cohort is even selected. It used
+ * to sit inside the cohort branch, which meant an epic with no comparable
+ * history got no proposal at all.
  */
 export async function runPremortem(
   input: PremortemInput,
@@ -526,6 +594,14 @@ export async function runPremortem(
   const derivedServices = affectedServicesForEpic(ctx.db, epic.itemId, epic.key);
   const services = overrides.length > 0 ? overrides : derivedServices;
 
+  // One translation, two consumers (incident coupling + the watcher proposals). `undefined` here
+  // means no resolver was wired at all, which the two consumers report differently: incident
+  // coupling degrades to a named gap, and no watcher is proposed.
+  const configIdFor =
+    ctx.resolveServiceId === undefined
+      ? undefined
+      : makeConfigServiceIdResolver(ctx.resolveServiceId);
+
   const gaps: GapNote[] = [];
   let cohort: CohortResult = emptyCohort();
   let risks: Risk[] = [];
@@ -542,6 +618,29 @@ export async function runPremortem(
       remediation: "Pass `--service <repo>`, or re-run once child PRs land.",
     });
   } else {
+    // Watcher proposals are a function of the TARGET's affected services, NOT of the cohort:
+    // an epic with no comparable history still has services worth watching. They used to sit
+    // inside the `cohort.members.length > 0` branch, so a first-of-its-kind epic — exactly the
+    // one whose risks are least knowable from history — silently got no proposal and no
+    // `--repropose`, while the docs promised one watcher per affected service unconditionally.
+    //
+    // `--repropose` (Task 5): clear THIS epic's tombstones BEFORE the proposal path runs, so a
+    // deliberately-deleted watcher is created fresh (paused) instead of staying `suppressed`.
+    // Scoped to `epic.itemId` — never a global clear.
+    if (input.repropose === true) {
+      clearProposalTombstones(ctx.db, epic.itemId);
+    }
+    const proposal = proposeWatchers(ctx.db, {
+      epicItemId: epic.itemId,
+      services,
+      nowMs: now,
+      resolveConfigServiceId: configIdFor ?? (() => null),
+    });
+    watchers = proposal.proposals;
+    if (proposal.unmappedServices.length > 0) {
+      gaps.push(unmappedWatcherServicesGap(proposal.unmappedServices, configIdFor !== undefined));
+    }
+
     cohort = selectCohort(ctx.db, services, {
       maxCandidateScan: DEFAULT_MAX_CANDIDATE_SCAN,
       maxCohortSize: DEFAULT_MAX_COHORT_SIZE,
@@ -563,24 +662,23 @@ export async function runPremortem(
     } else {
       const { reviewDragMedianMs, repoReviewMedianMs, cohortHasPrsMissingTimingData } =
         reviewDragMedians(ctx.db, cohort, services, now);
-      const incidentCoupling = countIncidentCoupledEpics(
-        ctx.db,
-        cohort.members,
-        ctx.resolveServiceId,
-      );
+      const incidentCoupling = countIncidentCoupledEpics(ctx.db, cohort.members, configIdFor);
 
       risks = computeRisks({
         cohort: cohort.members,
         targetChildCount: childCount,
-        targetCreatedAtMs: epicRow.created_at_ms ?? now,
+        // Passed through as `null`, never defaulted to `now`: a missing creation date is a
+        // missing date, and defaulting it made the brief say "this epic is brand new" about an
+        // epic of unknown age. `computeCycleTime` names the real cause instead.
+        targetCreatedAtMs: epicRow.created_at_ms,
         nowMs: now,
         reviewDragMedianMs,
         repoReviewMedianMs,
         cohortHasPrsMissingTimingData,
         incidentCoupling,
-        // Pre-mortem is Jira-only (the unconditional gap above states this),
-        // so the cohort can never blend trackers with different cancel/done
-        // semantics.
+        // Structurally true, not merely intended: `selectCohort`'s candidate query filters
+        // `service = 'jira'`, so the cohort cannot blend trackers with different cancel/done
+        // semantics even if another tracker started writing `metadata.issue_type = 'Epic'`.
         cohortIsMixedTracker: false,
       });
 
@@ -597,14 +695,6 @@ export async function runPremortem(
           remediation: `Run \`nimbus pre-mortem ${input.epicRef} --refresh\`, or configure a local model and re-run.`,
         });
       }
-
-      // `--repropose` (Task 5): clear THIS epic's tombstones before the proposal path runs,
-      // so a deliberately-deleted watcher is created fresh (paused) instead of staying
-      // `suppressed`. Scoped to `epic.itemId` — never a global clear.
-      if (input.repropose === true) {
-        clearProposalTombstones(ctx.db, epic.itemId);
-      }
-      watchers = proposeWatchers(ctx.db, { epicItemId: epic.itemId, services, nowMs: now });
 
       // Honesty rule 1 (conditional) — history span, silent when deep.
       if (

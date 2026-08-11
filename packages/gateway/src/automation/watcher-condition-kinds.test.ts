@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   isKnownWatcherConditionType,
+  supportsAffectedServiceFilter,
   WATCHER_CONDITION_KINDS,
   watcherConditionKind,
 } from "./watcher-condition-kinds.ts";
@@ -38,6 +39,32 @@ describe("watcher-condition-kinds", () => {
     // Pinned deliberately: without json_valid, a single non-JSON metadata row makes json_extract
     // raise and takes down evaluation for every watcher.
     expect(watcherConditionKind("deploy_failed")?.extraSql).toContain("json_valid(metadata)");
+  });
+
+  test("only the timeline-entity kinds support a filter.affectedService", () => {
+    // `graph-populator.ts`'s `syncTimelineEventGraph` writes `metadata.affectedService` for
+    // exactly these two entity types. `alert` has no populator branch at all, so accepting the
+    // filter there would store a watcher that can never fire.
+    expect(watcherConditionKind("incident_opened")?.affectedServiceEntityType).toBe("incident");
+    expect(watcherConditionKind("deploy_failed")?.affectedServiceEntityType).toBe("deployment");
+    expect(watcherConditionKind("alert_fired")?.affectedServiceEntityType).toBeNull();
+  });
+
+  test("supportsAffectedServiceFilter agrees with the entity-type column", () => {
+    for (const kind of WATCHER_CONDITION_KINDS) {
+      expect(supportsAffectedServiceFilter(kind)).toBe(kind.affectedServiceEntityType !== null);
+    }
+  });
+
+  test("every affectedServiceEntityType names a real graph entity type, never an item type alias", () => {
+    // Pinned because the two vocabularies coincide TODAY (`item.type` and the graph entity type
+    // are both `incident`/`deployment`), which would let a future kind quietly reuse `itemType`
+    // where a distinct entity type is required.
+    for (const kind of WATCHER_CONDITION_KINDS) {
+      if (kind.affectedServiceEntityType !== null) {
+        expect(["incident", "deployment"]).toContain(kind.affectedServiceEntityType);
+      }
+    }
   });
 
   test("no extraSql fragment contains a bind placeholder", () => {

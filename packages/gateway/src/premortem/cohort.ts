@@ -73,6 +73,15 @@ function childCountsFor(db: Database, epicItemIds: readonly string[]): Map<strin
  * Selects and ranks the cohort of closed Jira epics comparable to a target
  * epic, by service overlap.
  *
+ * `service = 'jira'` is LOAD-BEARING, not redundant with the `issue_type`
+ * filter. `agents/premortem.ts` passes `cohortIsMixedTracker: false` to
+ * `computeRisks`, which is what lets the abandonment rate be reported at all
+ * (Jira and another tracker do not agree on what a canceled status means, so a
+ * blended rate would not be comparable). Without this clause that claim rested
+ * on nothing structural: any tracker writing `metadata.issue_type = 'Epic'`
+ * plus a `status_category` would enter the cohort and silently blend. The
+ * filter makes the claim true by construction rather than by convention.
+ *
  * Candidates are scanned `resolved_at_ms DESC` so `maxCandidateScan` truncates
  * the OLDEST history, never an arbitrary slice. `resolved_at_ms` is read out
  * of `metadata` via `json_extract` — it is not a real `item` column, only
@@ -109,7 +118,8 @@ export function selectCohort(
               json_extract(metadata, '$.resolved_at_ms')  AS resolved_at_ms,
               json_extract(metadata, '$.status_category') AS status_category
          FROM item
-        WHERE json_valid(metadata)
+        WHERE service = 'jira'
+          AND json_valid(metadata)
           AND json_extract(metadata, '$.issue_type') = 'Epic'
           AND json_extract(metadata, '$.status_category') IN ('done', 'canceled')
           AND json_extract(metadata, '$.resolved_at_ms') IS NOT NULL
