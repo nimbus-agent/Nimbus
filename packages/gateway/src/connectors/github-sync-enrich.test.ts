@@ -227,6 +227,24 @@ describe("selectPrEnrichCandidates", () => {
     db.close();
   });
 
+  test("a real title that merely starts with the fallback prefix is NOT re-selected once it has stats (prevents permanent re-enrichment)", () => {
+    const db = createMemoryIndexDb();
+    const now = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#1",
+      title: "PR #1 revert", // starts with the fallback prefix but is a real title
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/app", number: 1, additions: 5, deletions: 2 },
+    });
+
+    expect(selectPrEnrichCandidates(db, 10)).toEqual([]);
+    db.close();
+  });
+
   test("a fallback-titled PR is still selected even with stats", () => {
     const db = createMemoryIndexDb();
     const now = Date.now();

@@ -481,6 +481,26 @@ interface FallbackPrCandidate {
 const MAX_ENRICH_PER_TICK = 10;
 
 /**
+ * True when `metadata` (a JSON blob) already carries a non-null `additions` field.
+ * Unparseable JSON returns `false` — mirrors the SQL's `NOT json_valid(metadata)` arm:
+ * a row that cannot be proven to have stats must remain a candidate, never be skipped.
+ */
+function metadataHasStats(metadata: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(metadata) as unknown;
+  } catch {
+    return false;
+  }
+  const rec = asRecord(parsed);
+  if (rec === undefined) {
+    return false;
+  }
+  const additions = rec["additions"];
+  return additions !== undefined && additions !== null;
+}
+
+/**
  * Candidates for a pull-detail re-fetch. Two independent reasons:
  *   1. the title is still the id-only `PR #<n>` fallback (the events feed omits
  *      `title` on `PullRequestEvent` payloads), or
@@ -488,10 +508,24 @@ const MAX_ENRICH_PER_TICK = 10;
  *      `commits` exist only on the single-PR response, never on events or the
  *      list endpoint.
  *
- * `json_extract` is used rather than a LIKE over the raw metadata blob so a PR
- * body mentioning "additions" cannot mask a genuinely missing field. Guarded by
- * `json_valid` because `json_extract` RAISES on malformed JSON, and one bad row
- * would otherwise kill selection for every PR.
+ * The SQL `WHERE` deliberately over-selects: its `title LIKE 'PR #%'` arm also
+ * matches a REAL title that merely starts with that text (e.g. `"PR #142 fix
+ * bug"`), and `upsertPr` writes GitHub's real title back unchanged, so such a
+ * row would otherwise re-qualify forever — permanently occupying a slot in the
+ * `MAX_ENRICH_PER_TICK`-capped, `modified_at DESC`-ordered result and starving
+ * rows that genuinely still need enrichment. The JS loop below narrows each
+ * over-selected row to the exact two reasons: keep it only if the title is the
+ * EXACT `PR #<num>` fallback, or its stats are still missing. Since the SQL
+ * already guarantees every row matched one of the two arms, a row that is not
+ * the exact fallback and already has stats can only have matched via the LIKE
+ * over-select, so skipping it is safe and sufficient.
+ *
+ * `json_extract` is used (via `metadataHasStats`) rather than a LIKE over the
+ * raw metadata blob so a PR body mentioning "additions" cannot mask a
+ * genuinely missing field. Guarded by `json_valid` in SQL and mirrored by
+ * `metadataHasStats`'s parse-failure fallback, because malformed JSON must
+ * never be treated as "has stats" — that would incorrectly skip a row that
+ * cannot be proven enriched.
  */
 export function selectPrEnrichCandidates(db: Database, limit: number): FallbackPrCandidate[] {
   const rows = db
@@ -505,7 +539,7 @@ export function selectPrEnrichCandidates(db: Database, limit: number): FallbackP
            )
          ORDER BY modified_at DESC LIMIT ?`,
     )
-    .all(limit * 3) as { external_id: string; title: string; metadata: string }[];
+    .all(limit * 3) as { external_id: string; title: string; metadata: string }[]; // over-select; JS narrows below
   const out: FallbackPrCandidate[] = [];
   for (const r of rows) {
     const hash = r.external_id.lastIndexOf("#");
@@ -513,6 +547,8 @@ export function selectPrEnrichCandidates(db: Database, limit: number): FallbackP
     const repoFull = r.external_id.slice(0, hash);
     const num = Number.parseInt(r.external_id.slice(hash + 1), 10);
     if (!Number.isFinite(num)) continue;
+    const isExactFallback = r.title === `PR #${String(num)}`;
+    if (!isExactFallback && metadataHasStats(r.metadata)) continue; // only matched via the LIKE over-select
     out.push({ externalId: r.external_id, repoFull, num });
     if (out.length >= limit) break;
   }
