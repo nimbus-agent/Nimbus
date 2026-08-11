@@ -311,12 +311,18 @@ async function subAuthorship(db: Database, lane: LaneInput): Promise<SubAgentRes
  *     already surfaced the reviewer in that case.
  */
 function detectUnresolvedReviewedRelation(db: Database, prEntityId: string): GapNote | null {
-  const missingEmit = detectMissingRelationEmit(
-    db,
-    "reviewed",
-    "Reviews are indexed from the GitHub events feed — sync the connector, or run `nimbus index backfill --service github` for history.",
-  );
-  if (missingEmit !== null) return missingEmit;
+  const missingEmit = detectMissingRelationEmit(db, "reviewed");
+  if (missingEmit !== null) {
+    // `detectMissingRelationEmit`'s hard-coded detail ("not yet emitted by
+    // the graph populator") is false for `reviewed` — `syncReviewGraph` does
+    // emit it. Override with an honest, scoped detail/remediation instead of
+    // changing the shared helper's detail for every other relation type.
+    return {
+      category: missingEmit.category,
+      detail: "No `reviewed` edges yet — the GitHub connector has not indexed PR reviews.",
+      remediation: "Sync the GitHub connector so PR reviews are indexed.",
+    };
+  }
 
   const resolvedRow = db
     .query(
@@ -334,7 +340,7 @@ function detectUnresolvedReviewedRelation(db: Database, prEntityId: string): Gap
     detail:
       "`reviewed` edges exist in the graph but none resolve to a reviewer for this PR — its reviewers are not (yet) indexed.",
     remediation:
-      "Sync the GitHub connector so this PR's reviewed events and their authors are indexed, then run `nimbus index backfill --service github` for history.",
+      "Sync the GitHub connector so this PR's reviewed events and their authors are indexed.",
   };
 }
 
@@ -360,6 +366,7 @@ async function subPullRequest(db: Database, lane: LaneInput): Promise<SubAgentRe
     )
     .get(pr.entityId) as { label: string } | null;
 
+  const REVIEWER_DISPLAY_LIMIT = 5;
   const reviewerRows = db
     .query(
       `SELECT DISTINCT pe.label AS label
@@ -367,16 +374,29 @@ async function subPullRequest(db: Database, lane: LaneInput): Promise<SubAgentRe
          JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
         WHERE r.to_id = ? AND r.type = 'reviewed'
         ORDER BY label
-        LIMIT 5`,
+        LIMIT ?`,
     )
-    .all(pr.entityId) as Array<{ label: string }>;
+    .all(pr.entityId, REVIEWER_DISPLAY_LIMIT) as Array<{ label: string }>;
+  const reviewerCountRow = db
+    .query(
+      `SELECT COUNT(DISTINCT pe.label) AS n
+         FROM graph_relation r
+         JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+        WHERE r.to_id = ? AND r.type = 'reviewed'`,
+    )
+    .get(pr.entityId) as { n: number } | null;
+  const reviewerTotal = reviewerCountRow?.n ?? reviewerRows.length;
+  const reviewerOverflow = reviewerTotal - reviewerRows.length;
 
   const openedBy =
     authorRow !== null ? `Opened by ${authorRow.label}` : "PR author not resolved in the graph.";
-  const detail =
-    reviewerRows.length === 0
-      ? openedBy
-      : `${openedBy} · Reviewed by ${reviewerRows.map((r) => r.label).join(", ")}`;
+  // A total truncated silently is a lie by omission — name the cut, don't
+  // hide it (mirrors the `+N more` pattern the `decisions`/`glossary` agents
+  // already use for truncated lists).
+  const reviewerList =
+    reviewerRows.map((r) => r.label).join(", ") +
+    (reviewerOverflow > 0 ? `, and ${String(reviewerOverflow)} more` : "");
+  const detail = reviewerRows.length === 0 ? openedBy : `${openedBy} · Reviewed by ${reviewerList}`;
 
   const finding: WhyFinding = {
     lane: "pull_request",

@@ -299,12 +299,18 @@ async function subPrAuthored(db: Database, input: string): Promise<SubAgentResul
  *     result is then just "no match for this search topic", not a data gap.
  */
 function detectUnresolvedReviewedRelation(db: Database): GapNote | null {
-  const missingEmit = detectMissingRelationEmit(
-    db,
-    "reviewed",
-    "Reviews are indexed from the GitHub events feed — sync the connector, or run `nimbus index backfill --service github` for history.",
-  );
-  if (missingEmit !== null) return missingEmit;
+  const missingEmit = detectMissingRelationEmit(db, "reviewed");
+  if (missingEmit !== null) {
+    // `detectMissingRelationEmit`'s hard-coded detail ("not yet emitted by
+    // the graph populator") is false for `reviewed` — `syncReviewGraph` does
+    // emit it. Override with an honest, scoped detail/remediation instead of
+    // changing the shared helper's detail for every other relation type.
+    return {
+      category: missingEmit.category,
+      detail: "No `reviewed` edges yet — the GitHub connector has not indexed PR reviews.",
+      remediation: "Sync the GitHub connector so PR reviews are indexed.",
+    };
+  }
 
   const resolvedRow = db
     .query(
@@ -324,8 +330,7 @@ function detectUnresolvedReviewedRelation(db: Database): GapNote | null {
     category: "missing_relation_emit",
     detail:
       "`reviewed` edges exist in the graph but none resolve to an indexed PR and reviewer — the referenced PRs or reviewers are not (yet) indexed.",
-    remediation:
-      "Sync the GitHub connector so the reviewed PRs and their authors are indexed, then run `nimbus index backfill --service github` for history.",
+    remediation: "Sync the GitHub connector so the reviewed PRs and their authors are indexed.",
   };
 }
 

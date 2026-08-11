@@ -229,6 +229,20 @@ describe("runExpert gap-note coverage", () => {
     const brief = await runExpert({ topicOrFile: "noop" }, ctx);
     const cats = brief.gaps.map((g) => g.category);
     expect(cats).toContain("missing_relation_emit");
+
+    // C-1: the zero-edge `reviewed` gap note must not claim the populator
+    // fails to emit `reviewed` (it does, since `syncReviewGraph` shipped),
+    // and must not tell the user to run a `nimbus index backfill` command
+    // that does not exist anywhere in the shipped CLI.
+    const reviewedGap = brief.gaps.find(
+      (g) => g.category === "missing_relation_emit" && g.detail.includes("reviewed"),
+    );
+    expect(reviewedGap).toBeDefined();
+    expect(reviewedGap?.detail).not.toMatch(/not yet emitted by the graph populator/);
+    for (const g of brief.gaps) {
+      expect(g.detail).not.toMatch(/index backfill/);
+      expect(g.remediation ?? "").not.toMatch(/index backfill/);
+    }
   });
 });
 
@@ -312,6 +326,47 @@ describe("subPrReviewed", () => {
     // Distinct from the "no edges at all" gap's detail — proves this is the
     // resolution-aware branch, not the pre-existing zero-edges check.
     expect(result.gap?.detail).toContain("none resolve");
+    db.close();
+  });
+
+  test("subPrReviewed emits no gap note when a reviewed edge resolves but the topic just has no match (M-10)", async () => {
+    // A fully resolvable `reviewed` edge exists (real person + real indexed PR),
+    // but the free-text query below matches nothing in it. This must return
+    // `null` from `detectUnresolvedReviewedRelation` — a topic with no match is
+    // not a data gap — never a false "missing_relation_emit" gap note.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:author", "Author"]);
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:reviewer", "Reviewer"]);
+
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#1",
+      title: "Add rate limiter",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      authorId: "person:author",
+      metadata: { repo: "acme/app", number: 1 },
+    });
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "review",
+      externalId: "acme/app#1#review-500",
+      title: "Review on acme/app#1",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      authorId: "person:reviewer",
+      metadata: { repo: "acme/app", pr_number: 1 },
+    });
+
+    const result = await subPrReviewed(db, "no-such-topic-anywhere");
+
+    expect(result.stream).toBeUndefined();
+    expect(result.gap).toBeUndefined();
     db.close();
   });
 });

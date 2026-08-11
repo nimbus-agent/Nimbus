@@ -159,6 +159,19 @@ describe("runWhy", () => {
         (g) => g.category === "missing_relation_emit" && g.detail.includes("reviewed"),
       ),
     ).toBe(true);
+
+    // C-1: the zero-edge `reviewed` gap note must not claim the populator
+    // fails to emit `reviewed` (it does, since `syncReviewGraph` shipped),
+    // and must not tell the user to run a `nimbus index backfill` command
+    // that does not exist anywhere in the shipped CLI.
+    const reviewedGap = brief.gaps.find(
+      (g) => g.category === "missing_relation_emit" && g.detail.includes("reviewed"),
+    );
+    expect(reviewedGap?.detail).not.toMatch(/not yet emitted by the graph populator/);
+    for (const g of brief.gaps) {
+      expect(g.detail).not.toMatch(/index backfill/);
+      expect(g.remediation ?? "").not.toMatch(/index backfill/);
+    }
   });
 
   test("the pull_request lane names reviewers when reviewed edges exist", async () => {
@@ -184,6 +197,37 @@ describe("runWhy", () => {
 
     expect(prFinding?.detail).toContain("Reviewed by");
     expect(brief.gaps.some((g) => g.detail.includes("`reviewed`"))).toBe(false);
+  });
+
+  test("I-5: a reviewer list beyond the display limit names the cut instead of silently truncating", async () => {
+    const db = freshDb();
+    seedWhyFixture(db, { commit: true, issue: true, pr: true, blame: { lineNo: 12 } });
+    const now = Date.now();
+
+    // 6 reviewers — one past the 5-reviewer display limit.
+    for (let i = 1; i <= 6; i++) {
+      const personId = `person:reviewer-${String(i)}`;
+      db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", [personId, `R${String(i)}`]);
+      upsertIndexedItem(db, {
+        service: "github",
+        type: "review",
+        externalId: `acme/app#412#review-${String(500 + i)}`,
+        title: "Review on acme/app#412",
+        bodyPreview: "",
+        modifiedAt: now,
+        syncedAt: now,
+        authorId: personId,
+        metadata: { repo: "acme/app", pr_number: 412 },
+      });
+    }
+
+    const brief = await runWhy({ ref: refAt(12) }, ctxFor(db));
+    const prFinding = brief.findings.find((f) => f.lane === "pull_request");
+
+    expect(prFinding?.detail).toContain("Reviewed by");
+    // The cut is named, not silent: exactly 5 reviewers are listed by name,
+    // and the overflow count (1) is stated explicitly.
+    expect(prFinding?.detail).toContain("R1, R2, R3, R4, R5, and 1 more");
   });
 
   test("pull_request lane: a reviewed edge that exists but doesn't resolve still yields a gap note, not silence", async () => {
