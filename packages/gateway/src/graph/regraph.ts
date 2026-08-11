@@ -202,7 +202,14 @@ function regraphSlice(
  * Processed in `REGRAPH_TYPE_ORDER` so reference targets are graphed before
  * the items that reference them; every edge this plan emits therefore settles
  * in a single pass. Idempotent regardless — each sync function clears and
- * rebuilds the edges it owns — so re-running is always safe.
+ * rebuilds the edges it owns — so re-running is always safe. ONE EXCEPTION:
+ * `reviewed` edges are deliberately never cleared (`syncReviewGraph` in
+ * `graph-populator.ts`) because their outgoing side is a `person`, who
+ * reviews many PRs — clearing on re-population would destroy every other PR
+ * that reviewer touched. A regraph pass is still safe for `reviewed`: each
+ * review row re-emits its own edge idempotently via `upsertGraphRelation`'s
+ * `ON CONFLICT`, it just never subtracts one that a deleted-upstream review
+ * left behind. See `graph-populator.ts`'s `CROSS_ITEM_RELATION_TYPES` comment.
  *
  * A row whose sync throws is skipped (not fatal to the pass) and counted in
  * `skipped`; `graphed` counts only items that actually produced graph writes.

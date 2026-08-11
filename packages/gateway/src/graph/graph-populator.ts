@@ -72,7 +72,19 @@ function repoPathFromMetadata(meta: Record<string, unknown>): string | undefined
  * The blanket clear below must not touch them: the entity being cleared is
  * only one endpoint, and the other side is authoritative for the edge.
  * Each emitting sync function clears its own outgoing edges of these types
- * via `clearOutgoingRelationsOfType` immediately before re-emitting them.
+ * via `clearOutgoingRelationsOfType` immediately before re-emitting them —
+ * WITH ONE DELIBERATE EXCEPTION: `reviewed`. Do NOT "fix" `syncReviewGraph`
+ * to call `clearOutgoingRelationsOfType(db, personEntityId, "reviewed")`
+ * before emitting. A `reviewed` edge's outgoing side is the PERSON, and one
+ * reviewer reviews many PRs — clearing that person's outgoing `reviewed`
+ * edges before re-emitting would delete every OTHER PR they reviewed, each
+ * time any one of their reviews is re-populated (e.g. `nimbus index regraph`
+ * would collapse a reviewer's entire history down to whichever review was
+ * populated last). `syncReviewGraph` relies on `upsertGraphRelation`'s
+ * `ON CONFLICT (from_id, to_id, type)` idempotency instead, and disclosed
+ * staleness (a deleted upstream review leaves a stale edge) rather than a
+ * clear that would silently destroy unrelated data. See `syncReviewGraph`'s
+ * own doc comment for the full rationale.
  */
 const CROSS_ITEM_RELATION_TYPES: readonly string[] = Object.freeze([
   "resolves",
@@ -301,7 +313,9 @@ function syncReviewGraph(db: Database, row: IndexedItemGraphInput, now: number):
   }
   const repoFull = stringField(row.metadata, "repo");
   const prNumber = row.metadata["pr_number"];
-  if (repoFull === undefined || repoFull === "" || typeof prNumber !== "number") {
+  // `stringField` already returns `undefined` for an empty/whitespace-only value — an
+  // `=== ""` disjunct here would be dead code (M-3).
+  if (repoFull === undefined || typeof prNumber !== "number") {
     return;
   }
 
