@@ -1,7 +1,11 @@
 // Type-only module: NO executable runtime logic. It is exact-path-excluded from the coverage floor
 // in scripts/coverage-floor/exclusions.ts (a type-only file emits no SF: lcov record). Adding runtime
 // logic here would silently bypass the floor — put runtime logic in a separate, covered module.
-import type { ConnectorOAuthProfile } from "../../connectors/connector-catalog.ts";
+import type {
+  ConnectorOAuthProfile,
+  ConnectorServiceId,
+} from "../../connectors/connector-catalog.ts";
+import type { ProbeVerdict } from "../../connectors/credential-probe.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
@@ -44,4 +48,13 @@ export type ConnectorRpcHandlerContext = {
    * `Config`-backed `oauthClientConfigForProvider`.
    */
   resolveOAuthClientConfig?: OAuthClientConfigResolver;
+  /**
+   * Test seam. Omitted in production, where `auth.ts` falls back to the real
+   * `runCredentialProbe`. Injected rather than `mock.module`-ed: `mock.module`
+   * is process-global and contaminates the combined Linux CI run.
+   */
+  runCredentialProbe?: (
+    serviceId: ConnectorServiceId,
+    creds: Record<string, string>,
+  ) => Promise<ProbeVerdict | null>;
 };

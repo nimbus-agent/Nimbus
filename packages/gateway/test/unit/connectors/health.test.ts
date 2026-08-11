@@ -101,6 +101,63 @@ describe("transitionHealth — basic transitions", () => {
     expect(snap.state).toBe("healthy");
     expect(snap.backoffAttempt).toBe(0);
   });
+
+  test("reauthenticated clears unauthenticated and the stale auth error", () => {
+    transitionHealth(db, "github", { type: "unauthenticated" });
+    expect(getConnectorHealth(db, "github").state).toBe("unauthenticated");
+
+    const snap = transitionHealth(db, "github", { type: "reauthenticated" });
+
+    expect(snap.state).toBe("healthy");
+    // The unauthenticated transition writes a hardcoded lastError (health.ts:196);
+    // leaving it behind would show a stale "token expired" next to a healthy state.
+    expect(getConnectorHealth(db, "github").lastError).toBeUndefined();
+  });
+
+  test("reauthenticated records its own history reason, not 'connector resumed'", () => {
+    transitionHealth(db, "github", { type: "unauthenticated" });
+    transitionHealth(db, "github", { type: "reauthenticated" });
+
+    const [latest] = getConnectorHealthHistory(db, "github", 1);
+    expect(latest?.toState).toBe("healthy");
+    expect(latest?.reason).toBe("credential re-verified");
+  });
+});
+
+describe("LocalIndex.markConnectorReauthenticated — guarded transition", () => {
+  test("from unauthenticated → becomes healthy", () => {
+    const idx = new LocalIndex(db);
+    transitionHealth(db, "github", { type: "unauthenticated" });
+    expect(getConnectorHealth(db, "github").state).toBe("unauthenticated");
+
+    idx.markConnectorReauthenticated("github");
+
+    expect(getConnectorHealth(db, "github").state).toBe("healthy");
+  });
+
+  test("from paused → stays paused", () => {
+    const idx = new LocalIndex(db);
+    transitionHealth(db, "github", { type: "paused" });
+    expect(getConnectorHealth(db, "github").state).toBe("paused");
+
+    idx.markConnectorReauthenticated("github");
+
+    expect(getConnectorHealth(db, "github").state).toBe("paused");
+  });
+
+  test("from rate_limited → stays rate_limited and retryAfter is unchanged", () => {
+    const idx = new LocalIndex(db);
+    const retryAfter = new Date(Date.now() + 60_000);
+    transitionHealth(db, "github", { type: "rate_limited", retryAfter });
+    const before = getConnectorHealth(db, "github");
+    expect(before.state).toBe("rate_limited");
+
+    idx.markConnectorReauthenticated("github");
+
+    const after = getConnectorHealth(db, "github");
+    expect(after.state).toBe("rate_limited");
+    expect(after.retryAfter?.getTime()).toBe(before.retryAfter?.getTime());
+  });
 });
 
 describe("transitionHealth — skipped_offline", () => {

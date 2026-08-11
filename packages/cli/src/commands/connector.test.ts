@@ -923,7 +923,9 @@ describe("runConnector auth — per-applier success", () => {
       setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
       await runConnector(["auth", service, ...flags]);
       expect(mock.calls[0]?.method).toBe("connector.auth");
-      expect(out.stdout).toContain(`Signed in: ${service}`);
+      // The mock response carries no `verified` field, so the CLI falls
+      // through to the honest default: stored, not verified.
+      expect(out.stdout).toContain(`Stored: ${service} (not verified)`);
       expect(out.stdout).toContain("Credential: stored in the OS vault (no OAuth scopes).");
     },
   );
@@ -999,11 +1001,58 @@ describe("runConnector auth — help + flag edges", () => {
       const mock = createMockIpcClient([{ ok: true, serviceId: "github", scopesGranted: [] }]);
       setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
       await runConnector(["auth", "github"]);
-      expect(out.stdout).toContain("Signed in: github");
+      expect(out.stdout).toContain("Stored: github (not verified)");
     } finally {
       for (const k of Object.keys(process.env)) delete process.env[k];
       Object.assign(process.env, savedEnv);
     }
+  });
+});
+
+describe("runConnector auth — verified reporting", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("prints Verified only when the provider confirmed the credential", async () => {
+    const mock = createMockIpcClient([
+      { ok: true, serviceId: "github", scopesGranted: [], verified: "verified" },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["auth", "github", "--token", "x"]);
+    expect(mock.calls[0]?.method).toBe("connector.auth");
+    expect(out.stdout).toContain("Verified: github");
+    expect(out.stdout).not.toContain("Signed in");
+  });
+
+  it("says plainly when the credential was stored but not verified", async () => {
+    const mock = createMockIpcClient([
+      { ok: true, serviceId: "github", scopesGranted: [], verified: "unverified" },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["auth", "github", "--token", "x"]);
+    expect(out.stdout).toContain("Stored: github");
+    expect(out.stdout).toContain("NOT verified");
+    expect(out.stdout).not.toContain("Signed in");
+  });
+
+  it("an unprobed connector never claims verification", async () => {
+    const mock = createMockIpcClient([
+      {
+        ok: true,
+        serviceId: "datadog",
+        scopesGranted: [],
+        verified: null,
+      },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["auth", "datadog", "--datadog-api-key", "a", "--datadog-app-key", "b"]);
+    expect(out.stdout).toContain("Stored: datadog (not verified)");
+    expect(out.stdout).not.toContain("Verified:");
+    expect(out.stdout).not.toContain("Signed in");
   });
 });
 
@@ -1159,12 +1208,19 @@ describe("runConnector auth — non-vault (OAuth) service prints scopes", () => 
   });
 
   it("prints the granted scopes line for an OAuth service id", async () => {
+    // A completed PKCE exchange IS provider confirmation, so the real gateway
+    // handler now reports `verified: "verified"` for every OAuth connector.
     const mock = createMockIpcClient([
-      { ok: true, serviceId: "google_drive", scopesGranted: ["drive.readonly", "profile"] },
+      {
+        ok: true,
+        serviceId: "google_drive",
+        scopesGranted: ["drive.readonly", "profile"],
+        verified: "verified",
+      },
     ]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runConnector(["auth", "google_drive"]);
-    expect(out.stdout).toContain("Signed in: google_drive");
+    expect(out.stdout).toContain("Verified: google_drive");
     expect(out.stdout).toContain("Scopes: drive.readonly, profile");
     expect(out.stdout).not.toContain("stored in the OS vault");
   });
@@ -1214,7 +1270,7 @@ describe("runConnector auth — env-fallback success + secondary error branches"
   it("aws profile-only path (no key pair) succeeds", async () => {
     fixtureOk("aws");
     await runConnector(["auth", "aws", "--aws-profile", "myprofile"]);
-    expect(out.stdout).toContain("Signed in: aws");
+    expect(out.stdout).toContain("Stored: aws (not verified)");
   });
 
   it("aws key pair without region OR profile throws the region/profile error", async () => {
@@ -1235,7 +1291,7 @@ describe("runConnector auth — env-fallback success + secondary error branches"
       "--aws-profile",
       "myprofile",
     ]);
-    expect(out.stdout).toContain("Signed in: aws");
+    expect(out.stdout).toContain("Stored: aws (not verified)");
   });
 
   it("gcp passes through the optional project id", async () => {
@@ -1248,7 +1304,7 @@ describe("runConnector auth — env-fallback success + secondary error branches"
       "--gcp-project-id",
       "proj-123",
     ]);
-    expect(out.stdout).toContain("Signed in: gcp");
+    expect(out.stdout).toContain("Stored: gcp (not verified)");
   });
 
   it("sentry passes through the optional --sentry-url", async () => {
@@ -1263,13 +1319,13 @@ describe("runConnector auth — env-fallback success + secondary error branches"
       "--sentry-url",
       "https://sentry.example/",
     ]);
-    expect(out.stdout).toContain("Signed in: sentry");
+    expect(out.stdout).toContain("Stored: sentry (not verified)");
   });
 
   it("newrelic passes through the optional account id", async () => {
     fixtureOk("newrelic");
     await runConnector(["auth", "newrelic", "--token", "k", "--newrelic-account-id", "12345"]);
-    expect(out.stdout).toContain("Signed in: newrelic");
+    expect(out.stdout).toContain("Stored: newrelic (not verified)");
   });
 
   it("datadog passes through the optional --datadog-site", async () => {
@@ -1284,7 +1340,7 @@ describe("runConnector auth — env-fallback success + secondary error branches"
       "--datadog-site",
       "datadoghq.eu",
     ]);
-    expect(out.stdout).toContain("Signed in: datadog");
+    expect(out.stdout).toContain("Stored: datadog (not verified)");
   });
 
   it("gitlab passes through the optional --api-base", async () => {
@@ -1297,7 +1353,7 @@ describe("runConnector auth — env-fallback success + secondary error branches"
       "--api-base",
       "https://git.example.com/api/v4",
     ]);
-    expect(out.stdout).toContain("Signed in: gitlab");
+    expect(out.stdout).toContain("Stored: gitlab (not verified)");
   });
 
   it("kubernetes context is set when --context is provided", async () => {
@@ -1310,7 +1366,7 @@ describe("runConnector auth — env-fallback success + secondary error branches"
       "--context",
       "staging",
     ]);
-    expect(out.stdout).toContain("Signed in: kubernetes");
+    expect(out.stdout).toContain("Stored: kubernetes (not verified)");
   });
 
   it("bitbucket missing app password throws the app-password error", async () => {

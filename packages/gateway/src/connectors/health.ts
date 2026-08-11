@@ -36,6 +36,7 @@ export type HealthEvent =
   | { type: "persistent_error"; error: string }
   | { type: "paused" }
   | { type: "resumed" }
+  | { type: "reauthenticated" }
   | { type: "skipped_offline" };
 
 const MAX_ERROR_LENGTH = 512;
@@ -61,6 +62,8 @@ function nextState(event: HealthEventWithStateChange, maxAttempts: number): Conn
     case "paused":
       return "paused";
     case "resumed":
+      return "healthy";
+    case "reauthenticated":
       return "healthy";
   }
 }
@@ -224,6 +227,16 @@ export function transitionHealth(
       backoffAttempt = 0;
       lastError = null;
       reason = "connector resumed";
+      break;
+
+    case "reauthenticated":
+      // Same clearing as `resumed` — a stale `unauthenticated` lastError beside a
+      // healthy state is exactly the mixed signal this change exists to remove —
+      // but its OWN reason: nothing was paused, so "connector resumed" would be false.
+      backoffUntilMs = null;
+      backoffAttempt = 0;
+      lastError = null;
+      reason = "credential re-verified";
       break;
   }
 

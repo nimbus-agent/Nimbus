@@ -312,3 +312,51 @@ describe("dispatchConnectorRpc — connector.startAuth alias + reset helper", ()
     }
   });
 });
+
+describe("dispatchConnectorRpc — connector.auth ignores a caller-supplied probe", () => {
+  // A caller must never be able to supply its own probe through the RPC params.
+  // Production builds the context as a fixed object literal whose only
+  // caller-derived member is `rec` (connector-rpc.ts:48-56) — `rec` is a sibling
+  // field, never spread. If a future refactor "simplified" that to `{...rec, …}`,
+  // any caller could inject `{kind:"valid"}` and bypass validation entirely. This
+  // pins it. Route through the real dispatcher, NOT handleConnectorAuth directly.
+  test("a probe function supplied in RPC params is ignored", async () => {
+    const seq: string[] = [];
+    const probeVault = {
+      set: async (k: string) => {
+        seq.push(`write:${k}`);
+      },
+      get: async () => null,
+      delete: async (k: string) => {
+        seq.push(`delete:${k}`);
+      },
+    } as unknown as NimbusVault;
+    let injectedRan = false;
+    const realFetch = globalThis.fetch;
+    // The REAL probe runs here (no seam injected), so bound its network call.
+    globalThis.fetch = (async () =>
+      new Response("Bad credentials", { status: 401 })) as unknown as typeof fetch;
+    try {
+      await expect(
+        dispatchConnectorRpc({
+          ...baseOpts({}),
+          vault: probeVault,
+          method: "connector.auth",
+          params: {
+            service: "github",
+            token: "dead-pat",
+            // A caller-supplied lookalike. It lands in `rec`, never on the context.
+            runCredentialProbe: async () => {
+              injectedRan = true;
+              return { kind: "valid" };
+            },
+          },
+        }),
+      ).rejects.toThrow(/rejected the credential \(HTTP 401\)/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(injectedRan).toBe(false);
+    expect(seq).toEqual([]); // the real probe rejected; nothing was written
+  });
+});

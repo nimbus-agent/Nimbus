@@ -1923,10 +1923,11 @@ describe("POST /v1/items/fetch", () => {
   });
 
   it.each<TargetedFetchOutcome>([
-    { status: "not_found" },
+    { status: "not_found", reason: "absent" },
     { status: "unsupported_url" },
     { status: "no_targeted_fetch", service: "jira" },
     { status: "not_configured" },
+    { status: "not_configured", service: "jira" },
     { status: "rate_limited" },
   ])("returns 200 for the miss outcome %j — a miss is not a client error", async (outcome) => {
     const res = await dispatchWriteRoute(

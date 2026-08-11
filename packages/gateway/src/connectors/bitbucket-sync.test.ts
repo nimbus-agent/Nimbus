@@ -62,7 +62,7 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("reports not_found for a 404", async () => {
+  test("reports absent for a 404", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "user", "app-pass");
     globalThis.fetch = ((): Promise<Response> =>
@@ -71,21 +71,69 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/999");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "absent" });
   });
 
-  test("reports not_found when credentials are missing", async () => {
+  test("reports unauthorized for a 401", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "user", "expired-app-pass");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("Unauthorized", { status: 401 }))) as unknown as typeof fetch;
+
+    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
+
+    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
+  });
+
+  test("reports unauthorized for a 403", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "user", "app-pass");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("forbidden", { status: 403 }))) as unknown as typeof fetch;
+
+    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
+
+    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
+  });
+
+  test("reports rate_limited for a 429", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "user", "app-pass");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("slow down", { status: 429 }))) as unknown as typeof fetch;
+
+    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
+
+    expect(out).toEqual({ status: "rate_limited" });
+  });
+
+  test("reports upstream_error for a 500", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "user", "app-pass");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("boom", { status: 500 }))) as unknown as typeof fetch;
+
+    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
+
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
+  });
+
+  test("reports no_credential when credentials are missing", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, null, null);
     const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
 
     const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "no_credential" });
   });
 
   // IMPORTANT 3: a DNS/TLS/connect failure must report not_found, not throw.
-  test("reports not_found when fetch itself throws (DNS/TLS/connect failure)", async () => {
+  test("reports unreachable when fetch itself throws (DNS/TLS/connect failure)", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "user", "app-pass");
     globalThis.fetch = ((): Promise<Response> => {
@@ -95,13 +143,14 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
+    expect(JSON.stringify(out)).not.toContain("api.bitbucket.org");
   });
 
   // A stalled/aborted upstream request must report not_found rather than hang the caller
   // (`POST /v1/items/fetch`) indefinitely — and the outbound request must actually carry a bounded
   // abort signal, not merely happen to survive an unrelated rejection.
-  test("reports not_found and passes an abort signal when the request is aborted (timeout)", async () => {
+  test("reports unreachable and passes an abort signal when the request is aborted (timeout)", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "user", "app-pass");
     let capturedSignal: AbortSignal | undefined;
@@ -115,7 +164,7 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
     expect(capturedSignal).toBeDefined();
   });
 
@@ -224,7 +273,7 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("reports not_found for a malformed (non-JSON) ok response", async () => {
+  test("reports upstream_error for a malformed (non-JSON) ok response", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "user", "app-pass");
     globalThis.fetch = ((): Promise<Response> =>
@@ -233,10 +282,10 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  test("reports not_found for valid JSON that is not an object", async () => {
+  test("reports upstream_error for valid JSON that is not an object", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "user", "app-pass");
     globalThis.fetch = ((): Promise<Response> =>
@@ -245,10 +294,10 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  test("reports not_found when the response body has no id field", async () => {
+  test("reports upstream_error when the response body has no id field", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "user", "app-pass");
     globalThis.fetch = ((): Promise<Response> =>
@@ -259,6 +308,6 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 });

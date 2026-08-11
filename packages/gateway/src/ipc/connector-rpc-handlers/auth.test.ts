@@ -199,6 +199,10 @@ describe("handleConnectorAuth — PAT handler routing", () => {
     const out = await handleConnectorAuth({
       ...ctxFor("github"),
       rec: { service: "github", personalAccessToken: "ghp_test_token" },
+      // Task 3 wires a real credential probe in front of every write. Inject a
+      // seam here so this routing test stays offline and deterministic — the
+      // probe's own behavior is covered in connector-rpc.test.ts.
+      runCredentialProbe: async () => ({ kind: "valid" }),
     });
     expect(out.kind).toBe("hit");
     expect((out.value as { ok: boolean; serviceId: string }).ok).toBe(true);

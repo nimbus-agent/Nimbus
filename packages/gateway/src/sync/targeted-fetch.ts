@@ -2,7 +2,7 @@
 
 import { canonicalizeUrl } from "../util/url-canonical.ts";
 import { type FetchableService, serviceForHost } from "./fetch-host-boundary.ts";
-import type { FetchOneResult, Syncable, SyncContext } from "./types.ts";
+import type { FetchMissReason, FetchOneResult, Syncable, SyncContext } from "./types.ts";
 
 /** How long a targeted fetch will poll for a rate-limit token before answering `rate_limited`. */
 const ACQUIRE_TIMEOUT_MS = 5_000;
@@ -16,10 +16,10 @@ const MAX_ACQUIRE_POLL_ATTEMPTS = Math.ceil(ACQUIRE_TIMEOUT_MS / RATE_LIMIT_POLL
 
 export type TargetedFetchOutcome =
   | { readonly status: "indexed"; readonly itemId: string }
-  | { readonly status: "not_found" }
+  | { readonly status: "not_found"; readonly reason: FetchMissReason }
   | { readonly status: "unsupported_url" }
   | { readonly status: "no_targeted_fetch"; readonly service: string }
-  | { readonly status: "not_configured" }
+  | { readonly status: "not_configured"; readonly service?: string }
   | { readonly status: "rate_limited" };
 
 export interface TargetedFetchDeps {
@@ -106,10 +106,15 @@ function queryStrippedCanonical(canonicalUrl: string): string {
  * Calls `fetchOne` with the canonicalized URL (rung 1). If and only if that answers
  * `unsupported_url` — meaning the connector's `$`-anchored regex rejected it before making any
  * outbound call — retries once with ALL query params stripped (rung 2). Never retries on
- * `not_found`: that attempt already made a real request, so trying again would double it. At most
- * one attempt ever reaches the network, because `unsupported_url` MUST be returned before any
- * outbound request (a contract stated on `Syncable.fetchOne` in `sync/types.ts`, since this retry
- * depends on it).
+ * `not_found`: the behaviour is still correct — a second attempt cannot succeed where the first
+ * did not, since a query-stripped retry changes nothing about a missing credential, an
+ * unauthorized/absent item, or an unreachable/erroring provider — but NOT because every
+ * `not_found` attempt made a real request, which is no longer true. `reason: "no_credential"`
+ * returns before any outbound call, exactly like `unsupported_url` does; the two arms differ in
+ * what a caller should do next (a URL-shape retry can't help either one), not in whether a request
+ * was made. At most one attempt ever reaches the network, because `unsupported_url` MUST be
+ * returned before any outbound request (a contract stated on `Syncable.fetchOne` in
+ * `sync/types.ts`, since this retry depends on it).
  */
 async function fetchOneWithRetry(
   fetchOne: NonNullable<Syncable["fetchOne"]>,
@@ -170,12 +175,19 @@ async function acquireWithinTimeout(
  * Order of operations, all fail-closed:
  *   1. Parse the URL and pin its scheme: `https:` always proceeds; `http:` proceeds only when it
  *      is exactly a service's own configured (self-hosted) origin, never caller-chosen.
- *   2. Resolve the host against the derived fetch-host boundary. A miss is `not_configured`.
- *   3. Look up the registered connector for that service, and its `fetchOne`.
+ *   2. Resolve the host against the derived fetch-host boundary. A miss is a bare `not_configured`
+ *      — there is no service to name yet at this point.
+ *   3. Look up the registered connector for that service, and its `fetchOne`. A miss here is ALSO
+ *      `not_configured`, but — unlike step 2's — names the `service`, since the boundary already
+ *      resolved one.
  *   4. Acquire a rate-limit token from the SAME bucket the scheduler uses, polling the
  *      non-blocking `tryAcquire` (bounded by a timeout) rather than the blocking `acquire`. A
  *      timeout returns `rate_limited` and appends NOTHING — `fetchOne` deterministically never
- *      runs past this point, so there is nothing to record.
+ *      runs past this point, so there is nothing to record. NOTE `rate_limited` has a SECOND
+ *      provenance: a connector's `fetchOne` returns it for a provider 429, and that one DOES
+ *      carry an appended row, because the request genuinely left the machine. Both are correct
+ *      for I29 — the ledger records ONLY real egress in both cases — so do not read this arm as
+ *      "no egress row".
  *   5. Append ONE `sync` egress row. A throw here aborts — no row, no fetch. Deliberately AFTER
  *      the acquire (not before it): appending before a rate-limit timeout would have recorded
  *      `authorized` egress for a call that never left the machine — still fail-closed either way,
@@ -225,7 +237,10 @@ export async function targetedFetch(
 
   const syncable = deps.syncableFor(service);
   if (syncable === undefined) {
-    return { status: "not_configured" };
+    // The boundary already resolved a service here, so naming it is a fact, not a
+    // guess. The host-miss return above stays bare: there is genuinely nothing to
+    // name, and guessing is what the boundary exists to refuse.
+    return { status: "not_configured", service };
   }
   const fetchOne = syncable.fetchOne;
   if (fetchOne === undefined) {

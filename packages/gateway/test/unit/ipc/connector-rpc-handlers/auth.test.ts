@@ -20,6 +20,12 @@ function makeCtx(
     },
     syncScheduler: undefined,
     connectorMesh: undefined,
+    // Task 3 wires a real credential probe in front of every write for
+    // github/gitlab/bitbucket/jenkins/jira. `null` means "no probe
+    // registered" — it leaves `verified` at its pre-existing default and
+    // keeps this suite offline/deterministic instead of hitting the real
+    // provider APIs with fixture tokens.
+    runCredentialProbe: async () => null,
   };
 }
 

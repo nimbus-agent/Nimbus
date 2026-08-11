@@ -910,9 +910,24 @@ async function runConnectorAuth(tail: string[]): Promise<void> {
   const normalized = service.trim().toLowerCase().replaceAll("-", "_");
   applyConnectorAuthParamsForService(normalized, params, f);
   const res = await withIpc((c) =>
-    c.call<{ ok: boolean; serviceId: string; scopesGranted: string[] }>("connector.auth", params),
+    c.call<{
+      ok: boolean;
+      serviceId: string;
+      scopesGranted: string[];
+      verified?: "verified" | "unverified" | null;
+    }>("connector.auth", params),
   );
-  console.log(`Signed in: ${res.serviceId}`);
+  // Report only what was actually checked. "Signed in" claimed more than the
+  // command ever verified — for the connectors with no probe it would keep
+  // claiming it.
+  if (res.verified === "verified") {
+    console.log(`Verified: ${res.serviceId}`);
+  } else if (res.verified === "unverified") {
+    console.log(`Stored: ${res.serviceId} (NOT verified — the provider did not confirm it)`);
+    console.log(`Run \`nimbus connector auth ${res.serviceId}\` again to retry verification.`);
+  } else {
+    console.log(`Stored: ${res.serviceId} (not verified)`);
+  }
   const vaultPatServices = new Set([
     "github",
     "gitlab",
