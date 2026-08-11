@@ -7,7 +7,7 @@ import {
   createStubVault,
   syncTestContext,
 } from "./connector-sync-test-helpers.ts";
-import { enrichFallbackPrTitles } from "./github-sync.ts";
+import { enrichPrDetail, selectPrEnrichCandidates } from "./github-sync.ts";
 
 function seedPrRow(
   db: ReturnType<typeof createMemoryIndexDb>,
@@ -15,6 +15,7 @@ function seedPrRow(
   num: number,
   title: string,
   modifiedAt: number,
+  extraMetadata: Record<string, unknown> = {},
 ): void {
   upsertIndexedItem(db, {
     service: "github",
@@ -25,7 +26,7 @@ function seedPrRow(
     url: null,
     canonicalUrl: null,
     modifiedAt,
-    metadata: { number: num, repo: repoFull },
+    metadata: { number: num, repo: repoFull, ...extraMetadata },
     syncedAt: modifiedAt,
   });
 }
@@ -41,12 +42,12 @@ function titleOf(db: ReturnType<typeof createMemoryIndexDb>, externalId: string)
   return row.title;
 }
 
-describe("enrichFallbackPrTitles", () => {
+describe("enrichPrDetail", () => {
   test("enriches only fallback-titled PRs, newest-first, capped at 10", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxFor(db);
     seedPrRow(db, "acme/app", 1, "PR #1", 1000); // fallback -> enrich
-    seedPrRow(db, "acme/app", 2, "Real title", 2000); // not fallback -> skip
+    seedPrRow(db, "acme/app", 2, "Real title", 2000, { additions: 5, deletions: 2 }); // real title + stats -> skip
     const fetchImpl = ((): Promise<Response> =>
       Promise.resolve(
         new Response(
@@ -55,7 +56,7 @@ describe("enrichFallbackPrTitles", () => {
         ),
       )) as unknown as typeof fetch;
 
-    const n = await enrichFallbackPrTitles(ctx, "pat", 3000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 3000, fetchImpl);
 
     expect(n).toBe(1);
     expect(titleOf(db, "acme/app#1")).toBe("Fix the retry loop");
@@ -69,20 +70,20 @@ describe("enrichFallbackPrTitles", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("nope", { status: 404 }))) as unknown as typeof fetch;
 
-    const n = await enrichFallbackPrTitles(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
 
     expect(n).toBe(0);
     expect(titleOf(db, "acme/app#9")).toBe("PR #9");
   });
 
-  test("returns 0 when there are no fallback-titled rows", async () => {
+  test("returns 0 when there are no PRs needing enrichment", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxFor(db);
-    seedPrRow(db, "acme/app", 3, "Add retry backoff", 1000);
+    seedPrRow(db, "acme/app", 3, "Add retry backoff", 1000, { additions: 5, deletions: 2 });
     const fetchImpl = (() =>
       Promise.resolve(new Response("{}", { status: 200 }))) as unknown as typeof fetch;
 
-    const n = await enrichFallbackPrTitles(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
 
     expect(n).toBe(0);
   });
@@ -105,7 +106,7 @@ describe("enrichFallbackPrTitles", () => {
       );
     }) as unknown as typeof fetch;
 
-    const n = await enrichFallbackPrTitles(ctx, "pat", 20000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 20000, fetchImpl);
 
     expect(n).toBe(10);
     expect(fetched).toHaveLength(10);
@@ -122,9 +123,7 @@ describe("enrichFallbackPrTitles", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("nope", { status: 401 }))) as unknown as typeof fetch;
 
-    await expect(enrichFallbackPrTitles(ctx, "pat", 2000, fetchImpl)).rejects.toThrow(
-      /unauthorized/,
-    );
+    await expect(enrichPrDetail(ctx, "pat", 2000, fetchImpl)).rejects.toThrow(/unauthorized/);
   });
 
   test("a rate-limited (403, no remaining) response propagates and aborts the tick", async () => {
@@ -137,16 +136,19 @@ describe("enrichFallbackPrTitles", () => {
         new Response("nope", { status: 403, headers: { "x-ratelimit-remaining": "0" } }),
       )) as unknown as typeof fetch;
 
-    await expect(enrichFallbackPrTitles(ctx, "pat", 3000, fetchImpl)).rejects.toThrow(
-      /rate limited/,
-    );
+    await expect(enrichPrDetail(ctx, "pat", 3000, fetchImpl)).rejects.toThrow(/rate limited/);
     expect(titleOf(db, "acme/app#7")).toBe("PR #7");
   });
 
-  test("a real title that merely starts with the fallback shape is not clobbered", async () => {
+  // Note: a title LIKE 'PR #%' (e.g. literally starting with that text) is now always
+  // treated as fallback-shaped, even with stats present — the exact-match JS filter that
+  // used to guard against this was intentionally removed (see selectPrEnrichCandidates'
+  // docstring). This fixture uses a title that does not collide with that prefix, so it
+  // still verifies that a real title with stats already captured is left untouched.
+  test("a real title with stats already captured is not clobbered", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxFor(db);
-    seedPrRow(db, "acme/app", 1, "PR #1 revert", 1000);
+    seedPrRow(db, "acme/app", 1, "Revert of PR #1", 1000, { additions: 5, deletions: 2 });
     const fetchImpl = (() =>
       Promise.resolve(
         new Response(JSON.stringify({ number: 1, title: "Fix the retry loop" }), {
@@ -154,10 +156,10 @@ describe("enrichFallbackPrTitles", () => {
         }),
       )) as unknown as typeof fetch;
 
-    const n = await enrichFallbackPrTitles(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
 
     expect(n).toBe(0);
-    expect(titleOf(db, "acme/app#1")).toBe("PR #1 revert");
+    expect(titleOf(db, "acme/app#1")).toBe("Revert of PR #1");
   });
 
   test("a malformed JSON response is skipped, not enriched", async () => {
@@ -167,7 +169,7 @@ describe("enrichFallbackPrTitles", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("not json", { status: 200 }))) as unknown as typeof fetch;
 
-    const n = await enrichFallbackPrTitles(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
 
     expect(n).toBe(0);
     expect(titleOf(db, "acme/app#8")).toBe("PR #8");
@@ -180,9 +182,86 @@ describe("enrichFallbackPrTitles", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("[1,2,3]", { status: 200 }))) as unknown as typeof fetch;
 
-    const n = await enrichFallbackPrTitles(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
 
     expect(n).toBe(0);
     expect(titleOf(db, "acme/app#10")).toBe("PR #10");
+  });
+});
+
+describe("selectPrEnrichCandidates", () => {
+  test("a PR with a real title but no stats is selected for enrichment", () => {
+    const db = createMemoryIndexDb();
+    const now = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#1",
+      title: "Add rate limiter", // NOT the `PR #1` fallback
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/app", number: 1 }, // no additions/deletions
+    });
+
+    const candidates = selectPrEnrichCandidates(db, 10);
+    expect(candidates.map((c) => c.externalId)).toEqual(["acme/app#1"]);
+    db.close();
+  });
+
+  test("a PR with stats already captured is not selected", () => {
+    const db = createMemoryIndexDb();
+    const now = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#1",
+      title: "Add rate limiter",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/app", number: 1, additions: 120, deletions: 30 },
+    });
+
+    expect(selectPrEnrichCandidates(db, 10)).toEqual([]);
+    db.close();
+  });
+
+  test("a fallback-titled PR is still selected even with stats", () => {
+    const db = createMemoryIndexDb();
+    const now = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#2",
+      title: "PR #2",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/app", number: 2, additions: 1, deletions: 1 },
+    });
+
+    expect(selectPrEnrichCandidates(db, 10).map((c) => c.externalId)).toEqual(["acme/app#2"]);
+    db.close();
+  });
+
+  test("selectPrEnrichCandidates never returns more than the limit", () => {
+    const db = createMemoryIndexDb();
+    const now = Date.now();
+    for (let i = 1; i <= 15; i += 1) {
+      upsertIndexedItem(db, {
+        service: "github",
+        type: "pr",
+        externalId: `acme/app#${String(i)}`,
+        title: `PR title ${String(i)}`,
+        bodyPreview: "",
+        modifiedAt: now + i,
+        syncedAt: now,
+        metadata: { repo: "acme/app", number: i },
+      });
+    }
+
+    expect(selectPrEnrichCandidates(db, 10)).toHaveLength(10);
+    db.close();
   });
 });

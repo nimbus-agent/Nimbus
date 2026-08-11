@@ -480,14 +480,32 @@ interface FallbackPrCandidate {
 
 const MAX_ENRICH_PER_TICK = 10;
 
-function selectFallbackPrCandidates(db: Database, limit: number): FallbackPrCandidate[] {
+/**
+ * Candidates for a pull-detail re-fetch. Two independent reasons:
+ *   1. the title is still the id-only `PR #<n>` fallback (the events feed omits
+ *      `title` on `PullRequestEvent` payloads), or
+ *   2. size statistics are missing — `additions`/`deletions`/`changed_files`/
+ *      `commits` exist only on the single-PR response, never on events or the
+ *      list endpoint.
+ *
+ * `json_extract` is used rather than a LIKE over the raw metadata blob so a PR
+ * body mentioning "additions" cannot mask a genuinely missing field. Guarded by
+ * `json_valid` because `json_extract` RAISES on malformed JSON, and one bad row
+ * would otherwise kill selection for every PR.
+ */
+export function selectPrEnrichCandidates(db: Database, limit: number): FallbackPrCandidate[] {
   const rows = db
     .query(
-      `SELECT external_id, title FROM item
-         WHERE service = 'github' AND type = 'pr' AND title LIKE 'PR #%'
+      `SELECT external_id, title, metadata FROM item
+         WHERE service = 'github' AND type = 'pr'
+           AND (
+             title LIKE 'PR #%'
+             OR NOT json_valid(metadata)
+             OR json_extract(metadata, '$.additions') IS NULL
+           )
          ORDER BY modified_at DESC LIMIT ?`,
     )
-    .all(limit * 3) as { external_id: string; title: string }[]; // over-select; JS filter is exact
+    .all(limit * 3) as { external_id: string; title: string; metadata: string }[];
   const out: FallbackPrCandidate[] = [];
   for (const r of rows) {
     const hash = r.external_id.lastIndexOf("#");
@@ -495,7 +513,6 @@ function selectFallbackPrCandidates(db: Database, limit: number): FallbackPrCand
     const repoFull = r.external_id.slice(0, hash);
     const num = Number.parseInt(r.external_id.slice(hash + 1), 10);
     if (!Number.isFinite(num)) continue;
-    if (r.title !== `PR #${String(num)}`) continue; // exact fallback only
     out.push({ externalId: r.external_id, repoFull, num });
     if (out.length >= limit) break;
   }
@@ -503,18 +520,20 @@ function selectFallbackPrCandidates(db: Database, limit: number): FallbackPrCand
 }
 
 /**
- * Re-fetches pull-request detail for any indexed `pr` row still carrying the
- * id-only `PR #<num>` fallback title (the GitHub events feed omits `title`
- * on `PullRequestEvent` payloads). Processes up to `MAX_ENRICH_PER_TICK`
- * rows, newest-first, sequentially through the shared rate limiter.
+ * Re-fetches pull-request detail for any indexed `pr` row that either still
+ * carries the id-only `PR #<num>` fallback title (the GitHub events feed omits
+ * `title` on `PullRequestEvent` payloads) or is missing size statistics
+ * (`additions`/`deletions`/`changed_files`/`commits`, which exist only on the
+ * single-PR response). Processes up to `MAX_ENRICH_PER_TICK` rows, newest-first,
+ * sequentially through the shared rate limiter.
  */
-export async function enrichFallbackPrTitles(
+export async function enrichPrDetail(
   ctx: SyncContext,
   pat: string,
   now: number,
   fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
-  const candidates = selectFallbackPrCandidates(ctx.db, MAX_ENRICH_PER_TICK);
+  const candidates = selectPrEnrichCandidates(ctx.db, MAX_ENRICH_PER_TICK);
   let enriched = 0;
   for (const c of candidates) {
     await ctx.rateLimiter.acquire("github");
@@ -540,6 +559,13 @@ export async function enrichFallbackPrTitles(
     }
     upsertPr(ctx, c.repoFull, pr, now);
     enriched += 1;
+  }
+  const remaining = selectPrEnrichCandidates(ctx.db, MAX_ENRICH_PER_TICK + 1).length;
+  if (remaining > MAX_ENRICH_PER_TICK) {
+    ctx.logger.info(
+      { service: SERVICE_ID, enriched, remainingAtLeast: MAX_ENRICH_PER_TICK },
+      "PR detail enrichment has more candidates queued for the next tick",
+    );
   }
   return enriched;
 }
@@ -629,14 +655,14 @@ async function syncGithubUserEvents(
     }
   }
 
-  // Best-effort title enrichment for fallback-titled PRs (existing rows + this tick's title-less events).
+  // Best-effort detail enrichment for fallback-titled or stats-missing PRs (existing rows + this tick's events).
   try {
-    await enrichFallbackPrTitles(ctx, pat, now);
+    await enrichPrDetail(ctx, pat, now);
   } catch (err) {
     if (err instanceof RateLimitError) throw err; // honor backoff
     ctx.logger.warn(
       { service: SERVICE_ID, err: String(err) },
-      "PR title enrichment pass failed (non-fatal)",
+      "PR detail enrichment pass failed (non-fatal)",
     );
   }
 
