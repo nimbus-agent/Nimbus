@@ -79,7 +79,11 @@ username), overridable by `--person <id>`. An unresolved subject produces a
 1. **Authored PRs** — count, merged share, size distribution where stats exist.
 2. **Reviewed PRs** — count, and the approve / changes-requested split from the review item's state.
 3. **Tickets** — opened directly, and closed via an authored PR's `resolves` edge.
-4. **Ownership** — services and directories carried, weighted by blame share.
+4. **Ownership** — services and directories carried, weighted by blame share. Reads the
+   precomputed `person --owns--> …` edges; it does **not** touch `git_blame_line` at request time,
+   so the expensive work stays in the ownership pass. But `maxOwnersPerPath` bounds owners per path,
+   not paths per owner, so a long-tenured person can carry thousands of edges: the lane aggregates
+   to directory and service level and applies an explicit `LIMIT`, rather than listing files.
 5. **Decisions** — authored, via the new `source_item_id → author_id` join.
 6. **Writing** — docs, notes and messages authored.
 
@@ -151,6 +155,22 @@ sources it drew on.
 The output may be shown to someone with authority over the reader's compensation. Each rule exists
 because the alternative reads as a stronger claim than the data supports.
 
+**A0. Ownership counts only mapped git identities, and says so.** `ownership/owner-identity.ts`
+`resolveOwner` maps a blame email to a `person` row via `findPersonByCanonicalEmail`; an email that
+does not match yields a `git:<email>` entity that is **never inserted into the `person` table**. So
+the `owns` graph mixes person-keyed and `git:`-keyed entities, and any work committed under an
+unmapped alias — a second machine, an old address, a GitHub `noreply` — is attributed elsewhere and
+would silently vanish from this brief. An undercount in a document used to argue for a raise is the
+worst failure this agent can have.
+
+The lane therefore states that ownership counts only blame lines whose git email maps to a known
+person. For the SELF case it goes further and is precise rather than generic: `resolveSelfPerson`
+already resolves through `git config user.email`, so the lane checks whether a `git:<that email>`
+entity exists in the graph and, if it does, reports it as a named gap — "some of your ownership is
+recorded under an unmapped git identity and is not counted here", with the remediation pointing at
+the person record. That converts a silent zero into an actionable statement. For a `--person`
+subject the alias set is unknown, so only the general caveat applies.
+
 **A. Blame is not commits.** There is no commit attribution (§ 2). The ownership lane reports
 *surviving lines you wrote in files you own*, labelled that way — never "commits authored". A line
 count is not a productivity measure and the brief does not present it as one.
@@ -171,7 +191,9 @@ prevent.
 **E. The subject is named.** With `--person`, the brief states whose evidence it contains and that it
 is built only from locally indexed data.
 
-**F. Sources are listed**, including whether personal documents were configured in.
+**F. Sources are listed**, including whether personal documents were configured in. When none are
+configured the brief says so once and names the config key, so an empty personal-sources section
+reads as "not enabled" rather than "nothing found" — the same distinction rule as § 5.D.
 
 ---
 
@@ -202,6 +224,12 @@ repo's fixtures are hand-authored and prove nothing. Verify against the live API
 - **`agents.negotiate` is absent from `HTTP_AGENT_NAMES`** — red-proved by removing the exclusion
   and confirming the test fails. `HTTP_AGENT_NAMES` is derived, so without this test the exclusion
   could be dropped in a refactor and the method would be exposed silently.
+- **And an HTTP-level test** driving `POST /v1/agents/negotiate` against the test server, asserting
+  the request is rejected rather than served. The list-membership test above proves the name is
+  absent from a derived array; this one proves the route actually refuses. Keep both — they fail for
+  different reasons.
+- **Unmapped-identity gap note (§ 5.A0)** — seed blame lines under an email with no `person` row,
+  assert the ownership lane reports the gap rather than an empty section.
 - **Gates:** `preflight:fast` per change; the Linux-authoritative coverage floor via the full
   `build-lcov.sh` before pushing — **not** a scoped per-directory istanbul run, which under-reports
   badly; and `typecheck:tests`, reading its "N new" line.
@@ -213,7 +241,8 @@ repo's fixtures are hand-authored and prove nothing. Verify against the live API
 1. The exact `review` item field carrying approve / changes-requested, and whether it is populated on
    every review event or only some — the lane's split depends on it.
 2. Whether `decision_record.source_item_id` always resolves to an `item` row with a non-null
-   `author_id`, or whether some extraction sources leave it null — this determines whether the
-   decisions lane needs its own gap note.
+   `author_id`, or whether some extraction sources leave it null. Either way the decisions lane emits
+   a SPECIFIC gap note for unattributable decisions ("N decisions could not be attributed to an
+   author") rather than folding them into a general failure or dropping them from the count.
 3. Whether `ownership_pass_state` exposes a last-run timestamp the brief can cite, so a stale
    ownership lane can say so rather than silently reporting old shares.
