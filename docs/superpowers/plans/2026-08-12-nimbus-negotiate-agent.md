@@ -413,22 +413,74 @@ distinguishable from a lane that ran and found nothing (`0`). Declare each lane 
 in `NegotiateBrief` and initialise it to `null` before the coordinator runs. Later tasks add their
 lane fields under that same rule.
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [ ] **Step 9: Register the brief with the deterministic renderer**
+
+**Task 1 cannot compile without this.** `agents/_lib/synthesize.ts` defines `SynthInput` as a CLOSED
+union (`:52`) and `deterministicRender` ends in `assertNeverBrief(brief)` (`:99`). `toolNameFor`
+(`:102`) is the same shape. So adding a brief kind requires three edits there, and omitting them is a
+typecheck failure, not a silent gap:
+
+1. add `NegotiateBrief` to the `SynthInput` union;
+2. add `if (brief.kind === "negotiate") return renderNegotiate(brief);` to `deterministicRender`;
+3. add `if (brief.kind === "negotiate") return "agents.negotiate";` to `toolNameFor`.
+
+Write `renderNegotiate` beside the existing `render*` functions, following their style. **This
+function is the deliverable** — the Markdown a person reads and may hand to a manager. Task 1's
+version renders only what Task 1 produces: the subject (naming them explicitly when
+`subject.isOther`), the window and generation time, the gap notes, and the unconditional
+`unavailableEvidence` list. **Each later lane task extends it**, and a lane whose field is `null`
+renders as "could not be computed", never as `0`.
+
+Add a test asserting the no-LLM path produces usable Markdown:
+
+```typescript
+test("renders deterministically with no LLM configured", async () => {
+  const db = freshDb();
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES ('github:acme/app#1', 'github', 'pr', 'acme/app#1', 'noop', 0, 0)`,
+  );
+  let captured: { brief: string } | undefined;
+  await emitNegotiateBrief(
+    { mePersonIdOverride: "person:me" },
+    {
+      db,
+      sessionId: "s1",
+      notify: (method, params) => {
+        if (method === "negotiate.briefReady") captured = params as { brief: string };
+      },
+    },
+  );
+  expect(captured?.brief ?? "").toContain("incidents resolved");
+  db.close();
+});
+```
+
+`synthesize` already falls back to `deterministicRender` when `llm` is undefined, when it returns
+empty, and when it throws (`synthesize.ts:132-154`) — this test pins that the negotiate path
+actually reaches it, which matters because the no-LLM path is a documented trap in this codebase.
+
+- [ ] **Step 10: Run the tests to verify they pass**
 
 Run: `bun test packages/gateway/src/agents/negotiate.test.ts`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
-- [ ] **Step 10: Preflight and commit**
+- [ ] **Step 11: Preflight and commit**
 
 ```bash
 bun run typecheck && bun run preflight:fast && \
-git add packages/gateway/src/agents/negotiate.ts packages/gateway/src/agents/_lib/negotiate-types.ts packages/gateway/src/agents/negotiate.test.ts && \
-git commit -m "feat(agents): negotiate shell, absent-evidence note, lane-failure gaps"
+git add packages/gateway/src/agents/ && \
+git commit -m "feat(agents): negotiate shell, deterministic render, absent-evidence note"
 ```
 
 ---
 
 ## Task 2: PR lanes — authored and reviewed
+
+> **Every lane task from here also extends `renderNegotiate`** in `agents/_lib/synthesize.ts` with
+> its own section. A lane field left at `null` — meaning the lane failed — must render as "could not
+> be computed", never as `0`. That distinction is the whole point of the nullable fields Task 1
+> introduced, and it is lost the moment a renderer prints `?? 0`.
 
 **Files:**
 
@@ -635,6 +687,14 @@ function laneReviewedPrs(db: Database, personId: string, sinceMs: number): Negot
 ```
 
 **`json_valid(i.metadata)` in the WHERE clause is required**, not decorative: `json_extract` raises `SQLiteError: malformed JSON` on unparseable text, and an unguarded call in a WHERE clause kills the query for every row, not just the bad one. Measured on bun 1.3.14 / SQLite 3.53.0 — do not remove it.
+
+**On indexes, and why this plan adds none.** `item` carries indexes on `service`, `type`,
+`modified_at` and `resolve_key` — **not** on `author_id` (verified). So the reviewed-PR and writing
+lanes filter on an unindexed column after an indexed narrowing. That is deliberate for now: adding
+an index means a migration, which this plan forbids, and the lanes narrow hard first
+(`service = 'github' AND type = 'review'`) before any JSON parsing, so the row set reaching
+`json_extract` is small on a personal index. If profiling on a large index shows otherwise, an
+`item(author_id)` index is a separate, deliberate migration — not something to slip into this PR.
 
 - [ ] **Step 5: Run to verify the tests pass**
 
@@ -904,7 +964,33 @@ function detectUnmappedGitIdentity(db: Database, gitEmail: string | null): GapNo
 }
 ```
 
-Call `detectUnmappedGitIdentity` only when the subject resolved via `git` (`subject.source === "git"`) or when a git email is otherwise known — for an `explicit` `--person` subject the alias set is unknowable, so skip it and rely on the standing caveat rendered from `brief.ownership`.
+Call `detectUnmappedGitIdentity` only when the subject resolved via `git` (`subject.source === "git"`)
+or when a git email is otherwise known — for an `explicit` `--person` subject the alias set is
+unknowable.
+
+**For the `--person` case, report a fact, never a guess.** Add a count of `git:`-prefixed owner
+entities present in the index:
+
+```typescript
+function countUnmappedOwnerIdentities(db: Database): number {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM graph_entity
+        WHERE type = 'person' AND external_id LIKE 'git:%'`,
+    )
+    .get() as { n: number };
+  return row.n;
+}
+```
+
+Surface it on `brief.ownership` as `unmappedIdentitiesInIndex: number`, rendered as "N git identities
+in this index are not mapped to a person; ownership attributed to them is not counted here."
+
+**Do NOT attempt to match those entities to the subject by name or email substring.** It was
+suggested, and it is the wrong trade here: a heuristic that guesses which aliases belong to a person
+produces attribution errors in a document that may influence someone's compensation, and a wrong
+attribution is worse than an acknowledged gap. The count is a true statement about the index; a
+substring match would be a claim about a person.
 
 - [ ] **Step 5: Run to verify the tests pass**
 
@@ -1083,6 +1169,15 @@ export const DEFAULT_NIMBUS_NEGOTIATE_TOML: NimbusNegotiateToml = { personalSour
 
 Parse `personal_sources` as a string array using whichever array helper the file already uses for
 list-valued keys — **check the file and reuse it; do not hand-roll a parser.**
+
+**Two malformed-input rules, both fail-safe toward excluding:**
+
+- **Non-string or blank entries are dropped at parse time**, not passed through to a query. Add a
+  test: `personal_sources = ["obsidian", "", 42]` yields `["obsidian"]`.
+- **An unrecognised service name needs no special handling and must not throw.** The lane uses it in
+  a bound `IN (...)` list, so a service that is not configured simply matches no rows. That is the
+  correct behaviour — a typo silently includes nothing rather than silently including everything.
+  Add a test proving a bogus service name yields zero extra rows and no error.
 
 - [ ] **Step 4: Write the failing writing-lane test**
 
