@@ -664,9 +664,17 @@ function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
 }
 
 /**
- * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring.
- * `unattributable` renders unconditionally alongside `authored`, never folded into it or
- * dropped: both counts are load-bearing, not just the attributed one (spec § 8.2).
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. Same
+ * disambiguation problem as `renderNegotiateOwnership`'s `unmappedIdentitiesInIndex`
+ * (Task 4): `unattributable` is a fact about the INDEX (decisions mined from a source —
+ * Obsidian, Teams — that records no author at all, or whose author is someone other than
+ * the subject), never an attribution to the subject. Printed next to `authored` with no
+ * disambiguating text, a reader (or their manager) could misread "N authored, M
+ * unattributable" as "N + M decisions, M just not linked to me" — the undercount failure
+ * inverted into an overstatement, which is worse (spec § 8.2, Task 5 fix-round-1). The
+ * line must therefore read as "N decisions attributed to you; M decisions exist in the
+ * index with no attributable author, not counted above and not necessarily yours" —
+ * matching `renderNegotiateOwnership`'s "attributed to them is not counted here" phrasing.
  */
 function renderNegotiateDecisions(d: NegotiateDecisions | null): string {
   if (d === null) {
@@ -675,9 +683,9 @@ function renderNegotiateDecisions(d: NegotiateDecisions | null): string {
   const lines = [
     "## Decisions",
     "",
-    `- ${String(d.authored)} decision(s) authored, ${String(
-      d.unattributable,
-    )} unattributable (no indexed author)`,
+    `- ${String(d.authored)} decision(s) attributed to you`,
+    `- ${String(d.unattributable)} decision(s) in this index have no indexed author and are ` +
+      "not counted above — they are not necessarily yours",
   ];
   return lines.join("\n");
 }

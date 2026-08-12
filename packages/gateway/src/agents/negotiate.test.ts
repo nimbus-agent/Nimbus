@@ -489,6 +489,15 @@ test("decisions counts authored and reports unattributable separately", async ()
 
   expect(brief.decisions?.authored).toBe(1);
   expect(brief.decisions?.unattributable).toBe(1);
+
+  // The undercount failure inverted: `unattributable` must never read as work that might
+  // belong to the subject — the rendered line has to say it is an index-wide fact, not
+  // part of their total (fix round 1). Mirrors the ownership lane's
+  // "attributed to them is not counted here" disambiguation.
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("1 decision(s) attributed to you");
+  expect(markdown).toContain("not counted above");
+  expect(markdown).toContain("not necessarily yours");
   db.close();
 });
 
