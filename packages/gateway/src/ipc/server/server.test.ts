@@ -339,6 +339,33 @@ describe("createIpcServer — RPC dispatch arms", () => {
     expect(res.result !== undefined || res.error !== undefined).toBe(true);
   });
 
+  test("workflow.cancel reaches createWorkflowCancelHandler", async () => {
+    server = createIpcServer({
+      listenPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+    });
+    await server.start();
+
+    // This harness dispatches each connection under a server-assigned clientId
+    // that the test has no way to pre-register a run under, so nothing here
+    // can be a live match. That still proves the RPC reaches the per-client-
+    // scoped handler rather than falling into the workflow.* fallthrough: an
+    // unmatched foreign id resolves to `{ cancelled: false }`, not a
+    // method-not-found error.
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "workflow.cancel",
+        params: { streamId: "wf-route-1" },
+      })}\n`,
+    );
+    const res = JSON.parse(line) as { result?: unknown; error?: unknown };
+    expect(res.result).toEqual({ cancelled: false });
+  });
+
   test("engine.getSessionTranscript without a localIndex throws -32603", async () => {
     server = createIpcServer({
       listenPath,

@@ -146,6 +146,7 @@ export async function main(): Promise<void> {
       stream: ctx.stream,
       sendChunk: ctx.sendChunk,
       ...(ctx.paramsOverride !== undefined && { paramsOverride: ctx.paramsOverride }),
+      ...(ctx.signal !== undefined && { signal: ctx.signal }),
     }),
   );
 

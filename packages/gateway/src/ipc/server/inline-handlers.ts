@@ -17,6 +17,7 @@ import type { IndexSearchQuery } from "../../index/local-index.ts";
 import type { AgentInvokeContext } from "../agent-invoke.ts";
 import { type AgentInvokeContextLike, createAskStreamHandler } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
+import { workflowRegistryKey } from "../workflow-cancel.ts";
 import type { WorkflowRunContext } from "../workflow-invoke.ts";
 import type { ServerCtx } from "./context.ts";
 import { RpcMethodError } from "./rpc-error.ts";
@@ -132,6 +133,7 @@ function buildWorkflowRunContext(
   clientId: string,
   session: ClientSession,
   params: unknown,
+  signal: AbortSignal,
 ): { ctx: WorkflowRunContext; sessionId: string | undefined; streamId: string | undefined } {
   const rec = asRecord(params);
   const workflowName = requireNonEmptyRpcString(rec, "name");
@@ -152,6 +154,7 @@ function buildWorkflowRunContext(
     sendChunk: (text: string) => {
       sendAgentChunkIfStreaming(session, stream, text, streamId);
     },
+    signal,
   };
   if (sessionId !== undefined) ctx.sessionId = sessionId;
   if (agent !== undefined) ctx.agent = agent;
@@ -173,7 +176,27 @@ export async function dispatchWorkflowRunRpc(
   if (handler === undefined) {
     throw new RpcMethodError(-32603, "Workflow runner is not configured");
   }
-  const { ctx: workflowCtx, sessionId } = buildWorkflowRunContext(clientId, session, params);
+  const ac = new AbortController();
+  const {
+    ctx: workflowCtx,
+    sessionId,
+    streamId,
+  } = buildWorkflowRunContext(clientId, session, params, ac.signal);
+
+  // The id is supplied by the CLIENT: workflow.run resolves only when the run
+  // ends, so a server-minted id could never reach the caller in time to cancel.
+  // That makes the key composite — a bare id is shared across every session on
+  // this registry, so one client could otherwise abort another's run.
+  const registryKey = streamId === undefined ? undefined : workflowRegistryKey(clientId, streamId);
+  if (registryKey !== undefined) {
+    if (ctx.streamRegistry.has(registryKey)) {
+      throw new RpcMethodError(
+        -32602,
+        "workflow.run: streamId is already in use by a running workflow for this client",
+      );
+    }
+    ctx.streamRegistry.register(registryKey, ac);
+  }
 
   try {
     const requestStore: AgentRequestContext = {};
@@ -186,6 +209,10 @@ export async function dispatchWorkflowRunRpc(
       throw new RpcMethodError(-32000, e.message);
     }
     throw e;
+  } finally {
+    if (registryKey !== undefined) {
+      ctx.streamRegistry.unregister(registryKey);
+    }
   }
 }
 

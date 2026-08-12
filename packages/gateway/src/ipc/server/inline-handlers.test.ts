@@ -10,6 +10,7 @@ import { createMockVault } from "../../vault/mock.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
+import { workflowRegistryKey } from "../workflow-cancel.ts";
 import type { WorkflowRunContext } from "../workflow-invoke.ts";
 import type { ServerCtx } from "./context.ts";
 import {
@@ -417,7 +418,7 @@ describe("dispatchWorkflowRunRpc", () => {
       localIndex: makeIndex(),
       workflowRunHandler: async (c: unknown) => {
         captured = c as WorkflowRunContext;
-        return { runId: "r1", dryRun: false, stepResults: [] };
+        return { runId: "r1", status: "done", dryRun: false, stepResults: [] };
       },
     });
     const { session, notifications } = makeSession();
@@ -432,6 +433,95 @@ describe("dispatchWorkflowRunRpc", () => {
       method: "agent.chunk",
       params: { streamId: "wf-sid-1", text: "step output" },
     });
+  });
+
+  test("registers the run under a per-client key and unregisters when it finishes", async () => {
+    let seenDuringRun = false;
+    let captured: WorkflowRunContext | undefined;
+    const key = workflowRegistryKey("client-1", "wf-sid-2");
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async (c: unknown) => {
+        captured = c as WorkflowRunContext;
+        seenDuringRun = ctx.streamRegistry.has(key);
+        return { runId: "r1", status: "done", dryRun: false, stepResults: [] };
+      },
+    });
+    const { session } = makeSession();
+
+    await dispatchWorkflowRunRpc(ctx, "client-1", session, {
+      name: "nightly",
+      streamId: "wf-sid-2",
+    });
+
+    expect(seenDuringRun).toBe(true);
+    expect(captured?.signal).toBeDefined();
+    expect(ctx.streamRegistry.has(key)).toBe(false);
+    // The bare id is never a registry key.
+    expect(ctx.streamRegistry.has("wf-sid-2")).toBe(false);
+  });
+
+  test("two clients may use the same streamId without colliding", async () => {
+    const release: Array<() => void> = [];
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async () =>
+        await new Promise((resolve) => {
+          release.push(() =>
+            resolve({ runId: "r", status: "done", dryRun: false, stepResults: [] }),
+          );
+        }),
+    });
+    const { session } = makeSession();
+
+    const a = dispatchWorkflowRunRpc(ctx, "client-a", session, { name: "n", streamId: "same" });
+    const b = dispatchWorkflowRunRpc(ctx, "client-b", session, { name: "n", streamId: "same" });
+
+    expect(ctx.streamRegistry.has(workflowRegistryKey("client-a", "same"))).toBe(true);
+    expect(ctx.streamRegistry.has(workflowRegistryKey("client-b", "same"))).toBe(true);
+
+    for (const r of release) r();
+    await Promise.all([a, b]);
+    expect(ctx.streamRegistry.size()).toBe(0);
+  });
+
+  test("the same client reusing a live streamId is rejected", async () => {
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async () => await new Promise(() => {}),
+    });
+    const { session } = makeSession();
+
+    void dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "dupe" });
+
+    await expect(
+      dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "dupe" }),
+    ).rejects.toThrow(RpcMethodError);
+  });
+
+  test("unregisters even when the run throws", async () => {
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async () => {
+        throw new Error("boom");
+      },
+    });
+    const { session } = makeSession();
+
+    await expect(
+      dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "wf-sid-3" }),
+    ).rejects.toThrow("boom");
+    expect(ctx.streamRegistry.has(workflowRegistryKey("client-1", "wf-sid-3"))).toBe(false);
+  });
+
+  test("a run without a streamId registers nothing", async () => {
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async () => ({ runId: "r1", dryRun: false, stepResults: [] }),
+    });
+    const { session } = makeSession();
+    await dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "nightly" });
+    expect(ctx.streamRegistry.size()).toBe(0);
   });
 });
 

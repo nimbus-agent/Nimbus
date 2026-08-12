@@ -197,7 +197,7 @@ async function makeWorkflowRunCapture(workflowName: string): Promise<{
   let received: unknown = null;
   server.setWorkflowRunHandler(async (ctx) => {
     received = ctx;
-    return { runId: "abc", dryRun: ctx.dryRun, stepResults: [] };
+    return { runId: "abc", status: "done", dryRun: ctx.dryRun, stepResults: [] };
   });
   await server.start();
   return { server, listenPath, getReceived: () => received };
@@ -498,6 +498,7 @@ describe("ipc server integration", () => {
     });
     server.setWorkflowRunHandler(async (ctx) => ({
       runId: "run-test",
+      status: "done",
       dryRun: ctx.dryRun,
       stepResults: [{ label: "step-1", status: "preview", output: ctx.workflowName }],
     }));

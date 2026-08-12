@@ -53,6 +53,7 @@ import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchTribalRpc } from "../tribal-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
+import { createWorkflowCancelHandler } from "../workflow-cancel.ts";
 import {
   automationRpcSkipped,
   connectorRpcSkipped,
@@ -1351,6 +1352,10 @@ export async function tryDispatchAutomationRpc(
 ): Promise<unknown> {
   if (method === "workflow.run") {
     return dispatchWorkflowRunRpc(ctx, clientId, session, params);
+  }
+
+  if (method === "workflow.cancel") {
+    return createWorkflowCancelHandler(ctx.streamRegistry)(clientId, params);
   }
 
   if (
