@@ -65,11 +65,13 @@ function firstPageUrl(input: SentryIssuePassInput): string {
 /**
  * Resolve a `rel="next"` href against the URL it came from — RFC 8288 permits
  * a relative href, and an unresolved relative URL makes `fetch()` throw — and
- * reject a resolved URL whose host doesn't match `apiRoot`'s. The Link header
- * is server-supplied and every follow carries the bearer token, so an
- * unvalidated host would leak it to wherever the header points. A rejected or
- * unresolvable URL ends the walk exactly like a natural `results="false"` —
- * no error, just no more pages — with a warning logged for the operator.
+ * reject a resolved URL whose origin (scheme AND host) doesn't match
+ * `apiRoot`'s. The Link header is server-supplied and every follow carries
+ * the bearer token, so an unvalidated host would leak it to wherever the
+ * header points, and an unvalidated scheme would let a same-host
+ * `http://` downgrade send it over cleartext. A rejected or unresolvable URL
+ * ends the walk exactly like a natural `results="false"` — no error, just no
+ * more pages — with a warning logged for the operator.
  */
 function resolveNextUrl(
   rawNext: string | null,
@@ -84,16 +86,16 @@ function resolveNextUrl(
   } catch {
     return null;
   }
-  let apiHost: string;
+  let apiUrl: URL;
   try {
-    apiHost = new URL(apiRoot).host;
+    apiUrl = new URL(apiRoot);
   } catch {
     return null;
   }
-  if (resolved.host !== apiHost) {
+  if (resolved.host !== apiUrl.host || resolved.protocol !== apiUrl.protocol) {
     ctx.logger.warn(
-      { serviceId: "sentry", nextHost: resolved.host, expectedHost: apiHost },
-      "sentry sync: issues next link host mismatch — ending walk",
+      { serviceId: "sentry", nextOrigin: resolved.origin, expectedOrigin: apiUrl.origin },
+      "sentry sync: issues next link origin mismatch — ending walk",
     );
     return null;
   }

@@ -565,6 +565,47 @@ describe("sentry-sync — issue pass", () => {
     expect(q).toMatch(/^lastSeen:-1[12]\dd$/);
   });
 
+  // ===========================================================================
+  // ROUND 2, IMPORTANT: an established cursor must shrink the request window,
+  // or a caught-up connector re-walks the full 30-day window every tick for
+  // zero upserts (skip-not-stop still fetches/parses/maps rows it won't index).
+  // ===========================================================================
+
+  test("an established, caught-up cursor issues one request with a shrunken window, not the full 30d", async () => {
+    const lastSeenMs = Date.now() - 2 * 86_400_000; // recent: 2 days ago
+    const cursor = encodeCursor({ lastSeenMs });
+    fixture.fetchMock.respond("GET", ISSUES_RE, [], {
+      headers: { "content-type": "application/json" }, // no Link header: one page only
+    });
+    await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      cursor,
+    );
+    const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));
+    expect(issueCalls).toHaveLength(1);
+    const q = new URL(issueCalls[0]?.url ?? "https://x/").searchParams.get("query") ?? "";
+    expect(q).not.toBe("lastSeen:-30d");
+    const days = Number((/^lastSeen:-(\d+)d$/.exec(q) ?? [])[1] ?? Number.NaN);
+    expect(days).toBeGreaterThan(0);
+    expect(days).toBeLessThan(10); // well short of the 30-day floor
+  });
+
+  // Dedicated to this fix, distinct from the pre-existing status-guard test:
+  // confirms the shrink applies ONLY to an established cursor, never a cold
+  // start — a cold start has no `prev.lastSeenMs` to derive a window from.
+  test("a cold start (no cursor) still requests the full lastSeen:-30d window", async () => {
+    fixture.fetchMock.respond("GET", ISSUES_RE, [], {
+      headers: { "content-type": "application/json" },
+    });
+    await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      null,
+    );
+    const call = fixture.fetchMock.calls.find((c) => c.url.includes("/issues/"));
+    const q = new URL(call?.url ?? "https://x/").searchParams.get("query") ?? "";
+    expect(q).toBe("lastSeen:-30d");
+  });
+
   test("a row with an unparseable lastSeen is skipped, not defaulted", async () => {
     fixture.fetchMock.respond(
       "GET",
@@ -866,6 +907,34 @@ describe("sentry-sync — issue pass", () => {
     );
     const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));
     expect(issueCalls).toHaveLength(1); // never followed to evil.example.com
+    expect(res.hasMore).toBe(false); // treated as a complete walk, not a truncated one
+    const ids = fixture.db
+      .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE type = 'error_issue'")
+      .all()
+      .map((r) => r.external_id);
+    expect(ids).toEqual(["1"]); // page 1's own row is still indexed
+  });
+
+  // ROUND 2, MINOR: the host check alone would let a same-host http://
+  // downgrade through — the bearer token would then go out over cleartext.
+  test("an http-downgrade next href is rejected — the walk ends instead of following it", async () => {
+    fixture.fetchMock.respond(
+      "GET",
+      ISSUES_PAGE1_RE,
+      [sentryIssue("1", "2026-08-02T00:00:00.000Z")],
+      {
+        headers: {
+          "content-type": "application/json",
+          Link: '<http://sentry.io/api/0/organizations/test-org/issues/?cursor=C2>; rel="next"; results="true"',
+        },
+      },
+    );
+    const res = await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      null,
+    );
+    const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));
+    expect(issueCalls).toHaveLength(1); // never followed over http://
     expect(res.hasMore).toBe(false); // treated as a complete walk, not a truncated one
     const ids = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE type = 'error_issue'")

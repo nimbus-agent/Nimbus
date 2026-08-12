@@ -201,13 +201,28 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
         ctx.historyFloorMs !== undefined && Number.isFinite(ctx.historyFloorMs)
           ? ctx.historyFloorMs
           : now - initialSyncDepthDays * 86_400_000;
+      const windowFloorMs = now - initialSyncDepthDays * 86_400_000;
+      // An established cursor derives the window from ITSELF, not a fixed
+      // 30-day floor: skip-not-stop (the Critical fix) means every row at or
+      // below the cursor is still fetched, parsed and mapped even though none
+      // of them get indexed, so a caught-up connector that kept asking for
+      // the full 30 days would re-walk the entire window every tick for zero
+      // upserts. `Math.max` (not min) picks the NEWER of the two bounds: a
+      // recent cursor shrinks the request to a small delta so the walk
+      // terminates naturally, while an ancient cursor is still capped at the
+      // 30-day window rather than left unbounded. A RESUMED walk is
+      // unaffected — it starts from `resumeUrl`, which already carries its
+      // own params, and never rebuilds this URL unless the resume is
+      // rejected, in which case rebuilding with the shrunken window is
+      // exactly what's wanted.
+      const sinceMs = prev === null ? coldFloorMs : Math.max(prev.lastSeenMs, windowFloorMs);
 
       const issues = await syncSentryIssuePass({
         ctx,
         apiRoot,
         org,
         token,
-        sinceMs: prev === null ? coldFloorMs : now - initialSyncDepthDays * 86_400_000,
+        sinceMs,
         cursorLastSeenMs: prev?.lastSeenMs ?? null,
         now,
         maxPages: maxPagesPerSync,
