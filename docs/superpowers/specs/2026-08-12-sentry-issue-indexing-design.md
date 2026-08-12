@@ -115,6 +115,19 @@ cursor described here governs pass 2 alone.
 **`initialSyncDepthDays` moves 1 → 30.** One day is indefensible for an attribution
 substrate; it is only tolerable today because projects do not change.
 
+**How an operator widens that window.** `initialSyncDepthDays` is a hardcoded field on
+the `Syncable` interface (`sync/types.ts:117`), not user-configurable — there is no
+`nimbus.toml` key and no `connector_depth` involvement (that table governs body depth,
+not history). The one override that exists is `SyncContext.historyFloorMs`, a one-shot
+cold-start floor the scheduler sets for a single run when the owner runs
+`nimbus index rebody --since <days>`. It is **opt-in per connector**, and today only
+`jira-sync.ts` and `linear-sync.ts` read it.
+
+**Sentry opts in.** An attribution substrate is exactly the case the mechanism was built
+for — someone assembling a contribution brief needs more than 30 days of history, once,
+without a permanent widening of every routine sync. It overrides only the cold-start
+floor; an established cursor always wins, being more recent by construction.
+
 ### Item mapping
 
 ```text
@@ -172,6 +185,29 @@ Two items that both fail silently if missed:
    but that is a claim to be proven by a Mendeley regression test in the same commit,
    not asserted in review.
 
+**Replace the regex with a real link-value parser.** The current implementation is
+
+```ts
+const m = /<([^<>]+)>;\s*rel="next"/.exec(part.trim());
+```
+
+which requires `rel` to be the **first** parameter after the URL. RFC 8288 does not
+order link-params, and Sentry emits three of them. Measured against four header shapes:
+
+| Header | Current regex |
+| --- | --- |
+| `<url>; rel="next"; results="true"; cursor="…"` (as Sentry documents it) | matches |
+| `<url>; results="false"; rel="next"; cursor="…"` (same params, reordered) | **no match** |
+| `<url>; rel="next"` (Mendeley, RFC-5988) | matches |
+| two links, `previous` then `next` | matches |
+
+The reordered case fails *closed* — pagination stops early and under-fetches rather than
+looping — so it is not a correctness emergency today. But layering a `results` check on
+top of an order-dependent regex makes the stop condition depend on parameter order,
+which is the kind of coupling that produces an unreproducible bug. Parse each link-value
+into a URL plus a parameter map, then read `rel` and `results` from that map, defaulting
+`results` to `true` when the attribute is absent.
+
 ### Failure behaviour
 
 Every failure degrades to "fewer items indexed", never to a wrong count.
@@ -182,6 +218,48 @@ Every failure degrades to "fewer items indexed", never to a wrong count.
 - A row missing `id` or a parseable `lastSeen` → skipped, never defaulted. A defaulted
   timestamp would corrupt the cursor and silently truncate the next run's window.
 
+**Do not "optimise" this by checkpointing the cursor mid-run.** The suggestion is
+natural — a run that indexes pages 1-3 and fails on page 4 re-fetches those three pages
+next tick, which looks wasteful — but it is **unsafe given a descending scan**, and the
+failure it introduces is silent.
+
+The cursor is a high-water mark: it asserts *"everything with `lastSeen` greater than
+this is indexed."* The scan runs newest-first. So after a failure on page 4, pages 1-3
+(the newest slice) are indexed, while everything older than page 3 — down to the
+previous cursor — is not. Advancing the cursor to the newest `lastSeen` seen would
+assert that the un-fetched middle band is done, and the next run, starting from that
+mark, would never look at it again. That band is lost permanently, with no error and no
+gap in any count.
+
+Re-fetching three bounded pages on the next tick is the correct trade. A future
+implementer wanting to eliminate the rework should persist Sentry's **opaque page
+cursor** to resume mid-scan, not the `lastSeen` high-water mark — a different and larger
+design, and one that must first establish how long Sentry's cursors stay valid.
+
+### Token scope
+
+The org-wide issues endpoint needs **`event:read`** (or `event:write` / `event:admin`).
+This is a *different* scope from the one pass 1 already relies on: a token carrying only
+`project:read` lists projects successfully and then gets **403** on the issues endpoint.
+So an existing working Sentry install can be upgraded to this connector version and have
+pass 2 fail permanently while pass 1 keeps succeeding.
+
+Two further wrinkles worth stating, since both look like bugs from the outside:
+
+- **Organization Auth Tokens are not a fix.** They are intended for source-map upload in
+  CI, and an existing one's scope cannot be modified.
+- **A project-scoped token cannot reach this endpoint at all**, whatever else it holds.
+
+**Chosen behaviour: treat 403 as an ordinary non-OK response** — log a warning naming
+the required scope, index nothing, leave the cursor untouched. Deliberately **not**
+done here: distinguishing a permanent 403 from a transient failure, and falling back to
+per-project issue listing. Both are real gaps and both are recorded as follow-ups rather
+than silently absent. The consequence to accept knowingly is that a mis-scoped token
+produces a warning every sync interval and an empty `error_issue` index, with no
+surfaced error — the connector looks configured and returns nothing. Spec B's gap note
+is the natural place to make that visible, since it is the component that must explain
+an empty result to a user.
+
 ### Testing
 
 | Test | Why it exists |
@@ -191,6 +269,8 @@ Every failure degrades to "fewer items indexed", never to a wrong count.
 | Resolved issues are indexed | Red-prove by adding `is:unresolved` back into the `query` string and confirming resolved rows vanish |
 | Legacy `{ pass: 1 }` cursor decodes to cold start | Every existing install hits this path once |
 | Mendeley Link-header regression | The shared-helper change is only safe if proven |
+| Link params parse regardless of order | Pins the fix for the order-dependent regex; assert both `rel`-first and `results`-first shapes |
+| A 403 leaves the cursor untouched and indexes nothing | The mis-scoped-token path is the most likely real-world failure |
 | `assignedTo` survives into metadata unresolved | Spec B depends on it; nothing in Spec A reads it, so nothing else would catch its loss |
 
 New files must clear the coverage floor: **85% line / 80% branch**, measured against a
@@ -207,7 +287,14 @@ Spec A does **not**:
 - reword `remediationForEntityType("incident")` in `agents/_lib/gap-notes.ts`;
 - read the Sentry activity feed;
 - add an item type to `PROSE_HEAVY_TYPES`;
-- add a migration.
+- add a migration;
+- add a `project` graph entity, or a `project -> error_issue` edge. `project` is **not**
+  in `ITEM_LINKED_ENTITY_TYPES` (`relationship-graph.ts:6-23`), so `sentry:project` items
+  have no graph entity to link from — the edge would require introducing a new entity
+  type to the shared graph model, which affects every connector that has a project-like
+  concept and is not this spec's call to make. Per-project aggregation is available
+  today without it, from the project slug carried in `metadata`;
+- fall back to per-project issue listing when the token lacks `event:read`.
 
 ## Open question deferred to Spec B
 
