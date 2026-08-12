@@ -58,6 +58,20 @@ export type NegotiateBrief = {
   readonly reviewedPrs: NegotiateReviewedPrs | null;
   readonly tickets: NegotiateTickets | null;
   readonly ownership: NegotiateOwnership | null;
+  readonly decisions: NegotiateDecisions | null;
+};
+
+/**
+ * `decision_record.source_item_id` joins to `item`, and the item's `author_id` gives the
+ * decision's author — but `obsidian-sync.ts` and `teams-sync.ts` set no `authorId` at all,
+ * so a decision mined from those sources resolves to an item with `author_id IS NULL`.
+ * `unattributable` counts those rows rather than silently dropping them from the
+ * denominator (spec § 8.2, Task 5 brief).
+ */
+export type NegotiateDecisions = {
+  readonly authored: number;
+  /** Decisions whose source item has no author — counted, never dropped (spec § 8.2). */
+  readonly unattributable: number;
 };
 
 export type NegotiateAuthoredPrs = {

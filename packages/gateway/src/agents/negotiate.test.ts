@@ -445,6 +445,53 @@ test("ownership reports directories for directory-typed owns targets", async () 
   db.close();
 });
 
+test("decisions counts authored and reports unattributable separately", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "C1/1.1",
+    title: "we decided X",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+  upsertIndexedItem(db, {
+    service: "obsidian",
+    type: "obsidian_note",
+    externalId: "note-1",
+    title: "we decided Y",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: null,
+    metadata: {},
+  });
+
+  for (const [id, src] of [
+    ["d1", "slack:C1/1.1"],
+    ["d2", "obsidian:note-1"],
+  ] as const) {
+    db.run(
+      `INSERT INTO decision_record
+         (id, source_item_id, status, cue_tier, cue_text, priority, confidence, decided_at, updated_at)
+       VALUES (?, ?, 'extracted', 'explicit', 'we decided', 1, 0.8, ?, ?)`,
+      [id, src, now, now],
+    );
+  }
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.decisions?.authored).toBe(1);
+  expect(brief.decisions?.unattributable).toBe(1);
+  db.close();
+});
+
 test("a lane that throws yields a gap note, not a zero", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);

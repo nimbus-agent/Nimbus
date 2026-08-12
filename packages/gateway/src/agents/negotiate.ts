@@ -9,6 +9,7 @@ import { detectEmptyIndex } from "./_lib/gap-notes.ts";
 import type {
   NegotiateAuthoredPrs,
   NegotiateBrief,
+  NegotiateDecisions,
   NegotiateInput,
   NegotiateOwnership,
   NegotiateReviewedPrs,
@@ -283,6 +284,36 @@ function countUnmappedOwnerIdentities(db: Database): number {
   return row.n;
 }
 
+/**
+ * `decision_record.source_item_id` joins to `item`, and the item's `author_id` gives the
+ * decision's author — a join nothing under `decisions/` performs today. `obsidian-sync.ts`
+ * and `teams-sync.ts` set no `authorId` at all, so a decision mined from either source
+ * resolves to an item with `author_id IS NULL`; `unattributable` counts those rows rather
+ * than silently dropping them from the denominator (spec § 8.2, Task 5 brief).
+ */
+function laneDecisions(db: Database, personId: string, sinceMs: number): NegotiateDecisions {
+  const cutoff = Date.now() - sinceMs;
+  const authored = db
+    .query(
+      `SELECT COUNT(*) AS n
+         FROM decision_record d
+         JOIN item i ON i.id = d.source_item_id
+        WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id = ?`,
+    )
+    .get(cutoff, personId) as { n: number };
+
+  const unattributable = db
+    .query(
+      `SELECT COUNT(*) AS n
+         FROM decision_record d
+         JOIN item i ON i.id = d.source_item_id
+        WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id IS NULL`,
+    )
+    .get(cutoff) as { n: number };
+
+  return { authored: authored.n, unattributable: unattributable.n };
+}
+
 function laneTask(execute: () => unknown): SubTask {
   return {
     taskType: "agent_step",
@@ -347,12 +378,13 @@ export async function runNegotiate(
   // is "not attempted", the same "could not be computed" meaning as a lane that threw.
   if (subject.personId !== null) {
     const personId = subject.personId;
-    laneNames.push("authoredPrs", "reviewedPrs", "tickets", "ownership");
+    laneNames.push("authoredPrs", "reviewedPrs", "tickets", "ownership", "decisions");
     tasks.push(
       laneTask(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
       laneTask(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
       laneTask(() => laneTickets(ctx.db, personId, sinceMs)),
       laneTask(() => laneOwnership(ctx.db, personId)),
+      laneTask(() => laneDecisions(ctx.db, personId, sinceMs)),
     );
   }
   const coordinator = new AgentCoordinator({
@@ -368,6 +400,7 @@ export async function runNegotiate(
   let reviewedPrs: NegotiateReviewedPrs | null = null;
   let tickets: NegotiateTickets | null = null;
   let ownership: NegotiateOwnership | null = null;
+  let decisions: NegotiateDecisions | null = null;
   for (const r of results) {
     if (r.status !== "done" || r.text === undefined) continue;
     const laneName = laneNames[r.taskIndex];
@@ -377,6 +410,7 @@ export async function runNegotiate(
       else if (laneName === "reviewedPrs") reviewedPrs = decoded as NegotiateReviewedPrs;
       else if (laneName === "tickets") tickets = decoded as NegotiateTickets;
       else if (laneName === "ownership") ownership = decoded as NegotiateOwnership;
+      else if (laneName === "decisions") decisions = decoded as NegotiateDecisions;
     } catch {
       gaps.push(laneFailureGap(laneName ?? `#${String(r.taskIndex)}`, r));
     }
@@ -399,6 +433,7 @@ export async function runNegotiate(
     reviewedPrs,
     tickets,
     ownership,
+    decisions,
   };
 }
 

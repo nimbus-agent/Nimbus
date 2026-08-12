@@ -23,6 +23,7 @@ import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
 import type {
   NegotiateAuthoredPrs,
   NegotiateBrief,
+  NegotiateDecisions,
   NegotiateOwnership,
   NegotiateReviewedPrs,
   NegotiateSubject,
@@ -663,11 +664,30 @@ function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
 }
 
 /**
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring.
+ * `unattributable` renders unconditionally alongside `authored`, never folded into it or
+ * dropped: both counts are load-bearing, not just the attributed one (spec § 8.2).
+ */
+function renderNegotiateDecisions(d: NegotiateDecisions | null): string {
+  if (d === null) {
+    return ["## Decisions", "", "_could not be computed_"].join("\n");
+  }
+  const lines = [
+    "## Decisions",
+    "",
+    `- ${String(d.authored)} decision(s) authored, ${String(
+      d.unattributable,
+    )} unattributable (no indexed author)`,
+  ];
+  return lines.join("\n");
+}
+
+/**
  * Task 1's version rendered only the subject, the window and generation time, the gap
  * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
- * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership — a lane
- * whose field is `null` renders as "could not be computed", never as `0`; each later lane
- * task extends this further the same way.
+ * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership; Task 5
+ * adds decisions — a lane whose field is `null` renders as "could not be computed", never
+ * as `0`; each later lane task extends this further the same way.
  */
 export function renderNegotiate(brief: NegotiateBrief): string {
   const days = Math.round(brief.query.sinceMs / 86_400_000);
@@ -680,6 +700,7 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   const reviewedPrs = renderNegotiateReviewedPrs(brief.reviewedPrs);
   const tickets = renderNegotiateTickets(brief.tickets);
   const ownership = renderNegotiateOwnership(brief.ownership);
+  const decisions = renderNegotiateDecisions(brief.decisions);
   const evidence = [
     "## Evidence not available from the index",
     "",
@@ -700,6 +721,8 @@ export function renderNegotiate(brief: NegotiateBrief): string {
     tickets,
     "",
     ownership,
+    "",
+    decisions,
     "",
     evidence,
     gaps,
