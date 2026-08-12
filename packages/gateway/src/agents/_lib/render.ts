@@ -28,6 +28,7 @@ import type {
   NegotiateReviewedPrs,
   NegotiateSubject,
   NegotiateTickets,
+  NegotiateWriting,
 } from "./negotiate-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
@@ -691,11 +692,43 @@ function renderNegotiateDecisions(d: NegotiateDecisions | null): string {
 }
 
 /**
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. `notes` is
+ * the personal-documents count the `[negotiate] personal_sources` gate controls (spec §
+ * 3.3); this line never explains *why* notes reads low/zero — that disclosure lives in
+ * `renderNegotiateSources`, unconditionally, so it is stated once rather than repeated.
+ */
+function renderNegotiateWriting(w: NegotiateWriting | null): string {
+  if (w === null) {
+    return ["## Writing", "", "_could not be computed_"].join("\n");
+  }
+  const lines = [
+    "## Writing",
+    "",
+    `- ${String(w.docs)} doc(s), ${String(w.notes)} note(s), ${String(w.messages)} message(s) authored`,
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Sources the brief drew on (spec § 5.F). Rendered unconditionally, like
+ * `unavailableEvidence`: when no personal source is configured, the section states so by
+ * name — `personalDocsConfigKey` — so an empty personal-sources result reads as "not
+ * enabled", never as "nothing found".
+ */
+function renderNegotiateSources(sources: NegotiateBrief["sources"]): string {
+  const line = sources.personalDocsConfigured
+    ? "- personal document sources are configured and included in the writing lane above"
+    : `- personal document sources are not enabled (set \`${sources.personalDocsConfigKey}\` in nimbus.toml to include them)`;
+  return ["## Sources", "", line].join("\n");
+}
+
+/**
  * Task 1's version rendered only the subject, the window and generation time, the gap
  * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
  * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership; Task 5
- * adds decisions — a lane whose field is `null` renders as "could not be computed", never
- * as `0`; each later lane task extends this further the same way.
+ * adds decisions; Task 6 adds writing + sources — a lane whose field is `null` renders as
+ * "could not be computed", never as `0`; each later lane task extends this further the
+ * same way.
  */
 export function renderNegotiate(brief: NegotiateBrief): string {
   const days = Math.round(brief.query.sinceMs / 86_400_000);
@@ -709,6 +742,8 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   const tickets = renderNegotiateTickets(brief.tickets);
   const ownership = renderNegotiateOwnership(brief.ownership);
   const decisions = renderNegotiateDecisions(brief.decisions);
+  const writing = renderNegotiateWriting(brief.writing);
+  const sources = renderNegotiateSources(brief.sources);
   const evidence = [
     "## Evidence not available from the index",
     "",
@@ -731,6 +766,10 @@ export function renderNegotiate(brief: NegotiateBrief): string {
     ownership,
     "",
     decisions,
+    "",
+    writing,
+    "",
+    sources,
     "",
     evidence,
     gaps,

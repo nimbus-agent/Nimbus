@@ -15,6 +15,7 @@ import type {
   NegotiateReviewedPrs,
   NegotiateSubject,
   NegotiateTickets,
+  NegotiateWriting,
 } from "./_lib/negotiate-types.ts";
 import {
   defaultRunGitConfigUserEmail,
@@ -31,6 +32,12 @@ export type NegotiateContext = {
   llm?: SynthesizerLlm;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
+  /**
+   * `[negotiate] personal_sources` (spec § 3.3): personal-document services the local
+   * owner has named as in scope. Not optional — a caller must resolve config (or supply
+   * `[]`) explicitly rather than silently disabling an opt-in the user believes is active.
+   */
+  personalSources: readonly string[];
 };
 
 const PERSONAL_DOCS_CONFIG_KEY = "[negotiate] personal_sources";
@@ -314,6 +321,70 @@ function laneDecisions(db: Database, personId: string, sinceMs: number): Negotia
   return { authored: authored.n, unattributable: unattributable.n };
 }
 
+const DOC_TYPES = ["page", "document"] as const;
+const NOTE_TYPES = ["obsidian_note"] as const;
+const MESSAGE_TYPES = ["message"] as const;
+
+function countAuthoredByType(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  types: readonly string[],
+): number {
+  const placeholders = types.map(() => "?").join(", ");
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM item
+        WHERE author_id = ? AND modified_at >= ? AND type IN (${placeholders})`,
+    )
+    .get(personId, cutoff, ...types) as { n: number };
+  return row.n;
+}
+
+/**
+ * `notes` (Obsidian's `obsidian_note` type) is the personal-documents content the
+ * `[negotiate] personal_sources` gate targets (spec § 3.3) — the roadmap's original
+ * "1:1 notes, with consent" mechanism. An empty `personalSources` short-circuits to `0`
+ * without querying at all: "the note lane excludes personal services" (Task 6 brief).
+ * When non-empty, `personalSources` is bound into an `IN (...)` list alongside `service`
+ * — an unrecognised/typo'd service name simply matches no rows, never throws, and never
+ * widens to "everything" (spec: fail-safe toward excluding).
+ */
+function countAuthoredNotes(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  personalSources: readonly string[],
+): number {
+  if (personalSources.length === 0) return 0;
+  const typePlaceholders = NOTE_TYPES.map(() => "?").join(", ");
+  const servicePlaceholders = personalSources.map(() => "?").join(", ");
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM item
+        WHERE author_id = ? AND modified_at >= ?
+          AND type IN (${typePlaceholders})
+          AND service IN (${servicePlaceholders})`,
+    )
+    .get(personId, cutoff, ...NOTE_TYPES, ...personalSources) as { n: number };
+  return row.n;
+}
+
+/** Docs and messages are work artifacts and are always in scope (spec § 3.3). */
+function laneWriting(
+  db: Database,
+  personId: string,
+  sinceMs: number,
+  personalSources: readonly string[],
+): NegotiateWriting {
+  const cutoff = Date.now() - sinceMs;
+  return {
+    docs: countAuthoredByType(db, personId, cutoff, DOC_TYPES),
+    notes: countAuthoredNotes(db, personId, cutoff, personalSources),
+    messages: countAuthoredByType(db, personId, cutoff, MESSAGE_TYPES),
+  };
+}
+
 function laneTask(execute: () => unknown): SubTask {
   return {
     taskType: "agent_step",
@@ -378,13 +449,14 @@ export async function runNegotiate(
   // is "not attempted", the same "could not be computed" meaning as a lane that threw.
   if (subject.personId !== null) {
     const personId = subject.personId;
-    laneNames.push("authoredPrs", "reviewedPrs", "tickets", "ownership", "decisions");
+    laneNames.push("authoredPrs", "reviewedPrs", "tickets", "ownership", "decisions", "writing");
     tasks.push(
       laneTask(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
       laneTask(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
       laneTask(() => laneTickets(ctx.db, personId, sinceMs)),
       laneTask(() => laneOwnership(ctx.db, personId)),
       laneTask(() => laneDecisions(ctx.db, personId, sinceMs)),
+      laneTask(() => laneWriting(ctx.db, personId, sinceMs, ctx.personalSources)),
     );
   }
   const coordinator = new AgentCoordinator({
@@ -401,6 +473,7 @@ export async function runNegotiate(
   let tickets: NegotiateTickets | null = null;
   let ownership: NegotiateOwnership | null = null;
   let decisions: NegotiateDecisions | null = null;
+  let writing: NegotiateWriting | null = null;
   for (const r of results) {
     if (r.status !== "done" || r.text === undefined) continue;
     const laneName = laneNames[r.taskIndex];
@@ -411,6 +484,7 @@ export async function runNegotiate(
       else if (laneName === "tickets") tickets = decoded as NegotiateTickets;
       else if (laneName === "ownership") ownership = decoded as NegotiateOwnership;
       else if (laneName === "decisions") decisions = decoded as NegotiateDecisions;
+      else if (laneName === "writing") writing = decoded as NegotiateWriting;
     } catch {
       gaps.push(laneFailureGap(laneName ?? `#${String(r.taskIndex)}`, r));
     }
@@ -425,7 +499,7 @@ export async function runNegotiate(
     query: { sinceMs },
     subject,
     sources: {
-      personalDocsConfigured: false,
+      personalDocsConfigured: ctx.personalSources.length > 0,
       personalDocsConfigKey: PERSONAL_DOCS_CONFIG_KEY,
     },
     unavailableEvidence: UNAVAILABLE_EVIDENCE,
@@ -434,6 +508,7 @@ export async function runNegotiate(
     tickets,
     ownership,
     decisions,
+    writing,
   };
 }
 

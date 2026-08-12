@@ -1931,6 +1931,68 @@ export function loadNimbusPremortemFromConfigDir(configDir: string): NimbusPremo
 }
 
 // ---------------------------------------------------------------------------
+// [negotiate] — personal-docs opt-in for the contribution-brief agent (Spine S1)
+// ---------------------------------------------------------------------------
+
+export type NimbusNegotiateToml = {
+  /**
+   * Personal sources (e.g. `obsidian`) are mined by `nimbus negotiate` only when named
+   * here — configuration IS the consent (spec § 3.3, following the `[glossary.terms]`
+   * precedent). Empty means work artifacts only.
+   */
+  personalSources: string[];
+};
+
+export const DEFAULT_NIMBUS_NEGOTIATE_TOML: NimbusNegotiateToml = { personalSources: [] };
+
+/**
+ * `parseStringArray` cannot distinguish a quoted TOML string from a bare token: an
+ * unquoted `42` parses through as the literal string "42", with no quoting information
+ * left to recover afterward. Such a bare numeric entry was never actually authored as a
+ * string, so it is dropped here rather than reaching a query — fail-safe toward excluding
+ * (Task 6 brief's two malformed-input rules).
+ */
+function isBareNumericToken(entry: string): boolean {
+  const t = entry.trim();
+  return t !== "" && Number.isFinite(Number(t));
+}
+
+/** Blank and non-string (bare numeric) entries are dropped at parse time, never reaching
+ * a query. A malformed (non-array) value falls back to an empty list rather than throwing. */
+function parsePersonalSources(valRaw: string): string[] {
+  try {
+    return parseStringArray(valRaw).filter((s) => s.length > 0 && !isBareNumericToken(s));
+  } catch {
+    return [];
+  }
+}
+
+function parseNimbusTomlNegotiateSection(source: string): Partial<NimbusNegotiateToml> {
+  const out: Partial<NimbusNegotiateToml> = {};
+  forEachSectionEntry(source, "[negotiate]", (key, valRaw) => {
+    if (key === "personal_sources") {
+      out.personalSources = parsePersonalSources(valRaw);
+    }
+  });
+  return out;
+}
+
+export function parseNimbusNegotiateToml(
+  raw: string,
+  defaults: NimbusNegotiateToml = DEFAULT_NIMBUS_NEGOTIATE_TOML,
+): NimbusNegotiateToml {
+  return { ...defaults, ...parseNimbusTomlNegotiateSection(raw) };
+}
+
+export function loadNimbusNegotiateFromPath(tomlPath: string): NimbusNegotiateToml {
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_NEGOTIATE_TOML, parseNimbusNegotiateToml);
+}
+
+export function loadNimbusNegotiateFromConfigDir(configDir: string): NimbusNegotiateToml {
+  return loadNimbusNegotiateFromPath(join(configDir, "nimbus.toml"));
+}
+
+// ---------------------------------------------------------------------------
 
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the

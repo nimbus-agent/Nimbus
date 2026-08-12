@@ -51,8 +51,8 @@ function freshDb(): Database {
   return db;
 }
 
-function ctxFor(db: Database) {
-  return { db, notify: () => {}, sessionId: "negotiate-test-1" };
+function ctxFor(db: Database, personalSources: string[] = []) {
+  return { db, notify: () => {}, sessionId: "negotiate-test-1", personalSources };
 }
 
 test("an empty index yields an empty_index gap, not zeroes", async () => {
@@ -123,6 +123,7 @@ test("renders deterministically with no LLM configured", async () => {
     {
       db,
       sessionId: "s1",
+      personalSources: [],
       notify: (method, params) => {
         if (method === "negotiate.briefReady") captured = params as { brief: string };
       },
@@ -212,6 +213,7 @@ test("emitNegotiateBrief routes through a configured LLM", async () => {
     {
       db,
       sessionId: "s2",
+      personalSources: [],
       llm: { generateMarkdown: async () => "# LLM-authored negotiate brief" },
       notify: (method, params) => {
         if (method === "negotiate.briefReady") captured = params as { brief: string };
@@ -515,5 +517,125 @@ test("a lane that throws yields a gap note, not a zero", async () => {
 
   expect(brief.authoredPrs).toBeNull();
   expect(brief.gaps.some((g) => g.detail.toLowerCase().includes("lane"))).toBe(true);
+  db.close();
+});
+
+test("writing counts work artifacts and reports personal docs as not enabled", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "confluence",
+    type: "page",
+    externalId: "p1",
+    title: "Design doc",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "C1/2.2",
+    title: "hello",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.writing?.docs).toBe(1);
+  expect(brief.writing?.messages).toBe(1);
+  expect(brief.sources.personalDocsConfigured).toBe(false);
+  expect(brief.sources.personalDocsConfigKey).toBe("[negotiate] personal_sources");
+  db.close();
+});
+
+test("personal notes are excluded when [negotiate] personal_sources is empty", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "obsidian",
+    type: "obsidian_note",
+    externalId: "note-1",
+    title: "1:1 notes",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.writing?.notes).toBe(0);
+  db.close();
+});
+
+test("personal notes are counted once the source is named in [negotiate] personal_sources", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "obsidian",
+    type: "obsidian_note",
+    externalId: "note-1",
+    title: "1:1 notes",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db, ["obsidian"]));
+
+  expect(brief.writing?.notes).toBe(1);
+  expect(brief.sources.personalDocsConfigured).toBe(true);
+  db.close();
+});
+
+// A typo'd/unrecognised service name must silently include nothing — never throw, and
+// never widen to "everything" (Task 6 brief's second malformed-input rule).
+test("an unrecognised configured service yields zero extra rows and no error", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "obsidian",
+    type: "obsidian_note",
+    externalId: "note-1",
+    title: "1:1 notes",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+
+  const brief = await runNegotiate(
+    { mePersonIdOverride: "person:me" },
+    ctxFor(db, ["obsidain-typo"]),
+  );
+
+  expect(brief.writing?.notes).toBe(0);
+  expect(brief.gaps.some((g) => g.detail.toLowerCase().includes("writing"))).toBe(false);
+  db.close();
+});
+
+test("renderNegotiate names the config key when personal docs are not configured", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("[negotiate] personal_sources");
+  expect(markdown).toContain("not enabled");
   db.close();
 });

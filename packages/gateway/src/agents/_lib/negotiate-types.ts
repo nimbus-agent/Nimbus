@@ -59,6 +59,20 @@ export type NegotiateBrief = {
   readonly tickets: NegotiateTickets | null;
   readonly ownership: NegotiateOwnership | null;
   readonly decisions: NegotiateDecisions | null;
+  readonly writing: NegotiateWriting | null;
+};
+
+/**
+ * Docs, notes and messages authored (spec § 3, lane 6). `notes` (Obsidian's `obsidian_note`
+ * type) is the personal-documents content the `[negotiate] personal_sources` gate targets
+ * (spec § 3.3) — it counts as zero, not `null`, when no personal source is configured; a
+ * configured-but-empty result is a real zero, not "could not be computed". `docs`/`messages`
+ * are work artifacts and are always in scope.
+ */
+export type NegotiateWriting = {
+  readonly docs: number;
+  readonly notes: number;
+  readonly messages: number;
 };
 
 /**
