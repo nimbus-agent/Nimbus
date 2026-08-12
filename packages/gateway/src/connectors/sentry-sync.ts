@@ -107,6 +107,14 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureSentryMcpRunning();
+      /**
+       * `sentry.auth_token` must carry the **`event:read`** scope. The org-wide issues
+       * endpoint rejects a `project:read`-only token with 403 while the projects list
+       * below still succeeds — so a mis-scoped install syncs projects, indexes zero
+       * issues, and looks configured. A project-scoped token cannot reach the endpoint
+       * at all, and an Organization Auth Token is not a substitute: it exists for
+       * source-map upload in CI and its scope cannot be changed after creation.
+       */
       const token = (await readConnectorSecret(ctx.vault, "sentry", "auth_token"))?.trim() ?? "";
       const org = (await readConnectorSecret(ctx.vault, "sentry", "org_slug"))?.trim() ?? "";
       if (token === "" || org === "") {

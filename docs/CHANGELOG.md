@@ -85,6 +85,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   the local HTTP API is not. Tauri `ALLOWED_METHODS` 105 → 106 (I7); no new invariant and no
   schema change. Documented in `docs/cli-reference.md`'s `nimbus negotiate` section, the
   built-in-agent table + IPC-method catalogue in `docs/architecture.md`, and `docs/roadmap.md`.
+
+- **2026-08-12 — Sentry issues are now indexed** (`sentry:error_issue`). The connector previously
+  indexed only projects. Issues are pulled org-wide, windowed by `lastSeen` with a 30-day cold
+  start, and include resolved issues. Requires the Sentry auth token to carry the **`event:read`**
+  scope — a `project:read`-only token continues to sync projects but logs a warning and indexes no
+  issues. Assignment is captured but not yet attributed to a person.
 - **2026-08-11 — `EgressCompleteness.tier` is gone; the coverage vector is the only claim (#1057).**
   The last step of a three-repo sequence. `tier: "authorized-actions"` was a deprecated additive
   wire shim, kept because the published `@nimbus-dev/client@0.15.x`'s `validateEgressCompleteness`
