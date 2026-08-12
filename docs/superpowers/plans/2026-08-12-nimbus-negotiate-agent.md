@@ -384,34 +384,23 @@ const UNAVAILABLE_EVIDENCE: readonly string[] = Object.freeze([
 
 returned as `unavailableEvidence: UNAVAILABLE_EVIDENCE` from `runNegotiate`.
 
-- [ ] **Step 8: Write the failing test for lane failure**
+- [ ] **Step 8: Implement the lane-failure mechanism (the TEST lives in Task 2)**
 
 Spec § 4: a failed lane degrades to a gap note, **never a silent zero**. A brief that renders `0`
 for a lane that threw is a lie, and it is the shape most likely to pass review unnoticed.
 
-```typescript
-test("a lane that throws yields a gap note, not a zero", async () => {
-  const db = freshDb();
-  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
-  db.run(
-    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
-     VALUES ('github:acme/app#1', 'github', 'pr', 'acme/app#1', 'noop', 0, 0)`,
-  );
-  // Drop a table one lane depends on, so that lane throws while the others succeed.
-  db.run("DROP TABLE decision_record");
+**Task 1 has no lanes yet**, so there is nothing here to make fail — the test belongs with the first
+real lane and is specified in Task 2. Task 1 builds only the mechanism:
 
-  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+- Every lane-backed field on `NegotiateBrief` is declared `… | null` and **initialised to `null`**
+  before the coordinator runs, so "the lane failed" is distinguishable from "the lane ran and found
+  nothing" (`0`). Later tasks add their fields under that same rule.
+- When `coordinator.run(tasks)` returns a result whose `status !== "done"` — or whose `text` cannot
+  be decoded — push a `GapNote` naming the lane, leaving that field at `null`. Use category
+  `missing_connector` (an existing value; do **not** add a new `GapCategory`) and put the lane name
+  in `detail` so the Task 2 test can match on it.
 
-  expect(brief.gaps.some((g) => g.detail.toLowerCase().includes("lane"))).toBe(true);
-  expect(brief.decisions).toBeNull();
-  db.close();
-});
-```
-
-This makes every lane-backed brief field **nullable**: a lane that failed reports `null`, which is
-distinguishable from a lane that ran and found nothing (`0`). Declare each lane field as `… | null`
-in `NegotiateBrief` and initialise it to `null` before the coordinator runs. Later tasks add their
-lane fields under that same rule.
+Wire this now even though no lane exercises it, because Task 2 onwards depends on the shape.
 
 - [ ] **Step 9: Register the brief with the deterministic renderer**
 
@@ -696,12 +685,41 @@ an index means a migration, which this plan forbids, and the lanes narrow hard f
 `json_extract` is small on a personal index. If profiling on a large index shows otherwise, an
 `item(author_id)` index is a separate, deliberate migration — not something to slip into this PR.
 
-- [ ] **Step 5: Run to verify the tests pass**
+- [ ] **Step 5: Write the lane-failure test — the first real lane makes this testable**
+
+Task 1 built the mechanism (nullable lane fields, a gap note when a lane does not complete) but had
+no lane to exercise it. This task has two, so the test lands here.
+
+```typescript
+test("a lane that throws yields a gap note, not a zero", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES ('github:acme/app#1', 'github', 'pr', 'acme/app#1', 'noop', 0, 0)`,
+  );
+  // Break a table the authored-PR lane depends on so that lane throws.
+  db.run("DROP TABLE graph_relation");
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.authoredPrs).toBeNull();
+  expect(brief.gaps.some((g) => g.detail.toLowerCase().includes("lane"))).toBe(true);
+  db.close();
+});
+```
+
+**Red-prove it:** make the lane swallow its own error and return zeroes instead of rethrowing.
+The test must FAIL on `expect(brief.authoredPrs).toBeNull()` — receiving an object of zeroes. Restore.
+A lane that reports `0` for a query that threw is the exact defect this test exists to catch, and it
+is invisible to every other test in the suite.
+
+- [ ] **Step 6: Run to verify the tests pass**
 
 Run: `bun test packages/gateway/src/agents/negotiate.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
-- [ ] **Step 6: Preflight and commit**
+- [ ] **Step 7: Preflight and commit**
 
 ```bash
 bun run typecheck && bun run preflight:fast && \
