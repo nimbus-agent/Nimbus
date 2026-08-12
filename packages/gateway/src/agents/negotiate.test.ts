@@ -601,6 +601,82 @@ test("personal notes are counted once the source is named in [negotiate] persona
   db.close();
 });
 
+// The gate is per-SERVICE, not per-type: `type: "page"` is emitted by both
+// `confluence-sync.ts` and `notion-sync.ts`, so Notion (personal-capable) and Confluence
+// (work) must be told apart on `service`, never on `type` alone.
+
+// The negative half is the one that actually proves the gate exists — without it, a
+// passing "counted once configured" test alone would also pass an ungated implementation.
+test("Notion pages are excluded from docs when [negotiate] personal_sources is empty", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "notion",
+    type: "page",
+    externalId: "n1",
+    title: "Notion page",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.writing?.docs).toBe(0);
+  db.close();
+});
+
+test("Notion pages are counted in docs once notion is named in [negotiate] personal_sources", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "notion",
+    type: "page",
+    externalId: "n1",
+    title: "Notion page",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db, ["notion"]));
+
+  expect(brief.writing?.docs).toBe(1);
+  db.close();
+});
+
+// Confluence is a work wiki and is never gated. Under-counting a real work artifact is the
+// failure direction this whole agent exists to avoid, so it gets its own explicit
+// assertion rather than being folded into the combined "writing counts work artifacts"
+// test above.
+test("Confluence pages are counted in docs even when [negotiate] personal_sources is empty", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "confluence",
+    type: "page",
+    externalId: "c1",
+    title: "Confluence page",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.writing?.docs).toBe(1);
+  db.close();
+});
+
 // A typo'd/unrecognised service name must silently include nothing — never throw, and
 // never widen to "everything" (Task 6 brief's second malformed-input rule).
 test("an unrecognised configured service yields zero extra rows and no error", async () => {

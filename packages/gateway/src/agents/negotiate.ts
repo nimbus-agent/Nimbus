@@ -325,6 +325,24 @@ const DOC_TYPES = ["page", "document"] as const;
 const NOTE_TYPES = ["obsidian_note"] as const;
 const MESSAGE_TYPES = ["message"] as const;
 
+/**
+ * Services whose content is mined only when the user names them in
+ * `[negotiate] personal_sources` (spec § 3.3). The gate operates on the SERVICE, not the
+ * item type: `type: "page"` is emitted by BOTH `confluence-sync.ts` (a work wiki) and
+ * `notion-sync.ts` (commonly personal), so a type-only filter cannot separate them —
+ * without a service filter, an unconfigured Notion workspace would be counted
+ * unconditionally, contradicting "excluded by default, opt in via config".
+ *
+ * - `obsidian`: an unambiguously personal, local notes vault.
+ * - `notion`: commonly a personal workspace, and named explicitly in the brief's own
+ *   `[negotiate]` example.
+ *
+ * A future connector belongs here only if its content is similarly personal by default.
+ * Everything else — Confluence, Slack, Teams, Discord, … — is a work artifact and stays
+ * always in scope; it is never gated by `personal_sources`.
+ */
+const PERSONAL_CAPABLE_SERVICES = ["obsidian", "notion"] as const;
+
 function countAuthoredByType(
   db: Database,
   personId: string,
@@ -341,24 +359,45 @@ function countAuthoredByType(
   return row.n;
 }
 
-/**
- * `notes` (Obsidian's `obsidian_note` type) is the personal-documents content the
- * `[negotiate] personal_sources` gate targets (spec § 3.3) — the roadmap's original
- * "1:1 notes, with consent" mechanism. An empty `personalSources` short-circuits to `0`
- * without querying at all: "the note lane excludes personal services" (Task 6 brief).
- * When non-empty, `personalSources` is bound into an `IN (...)` list alongside `service`
- * — an unrecognised/typo'd service name simply matches no rows, never throws, and never
- * widens to "everything" (spec: fail-safe toward excluding).
- */
-function countAuthoredNotes(
+/** `types` authored by `personId`, from services NOT in `excludedServices` — the
+ * always-on half of the personal-sources gate (work artifacts). */
+function countAuthoredExcludingServices(
   db: Database,
   personId: string,
   cutoff: number,
-  personalSources: readonly string[],
+  types: readonly string[],
+  excludedServices: readonly string[],
 ): number {
-  if (personalSources.length === 0) return 0;
-  const typePlaceholders = NOTE_TYPES.map(() => "?").join(", ");
-  const servicePlaceholders = personalSources.map(() => "?").join(", ");
+  const typePlaceholders = types.map(() => "?").join(", ");
+  const servicePlaceholders = excludedServices.map(() => "?").join(", ");
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM item
+        WHERE author_id = ? AND modified_at >= ?
+          AND type IN (${typePlaceholders})
+          AND service NOT IN (${servicePlaceholders})`,
+    )
+    .get(personId, cutoff, ...types, ...excludedServices) as { n: number };
+  return row.n;
+}
+
+/**
+ * `types` authored by `personId`, from services IN `services` — the opt-in half of the
+ * personal-sources gate. `services` is a bound `IN (...)` list, so an unrecognised or
+ * typo'd service name simply matches no rows: it never throws and never widens to
+ * "everything" (spec: fail-safe toward excluding). An empty `services` list
+ * short-circuits to `0` without querying at all.
+ */
+function countAuthoredForServices(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  types: readonly string[],
+  services: readonly string[],
+): number {
+  if (services.length === 0) return 0;
+  const typePlaceholders = types.map(() => "?").join(", ");
+  const servicePlaceholders = services.map(() => "?").join(", ");
   const row = db
     .query(
       `SELECT COUNT(*) AS n FROM item
@@ -366,11 +405,40 @@ function countAuthoredNotes(
           AND type IN (${typePlaceholders})
           AND service IN (${servicePlaceholders})`,
     )
-    .get(personId, cutoff, ...NOTE_TYPES, ...personalSources) as { n: number };
+    .get(personId, cutoff, ...types, ...services) as { n: number };
   return row.n;
 }
 
-/** Docs and messages are work artifacts and are always in scope (spec § 3.3). */
+/**
+ * Counts `types` authored by `personId`, applying the `[negotiate] personal_sources`
+ * gate PER SERVICE (spec § 3.3, see `PERSONAL_CAPABLE_SERVICES`): every service outside
+ * `PERSONAL_CAPABLE_SERVICES` always contributes (work artifacts); a service inside it
+ * contributes only when the caller has named it in `personalSources`. Used for both
+ * `docs` (Confluence always, Notion opt-in) and `notes` (Obsidian opt-in only — no
+ * non-personal-capable service emits `obsidian_note`, so this collapses to the prior
+ * "notes is zero unless configured" behaviour).
+ */
+function countAuthoredServiceGated(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  types: readonly string[],
+  personalSources: readonly string[],
+): number {
+  const alwaysOn = countAuthoredExcludingServices(
+    db,
+    personId,
+    cutoff,
+    types,
+    PERSONAL_CAPABLE_SERVICES,
+  );
+  const configuredPersonal = PERSONAL_CAPABLE_SERVICES.filter((s) => personalSources.includes(s));
+  const gated = countAuthoredForServices(db, personId, cutoff, types, configuredPersonal);
+  return alwaysOn + gated;
+}
+
+/** Messages are a work artifact and are always in scope (spec § 3.3) — chat services are
+ * not in `PERSONAL_CAPABLE_SERVICES`. */
 function laneWriting(
   db: Database,
   personId: string,
@@ -379,8 +447,8 @@ function laneWriting(
 ): NegotiateWriting {
   const cutoff = Date.now() - sinceMs;
   return {
-    docs: countAuthoredByType(db, personId, cutoff, DOC_TYPES),
-    notes: countAuthoredNotes(db, personId, cutoff, personalSources),
+    docs: countAuthoredServiceGated(db, personId, cutoff, DOC_TYPES, personalSources),
+    notes: countAuthoredServiceGated(db, personId, cutoff, NOTE_TYPES, personalSources),
     messages: countAuthoredByType(db, personId, cutoff, MESSAGE_TYPES),
   };
 }
