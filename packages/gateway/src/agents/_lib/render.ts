@@ -20,6 +20,7 @@ import type {
   PreflightDownstream,
 } from "./findings.ts";
 import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
+import type { NegotiateBrief, NegotiateSubject } from "./negotiate-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
 import type { WhyBrief, WhyLane } from "./why-types.ts";
@@ -547,4 +548,44 @@ export function renderPremortem(brief: PremortemBrief): string {
   const gaps = renderGaps(brief.gaps);
   const footer = renderLatency(brief.latencyMs);
   return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+/**
+ * `subject.isOther` is true only when the caller passed `--person <id>` for someone
+ * other than the resolved local user (see `negotiate.ts` `resolveSubject`) — that case
+ * always has a non-null `personId`, so the fallback below is defensive, not reachable
+ * in practice. The local-user case deliberately does not name the person: an
+ * unresolved local subject already carries a `missing_user_identity` gap note.
+ */
+function renderNegotiateSubjectLine(subject: NegotiateSubject): string {
+  if (subject.isOther) {
+    const label = subject.displayName ?? subject.personId ?? "unknown person";
+    return `**Subject:** ${label} — brief requested for someone other than you`;
+  }
+  return "**Subject:** you";
+}
+
+/**
+ * Task 1's version renders only what Task 1 produces: the subject, the window and
+ * generation time, the gap notes, and the unconditional `unavailableEvidence` list.
+ * Each later lane task extends this — a lane whose field is `null` must render as
+ * "could not be computed", never as `0`.
+ */
+export function renderNegotiate(brief: NegotiateBrief): string {
+  const days = Math.round(brief.query.sinceMs / 86_400_000);
+  const header = "# Negotiation brief";
+  const subjectLine = renderNegotiateSubjectLine(brief.subject);
+  const windowLine = `_window: last ${String(days)}d · generated ${new Date(
+    brief.generatedAt,
+  ).toISOString()}_`;
+  const evidence = [
+    "## Evidence not available from the index",
+    "",
+    ...brief.unavailableEvidence.map((e) => `- ${e}`),
+  ].join("\n");
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", subjectLine, windowLine, "", evidence, gaps, footer]
+    .filter((s) => s !== "")
+    .join("\n");
 }
