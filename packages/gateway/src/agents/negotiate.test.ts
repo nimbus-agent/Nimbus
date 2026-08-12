@@ -1,9 +1,43 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import type { SubTaskResult } from "../engine/coordinator.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { renderNegotiate } from "./_lib/render.ts";
 import { emitNegotiateBrief, reduceLaneResults, runNegotiate } from "./negotiate.ts";
+
+function seedPr(
+  db: Database,
+  num: number,
+  authorId: string | null,
+  extraMeta: Record<string, unknown> = {},
+): void {
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: `acme/app#${String(num)}`,
+    title: `PR title ${String(num)}`,
+    bodyPreview: "",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId,
+    metadata: { repo: "acme/app", number: num, merged: true, ...extraMeta },
+  });
+}
+
+function seedReview(db: Database, num: number, reviewerId: string, state: string | null): void {
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "review",
+    externalId: `acme/app#${String(num)}#review-${String(num)}`,
+    title: `Review on acme/app#${String(num)}`,
+    bodyPreview: "",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: reviewerId,
+    metadata: { repo: "acme/app", pr_number: num, review_id: num, state },
+  });
+}
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -180,5 +214,67 @@ test("emitNegotiateBrief routes through a configured LLM", async () => {
   );
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(captured?.brief).toBe("# LLM-authored negotiate brief");
+  db.close();
+});
+
+test("authored PRs are counted, with stats coverage when only some are enriched", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:me", { additions: 100, deletions: 20, changed_files: 3 });
+  seedPr(db, 2, "person:me"); // no stats
+  seedPr(db, 3, "person:other");
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.authoredPrs?.count).toBe(2);
+  expect(brief.authoredPrs?.statsCoverage).toEqual({ covered: 1, total: 2 });
+  expect(brief.authoredPrs?.stats?.additions).toBe(100);
+  db.close();
+});
+
+test("reviewed PRs split by state, with a null-state arm", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:author");
+  seedPr(db, 2, "person:author");
+  seedPr(db, 3, "person:author");
+  seedReview(db, 1, "person:me", "approved");
+  seedReview(db, 2, "person:me", "changes_requested");
+  seedReview(db, 3, "person:me", null);
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.reviewedPrs?.count).toBe(3);
+  expect(brief.reviewedPrs?.approved).toBe(1);
+  expect(brief.reviewedPrs?.changesRequested).toBe(1);
+  expect(brief.reviewedPrs?.otherOrUnknown).toBe(1);
+  db.close();
+});
+
+test("stats coverage is complete when every authored PR is enriched", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:me", { additions: 10, deletions: 1, changed_files: 1 });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.authoredPrs?.statsCoverage).toEqual({ covered: 1, total: 1 });
+  db.close();
+});
+
+test("a lane that throws yields a gap note, not a zero", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES ('github:acme/app#1', 'github', 'pr', 'acme/app#1', 'noop', 0, 0)`,
+  );
+  // Break a table the authored-PR lane depends on so that lane throws.
+  db.run("DROP TABLE graph_relation");
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.authoredPrs).toBeNull();
+  expect(brief.gaps.some((g) => g.detail.toLowerCase().includes("lane"))).toBe(true);
   db.close();
 });

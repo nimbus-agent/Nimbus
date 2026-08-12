@@ -20,7 +20,12 @@ import type {
   PreflightDownstream,
 } from "./findings.ts";
 import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
-import type { NegotiateBrief, NegotiateSubject } from "./negotiate-types.ts";
+import type {
+  NegotiateAuthoredPrs,
+  NegotiateBrief,
+  NegotiateReviewedPrs,
+  NegotiateSubject,
+} from "./negotiate-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
 import type { WhyBrief, WhyLane } from "./why-types.ts";
@@ -568,10 +573,51 @@ function renderNegotiateSubjectLine(subject: NegotiateSubject): string {
 }
 
 /**
- * Task 1's version renders only what Task 1 produces: the subject, the window and
- * generation time, the gap notes, and the unconditional `unavailableEvidence` list.
- * Each later lane task extends this — a lane whose field is `null` must render as
- * "could not be computed", never as `0`.
+ * A `null` lane means "could not be computed" (failed, or never attempted for lack of a
+ * resolved subject) and must never render as `0` — that distinction is the entire reason
+ * `authoredPrs` is nullable rather than defaulting to an all-zero object.
+ */
+function renderNegotiateAuthoredPrs(a: NegotiateAuthoredPrs | null): string {
+  if (a === null) {
+    return ["## PRs authored", "", "_could not be computed_"].join("\n");
+  }
+  const lines = ["## PRs authored", "", `- ${String(a.count)} PR(s), ${String(a.merged)} merged`];
+  if (a.stats === null) {
+    lines.push("- stats: not available (no enriched PR in this window)");
+  } else {
+    const coverageSuffix =
+      a.statsCoverage.covered < a.statsCoverage.total
+        ? ` (stats coverage ${String(a.statsCoverage.covered)}/${String(a.statsCoverage.total)})`
+        : "";
+    lines.push(
+      `- stats: +${String(a.stats.additions)} / -${String(a.stats.deletions)} across ${String(
+        a.stats.changedFiles,
+      )} file(s)${coverageSuffix}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/** Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. */
+function renderNegotiateReviewedPrs(r: NegotiateReviewedPrs | null): string {
+  if (r === null) {
+    return ["## PRs reviewed", "", "_could not be computed_"].join("\n");
+  }
+  const lines = [
+    "## PRs reviewed",
+    "",
+    `- ${String(r.count)} review(s): ${String(r.approved)} approved, ${String(
+      r.changesRequested,
+    )} changes requested, ${String(r.otherOrUnknown)} other/unknown`,
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Task 1's version rendered only the subject, the window and generation time, the gap
+ * notes, and the unconditional `unavailableEvidence` list. Task 2 adds the authored/
+ * reviewed PR lane sections — a lane whose field is `null` renders as "could not be
+ * computed", never as `0`; each later lane task extends this further the same way.
  */
 export function renderNegotiate(brief: NegotiateBrief): string {
   const days = Math.round(brief.query.sinceMs / 86_400_000);
@@ -580,6 +626,8 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   const windowLine = `_window: last ${String(days)}d · generated ${new Date(
     brief.generatedAt,
   ).toISOString()}_`;
+  const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);
+  const reviewedPrs = renderNegotiateReviewedPrs(brief.reviewedPrs);
   const evidence = [
     "## Evidence not available from the index",
     "",
@@ -587,7 +635,20 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   ].join("\n");
   const gaps = renderGaps(brief.gaps);
   const footer = renderLatency(brief.latencyMs);
-  return [header, "", subjectLine, windowLine, "", evidence, gaps, footer]
+  return [
+    header,
+    "",
+    subjectLine,
+    windowLine,
+    "",
+    authoredPrs,
+    "",
+    reviewedPrs,
+    "",
+    evidence,
+    gaps,
+    footer,
+  ]
     .filter((s) => s !== "")
     .join("\n");
 }

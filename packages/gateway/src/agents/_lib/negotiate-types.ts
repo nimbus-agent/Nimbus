@@ -49,4 +49,30 @@ export type NegotiateBrief = {
    * in this run, they are permanent limits of the index.
    */
   readonly unavailableEvidence: readonly string[];
+  /**
+   * `null` means the lane failed (or never ran — e.g. no resolved subject) and a matching
+   * gap note explains why; a non-null value with all-zero counts means the lane ran and
+   * found nothing. Never collapse the two (Task 1 § 4).
+   */
+  readonly authoredPrs: NegotiateAuthoredPrs | null;
+  readonly reviewedPrs: NegotiateReviewedPrs | null;
+};
+
+export type NegotiateAuthoredPrs = {
+  readonly count: number;
+  readonly merged: number;
+  readonly stats: {
+    readonly additions: number;
+    readonly deletions: number;
+    readonly changedFiles: number;
+  } | null;
+  readonly statsCoverage: NegotiateCoverage;
+};
+
+export type NegotiateReviewedPrs = {
+  readonly count: number;
+  readonly approved: number;
+  readonly changesRequested: number;
+  /** `commented`, `dismissed`, or a null `metadata.state` — counted, never dropped. */
+  readonly otherOrUnknown: number;
 };
