@@ -194,6 +194,15 @@ describe("nimbus negotiate (e2e, in-process)", () => {
       expect(params.brief).toContain("**Subject:** you");
       expect(params.brief).toMatch(/_window: last \d+d/);
 
+      // The seeded evidence is LOAD-BEARING: without these, every lane could come back `null`
+      // (or the fixture's issue-before-PR ordering could silently break, which the comment on
+      // `seedNegotiateEvidence` warns about) and this test would still pass, proving nothing.
+      expect(params.brief).toContain("2 PR(s), 1 merged");
+      expect(params.brief).toContain("stats coverage 1/2");
+      expect(params.brief).toContain("1 review(s): 1 approved");
+      expect(params.brief).toContain("1 opened, 1 closed by an authored PR");
+      expect(params.brief).toContain("services: checkout");
+
       // The absent-evidence note (spec § 5.D) is present UNCONDITIONALLY — incidents resolved,
       // on-call shifts and deploys triggered do not exist in the index at all, and the brief
       // names them on every run so an empty section is never read as zero.
