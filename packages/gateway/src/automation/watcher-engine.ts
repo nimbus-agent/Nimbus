@@ -6,7 +6,7 @@ import {
   itemMatchesGraphPredicate,
   parseGraphPredicate,
 } from "./graph-predicate.ts";
-import { watcherConditionKind } from "./watcher-condition-kinds.ts";
+import { type WatcherConditionKind, watcherConditionKind } from "./watcher-condition-kinds.ts";
 import {
   insertWatcherEvent,
   listEnabledWatchers,
@@ -104,16 +104,34 @@ export function evaluateWatchersStartupCatchUp(
   }
 }
 
-function evaluateOneWatcher(
-  db: Database,
+/**
+ * Parse a watcher's `filter` and decide whether this evaluation is in scope at
+ * all. `null` means "this watcher does not apply" — a malformed condition, a
+ * `filter.service` that does not match the connector that just synced, or an
+ * `affectedService` this condition kind structurally cannot evaluate.
+ *
+ * Split out of `evaluateOneWatcher` for cognitive complexity (Sonar S3776,
+ * scored 19): the guard chain was most of the score, and it is a coherent
+ * question on its own — "does this watcher care about what just happened?"
+ *
+ * Every arm fails CLOSED, which is the whole point. In particular an
+ * `affectedService` on a kind with no timeline entity returns `null` rather than
+ * being ignored: ignoring it would silently WIDEN the watcher to every item of
+ * its type, the exact opposite of the narrowing the operator asked for.
+ *
+ * `filter.affectedService` scopes on the service the EVENT IS ABOUT, which
+ * `filter.service` structurally cannot — `item.service` is the syncable
+ * connector id, so every PagerDuty incident carries `pagerduty` there.
+ */
+function resolveWatcherScope(
   w: WatcherRow,
+  kind: WatcherConditionKind,
   syncedServiceId: string | undefined,
-  graphEnabled: boolean,
-): { summary: string; snapshot: string } | null {
-  const kind = watcherConditionKind(w.condition_type);
-  if (kind === undefined) {
-    return null;
-  }
+): {
+  service: string | undefined;
+  affectedService: string | undefined;
+  affectedServiceEntityType: string | null;
+} | null {
   const cond = asRecord(w.condition_json);
   if (cond === undefined) {
     return null;
@@ -127,18 +145,30 @@ function evaluateOneWatcher(
   if (syncedServiceId !== undefined && service !== undefined && service !== syncedServiceId) {
     return null;
   }
-
-  // `filter.affectedService` scopes on the service the EVENT IS ABOUT, which `filter.service`
-  // structurally cannot: `item.service` is the syncable connector id, so every PagerDuty incident
-  // carries `pagerduty` there. Fail closed on a kind with no timeline entity — an
-  // `affectedService` the engine cannot evaluate must match nothing, never be ignored (ignoring it
-  // silently WIDENS the watcher to every item of its type, the opposite of what was asked for).
   const affectedService =
     typeof f["affectedService"] === "string" ? f["affectedService"] : undefined;
   const affectedServiceEntityType = kind.affectedServiceEntityType;
   if (affectedService !== undefined && affectedServiceEntityType === null) {
     return null;
   }
+  return { service, affectedService, affectedServiceEntityType };
+}
+
+function evaluateOneWatcher(
+  db: Database,
+  w: WatcherRow,
+  syncedServiceId: string | undefined,
+  graphEnabled: boolean,
+): { summary: string; snapshot: string } | null {
+  const kind = watcherConditionKind(w.condition_type);
+  if (kind === undefined) {
+    return null;
+  }
+  const scope = resolveWatcherScope(w, kind, syncedServiceId);
+  if (scope === null) {
+    return null;
+  }
+  const { service, affectedService, affectedServiceEntityType } = scope;
 
   const since = w.last_checked_at ?? w.created_at;
   const rows = db

@@ -529,6 +529,52 @@ function emptyCohort(): CohortResult {
  * to sit inside the cohort branch, which meant an epic with no comparable
  * history got no proposal at all.
  */
+/**
+ * Propose (paused) watchers for the epic's affected services, plus the gap note
+ * for any service that maps to no configured deployment id.
+ *
+ * Split out of `runPremortem` for cognitive complexity (Sonar S3776, scored 30).
+ *
+ * Deliberately a function of the TARGET's affected services, NOT of the cohort:
+ * an epic with no comparable history still has services worth watching. These
+ * calls used to sit inside the `cohort.members.length > 0` branch, so a
+ * first-of-its-kind epic — exactly the one whose risks are least knowable from
+ * history — silently got no proposal and no `--repropose`, while the docs
+ * promised one watcher per affected service unconditionally.
+ *
+ * `repropose` clears THIS epic's tombstones BEFORE proposing, so a deliberately-
+ * deleted watcher is created fresh (paused) instead of staying `suppressed`.
+ * Scoped to `epicItemId` — never a global clear.
+ */
+function buildWatcherProposals(
+  ctx: PremortemContext,
+  args: {
+    epicItemId: string;
+    services: readonly string[];
+    now: number;
+    configIdFor: ((service: string) => string | null) | undefined;
+    repropose: boolean;
+  },
+): { watchers: WatcherProposal[]; gap: GapNote | undefined } {
+  const { epicItemId, services, now, configIdFor, repropose } = args;
+  if (repropose) {
+    clearProposalTombstones(ctx.db, epicItemId);
+  }
+  const proposal = proposeWatchers(ctx.db, {
+    epicItemId,
+    services: [...services],
+    nowMs: now,
+    resolveConfigServiceId: configIdFor ?? (() => null),
+  });
+  return {
+    watchers: proposal.proposals,
+    gap:
+      proposal.unmappedServices.length > 0
+        ? unmappedWatcherServicesGap(proposal.unmappedServices, configIdFor !== undefined)
+        : undefined,
+  };
+}
+
 export async function runPremortem(
   input: PremortemInput,
   ctx: PremortemContext,
@@ -628,18 +674,16 @@ export async function runPremortem(
     // `--repropose` (Task 5): clear THIS epic's tombstones BEFORE the proposal path runs, so a
     // deliberately-deleted watcher is created fresh (paused) instead of staying `suppressed`.
     // Scoped to `epic.itemId` — never a global clear.
-    if (input.repropose === true) {
-      clearProposalTombstones(ctx.db, epic.itemId);
-    }
-    const proposal = proposeWatchers(ctx.db, {
+    const proposed = buildWatcherProposals(ctx, {
       epicItemId: epic.itemId,
       services,
-      nowMs: now,
-      resolveConfigServiceId: configIdFor ?? (() => null),
+      now,
+      configIdFor,
+      repropose: input.repropose === true,
     });
-    watchers = proposal.proposals;
-    if (proposal.unmappedServices.length > 0) {
-      gaps.push(unmappedWatcherServicesGap(proposal.unmappedServices, configIdFor !== undefined));
+    watchers = proposed.watchers;
+    if (proposed.gap !== undefined) {
+      gaps.push(proposed.gap);
     }
 
     cohort = selectCohort(ctx.db, services, {

@@ -430,6 +430,120 @@ function bindRootRemote(
 }
 
 /**
+ * Emit `owns` edges for every file and directory under one root, plus the
+ * `contains` skeleton that links them, returning how many owner edges were
+ * written.
+ *
+ * The third and last extraction from `runOwnershipPass` (Sonar S3776). The first
+ * pass on this function took it 55 -> 44 by lifting `accumulateOwnerWeights` and
+ * `bindRootRemote`; that was not enough, because these two loops — with their
+ * nested `ranked.emitted` walks and their upsert-vs-ensure branches — were
+ * always the bulk of the score.
+ *
+ * The `upsertGraphEntity` / `ensureGraphEntity` split inside is load-bearing and
+ * is preserved exactly: the authoritative writer of a node upserts (carrying
+ * metadata), while a purely STRUCTURAL reference create-if-absents, because an
+ * upsert from a call site with no metadata to pass would NULL what the
+ * authoritative writer just wrote.
+ */
+function emitPathOwnership(
+  db: Database,
+  args: {
+    root: string;
+    rootMarker: string;
+    fileWeights: ReadonlyMap<string, Map<string, number>>;
+    dirWeights: ReadonlyMap<string, Map<string, number>>;
+    ownerLabels: ReadonlyMap<string, string>;
+    cfg: { minShare: number; maxOwnersPerPath: number };
+    nowMs: number;
+  },
+): number {
+  const { root, rootMarker, fileWeights, dirWeights, ownerLabels, cfg, nowMs } = args;
+  let emitted = 0;
+  const emitOwners = (targetEntityId: string, weights: Map<string, number>): void => {
+    const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+    for (const e of ranked.emitted) {
+      const personId = upsertGraphEntity(db, {
+        type: "person",
+        externalId: e.externalId,
+        label: ownerLabels.get(e.externalId) ?? e.externalId,
+        service: "filesystem",
+      });
+      upsertGraphRelation(db, personId, targetEntityId, "owns", nowMs, e.share);
+      emitted += 1;
+    }
+  };
+
+  for (const [path, weights] of fileWeights) {
+    const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+    // `service: "filesystem"` MATCHES `syncCodeSymbolGraph` exactly. We share
+    // this entity with it by design (same external id, so ownership edges land
+    // on the same node as `defined_in`/`in_repo` and the graph converges), and
+    // an upsert overwrites `service` unconditionally — so if the two writers
+    // disagreed on this value they would churn it back and forth forever.
+    //
+    // The consequence is that a code-symbol sync, which passes no metadata,
+    // transiently NULLs the ownership metadata below. That is self-healing:
+    // the next debounced pass restores it, and it is cosmetic — unlike the
+    // scoping it would break, which is why file scope comes from `contains`
+    // edges rather than from this column.
+    const fileId = upsertGraphEntity(db, {
+      type: "source_file",
+      externalId: fileExternalId(root, path),
+      label: path,
+      service: "filesystem",
+      metadata: ownerCountsMetadata(ranked),
+    });
+    emitOwners(fileId, weights);
+
+    const nearest = directoryAncestors(path)[0];
+    if (nearest !== undefined) {
+      // `ensureGraphEntity` (create-if-absent), NOT `upsertGraphEntity`: this
+      // is a purely STRUCTURAL reference to a directory that the rollup loop
+      // below writes authoritatively, metadata included. An upsert here would
+      // NULL that metadata, because this call site has none to pass.
+      const dirId = ensureGraphEntity(db, {
+        type: "directory",
+        externalId: dirExternalId(root, nearest),
+        label: nearest === "" ? root : nearest,
+        service: rootMarker,
+      });
+      upsertGraphRelation(db, dirId, fileId, "contains", nowMs);
+    }
+  }
+
+  for (const [dir, weights] of dirWeights) {
+    const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+    const dirId = upsertGraphEntity(db, {
+      type: "directory",
+      externalId: dirExternalId(root, dir),
+      label: dir === "" ? root : dir,
+      service: rootMarker,
+      metadata: ownerCountsMetadata(ranked),
+    });
+    emitOwners(dirId, weights);
+
+    const parents = directoryAncestors(dir);
+    const parent = dir === "" ? undefined : parents[0];
+    if (parent !== undefined) {
+      // Structural again — create-if-absent. With two or more top-level
+      // directories the repo-root node is reached from several children, and
+      // an upsert here would NULL the metadata its own iteration wrote. That
+      // node feeds the service rollup, so losing its metadata is not cosmetic.
+      const parentId = ensureGraphEntity(db, {
+        type: "directory",
+        externalId: dirExternalId(root, parent),
+        label: parent === "" ? root : parent,
+        service: rootMarker,
+      });
+      upsertGraphRelation(db, parentId, dirId, "contains", nowMs);
+    }
+  }
+
+  return emitted;
+}
+
+/**
  * Derive the ownership graph for `opts.roots` and persist the pass summary.
  *
  * `opts.roots` MUST be the COMPLETE set of git-aware roots, not a subset.
@@ -529,85 +643,15 @@ export async function runOwnershipPass(
         });
       }
 
-      const emitOwners = (targetEntityId: string, weights: Map<string, number>): void => {
-        const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-        for (const e of ranked.emitted) {
-          const personId = upsertGraphEntity(db, {
-            type: "person",
-            externalId: e.externalId,
-            label: ownerLabels.get(e.externalId) ?? e.externalId,
-            service: "filesystem",
-          });
-          upsertGraphRelation(db, personId, targetEntityId, "owns", opts.nowMs, e.share);
-          ownersEmitted += 1;
-        }
-      };
-
-      for (const [path, weights] of fileWeights) {
-        const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-        // `service: "filesystem"` MATCHES `syncCodeSymbolGraph` exactly. We share
-        // this entity with it by design (same external id, so ownership edges land
-        // on the same node as `defined_in`/`in_repo` and the graph converges), and
-        // an upsert overwrites `service` unconditionally — so if the two writers
-        // disagreed on this value they would churn it back and forth forever.
-        //
-        // The consequence is that a code-symbol sync, which passes no metadata,
-        // transiently NULLs the ownership metadata below. That is self-healing:
-        // the next debounced pass restores it, and it is cosmetic — unlike the
-        // scoping it would break, which is why file scope comes from `contains`
-        // edges rather than from this column.
-        const fileId = upsertGraphEntity(db, {
-          type: "source_file",
-          externalId: fileExternalId(root, path),
-          label: path,
-          service: "filesystem",
-          metadata: ownerCountsMetadata(ranked),
-        });
-        emitOwners(fileId, weights);
-
-        const nearest = directoryAncestors(path)[0];
-        if (nearest !== undefined) {
-          // `ensureGraphEntity` (create-if-absent), NOT `upsertGraphEntity`: this
-          // is a purely STRUCTURAL reference to a directory that the rollup loop
-          // below writes authoritatively, metadata included. An upsert here would
-          // NULL that metadata, because this call site has none to pass.
-          const dirId = ensureGraphEntity(db, {
-            type: "directory",
-            externalId: dirExternalId(root, nearest),
-            label: nearest === "" ? root : nearest,
-            service: rootMarker,
-          });
-          upsertGraphRelation(db, dirId, fileId, "contains", opts.nowMs);
-        }
-      }
-
-      for (const [dir, weights] of dirWeights) {
-        const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-        const dirId = upsertGraphEntity(db, {
-          type: "directory",
-          externalId: dirExternalId(root, dir),
-          label: dir === "" ? root : dir,
-          service: rootMarker,
-          metadata: ownerCountsMetadata(ranked),
-        });
-        emitOwners(dirId, weights);
-
-        const parents = directoryAncestors(dir);
-        const parent = dir === "" ? undefined : parents[0];
-        if (parent !== undefined) {
-          // Structural again — create-if-absent. With two or more top-level
-          // directories the repo-root node is reached from several children, and
-          // an upsert here would NULL the metadata its own iteration wrote. That
-          // node feeds the service rollup, so losing its metadata is not cosmetic.
-          const parentId = ensureGraphEntity(db, {
-            type: "directory",
-            externalId: dirExternalId(root, parent),
-            label: parent === "" ? root : parent,
-            service: rootMarker,
-          });
-          upsertGraphRelation(db, parentId, dirId, "contains", opts.nowMs);
-        }
-      }
+      ownersEmitted += emitPathOwnership(db, {
+        root,
+        rootMarker,
+        fileWeights,
+        dirWeights,
+        ownerLabels,
+        cfg,
+        nowMs: opts.nowMs,
+      });
 
       if (boundServiceId !== undefined) {
         const sw = serviceWeights.get(boundServiceId) ?? new Map<string, number>();
