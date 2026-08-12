@@ -22,6 +22,11 @@ function makeRegistry(): StreamRegistry {
     unregister: (id) => {
       map.delete(id);
     },
+    unregisterIf: (id, ac) => {
+      if (map.get(id) === ac) {
+        map.delete(id);
+      }
+    },
     has: (id) => map.has(id),
     size: () => map.size,
   };

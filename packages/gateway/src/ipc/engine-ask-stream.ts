@@ -22,6 +22,15 @@ export type StreamRegistry = {
   register(streamId: string, ac: AbortController): void;
   cancel(streamId: string): boolean;
   unregister(streamId: string): void;
+  /**
+   * Compare-and-delete: removes the entry only if `ac` is still the
+   * controller currently registered under `streamId`. A plain `unregister`
+   * in a `finally` can otherwise evict a *different* run's live entry once
+   * an id has been cancelled and reused — the cancelled run's cleanup fires
+   * after the reuse has already registered its own controller under the
+   * same key.
+   */
+  unregisterIf(streamId: string, ac: AbortController): void;
   has(streamId: string): boolean;
   size(): number;
 };
@@ -136,6 +145,11 @@ export function createStreamRegistry(): StreamRegistry {
     },
     unregister(id): void {
       map.delete(id);
+    },
+    unregisterIf(id, ac): void {
+      if (map.get(id) === ac) {
+        map.delete(id);
+      }
     },
     has(id): boolean {
       return map.has(id);

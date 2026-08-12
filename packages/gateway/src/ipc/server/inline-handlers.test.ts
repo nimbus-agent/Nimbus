@@ -10,7 +10,7 @@ import { createMockVault } from "../../vault/mock.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
-import { workflowRegistryKey } from "../workflow-cancel.ts";
+import { createWorkflowCancelHandler, workflowRegistryKey } from "../workflow-cancel.ts";
 import type { WorkflowRunContext } from "../workflow-invoke.ts";
 import type { ServerCtx } from "./context.ts";
 import {
@@ -522,6 +522,65 @@ describe("dispatchWorkflowRunRpc", () => {
     const { session } = makeSession();
     await dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "nightly" });
     expect(ctx.streamRegistry.size()).toBe(0);
+  });
+
+  test("rejects a streamId containing the registry's separator byte", async () => {
+    const handler = async (): Promise<unknown> => ({ runId: "r1", dryRun: false, stepResults: [] });
+    const ctx = makeCtx({ localIndex: makeIndex(), workflowRunHandler: handler });
+    const { session } = makeSession();
+    await expect(
+      dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "bad\u0000id" }),
+    ).rejects.toThrow(RpcMethodError);
+    expect(ctx.streamRegistry.size()).toBe(0);
+  });
+
+  // Reproduces the sequence: cancel a live run (registry.cancel deletes the
+  // entry immediately, but the run itself keeps executing until its next
+  // step boundary), reuse the same streamId while the cancelled run is still
+  // winding down, then let the first run's `finally` fire. A plain
+  // `unregister` there would delete the SECOND run's live entry, leaving it
+  // silently uncancellable forever.
+  test("cancel-then-reuse: a stale finally does not evict the successor's live entry", async () => {
+    const releases: Array<() => void> = [];
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async () =>
+        await new Promise((resolve) => {
+          releases.push(() =>
+            resolve({ runId: "r", status: "cancelled", dryRun: false, stepResults: [] }),
+          );
+        }),
+    });
+    const { session } = makeSession();
+    const key = workflowRegistryKey("client-1", "x");
+    const cancelHandler = createWorkflowCancelHandler(ctx.streamRegistry);
+
+    // First run registers under `key`.
+    const first = dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "x" });
+    expect(ctx.streamRegistry.has(key)).toBe(true);
+
+    // Cancel it: the entry is deleted immediately, even though the run
+    // itself (the unresolved promise above) is still winding down.
+    expect(cancelHandler("client-1", { streamId: "x" })).toEqual({ cancelled: true });
+    expect(ctx.streamRegistry.has(key)).toBe(false);
+
+    // Reuse the same id: the duplicate-check sees nothing live, so it
+    // registers a NEW controller under the same key.
+    const second = dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "x" });
+    expect(ctx.streamRegistry.has(key)).toBe(true);
+
+    // Let the FIRST run reach its boundary now. Its `finally` must not evict
+    // the second run's live entry.
+    releases[0]?.();
+    await first;
+    expect(ctx.streamRegistry.has(key)).toBe(true);
+
+    // The second run must still be cancellable.
+    expect(cancelHandler("client-1", { streamId: "x" })).toEqual({ cancelled: true });
+
+    releases[1]?.();
+    await second;
+    expect(ctx.streamRegistry.has(key)).toBe(false);
   });
 });
 

@@ -17,7 +17,7 @@ import type { IndexSearchQuery } from "../../index/local-index.ts";
 import type { AgentInvokeContext } from "../agent-invoke.ts";
 import { type AgentInvokeContextLike, createAskStreamHandler } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
-import { workflowRegistryKey } from "../workflow-cancel.ts";
+import { assertStreamIdHasNoNulByte, workflowRegistryKey } from "../workflow-cancel.ts";
 import type { WorkflowRunContext } from "../workflow-invoke.ts";
 import type { ServerCtx } from "./context.ts";
 import { RpcMethodError } from "./rpc-error.ts";
@@ -144,6 +144,9 @@ function buildWorkflowRunContext(
   const agent = parseOptionalString(rec, "agent");
   const paramsOverride = parseWorkflowRunParamsOverride(rec);
   const streamId = parseOptionalString(rec, "streamId");
+  if (streamId !== undefined) {
+    assertStreamIdHasNoNulByte(streamId, "workflow.run");
+  }
 
   const ctx: WorkflowRunContext = {
     clientId,
@@ -211,7 +214,10 @@ export async function dispatchWorkflowRunRpc(
     throw e;
   } finally {
     if (registryKey !== undefined) {
-      ctx.streamRegistry.unregister(registryKey);
+      // Compare-and-delete: if this streamId was cancelled and reused while
+      // this run was winding down, a plain unregister here would evict the
+      // reuse's live entry instead of this run's (already-deleted) one.
+      ctx.streamRegistry.unregisterIf(registryKey, ac);
     }
   }
 }

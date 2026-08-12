@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { createStreamRegistry } from "./engine-ask-stream.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
-import { createWorkflowCancelHandler, workflowRegistryKey } from "./workflow-cancel.ts";
+import {
+  assertStreamIdHasNoNulByte,
+  createWorkflowCancelHandler,
+  workflowRegistryKey,
+} from "./workflow-cancel.ts";
 
 describe("createWorkflowCancelHandler", () => {
   test("aborts the calling client's run and reports cancelled", () => {
@@ -43,8 +47,19 @@ describe("createWorkflowCancelHandler", () => {
   });
 
   test("the key separator cannot be forged from a crafted streamId", () => {
-    // A NUL separator cannot appear in a JSON-RPC string id in practice, so
-    // "client-a" + "x" can never collide with another client's namespace.
+    // Every parse site rejects a NUL-bearing streamId (assertStreamIdHasNoNulByte),
+    // so "client-a" + "x" can never collide with another client's namespace —
+    // the separator is only forgery-proof in combination with that guard.
     expect(workflowRegistryKey("a", "b")).not.toBe(workflowRegistryKey("a:b", ""));
+  });
+
+  test("createWorkflowCancelHandler rejects a streamId containing the separator byte", () => {
+    const handler = createWorkflowCancelHandler(createStreamRegistry());
+    expect(() => handler("client-a", { streamId: "victim\u0000stream" })).toThrow(RpcMethodError);
+  });
+
+  test("assertStreamIdHasNoNulByte rejects the separator byte and passes clean ids through", () => {
+    expect(() => assertStreamIdHasNoNulByte("clean-id", "workflow.run")).not.toThrow();
+    expect(() => assertStreamIdHasNoNulByte("bad\u0000id", "workflow.run")).toThrow(RpcMethodError);
   });
 });
