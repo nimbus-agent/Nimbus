@@ -1,35 +1,53 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
-import {
-  clampSyncTitle,
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
+import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
-import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { syncSentryIssuePass } from "./sentry-issue-sync.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "sentry";
-const CURSOR_PREFIX = "nimbus-sentry1:";
+const CURSOR_PREFIX = "nimbus-sentry2:";
 
-type SentryCursorV1 = { pass: number };
+type SentryCursorV2 = { lastSeenMs: number };
 
-function encodeCursor(c: SentryCursorV1): string {
+function encodeCursor(c: SentryCursorV2): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
 }
 
-function pass1Cursor(): string {
-  return encodeCursor({ pass: 1 });
+/**
+ * `null` on a prefix miss — which is what makes a persisted legacy
+ * `nimbus-sentry1:` cursor (payload `{pass}`) a cold start rather than a
+ * special-cased legacy branch: it simply fails to decode.
+ */
+function decodeCursor(raw: string | null): SentryCursorV2 | null {
+  if (raw === null || raw === "") {
+    return null;
+  }
+  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
+  if (parsed === undefined) {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const rec = parsed as Record<string, unknown>;
+  const lastSeenMs = rec["lastSeenMs"];
+  if (typeof lastSeenMs !== "number" || !Number.isFinite(lastSeenMs)) {
+    return null;
+  }
+  return { lastSeenMs };
 }
 
 export type SentrySyncableOptions = {
   ensureSentryMcpRunning: () => Promise<void>;
+  maxPagesPerSync?: number;
 };
 
 export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
-  const initialSyncDepthDays = 1;
+  const initialSyncDepthDays = 30;
+  const maxPagesPerSync = Math.max(1, Math.min(100, options.maxPagesPerSync ?? 20));
   return {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 120 * 1000,
@@ -59,17 +77,37 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
           { serviceId: SERVICE_ID, status: res.status },
           "sentry sync: projects failed",
         );
-        return syncPassCursorHttpEmpty(t0, text.length, cursor, pass1Cursor());
+        // The projects request itself failed: nothing is trustworthy enough to
+        // window an issue pass against, so the issue pass does not run this
+        // tick. Keep the incoming cursor untouched, or a cold-start marker if
+        // there was none.
+        return {
+          cursor: cursor ?? encodeCursor({ lastSeenMs: 0 }),
+          itemsUpserted: 0,
+          itemsDeleted: 0,
+          hasMore: false,
+          durationMs: Math.round(performance.now() - t0),
+          bytesTransferred: text.length,
+        };
       }
       let root: unknown;
       try {
         root = JSON.parse(text) as unknown;
       } catch {
-        return syncPassCursorParseEmpty(t0, text.length, pass1Cursor());
+        // Same reasoning as the !res.ok arm: an unparseable projects body means
+        // the issue pass is skipped too.
+        return {
+          cursor: encodeCursor({ lastSeenMs: 0 }),
+          itemsUpserted: 0,
+          itemsDeleted: 0,
+          hasMore: false,
+          durationMs: Math.round(performance.now() - t0),
+          bytesTransferred: text.length,
+        };
       }
       const list = Array.isArray(root) ? root : [];
       const now = Date.now();
-      let upserted = 0;
+      let projectsUpserted = 0;
       for (const item of list) {
         const row = asRecord(item);
         if (row === undefined) {
@@ -96,10 +134,47 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
           pinned: false,
           syncedAt: now,
         });
-        upserted += 1;
+        projectsUpserted += 1;
       }
+      const projectBytes = text.length;
 
-      return syncPassCursorSuccess(t0, text.length, pass1Cursor(), upserted);
+      const prev = decodeCursor(cursor);
+      // Honors `SyncContext.historyFloorMs` (opt-in, see `sync/types.ts`) on a COLD
+      // START only; an established cursor is more recent by construction and wins.
+      const coldFloorMs =
+        ctx.historyFloorMs !== undefined && Number.isFinite(ctx.historyFloorMs)
+          ? ctx.historyFloorMs
+          : now - initialSyncDepthDays * 86_400_000;
+
+      const issues = await syncSentryIssuePass({
+        ctx,
+        apiRoot,
+        org,
+        token,
+        sinceMs: prev === null ? coldFloorMs : now - initialSyncDepthDays * 86_400_000,
+        cursorLastSeenMs: prev?.lastSeenMs ?? null,
+        now,
+        maxPages: maxPagesPerSync,
+      });
+
+      // Never advance past data that was not fetched. A failed pass echoes the
+      // incoming cursor VERBATIM (not re-derived from `prev`) so the next tick
+      // retries the exact same window. A successful pass, by contrast, always
+      // returns a freshly re-encoded V2 cursor — even when it indexed nothing —
+      // which is what upgrades a legacy `nimbus-sentry1:` (or any other
+      // undecodable) cursor to V2 instead of echoing it back unrecognised.
+      const nextCursor = issues.ok
+        ? encodeCursor({ lastSeenMs: issues.maxLastSeenMs ?? prev?.lastSeenMs ?? 0 })
+        : (cursor ?? encodeCursor({ lastSeenMs: prev?.lastSeenMs ?? 0 }));
+
+      return {
+        cursor: nextCursor,
+        itemsUpserted: projectsUpserted + issues.upserted,
+        itemsDeleted: 0,
+        hasMore: issues.hasMore,
+        durationMs: Math.round(performance.now() - t0),
+        bytesTransferred: projectBytes + issues.bytes,
+      };
     },
   };
 }

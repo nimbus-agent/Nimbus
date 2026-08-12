@@ -7,11 +7,14 @@ import {
 } from "../../helpers/connector-sync-harness.ts";
 
 const ENSURE_MCP = { ensureSentryMcpRunning: async (): Promise<void> => {} };
-const CURSOR_PREFIX = "nimbus-sentry1:";
+const CURSOR_PREFIX = "nimbus-sentry2:";
 
 const PROJECTS_DEFAULT_RE = /^https:\/\/sentry\.io\/api\/0\/organizations\/test-org\/projects\/$/;
 const PROJECTS_CUSTOM_RE =
   /^https:\/\/sentry\.example\.com\/api\/0\/organizations\/test-org\/projects\/$/;
+// No host anchor: matches the issue pass URL under both the default sentry.io
+// host and the custom-base tests below.
+const ISSUES_RE = /\/organizations\/test-org\/issues\/\?[^#]*$/;
 
 function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -96,6 +99,10 @@ describe("sentry-sync — with shared fixture", () => {
     fixture.fetchMock.install();
     await fixture.vault.set("sentry.auth_token", "sentry-stub-token");
     await fixture.vault.set("sentry.org_slug", "test-org");
+    // These tests exercise the projects pass only; the two-pass syncable now
+    // always runs the issue pass too whenever projects succeeds, so give it a
+    // default empty response unless a test needs otherwise.
+    fixture.fetchMock.respond("GET", ISSUES_RE, []);
   });
 
   afterEach(() => {
@@ -250,7 +257,7 @@ describe("sentry-sync — with shared fixture", () => {
   });
 
   describe("cursor decode", () => {
-    test("null cursor returns success pass cursor with pass:1", async () => {
+    test("null cursor with no issues found returns a v2 cursor with lastSeenMs:0", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, []);
       const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.cursor).not.toBeNull();
@@ -258,19 +265,30 @@ describe("sentry-sync — with shared fixture", () => {
       expect(res.cursor.startsWith(CURSOR_PREFIX)).toBe(true);
       const decoded = JSON.parse(
         Buffer.from(res.cursor.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
-      ) as { pass: number };
-      expect(decoded.pass).toBe(1);
+      ) as { lastSeenMs: number };
+      expect(decoded.lastSeenMs).toBe(0);
     });
 
-    test("any incoming cursor is replaced on success (pass cursor)", async () => {
+    // On any SUCCESSFUL pass the returned cursor is always a freshly re-encoded
+    // v2 `{ lastSeenMs }` cursor — never a passthrough of whatever the caller
+    // supplied. An incoming cursor whose payload does not decode as
+    // `{ lastSeenMs }` fails `decodeCursor`'s validation (treated as a cold
+    // start), so on success it is replaced with `lastSeenMs: 0`, not echoed back.
+    test("an incoming cursor with no decodable lastSeenMs is replaced on success", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, []);
+      const incoming = encodeCursor({ arbitrary: true });
       const res = await createSentrySyncable(ENSURE_MCP).sync(
         fixture.createSyncContext(),
-        encodeCursor({ arbitrary: true }),
+        incoming,
       );
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
       expect(res.cursor.startsWith(CURSOR_PREFIX)).toBe(true);
+      expect(res.cursor).not.toBe(incoming);
+      const decoded = JSON.parse(
+        Buffer.from(res.cursor.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
+      ) as { lastSeenMs: number };
+      expect(decoded.lastSeenMs).toBe(0);
     });
   });
 
@@ -296,5 +314,262 @@ describe("sentry-sync — with shared fixture", () => {
       await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(fixture.notifications.emitted).toHaveLength(0);
     });
+  });
+});
+
+const ISSUES_PAGE1_RE = /\/organizations\/test-org\/issues\/\?(?!.*cursor=)/;
+const ISSUES_PAGE2_RE = /\/organizations\/test-org\/issues\/\?.*cursor=C2/;
+const CURSOR_V2_PREFIX = "nimbus-sentry2:";
+
+function sentryIssue(id: string, lastSeen: string): Record<string, unknown> {
+  return {
+    id,
+    title: `Issue ${id}`,
+    culprit: "app/x.ts in run",
+    permalink: `https://acme.sentry.io/issues/${id}/`,
+    status: "resolved",
+    level: "error",
+    lastSeen,
+    firstSeen: "2026-07-01T00:00:00.000Z",
+    project: { slug: "web" },
+    metadata: { value: `boom ${id}` },
+    assignedTo: null,
+  };
+}
+
+describe("sentry-sync — issue pass", () => {
+  let fixture: ConnectorSyncFixture;
+
+  beforeEach(async () => {
+    fixture = createConnectorSyncFixture();
+    fixture.fetchMock.install();
+    await fixture.vault.set("sentry.auth_token", "sentry-stub-token");
+    await fixture.vault.set("sentry.org_slug", "test-org");
+    fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, []);
+  });
+
+  afterEach(() => {
+    fixture.cleanup();
+  });
+
+  test("indexes issues as sentry:error_issue with a null author", async () => {
+    fixture.fetchMock.respond("GET", ISSUES_RE, [sentryIssue("1", "2026-08-01T00:00:00.000Z")], {
+      headers: { "content-type": "application/json" },
+    });
+    await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      null,
+    );
+    const row = fixture.db
+      .query<{ type: string; author_id: string | null; external_id: string }, []>(
+        "SELECT type, author_id, external_id FROM item WHERE service = 'sentry' AND type = 'error_issue'",
+      )
+      .get();
+    expect(row?.type).toBe("error_issue");
+    expect(row?.external_id).toBe("1");
+    expect(row?.author_id).toBeNull();
+  });
+
+  // THE STATUS GUARD. The API default is is:unresolved, which would drop these.
+  test("sends a lastSeen query with no is: term, and never statsPeriod", async () => {
+    fixture.fetchMock.respond("GET", ISSUES_RE, [], {
+      headers: { "content-type": "application/json" },
+    });
+    await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      null,
+    );
+    const call = fixture.fetchMock.calls.find((c) => c.url.includes("/issues/"));
+    const url = new URL(call?.url ?? "https://x/");
+    expect(url.searchParams.get("query")).toBe("lastSeen:-30d");
+    expect(url.searchParams.get("query")).not.toContain("is:");
+    expect(url.searchParams.get("statsPeriod")).toBeNull();
+    expect(url.searchParams.get("collapse")).toBe("stats");
+    expect(url.searchParams.get("sort")).toBe("date");
+  });
+
+  // THE TERMINATION GUARD. Sentry sends rel="next" on the last page too.
+  test("stops paginating when the next link declares results=false", async () => {
+    fixture.fetchMock.respond(
+      "GET",
+      ISSUES_PAGE1_RE,
+      [sentryIssue("1", "2026-08-02T00:00:00.000Z")],
+      {
+        headers: {
+          "content-type": "application/json",
+          Link: '<https://sentry.io/api/0/organizations/test-org/issues/?cursor=C2>; rel="next"; results="true"',
+        },
+      },
+    );
+    fixture.fetchMock.respond(
+      "GET",
+      ISSUES_PAGE2_RE,
+      [sentryIssue("2", "2026-08-01T00:00:00.000Z")],
+      {
+        headers: {
+          "content-type": "application/json",
+          Link: '<https://sentry.io/api/0/organizations/test-org/issues/?cursor=C3>; rel="next"; results="false"',
+        },
+      },
+    );
+    await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      null,
+    );
+    const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));
+    expect(issueCalls).toHaveLength(2);
+    const ids = fixture.db
+      .query<{ external_id: string }, []>(
+        "SELECT external_id FROM item WHERE type = 'error_issue' ORDER BY external_id",
+      )
+      .all()
+      .map((r) => r.external_id);
+    expect(ids).toEqual(["1", "2"]);
+  });
+
+  test("stops early once a row is at or below the stored cursor", async () => {
+    const cursor =
+      CURSOR_V2_PREFIX +
+      Buffer.from(
+        JSON.stringify({ lastSeenMs: Date.parse("2026-08-01T12:00:00.000Z") }),
+        "utf8",
+      ).toString("base64url");
+    fixture.fetchMock.respond(
+      "GET",
+      ISSUES_RE,
+      [
+        sentryIssue("new", "2026-08-02T00:00:00.000Z"),
+        sentryIssue("old", "2026-07-01T00:00:00.000Z"),
+      ],
+      { headers: { "content-type": "application/json" } },
+    );
+    await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      cursor,
+    );
+    const ids = fixture.db
+      .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE type = 'error_issue'")
+      .all()
+      .map((r) => r.external_id);
+    expect(ids).toEqual(["new"]);
+  });
+
+  // THE LEGACY CURSOR. Every existing install has one persisted.
+  test("a legacy nimbus-sentry1 cursor is treated as a cold start", async () => {
+    fixture.fetchMock.respond("GET", ISSUES_RE, [], {
+      headers: { "content-type": "application/json" },
+    });
+    const legacy =
+      "nimbus-sentry1:" + Buffer.from(JSON.stringify({ pass: 1 }), "utf8").toString("base64url");
+    const res = await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      legacy,
+    );
+    const call = fixture.fetchMock.calls.find((c) => c.url.includes("/issues/"));
+    expect(new URL(call?.url ?? "https://x/").searchParams.get("query")).toBe("lastSeen:-30d");
+    expect(res.cursor?.startsWith(CURSOR_V2_PREFIX)).toBe(true);
+  });
+
+  // THE MIS-SCOPED TOKEN. project:read lists projects but 403s on issues.
+  test("a 403 on the issue pass indexes nothing and leaves the cursor unadvanced", async () => {
+    const cursor =
+      CURSOR_V2_PREFIX +
+      Buffer.from(JSON.stringify({ lastSeenMs: 1_600_000_000_000 }), "utf8").toString("base64url");
+    fixture.fetchMock.respond("GET", ISSUES_RE, { detail: "forbidden" }, { status: 403 });
+    const res = await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      cursor,
+    );
+    expect(res.cursor).toBe(cursor);
+    const n = fixture.db
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM item WHERE type = 'error_issue'")
+      .get();
+    expect(n?.n).toBe(0);
+  });
+
+  // A stronger companion to the 403 test above: the single-page case above
+  // can't distinguish `ok: false` from a hypothetical `ok: true` regression,
+  // because when nothing was indexed, re-deriving the cursor from the already-
+  // decoded incoming value and echoing that same incoming value byte-for-byte
+  // coincide. Real partial progress (page 1 indexes something, THEN page 2
+  // 403s) breaks that coincidence: a correct implementation must still discard
+  // page 1's advance and echo the pre-sync cursor.
+  test("a 403 on page 2, after page 1 indexed real progress, still discards that progress", async () => {
+    const cursor =
+      CURSOR_V2_PREFIX +
+      Buffer.from(JSON.stringify({ lastSeenMs: 1_600_000_000_000 }), "utf8").toString("base64url");
+    fixture.fetchMock.respond(
+      "GET",
+      ISSUES_PAGE1_RE,
+      [sentryIssue("1", "2026-08-02T00:00:00.000Z")],
+      {
+        headers: {
+          "content-type": "application/json",
+          Link: '<https://sentry.io/api/0/organizations/test-org/issues/?cursor=C2>; rel="next"; results="true"',
+        },
+      },
+    );
+    fixture.fetchMock.respond("GET", ISSUES_PAGE2_RE, { detail: "forbidden" }, { status: 403 });
+    const res = await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      cursor,
+    );
+    expect(res.cursor).toBe(cursor);
+    const n = fixture.db
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM item WHERE type = 'error_issue'")
+      .get();
+    // Page 1's row is indexed (the upsert already happened before page 2 was
+    // even fetched) — it is the CURSOR that must not advance past it.
+    expect(n?.n).toBe(1);
+  });
+
+  test("honours historyFloorMs on a cold start", async () => {
+    fixture.fetchMock.respond("GET", ISSUES_RE, [], {
+      headers: { "content-type": "application/json" },
+    });
+    const floor = Date.now() - 120 * 86_400_000;
+    await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full", historyFloorMs: floor },
+      null,
+    );
+    const call = fixture.fetchMock.calls.find((c) => c.url.includes("/issues/"));
+    const q = new URL(call?.url ?? "https://x/").searchParams.get("query") ?? "";
+    expect(q).toMatch(/^lastSeen:-1[12]\dd$/);
+  });
+
+  test("a row with an unparseable lastSeen is skipped, not defaulted", async () => {
+    fixture.fetchMock.respond(
+      "GET",
+      ISSUES_RE,
+      [
+        { id: "bad", title: "x", lastSeen: "nope" },
+        sentryIssue("good", "2026-08-01T00:00:00.000Z"),
+      ],
+      { headers: { "content-type": "application/json" } },
+    );
+    await createSentrySyncable(ENSURE_MCP).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      null,
+    );
+    const ids = fixture.db
+      .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE type = 'error_issue'")
+      .all()
+      .map((r) => r.external_id);
+    expect(ids).toEqual(["good"]);
+  });
+
+  test("stops at the page budget", async () => {
+    fixture.fetchMock.respond("GET", ISSUES_RE, [sentryIssue("1", "2026-08-02T00:00:00.000Z")], {
+      headers: {
+        "content-type": "application/json",
+        Link: '<https://sentry.io/api/0/organizations/test-org/issues/?cursor=CN>; rel="next"; results="true"',
+      },
+    });
+    const res = await createSentrySyncable({ ...ENSURE_MCP, maxPagesPerSync: 2 }).sync(
+      { ...fixture.createSyncContext(), depth: "full" },
+      null,
+    );
+    expect(fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"))).toHaveLength(2);
+    expect(res.hasMore).toBe(true);
   });
 });
