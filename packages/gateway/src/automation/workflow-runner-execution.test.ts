@@ -156,4 +156,152 @@ describe("runWorkflowExecution (agent path)", () => {
     expect(chunks.some((c) => c.includes("Only"))).toBe(true);
     expect(chunks.includes("body")).toBe(true);
   });
+
+  test("an aborted run stops at the next step boundary and finalises cancelled", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    upsertWorkflowByName(
+      db,
+      "cancel-mid",
+      null,
+      JSON.stringify([{ run: "a" }, { run: "b" }, { run: "c" }]),
+      now,
+    );
+
+    const ac = new AbortController();
+    let calls = 0;
+
+    const r = await runWorkflowExecution({
+      db,
+      agent: noopAgent,
+      workflowName: "cancel-mid",
+      triggeredBy: "cli",
+      dryRun: false,
+      stream: false,
+      sendChunk: () => {
+        /* noop */
+      },
+      signal: ac.signal,
+      conversationalRunner: async () => {
+        calls += 1;
+        // Cancel during step 1; step 1 still completes, step 2 never starts.
+        if (calls === 1) ac.abort();
+        return { reply: "step-ok" };
+      },
+    });
+
+    expect(calls).toBe(1);
+    expect(r.stepResults).toEqual([{ label: "step-1", status: "done", output: "step-ok" }]);
+    expect(r.status).toBe("cancelled");
+
+    const runRow = db.query(`SELECT status FROM workflow_run WHERE id = ?`).get(r.runId) as {
+      status: string;
+    };
+    expect(runRow.status).toBe("cancelled");
+  });
+
+  test("a run aborted before the first step records zero steps", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    upsertWorkflowByName(db, "cancel-early", null, JSON.stringify([{ run: "a" }]), now);
+
+    const ac = new AbortController();
+    ac.abort();
+
+    const r = await runWorkflowExecution({
+      db,
+      agent: noopAgent,
+      workflowName: "cancel-early",
+      triggeredBy: "cli",
+      dryRun: false,
+      stream: false,
+      sendChunk: () => {
+        /* noop */
+      },
+      signal: ac.signal,
+      conversationalRunner: async () => ({ reply: "never" }),
+    });
+
+    expect(r.stepResults).toEqual([]);
+    expect(r.status).toBe("cancelled");
+    const runRow = db.query(`SELECT status FROM workflow_run WHERE id = ?`).get(r.runId) as {
+      status: string;
+    };
+    expect(runRow.status).toBe("cancelled");
+  });
+
+  test("an unaborted signal does not change a normal run", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    upsertWorkflowByName(db, "no-cancel", null, JSON.stringify([{ run: "a" }]), now);
+
+    const r = await runWorkflowExecution({
+      db,
+      agent: noopAgent,
+      workflowName: "no-cancel",
+      triggeredBy: "cli",
+      dryRun: false,
+      stream: false,
+      sendChunk: () => {
+        /* noop */
+      },
+      signal: new AbortController().signal,
+      conversationalRunner: async () => ({ reply: "step-ok" }),
+    });
+
+    const runRow = db.query(`SELECT status FROM workflow_run WHERE id = ?`).get(r.runId) as {
+      status: string;
+    };
+    expect(runRow.status).toBe("done");
+    expect(r.status).toBe("done");
+  });
+
+  test("a dry run reports status preview", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    upsertWorkflowByName(db, "preview-me", null, JSON.stringify([{ run: "a" }]), now);
+
+    const r = await runWorkflowExecution({
+      db,
+      agent: noopAgent,
+      workflowName: "preview-me",
+      triggeredBy: "cli",
+      dryRun: true,
+      stream: false,
+      sendChunk: () => {
+        /* noop */
+      },
+      conversationalRunner: async () => ({ reply: "never" }),
+    });
+
+    expect(r.status).toBe("preview");
+  });
+
+  test("a halted run reports status error", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    upsertWorkflowByName(db, "boom", null, JSON.stringify([{ run: "a" }, { run: "b" }]), now);
+
+    const r = await runWorkflowExecution({
+      db,
+      agent: noopAgent,
+      workflowName: "boom",
+      triggeredBy: "cli",
+      dryRun: false,
+      stream: false,
+      sendChunk: () => {
+        /* noop */
+      },
+      conversationalRunner: async () => {
+        throw new Error("step blew up");
+      },
+    });
+
+    expect(r.status).toBe("error");
+  });
 });

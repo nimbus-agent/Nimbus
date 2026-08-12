@@ -112,10 +112,23 @@ export type RunWorkflowExecutionParams = {
   sendChunk: (text: string) => void;
   conversationalRunner?: (p: RunConversationalAgentParams) => Promise<{ reply: string }>;
   readonly paramsOverride?: Readonly<Record<string, Record<string, unknown>>>;
+  /**
+   * Cancels the run at the NEXT STEP BOUNDARY. The in-flight step always runs
+   * to completion — the signal is deliberately not threaded into step
+   * execution or the LLM calls inside it.
+   */
+  readonly signal?: AbortSignal;
 };
 
 export type RunWorkflowExecutionResult = {
   runId: string;
+  /**
+   * The run's terminal status: "preview" | "done" | "error" | "cancelled".
+   * Mirrors what finalizeRun wrote to workflow_run — an IPC caller cannot read
+   * that table, so a cancelled run would otherwise be indistinguishable from a
+   * short one that completed.
+   */
+  status: string;
   dryRun: boolean;
   stepResults: Array<{
     label?: string;
@@ -225,6 +238,7 @@ function executeDryRun(
   finalizeRun(p, wf, runId, "preview", now, null);
   return {
     runId,
+    status: "preview",
     dryRun: true,
     stepResults: steps.map((s, i) => ({
       label: s.label ?? `step-${String(i + 1)}`,
@@ -245,6 +259,10 @@ async function executeRealRunSteps(
   const outputs: string[] = [];
   const stepResults: RunWorkflowExecutionResult["stepResults"] = [];
   for (let i = 0; i < steps.length; i++) {
+    if (p.signal?.aborted === true) {
+      finalizeRun(p, wf, runId, "cancelled", now, "Run cancelled");
+      return { runId, status: "cancelled", dryRun: false, stepResults };
+    }
     const step = steps[i];
     if (step === undefined) continue;
     const outcome = await executeWorkflowStep(p, runId, i, step, outputs);
@@ -255,11 +273,11 @@ async function executeRealRunSteps(
     stepResults.push({ label: outcome.label, status: "error", error: outcome.message });
     if (outcome.halt) {
       finalizeRun(p, wf, runId, "error", now, outcome.message);
-      return { runId, dryRun: false, stepResults };
+      return { runId, status: "error", dryRun: false, stepResults };
     }
   }
   finalizeRun(p, wf, runId, "done", now, null);
-  return { runId, dryRun: false, stepResults };
+  return { runId, status: "done", dryRun: false, stepResults };
 }
 
 export async function runWorkflowExecution(
