@@ -551,11 +551,13 @@ export function renderPremortem(brief: PremortemBrief): string {
 }
 
 /**
- * `subject.isOther` is true only when the caller passed `--person <id>` for someone
- * other than the resolved local user (see `negotiate.ts` `resolveSubject`) — that case
- * always has a non-null `personId`, so the fallback below is defensive, not reachable
- * in practice. The local-user case deliberately does not name the person: an
- * unresolved local subject already carries a `missing_user_identity` gap note.
+ * `subject.isOther` is true only when `--person <id>` named someone whose id differs
+ * from the separately-resolved local user (`negotiate.ts` `resolveSubject` always
+ * resolves both and compares) — `--person <your own id>` reads as a normal self brief,
+ * not "someone other than you". The explicit-subject case always has a non-null
+ * `personId`, so the fallback below is defensive, not reachable in practice. The
+ * local-user case deliberately does not name the person: an unresolved local subject
+ * already carries a `missing_user_identity` gap note.
  */
 function renderNegotiateSubjectLine(subject: NegotiateSubject): string {
   if (subject.isOther) {

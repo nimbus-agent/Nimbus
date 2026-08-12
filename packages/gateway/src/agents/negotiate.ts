@@ -59,6 +59,26 @@ function laneFailureGap(laneName: string, r: SubTaskResult): GapNote {
   };
 }
 
+/**
+ * Extracted from `runNegotiate` so it can be unit-tested directly against synthetic
+ * `SubTaskResult[]` input: Task 1 wires this mechanism with zero real lanes (`tasks` is
+ * always `[]`), so the loop body never runs end-to-end via `runNegotiate` itself, and a
+ * coverage floor requires exercising it — building fake `SubTaskResult`s is the only way
+ * to reach it without inventing a lane, which is Task 2's job, not Task 1's.
+ */
+export function reduceLaneResults(
+  results: readonly SubTaskResult[],
+  laneNames: readonly string[],
+): GapNote[] {
+  const gaps: GapNote[] = [];
+  for (const r of results) {
+    if (r.status !== "done" || r.text === undefined) {
+      gaps.push(laneFailureGap(laneNames[r.taskIndex] ?? `#${String(r.taskIndex)}`, r));
+    }
+  }
+  return gaps;
+}
+
 export async function runNegotiate(
   input: NegotiateInput,
   ctx: NegotiateContext,
@@ -91,11 +111,7 @@ export async function runNegotiate(
     toolCallCount: { value: 0 },
   });
   const results = await coordinator.run(tasks);
-  for (const r of results) {
-    if (r.status !== "done" || r.text === undefined) {
-      gaps.push(laneFailureGap(laneNames[r.taskIndex] ?? `#${String(r.taskIndex)}`, r));
-    }
-  }
+  gaps.push(...reduceLaneResults(results, laneNames));
 
   return {
     kind: "negotiate",
@@ -114,19 +130,22 @@ export async function runNegotiate(
 }
 
 async function resolveSubject(db: Database, input: NegotiateInput): Promise<NegotiateSubject> {
-  if (input.personId !== undefined && input.personId.length > 0) {
-    return {
-      personId: input.personId,
-      source: "explicit",
-      displayName: personDisplayNameOrNull(db, input.personId),
-      isOther: true,
-    };
-  }
+  // Always resolve the local self id, even for an explicit `--person`: `isOther` means
+  // "named someone other than the resolved local user" (see `NegotiateSubject.isOther`'s
+  // docstring), which is a comparison, not a fact derivable from `--person` being present.
   const resolution = await resolveSelfPerson(db, {
     ...(input.mePersonIdOverride === undefined ? {} : { override: input.mePersonIdOverride }),
     ...(input.runGitOverride === undefined ? {} : { runGit: input.runGitOverride }),
     osUsername: input.osUsernameOverride ?? safeOsUsername(),
   });
+  if (input.personId !== undefined && input.personId.length > 0) {
+    return {
+      personId: input.personId,
+      source: "explicit",
+      displayName: personDisplayNameOrNull(db, input.personId),
+      isOther: input.personId !== resolution.personId,
+    };
+  }
   return {
     personId: resolution.personId,
     source: resolution.source,
