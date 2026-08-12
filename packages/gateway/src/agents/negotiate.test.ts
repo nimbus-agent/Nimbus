@@ -262,6 +262,42 @@ test("stats coverage is complete when every authored PR is enriched", async () =
   db.close();
 });
 
+test("tickets counts opened, and closed via an authored PR's resolves edge", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+
+  // Issue must exist BEFORE the PR: syncPrGraph only wires `resolves` against
+  // issue entities already present at PR-sync time.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#issue-7",
+    title: "Login broken",
+    bodyPreview: "",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: "person:me",
+    metadata: { repo: "acme/app", number: 7 },
+  });
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/app#1",
+    title: "Fix login",
+    bodyPreview: "closes #7",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: "person:me",
+    metadata: { repo: "acme/app", number: 1 },
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.tickets?.opened).toBe(1);
+  expect(brief.tickets?.closedByAuthoredPr).toBe(1);
+  db.close();
+});
+
 test("a lane that throws yields a gap note, not a zero", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);

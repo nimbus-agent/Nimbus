@@ -11,6 +11,7 @@ import type {
   NegotiateInput,
   NegotiateReviewedPrs,
   NegotiateSubject,
+  NegotiateTickets,
 } from "./_lib/negotiate-types.ts";
 import { resolveSelfPerson } from "./_lib/self-person.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
@@ -156,6 +157,41 @@ function laneReviewedPrs(db: Database, personId: string, sinceMs: number): Negot
   return { count: rows.length, approved, changesRequested, otherOrUnknown };
 }
 
+/**
+ * `opened`: `person --opened--> issue` (graph_relation), joined back to `item` for the
+ * window cutoff. `closedByAuthoredPr`: `person --authored--> pr --resolves--> issue`,
+ * `DISTINCT`-counted on the issue side so one PR resolving multiple issues (or, in
+ * principle, multiple authored PRs resolving the same issue) does not double-count.
+ * Windowed on the PR's `modified_at`, matching `laneAuthoredPrs`.
+ */
+function laneTickets(db: Database, personId: string, sinceMs: number): NegotiateTickets {
+  const cutoff = Date.now() - sinceMs;
+  const opened = db
+    .query(
+      `SELECT COUNT(*) AS n
+         FROM graph_relation r
+         JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+         JOIN graph_entity ie ON ie.id = r.to_id   AND ie.type = 'issue'
+         JOIN item i          ON i.id = ie.external_id
+        WHERE r.type = 'opened' AND pe.external_id = ? AND i.modified_at >= ?`,
+    )
+    .get(personId, cutoff) as { n: number };
+
+  const closed = db
+    .query(
+      `SELECT COUNT(DISTINCT res.to_id) AS n
+         FROM graph_relation auth
+         JOIN graph_entity pe   ON pe.id = auth.from_id AND pe.type = 'person'
+         JOIN graph_entity pre  ON pre.id = auth.to_id  AND pre.type = 'pr'
+         JOIN item pri          ON pri.id = pre.external_id
+         JOIN graph_relation res ON res.from_id = pre.id AND res.type = 'resolves'
+        WHERE auth.type = 'authored' AND pe.external_id = ? AND pri.modified_at >= ?`,
+    )
+    .get(personId, cutoff) as { n: number };
+
+  return { opened: opened.n, closedByAuthoredPr: closed.n };
+}
+
 function laneTask(execute: () => unknown): SubTask {
   return {
     taskType: "agent_step",
@@ -214,10 +250,11 @@ export async function runNegotiate(
   // is "not attempted", the same "could not be computed" meaning as a lane that threw.
   if (subject.personId !== null) {
     const personId = subject.personId;
-    laneNames.push("authoredPrs", "reviewedPrs");
+    laneNames.push("authoredPrs", "reviewedPrs", "tickets");
     tasks.push(
       laneTask(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
       laneTask(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
+      laneTask(() => laneTickets(ctx.db, personId, sinceMs)),
     );
   }
   const coordinator = new AgentCoordinator({
@@ -231,6 +268,7 @@ export async function runNegotiate(
 
   let authoredPrs: NegotiateAuthoredPrs | null = null;
   let reviewedPrs: NegotiateReviewedPrs | null = null;
+  let tickets: NegotiateTickets | null = null;
   for (const r of results) {
     if (r.status !== "done" || r.text === undefined) continue;
     const laneName = laneNames[r.taskIndex];
@@ -238,6 +276,7 @@ export async function runNegotiate(
       const decoded: unknown = JSON.parse(r.text);
       if (laneName === "authoredPrs") authoredPrs = decoded as NegotiateAuthoredPrs;
       else if (laneName === "reviewedPrs") reviewedPrs = decoded as NegotiateReviewedPrs;
+      else if (laneName === "tickets") tickets = decoded as NegotiateTickets;
     } catch {
       gaps.push(laneFailureGap(laneName ?? `#${String(r.taskIndex)}`, r));
     }
@@ -258,6 +297,7 @@ export async function runNegotiate(
     unavailableEvidence: UNAVAILABLE_EVIDENCE,
     authoredPrs,
     reviewedPrs,
+    tickets,
   };
 }
 

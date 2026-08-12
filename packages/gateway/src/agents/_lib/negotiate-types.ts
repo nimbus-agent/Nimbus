@@ -56,6 +56,7 @@ export type NegotiateBrief = {
    */
   readonly authoredPrs: NegotiateAuthoredPrs | null;
   readonly reviewedPrs: NegotiateReviewedPrs | null;
+  readonly tickets: NegotiateTickets | null;
 };
 
 export type NegotiateAuthoredPrs = {
@@ -75,4 +76,15 @@ export type NegotiateReviewedPrs = {
   readonly changesRequested: number;
   /** `commented`, `dismissed`, or a null `metadata.state` — counted, never dropped. */
   readonly otherOrUnknown: number;
+};
+
+/**
+ * `opened` traverses `person --opened--> issue`. `closedByAuthoredPr` traverses
+ * `person --authored--> pr --resolves--> issue` — a `resolves` edge is emitted by
+ * `syncPrGraph` from issue references (e.g. "closes #7") in the PR body, and only wires
+ * against an issue entity that already exists in `graph_entity` at PR-sync time.
+ */
+export type NegotiateTickets = {
+  readonly opened: number;
+  readonly closedByAuthoredPr: number;
 };

@@ -25,6 +25,7 @@ import type {
   NegotiateBrief,
   NegotiateReviewedPrs,
   NegotiateSubject,
+  NegotiateTickets,
 } from "./negotiate-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
@@ -613,11 +614,25 @@ function renderNegotiateReviewedPrs(r: NegotiateReviewedPrs | null): string {
   return lines.join("\n");
 }
 
+/** Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. */
+function renderNegotiateTickets(t: NegotiateTickets | null): string {
+  if (t === null) {
+    return ["## Tickets", "", "_could not be computed_"].join("\n");
+  }
+  const lines = [
+    "## Tickets",
+    "",
+    `- ${String(t.opened)} opened, ${String(t.closedByAuthoredPr)} closed by an authored PR`,
+  ];
+  return lines.join("\n");
+}
+
 /**
  * Task 1's version rendered only the subject, the window and generation time, the gap
- * notes, and the unconditional `unavailableEvidence` list. Task 2 adds the authored/
- * reviewed PR lane sections — a lane whose field is `null` renders as "could not be
- * computed", never as `0`; each later lane task extends this further the same way.
+ * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
+ * reviewed PR lane sections; Task 3 adds the tickets lane — a lane whose field is `null`
+ * renders as "could not be computed", never as `0`; each later lane task extends this
+ * further the same way.
  */
 export function renderNegotiate(brief: NegotiateBrief): string {
   const days = Math.round(brief.query.sinceMs / 86_400_000);
@@ -628,6 +643,7 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   ).toISOString()}_`;
   const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);
   const reviewedPrs = renderNegotiateReviewedPrs(brief.reviewedPrs);
+  const tickets = renderNegotiateTickets(brief.tickets);
   const evidence = [
     "## Evidence not available from the index",
     "",
@@ -644,6 +660,8 @@ export function renderNegotiate(brief: NegotiateBrief): string {
     authoredPrs,
     "",
     reviewedPrs,
+    "",
+    tickets,
     "",
     evidence,
     gaps,
