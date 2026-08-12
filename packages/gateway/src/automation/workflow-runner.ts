@@ -249,7 +249,23 @@ function executeDryRun(
   };
 }
 
-async function executeRealRunSteps(
+// A plain `p.signal?.aborted === true` expression, factored out only so
+// TypeScript's control-flow narrowing doesn't (wrongly) treat the second
+// call site as unreachable: `.aborted` can flip between calls via
+// `AbortController.abort()`, but the compiler can't see that through two
+// inline copies of the same property read, and a function call boundary is
+// what resets its narrowing.
+function isAborted(p: RunWorkflowExecutionParams): boolean {
+  return p.signal?.aborted === true;
+}
+
+// Exported for direct unit testing of the empty-`steps` edge case: the sole
+// production caller (`runWorkflowExecution`, via `parseWorkflowStepsJson`)
+// currently rejects a workflow with zero executable steps before this ever
+// runs, so that path can't be exercised end-to-end through the public RPC —
+// but this function's own contract (honour an already-aborted signal) must
+// not depend on a caller-side invariant that could change later.
+export async function executeRealRunSteps(
   p: RunWorkflowExecutionParams,
   wf: { id: string; name: string },
   steps: WorkflowStep[],
@@ -258,8 +274,15 @@ async function executeRealRunSteps(
 ): Promise<RunWorkflowExecutionResult> {
   const outputs: string[] = [];
   const stepResults: RunWorkflowExecutionResult["stepResults"] = [];
+  // Checked once up front too: a zero-step workflow never enters the loop
+  // below, so without this an already-aborted signal would be ignored and
+  // the run would finalise "done" instead of honouring the cancellation.
+  if (isAborted(p)) {
+    finalizeRun(p, wf, runId, "cancelled", now, "Run cancelled");
+    return { runId, status: "cancelled", dryRun: false, stepResults };
+  }
   for (let i = 0; i < steps.length; i++) {
-    if (p.signal?.aborted === true) {
+    if (isAborted(p)) {
       finalizeRun(p, wf, runId, "cancelled", now, "Run cancelled");
       return { runId, status: "cancelled", dryRun: false, stepResults };
     }

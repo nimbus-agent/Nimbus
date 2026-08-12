@@ -1243,10 +1243,14 @@ const streamReq: JSONRPCRequest = {
 
 // Cancel a running workflow — a DISTINCT method from `engine.cancelStream`
 // (below): `engine.cancelStream` cannot cancel a workflow run, even though
-// both share the same underlying stream registry internally. A `streamId` is
-// scoped to the CALLING CLIENT — two different clients may use the same id at
-// the same time without interfering, and one client cannot cancel another
-// client's run.
+// both share the same underlying stream registry internally. A workflow run
+// is registered under `clientId + SEP + streamId` (SEP is a byte that cannot
+// appear in a client-supplied id — both workflow.run and engine.cancelStream
+// reject any streamId containing it), so a bare id passed to
+// engine.cancelStream can never match a workflow's composite key, however it
+// is chosen. A `streamId` is also scoped to the CALLING CLIENT — two
+// different clients may use the same id at the same time without
+// interfering, and one client cannot cancel another client's run.
 // workflow.cancel(params: { streamId: string }) -> { cancelled: boolean }
 // `cancelled: false` means no live run of YOUR OWN client held that id
 // (already finished, never started, or belongs to another client).

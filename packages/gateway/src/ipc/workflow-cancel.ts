@@ -54,10 +54,14 @@ export function createWorkflowCancelHandler(
     if (typeof params !== "object" || params === null) {
       throw new RpcMethodError(-32602, "workflow.cancel requires { streamId: string }");
     }
-    const sid = (params as { streamId?: unknown }).streamId;
-    if (typeof sid !== "string" || sid.length === 0) {
+    const raw = (params as { streamId?: unknown }).streamId;
+    if (typeof raw !== "string" || raw.trim().length === 0) {
       throw new RpcMethodError(-32602, "workflow.cancel requires non-empty streamId");
     }
+    // Must match workflow.run's parsing exactly (inline-handlers.ts's
+    // parseOptionalString also trims) — otherwise a run registered under a
+    // trimmed streamId could never be looked up here by its untrimmed form.
+    const sid = raw.trim();
     assertStreamIdHasNoNulByte(sid, "workflow.cancel");
     return { cancelled: registry.cancel(workflowRegistryKey(clientId, sid)) };
   };

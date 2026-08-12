@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import type { Agent } from "@mastra/core/agent";
 
 import type { RunConversationalAgentParams } from "../engine/run-conversational-agent.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { runWorkflowExecution } from "./workflow-runner.ts";
-import { upsertWorkflowByName } from "./workflow-store.ts";
+import { executeRealRunSteps, runWorkflowExecution } from "./workflow-runner.ts";
+import { insertWorkflowRunRow, upsertWorkflowByName } from "./workflow-store.ts";
 
 describe("runWorkflowExecution (agent path)", () => {
   const noopAgent = {} as Agent;
@@ -227,6 +228,56 @@ describe("runWorkflowExecution (agent path)", () => {
     expect(r.stepResults).toEqual([]);
     expect(r.status).toBe("cancelled");
     const runRow = db.query(`SELECT status FROM workflow_run WHERE id = ?`).get(r.runId) as {
+      status: string;
+    };
+    expect(runRow.status).toBe("cancelled");
+  });
+
+  test("a zero-step run honours an already-aborted signal (executeRealRunSteps directly)", async () => {
+    // `runWorkflowExecution` can't reach this through the public RPC today —
+    // `parseWorkflowStepsJson` rejects a stored workflow with zero executable
+    // steps before execution ever starts — so this exercises the executor's
+    // own contract directly, matching how it would behave for any future
+    // caller that isn't guarded that way.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    const workflowId = upsertWorkflowByName(db, "empty-steps", null, JSON.stringify([]), now);
+    const runId = randomUUID();
+    insertWorkflowRunRow(db, {
+      id: runId,
+      workflowId,
+      triggeredBy: "cli",
+      status: "running",
+      startedAt: now,
+    });
+
+    const ac = new AbortController();
+    ac.abort();
+
+    const r = await executeRealRunSteps(
+      {
+        db,
+        agent: noopAgent,
+        workflowName: "empty-steps",
+        triggeredBy: "cli",
+        dryRun: false,
+        stream: false,
+        sendChunk: () => {
+          /* noop */
+        },
+        signal: ac.signal,
+        conversationalRunner: async () => ({ reply: "never" }),
+      },
+      { id: workflowId, name: "empty-steps" },
+      [],
+      runId,
+      now,
+    );
+
+    expect(r.stepResults).toEqual([]);
+    expect(r.status).toBe("cancelled");
+    const runRow = db.query(`SELECT status FROM workflow_run WHERE id = ?`).get(runId) as {
       status: string;
     };
     expect(runRow.status).toBe("cancelled");

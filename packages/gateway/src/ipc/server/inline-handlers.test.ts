@@ -582,6 +582,27 @@ describe("dispatchWorkflowRunRpc", () => {
     await second;
     expect(ctx.streamRegistry.has(key)).toBe(false);
   });
+
+  // workflow.run's streamId parse (parseOptionalString) trims. If
+  // workflow.cancel's parse didn't agree, a run registered with surrounding
+  // whitespace could never be cancelled: it would register under the
+  // trimmed key but look up under the untrimmed one and silently answer
+  // `{ cancelled: false }` forever.
+  test("a streamId with surrounding whitespace can be registered and then cancelled", async () => {
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async () => await new Promise(() => {}),
+    });
+    const { session } = makeSession();
+    const key = workflowRegistryKey("client-1", "abc");
+
+    void dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "  abc  " });
+    expect(ctx.streamRegistry.has(key)).toBe(true);
+
+    const cancelHandler = createWorkflowCancelHandler(ctx.streamRegistry);
+    expect(cancelHandler("client-1", { streamId: "  abc  " })).toEqual({ cancelled: true });
+    expect(ctx.streamRegistry.has(key)).toBe(false);
+  });
 });
 
 describe("dispatchEngineAskStream", () => {
