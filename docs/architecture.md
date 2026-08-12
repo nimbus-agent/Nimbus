@@ -1219,13 +1219,41 @@ const streamReq: JSONRPCRequest = {
 //   name: string, triggeredBy?: string, dryRun?: boolean,
 //   stream?: boolean,                          // opt in to agent.chunk
 //   sessionId?: string, agent?: string,
+//   streamId?: string,                         // optional — see below
 //   paramsOverride?: Record<string, Record<string, unknown>>  // keyed by step label
-// }) -> WorkflowRunResult
+// }) -> WorkflowRunResult { runId, status, dryRun, stepResults }
 // Notification: { method: "agent.chunk", params: { text: string } }
 //
-// Because the chunk method is shared, a client that runs a workflow and an ask
-// concurrently on ONE connection cannot attribute chunks to either. Clients that
-// need both at once should use separate connections until a stream id is added.
+// `agent.invoke` accepts the same optional `streamId` param and echoes it the
+// same way. Without a streamId, `agent.chunk` params are `{ text }` exactly as
+// before — fully backward compatible. WITH one, every `agent.chunk` this call
+// produces carries it: { method: "agent.chunk", params: { streamId, text } }.
+// That is also what lets a client that runs a workflow and an ask concurrently
+// on ONE connection attribute chunks to either — supply a streamId on both
+// calls and each chunk arrives tagged with the id that produced it.
+//
+// `status` on the result is one of "preview" (dry run) | "done" | "error" |
+// "cancelled" — it is the ONLY way an IPC caller can tell a workflow that was
+// cancelled after one step apart from one that simply finished in one step;
+// callers cannot read the `workflow_run` table directly.
+//
+// A streamId also registers the run so it can be cancelled — see
+// `workflow.cancel` immediately below. Reusing a streamId that is already
+// live for the SAME client is rejected with -32602 at workflow.run time.
+
+// Cancel a running workflow — a DISTINCT method from `engine.cancelStream`
+// (below): `engine.cancelStream` cannot cancel a workflow run, even though
+// both share the same underlying stream registry internally. A `streamId` is
+// scoped to the CALLING CLIENT — two different clients may use the same id at
+// the same time without interfering, and one client cannot cancel another
+// client's run.
+// workflow.cancel(params: { streamId: string }) -> { cancelled: boolean }
+// `cancelled: false` means no live run of YOUR OWN client held that id
+// (already finished, never started, or belongs to another client).
+//
+// Cancellation takes effect at the NEXT STEP BOUNDARY, not immediately: the
+// step already running always completes. A workflow whose current step is a
+// long model call will NOT stop early.
 
 // Connector config mutations — emitted from `ipc/connector-rpc-handlers/lifecycle.ts`
 // (`emitConfigChanged`) after setConfig / pause / resume / setInterval. Carries the
@@ -1240,6 +1268,7 @@ const streamReq: JSONRPCRequest = {
 // Session rehydration (Phase 4 WS6)
 // engine.getSessionTranscript(params: { sessionId, limit? }) -> { turns: AgentTurn[] }
 // engine.cancelStream(params: { streamId }) -> { ok: true }
+//   (cannot cancel a workflow run — see workflow.cancel above)
 
 // Audit & Integrity (Phase 4 WS3)
 // audit.verify(params: { full?, since? }) -> { ok: true, checkedCount, errors: [] }
@@ -1520,6 +1549,14 @@ const streamReq: JSONRPCRequest = {
 **Source:** `packages/gateway/src/ipc/server/inline-handlers.ts:288` — added 2026-05-28
 
 The `AbortSignal` from `engine.cancelStream` is deliberately **not** plumbed into `AgentInvokeContext` yet. The existing `AgentInvokeContext` type does not carry an `abort` field; adding it is a future task. For the current implementation the `AbortController` only short-circuits two observable paths: (a) the `sendChunk` callback (token streaming stops immediately on cancellation) and (b) the post-completion `streamDone` / `streamError` notification. This is sufficient for `cancelStream` to terminate all client-visible behaviour without requiring a full `AgentInvokeContext` type change.
+
+### Cancellation boundary in `workflow.cancel`
+
+**Source:** `packages/gateway/src/automation/workflow-runner.ts:262`, `packages/gateway/src/ipc/workflow-cancel.ts:50` — added 2026-08-12
+
+**Cancellation takes effect at the NEXT STEP BOUNDARY.** `workflow.cancel` aborts the `AbortSignal` registered for the run's `streamId`, but that signal is checked only at the top of the step loop, before starting the next step — it is deliberately **not** threaded into step execution or the LLM call inside it. The step already running always completes; only then is the run finalized with `status: "cancelled"`. A workflow whose current step is a long model call will **not** stop early. This mirrors the `engine.cancelStream` limitation above: both cancel promptly between units of work, neither interrupts a unit already in flight.
+
+A `streamId` used with `workflow.cancel` is scoped to the run registry key `clientId + NUL + streamId` (`workflowRegistryKey`, `ipc/workflow-cancel.ts`) rather than the bare id `engine.cancelStream` uses — which is *why* `engine.cancelStream` cannot reach a workflow run even though both draw from the same `StreamRegistry`. A streamId containing a NUL character (U+0000) is rejected with `-32602` at both the `workflow.run` and `workflow.cancel` parse sites, since NUL is the key separator and allowing it would let a crafted streamId forge another client's key.
 
 ---
 
