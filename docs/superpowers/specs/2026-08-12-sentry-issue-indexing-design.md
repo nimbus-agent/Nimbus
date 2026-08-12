@@ -179,13 +179,26 @@ Two items that both fail silently if missed:
 1. **The persisted `{ pass: 1 }` cursor must decode to `null`, not throw.** Every
    existing install has one. Cold-start-on-unrecognised-cursor is correct, and needs its
    own test.
-2. **`LinkHeaderPagination` is shared with Mendeley.** Teaching it `results` changes
-   Mendeley's path too. Mendeley sends a standard RFC-5988 header with no `results`
-   attribute, so honouring the attribute **only when present** is behaviour-preserving —
-   but that is a claim to be proven by a Mendeley regression test in the same commit,
-   not asserted in review.
+2. **`LinkHeaderPagination` has no production users at all.** *(Corrected during planning
+   — an earlier revision of this spec claimed it was shared with Mendeley. It is not.)*
+   Nothing in `packages/` imports `_lib/pagination`; only its own test file references
+   the class. Mendeley parses its header with its own `connectors/mendeley-link-header.ts`
+   `parseNextLink`. So changing `LinkHeaderPagination` cannot affect Mendeley, and a
+   "Mendeley regression test" guarding that change would prove nothing.
 
-**Replace the regex with a real link-value parser.** The current implementation is
+   `mendeley-link-header.ts`'s regex carries the **same** order-dependence
+   (`/<([^<>]+)>\s*;\s*rel\s*=\s*"?([^";]+)"?/i` also requires `rel` first), harmless
+   there because Mendeley emits `rel` as the only link-param.
+
+   **Resulting plan:** add one correct, order-independent parser at
+   `connectors/link-header.ts`; Sentry consumes it; **migrate Mendeley onto it and delete
+   `mendeley-link-header.ts`**, which is what makes a Mendeley regression test meaningful
+   and avoids standing up a third link parser in a repo with a duplication gate.
+   `_lib/pagination.ts` is left untouched — pre-existing dead code, and deleting it is a
+   separate cleanup with its own coverage-floor consequences.
+
+**Replace the regex with a real link-value parser.** The current implementation in
+`_lib/pagination.ts` — the shape to avoid, not to extend — is
 
 ```ts
 const m = /<([^<>]+)>;\s*rel="next"/.exec(part.trim());
@@ -268,7 +281,7 @@ an empty result to a user.
 | Pagination terminates on `results="false"` | **Red-prove it:** remove the check and confirm the loop runs to the page ceiling |
 | Resolved issues are indexed | Red-prove by adding `is:unresolved` back into the `query` string and confirming resolved rows vanish |
 | Legacy `{ pass: 1 }` cursor decodes to cold start | Every existing install hits this path once |
-| Mendeley Link-header regression | The shared-helper change is only safe if proven |
+| Mendeley Link-header regression | Mendeley is **migrated** onto the new parser, so this guards a real change |
 | Link params parse regardless of order | Pins the fix for the order-dependent regex; assert both `rel`-first and `results`-first shapes |
 | A 403 leaves the cursor untouched and indexes nothing | The mis-scoped-token path is the most likely real-world failure |
 | `assignedTo` survives into metadata unresolved | Spec B depends on it; nothing in Spec A reads it, so nothing else would catch its loss |
