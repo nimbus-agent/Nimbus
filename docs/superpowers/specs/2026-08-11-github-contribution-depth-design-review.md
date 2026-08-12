@@ -5,7 +5,7 @@
 1. **GitHub Timeline API Limitations vs. Incremental Accumulation**
    - The spec notes: "incremental accumulation works, retroactive backfill does not" due to the 30-day/300-event ceiling.
    - **Question**: When a user goes OOO or shuts down Nimbus for >30 days, is there any warning or detection mechanism? If they miss the 30-day window, will Nimbus silently omit reviews that occurred during that period, leading to silent data gaps?
-   - **Suggestion**: In the connector status or next-sync output, if `last_synced_at` (or equivalent sync high-water mark) is older than 30 days, log a warning or suggest triggering the search-based backfill (`nimbus index backfill --service github`).
+   - **Suggestion**: In the connector status or next-sync output, if `last_synced_at` (or equivalent sync high-water mark) is older than 30 days, log a warning or suggest triggering the search-based backfill (`nimbus index backfill --service github`). **[HISTORICAL — not adopted: `nimbus index backfill` was never shipped and does not exist in the CLI; this PR's own tests assert no gap note may reference it. Preserved verbatim as the question was originally asked.]**
 
 2. **Differentiating PR Authorship from PR Review in Context Retrieval**
    - Under § 4 ("Chosen — reuse `upsertPr` verbatim"), colleague PR descriptions are fully indexed.

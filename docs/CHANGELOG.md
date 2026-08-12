@@ -100,10 +100,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   request indexes that pull request, including ones you did not author, since that is what lets a
   review link to a titled PR rather than a bare id; this indexes pull requests you reviewed, never
   who reviewed your pull requests, because the GitHub events feed reports only the authenticated
-  user's own activity; and coverage begins at first sync — the events feed exposes only a recent
-  window (GitHub caps it at 300 events / 30 days, and Nimbus reads one page of 100 per tick), so
-  reviews from before the connector was first synced are not recoverable by syncing, and a review
-  deleted upstream leaves its graph link in place. Separately, PR size stats (`additions`,
+  user's own activity; and coverage is bounded by the events feed's retained window (GitHub caps
+  it at 300 events / 30 days, and Nimbus reads one page of 100 per tick) — a first successful sync
+  does index recent events created before installation, since that trailing window is what it
+  reads, but reviews older than the retained window, or beyond the per-tick page cap, are not
+  recoverable by syncing, and a review deleted upstream leaves its graph link in place. Separately, PR size stats (`additions`,
   `deletions`, `changed_files`, `commits`) are now captured, and the enrichment pass also re-fetches
   PRs that have a real title but no stats. A secondary-rate-limit bug is fixed alongside: a 403
   carrying `retry-after` is now honored even when quota remains.

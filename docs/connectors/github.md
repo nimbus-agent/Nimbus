@@ -23,10 +23,13 @@ Three limits are worth knowing:
   author. This is what lets a review link to a titled PR rather than a bare id.
 - This indexes **pull requests you reviewed**, not **who reviewed your pull
   requests** — the GitHub events feed reports your own activity.
-- The events feed exposes only a recent window of activity, so reviews left
-  before the connector was first synced are not recoverable by syncing at
-  all. This is a separate limit from the per-tick page cap below — a
-  different cause, and syncing more often does not help it.
+- The events feed exposes only a recent, trailing window of activity (GitHub
+  caps it at 300 events / 30 days), and a first successful sync does index
+  whatever recent events fall inside that window — including ones created
+  before the connector was installed. What is genuinely unrecoverable by
+  syncing is anything **older than the retained events window**, or beyond
+  the per-tick page cap below. This is a separate limit from that page cap —
+  a different cause, and syncing more often does not help either one.
 - The sync also fetches one un-paginated page of 100 events per tick from the
   events feed. A burst of more than 100 events between **any** two ticks —
   not only before the first sync — silently drops the overflow; the

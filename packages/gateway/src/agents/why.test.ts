@@ -167,6 +167,7 @@ describe("runWhy", () => {
     const reviewedGap = brief.gaps.find(
       (g) => g.category === "missing_relation_emit" && g.detail.includes("reviewed"),
     );
+    expect(reviewedGap).toBeDefined();
     expect(reviewedGap?.detail).not.toMatch(/not yet emitted by the graph populator/);
     for (const g of brief.gaps) {
       expect(g.detail).not.toMatch(/index backfill/);

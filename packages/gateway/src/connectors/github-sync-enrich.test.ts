@@ -266,6 +266,41 @@ describe("selectPrEnrichCandidates", () => {
     db.close();
   });
 
+  test("a row with malformed metadata does not throw and the good row is still returned", () => {
+    const db = createMemoryIndexDb();
+    const now = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#1",
+      title: "Add rate limiter", // NOT the `PR #1` fallback, no stats -> genuine candidate
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/app", number: 1 },
+    });
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#2",
+      title: "Fine already",
+      bodyPreview: "",
+      modifiedAt: now + 1,
+      syncedAt: now,
+      metadata: { repo: "acme/app", number: 2 },
+    });
+    // Plant deliberately malformed JSON directly — the normal write path always
+    // JSON-stringifies, so this can only be reproduced via a raw UPDATE.
+    db.run("UPDATE item SET metadata = ? WHERE external_id = ?", ["{bad", "acme/app#2"]);
+
+    let candidates: ReturnType<typeof selectPrEnrichCandidates> | undefined;
+    expect(() => {
+      candidates = selectPrEnrichCandidates(db, 10);
+    }).not.toThrow();
+    expect(candidates?.map((c) => c.externalId)).toContain("acme/app#1");
+    db.close();
+  });
+
   test("selectPrEnrichCandidates never returns more than the limit", () => {
     const db = createMemoryIndexDb();
     const now = Date.now();

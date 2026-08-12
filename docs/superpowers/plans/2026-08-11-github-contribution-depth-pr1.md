@@ -1222,8 +1222,15 @@ it existed to make the SQL`LIKE` precise, but a row now qualifies on either reas
 would silently drop every stats-missing PR with a real title — the exact case this task adds.
 
 `NOT json_valid(metadata)` is deliberate: a row with unparseable metadata cannot be proven to have
-stats, so it is re-fetched rather than skipped, and `json_extract` is never reached for it (SQLite's
-`OR` short-circuits left to right).
+stats, so it must be re-fetched rather than skipped. **Correction (post-review):** the `OR` form
+above does not protect `json_extract` from malformed JSON — SQLite's `OR` does not reliably
+short-circuit left to right here, and `json_extract` on unparseable text raises
+`SQLiteError: malformed JSON`, which kills the whole query for every row, not just the bad one.
+The shipped code wraps the `json_extract` arm in a `CASE WHEN json_valid(metadata) THEN
+json_extract(metadata, '$.additions') IS NULL ELSE 1 END` guard instead of relying on `OR`
+short-circuit — a row whose metadata cannot be parsed falls into the `ELSE 1` branch and remains a
+candidate. See `packages/gateway/src/connectors/github-sync.ts`'s `selectPrEnrichCandidates` for
+the actual guarded query.
 
 - [ ] **Step 4: Rename the caller and update the doc comment**
 

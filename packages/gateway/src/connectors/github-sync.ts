@@ -607,8 +607,13 @@ function metadataHasStats(metadata: string): boolean {
  *
  * `json_extract` is used (via `metadataHasStats`) rather than a LIKE over the
  * raw metadata blob so a PR body mentioning "additions" cannot mask a
- * genuinely missing field. Guarded by `json_valid` in SQL and mirrored by
- * `metadataHasStats`'s parse-failure fallback, because malformed JSON must
+ * genuinely missing field. `OR` does NOT short-circuit SQLite's evaluation
+ * order in a way that protects `json_extract` from malformed JSON — a single
+ * row with unparseable `metadata` throws `SQLiteError: malformed JSON` and
+ * kills the whole query. The `json_extract` arm is therefore wrapped in a
+ * `CASE WHEN json_valid(metadata) THEN … ELSE 1 END` guard, mirrored by
+ * `metadataHasStats`'s parse-failure fallback: a row whose metadata cannot be
+ * parsed must remain a CANDIDATE (the `ELSE 1`), because malformed JSON must
  * never be treated as "has stats" — that would incorrectly skip a row that
  * cannot be proven enriched.
  */
@@ -619,8 +624,10 @@ export function selectPrEnrichCandidates(db: Database, limit: number): FallbackP
          WHERE service = 'github' AND type = 'pr'
            AND (
              title LIKE 'PR #%'
-             OR NOT json_valid(metadata)
-             OR json_extract(metadata, '$.additions') IS NULL
+             OR CASE
+                  WHEN json_valid(metadata) THEN json_extract(metadata, '$.additions') IS NULL
+                  ELSE 1
+                END
            )
          ORDER BY modified_at DESC LIMIT ?`,
     )
