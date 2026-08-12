@@ -86,11 +86,14 @@ The steps are short; the one that gets forgotten is step 5.
 2. **Store it.** `nimbus-vscode` → *Settings* → *Environments* → **release** →
    update the `VSCE_PAT` secret. It is an **environment** secret, not a repository
    secret — pasting it at repo level leaves the publish job reading the old value.
-3. **Revoke the old token** in the same ADO tokens page. Configure-then-revoke, per
-   the ordering rule at the top of this page.
-4. **Verify.** Run the `secret-health` workflow in `nimbus-vscode` manually. It
-   live-probes the token via `probe-publish-token` (`tool: vsce`), so a bad paste
-   surfaces in about a minute instead of at the next release.
+3. **Verify — before revoking anything.** Run the `secret-health` workflow in
+   `nimbus-vscode` manually. It live-probes the token via `probe-publish-token`
+   (`tool: vsce`), so a bad paste or a wrong-scope store surfaces in about a
+   minute instead of at the next release.
+4. **Revoke the old token** in the same ADO tokens page, and only once step 3
+   reported `ok`. This is the configure-then-revoke ordering rule from the top of
+   this page: until the replacement is proven, the old token is the rollback, and
+   revoking first throws it away at exactly the moment you might need it.
 5. **Update the deadline.** Set `hardDeadline` on the `VSCE_PAT` entry in
    `scripts/release/credential-registry.ts` to the new expiry date. Skipping this
    is the failure mode with teeth: the date is hand-maintained, so a stale past
