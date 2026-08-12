@@ -588,11 +588,15 @@ Like `nimbus owners`/`nimbus pre-mortem`, `nimbus negotiate` **hard-rejects** an
 
 **Personal sources are off unless configured.** Confluence pages and chat messages are always in scope. Obsidian notes and Notion pages are mined only when their service is named in `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the `[glossary.terms]` precedent. The brief's `sources` block reports whether the opt-in is active and names the config key it reads.
 
-**Three limits every brief states plainly — not decoration, the point of the command:**
+**Five limits every brief states plainly — not decoration, the point of the command:**
 
 - **Ownership can understate.** The ownership lane counts only `git_blame_line` rows whose git email maps to a known `person` row. Work committed under an unmapped alias — a second machine, an old address, a GitHub `noreply` address — is attributed to a separate, unmapped identity in the index and is **not** counted toward the subject. For a self brief the agent can usually detect this (it knows which git email self-resolution attempted) and adds a gap note naming it; for an explicit `--person` subject it cannot, since someone else's alias set is unknowable from here, and heuristically guessing by name/email was deliberately rejected as worse than an acknowledged gap.
+- **Ownership can also be stale, or never computed.** The ownership lane is a read over the precomputed `owns` graph, not a live derivation, so every brief also states when that background pass last ran — or, if it has never run, says so and names `nimbus owners --refresh` as the fix — rather than presenting a possibly-outdated or empty list as current.
 - **PR size stats carry their own coverage.** `additions`/`deletions`/`changed_files` live in a PR's metadata only where the enrichment pass has already run. `authoredPrs.stats` is an aggregate over whatever subset was enriched, and `authoredPrs.statsCoverage` (`covered` of `total`) is reported alongside it so the aggregate is never read as if it covered every authored PR.
+- **Unattributable decisions are a fact about the index, not about the subject.** `decisions.unattributable` counts decisions mined from a source (Obsidian, Teams) that records no author at all — it is an index-wide count, never the subject's own. Reading "N authored, M unattributable" as "N + M decisions are mine, M just aren't linked to me" turns an undercount into an overstatement, so the brief spells out that those M decisions are not counted above and are not necessarily the subject's.
 - **Incidents resolved, on-call shifts, and deploys triggered are not available at all.** The local index carries no attribution for any of the three. The brief names all three, unconditionally, on every run — never only when they would otherwise read as an empty or zero section, so a genuine zero is never confused with "cannot be computed."
+
+The brief is also recomputed fresh on every invocation rather than cached, so two runs a window apart can legitimately disagree as the underlying index changes.
 
 **Not reachable over the local HTTP API.** `agents.negotiate` is served on the CLI/Tauri socket only. Unlike `agents.preflight`/`agents.premortem` (excluded for their side effects) it writes nothing, but combined with `--person` an HTTP-exposed version would let any holder of the `agents` bearer token assemble a contribution dossier on any indexed person without the local owner initiating it — the CLI and Tauri renderer are same-machine, owner-initiated surfaces, the local HTTP API is not.
 
@@ -606,7 +610,7 @@ Like `nimbus owners`/`nimbus pre-mortem`, `nimbus negotiate` **hard-rejects** an
 
 **Read-only:** never triggers HITL, never makes a live connector API call, never calls `connectors.dispatch` — every lane reads only the already-indexed graph and item tables. Zero `egress_ledger` rows.
 
-**Exit codes:** `1` = gateway not running; `2` = agent error (an unrecognised flag, an out-of-range `--since`, or a malformed `agents.negotiate` response).
+**Exit codes:** `1` = gateway not running, or an unrecognised flag / unexpected argument (rejected by `parseNegotiateArgs` before the gateway is ever called); `2` = agent error (an out-of-range `--since`, or a malformed `agents.negotiate` response).
 
 ---
 

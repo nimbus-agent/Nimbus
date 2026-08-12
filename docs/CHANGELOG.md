@@ -24,15 +24,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the
   `[glossary.terms]` precedent, resolved per SERVICE (not per item type) because Confluence and
   Notion both emit `type: "page"`.
-  **Three limits stated on every brief, never decoration.** Ownership counts only
+  **Five limits stated on every brief, never decoration.** Ownership counts only
   `git_blame_line` rows whose git email maps to a known `person` row — work committed under an
   unmapped alias (a second machine, an old address, a GitHub `noreply` address) is attributed
   elsewhere and not counted; the brief flags this for a self subject when it can detect it, and
   never guesses for an explicit `--person` subject, since someone else's alias set is unknowable
-  from here. PR size stats exist only where the enrichment pass has run, so `authoredPrs.stats`
-  carries its own `statsCoverage` (covered of total) rather than implying completeness. Incidents
-  resolved, on-call shifts, and deploys triggered are not available in the index at all — named
-  unconditionally on every run, so an empty section is never read as a zero.
+  from here. Ownership can also be stale, or never computed at all: the lane reads the
+  precomputed `owns` graph, not a live derivation, so every brief states when that background
+  pass last ran, or names `nimbus owners --refresh` when it never has. PR size stats exist only
+  where the enrichment pass has run, so `authoredPrs.stats` carries its own `statsCoverage`
+  (covered of total) rather than implying completeness. `decisions.unattributable` is a fact
+  about the INDEX, not the subject — decisions mined from a source (Obsidian, Teams) that
+  records no author at all — and the render spells that out, since reading "N authored, M
+  unattributable" as "N + M decisions are mine" turns an undercount into an overstatement.
+  Incidents resolved, on-call shifts, and deploys triggered are not available in the index at
+  all — named unconditionally on every run, so an empty section is never read as a zero.
   **Not reachable over the HTTP API**, for a different reason than `agents.preflight` /
   `agents.premortem` (excluded for their side effects): `agents.negotiate` writes nothing, but
   combined with `--person` an HTTP-exposed version would let any holder of the `agents` bearer
