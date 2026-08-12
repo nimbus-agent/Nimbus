@@ -14,7 +14,7 @@ import { emitGlossaryBrief } from "../agents/glossary.ts";
 import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
 import { emitJanitorBrief } from "../agents/janitor.ts";
-import { emitNegotiateBrief } from "../agents/negotiate.ts";
+import { emitNegotiateBrief, MAX_SINCE_MS as MAX_NEGOTIATE_SINCE_MS } from "../agents/negotiate.ts";
 import { emitOwnershipBrief } from "../agents/ownership.ts";
 import { emitPreflightBrief } from "../agents/preflight.ts";
 import { emitPremortemBrief } from "../agents/premortem.ts";
@@ -569,11 +569,13 @@ const MAX_PERSON_ID_LEN = 256;
  * while I was away" use case; negotiate's headline use is preparing for a review cycle, and an
  * annual review needs a year of evidence. Clamping negotiate to a quarter would make the agent
  * unable to answer the question it exists for — see `agents/negotiate.ts`'s own
- * `MAX_SINCE_MS = 365 days`, which this mirrors so the IPC validator and the agent agree. This is
- * a per-method bound, not a broader raise: every other `require*Params` validator in this file
- * stays on the shared 90-day constant.
+ * `MAX_SINCE_MS = 365 days`, which this IMPORTS (aliased) rather than restates. A second copy of
+ * the literal was the shape to avoid: the two files diverging fails SILENTLY — the IPC would
+ * accept a window `runNegotiate` then clamps with `Math.min`, printing a smaller window than the
+ * caller asked for, which is the exact silent-clamping behaviour the explicit rejection below
+ * exists to replace. This is a per-method bound, not a broader raise: every other `require*Params`
+ * validator in this file stays on the shared 90-day constant.
  */
-const MAX_NEGOTIATE_SINCE_MS = 365 * 24 * 60 * 60 * 1000;
 
 function requireNegotiateParams(params: unknown): { sinceMs?: number; personId?: string } {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
@@ -826,7 +828,7 @@ async function handlePremortem(
  * The `agents.*` methods this module answers.
  *
  * Declared once and used for BOTH the egress-append test and the dispatch, so the ledgered set is
- * definitionally the served set. A second, hand-maintained list of the same thirteen strings is how
+ * definitionally the served set. A second, hand-maintained list of the same fifteen strings is how
  * the over-counting defect this replaces was introduced: `method.startsWith("agents.")` appended an
  * `authorized` row for `agents.<anything>`, which then failed `-32601` having done no work — so
  * `nimbus prove` over-counted, and an unbounded caller-supplied `method` reached a hashed,
