@@ -563,6 +563,18 @@ async function handleDecisions(
 
 const MAX_PERSON_ID_LEN = 256;
 
+/**
+ * `agents.negotiate`'s OWN `sinceMs` bound — deliberately NOT the shared `MAX_SINCE_MS` (90
+ * days) every sibling validator uses. `MAX_SINCE_MS` is sized for `catchup`'s "what happened
+ * while I was away" use case; negotiate's headline use is preparing for a review cycle, and an
+ * annual review needs a year of evidence. Clamping negotiate to a quarter would make the agent
+ * unable to answer the question it exists for — see `agents/negotiate.ts`'s own
+ * `MAX_SINCE_MS = 365 days`, which this mirrors so the IPC validator and the agent agree. This is
+ * a per-method bound, not a broader raise: every other `require*Params` validator in this file
+ * stays on the shared 90-day constant.
+ */
+const MAX_NEGOTIATE_SINCE_MS = 365 * 24 * 60 * 60 * 1000;
+
 function requireNegotiateParams(params: unknown): { sinceMs?: number; personId?: string } {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new AgentsRpcError(-32602, "agents.negotiate requires an object payload");
@@ -574,11 +586,11 @@ function requireNegotiateParams(params: unknown): { sinceMs?: number; personId?:
       typeof p.sinceMs !== "number" ||
       !Number.isInteger(p.sinceMs) ||
       p.sinceMs < 0 ||
-      p.sinceMs > MAX_SINCE_MS
+      p.sinceMs > MAX_NEGOTIATE_SINCE_MS
     ) {
       throw new AgentsRpcError(
         -32602,
-        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
+        `sinceMs must be a non-negative integer up to ${MAX_NEGOTIATE_SINCE_MS} ms (365 days)`,
       );
     }
     out.sinceMs = p.sinceMs;

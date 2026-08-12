@@ -602,6 +602,23 @@ describe("agents.ghost / conflicts / huddle dispatch", () => {
       ),
     ).rejects.toThrow();
   });
+
+  it(
+    "agents.huddle still rejects sinceMs above the shared 90-day bound (200 days) — proves " +
+      "agents.negotiate's own 365-day bound did not leak into the shared MAX_SINCE_MS",
+    async () => {
+      await expect(
+        dispatchAgentsRpc(
+          "agents.huddle",
+          { sinceMs: 200 * 24 * 60 * 60 * 1000 },
+          ctxWithFederation(),
+        ),
+      ).rejects.toMatchObject({
+        rpcCode: -32602,
+        message: expect.stringContaining("90 days"),
+      });
+    },
+  );
 });
 
 describe("dispatchAgentsRpc — agents.decisions", () => {
@@ -640,6 +657,32 @@ describe("dispatchAgentsRpc — agents.negotiate", () => {
     ).rejects.toMatchObject({
       rpcCode: -32602,
       message: expect.stringContaining("sinceMs"),
+    });
+  });
+
+  // Negotiate's own 365-day bound (review-cycle evidence), NOT the shared 90-day MAX_SINCE_MS
+  // every sibling validator uses — see MAX_NEGOTIATE_SINCE_MS's comment in agents-rpc.ts. The
+  // sibling test above ("agents.huddle still rejects sinceMs above the shared 90-day bound")
+  // is what proves this per-method raise did not leak into the shared constant.
+  test("accepts sinceMs at exactly 365 days", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.negotiate",
+      { sinceMs: 365 * 24 * 60 * 60 * 1000 },
+      makeCtx(freshDb()),
+    );
+    expect(out.kind).toBe("hit");
+  });
+
+  test("rejects sinceMs above 365 days, naming the negotiate bound", async () => {
+    await expect(
+      dispatchAgentsRpc(
+        "agents.negotiate",
+        { sinceMs: 366 * 24 * 60 * 60 * 1000 },
+        makeCtx(freshDb()),
+      ),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: expect.stringContaining("365 days"),
     });
   });
 
