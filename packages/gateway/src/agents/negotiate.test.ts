@@ -4,6 +4,7 @@ import type { SubTaskResult } from "../engine/coordinator.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import type { NegotiateBrief } from "./_lib/negotiate-types.ts";
 import { renderNegotiate } from "./_lib/render.ts";
 import {
   emitNegotiateBrief,
@@ -173,6 +174,76 @@ test("--person naming the resolved local user is not isOther", async () => {
   db.close();
 });
 
+// THE STRUCTURAL-ZERO GUARD. An explicit `--person` is never `personId === null`, so the
+// generic unresolved-identity gap cannot fire for it, and `personDisplayNameOrNull` returns
+// null for an unknown id — without these, an unresolvable id renders as a person who shipped
+// nothing, in a document that may affect their compensation.
+test("--person naming an id that matches nothing declares the counts structurally zero", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:me", { additions: 10, deletions: 1, changed_files: 1 });
+
+  const brief = await runNegotiate(
+    { personId: "person:typo", mePersonIdOverride: "person:me" },
+    ctxFor(db),
+  );
+
+  const gap = brief.gaps.find((g) => g.detail.includes("person:typo"));
+  expect(gap).toBeDefined();
+  expect(gap?.category).toBe("missing_user_identity");
+  expect(gap?.detail).toContain("matched no indexed person");
+  expect(gap?.detail).toContain("structurally zero");
+  // Every lane still RAN (they are not null) — the gap is what distinguishes their zeroes
+  // from a measurement, and the rendered brief must carry it.
+  expect(brief.authoredPrs?.count).toBe(0);
+  expect(renderNegotiate(brief)).toContain("structurally zero");
+  db.close();
+});
+
+// The `git:<email>` shape specifically: `resolveOwner` emits it for a blame email with no
+// `person` row, so it IS a `graph_entity` (ownership comes back populated, which is what makes
+// it look like it worked) while every `author_id`-keyed lane is structurally zero.
+test("--person naming a git: blame alias says which lanes are structurally zero", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const ghost = upsertGraphEntity(db, {
+    type: "person",
+    externalId: "git:jane@example.com",
+    label: "jane@example.com",
+  });
+  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  upsertGraphRelation(db, ghost, svc, "owns", Date.now(), 0.9);
+
+  const brief = await runNegotiate(
+    { personId: "git:jane@example.com", mePersonIdOverride: "person:me" },
+    ctxFor(db),
+  );
+
+  const gap = brief.gaps.find((g) => g.detail.includes("git:jane@example.com"));
+  expect(gap).toBeDefined();
+  expect(gap?.category).toBe("missing_user_identity");
+  expect(gap?.detail).toContain("structurally zero");
+  // The graph half really did measure something — the gap must not claim otherwise.
+  expect(brief.ownership?.services).toEqual(["api"]);
+  expect(gap?.detail).not.toContain("every count below is structurally zero");
+  expect(gap?.remediation).toContain("nimbus people search");
+  db.close();
+});
+
+test("--person naming a real person raises no structural-zero gap", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:other", "Other Person"]);
+
+  const brief = await runNegotiate(
+    { personId: "person:other", mePersonIdOverride: "person:me" },
+    ctxFor(db),
+  );
+
+  expect(brief.gaps.some((g) => g.detail.includes("structurally zero"))).toBe(false);
+  db.close();
+});
+
 test("reduceLaneResults: a done lane with text yields no gap", () => {
   const results: SubTaskResult[] = [
     { taskIndex: 0, taskType: "agent_step", status: "done", text: "{}" },
@@ -274,35 +345,56 @@ test("tickets counts opened, and closed via an authored PR's resolves edge", asy
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
 
-  // Issue must exist BEFORE the PR: syncPrGraph only wires `resolves` against
+  // Issues must exist BEFORE the PRs: syncPrGraph only wires `resolves` against
   // issue entities already present at PR-sync time.
-  upsertIndexedItem(db, {
-    service: "github",
-    type: "issue",
-    externalId: "acme/app#issue-7",
-    title: "Login broken",
-    bodyPreview: "",
-    modifiedAt: Date.now(),
-    syncedAt: Date.now(),
-    authorId: "person:me",
-    metadata: { repo: "acme/app", number: 7 },
-  });
+  for (const n of [7, 8]) {
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "issue",
+      externalId: `acme/app#issue-${String(n)}`,
+      title: `Issue ${String(n)}`,
+      bodyPreview: "",
+      modifiedAt: Date.now(),
+      syncedAt: Date.now(),
+      authorId: "person:me",
+      metadata: { repo: "acme/app", number: n },
+    });
+  }
+  // PR 1 resolves BOTH issues; PR 2 resolves issue 7 a second time. Three `resolves` rows
+  // over two distinct issues — so `COUNT(DISTINCT res.to_id)` yields 2 and a `COUNT(*)`
+  // regression yields 3, which no single-issue fixture could tell apart.
   upsertIndexedItem(db, {
     service: "github",
     type: "pr",
     externalId: "acme/app#1",
     title: "Fix login",
-    bodyPreview: "closes #7",
+    bodyPreview: "closes #7 and closes #8",
     modifiedAt: Date.now(),
     syncedAt: Date.now(),
     authorId: "person:me",
     metadata: { repo: "acme/app", number: 1 },
   });
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/app#2",
+    title: "Fix login again",
+    bodyPreview: "closes #7",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: "person:me",
+    metadata: { repo: "acme/app", number: 2 },
+  });
+
+  const resolvesRows = db
+    .query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'resolves'")
+    .get() as { n: number };
+  expect(resolvesRows.n).toBe(3);
 
   const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
 
-  expect(brief.tickets?.opened).toBe(1);
-  expect(brief.tickets?.closedByAuthoredPr).toBe(1);
+  expect(brief.tickets?.opened).toBe(2);
+  expect(brief.tickets?.closedByAuthoredPr).toBe(2);
   db.close();
 });
 
@@ -713,5 +805,242 @@ test("renderNegotiate names the config key when personal docs are not configured
   const markdown = renderNegotiate(brief);
   expect(markdown).toContain("[negotiate] personal_sources");
   expect(markdown).toContain("not enabled");
+  db.close();
+});
+
+// `personalDocsConfigured` must mean "an entry actually widened the query", not "the user
+// typed something": a configured entry that matches nothing is an UNDERCOUNT, and rendering
+// it as complete coverage inverts the one section whose job is to disclose the opt-in.
+function seedObsidianNote(db: Database): void {
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "obsidian",
+    type: "obsidian_note",
+    externalId: "note-1",
+    title: "1:1 notes",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    authorId: "person:me",
+    metadata: {},
+  });
+}
+
+test("a personal source that matches nothing is not reported as configured coverage", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedObsidianNote(db);
+
+  // "Obsidian" reaching the agent uncased is what `parsePersonalSources` now prevents; the
+  // agent must still be honest if any other caller hands it one.
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db, ["Obsidian"]));
+
+  expect(brief.writing?.notes).toBe(0);
+  expect(brief.sources.personalDocsConfigured).toBe(false);
+  expect(brief.sources.personalDocsRecognised).toEqual([]);
+  expect(brief.sources.personalDocsUnrecognised).toEqual(["Obsidian"]);
+
+  const markdown = renderNegotiate(brief);
+  expect(markdown).not.toContain("configured and included");
+  expect(markdown).toContain('1 unrecognised entry ignored: "Obsidian"');
+  db.close();
+});
+
+test("a wholly unrecognised personal source is disclosed, never dropped silently", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedObsidianNote(db);
+
+  const brief = await runNegotiate(
+    { mePersonIdOverride: "person:me" },
+    ctxFor(db, ["obsidian-vault"]),
+  );
+
+  expect(brief.sources.personalDocsConfigured).toBe(false);
+  expect(renderNegotiate(brief)).toContain('1 unrecognised entry ignored: "obsidian-vault"');
+  db.close();
+});
+
+test("a recognised source is named, and an unrecognised sibling is still disclosed", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedObsidianNote(db);
+
+  const brief = await runNegotiate(
+    { mePersonIdOverride: "person:me" },
+    ctxFor(db, ["obsidian", "foo", "bar"]),
+  );
+
+  expect(brief.writing?.notes).toBe(1);
+  expect(brief.sources.personalDocsConfigured).toBe(true);
+  expect(brief.sources.personalDocsRecognised).toEqual(["obsidian"]);
+
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("personal document sources: obsidian — configured and included");
+  expect(markdown).toContain('2 unrecognised entries ignored: "foo", "bar"');
+  db.close();
+});
+
+// Five of six lanes filter on `item.modified_at` (GitHub's `updated_at`, i.e. LAST TOUCH),
+// so an undisclosed "last 90d" header overstates every headline count.
+test("the window line discloses that it windows on last-modified, not creation", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("ACTIVE in this window");
+  expect(markdown).toContain("last-modified, not created");
+  db.close();
+});
+
+// The counts are already correct for `--person`; it was the PROSE that said "you"/"yours"
+// three sections after the subject line said "someone other than you".
+test("the decisions section addresses the named subject, not 'you'", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:other", "Other Person"]);
+  const brief = await runNegotiate(
+    { personId: "person:other", mePersonIdOverride: "person:me" },
+    ctxFor(db),
+  );
+
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("decision(s) attributed to Other Person");
+  expect(markdown).toContain("not necessarily theirs");
+  expect(markdown).not.toContain("attributed to you");
+  expect(markdown).not.toContain("not necessarily yours");
+  db.close();
+});
+
+// The defensive arm: `resolveSubject`'s explicit path always sets a non-null `personId`, so a
+// null id with `isOther` is unreachable through `runNegotiate` — but if it ever became
+// reachable it must NOT silently revert to addressing the reader as the subject.
+test("an other subject with no id at all still reads as a third party", () => {
+  const brief: NegotiateBrief = {
+    kind: "negotiate",
+    agentVersion: 1,
+    generatedAt: 0,
+    latencyMs: 0,
+    gaps: [],
+    query: { sinceMs: 1000 },
+    subject: { personId: null, source: "explicit", displayName: null, isOther: true },
+    sources: {
+      personalDocsConfigured: false,
+      personalDocsRecognised: [],
+      personalDocsUnrecognised: [],
+      personalDocsConfigKey: "[negotiate] personal_sources",
+    },
+    unavailableEvidence: [],
+    authoredPrs: null,
+    reviewedPrs: null,
+    tickets: null,
+    ownership: null,
+    decisions: { authored: 0, unattributable: 0 },
+    writing: null,
+  };
+
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("decision(s) attributed to the subject");
+  expect(markdown).toContain("not necessarily theirs");
+  expect(markdown).toContain("unknown person");
+});
+
+test("an unnamed other subject falls back to the id, never to 'you'", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const brief = await runNegotiate(
+    { personId: "person:nameless", mePersonIdOverride: "person:me" },
+    ctxFor(db),
+  );
+
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("decision(s) attributed to person:nameless");
+  expect(markdown).not.toContain("attributed to you");
+  db.close();
+});
+
+// `nimbus owners` states this in EVERY brief; negotiate reads the same `owns` edges, and
+// "## Ownership — services: checkout" inside a contribution brief reads as accountability.
+test("the ownership section labels itself authorship-derived, unconditionally", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
+  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  upsertGraphRelation(db, me, svc, "owns", Date.now(), 0.8);
+
+  const withOwnership = renderNegotiate(
+    await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db)),
+  );
+  expect(withOwnership).toContain("authorship-derived ownership");
+  expect(withOwnership).toContain("not who is formally accountable");
+  db.close();
+
+  // …and with no recorded ownership at all, where the temptation to omit it is highest.
+  const empty = freshDb();
+  empty.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const bare = renderNegotiate(
+    await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(empty)),
+  );
+  expect(bare).toContain("no recorded ownership");
+  expect(bare).toContain("authorship-derived ownership");
+  empty.close();
+});
+
+// M2: `--person <your own id>` is still a brief about you, resolved from your own git email.
+test("an explicit self subject still carries the unmapped-git-identity caveat", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name, canonical_email) VALUES (?, ?, ?)", [
+    "person:me",
+    "Me",
+    "me@work.example",
+  ]);
+  // Blame indexed before the person record was linked: the SAME email exists both as the
+  // person's canonical email and as an unmapped `git:` graph entity carrying `owns` edges.
+  const ghost = upsertGraphEntity(db, {
+    type: "person",
+    externalId: "git:me@work.example",
+    label: "me@work.example",
+  });
+  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  upsertGraphRelation(db, ghost, svc, "owns", Date.now(), 0.9);
+
+  // No `mePersonIdOverride` — an override short-circuits `resolveSelfPerson` before it ever
+  // consults git, so the caveat has no git email to be about.
+  const brief = await runNegotiate(
+    {
+      personId: "person:me",
+      runGitOverride: async () => "me@work.example",
+      osUsernameOverride: "",
+    },
+    ctxFor(db),
+  );
+
+  expect(brief.subject.isOther).toBe(false);
+  expect(brief.gaps.some((g) => g.detail.includes("unmapped git identity"))).toBe(true);
+  db.close();
+});
+
+// M4: "no enriched PR in this window" is a coverage statement, and there is no coverage
+// question to answer when the window holds no authored PR at all.
+test("the stats-unavailable note is suppressed when there are no authored PRs", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.authoredPrs?.statsCoverage).toEqual({ covered: 0, total: 0 });
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("0 PR(s), 0 merged");
+  expect(markdown).not.toContain("no enriched PR in this window");
+  db.close();
+});
+
+test("the stats-unavailable note still fires when an unenriched PR exists", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:me");
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(renderNegotiate(brief)).toContain("no enriched PR in this window");
   db.close();
 });

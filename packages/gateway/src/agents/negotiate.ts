@@ -25,7 +25,14 @@ import {
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 const DEFAULT_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
-const MAX_SINCE_MS = 365 * 24 * 60 * 60 * 1000;
+/**
+ * The agent's own window ceiling — a year, sized for an annual review cycle rather than
+ * `catchup`'s "what happened while I was away" quarter. EXPORTED so `ipc/agents-rpc.ts`'s
+ * `requireNegotiateParams` validates against this same literal instead of re-declaring it:
+ * two copies drifting apart fails SILENTLY (the IPC accepts a window the agent then clamps),
+ * which is exactly the silent-clamping bug the explicit IPC rejection exists to prevent.
+ */
+export const MAX_SINCE_MS = 365 * 24 * 60 * 60 * 1000;
 
 export type NegotiateContext = {
   db: Database;
@@ -63,6 +70,67 @@ function unresolvedIdentityGap(): GapNote {
       "Could not resolve the subject — no override / git email / OS username matched a known person.",
     remediation:
       "Set `[user] me_person_id` in your active profile's nimbus.toml, or run `nimbus people search <you>` to find your person id.",
+  };
+}
+
+/**
+ * How an explicit `--person <id>` matched the index.
+ *
+ * - `person` — a real `person` row. Every lane can measure this subject.
+ * - `graph-only` — no `person` row, but a `person`-typed `graph_entity` with that
+ *   `external_id` exists. This is the `git:<email>` blame-alias shape (`resolveOwner`,
+ *   `ownership/owner-identity.ts`) — the GRAPH lanes (authored PRs, tickets, ownership)
+ *   traverse `graph_entity.external_id` and can still measure it, but every lane keyed on
+ *   `item.author_id` — which only ever holds a `person.id` — is structurally zero.
+ * - `none` — nothing in the index carries that id at all: every lane is structurally zero.
+ */
+type ExplicitSubjectMatch = "person" | "graph-only" | "none";
+
+function classifyExplicitSubject(db: Database, personId: string): ExplicitSubjectMatch {
+  const person = db.query("SELECT 1 AS n FROM person WHERE id = ? LIMIT 1").get(personId) as {
+    n?: number;
+  } | null;
+  if (person !== null) return "person";
+  const entity = db
+    .query("SELECT 1 AS n FROM graph_entity WHERE type = 'person' AND external_id = ? LIMIT 1")
+    .get(personId) as { n?: number } | null;
+  return entity === null ? "none" : "graph-only";
+}
+
+/**
+ * The honesty contract's hardest case (spec § 3.2): an explicit `--person <id>` that resolves
+ * to nothing is NOT `personId === null`, so `unresolvedIdentityGap()` never fires for it, and
+ * `personDisplayNameOrNull` returns `null` for an unknown id — nothing in the rendered brief
+ * gives it away. Six lanes then each honestly return `0` and the document reads as a person who
+ * shipped nothing, which in a compensation conversation is the worst possible failure.
+ *
+ * A structural zero is not a measurement, so it must be labelled as one. The two arms state
+ * DIFFERENT facts and are not collapsed: with a `graph-only` match the graph lanes really did
+ * measure something (that is precisely why a `git:` id looks like it worked — ownership comes
+ * back populated), and claiming every count is structurally zero would be its own false
+ * statement in the opposite direction.
+ *
+ * Returns `null` for a `person` match — the ordinary case, which needs no disclosure.
+ */
+function explicitSubjectGap(match: ExplicitSubjectMatch, personId: string): GapNote | null {
+  if (match === "person") return null;
+  const remediation =
+    "Pass a `person.id` — run `nimbus people search <name>` to find it. A `git:<email>` blame " +
+    "alias is a graph entity, not a person id.";
+  if (match === "none") {
+    return {
+      category: "missing_user_identity",
+      detail: `\`--person ${personId}\` matched no indexed person; every count below is structurally zero, not a measurement.`,
+      remediation,
+    };
+  }
+  return {
+    category: "missing_user_identity",
+    detail:
+      `\`--person ${personId}\` matched no \`person\` record — only a graph entity (the ` +
+      "`git:<email>` blame-alias shape). Every count drawn from indexed authorship — PRs " +
+      "reviewed, decisions, writing — is structurally zero for this id, not a measurement.",
+    remediation,
   };
 }
 
@@ -112,7 +180,16 @@ function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): Negot
         meta = parsed as Record<string, unknown>;
       }
     } catch {
-      // Unparseable metadata contributes to neither the merged count nor stats coverage.
+      // Unparseable metadata contributes to neither the merged count nor stats coverage —
+      // but it DOES stay in `count`/`statsCoverage.total`, because the PR itself is real
+      // evidence and dropping it would understate the headline number. The consequence is
+      // asymmetric disclosure: the stats half is self-disclosing (`statsCoverage` renders
+      // `covered/total`, so an unparseable row visibly widens the gap), while the `merged`
+      // half is not — `merged` carries no denominator of its own, so a PR whose metadata
+      // will not parse is silently absent from it. Only a genuinely corrupt `item.metadata`
+      // reaches here (every writer goes through `JSON.stringify`), so this is a
+      // never-in-practice edge rather than a live undercount; a `mergedCoverage` companion
+      // field is the fix if it ever stops being one.
       continue;
     }
     if (meta["merged"] === true) merged += 1;
@@ -432,9 +509,42 @@ function countAuthoredServiceGated(
     types,
     PERSONAL_CAPABLE_SERVICES,
   );
-  const configuredPersonal = PERSONAL_CAPABLE_SERVICES.filter((s) => personalSources.includes(s));
-  const gated = countAuthoredForServices(db, personId, cutoff, types, configuredPersonal);
+  const gated = countAuthoredForServices(
+    db,
+    personId,
+    cutoff,
+    types,
+    splitPersonalSources(personalSources).recognised,
+  );
   return alwaysOn + gated;
+}
+
+/**
+ * The `[negotiate] personal_sources` list, split into the entries that actually WIDEN the
+ * query and the entries that match nothing.
+ *
+ * The one authority for both halves of the disclosure: `countAuthoredServiceGated` widens on
+ * `recognised`, and `renderNegotiateSources` reports the same `recognised`/`unrecognised`
+ * split — so "personal document sources are configured" can never mean anything other than
+ * "at least one configured entry actually contributed". Deriving `personalDocsConfigured`
+ * from `personalSources.length` instead made a typo'd or mis-capitalised entry render as
+ * complete coverage over an undercount, in the one section whose whole job is to disclose
+ * whether the opt-in applied. Case-folding is handled upstream at parse time
+ * (`config/nimbus-toml.ts` `parsePersonalSources`), so `"Obsidian"` reaches here as
+ * `"obsidian"` and is recognised.
+ *
+ * `recognised` is ordered by `PERSONAL_CAPABLE_SERVICES`, not by config order, so it is
+ * deduplicated and stable regardless of how the user wrote the list.
+ */
+function splitPersonalSources(personalSources: readonly string[]): {
+  recognised: readonly string[];
+  unrecognised: readonly string[];
+} {
+  const capable: readonly string[] = PERSONAL_CAPABLE_SERVICES;
+  return {
+    recognised: capable.filter((s) => personalSources.includes(s)),
+    unrecognised: personalSources.filter((s) => !capable.includes(s)),
+  };
 }
 
 /** Messages are a work artifact and are always in scope (spec § 3.3) — chat services are
@@ -450,6 +560,22 @@ function laneWriting(
     docs: countAuthoredServiceGated(db, personId, cutoff, DOC_TYPES, personalSources),
     notes: countAuthoredServiceGated(db, personId, cutoff, NOTE_TYPES, personalSources),
     messages: countAuthoredByType(db, personId, cutoff, MESSAGE_TYPES),
+  };
+}
+
+/**
+ * The `sources` block (spec § 5.F). `personalDocsConfigured` is the INTERSECTION with
+ * `PERSONAL_CAPABLE_SERVICES` — see `splitPersonalSources` — never `personalSources.length`;
+ * and entries that matched nothing are carried through to the render rather than dropped
+ * silently, so a typo is visible to the person holding the brief.
+ */
+function personalDocsSources(personalSources: readonly string[]): NegotiateBrief["sources"] {
+  const { recognised, unrecognised } = splitPersonalSources(personalSources);
+  return {
+    personalDocsConfigured: recognised.length > 0,
+    personalDocsRecognised: recognised,
+    personalDocsUnrecognised: unrecognised,
+    personalDocsConfigKey: PERSONAL_DOCS_CONFIG_KEY,
   };
 }
 
@@ -492,11 +618,16 @@ export async function runNegotiate(
   const empty = detectEmptyIndex(ctx.db);
   if (empty !== null) gaps.push(empty);
 
-  const { subject, gitEmailAttempted } = await resolveSubject(ctx.db, input);
+  const { subject, gitEmailAttempted, subjectGap } = await resolveSubject(ctx.db, input);
   if (subject.personId === null) gaps.push(unresolvedIdentityGap());
-  // Never for an explicit `--person` subject — someone else's alias set is unknowable
-  // from here (spec § 5.A0); `gitEmailAttempted` is only meaningful for the local self.
-  if (subject.source !== "explicit") {
+  if (subjectGap !== null) gaps.push(subjectGap);
+  // Never when `--person` named SOMEONE ELSE — their alias set is unknowable from here
+  // (spec § 5.A0); `gitEmailAttempted` is only meaningful for the local self. Keyed on
+  // `isOther`, not on `source === "explicit"`: `--person <your own id>` is still a brief
+  // about you, resolved from your own git email, and dropping the undercount caveat there
+  // would render a bare run and an explicit self run identically while one of them silently
+  // omits a disclosure the other makes.
+  if (!subject.isOther) {
     const gitGap = detectUnmappedGitIdentity(ctx.db, gitEmailAttempted);
     if (gitGap !== null) gaps.push(gitGap);
   }
@@ -566,10 +697,7 @@ export async function runNegotiate(
     gaps,
     query: { sinceMs },
     subject,
-    sources: {
-      personalDocsConfigured: ctx.personalSources.length > 0,
-      personalDocsConfigKey: PERSONAL_DOCS_CONFIG_KEY,
-    },
+    sources: personalDocsSources(ctx.personalSources),
     unavailableEvidence: UNAVAILABLE_EVIDENCE,
     authoredPrs,
     reviewedPrs,
@@ -591,7 +719,11 @@ export async function runNegotiate(
 async function resolveSubject(
   db: Database,
   input: NegotiateInput,
-): Promise<{ subject: NegotiateSubject; gitEmailAttempted: string | null }> {
+): Promise<{
+  subject: NegotiateSubject;
+  gitEmailAttempted: string | null;
+  subjectGap: GapNote | null;
+}> {
   let gitEmailAttempted: string | null = null;
   const baseRunGit = input.runGitOverride ?? defaultRunGitConfigUserEmail;
   const capturingRunGit: GitRunner = async () => {
@@ -616,6 +748,7 @@ async function resolveSubject(
         isOther: input.personId !== resolution.personId,
       },
       gitEmailAttempted,
+      subjectGap: explicitSubjectGap(classifyExplicitSubject(db, input.personId), input.personId),
     };
   }
   return {
@@ -627,6 +760,7 @@ async function resolveSubject(
       isOther: false,
     },
     gitEmailAttempted,
+    subjectGap: null,
   };
 }
 

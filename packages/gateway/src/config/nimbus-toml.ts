@@ -1957,11 +1957,21 @@ function isBareNumericToken(entry: string): boolean {
   return t !== "" && Number.isFinite(Number(t));
 }
 
-/** Blank and non-string (bare numeric) entries are dropped at parse time, never reaching
- * a query. A malformed (non-array) value falls back to an empty list rather than throwing. */
+/**
+ * Blank and non-string (bare numeric) entries are dropped at parse time, never reaching
+ * a query. A malformed (non-array) value falls back to an empty list rather than throwing.
+ *
+ * Entries are lower-cased because the consumer matches them against `item.service`, which is
+ * always a lower-case connector id: `personal_sources = ["Obsidian"]` is a natural thing to
+ * write in TOML, and matched nothing under an exact, case-sensitive comparison — an UNDERCOUNT
+ * that `nimbus negotiate` then reported as configured coverage. Folding here rather than at the
+ * comparison site keeps one normalisation point for every future consumer of the list.
+ */
 function parsePersonalSources(valRaw: string): string[] {
   try {
-    return parseStringArray(valRaw).filter((s) => s.length > 0 && !isBareNumericToken(s));
+    return parseStringArray(valRaw)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length > 0 && !isBareNumericToken(s));
   } catch {
     return [];
   }

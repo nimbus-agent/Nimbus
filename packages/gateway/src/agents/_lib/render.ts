@@ -587,7 +587,12 @@ function renderNegotiateAuthoredPrs(a: NegotiateAuthoredPrs | null): string {
   }
   const lines = ["## PRs authored", "", `- ${String(a.count)} PR(s), ${String(a.merged)} merged`];
   if (a.stats === null) {
-    lines.push("- stats: not available (no enriched PR in this window)");
+    // Only when there was something to enrich. With zero authored PRs in the window,
+    // "no enriched PR in this window" reads as a coverage failure over a real population
+    // rather than what it is — an empty population, already stated by the line above.
+    if (a.statsCoverage.total > 0) {
+      lines.push("- stats: not available (no enriched PR in this window)");
+    }
   } else {
     const coverageSuffix =
       a.statsCoverage.covered < a.statsCoverage.total
@@ -661,32 +666,65 @@ function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
         "to a person; ownership attributed to them is not counted here.",
     );
   }
+  // Unconditional, exactly as `nimbus owners` states it in every brief (`agents/ownership.ts`):
+  // this lane reads the SAME `owns` edges, which are derived from git blame. Under a heading
+  // like "## Ownership — services: checkout", inside a document about someone's contribution,
+  // an unlabelled ownership claim reads as formal accountability.
+  lines.push(
+    "- this is authorship-derived ownership — who wrote the lines, not who is formally " +
+      "accountable; there is no CODEOWNERS, reviewer or on-call data in the index.",
+  );
   return lines.join("\n");
+}
+
+/**
+ * How to address the subject in running prose. A self brief says "you"/"yours"; a
+ * `--person <someone-else>` brief must not, or the section contradicts the subject line
+ * three sections above it ("brief requested for someone other than you", then "attributed
+ * to you"). Falls back to `personId`, then a neutral noun, so an unnamed subject still
+ * reads as a third party rather than silently reverting to "you".
+ */
+function negotiateSubjectVoice(subject: NegotiateSubject): {
+  addressed: string;
+  possessive: string;
+} {
+  if (!subject.isOther) return { addressed: "you", possessive: "yours" };
+  return {
+    addressed: subject.displayName ?? subject.personId ?? "the subject",
+    possessive: "theirs",
+  };
 }
 
 /**
  * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. Same
  * disambiguation problem as `renderNegotiateOwnership`'s `unmappedIdentitiesInIndex`
- * (Task 4): `unattributable` is a fact about the INDEX (decisions mined from a source —
- * Obsidian, Teams — that records no author at all, or whose author is someone other than
- * the subject), never an attribution to the subject. Printed next to `authored` with no
- * disambiguating text, a reader (or their manager) could misread "N authored, M
- * unattributable" as "N + M decisions, M just not linked to me" — the undercount failure
- * inverted into an overstatement, which is worse (spec § 8.2, Task 5 fix-round-1). The
- * line must therefore read as "N decisions attributed to you; M decisions exist in the
- * index with no attributable author, not counted above and not necessarily yours" —
- * matching `renderNegotiateOwnership`'s "attributed to them is not counted here" phrasing.
+ * (Task 4): `unattributable` is a fact about the INDEX — decisions mined from a source
+ * (Obsidian, Teams) that records no author AT ALL, which is precisely and only what
+ * `laneDecisions` queries (`i.author_id IS NULL`). It is NOT "decisions authored by someone
+ * else": those are simply absent from both counts. Do not widen the query to match a looser
+ * reading of this comment — that would inflate `unattributable` and make the rendered line
+ * below false.
+ *
+ * Printed next to `authored` with no disambiguating text, a reader (or their manager) could
+ * misread "N authored, M unattributable" as "N + M decisions, M just not linked to me" — the
+ * undercount failure inverted into an overstatement, which is worse (spec § 8.2, Task 5
+ * fix-round-1). The line must therefore read as "N decisions attributed to <subject>; M
+ * decisions exist in the index with no attributable author, not counted above and not
+ * necessarily <subject>'s" — matching `renderNegotiateOwnership`'s "attributed to them is not
+ * counted here" phrasing. The subject is threaded in rather than hardcoded to "you" for the
+ * same reason `renderNegotiateSubjectLine` takes it.
  */
-function renderNegotiateDecisions(d: NegotiateDecisions | null): string {
+function renderNegotiateDecisions(d: NegotiateDecisions | null, subject: NegotiateSubject): string {
   if (d === null) {
     return ["## Decisions", "", "_could not be computed_"].join("\n");
   }
+  const voice = negotiateSubjectVoice(subject);
   const lines = [
     "## Decisions",
     "",
-    `- ${String(d.authored)} decision(s) attributed to you`,
+    `- ${String(d.authored)} decision(s) attributed to ${voice.addressed}`,
     `- ${String(d.unattributable)} decision(s) in this index have no indexed author and are ` +
-      "not counted above — they are not necessarily yours",
+      `not counted above — they are not necessarily ${voice.possessive}`,
   ];
   return lines.join("\n");
 }
@@ -718,10 +756,28 @@ function renderNegotiateWriting(w: NegotiateWriting | null): string {
  * enabled", never as "nothing found".
  */
 function renderNegotiateSources(sources: NegotiateBrief["sources"]): string {
+  const ignored = renderIgnoredPersonalSources(sources.personalDocsUnrecognised);
   const line = sources.personalDocsConfigured
-    ? "- personal document sources are configured and included in the writing lane above"
-    : `- personal document sources are not enabled (set \`${sources.personalDocsConfigKey}\` in nimbus.toml to include them)`;
+    ? `- personal document sources: ${sources.personalDocsRecognised.join(
+        ", ",
+      )} — configured and included in the writing lane above${ignored}`
+    : `- personal document sources are not enabled (set \`${sources.personalDocsConfigKey}\` in nimbus.toml to include them)${ignored}`;
   return ["## Sources", "", line].join("\n");
+}
+
+/**
+ * The disclosure half of the `personalDocsConfigured` fix. An entry that matches no
+ * personal-capable service widens nothing, so dropping it silently leaves a mis-typed or
+ * mis-named opt-in indistinguishable from a source that was genuinely empty — and, before
+ * `personalDocsConfigured` became an intersection, made an undercount render as complete
+ * coverage. The entries are echoed back quoted so the reader can see the exact string their
+ * `nimbus.toml` carries.
+ */
+function renderIgnoredPersonalSources(unrecognised: readonly string[]): string {
+  if (unrecognised.length === 0) return "";
+  const noun = unrecognised.length === 1 ? "entry" : "entries";
+  const quoted = unrecognised.map((s) => `"${s}"`).join(", ");
+  return ` (${String(unrecognised.length)} unrecognised ${noun} ignored: ${quoted})`;
 }
 
 /**
@@ -736,14 +792,22 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   const days = Math.round(brief.query.sinceMs / 86_400_000);
   const header = "# Negotiation brief";
   const subjectLine = renderNegotiateSubjectLine(brief.subject);
-  const windowLine = `_window: last ${String(days)}d · generated ${new Date(
+  // The window clause is a disclosure, not decoration. `item` has no creation timestamp, so
+  // every item-backed lane filters on `modified_at` — GitHub's `updated_at`, i.e. LAST TOUCH.
+  // Under a bare "_window: last 90d_" header, "40 PR(s)" is read as "40 authored this quarter"
+  // when the query actually means "40 you authored at any time that were touched in this
+  // window" — a systematic OVERSTATEMENT of the headline numbers, the failure direction this
+  // agent exists to avoid. Re-querying on creation date is unavailable, so saying so is the fix.
+  const windowLine = `_window: last ${String(
+    days,
+  )}d — items authored by the subject that were ACTIVE in this window; the index records last-modified, not created (the decisions lane windows on its recorded decision date instead) · generated ${new Date(
     brief.generatedAt,
   ).toISOString()}_`;
   const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);
   const reviewedPrs = renderNegotiateReviewedPrs(brief.reviewedPrs);
   const tickets = renderNegotiateTickets(brief.tickets);
   const ownership = renderNegotiateOwnership(brief.ownership);
-  const decisions = renderNegotiateDecisions(brief.decisions);
+  const decisions = renderNegotiateDecisions(brief.decisions, brief.subject);
   const writing = renderNegotiateWriting(brief.writing);
   const sources = renderNegotiateSources(brief.sources);
   const evidence = [

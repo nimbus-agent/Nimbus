@@ -1649,6 +1649,23 @@ describe("parseNimbusNegotiateToml", () => {
     expect(parsed.personalSources).toEqual(["obsidian"]);
   });
 
+  // `item.service` is always a lower-case connector id, and the consumer matches on it
+  // exactly. `["Obsidian"]` is a natural thing to write in TOML and matched NOTHING before
+  // this fold — an undercount that `nimbus negotiate` reported as configured coverage.
+  test("entries are case-folded so a capitalised service name still matches", () => {
+    const parsed = parseNimbusNegotiateToml(
+      '[negotiate]\npersonal_sources = ["Obsidian", "NOTION"]\n',
+    );
+    expect(parsed.personalSources).toEqual(["obsidian", "notion"]);
+  });
+
+  test("whitespace-only entries are dropped, not folded into a blank service name", () => {
+    expect(
+      parseNimbusNegotiateToml('[negotiate]\npersonal_sources = ["  ", "obsidian"]\n')
+        .personalSources,
+    ).toEqual(["obsidian"]);
+  });
+
   test("a malformed (non-array) value falls back to an empty list, never throws", () => {
     expect(() =>
       parseNimbusNegotiateToml("[negotiate]\npersonal_sources = not-an-array\n"),

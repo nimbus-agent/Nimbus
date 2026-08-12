@@ -40,7 +40,22 @@ export type NegotiateBrief = {
   readonly subject: NegotiateSubject;
   /** Sources the brief drew on, including whether personal documents were configured (§ 5.F). */
   readonly sources: {
+    /**
+     * True only when at least one configured entry actually WIDENED the writing lane — the
+     * intersection of `[negotiate] personal_sources` with the personal-capable service list
+     * (`negotiate.ts` `splitPersonalSources`), never `personalSources.length > 0`. A
+     * configured-but-matching-nothing list is an undercount; rendering it as "configured and
+     * included" would state complete coverage over one.
+     */
     readonly personalDocsConfigured: boolean;
+    /** The configured entries that matched a personal-capable service, in a stable order. */
+    readonly personalDocsRecognised: readonly string[];
+    /**
+     * Configured entries that match no personal-capable service and therefore contributed
+     * nothing. Carried rather than dropped: a silently ignored typo is indistinguishable from
+     * a source that was genuinely empty.
+     */
+    readonly personalDocsUnrecognised: readonly string[];
     readonly personalDocsConfigKey: string;
   };
   /**
