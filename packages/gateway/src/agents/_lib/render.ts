@@ -692,10 +692,12 @@ function renderNegotiateDecisions(d: NegotiateDecisions | null): string {
 }
 
 /**
- * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. `notes` is
- * the personal-documents count the `[negotiate] personal_sources` gate controls (spec §
- * 3.3); this line never explains *why* notes reads low/zero — that disclosure lives in
- * `renderNegotiateSources`, unconditionally, so it is stated once rather than repeated.
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. `docs` and
+ * `notes` each partly reflect the `[negotiate] personal_sources` gate (spec § 3.3) — see
+ * `NegotiateWriting`'s docstring and `negotiate.ts`'s `PERSONAL_CAPABLE_SERVICES` for which
+ * services that covers; this line never explains *why* a count reads low/zero — that
+ * disclosure lives in `renderNegotiateSources`, unconditionally, so it is stated once
+ * rather than repeated (and not restated here, so the two cannot drift apart).
  */
 function renderNegotiateWriting(w: NegotiateWriting | null): string {
   if (w === null) {

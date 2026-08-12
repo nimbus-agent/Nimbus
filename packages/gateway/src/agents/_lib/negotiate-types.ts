@@ -63,11 +63,18 @@ export type NegotiateBrief = {
 };
 
 /**
- * Docs, notes and messages authored (spec § 3, lane 6). `notes` (Obsidian's `obsidian_note`
- * type) is the personal-documents content the `[negotiate] personal_sources` gate targets
- * (spec § 3.3) — it counts as zero, not `null`, when no personal source is configured; a
- * configured-but-empty result is a real zero, not "could not be computed". `docs`/`messages`
- * are work artifacts and are always in scope.
+ * Docs, notes and messages authored (spec § 3, lane 6). Each field counts as zero, not
+ * `null`, when no personal source is configured (or matches) — a configured-but-empty
+ * result is a real zero, not "could not be computed".
+ *
+ * The `[negotiate] personal_sources` gate (spec § 3.3) is per-SERVICE, not per field or
+ * per item type — `negotiate.ts`'s `PERSONAL_CAPABLE_SERVICES` is the sole authority on
+ * which services it covers and why; do not restate that list here; it drifts. As of that
+ * list: `messages` is never gated (no chat service is personal-capable). `docs` and
+ * `notes` are each a mix of always-in-scope services and personal-capable ones gated by
+ * `personal_sources` — e.g. `docs` includes Confluence pages unconditionally, and Notion
+ * pages only when configured, because both connectors emit the same `item.type` and the
+ * gate cannot be a type filter.
  */
 export type NegotiateWriting = {
   readonly docs: number;
