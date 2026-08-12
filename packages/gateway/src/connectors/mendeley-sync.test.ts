@@ -115,6 +115,39 @@ describe("createMendeleySyncable", () => {
     expect(calls[1]).toBe("https://api.mendeley.com/documents?marker=REL2");
   });
 
+  test("follows rel=next even when it is not the first link parameter", async () => {
+    const calls: string[] = [];
+    const fetchFn = (async (url: string | URL) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.includes("marker=ORD2")) {
+        return jsonResponse([{ id: "d2", title: "Second" }]);
+      }
+      // `rel` LAST, not first — the old regex required it first and would have
+      // treated this as "no next page", silently truncating the sync.
+      return jsonResponse(
+        [{ id: "d1", title: "First" }],
+        '<https://api.mendeley.com/documents?marker=ORD2>; type="application/json"; rel="next"',
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    const ctx = makeCtxWithSecret(
+      JSON.stringify({
+        accessToken: "tok-abc",
+        refreshToken: "ref",
+        expiresAt: Date.now() + 3_600_000,
+        scopes: ["all"],
+      }),
+    );
+    const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r = await syncable.sync(ctx as any, null);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toBe("https://api.mendeley.com/documents?marker=ORD2");
+    expect(r.itemsUpserted).toBe(2);
+  });
+
   test("emits modified_since (seconds precision) on an incremental cycle", async () => {
     const calls: string[] = [];
     const fetchFn = (async (url: string | URL) => {

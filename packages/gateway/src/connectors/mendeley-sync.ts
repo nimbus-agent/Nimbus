@@ -7,7 +7,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
-import { parseNextLink } from "./mendeley-link-header.ts";
+import { nextPageUrl } from "./link-header.ts";
 import { mapMendeleyDocumentToItem } from "./mendeley-reference-mapping.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -87,7 +87,7 @@ async function fetchMendeleyPage(
     // Resolve the rel="next" href against the current page URL so a relative
     // Link header (RFC 5988 permits it) becomes an absolute URL fetch can use.
     // An already-absolute href is returned unchanged by the URL constructor.
-    nextUrl: resolveNextUrl(parseNextLink(res.headers.get("link")), url),
+    nextUrl: resolveNextUrl(nextPageUrl(res.headers.get("link")), url),
   };
 }
 
