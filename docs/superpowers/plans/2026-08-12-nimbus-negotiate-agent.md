@@ -413,7 +413,9 @@ typecheck failure, not a silent gap:
 2. add `if (brief.kind === "negotiate") return renderNegotiate(brief);` to `deterministicRender`;
 3. add `if (brief.kind === "negotiate") return "agents.negotiate";` to `toolNameFor`.
 
-Write `renderNegotiate` beside the existing `render*` functions, following their style. **This
+Write `renderNegotiate` in `packages/gateway/src/agents/_lib/render.ts` — **that is where the
+`render*` functions live, not `synthesize.ts`**, which only dispatches to them — following their
+style. **This
 function is the deliverable** — the Markdown a person reads and may hand to a manager. Task 1's
 version renders only what Task 1 produces: the subject (naming them explicitly when
 `subject.isOther`), the window and generation time, the gap notes, and the unconditional
