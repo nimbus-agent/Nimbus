@@ -1536,7 +1536,8 @@ const streamReq: JSONRPCRequest = {
 //   unconditionally: (a) an explicit `--person` that matches no `person` row raises a
 //   `missing_user_identity` gap stating the counts are STRUCTURALLY zero rather than measured —
 //   including the `git:<email>` blame-alias shape, which is a `graph_entity`, not a `person.id`,
-//   so the four `item.author_id`-keyed lanes can never match it while the graph lanes still can
+//   so only the ownership lane can measure it: the three `item.author_id`-keyed lanes cannot,
+//   and neither can PRs authored or tickets, whose graph edges are built from `item.author_id`
 //   (the two cases state different facts and are not collapsed); (b) the window is "ACTIVE in",
 //   not "created in", since `item` carries no creation timestamp and every item-backed lane
 //   filters on `modified_at` (GitHub's `updated_at`); (c) the ownership section repeats

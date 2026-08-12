@@ -576,7 +576,6 @@ const MAX_PERSON_ID_LEN = 256;
  * exists to replace. This is a per-method bound, not a broader raise: every other `require*Params`
  * validator in this file stays on the shared 90-day constant.
  */
-
 function requireNegotiateParams(params: unknown): { sinceMs?: number; personId?: string } {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new AgentsRpcError(-32602, "agents.negotiate requires an object payload");

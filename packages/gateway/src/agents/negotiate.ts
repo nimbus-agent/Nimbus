@@ -78,10 +78,15 @@ function unresolvedIdentityGap(): GapNote {
  *
  * - `person` — a real `person` row. Every lane can measure this subject.
  * - `graph-only` — no `person` row, but a `person`-typed `graph_entity` with that
- *   `external_id` exists. This is the `git:<email>` blame-alias shape (`resolveOwner`,
- *   `ownership/owner-identity.ts`) — the GRAPH lanes (authored PRs, tickets, ownership)
- *   traverse `graph_entity.external_id` and can still measure it, but every lane keyed on
- *   `item.author_id` — which only ever holds a `person.id` — is structurally zero.
+ *   `external_id` exists. Typically the `git:<email>` blame-alias shape (`resolveOwner`,
+ *   `ownership/owner-identity.ts`), though a stale entity whose `person` row is gone lands
+ *   here too. OWNERSHIP IS THE ONLY LANE THAT CAN MEASURE SUCH AN ID. It is tempting to
+ *   assume the other graph-traversing lanes can too — they cannot: `authored` and `opened`
+ *   edges are built from `row.authorId` (`graph/graph-populator.ts`), which only ever holds
+ *   a `person.id`, so a `git:` entity is never their `from`. The ownership pass is the sole
+ *   writer that puts such an external id on a graph entity, and it emits only `owns` edges.
+ *   Authored PRs, reviewed PRs, tickets, decisions and writing are therefore ALL
+ *   structurally zero here.
  * - `none` — nothing in the index carries that id at all: every lane is structurally zero.
  */
 type ExplicitSubjectMatch = "person" | "graph-only" | "none";
@@ -120,16 +125,21 @@ function explicitSubjectGap(match: ExplicitSubjectMatch, personId: string): GapN
   if (match === "none") {
     return {
       category: "missing_user_identity",
-      detail: `\`--person ${personId}\` matched no indexed person; every count below is structurally zero, not a measurement.`,
+      detail:
+        `\`--person ${personId}\` matched no indexed person; every count attributed to this id ` +
+        "below is structurally zero, not a measurement. (The index-wide figures — decisions " +
+        "with no indexed author, unmapped git identities — are real counts about the index, " +
+        "not about this id.)",
       remediation,
     };
   }
   return {
     category: "missing_user_identity",
     detail:
-      `\`--person ${personId}\` matched no \`person\` record — only a graph entity (the ` +
-      "`git:<email>` blame-alias shape). Every count drawn from indexed authorship — PRs " +
-      "reviewed, decisions, writing — is structurally zero for this id, not a measurement.",
+      `\`--person ${personId}\` matched no \`person\` record — only a graph entity (typically ` +
+      "the `git:<email>` blame-alias shape). Ownership below is the ONLY lane that can measure " +
+      "this id: PRs authored, PRs reviewed, tickets, decisions and writing are every one of " +
+      "them structurally zero for it, not measurements.",
     remediation,
   };
 }
@@ -534,7 +544,9 @@ function countAuthoredServiceGated(
  * `"obsidian"` and is recognised.
  *
  * `recognised` is ordered by `PERSONAL_CAPABLE_SERVICES`, not by config order, so it is
- * deduplicated and stable regardless of how the user wrote the list.
+ * deduplicated and stable regardless of how the user wrote the list. `unrecognised` is
+ * deduplicated explicitly to match: it is echoed back to the reader verbatim, and
+ * `2 unrecognised entries ignored: "foo", "foo"` reads as two distinct mistakes.
  */
 function splitPersonalSources(personalSources: readonly string[]): {
   recognised: readonly string[];
@@ -543,7 +555,7 @@ function splitPersonalSources(personalSources: readonly string[]): {
   const capable: readonly string[] = PERSONAL_CAPABLE_SERVICES;
   return {
     recognised: capable.filter((s) => personalSources.includes(s)),
-    unrecognised: personalSources.filter((s) => !capable.includes(s)),
+    unrecognised: [...new Set(personalSources.filter((s) => !capable.includes(s)))],
   };
 }
 

@@ -202,7 +202,16 @@ test("--person naming an id that matches nothing declares the counts structurall
 
 // The `git:<email>` shape specifically: `resolveOwner` emits it for a blame email with no
 // `person` row, so it IS a `graph_entity` (ownership comes back populated, which is what makes
-// it look like it worked) while every `author_id`-keyed lane is structurally zero.
+// it look like it worked) while EVERY OTHER LANE is structurally zero.
+//
+// The count matters and an earlier fix got it wrong: it named only the three `author_id`-keyed
+// lanes, on the assumption that the graph-traversing lanes could still measure a `git:` id.
+// They cannot. `authored` and `opened` edges are built from `row.authorId`
+// (`graph/graph-populator.ts`), which only ever holds a `person.id`, and the ownership pass is
+// the only writer that puts a `git:` external id on an entity — emitting `owns` edges alone.
+// So PRs authored and tickets are structurally zero too, and a gap that ENUMERATES lanes while
+// omitting them is worse than silence: it implies those two were measured. Hence the positive
+// assertions below on every lane the gap must name.
 test("--person naming a git: blame alias says which lanes are structurally zero", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
@@ -223,9 +232,15 @@ test("--person naming a git: blame alias says which lanes are structurally zero"
   expect(gap).toBeDefined();
   expect(gap?.category).toBe("missing_user_identity");
   expect(gap?.detail).toContain("structurally zero");
-  // The graph half really did measure something — the gap must not claim otherwise.
+  // Ownership really did measure something — the gap must not claim otherwise.
   expect(brief.ownership?.services).toEqual(["api"]);
   expect(gap?.detail).not.toContain("every count below is structurally zero");
+  // ...and it must name ALL five lanes that are structurally zero, not just the three keyed on
+  // `author_id`. Dropping "PRs authored"/"tickets" from this sentence is the exact regression
+  // that shipped once already.
+  for (const lane of ["PRs authored", "PRs reviewed", "tickets", "decisions", "writing"]) {
+    expect(gap?.detail).toContain(lane);
+  }
   expect(gap?.remediation).toContain("nimbus people search");
   db.close();
 });

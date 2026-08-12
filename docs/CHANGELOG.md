@@ -32,7 +32,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   STRUCTURALLY zero rather than measured. This covers the `git:<email>` blame-alias shape
   specifically — the identity the ownership pass emits for a git email with no `person` row, and
   therefore not a `person.id`: the four lanes keyed on `item.author_id` can never match it, while
-  the graph lanes still can, so the two cases state different facts and are not collapsed.
+  the ownership lane still can (it is the sole lane reading `owns` edges, the only edges that
+  ever carry a `git:` external id), so the two cases state different facts and are not collapsed.
   Without it, an unresolvable id rendered as a person who shipped nothing.
   **Six limits stated on every brief, never decoration.** The window is "ACTIVE in", not
   "created in": `item` carries no creation timestamp, only `modified_at` (GitHub's `updated_at`,

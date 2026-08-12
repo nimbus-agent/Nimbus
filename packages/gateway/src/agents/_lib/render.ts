@@ -671,8 +671,12 @@ function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
   // like "## Ownership — services: checkout", inside a document about someone's contribution,
   // an unlabelled ownership claim reads as formal accountability.
   lines.push(
+    // Do NOT shorten this to "there is no reviewer data in the index" — this same brief renders
+    // a measured "PRs reviewed" section, so that claim would contradict it. `nimbus owners`
+    // (`agents/ownership.ts`) is deliberately narrower for the same reason; match it.
     "- this is authorship-derived ownership — who wrote the lines, not who is formally " +
-      "accountable; there is no CODEOWNERS, reviewer or on-call data in the index.",
+      "accountable. There is no CODEOWNERS and no on-call rotation in the index, and reviewer " +
+      "data (`reviewed` edges from GitHub PR reviews) is not factored into this ranking.",
   );
   return lines.join("\n");
 }
@@ -757,11 +761,19 @@ function renderNegotiateWriting(w: NegotiateWriting | null): string {
  */
 function renderNegotiateSources(sources: NegotiateBrief["sources"]): string {
   const ignored = renderIgnoredPersonalSources(sources.personalDocsUnrecognised);
-  const line = sources.personalDocsConfigured
-    ? `- personal document sources: ${sources.personalDocsRecognised.join(
-        ", ",
-      )} — configured and included in the writing lane above${ignored}`
-    : `- personal document sources are not enabled (set \`${sources.personalDocsConfigKey}\` in nimbus.toml to include them)${ignored}`;
+  // Three states, not two. Telling a reader to "set `[negotiate] personal_sources`" when they
+  // have already set it — and every entry was unrecognised — is the advice that wastes the
+  // most time, so that case gets its own line saying what actually went wrong.
+  let line: string;
+  if (sources.personalDocsConfigured) {
+    line = `- personal document sources: ${sources.personalDocsRecognised.join(
+      ", ",
+    )} — configured and included in the writing lane above${ignored}`;
+  } else if (sources.personalDocsUnrecognised.length > 0) {
+    line = `- personal document sources are not enabled: no entry in \`${sources.personalDocsConfigKey}\` matched a personal-capable service${ignored}`;
+  } else {
+    line = `- personal document sources are not enabled (set \`${sources.personalDocsConfigKey}\` in nimbus.toml to include them)`;
+  }
   return ["## Sources", "", line].join("\n");
 }
 
@@ -800,7 +812,7 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   // agent exists to avoid. Re-querying on creation date is unavailable, so saying so is the fix.
   const windowLine = `_window: last ${String(
     days,
-  )}d — items authored by the subject that were ACTIVE in this window; the index records last-modified, not created (the decisions lane windows on its recorded decision date instead) · generated ${new Date(
+  )}d — items authored by the subject that were ACTIVE in this window; the index records last-modified, not created. Two lanes sit outside it: decisions windows on its recorded decision date, and ownership is not windowed at all (it is an all-time snapshot) · generated ${new Date(
     brief.generatedAt,
   ).toISOString()}_`;
   const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);
