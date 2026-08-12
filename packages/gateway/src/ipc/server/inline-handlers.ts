@@ -41,14 +41,21 @@ function parseOptionalString(
   return raw.trim();
 }
 
-function sendAgentChunkIfStreaming(session: ClientSession, stream: boolean, text: string): void {
+function sendAgentChunkIfStreaming(
+  session: ClientSession,
+  stream: boolean,
+  text: string,
+  streamId?: string,
+): void {
   if (!stream) {
     return;
   }
   session.writeNotification({
     jsonrpc: "2.0",
     method: "agent.chunk",
-    params: { text },
+    // Additive by design: without a streamId the params are byte-identical to
+    // what every shipped client already parses.
+    params: streamId === undefined ? { text } : { streamId, text },
   });
 }
 
@@ -69,6 +76,7 @@ export async function dispatchAgentInvoke(
   const agentRaw = rec?.["agent"];
   const agent =
     typeof agentRaw === "string" && agentRaw.trim() !== "" ? agentRaw.trim() : undefined;
+  const streamId = parseOptionalString(rec, "streamId");
   const handler = ctx.getAgentInvokeHandler();
   if (handler === undefined) {
     return {
@@ -87,7 +95,7 @@ export async function dispatchAgentInvoke(
         input,
         stream,
         sendChunk: (text: string) => {
-          sendAgentChunkIfStreaming(session, stream, text);
+          sendAgentChunkIfStreaming(session, stream, text, streamId);
         },
       };
       if (sessionId !== undefined) {
@@ -124,7 +132,7 @@ function buildWorkflowRunContext(
   clientId: string,
   session: ClientSession,
   params: unknown,
-): { ctx: WorkflowRunContext; sessionId: string | undefined } {
+): { ctx: WorkflowRunContext; sessionId: string | undefined; streamId: string | undefined } {
   const rec = asRecord(params);
   const workflowName = requireNonEmptyRpcString(rec, "name");
   const triggeredBy = parseOptionalString(rec, "triggeredBy") ?? clientId;
@@ -133,6 +141,7 @@ function buildWorkflowRunContext(
   const sessionId = parseOptionalString(rec, "sessionId");
   const agent = parseOptionalString(rec, "agent");
   const paramsOverride = parseWorkflowRunParamsOverride(rec);
+  const streamId = parseOptionalString(rec, "streamId");
 
   const ctx: WorkflowRunContext = {
     clientId,
@@ -141,13 +150,14 @@ function buildWorkflowRunContext(
     dryRun,
     stream,
     sendChunk: (text: string) => {
-      sendAgentChunkIfStreaming(session, stream, text);
+      sendAgentChunkIfStreaming(session, stream, text, streamId);
     },
   };
   if (sessionId !== undefined) ctx.sessionId = sessionId;
   if (agent !== undefined) ctx.agent = agent;
   if (paramsOverride !== undefined) ctx.paramsOverride = paramsOverride;
-  return { ctx, sessionId };
+  if (streamId !== undefined) ctx.streamId = streamId;
+  return { ctx, sessionId, streamId };
 }
 
 export async function dispatchWorkflowRunRpc(

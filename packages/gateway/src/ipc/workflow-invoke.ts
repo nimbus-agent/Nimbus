@@ -11,6 +11,8 @@ export type WorkflowRunContext = {
   sessionId?: string;
   agent?: string;
   paramsOverride?: Readonly<Record<string, Record<string, unknown>>>;
+  /** Client-supplied correlation id, echoed on every agent.chunk for this run. */
+  streamId?: string;
 };
 
 export type WorkflowRunHandler = (ctx: WorkflowRunContext) => Promise<{

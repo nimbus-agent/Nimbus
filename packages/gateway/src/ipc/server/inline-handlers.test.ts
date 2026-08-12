@@ -10,6 +10,7 @@ import { createMockVault } from "../../vault/mock.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
+import type { WorkflowRunContext } from "../workflow-invoke.ts";
 import type { ServerCtx } from "./context.ts";
 import {
   dispatchAgentInvoke,
@@ -272,6 +273,69 @@ describe("dispatchAgentInvoke", () => {
     expect(captured?.["sessionId"]).toBeUndefined();
     expect(captured?.["agent"]).toBeUndefined();
   });
+
+  test("agent.chunk carries streamId when the caller supplies one", async () => {
+    let captured: Record<string, unknown> | undefined;
+    const handler = async (payload: unknown): Promise<{ reply: string }> => {
+      captured = payload as Record<string, unknown>;
+      return { reply: "ok" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    const { session, notifications } = makeSession();
+    await dispatchAgentInvoke(ctx, session, "client-1", {
+      input: "hi",
+      stream: true,
+      streamId: "sid-1",
+    });
+    const sendChunk = captured?.["sendChunk"] as (t: string) => void;
+    sendChunk("chunk-1");
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toEqual({
+      jsonrpc: "2.0",
+      method: "agent.chunk",
+      params: { streamId: "sid-1", text: "chunk-1" },
+    });
+  });
+
+  test("agent.chunk params are unchanged when no streamId is supplied", async () => {
+    let captured: Record<string, unknown> | undefined;
+    const handler = async (payload: unknown): Promise<{ reply: string }> => {
+      captured = payload as Record<string, unknown>;
+      return { reply: "ok" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    const { session, notifications } = makeSession();
+    await dispatchAgentInvoke(ctx, session, "client-1", { input: "hi", stream: true });
+    const sendChunk = captured?.["sendChunk"] as (t: string) => void;
+    sendChunk("chunk-1");
+    expect(notifications[0]).toEqual({
+      jsonrpc: "2.0",
+      method: "agent.chunk",
+      params: { text: "chunk-1" },
+    });
+  });
+
+  test("whitespace-only streamId is treated as absent", async () => {
+    let captured: Record<string, unknown> | undefined;
+    const handler = async (payload: unknown): Promise<{ reply: string }> => {
+      captured = payload as Record<string, unknown>;
+      return { reply: "ok" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    const { session, notifications } = makeSession();
+    await dispatchAgentInvoke(ctx, session, "client-1", {
+      input: "hi",
+      stream: true,
+      streamId: "   ",
+    });
+    const sendChunk = captured?.["sendChunk"] as (t: string) => void;
+    sendChunk("c");
+    expect(notifications[0]).toEqual({
+      jsonrpc: "2.0",
+      method: "agent.chunk",
+      params: { text: "c" },
+    });
+  });
 });
 
 describe("dispatchWorkflowRunRpc", () => {
@@ -345,6 +409,29 @@ describe("dispatchWorkflowRunRpc", () => {
       paramsOverride: null,
     });
     expect(r).toBeDefined();
+  });
+
+  test("workflow chunks carry the supplied streamId", async () => {
+    let captured: WorkflowRunContext | undefined;
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async (c: unknown) => {
+        captured = c as WorkflowRunContext;
+        return { runId: "r1", dryRun: false, stepResults: [] };
+      },
+    });
+    const { session, notifications } = makeSession();
+    await dispatchWorkflowRunRpc(ctx, "client-1", session, {
+      name: "nightly",
+      stream: true,
+      streamId: "wf-sid-1",
+    });
+    captured?.sendChunk("step output");
+    expect(notifications[0]).toEqual({
+      jsonrpc: "2.0",
+      method: "agent.chunk",
+      params: { streamId: "wf-sid-1", text: "step output" },
+    });
   });
 });
 
