@@ -1,0 +1,205 @@
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+import { emitNegotiateBrief } from "../../../src/agents/negotiate.ts";
+import { upsertGraphEntity, upsertGraphRelation } from "../../../src/graph/relationship-graph.ts";
+import { upsertIndexedItem } from "../../../src/index/item-store.ts";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
+import { insertPerson } from "../../../src/people/person-store.ts";
+
+const NOW = 1_800_000_000_000;
+const PERSON_ID = "person:me";
+const UNAVAILABLE_EVIDENCE = ["incidents resolved", "on-call shifts", "deploys triggered"];
+
+/** Narrows the `negotiate.briefReady` payload instead of casting it into shape. */
+function isBriefReadyParams(v: unknown): v is { brief: string; findings: { kind: string } } {
+  if (v === null || typeof v !== "object") return false;
+  const o = v as { brief?: unknown; findings?: unknown };
+  if (typeof o.brief !== "string") return false;
+  if (o.findings === null || typeof o.findings !== "object") return false;
+  return typeof (o.findings as { kind?: unknown }).kind === "string";
+}
+
+/** The REAL V44+ `egress_ledger` (and the rest of the shipped schema), built by the migration
+ * runner rather than a hand-copied `CREATE TABLE` — mirrors `premortem.e2e.test.ts`. */
+function freshDb(): Database {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  return db;
+}
+
+/**
+ * Seeds through the real writers only — `upsertIndexedItem`, `upsertGraphEntity`,
+ * `upsertGraphRelation` — never a hand-rolled `INSERT INTO graph_entity`.
+ *
+ * The issue is upserted BEFORE the PR that references it in its body: `syncPrGraph` (invoked
+ * internally by `upsertIndexedItem`) only wires a `resolves` edge against issue entities already
+ * present in `graph_entity` at PR-sync time — the reverse order silently yields zero resolved
+ * tickets while the test still passes, proving nothing.
+ */
+function seedNegotiateEvidence(db: Database): void {
+  insertPerson(db, {
+    id: PERSON_ID,
+    displayName: "Ada Lovelace",
+    canonicalEmail: "ada@example.com",
+    githubLogin: "ada",
+    gitlabLogin: null,
+    slackHandle: null,
+    linearMemberId: null,
+    jiraAccountId: null,
+    notionUserId: null,
+    bitbucketUuid: null,
+    linked: false,
+    metadata: {},
+  });
+
+  // The issue, seeded BEFORE the PR that resolves it (the ordering trap above).
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/widgets#42",
+    title: "Checkout button unresponsive",
+    bodyPreview: "",
+    modifiedAt: NOW,
+    syncedAt: NOW,
+    authorId: PERSON_ID,
+    metadata: { repo: "acme/widgets", number: 42 },
+  });
+
+  // Authored PR #1: enriched with size stats, and its body closes the issue above.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/widgets#7",
+    title: "Fix checkout button",
+    bodyPreview: "closes #42",
+    modifiedAt: NOW,
+    syncedAt: NOW,
+    authorId: PERSON_ID,
+    metadata: {
+      repo: "acme/widgets",
+      number: 7,
+      merged: true,
+      additions: 120,
+      deletions: 30,
+      changed_files: 4,
+    },
+  });
+
+  // Authored PR #2: unenriched (no size stats) — exercises stats coverage < total.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/widgets#8",
+    title: "Add checkout regression test",
+    bodyPreview: "",
+    modifiedAt: NOW,
+    syncedAt: NOW,
+    authorId: PERSON_ID,
+    metadata: { repo: "acme/widgets", number: 8, merged: false },
+  });
+
+  // A review authored by the subject.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "review",
+    externalId: "acme/widgets#9#review-1",
+    title: "Review on acme/widgets#9",
+    bodyPreview: "",
+    modifiedAt: NOW,
+    syncedAt: NOW,
+    authorId: PERSON_ID,
+    metadata: { repo: "acme/widgets", pr_number: 9, review_id: 1, state: "approved" },
+  });
+
+  // An ownership edge, through the real graph writers.
+  const personEntityId = upsertGraphEntity(db, {
+    type: "person",
+    externalId: PERSON_ID,
+    label: "Ada Lovelace",
+  });
+  const serviceEntityId = upsertGraphEntity(db, {
+    type: "service",
+    externalId: "svc:checkout",
+    label: "checkout",
+  });
+  upsertGraphRelation(db, personEntityId, serviceEntityId, "owns", NOW, 0.9);
+}
+
+describe("nimbus negotiate (e2e, in-process)", () => {
+  test("the negotiate agent source is HITL-free by shape", () => {
+    // Anchored to this file, not the CWD — mirrors premortem.e2e.test.ts/decisions.e2e.test.ts.
+    // A CWD-relative read resolves when the suite starts at the repo root but throws ENOENT
+    // under the sharded coverage runner, which starts elsewhere.
+    const src = readFileSync(
+      path.join(__dirname, "..", "..", "..", "src", "agents", "negotiate.ts"),
+      "utf8",
+    );
+    expect(src).not.toContain("ToolExecutor");
+    expect(src).not.toContain("HITL_REQUIRED");
+    expect(src).not.toContain("connectors.dispatch");
+  });
+
+  test(
+    "seeded index -> emitNegotiateBrief -> negotiate.briefReady fires with markdown naming the " +
+      "subject and window, a negotiate-kind finding, and the unconditional absent-evidence note",
+    async () => {
+      const db = freshDb();
+      seedNegotiateEvidence(db);
+
+      const seen: Array<{ method: string; params: unknown }> = [];
+      const result = await emitNegotiateBrief(
+        { mePersonIdOverride: PERSON_ID },
+        {
+          db,
+          notify: (method, params) => seen.push({ method, params }),
+          sessionId: "e2e-negotiate",
+          personalSources: [],
+        },
+      );
+      expect(result).toEqual({ sessionId: "e2e-negotiate" });
+
+      // Poll to a terminal notification rather than a fixed sleep — emitNegotiateBrief is
+      // fire-and-forget, and a fixed wait is the classic CI flake on a slow runner.
+      const deadline = performance.now() + 5_000;
+      while (performance.now() < deadline) {
+        if (
+          seen.some(
+            (s) => s.method === "negotiate.briefReady" || s.method === "negotiate.briefError",
+          )
+        ) {
+          break;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      }
+
+      // Zero HITL: `emitBriefWithSynthesis` calls `notify` exactly once, for the brief lifecycle
+      // event, never for a consent/HITL side channel.
+      expect(seen.map((s) => s.method)).toEqual(["negotiate.briefReady"]);
+
+      const ready = seen.find((s) => s.method === "negotiate.briefReady");
+      expect(ready).toBeDefined();
+      const params: unknown = ready?.params;
+      expect(isBriefReadyParams(params)).toBe(true);
+      if (!isBriefReadyParams(params)) return;
+
+      expect(params.brief.length).toBeGreaterThan(0);
+      expect(params.findings.kind).toBe("negotiate");
+
+      // The Markdown names the subject and the window — this is the artifact a person hands to
+      // a manager; rendering without saying whose it is or what period it covers is unusable.
+      expect(params.brief).toContain("**Subject:** you");
+      expect(params.brief).toMatch(/_window: last \d+d/);
+
+      // The absent-evidence note (spec § 5.D) is present UNCONDITIONALLY — incidents resolved,
+      // on-call shifts and deploys triggered do not exist in the index at all, and the brief
+      // names them on every run so an empty section is never read as zero.
+      for (const term of UNAVAILABLE_EVIDENCE) {
+        expect(params.brief).toContain(term);
+      }
+    },
+  );
+});
