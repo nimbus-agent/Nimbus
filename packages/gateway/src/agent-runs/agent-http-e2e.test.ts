@@ -156,6 +156,23 @@ describe("agents over HTTP — end to end", () => {
     }
   });
 
+  test("agents.negotiate is not reachable over HTTP", async () => {
+    // Unlike preflight/premortem above, negotiate is a pure read with no side effects — it is
+    // excluded for a different reason: combined with `--person`, HTTP exposure would let any
+    // holder of the `agents` token assemble a contribution dossier on any indexed person without
+    // the owner initiating it. A 404 here is the whole point, same as preflight/premortem above,
+    // and no egress row is written for a route that does not exist.
+    const s = await startAgentTestServer();
+    try {
+      const res = await invoke(s.port, "negotiate", s.token, { personId: "person-1" });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "unknown_agent" });
+      expect(ledgerRows(s.db, "SELECT id FROM egress_ledger")).toEqual([]);
+    } finally {
+      s.stop();
+    }
+  });
+
   test("GET /v1/agents publishes exactly the invokable set", async () => {
     const s = await startAgentTestServer();
     try {
@@ -167,6 +184,7 @@ describe("agents over HTTP — end to end", () => {
       expect(agents).not.toContain("preflight");
       expect(agents).not.toContain("premortem");
       expect(agents).not.toContain("whyPeek");
+      expect(agents).not.toContain("negotiate");
       expect(agents).toContain("expert");
       expect(agents).toHaveLength(11);
     } finally {
