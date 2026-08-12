@@ -792,6 +792,40 @@ function syncTimelineEventGraph(
 }
 
 /**
+ * A Sentry error group. Deliberately NOT an `incident` entity: an error group
+ * with a large event count that never paged anyone is not an incident, and
+ * counting it as one inflates every downstream contribution brief.
+ *
+ * `clearRelationsTouchingEntity` removes every edge touching this entity except
+ * the four CROSS_ITEM_RELATION_TYPES, so ANY edge a later change wants to keep
+ * across re-syncs must be re-emitted HERE, in this function. That includes the
+ * `person --assigned--> error_issue` edge planned for the attribution spec.
+ */
+function syncErrorIssueGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
+  const projectRaw = row.metadata["project"];
+  const project = typeof projectRaw === "string" && projectRaw !== "" ? projectRaw : undefined;
+
+  const entityId = upsertGraphEntity(db, {
+    type: "error_issue",
+    externalId: row.id,
+    label: row.title,
+    service: row.service,
+    metadata: { project: project ?? null },
+  });
+  clearRelationsTouchingEntity(db, entityId);
+
+  if (project !== undefined) {
+    const serviceId = upsertGraphEntity(db, {
+      type: "service",
+      externalId: `${row.service}:${project}`,
+      label: project,
+      service: row.service,
+    });
+    upsertGraphRelation(db, entityId, serviceId, "belongs_to", now);
+  }
+}
+
+/**
  * Read the item's event time back from the row written immediately before this
  * populator call. `upsertIndexedItem` inserts and then calls the populator
  * synchronously on the same handle, so the row is always present on the
@@ -878,6 +912,10 @@ export function syncGraphFromIndexedItem(
   }
   if (row.type === "data_quality_test") {
     syncDataQualityTestGraph(db, row, now);
+    return;
+  }
+  if (row.type === "error_issue") {
+    syncErrorIssueGraph(db, row, now);
     return;
   }
   if (row.type === "incident") {
