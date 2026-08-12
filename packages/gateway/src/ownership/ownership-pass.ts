@@ -430,52 +430,46 @@ function bindRootRemote(
 }
 
 /**
- * Emit `owns` edges for every file and directory under one root, plus the
- * `contains` skeleton that links them, returning how many owner edges were
- * written.
- *
- * The third and last extraction from `runOwnershipPass` (Sonar S3776). The first
- * pass on this function took it 55 -> 44 by lifting `accumulateOwnerWeights` and
- * `bindRootRemote`; that was not enough, because these two loops — with their
- * nested `ranked.emitted` walks and their upsert-vs-ensure branches — were
- * always the bulk of the score.
- *
- * The `upsertGraphEntity` / `ensureGraphEntity` split inside is load-bearing and
- * is preserved exactly: the authoritative writer of a node upserts (carrying
- * metadata), while a purely STRUCTURAL reference create-if-absents, because an
- * upsert from a call site with no metadata to pass would NULL what the
- * authoritative writer just wrote.
+ * Everything the per-path emitters need that does not vary within one root.
+ * Bundled so the emitters below take two arguments instead of seven.
  */
-function emitPathOwnership(
-  db: Database,
-  args: {
-    root: string;
-    rootMarker: string;
-    fileWeights: ReadonlyMap<string, Map<string, number>>;
-    dirWeights: ReadonlyMap<string, Map<string, number>>;
-    ownerLabels: ReadonlyMap<string, string>;
-    cfg: { minShare: number; maxOwnersPerPath: number };
-    nowMs: number;
-  },
-): number {
-  const { root, rootMarker, fileWeights, dirWeights, ownerLabels, cfg, nowMs } = args;
-  let emitted = 0;
-  const emitOwners = (targetEntityId: string, weights: Map<string, number>): void => {
-    const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-    for (const e of ranked.emitted) {
-      const personId = upsertGraphEntity(db, {
-        type: "person",
-        externalId: e.externalId,
-        label: ownerLabels.get(e.externalId) ?? e.externalId,
-        service: "filesystem",
-      });
-      upsertGraphRelation(db, personId, targetEntityId, "owns", nowMs, e.share);
-      emitted += 1;
-    }
-  };
+type EmitCtx = {
+  readonly root: string;
+  readonly rootMarker: string;
+  readonly ownerLabels: ReadonlyMap<string, string>;
+  readonly cfg: { readonly minShare: number; readonly maxOwnersPerPath: number };
+  readonly nowMs: number;
+};
 
+/** `person --owns--> target` for each ranked owner. Returns how many it wrote. */
+function emitOwnersFor(
+  db: Database,
+  targetEntityId: string,
+  weights: Map<string, number>,
+  ctx: EmitCtx,
+): number {
+  const ranked = rankOwners(weights, ctx.cfg.minShare, ctx.cfg.maxOwnersPerPath);
+  for (const e of ranked.emitted) {
+    const personId = upsertGraphEntity(db, {
+      type: "person",
+      externalId: e.externalId,
+      label: ctx.ownerLabels.get(e.externalId) ?? e.externalId,
+      service: "filesystem",
+    });
+    upsertGraphRelation(db, personId, targetEntityId, "owns", ctx.nowMs, e.share);
+  }
+  return ranked.emitted.length;
+}
+
+/** `source_file` nodes, their owner edges, and the `contains` link from the nearest directory. */
+function emitFileOwnership(
+  db: Database,
+  fileWeights: ReadonlyMap<string, Map<string, number>>,
+  ctx: EmitCtx,
+): number {
+  let emitted = 0;
   for (const [path, weights] of fileWeights) {
-    const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+    const ranked = rankOwners(weights, ctx.cfg.minShare, ctx.cfg.maxOwnersPerPath);
     // `service: "filesystem"` MATCHES `syncCodeSymbolGraph` exactly. We share
     // this entity with it by design (same external id, so ownership edges land
     // on the same node as `defined_in`/`in_repo` and the graph converges), and
@@ -489,42 +483,50 @@ function emitPathOwnership(
     // edges rather than from this column.
     const fileId = upsertGraphEntity(db, {
       type: "source_file",
-      externalId: fileExternalId(root, path),
+      externalId: fileExternalId(ctx.root, path),
       label: path,
       service: "filesystem",
       metadata: ownerCountsMetadata(ranked),
     });
-    emitOwners(fileId, weights);
+    emitted += emitOwnersFor(db, fileId, weights, ctx);
 
     const nearest = directoryAncestors(path)[0];
     if (nearest !== undefined) {
       // `ensureGraphEntity` (create-if-absent), NOT `upsertGraphEntity`: this
-      // is a purely STRUCTURAL reference to a directory that the rollup loop
-      // below writes authoritatively, metadata included. An upsert here would
+      // is a purely STRUCTURAL reference to a directory that the directory
+      // emitter writes authoritatively, metadata included. An upsert here would
       // NULL that metadata, because this call site has none to pass.
       const dirId = ensureGraphEntity(db, {
         type: "directory",
-        externalId: dirExternalId(root, nearest),
-        label: nearest === "" ? root : nearest,
-        service: rootMarker,
+        externalId: dirExternalId(ctx.root, nearest),
+        label: nearest === "" ? ctx.root : nearest,
+        service: ctx.rootMarker,
       });
-      upsertGraphRelation(db, dirId, fileId, "contains", nowMs);
+      upsertGraphRelation(db, dirId, fileId, "contains", ctx.nowMs);
     }
   }
+  return emitted;
+}
 
+/** `directory` nodes, their owner edges, and the parent `contains` skeleton. */
+function emitDirectoryOwnership(
+  db: Database,
+  dirWeights: ReadonlyMap<string, Map<string, number>>,
+  ctx: EmitCtx,
+): number {
+  let emitted = 0;
   for (const [dir, weights] of dirWeights) {
-    const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+    const ranked = rankOwners(weights, ctx.cfg.minShare, ctx.cfg.maxOwnersPerPath);
     const dirId = upsertGraphEntity(db, {
       type: "directory",
-      externalId: dirExternalId(root, dir),
-      label: dir === "" ? root : dir,
-      service: rootMarker,
+      externalId: dirExternalId(ctx.root, dir),
+      label: dir === "" ? ctx.root : dir,
+      service: ctx.rootMarker,
       metadata: ownerCountsMetadata(ranked),
     });
-    emitOwners(dirId, weights);
+    emitted += emitOwnersFor(db, dirId, weights, ctx);
 
-    const parents = directoryAncestors(dir);
-    const parent = dir === "" ? undefined : parents[0];
+    const parent = dir === "" ? undefined : directoryAncestors(dir)[0];
     if (parent !== undefined) {
       // Structural again — create-if-absent. With two or more top-level
       // directories the repo-root node is reached from several children, and
@@ -532,15 +534,220 @@ function emitPathOwnership(
       // node feeds the service rollup, so losing its metadata is not cosmetic.
       const parentId = ensureGraphEntity(db, {
         type: "directory",
-        externalId: dirExternalId(root, parent),
-        label: parent === "" ? root : parent,
-        service: rootMarker,
+        externalId: dirExternalId(ctx.root, parent),
+        label: parent === "" ? ctx.root : parent,
+        service: ctx.rootMarker,
       });
-      upsertGraphRelation(db, parentId, dirId, "contains", nowMs);
+      upsertGraphRelation(db, parentId, dirId, "contains", ctx.nowMs);
     }
   }
-
   return emitted;
+}
+
+/**
+ * What one root contributed. A VALUE, not a set of side effects on the caller's
+ * counters — and that distinction is the whole point of this shape.
+ *
+ * `runOwnershipPass` used to carry eight mutable accumulators and merge into
+ * them inside the loop, which is why extracting helpers never moved its
+ * cognitive-complexity score much: each helper still handed results back for
+ * in-place merging, so the loop body stayed a junction of everything. Making a
+ * root produce a value turns the loop into a map and the accounting into a fold
+ * (`foldRootOutcomes`), and neither half branches on the other's state.
+ */
+type RootOutcome = {
+  readonly covered: boolean;
+  readonly hasRemote: boolean;
+  readonly boundServiceId: string | undefined;
+  readonly filesCovered: number;
+  readonly filesExcluded: number;
+  readonly ownersEmitted: number;
+  readonly entitiesReaped: number;
+  /**
+   * The ROOT directory's weighted totals (`dirWeights.get("")`) — the sum of
+   * every file under the root, not an average of per-directory shares, so two
+   * repos bound to one service compose by volume of surviving code.
+   */
+  readonly rootTotals: ReadonlyMap<string, number> | undefined;
+  readonly ownerLabels: ReadonlyMap<string, string>;
+};
+
+/**
+ * Derive and write one root's slice of the ownership graph.
+ *
+ * Strictly synchronous: it runs inside the `db.transaction` callback, which
+ * cannot `await`. Every subprocess call (`resolveRepoRemote`) is prefetched by
+ * the caller for exactly that reason.
+ */
+function processRoot(
+  db: Database,
+  root: string,
+  deps: {
+    readonly cfg: NimbusOwnershipToml;
+    readonly nowMs: number;
+    readonly remote: Awaited<ReturnType<typeof resolveRepoRemote>>;
+    readonly urnToService: ReadonlyMap<string, string>;
+    readonly servicesSeen: Set<string>;
+  },
+): RootOutcome {
+  const { cfg, nowMs, remote, urnToService, servicesSeen } = deps;
+  const rootMarker = `ownership:${root}`;
+
+  // MUST precede the clear — it reads the `contains` edges the clear deletes.
+  collectFileScopeForRoot(db, rootMarker);
+  clearOwnershipEdgesForRoot(db, rootMarker);
+  // Outside the `remote !== null` branch below, on purpose: a root that LOST
+  // its remote must still have its stale `tracks_remote` edge retired.
+  clearRemoteTrackingEdgeForRoot(db, root);
+
+  const agg = aggregateBlameForRoot(db, root, {
+    nowMs,
+    halfLifeDays: cfg.halfLifeDays,
+    ignoreGlobs: cfg.ignoreGlobs,
+  });
+  const { fileWeights, dirWeights, ownerLabels } = accumulateOwnerWeights(db, agg.rows);
+
+  const boundServiceId =
+    remote === null
+      ? undefined
+      : bindRootRemote(db, { root, remote, urnToService, nowMs, servicesSeen });
+
+  const ctx: EmitCtx = { root, rootMarker, ownerLabels, cfg, nowMs };
+  const ownersEmitted =
+    emitFileOwnership(db, fileWeights, ctx) + emitDirectoryOwnership(db, dirWeights, ctx);
+
+  return {
+    covered: agg.rows.length > 0,
+    hasRemote: remote !== null,
+    boundServiceId,
+    filesCovered: agg.filesCovered,
+    filesExcluded: agg.filesExcluded,
+    ownersEmitted,
+    entitiesReaped: reapOrphansForRoot(db, rootMarker),
+    rootTotals: dirWeights.get(""),
+    ownerLabels,
+  };
+}
+
+/** The cross-root accounting, folded from per-root outcomes. Pure — no `db`. */
+type PassTotals = {
+  rootsCovered: number;
+  rootsWithRemote: number;
+  filesCovered: number;
+  filesExcluded: number;
+  ownersEmitted: number;
+  entitiesReaped: number;
+  /** serviceId -> owner externalId -> weighted lines, accumulated across roots. */
+  serviceWeights: Map<string, Map<string, number>>;
+  /**
+   * Owner labels must survive the per-root loop because the service rollup
+   * upserts the SAME `person` entities again, and `upsertGraphEntity` writes
+   * `label = excluded.label` unconditionally. Passing the external id there
+   * would overwrite a resolved display name with `git:<email>`.
+   */
+  ownerLabelsAcrossRoots: Map<string, string>;
+};
+
+function foldRootOutcomes(outcomes: readonly RootOutcome[]): PassTotals {
+  const totals: PassTotals = {
+    rootsCovered: 0,
+    rootsWithRemote: 0,
+    filesCovered: 0,
+    filesExcluded: 0,
+    ownersEmitted: 0,
+    entitiesReaped: 0,
+    serviceWeights: new Map(),
+    ownerLabelsAcrossRoots: new Map(),
+  };
+  for (const o of outcomes) {
+    if (o.covered) totals.rootsCovered += 1;
+    if (o.hasRemote) totals.rootsWithRemote += 1;
+    totals.filesCovered += o.filesCovered;
+    totals.filesExcluded += o.filesExcluded;
+    totals.ownersEmitted += o.ownersEmitted;
+    totals.entitiesReaped += o.entitiesReaped;
+
+    // Only a BOUND root contributes to the service rollup and to the surviving
+    // label map — an unbound root has no service to roll up into, and its
+    // labels are already written on its own file/directory edges.
+    if (o.boundServiceId === undefined) continue;
+    const sw = totals.serviceWeights.get(o.boundServiceId) ?? new Map<string, number>();
+    if (o.rootTotals !== undefined) {
+      for (const [owner, w] of o.rootTotals) sw.set(owner, (sw.get(owner) ?? 0) + w);
+    }
+    totals.serviceWeights.set(o.boundServiceId, sw);
+    for (const [owner, label] of o.ownerLabels) totals.ownerLabelsAcrossRoots.set(owner, label);
+  }
+  return totals;
+}
+
+/** `person --owns--> service` for every bound service. Returns edges written. */
+function emitServiceRollup(
+  db: Database,
+  totals: PassTotals,
+  cfg: NimbusOwnershipToml,
+  nowMs: number,
+): number {
+  let emitted = 0;
+  for (const [serviceId, weights] of totals.serviceWeights) {
+    // Ranked BEFORE the upsert so the same counts that drive emission also land on
+    // the entity. A service's owner list is capped exactly like a file's, and until
+    // now carried nothing to say so — leaving `--service`, the one lookup the whole
+    // workspace -> repo -> service bridge exists to serve, unable to report its own
+    // truncation.
+    const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+    const svcId = upsertGraphEntity(db, {
+      type: "service",
+      externalId: `service:${serviceId}`,
+      label: serviceId,
+      service: "nimbus",
+      metadata: ownerCountsMetadata(ranked),
+    });
+    for (const e of ranked.emitted) {
+      const personId = upsertGraphEntity(db, {
+        type: "person",
+        externalId: e.externalId,
+        label: totals.ownerLabelsAcrossRoots.get(e.externalId) ?? e.externalId,
+        service: "filesystem",
+      });
+      upsertGraphRelation(db, personId, svcId, "owns", nowMs, e.share);
+      emitted += 1;
+    }
+  }
+  return emitted;
+}
+
+function persistPassState(db: Database, nowMs: number, summary: OwnershipPassSummary): void {
+  dbRun(
+    db,
+    `INSERT INTO ownership_pass_state
+       (id, last_pass_at, last_duration_ms, roots_total, roots_covered, roots_with_remote,
+        files_covered, files_excluded, services_bound, owners_emitted, entities_reaped)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       last_pass_at = excluded.last_pass_at,
+       last_duration_ms = excluded.last_duration_ms,
+       roots_total = excluded.roots_total,
+       roots_covered = excluded.roots_covered,
+       roots_with_remote = excluded.roots_with_remote,
+       files_covered = excluded.files_covered,
+       files_excluded = excluded.files_excluded,
+       services_bound = excluded.services_bound,
+       owners_emitted = excluded.owners_emitted,
+       entities_reaped = excluded.entities_reaped`,
+    [
+      nowMs,
+      summary.durationMs,
+      summary.rootsTotal,
+      summary.rootsCovered,
+      summary.rootsWithRemote,
+      summary.filesCovered,
+      summary.filesExcluded,
+      summary.servicesBound,
+      summary.ownersEmitted,
+      summary.entitiesReaped,
+    ],
+  );
 }
 
 /**
@@ -562,21 +769,8 @@ export async function runOwnershipPass(
 ): Promise<OwnershipPassSummary> {
   const t0 = performance.now();
   const cfg = opts.config;
-  let rootsCovered = 0;
-  let rootsWithRemote = 0;
-  let filesCovered = 0;
-  let filesExcluded = 0;
-  let ownersEmitted = 0;
-  let entitiesReaped = 0;
   const servicesSeen = new Set<string>();
 
-  // serviceId -> owner externalId -> weighted lines, accumulated across roots.
-  const serviceWeights = new Map<string, Map<string, number>>();
-  // Owner labels survive the per-root loop because the service rollup below
-  // upserts the SAME `person` entities again, and `upsertGraphEntity` writes
-  // `label = excluded.label` unconditionally. Passing the external id there
-  // would overwrite a resolved display name with `git:<email>`.
-  const ownerLabelsAcrossRoots = new Map<string, string>();
   // "github:owner/name" -> serviceId
   const urnToService = new Map<string, string>();
   for (const [serviceId, urns] of opts.serviceRepoUrns) {
@@ -588,7 +782,7 @@ export async function runOwnershipPass(
   // roots, and — more importantly — it lifts all subprocess I/O out of the
   // per-root loop, leaving that loop as uninterrupted SQLite work. Interleaving
   // `await`ed spawns with graph writes is what would make wrapping the loop in
-  // a transaction impossible later.
+  // a transaction impossible.
   const remoteByRoot = new Map<string, Awaited<ReturnType<typeof resolveRepoRemote>>>();
   await Promise.all(
     opts.roots.map(async (root) => {
@@ -603,144 +797,42 @@ export async function runOwnershipPass(
   // worse than before the pass ran. The remote prefetch above is deliberately
   // OUTSIDE this body: a `db.transaction` callback is synchronous and must
   // never `await`, which is the reason all subprocess I/O was hoisted there.
-  db.transaction(() => {
+  const totals = db.transaction((): PassTotals => {
     // BEFORE the loop, not inside it: the edge is keyed on the remote repo, so a
     // root that re-points cannot name the repo it used to be bound to. Same
     // wholesale-clear-then-re-emit discipline as `clearServiceOwnershipEdges`,
     // and it carries the same caller contract on `opts.roots` completeness.
     clearRepoServiceEdges(db);
 
-    for (const root of opts.roots) {
-      const rootMarker = `ownership:${root}`;
-      // MUST precede the clear — it reads the `contains` edges the clear deletes.
-      collectFileScopeForRoot(db, rootMarker);
-      clearOwnershipEdgesForRoot(db, rootMarker);
-      // Outside the `remote !== null` branch below, on purpose: a root that LOST
-      // its remote must still have its stale `tracks_remote` edge retired.
-      clearRemoteTrackingEdgeForRoot(db, root);
-
-      const agg = aggregateBlameForRoot(db, root, {
-        nowMs: opts.nowMs,
-        halfLifeDays: cfg.halfLifeDays,
-        ignoreGlobs: cfg.ignoreGlobs,
-      });
-      filesCovered += agg.filesCovered;
-      filesExcluded += agg.filesExcluded;
-      if (agg.rows.length > 0) rootsCovered += 1;
-
-      const { fileWeights, dirWeights, ownerLabels } = accumulateOwnerWeights(db, agg.rows);
-
-      const remote = remoteByRoot.get(root) ?? null;
-      let boundServiceId: string | undefined;
-      if (remote !== null) {
-        rootsWithRemote += 1;
-        boundServiceId = bindRootRemote(db, {
-          root,
-          remote,
-          urnToService,
-          nowMs: opts.nowMs,
-          servicesSeen,
-        });
-      }
-
-      ownersEmitted += emitPathOwnership(db, {
-        root,
-        rootMarker,
-        fileWeights,
-        dirWeights,
-        ownerLabels,
+    const outcomes = opts.roots.map((root) =>
+      processRoot(db, root, {
         cfg,
         nowMs: opts.nowMs,
-      });
-
-      if (boundServiceId !== undefined) {
-        const sw = serviceWeights.get(boundServiceId) ?? new Map<string, number>();
-        // The service rollup adds the ROOT directory's weighted TOTALS, which are
-        // themselves the sum of every file under the root — not an average of the
-        // per-directory shares. Two repos bound to one service therefore compose
-        // by volume of surviving code, as they should.
-        const rootTotals = dirWeights.get("");
-        if (rootTotals !== undefined) {
-          for (const [owner, w] of rootTotals) sw.set(owner, (sw.get(owner) ?? 0) + w);
-        }
-        serviceWeights.set(boundServiceId, sw);
-        for (const [owner, label] of ownerLabels) ownerLabelsAcrossRoots.set(owner, label);
-      }
-
-      entitiesReaped += reapOrphansForRoot(db, rootMarker);
-    }
+        remote: remoteByRoot.get(root) ?? null,
+        urnToService,
+        servicesSeen,
+      }),
+    );
+    const folded = foldRootOutcomes(outcomes);
 
     clearServiceOwnershipEdges(db);
-
-    for (const [serviceId, weights] of serviceWeights) {
-      // Ranked BEFORE the upsert so the same counts that drive emission also land on
-      // the entity. A service's owner list is capped exactly like a file's, and until
-      // now carried nothing to say so — leaving `--service`, the one lookup the whole
-      // workspace → repo → service bridge exists to serve, unable to report its own
-      // truncation.
-      const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-      const svcId = upsertGraphEntity(db, {
-        type: "service",
-        externalId: `service:${serviceId}`,
-        label: serviceId,
-        service: "nimbus",
-        metadata: ownerCountsMetadata(ranked),
-      });
-      for (const e of ranked.emitted) {
-        const personId = upsertGraphEntity(db, {
-          type: "person",
-          externalId: e.externalId,
-          label: ownerLabelsAcrossRoots.get(e.externalId) ?? e.externalId,
-          service: "filesystem",
-        });
-        upsertGraphRelation(db, personId, svcId, "owns", opts.nowMs, e.share);
-        ownersEmitted += 1;
-      }
-    }
+    folded.ownersEmitted += emitServiceRollup(db, folded, cfg, opts.nowMs);
+    return folded;
   })();
 
   const summary: OwnershipPassSummary = {
     rootsTotal: opts.roots.length,
-    rootsCovered,
-    rootsWithRemote,
-    filesCovered,
-    filesExcluded,
+    rootsCovered: totals.rootsCovered,
+    rootsWithRemote: totals.rootsWithRemote,
+    filesCovered: totals.filesCovered,
+    filesExcluded: totals.filesExcluded,
     servicesBound: servicesSeen.size,
-    ownersEmitted,
-    entitiesReaped,
+    ownersEmitted: totals.ownersEmitted,
+    entitiesReaped: totals.entitiesReaped,
     durationMs: Math.round(performance.now() - t0),
   };
 
-  dbRun(
-    db,
-    `INSERT INTO ownership_pass_state
-       (id, last_pass_at, last_duration_ms, roots_total, roots_covered, roots_with_remote,
-        files_covered, files_excluded, services_bound, owners_emitted, entities_reaped)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (id) DO UPDATE SET
-       last_pass_at = excluded.last_pass_at,
-       last_duration_ms = excluded.last_duration_ms,
-       roots_total = excluded.roots_total,
-       roots_covered = excluded.roots_covered,
-       roots_with_remote = excluded.roots_with_remote,
-       files_covered = excluded.files_covered,
-       files_excluded = excluded.files_excluded,
-       services_bound = excluded.services_bound,
-       owners_emitted = excluded.owners_emitted,
-       entities_reaped = excluded.entities_reaped`,
-    [
-      opts.nowMs,
-      summary.durationMs,
-      summary.rootsTotal,
-      summary.rootsCovered,
-      summary.rootsWithRemote,
-      summary.filesCovered,
-      summary.filesExcluded,
-      summary.servicesBound,
-      summary.ownersEmitted,
-      summary.entitiesReaped,
-    ],
-  );
+  persistPassState(db, opts.nowMs, summary);
 
   return summary;
 }
