@@ -17,6 +17,8 @@
 - **Cancellation lands at the next step boundary, never mid-step.** The in-flight step runs to completion. Do not thread the signal into `executeWorkflowStep` or the LLM calls inside it — that is explicitly out of scope.
 - **A cancelled run finalises with status `"cancelled"`** via the existing `finalizeRun`, so run history reflects it.
 - **Reuse `ctx.streamRegistry`.** Do not create a second registry; `ServerCtx.streamRegistry` (`packages/gateway/src/ipc/server/context.ts:12`) already exists and `makeCtx` in the tests already builds a real one.
+- **Register workflow runs under a per-client key, never the bare `streamId`.** The registry is created once per server (`server.ts:68`) and shared by every connected session, while the id now comes from the client. A bare id would let one client abort another client's run. Always key with `workflowRegistryKey(clientId, streamId)` (Task 3).
+- **`runWorkflowExecution` reports its own terminal status.** An IPC caller cannot read the `workflow_run` table, so `status` must travel in the result. Valid values: `"preview"` (dry run), `"done"`, `"error"`, `"cancelled"`.
 - Lint runs as `biome check --error-on-warnings .` — warnings fail the build.
 - Run scoped tests with `bun test <paths> --timeout 30000`.
 
@@ -27,11 +29,13 @@
 Makes chunks correlatable. No cancellation yet.
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/server/inline-handlers.ts` (`sendAgentChunkIfStreaming` ~line 43, `dispatchAgentInvoke` ~line 54, `buildWorkflowRunContext` ~line 123)
 - Modify: `packages/gateway/src/ipc/workflow-invoke.ts` (type only)
 - Test: `packages/gateway/src/ipc/server/inline-handlers.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks.
 - Produces: `WorkflowRunContext.streamId?: string`; `sendAgentChunkIfStreaming(session, stream, text, streamId?)`. Task 3 relies on `buildWorkflowRunContext` returning `streamId` in its result object.
 
@@ -248,12 +252,14 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 Independent of Task 1 — the runner gains a signal and a `cancelled` terminal status. Nothing triggers it yet.
 
 **Files:**
+
 - Modify: `packages/gateway/src/automation/workflow-runner.ts` (`RunWorkflowExecutionParams` ~line 105, `executeRealRunSteps` ~line 238)
 - Test: `packages/gateway/src/automation/workflow-runner-execution.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from Task 1.
-- Produces: `RunWorkflowExecutionParams.signal?: AbortSignal`. A cancelled run returns normally (does not throw) with the steps completed so far, and writes `status = "cancelled"` to `workflow_run`.
+- Produces: `RunWorkflowExecutionParams.signal?: AbortSignal`, and `RunWorkflowExecutionResult.status: string` (`"preview" | "done" | "error" | "cancelled"`). A cancelled run returns normally (does not throw) with the steps completed so far, writes `status = "cancelled"` to `workflow_run`, **and reports that status in its result** — an IPC caller cannot query the table.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -296,6 +302,7 @@ Add to `packages/gateway/src/automation/workflow-runner-execution.test.ts`, insi
 
     expect(calls).toBe(1);
     expect(r.stepResults).toEqual([{ label: "step-1", status: "done", output: "step-ok" }]);
+    expect(r.status).toBe("cancelled");
 
     const runRow = db
       .query(`SELECT status FROM workflow_run WHERE id = ?`)
@@ -327,6 +334,7 @@ Add to `packages/gateway/src/automation/workflow-runner-execution.test.ts`, insi
     });
 
     expect(r.stepResults).toEqual([]);
+    expect(r.status).toBe("cancelled");
     const runRow = db
       .query(`SELECT status FROM workflow_run WHERE id = ?`)
       .get(r.runId) as { status: string };
@@ -357,6 +365,53 @@ Add to `packages/gateway/src/automation/workflow-runner-execution.test.ts`, insi
       .query(`SELECT status FROM workflow_run WHERE id = ?`)
       .get(r.runId) as { status: string };
     expect(runRow.status).toBe("done");
+    expect(r.status).toBe("done");
+  });
+
+  test("a dry run reports status preview", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    upsertWorkflowByName(db, "preview-me", null, JSON.stringify([{ run: "a" }]), now);
+
+    const r = await runWorkflowExecution({
+      db,
+      agent: noopAgent,
+      workflowName: "preview-me",
+      triggeredBy: "cli",
+      dryRun: true,
+      stream: false,
+      sendChunk: () => {
+        /* noop */
+      },
+      conversationalRunner: async () => ({ reply: "never" }),
+    });
+
+    expect(r.status).toBe("preview");
+  });
+
+  test("a halted run reports status error", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    upsertWorkflowByName(db, "boom", null, JSON.stringify([{ run: "a" }, { run: "b" }]), now);
+
+    const r = await runWorkflowExecution({
+      db,
+      agent: noopAgent,
+      workflowName: "boom",
+      triggeredBy: "cli",
+      dryRun: false,
+      stream: false,
+      sendChunk: () => {
+        /* noop */
+      },
+      conversationalRunner: async () => {
+        throw new Error("step blew up");
+      },
+    });
+
+    expect(r.status).toBe("error");
   });
 ```
 
@@ -368,7 +423,7 @@ bun test packages/gateway/src/automation/workflow-runner-execution.test.ts --tim
 
 Expected: the first two FAIL — `signal` is not a known property (typecheck) and the status is `done`, not `cancelled`. The third passes once `signal` is accepted.
 
-- [ ] **Step 3: Add the signal to the params type**
+- [ ] **Step 3: Add the signal and the reported status to the types**
 
 In `packages/gateway/src/automation/workflow-runner.ts`, add to `RunWorkflowExecutionParams`:
 
@@ -381,7 +436,19 @@ In `packages/gateway/src/automation/workflow-runner.ts`, add to `RunWorkflowExec
   readonly signal?: AbortSignal;
 ```
 
-- [ ] **Step 4: Check the signal between steps**
+and to `RunWorkflowExecutionResult`, as the second field (after `runId`):
+
+```ts
+  /**
+   * The run's terminal status: "preview" | "done" | "error" | "cancelled".
+   * Mirrors what finalizeRun wrote to workflow_run — an IPC caller cannot read
+   * that table, so a cancelled run would otherwise be indistinguishable from a
+   * short one that completed.
+   */
+  status: string;
+```
+
+- [ ] **Step 4: Check the signal between steps and set the status on every return path**
 
 In `executeRealRunSteps`, add the boundary check as the first statement inside the `for` loop, before the existing `const step = steps[i];`:
 
@@ -389,12 +456,18 @@ In `executeRealRunSteps`, add the boundary check as the first statement inside t
   for (let i = 0; i < steps.length; i++) {
     if (p.signal?.aborted === true) {
       finalizeRun(p, wf, runId, "cancelled", now, "Run cancelled");
-      return { runId, dryRun: false, stepResults };
+      return { runId, status: "cancelled", dryRun: false, stepResults };
     }
     const step = steps[i];
 ```
 
 Placing it at the top of the loop is what gives both behaviours: a signal aborted before entry records zero steps, and one aborted during step N records N results.
+
+Then add `status` to the three remaining return sites, matching what each already passes to `finalizeRun` — the typecheck will point at each one:
+
+- in `executeDryRun`, the returned object gets `status: "preview"` (it finalises as `"preview"`, **not** `"done"`);
+- in `executeRealRunSteps`, the halt-on-error return gets `status: "error"`;
+- in `executeRealRunSteps`, the final return after the loop gets `status: "done"`.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -434,6 +507,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 Ties Tasks 1 and 2 together into a reachable capability.
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/workflow-cancel.ts`
 - Create: `packages/gateway/src/ipc/workflow-cancel.test.ts`
 - Modify: `packages/gateway/src/ipc/workflow-invoke.ts` (type only)
@@ -443,8 +517,11 @@ Ties Tasks 1 and 2 together into a reachable capability.
 - Test: `packages/gateway/src/ipc/server/inline-handlers.test.ts`
 
 **Interfaces:**
+
 - Consumes: `buildWorkflowRunContext(...) → { ctx, sessionId, streamId }` from Task 1; `RunWorkflowExecutionParams.signal` from Task 2.
-- Produces: `createWorkflowCancelHandler(registry: StreamRegistry) => (params: unknown) => { cancelled: boolean }`, routed as the `workflow.cancel` RPC.
+- Produces: `workflowRegistryKey(clientId: string, streamId: string) => string`, and `createWorkflowCancelHandler(registry: StreamRegistry) => (clientId: string, params: unknown) => { cancelled: boolean }`, routed as the `workflow.cancel` RPC.
+
+**Why the key is composite:** the registry is one per server, shared by every session, and the `streamId` is now chosen by the client. Keying on the bare id would let client A abort client B's run by guessing or reusing an id, and would make A's `finally` unregister B's entry. Scoping by `clientId` removes both. A client colliding with *itself* is a client bug and is rejected loudly.
 
 - [ ] **Step 1: Write the failing handler test**
 
@@ -455,33 +532,50 @@ import { describe, expect, test } from "bun:test";
 
 import { createStreamRegistry } from "./engine-ask-stream.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
-import { createWorkflowCancelHandler } from "./workflow-cancel.ts";
+import { createWorkflowCancelHandler, workflowRegistryKey } from "./workflow-cancel.ts";
 
 describe("createWorkflowCancelHandler", () => {
-  test("aborts a registered run and reports cancelled", () => {
+  test("aborts the calling client's run and reports cancelled", () => {
     const registry = createStreamRegistry();
     const ac = new AbortController();
-    registry.register("wf-1", ac);
+    registry.register(workflowRegistryKey("client-a", "wf-1"), ac);
 
-    const result = createWorkflowCancelHandler(registry)({ streamId: "wf-1" });
+    const result = createWorkflowCancelHandler(registry)("client-a", { streamId: "wf-1" });
 
     expect(result).toEqual({ cancelled: true });
     expect(ac.signal.aborted).toBe(true);
   });
 
+  test("one client cannot cancel another client's run with the same streamId", () => {
+    const registry = createStreamRegistry();
+    const ac = new AbortController();
+    registry.register(workflowRegistryKey("client-b", "shared-id"), ac);
+
+    const result = createWorkflowCancelHandler(registry)("client-a", { streamId: "shared-id" });
+
+    expect(result).toEqual({ cancelled: false });
+    expect(ac.signal.aborted).toBe(false);
+  });
+
   test("reports cancelled: false for an unknown streamId", () => {
     const registry = createStreamRegistry();
-    expect(createWorkflowCancelHandler(registry)({ streamId: "nope" })).toEqual({
+    expect(createWorkflowCancelHandler(registry)("client-a", { streamId: "nope" })).toEqual({
       cancelled: false,
     });
   });
 
   test("rejects a missing or non-string streamId", () => {
     const handler = createWorkflowCancelHandler(createStreamRegistry());
-    expect(() => handler(null)).toThrow(RpcMethodError);
-    expect(() => handler({})).toThrow(RpcMethodError);
-    expect(() => handler({ streamId: 42 })).toThrow(RpcMethodError);
-    expect(() => handler({ streamId: "" })).toThrow(RpcMethodError);
+    expect(() => handler("client-a", null)).toThrow(RpcMethodError);
+    expect(() => handler("client-a", {})).toThrow(RpcMethodError);
+    expect(() => handler("client-a", { streamId: 42 })).toThrow(RpcMethodError);
+    expect(() => handler("client-a", { streamId: "" })).toThrow(RpcMethodError);
+  });
+
+  test("the key separator cannot be forged from a crafted streamId", () => {
+    // A NUL separator cannot appear in a JSON-RPC string id in practice, so
+    // "client-a" + "x" can never collide with another client's namespace.
+    expect(workflowRegistryKey("a", "b")).not.toBe(workflowRegistryKey("a:b", ""));
   });
 });
 ```
@@ -506,18 +600,32 @@ export type WorkflowCancelParams = { readonly streamId: string };
 export type WorkflowCancelResult = { readonly cancelled: boolean };
 
 /**
+ * Workflow runs share the server-wide stream registry with engine.askStream,
+ * but their id is chosen by the CLIENT rather than minted here. Scoping the
+ * registry key by clientId is what stops one client aborting another's run —
+ * and what stops one client's cleanup unregistering another's entry.
+ *
+ * NUL is the separator because it cannot appear in a practical JSON-RPC string
+ * id, so no clientId/streamId pair can forge another pair's key.
+ */
+export function workflowRegistryKey(clientId: string, streamId: string): string {
+  return `${clientId}\u0000${streamId}`;
+}
+
+/**
  * Deliberately a distinct method rather than an overload of
  * engine.cancelStream: the published client documents that no workflow cancel
  * exists, so a distinctly named RPC makes the new capability discoverable and
- * keeps ask-stream semantics unpolluted.
+ * keeps ask-stream semantics unpolluted. The composite key also means
+ * engine.cancelStream cannot reach a workflow run even by passing its raw id.
  *
  * Reports whether a live run was found — unlike engine.cancelStream, which
  * always answers { ok: true }.
  */
 export function createWorkflowCancelHandler(
   registry: StreamRegistry,
-): (params: unknown) => WorkflowCancelResult {
-  return (params): WorkflowCancelResult => {
+): (clientId: string, params: unknown) => WorkflowCancelResult {
+  return (clientId, params): WorkflowCancelResult => {
     if (typeof params !== "object" || params === null) {
       throw new RpcMethodError(-32602, "workflow.cancel requires { streamId: string }");
     }
@@ -525,7 +633,7 @@ export function createWorkflowCancelHandler(
     if (typeof sid !== "string" || sid.length === 0) {
       throw new RpcMethodError(-32602, "workflow.cancel requires non-empty streamId");
     }
-    return { cancelled: registry.cancel(sid) };
+    return { cancelled: registry.cancel(workflowRegistryKey(clientId, sid)) };
   };
 }
 ```
@@ -543,15 +651,16 @@ Expected: PASS.
 Add to the `dispatchWorkflowRunRpc` describe block in `packages/gateway/src/ipc/server/inline-handlers.test.ts`:
 
 ```ts
-  test("registers the run under its streamId and unregisters when it finishes", async () => {
+  test("registers the run under a per-client key and unregisters when it finishes", async () => {
     let seenDuringRun = false;
     let captured: WorkflowRunContext | undefined;
+    const key = workflowRegistryKey("client-1", "wf-sid-2");
     const ctx = makeCtx({
       localIndex: makeLocalIndex(),
       workflowRunHandler: async (c: WorkflowRunContext) => {
         captured = c;
-        seenDuringRun = ctx.streamRegistry.has("wf-sid-2");
-        return { runId: "r1", dryRun: false, stepResults: [] };
+        seenDuringRun = ctx.streamRegistry.has(key);
+        return { runId: "r1", status: "done", dryRun: false, stepResults: [] };
       },
     });
     const { session } = makeSession();
@@ -563,7 +672,47 @@ Add to the `dispatchWorkflowRunRpc` describe block in `packages/gateway/src/ipc/
 
     expect(seenDuringRun).toBe(true);
     expect(captured?.signal).toBeDefined();
+    expect(ctx.streamRegistry.has(key)).toBe(false);
+    // The bare id is never a registry key.
     expect(ctx.streamRegistry.has("wf-sid-2")).toBe(false);
+  });
+
+  test("two clients may use the same streamId without colliding", async () => {
+    const release: Array<() => void> = [];
+    const ctx = makeCtx({
+      localIndex: makeLocalIndex(),
+      workflowRunHandler: async () =>
+        await new Promise((resolve) => {
+          release.push(() =>
+            resolve({ runId: "r", status: "done", dryRun: false, stepResults: [] }),
+          );
+        }),
+    });
+    const { session } = makeSession();
+
+    const a = dispatchWorkflowRunRpc(ctx, "client-a", session, { name: "n", streamId: "same" });
+    const b = dispatchWorkflowRunRpc(ctx, "client-b", session, { name: "n", streamId: "same" });
+
+    expect(ctx.streamRegistry.has(workflowRegistryKey("client-a", "same"))).toBe(true);
+    expect(ctx.streamRegistry.has(workflowRegistryKey("client-b", "same"))).toBe(true);
+
+    for (const r of release) r();
+    await Promise.all([a, b]);
+    expect(ctx.streamRegistry.size()).toBe(0);
+  });
+
+  test("the same client reusing a live streamId is rejected", async () => {
+    const ctx = makeCtx({
+      localIndex: makeLocalIndex(),
+      workflowRunHandler: async () => await new Promise(() => {}),
+    });
+    const { session } = makeSession();
+
+    void dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "dupe" });
+
+    await expect(
+      dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "dupe" }),
+    ).rejects.toThrow(RpcMethodError);
   });
 
   test("unregisters even when the run throws", async () => {
@@ -578,7 +727,7 @@ Add to the `dispatchWorkflowRunRpc` describe block in `packages/gateway/src/ipc/
     await expect(
       dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "wf-sid-3" }),
     ).rejects.toThrow("boom");
-    expect(ctx.streamRegistry.has("wf-sid-3")).toBe(false);
+    expect(ctx.streamRegistry.has(workflowRegistryKey("client-1", "wf-sid-3"))).toBe(false);
   });
 
   test("a run without a streamId registers nothing", async () => {
@@ -609,6 +758,19 @@ In `packages/gateway/src/ipc/workflow-invoke.ts`, add to `WorkflowRunContext` (t
   signal?: AbortSignal;
 ```
 
+`WorkflowRunHandler` in the same file declares its own return shape, separate from `RunWorkflowExecutionResult`. It is what types the RPC response, so `status` has to be added there too or the field Task 2 produces never reaches the wire's type:
+
+```ts
+export type WorkflowRunHandler = (ctx: WorkflowRunContext) => Promise<{
+  runId: string;
+  status: string;
+  dryRun: boolean;
+  stepResults: Array<{ label?: string; status: string; output?: string; error?: string }>;
+}>;
+```
+
+This makes `status` required of every handler stub in the tests. Update the stub added in **Task 1, Step 6** (`{ runId: "r1", dryRun: false, stepResults: [] }`) to include `status: "done"`; the typecheck will flag any others.
+
 - [ ] **Step 8: Register and unregister in the dispatcher**
 
 In `inline-handlers.ts`, give `buildWorkflowRunContext` a fourth parameter and assign the signal unconditionally (it is always passed, so `exactOptionalPropertyTypes` is satisfied):
@@ -634,10 +796,19 @@ Then rewrite the body of `dispatchWorkflowRunRpc` from the `buildWorkflowRunCont
     streamId,
   } = buildWorkflowRunContext(clientId, session, params, ac.signal);
 
-  // Registered under the CLIENT's id: workflow.run resolves only when the run
+  // The id is supplied by the CLIENT: workflow.run resolves only when the run
   // ends, so a server-minted id could never reach the caller in time to cancel.
-  if (streamId !== undefined) {
-    ctx.streamRegistry.register(streamId, ac);
+  // That makes the key composite — a bare id is shared across every session on
+  // this registry, so one client could otherwise abort another's run.
+  const registryKey = streamId === undefined ? undefined : workflowRegistryKey(clientId, streamId);
+  if (registryKey !== undefined) {
+    if (ctx.streamRegistry.has(registryKey)) {
+      throw new RpcMethodError(
+        -32602,
+        "workflow.run: streamId is already in use by a running workflow for this client",
+      );
+    }
+    ctx.streamRegistry.register(registryKey, ac);
   }
 
   try {
@@ -652,13 +823,15 @@ Then rewrite the body of `dispatchWorkflowRunRpc` from the `buildWorkflowRunCont
     }
     throw e;
   } finally {
-    if (streamId !== undefined) {
-      ctx.streamRegistry.unregister(streamId);
+    if (registryKey !== undefined) {
+      ctx.streamRegistry.unregister(registryKey);
     }
   }
 ```
 
-Note `buildWorkflowRunContext` can throw on invalid params — it runs before registration, so nothing leaks.
+Note `buildWorkflowRunContext` can throw on invalid params — it runs before registration, so nothing leaks. The duplicate check throws *before* `register`, so a rejected second run cannot unregister the first one's entry.
+
+Import `workflowRegistryKey` from `../workflow-cancel.ts` at the top of `inline-handlers.ts`.
 
 - [ ] **Step 9: Run the tests to verify they pass**
 
@@ -680,9 +853,11 @@ and in `tryDispatchAutomationRpc`, add the case **before** the `method.startsWit
 
 ```ts
   if (method === "workflow.cancel") {
-    return createWorkflowCancelHandler(ctx.streamRegistry)(params);
+    return createWorkflowCancelHandler(ctx.streamRegistry)(clientId, params);
   }
 ```
+
+`clientId` is already a parameter of `tryDispatchAutomationRpc`, so nothing new needs threading.
 
 - [ ] **Step 11: Pass the signal to the runner**
 
@@ -700,7 +875,9 @@ Add to `packages/gateway/src/ipc/server/server.test.ts`, following the existing 
   test("workflow.cancel reaches createWorkflowCancelHandler", async () => {
     const { server, ctx } = makeTestServer();
     const ac = new AbortController();
-    ctx.streamRegistry.register("wf-route-1", ac);
+    // Registered under the same composite key dispatchWorkflowRunRpc uses, so
+    // the routing test fails if the clientId ever stops being threaded through.
+    ctx.streamRegistry.register(workflowRegistryKey("test-client", "wf-route-1"), ac);
 
     const res = await server.handleRpc("workflow.cancel", { streamId: "wf-route-1" });
 
@@ -709,7 +886,7 @@ Add to `packages/gateway/src/ipc/server/server.test.ts`, following the existing 
   });
 ```
 
-Match the surrounding tests' helper names and invocation style exactly — read `server.test.ts:300-340` first and mirror it rather than inventing `makeTestServer`/`handleRpc` if those are named differently there.
+Match the surrounding tests' helper names and invocation style exactly — read `server.test.ts:300-340` first and mirror it rather than inventing `makeTestServer`/`handleRpc` if those are named differently there. Replace `"test-client"` with whatever clientId that harness actually dispatches under; if the helper does not expose one, assert `{ cancelled: false }` against a deliberately foreign clientId instead, so the test still proves the id is being scoped.
 
 - [ ] **Step 13: Run everything**
 
@@ -740,9 +917,11 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ### Task 4: Document the new RPC
 
 **Files:**
+
 - Modify: the gateway's IPC method reference (locate it first: `rg -l "engine.cancelStream" docs/` — document `workflow.cancel` wherever `engine.cancelStream` is described; if there is no such doc, skip this task and say so rather than inventing a new doc file)
 
 **Interfaces:**
+
 - Consumes: the shipped behaviour from Tasks 1–3.
 - Produces: nothing code-level.
 
@@ -754,7 +933,14 @@ rg -l "engine\.cancelStream" docs/
 
 - [ ] **Step 2: Document both changes**
 
-Add, in that file's existing style: `workflow.cancel` taking `{ streamId }` and returning `{ cancelled: boolean }`; the optional `streamId` on `workflow.run` and `agent.invoke`; the fact that `agent.chunk` carries `streamId` only when one was supplied; and — stated plainly, not buried — that **cancellation takes effect at the next step boundary, so a workflow whose current step is a long model call will not stop early.**
+Add, in that file's existing style:
+
+- `workflow.cancel` taking `{ streamId }` and returning `{ cancelled: boolean }`, where `false` means no live run of *yours* had that id.
+- The optional `streamId` on `workflow.run` and `agent.invoke`, and that `agent.chunk` carries it only when one was supplied.
+- That a `streamId` is scoped to the calling client: two clients may use the same id, one client cannot cancel another's run, and **`engine.cancelStream` cannot cancel a workflow** even though both share a registry internally.
+- That reusing an id already live for the same client is rejected with `-32602`.
+- `status` on the `workflow.run` result (`"preview" | "done" | "error" | "cancelled"`), and that it is the only way an IPC caller can tell a cancelled run from a short completed one.
+- Stated plainly, not buried: **cancellation takes effect at the next step boundary, so a workflow whose current step is a long model call will not stop early.**
 
 - [ ] **Step 3: Verify and commit**
 
@@ -783,12 +969,33 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 | Cancellation at next step boundary, `cancelled` status via `finalizeRun` | 2 |
 | Backward compatibility | 1 (Step 1, second and third tests) |
 | Documented limitation | 3 (handler docstring), 4 |
+| Per-client registry key (review fix 1) | 3 (Steps 1, 3, 5, 8, 10, 12) |
+| `status` on the run result (review fix 2) | 2 (Steps 1, 3, 4), 3 (Step 7) |
 
 No gaps.
 
 **Placeholder scan:** none — every code step carries real code. Task 4 Step 1 is a discovery command rather than a fixed path because the doc's location is genuinely unverified; the step says explicitly what to do if it does not exist, rather than leaving a TODO. Task 3 Step 12 likewise instructs the implementer to mirror the neighbouring test's real helper names.
 
 **Type consistency:** `streamId: string | undefined` is the return shape from `buildWorkflowRunContext` in both Task 1 Step 5 and Task 3 Step 8; `signal` is `AbortSignal` (non-optional parameter, optional context property) in both Task 3 Step 8 and Task 2's `RunWorkflowExecutionParams`; `createWorkflowCancelHandler` returns `{ cancelled: boolean }` in the handler, its test, and the routing test.
+
+## Review triage
+
+Against `2026-08-12-workflow-stream-tagging-cancel-review.md`.
+
+**1. Duplicate `streamId` registration — FIXED, and the review understates it.**
+Confirmed: `streamRegistry` is created once per server (`server.ts:68`) and shared by every session in the `sessions` map. The consequence is not only that a run becomes uncancellable — **client A calling `workflow.cancel` with a guessed or reused id aborts client B's workflow.** Rejecting duplicates, as the review proposes, would not fix that: A could still cancel B's run by passing B's id. Keying the registry by `clientId` does, and the duplicate rejection is kept on top for the same-client case, where reuse is a genuine client bug.
+
+**2. Final status in the RPC response — FIXED.**
+Confirmed: an IPC caller cannot read `workflow_run`, so a run cancelled after one step was indistinguishable from a one-step run that completed — which would have made the whole feature unobservable to its only consumer. `status` now travels in the result. One correction to the review's framing: the fourth value is `"preview"`, not `"done"` — `executeDryRun` finalises as `"preview"` (`workflow-runner.ts:226`).
+
+**3. `engine.cancelStream` cross-cancelling a workflow — RESOLVED BY FIX 1, plus documented.**
+Once workflow runs are keyed `clientId\u0000streamId`, `engine.cancelStream` (which passes a bare id) can no longer reach one. Documented in Task 4 as a guarantee rather than left as accidental behaviour.
+
+**4. Check the signal before the DB insert — DECLINED.**
+This would drop the `workflow_run` row for a run cancelled before its first step, so a requested-then-cancelled run would vanish from history entirely rather than appearing as `cancelled`. Task 2's second test asserts exactly that row exists. `finalizeRun` also emits the run-completed audit event and prunes old runs; skipping the insert would need a parallel path duplicating both. The work avoided is one row insert and one `JSON.parse` in a rare race — not worth losing the audit trail. Boundary check stays at the top of the step loop.
+
+**5. `readonly` on the new `WorkflowRunContext` fields — DECLINED for that type, already done elsewhere.**
+The review says `readonly` matches the file's conventions; it does not. **No field in `WorkflowRunContext` is `readonly` today** — including `paramsOverride`, which uses `Readonly<Record<...>>` for its *value* while the property itself stays mutable. The file's established pattern is post-construction conditional assignment (`if (x !== undefined) ctx.x = x`), which `readonly` would break, forcing a conditional-spread rewrite of code this change does not otherwise touch. The convention the review is reaching for does hold in `engine-cancel-stream.ts`, and the new `workflow-cancel.ts` already follows it — `WorkflowCancelParams` and `WorkflowCancelResult` are both fully `readonly`. `RunWorkflowExecutionParams.signal` is also `readonly`, matching that type's existing `readonly paramsOverride`.
 
 ## Out of scope
 
