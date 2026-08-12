@@ -572,7 +572,7 @@ Usage: nimbus negotiate [--since <duration>] [--person <id>] [--json]
 ```bash
 nimbus negotiate
 nimbus negotiate --since 180d
-nimbus negotiate --person git:jane@example.com
+nimbus negotiate --person person:jane
 nimbus negotiate --json
 ```
 
@@ -581,15 +581,18 @@ nimbus negotiate --json
 | Flag | Description |
 |---|---|
 | `--since <duration>` | Window to summarise (`ms\|s\|m\|h\|d\|w`, e.g. `90d`). Defaults to `90d`. The gateway rejects anything above `365d` outright (exit code 2, naming the 365-day bound) rather than silently clamping it — sized for a full annual review cycle, wider than every sibling agent's shared 90-day cap. |
-| `--person <id>` | Brief a different, already-indexed person instead of yourself. Resolved **entirely from locally indexed data** — this opens no connector and fetches nothing live, the same as a self brief. |
+| `--person <id>` | Brief a different, already-indexed person instead of yourself. Takes a **`person.id`** (`person:…`) — run `nimbus people search <name>` to find one. A `git:<email>` blame alias is **not** a person id: it is the identity the ownership pass emits for a git email with no `person` row, so four of the six lanes (which key on `item.author_id`, always a `person.id`) can never match it. An id that resolves to no person is not silently briefed as zero — the brief carries a gap note saying the counts are structurally zero rather than measured. Resolved **entirely from locally indexed data** — this opens no connector and fetches nothing live, the same as a self brief. |
 | `--json` | Machine-readable JSON output (otherwise Markdown). |
 
 Like `nimbus owners`/`nimbus pre-mortem`, `nimbus negotiate` **hard-rejects** an unrecognised flag rather than ignoring it — a typo'd `--persn` would otherwise silently fall through to the local user's own brief in response to a question about someone else, a wrong answer that looks like a right one.
 
-**Personal sources are off unless configured.** Confluence pages and chat messages are always in scope. Obsidian notes and Notion pages are mined only when their service is named in `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the `[glossary.terms]` precedent. The brief's `sources` block reports whether the opt-in is active and names the config key it reads.
+**Personal sources are off unless configured.** Confluence pages and chat messages are always in scope. Obsidian notes and Notion pages are mined only when their service is named in `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the `[glossary.terms]` precedent. The brief's `sources` block reports whether the opt-in is active and names the config key it reads. Entries are case-folded (`"Obsidian"` works), and an entry that names no recognised personal-document service is reported back in the brief as ignored rather than dropped in silence — "configured" means an entry actually widened the query, never merely that the key is present.
 
-**Five limits every brief states plainly — not decoration, the point of the command:**
+**The ownership section is authorship-derived, exactly as `nimbus owners` says.** The lane reads the same precomputed `owns` edges, derived from recency-weighted `git blame`. Every brief states plainly that this is who wrote the lines, not who is formally accountable — there is no CODEOWNERS, reviewer, or on-call data anywhere in the local index.
 
+**Six limits every brief states plainly — not decoration, the point of the command:**
+
+- **The window is "active in", not "created in".** `item` carries no creation timestamp, only `modified_at` — which for GitHub is `updated_at`, the last touch. Every item-backed lane therefore filters on last-modified, so `--since 90d` means "authored by the subject at any time and touched within the last 90 days", not "authored within the last 90 days"; a ticket closed two years ago still counts if a bot commented on its PR last week. That would overstate the headline numbers silently, so the window line in every brief says so outright. (The decisions lane is the exception: it windows on `decision_record.decided_at`, a real decision date.)
 - **Ownership can understate.** The ownership lane counts only `git_blame_line` rows whose git email maps to a known `person` row. Work committed under an unmapped alias — a second machine, an old address, a GitHub `noreply` address — is attributed to a separate, unmapped identity in the index and is **not** counted toward the subject. For a self brief the agent can usually detect this (it knows which git email self-resolution attempted) and adds a gap note naming it; for an explicit `--person` subject it cannot, since someone else's alias set is unknowable from here, and heuristically guessing by name/email was deliberately rejected as worse than an acknowledged gap.
 - **Ownership can also be stale, or never computed.** The ownership lane is a read over the precomputed `owns` graph, not a live derivation, so every brief also states when that background pass last ran — or, if it has never run, says so and names `nimbus owners --refresh` as the fix — rather than presenting a possibly-outdated or empty list as current.
 - **PR size stats carry their own coverage.** `additions`/`deletions`/`changed_files` live in a PR's metadata only where the enrichment pass has already run. `authoredPrs.stats` is an aggregate over whatever subset was enriched, and `authoredPrs.statsCoverage` (`covered` of `total`) is reported alongside it so the aggregate is never read as if it covered every authored PR.
