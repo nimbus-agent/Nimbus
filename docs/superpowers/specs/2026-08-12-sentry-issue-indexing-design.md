@@ -231,10 +231,36 @@ Every failure degrades to "fewer items indexed", never to a wrong count.
 - A row missing `id` or a parseable `lastSeen` → skipped, never defaulted. A defaulted
   timestamp would corrupt the cursor and silently truncate the next run's window.
 
-**Do not "optimise" this by checkpointing the cursor mid-run.** The suggestion is
-natural — a run that indexes pages 1-3 and fails on page 4 re-fetches those three pages
-next tick, which looks wasteful — but it is **unsafe given a descending scan**, and the
-failure it introduces is silent.
+> **CORRECTED 2026-08-12, after the Task 4 review.** The section below is right that
+> advancing the `lastSeen` high-water mark on a partial run loses data. It was WRONG to
+> treat resumability as a deferred optimisation: with a descending scan and a page budget,
+> a **resume cursor is required for correctness**, not for efficiency. The high-water mark
+> is the NEWEST row seen, so ANY walk that ends early — budget exhausted, or a single
+> out-of-order row tripping the early-stop — publishes a watermark covering rows it never
+> fetched, and the next run's early-stop skips straight past them. They become unreachable
+> permanently and silently. Measured: with a 2-page budget over 3 pages, issue 1 is never
+> indexed on any run, ever. At the shipped 20-page × 100-row default, an org with more than
+> 2000 issues in the window indexes only the newest 2000 — which is the path every cold
+> start takes.
+>
+> **The corrected design** (owner-approved): the cursor payload becomes
+> `{ lastSeenMs, resume?, pendingMax? }`. A row at or below `lastSeenMs` is **skipped, not
+> stopped on**. The walk terminates only on `results="false"` or the page budget. On budget
+> exhaustion the Sentry page cursor is saved to `resume` and `lastSeenMs` is left untouched;
+> the next run continues from there. `lastSeenMs` advances to `pendingMax` only when the
+> walk completes. A `resume` cursor Sentry no longer accepts must fall back to a fresh walk,
+> never to an error.
+>
+> Root cause worth keeping: this plan cited `pagerduty-sync.ts` as the model for the page
+> budget and copied the budget without the property that makes it safe — PagerDuty sorts
+> ASCENDING (`sort_by=updated_at:asc`) and resumes with `since=maxUpdated`, so a truncated
+> walk resumes where it stopped. Sentry offers no ascending sort, which is precisely why it
+> needs the resume cursor instead.
+
+**Do not "optimise" this by checkpointing the `lastSeen` high-water mark mid-run.** The
+suggestion is natural — a run that indexes pages 1-3 and fails on page 4 re-fetches those
+three pages next tick, which looks wasteful — but it is **unsafe given a descending scan**,
+and the failure it introduces is silent.
 
 The cursor is a high-water mark: it asserts *"everything with `lastSeen` greater than
 this is indexed."* The scan runs newest-first. So after a failure on page 4, pages 1-3
@@ -244,10 +270,14 @@ assert that the un-fetched middle band is done, and the next run, starting from 
 mark, would never look at it again. That band is lost permanently, with no error and no
 gap in any count.
 
-Re-fetching three bounded pages on the next tick is the correct trade. A future
-implementer wanting to eliminate the rework should persist Sentry's **opaque page
-cursor** to resume mid-scan, not the `lastSeen` high-water mark — a different and larger
-design, and one that must first establish how long Sentry's cursors stay valid.
+Re-fetching three bounded pages on the next tick is the correct trade **for a FAILED
+request**, and that remains the behaviour: a failed pass keeps the incoming cursor and
+retries the same window.
+
+Persisting Sentry's **opaque page cursor** to resume mid-scan is a different mechanism for
+a different case — a walk truncated by the page BUDGET rather than by an error — and per
+the correction above it is **mandatory for correctness**, not the optional optimisation
+this paragraph originally called it.
 
 ### Token scope
 

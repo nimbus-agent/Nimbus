@@ -4,13 +4,18 @@ import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import type { SentryIssuePassResult } from "./sentry-issue-sync.ts";
 import { syncSentryIssuePass } from "./sentry-issue-sync.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "sentry";
 const CURSOR_PREFIX = "nimbus-sentry2:";
 
-type SentryCursorV2 = { lastSeenMs: number };
+/**
+ * `resume` / `pendingMax` are present only while a page-budget-truncated
+ * walk is in flight; a completed walk clears both (see `buildNextCursor`).
+ */
+type SentryCursorV2 = { lastSeenMs: number; resume?: string; pendingMax?: number };
 
 function encodeCursor(c: SentryCursorV2): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
@@ -37,7 +42,54 @@ function decodeCursor(raw: string | null): SentryCursorV2 | null {
   if (typeof lastSeenMs !== "number" || !Number.isFinite(lastSeenMs)) {
     return null;
   }
-  return { lastSeenMs };
+  const resumeRaw = rec["resume"];
+  const resume = typeof resumeRaw === "string" && resumeRaw !== "" ? resumeRaw : undefined;
+  const pendingMaxRaw = rec["pendingMax"];
+  const pendingMax =
+    typeof pendingMaxRaw === "number" && Number.isFinite(pendingMaxRaw) ? pendingMaxRaw : undefined;
+  return {
+    lastSeenMs,
+    ...(resume !== undefined ? { resume } : {}),
+    ...(pendingMax !== undefined ? { pendingMax } : {}),
+  };
+}
+
+/**
+ * Composes the next persisted cursor from the projects+issues pass outcome.
+ *
+ * - A FAILED issue pass echoes the incoming cursor VERBATIM, including
+ *   `null`. Never synthesize `{lastSeenMs: 0}` here: a cold start (`cursor`
+ *   already null) that fails must STAY a cold start, or the next attempt
+ *   silently loses `historyFloorMs` forever (Important B).
+ * - A BUDGET-TRUNCATED walk (`issues.resumeUrl !== null`) leaves `lastSeenMs`
+ *   exactly as it already was — nothing is "caught up" yet — and carries the
+ *   resume point + running max forward so the unread tail is reachable next
+ *   run instead of being permanently stranded (the Critical fix).
+ * - A COMPLETE walk advances to the highest of: any carried-over
+ *   `pendingMax`, this walk's own running max, and the previously
+ *   established `lastSeenMs` — never regressing below any of the three —
+ *   and clears `resume`/`pendingMax`.
+ */
+function buildNextCursor(
+  cursor: string | null,
+  prev: SentryCursorV2 | null,
+  issues: SentryIssuePassResult,
+): string | null {
+  if (!issues.ok) {
+    return cursor;
+  }
+  if (issues.resumeUrl !== null) {
+    return encodeCursor({
+      lastSeenMs: prev?.lastSeenMs ?? 0,
+      resume: issues.resumeUrl,
+      pendingMax: issues.runningMaxMs ?? prev?.pendingMax ?? 0,
+    });
+  }
+  const candidates = [prev?.pendingMax, issues.runningMaxMs, prev?.lastSeenMs].filter(
+    (v): v is number => typeof v === "number" && Number.isFinite(v),
+  );
+  const lastSeenMs = candidates.length > 0 ? Math.max(...candidates) : 0;
+  return encodeCursor({ lastSeenMs });
 }
 
 export type SentrySyncableOptions = {
@@ -94,10 +146,14 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
       try {
         root = JSON.parse(text) as unknown;
       } catch {
-        // Same reasoning as the !res.ok arm: an unparseable projects body means
-        // the issue pass is skipped too.
+        // Same reasoning as the !res.ok arm above: an unparseable projects
+        // body means the issue pass is skipped too, AND — like that arm —
+        // a cursor the caller already trusted must not be destroyed by a
+        // failure in the OTHER pass. Echo it (or a cold-start marker if
+        // there was none), never synthesize a fresh {lastSeenMs: 0} over an
+        // established one.
         return {
-          cursor: encodeCursor({ lastSeenMs: 0 }),
+          cursor: cursor ?? encodeCursor({ lastSeenMs: 0 }),
           itemsUpserted: 0,
           itemsDeleted: 0,
           hasMore: false,
@@ -155,17 +211,11 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
         cursorLastSeenMs: prev?.lastSeenMs ?? null,
         now,
         maxPages: maxPagesPerSync,
+        resumeUrl: prev?.resume ?? null,
+        pendingMax: prev?.pendingMax ?? null,
       });
 
-      // Never advance past data that was not fetched. A failed pass echoes the
-      // incoming cursor VERBATIM (not re-derived from `prev`) so the next tick
-      // retries the exact same window. A successful pass, by contrast, always
-      // returns a freshly re-encoded V2 cursor — even when it indexed nothing —
-      // which is what upgrades a legacy `nimbus-sentry1:` (or any other
-      // undecodable) cursor to V2 instead of echoing it back unrecognised.
-      const nextCursor = issues.ok
-        ? encodeCursor({ lastSeenMs: issues.maxLastSeenMs ?? prev?.lastSeenMs ?? 0 })
-        : (cursor ?? encodeCursor({ lastSeenMs: prev?.lastSeenMs ?? 0 }));
+      const nextCursor = buildNextCursor(cursor, prev, issues);
 
       return {
         cursor: nextCursor,
