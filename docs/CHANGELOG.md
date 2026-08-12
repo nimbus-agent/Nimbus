@@ -8,6 +8,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-12 — `nimbus negotiate`: the fourteenth built-in agent, a cited contribution brief.**
+  `agents.negotiate` / `nimbus negotiate [--since <duration>] [--person <id>] [--json]`. Six
+  parallel `AgentCoordinator` lanes assembled entirely from evidence already in the local index —
+  no connector is opened and nothing is fetched live, including for `--person`, which briefs a
+  different already-indexed person from the same local data, never a live one: PRs authored (with
+  size stats where the enrichment pass has reached them), PRs reviewed (approve /
+  changes-requested / other), tickets opened and tickets closed by an authored PR, code and
+  services owned, decisions authored, and documents/notes/messages written. `--since` defaults to
+  90 days and tops out at 365 — negotiate's own bound, wider than the shared 90-day `MAX_SINCE_MS`
+  every sibling agent uses, sized for an annual review cycle; a request above it is rejected
+  outright (exit code 2), never silently clamped.
+  **Personal sources are off unless configured.** Confluence pages and chat messages are always
+  in scope; Obsidian notes and Notion pages are mined only when their service is named in
+  `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the
+  `[glossary.terms]` precedent, resolved per SERVICE (not per item type) because Confluence and
+  Notion both emit `type: "page"`.
+  **Three limits stated on every brief, never decoration.** Ownership counts only
+  `git_blame_line` rows whose git email maps to a known `person` row — work committed under an
+  unmapped alias (a second machine, an old address, a GitHub `noreply` address) is attributed
+  elsewhere and not counted; the brief flags this for a self subject when it can detect it, and
+  never guesses for an explicit `--person` subject, since someone else's alias set is unknowable
+  from here. PR size stats exist only where the enrichment pass has run, so `authoredPrs.stats`
+  carries its own `statsCoverage` (covered of total) rather than implying completeness. Incidents
+  resolved, on-call shifts, and deploys triggered are not available in the index at all — named
+  unconditionally on every run, so an empty section is never read as a zero.
+  **Not reachable over the HTTP API**, for a different reason than `agents.preflight` /
+  `agents.premortem` (excluded for their side effects): `agents.negotiate` writes nothing, but
+  combined with `--person` an HTTP-exposed version would let any holder of the `agents` bearer
+  token assemble a contribution dossier on any indexed person without the local owner initiating
+  it. The CLI and Tauri renderer are same-machine, owner-initiated surfaces (I7's XSS threat
+  model, not "arbitrary network caller"); the local HTTP API is not. Documented in
+  `docs/cli-reference.md`'s `nimbus negotiate` section.
 - **2026-08-11 — `EgressCompleteness.tier` is gone; the coverage vector is the only claim (#1057).**
   The last step of a three-repo sequence. `tier: "authorized-actions"` was a deprecated additive
   wire shim, kept because the published `@nimbus-dev/client@0.15.x`'s `validateEgressCompleteness`

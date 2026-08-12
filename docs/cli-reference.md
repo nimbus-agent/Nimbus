@@ -559,6 +559,57 @@ Like `nimbus owners`/`nimbus glossary`, `nimbus pre-mortem` **hard-rejects** an 
 
 ---
 
+### `nimbus negotiate`
+
+The fourteenth built-in agent: a cited contribution brief for one person over a time window, assembled entirely from evidence already in the local index — no connector is opened and nothing is fetched live. Six lanes: PRs authored (with size stats where the enrichment pass has reached them), PRs reviewed (approve / changes-requested / other), tickets opened and tickets closed by an authored PR, code and services owned, decisions authored, and documents/notes/messages written.
+
+```text
+Usage: nimbus negotiate [--since <duration>] [--person <id>] [--json]
+  --since    window to summarise, e.g. 90d (default 90d, max 365d)
+  --person   brief a different person by id (defaults to you)
+```
+
+```bash
+nimbus negotiate
+nimbus negotiate --since 180d
+nimbus negotiate --person git:jane@example.com
+nimbus negotiate --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--since <duration>` | Window to summarise (`ms\|s\|m\|h\|d\|w`, e.g. `90d`). Defaults to `90d`. The gateway rejects anything above `365d` outright (exit code 2, naming the 365-day bound) rather than silently clamping it — sized for a full annual review cycle, wider than every sibling agent's shared 90-day cap. |
+| `--person <id>` | Brief a different, already-indexed person instead of yourself. Resolved **entirely from locally indexed data** — this opens no connector and fetches nothing live, the same as a self brief. |
+| `--json` | Machine-readable JSON output (otherwise Markdown). |
+
+Like `nimbus owners`/`nimbus pre-mortem`, `nimbus negotiate` **hard-rejects** an unrecognised flag rather than ignoring it — a typo'd `--persn` would otherwise silently fall through to the local user's own brief in response to a question about someone else, a wrong answer that looks like a right one.
+
+**Personal sources are off unless configured.** Confluence pages and chat messages are always in scope. Obsidian notes and Notion pages are mined only when their service is named in `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the `[glossary.terms]` precedent. The brief's `sources` block reports whether the opt-in is active and names the config key it reads.
+
+**Three limits every brief states plainly — not decoration, the point of the command:**
+
+- **Ownership can understate.** The ownership lane counts only `git_blame_line` rows whose git email maps to a known `person` row. Work committed under an unmapped alias — a second machine, an old address, a GitHub `noreply` address — is attributed to a separate, unmapped identity in the index and is **not** counted toward the subject. For a self brief the agent can usually detect this (it knows which git email self-resolution attempted) and adds a gap note naming it; for an explicit `--person` subject it cannot, since someone else's alias set is unknowable from here, and heuristically guessing by name/email was deliberately rejected as worse than an acknowledged gap.
+- **PR size stats carry their own coverage.** `additions`/`deletions`/`changed_files` live in a PR's metadata only where the enrichment pass has already run. `authoredPrs.stats` is an aggregate over whatever subset was enriched, and `authoredPrs.statsCoverage` (`covered` of `total`) is reported alongside it so the aggregate is never read as if it covered every authored PR.
+- **Incidents resolved, on-call shifts, and deploys triggered are not available at all.** The local index carries no attribution for any of the three. The brief names all three, unconditionally, on every run — never only when they would otherwise read as an empty or zero section, so a genuine zero is never confused with "cannot be computed."
+
+**Not reachable over the local HTTP API.** `agents.negotiate` is served on the CLI/Tauri socket only. Unlike `agents.preflight`/`agents.premortem` (excluded for their side effects) it writes nothing, but combined with `--person` an HTTP-exposed version would let any holder of the `agents` bearer token assemble a contribution dossier on any indexed person without the local owner initiating it — the CLI and Tauri renderer are same-machine, owner-initiated surfaces, the local HTTP API is not.
+
+**Configuration — `[negotiate]` in `nimbus.toml`:**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `personal_sources` | `[]` | Personal-document services to mine in the docs/notes lanes — currently `obsidian` and/or `notion`. Empty means work artifacts only (Confluence, chat messages, and any other always-in-scope service). |
+
+**Output (Markdown):** the resolved subject, the query window, each lane's counts (or a gap note where a lane could not be computed), the unconditional unavailable-evidence list, and the personal-sources status.
+
+**Read-only:** never triggers HITL, never makes a live connector API call, never calls `connectors.dispatch` — every lane reads only the already-indexed graph and item tables. Zero `egress_ledger` rows.
+
+**Exit codes:** `1` = gateway not running; `2` = agent error (an unrecognised flag, an out-of-range `--since`, or a malformed `agents.negotiate` response).
+
+---
+
 ### `nimbus catchup`
 
 Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike a uniform, service-scoped digest, `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).
