@@ -608,9 +608,11 @@ function metadataHasStats(metadata: string): boolean {
  * `json_extract` is used (via `metadataHasStats`) rather than a LIKE over the
  * raw metadata blob so a PR body mentioning "additions" cannot mask a
  * genuinely missing field. `OR` does NOT short-circuit SQLite's evaluation
- * order in a way that protects `json_extract` from malformed JSON — a single
- * row with unparseable `metadata` throws `SQLiteError: malformed JSON` and
- * kills the whole query. The `json_extract` arm is therefore wrapped in a
+ * order in a way that is guaranteed by contract. Measured behaviour (bun 1.3.14 /
+ * SQLite 3.53.0): the bare `OR` form DOES short-circuit per row in WHERE-clause
+ * context and does not throw; the same expression in a SELECT-list value context
+ * DOES throw. Rather than depend on that context distinction, the `json_extract`
+ * arm is wrapped in a
  * `CASE WHEN json_valid(metadata) THEN … ELSE 1 END` guard, mirrored by
  * `metadataHasStats`'s parse-failure fallback: a row whose metadata cannot be
  * parsed must remain a CANDIDATE (the `ELSE 1`), because malformed JSON must

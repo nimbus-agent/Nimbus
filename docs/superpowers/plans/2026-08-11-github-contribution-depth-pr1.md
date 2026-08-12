@@ -1222,15 +1222,26 @@ it existed to make the SQL`LIKE` precise, but a row now qualifies on either reas
 would silently drop every stats-missing PR with a real title — the exact case this task adds.
 
 `NOT json_valid(metadata)` is deliberate: a row with unparseable metadata cannot be proven to have
-stats, so it must be re-fetched rather than skipped. **Correction (post-review):** the `OR` form
-above does not protect `json_extract` from malformed JSON — SQLite's `OR` does not reliably
-short-circuit left to right here, and `json_extract` on unparseable text raises
-`SQLiteError: malformed JSON`, which kills the whole query for every row, not just the bad one.
-The shipped code wraps the `json_extract` arm in a `CASE WHEN json_valid(metadata) THEN
-json_extract(metadata, '$.additions') IS NULL ELSE 1 END` guard instead of relying on `OR`
-short-circuit — a row whose metadata cannot be parsed falls into the `ELSE 1` branch and remains a
-candidate. See `packages/gateway/src/connectors/github-sync.ts`'s `selectPrEnrichCandidates` for
-the actual guarded query.
+stats, so it must be re-fetched rather than skipped. A guard is genuinely required: an UNGUARDED
+`json_extract(metadata, '$.additions') IS NULL` in the WHERE clause throws
+`SQLiteError: malformed JSON` on a single bad row and kills the query for every row.
+
+**Measured correction (post-review).** The bare `OR` form above is NOT broken, contrary to a review
+finding and to this plan's earlier correction of it. Measured on bun 1.3.14 / SQLite 3.53.0, on both
+Windows and Linux, over real table rows:
+
+| Expression | Result |
+| --- | --- |
+| `WHERE … OR NOT json_valid(metadata) OR json_extract(…) IS NULL` | no throw — short-circuits per row |
+| `WHERE … OR CASE WHEN json_valid(metadata) THEN json_extract(…) IS NULL ELSE 1 END` | no throw |
+| `WHERE json_extract(…) IS NULL` (unguarded) | **throws** |
+
+The review's repro (`SELECT (NOT json_valid('{bad') OR json_extract('{bad', …))`) throws because a
+SELECT-list VALUE context evaluates differently from a WHERE-clause boolean context. The shipped
+code uses the `CASE WHEN json_valid(metadata) THEN … ELSE 1 END` form anyway — not because `OR` was
+wrong, but so correctness does not rest on a context-dependent evaluation detail that is easy to
+mis-test and was in fact mis-tested twice. A row whose metadata cannot be parsed falls into
+`ELSE 1` and remains a candidate. See `selectPrEnrichCandidates` for the shipped query.
 
 - [ ] **Step 4: Rename the caller and update the doc comment**
 
