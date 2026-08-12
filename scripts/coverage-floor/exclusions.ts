@@ -65,6 +65,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/agent-runs/agent-test-server.ts" },
   // `http-api-test-server.ts` is the third harness of this shape — same reason.
   { kind: "exact", path: "packages/gateway/src/ipc/http-api-test-server.ts" },
+  // `test-token-vault.ts` is the in-memory seeded Vault those harnesses share. It was extracted
+  // from `brief-test-server.ts` + `agent-test-server.ts` (both already excluded here) when their
+  // byte-identical copies were deduplicated, so it inherits their exemption rather than earning a
+  // new one — the `delete`/`listKeys` accessors exist to satisfy the `NimbusVault` interface and no
+  // harness calls them, which is exactly why the two parents were exempted in the first place.
+  { kind: "exact", path: "packages/gateway/src/ipc/test-token-vault.ts" },
 
   // ── Generated SQL ── (retired 2026-08-01)
   // The `index/*-v<N>-sql.ts` migration constants are single exported template literals that the
