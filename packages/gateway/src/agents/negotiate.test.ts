@@ -5,7 +5,12 @@ import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-gr
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { renderNegotiate } from "./_lib/render.ts";
-import { emitNegotiateBrief, reduceLaneResults, runNegotiate } from "./negotiate.ts";
+import {
+  emitNegotiateBrief,
+  OWNERSHIP_LIMIT,
+  reduceLaneResults,
+  runNegotiate,
+} from "./negotiate.ts";
 
 function seedPr(
   db: Database,
@@ -339,6 +344,104 @@ test("an unmapped git identity for the self subject raises a named gap", async (
   const gap = brief.gaps.find((g) => g.detail.includes("unmapped git identity"));
   expect(gap).toBeDefined();
   expect(gap?.category).toBe("missing_user_identity");
+  db.close();
+});
+
+test("--person reports a count of unmapped git identities in the index, never a guess", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:target", "Target Person"]);
+  const target = upsertGraphEntity(db, {
+    type: "person",
+    externalId: "person:target",
+    label: "Target Person",
+  });
+  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  upsertGraphRelation(db, target, svc, "owns", Date.now(), 0.7);
+
+  // Unrelated `git:` alias elsewhere in the index — must be COUNTED, never attributed to the
+  // named subject by name/email matching (spec § 5.A0).
+  const ghost = upsertGraphEntity(db, {
+    type: "person",
+    externalId: "git:ghost@example.com",
+    label: "ghost@example.com",
+  });
+  const otherSvc = upsertGraphEntity(db, {
+    type: "service",
+    externalId: "svc:other",
+    label: "other",
+  });
+  upsertGraphRelation(db, ghost, otherSvc, "owns", Date.now(), 0.5);
+
+  const brief = await runNegotiate(
+    { personId: "person:target", mePersonIdOverride: "person:me" },
+    ctxFor(db),
+  );
+
+  expect(brief.subject.source).toBe("explicit");
+  // Round-trips the lane result through JSON.stringify/JSON.parse (the coordinator boundary).
+  expect(brief.ownership?.unmappedIdentitiesInIndex).toBe(1);
+  expect(brief.ownership?.services).toEqual(["api"]);
+
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("1 git identities in this index are not mapped");
+  db.close();
+});
+
+test("ownership truncates at OWNERSHIP_LIMIT owned targets and reports truncated", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
+  const total = OWNERSHIP_LIMIT + 5;
+  for (let i = 0; i < total; i += 1) {
+    const svc = upsertGraphEntity(db, {
+      type: "service",
+      externalId: `svc:${String(i)}`,
+      label: `svc-${String(i)}`,
+    });
+    upsertGraphRelation(db, me, svc, "owns", Date.now(), total - i);
+  }
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.ownership?.truncated).toBe(true);
+  expect(brief.ownership?.services).toHaveLength(OWNERSHIP_LIMIT);
+  db.close();
+});
+
+test("ownership at exactly OWNERSHIP_LIMIT owned targets is not truncated", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
+  for (let i = 0; i < OWNERSHIP_LIMIT; i += 1) {
+    const svc = upsertGraphEntity(db, {
+      type: "service",
+      externalId: `svc:${String(i)}`,
+      label: `svc-${String(i)}`,
+    });
+    upsertGraphRelation(db, me, svc, "owns", Date.now(), OWNERSHIP_LIMIT - i);
+  }
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.ownership?.truncated).toBe(false);
+  expect(brief.ownership?.services).toHaveLength(OWNERSHIP_LIMIT);
+  db.close();
+});
+
+test("ownership reports directories for directory-typed owns targets", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
+  const dir = upsertGraphEntity(db, {
+    type: "directory",
+    externalId: "dir:root:src/api",
+    label: "src/api",
+  });
+  upsertGraphRelation(db, me, dir, "owns", Date.now(), 0.6);
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.ownership?.directories).toEqual(["src/api"]);
   db.close();
 });
 

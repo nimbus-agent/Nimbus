@@ -198,7 +198,9 @@ function laneTickets(db: Database, personId: string, sinceMs: number): Negotiate
   return { opened: opened.n, closedByAuthoredPr: closed.n };
 }
 
-const OWNERSHIP_LIMIT = 50;
+/** Exported so tests can seed exactly-at / one-past the boundary without duplicating the magic
+ * number. */
+export const OWNERSHIP_LIMIT = 50;
 
 /**
  * A graph read, never a `git_blame_line` scan (spec § 5.A0) — the ownership pass
