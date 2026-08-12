@@ -57,6 +57,7 @@ export type NegotiateBrief = {
   readonly authoredPrs: NegotiateAuthoredPrs | null;
   readonly reviewedPrs: NegotiateReviewedPrs | null;
   readonly tickets: NegotiateTickets | null;
+  readonly ownership: NegotiateOwnership | null;
 };
 
 export type NegotiateAuthoredPrs = {
@@ -87,4 +88,23 @@ export type NegotiateReviewedPrs = {
 export type NegotiateTickets = {
   readonly opened: number;
   readonly closedByAuthoredPr: number;
+};
+
+/**
+ * Precomputed `owns` edges (the ownership pass, `ownership/ownership-pass.ts`), aggregated
+ * to directory/service level only — this lane never lists files (spec § 5.A0).
+ */
+export type NegotiateOwnership = {
+  readonly services: string[];
+  readonly directories: string[];
+  /** `ownership_pass_state.last_pass_at`; null when the pass has never run. */
+  readonly lastPassAt: number | null;
+  /** True when the `LIMIT` clipped the result — rendered so a partial list never reads as complete. */
+  readonly truncated: boolean;
+  /**
+   * `COUNT(*)` of `git:`-prefixed `person` entities anywhere in the index — a true statement
+   * about the index, never an attribution to the subject (spec § 5.A0: a heuristic match by
+   * name/email would produce a wrong attribution, which is worse than an acknowledged gap).
+   */
+  readonly unmappedIdentitiesInIndex: number;
 };

@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { userInfo } from "node:os";
 
 import { AgentCoordinator, type SubTask, type SubTaskResult } from "../engine/coordinator.ts";
+import { normalizeEmail } from "../people/person-store.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import { detectEmptyIndex } from "./_lib/gap-notes.ts";
@@ -9,11 +10,16 @@ import type {
   NegotiateAuthoredPrs,
   NegotiateBrief,
   NegotiateInput,
+  NegotiateOwnership,
   NegotiateReviewedPrs,
   NegotiateSubject,
   NegotiateTickets,
 } from "./_lib/negotiate-types.ts";
-import { resolveSelfPerson } from "./_lib/self-person.ts";
+import {
+  defaultRunGitConfigUserEmail,
+  type GitRunner,
+  resolveSelfPerson,
+} from "./_lib/self-person.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 const DEFAULT_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -192,6 +198,89 @@ function laneTickets(db: Database, personId: string, sinceMs: number): Negotiate
   return { opened: opened.n, closedByAuthoredPr: closed.n };
 }
 
+const OWNERSHIP_LIMIT = 50;
+
+/**
+ * A graph read, never a `git_blame_line` scan (spec § 5.A0) — the ownership pass
+ * (`ownership/ownership-pass.ts`) already did the expensive derivation and left `owns`
+ * edges behind; this lane only aggregates them. `maxOwnersPerPath` bounds owners PER PATH,
+ * not paths per owner, so a long-tenured person can carry thousands of `owns` edges —
+ * hence the explicit `LIMIT` here and the directory/service-only aggregation (never files).
+ */
+function laneOwnership(db: Database, personId: string): NegotiateOwnership {
+  const rows = db
+    .query(
+      `SELECT te.type AS target_type, te.label AS label
+         FROM graph_relation r
+         JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+         JOIN graph_entity te ON te.id = r.to_id
+        WHERE r.type = 'owns'
+          AND pe.external_id = ?
+          AND te.type IN ('service', 'directory')
+        ORDER BY r.weight DESC
+        LIMIT ?`,
+    )
+    .all(personId, OWNERSHIP_LIMIT + 1) as Array<{ target_type: string; label: string }>;
+
+  const truncated = rows.length > OWNERSHIP_LIMIT;
+  const kept = truncated ? rows.slice(0, OWNERSHIP_LIMIT) : rows;
+  const state = db.query("SELECT last_pass_at FROM ownership_pass_state WHERE id = 1").get() as {
+    last_pass_at: number | null;
+  } | null;
+
+  return {
+    services: kept.filter((r) => r.target_type === "service").map((r) => r.label),
+    directories: kept.filter((r) => r.target_type === "directory").map((r) => r.label),
+    lastPassAt: state?.last_pass_at ?? null,
+    truncated,
+    unmappedIdentitiesInIndex: countUnmappedOwnerIdentities(db),
+  };
+}
+
+/**
+ * Spec § 5.A0. `resolveOwner` (`ownership/owner-identity.ts`) emits `git:<email>` for a
+ * blame email with no matching `person` row, so ownership recorded under an unmapped alias
+ * is attributed to a SEPARATE graph entity and would silently vanish from a person-id-keyed
+ * lane like `laneOwnership`. For the SELF subject we know the git email that self-resolution
+ * attempted (whether or not it ended up mapping to a person), so we can name the gap
+ * precisely instead of carrying a generic caveat. Never called for an explicit `--person`
+ * subject: someone else's alias set is unknowable from here (see `countUnmappedOwnerIdentities`).
+ */
+function detectUnmappedGitIdentity(db: Database, gitEmail: string | null): GapNote | null {
+  if (gitEmail === null || gitEmail.trim() === "") return null;
+  const row = db
+    .query(
+      `SELECT 1 AS n FROM graph_entity
+        WHERE type = 'person' AND external_id = ? LIMIT 1`,
+    )
+    .get(`git:${normalizeEmail(gitEmail)}`) as { n?: number } | null;
+  if (row === null) return null;
+  return {
+    category: "missing_user_identity",
+    detail:
+      "Some of your ownership is recorded under an unmapped git identity and is not counted here.",
+    remediation:
+      "Add that git email to your person record so blame lines written under it are attributed to you.",
+  };
+}
+
+/**
+ * A fact about the INDEX, never a guess about the SUBJECT. Matching `git:`-prefixed
+ * entities to an explicit `--person` subject by name or email substring was proposed and
+ * rejected (spec § 5.A0): a heuristic attribution is wrong in a document that may affect
+ * someone's compensation, which is worse than an acknowledged gap. This count is always
+ * true regardless of who the brief is about.
+ */
+function countUnmappedOwnerIdentities(db: Database): number {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM graph_entity
+        WHERE type = 'person' AND external_id LIKE 'git:%'`,
+    )
+    .get() as { n: number };
+  return row.n;
+}
+
 function laneTask(execute: () => unknown): SubTask {
   return {
     taskType: "agent_step",
@@ -231,8 +320,14 @@ export async function runNegotiate(
   const empty = detectEmptyIndex(ctx.db);
   if (empty !== null) gaps.push(empty);
 
-  const subject = await resolveSubject(ctx.db, input);
+  const { subject, gitEmailAttempted } = await resolveSubject(ctx.db, input);
   if (subject.personId === null) gaps.push(unresolvedIdentityGap());
+  // Never for an explicit `--person` subject — someone else's alias set is unknowable
+  // from here (spec § 5.A0); `gitEmailAttempted` is only meaningful for the local self.
+  if (subject.source !== "explicit") {
+    const gitGap = detectUnmappedGitIdentity(ctx.db, gitEmailAttempted);
+    if (gitGap !== null) gaps.push(gitGap);
+  }
 
   // Lane mechanism (spec § 4): every lane-backed field on `NegotiateBrief` must be
   // declared `… | null` and initialised to `null` before the coordinator runs, so a
@@ -250,11 +345,12 @@ export async function runNegotiate(
   // is "not attempted", the same "could not be computed" meaning as a lane that threw.
   if (subject.personId !== null) {
     const personId = subject.personId;
-    laneNames.push("authoredPrs", "reviewedPrs", "tickets");
+    laneNames.push("authoredPrs", "reviewedPrs", "tickets", "ownership");
     tasks.push(
       laneTask(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
       laneTask(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
       laneTask(() => laneTickets(ctx.db, personId, sinceMs)),
+      laneTask(() => laneOwnership(ctx.db, personId)),
     );
   }
   const coordinator = new AgentCoordinator({
@@ -269,6 +365,7 @@ export async function runNegotiate(
   let authoredPrs: NegotiateAuthoredPrs | null = null;
   let reviewedPrs: NegotiateReviewedPrs | null = null;
   let tickets: NegotiateTickets | null = null;
+  let ownership: NegotiateOwnership | null = null;
   for (const r of results) {
     if (r.status !== "done" || r.text === undefined) continue;
     const laneName = laneNames[r.taskIndex];
@@ -277,6 +374,7 @@ export async function runNegotiate(
       if (laneName === "authoredPrs") authoredPrs = decoded as NegotiateAuthoredPrs;
       else if (laneName === "reviewedPrs") reviewedPrs = decoded as NegotiateReviewedPrs;
       else if (laneName === "tickets") tickets = decoded as NegotiateTickets;
+      else if (laneName === "ownership") ownership = decoded as NegotiateOwnership;
     } catch {
       gaps.push(laneFailureGap(laneName ?? `#${String(r.taskIndex)}`, r));
     }
@@ -298,32 +396,57 @@ export async function runNegotiate(
     authoredPrs,
     reviewedPrs,
     tickets,
+    ownership,
   };
 }
 
-async function resolveSubject(db: Database, input: NegotiateInput): Promise<NegotiateSubject> {
+/**
+ * `gitEmailAttempted` captures the raw email `resolveSelfPerson` tried against git config
+ * (whether or not it ended up mapping to a `person` row) so `runNegotiate` can pass it to
+ * `detectUnmappedGitIdentity`. It stays `null` whenever git was never consulted — e.g. an
+ * `override`/explicit `mePersonIdOverride` short-circuits `resolveSelfPerson` before it
+ * calls `runGit` at all — matching "call only when a git email is otherwise known" (Task 4
+ * brief step 4).
+ */
+async function resolveSubject(
+  db: Database,
+  input: NegotiateInput,
+): Promise<{ subject: NegotiateSubject; gitEmailAttempted: string | null }> {
+  let gitEmailAttempted: string | null = null;
+  const baseRunGit = input.runGitOverride ?? defaultRunGitConfigUserEmail;
+  const capturingRunGit: GitRunner = async () => {
+    const raw = await baseRunGit();
+    gitEmailAttempted = raw === null || raw.trim() === "" ? null : raw;
+    return raw;
+  };
   // Always resolve the local self id, even for an explicit `--person`: `isOther` means
   // "named someone other than the resolved local user" (see `NegotiateSubject.isOther`'s
   // docstring), which is a comparison, not a fact derivable from `--person` being present.
   const resolution = await resolveSelfPerson(db, {
     ...(input.mePersonIdOverride === undefined ? {} : { override: input.mePersonIdOverride }),
-    ...(input.runGitOverride === undefined ? {} : { runGit: input.runGitOverride }),
+    runGit: capturingRunGit,
     osUsername: input.osUsernameOverride ?? safeOsUsername(),
   });
   if (input.personId !== undefined && input.personId.length > 0) {
     return {
-      personId: input.personId,
-      source: "explicit",
-      displayName: personDisplayNameOrNull(db, input.personId),
-      isOther: input.personId !== resolution.personId,
+      subject: {
+        personId: input.personId,
+        source: "explicit",
+        displayName: personDisplayNameOrNull(db, input.personId),
+        isOther: input.personId !== resolution.personId,
+      },
+      gitEmailAttempted,
     };
   }
   return {
-    personId: resolution.personId,
-    source: resolution.source,
-    displayName:
-      resolution.personId === null ? null : personDisplayNameOrNull(db, resolution.personId),
-    isOther: false,
+    subject: {
+      personId: resolution.personId,
+      source: resolution.source,
+      displayName:
+        resolution.personId === null ? null : personDisplayNameOrNull(db, resolution.personId),
+      isOther: false,
+    },
+    gitEmailAttempted,
   };
 }
 

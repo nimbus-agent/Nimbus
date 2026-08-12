@@ -23,6 +23,7 @@ import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
 import type {
   NegotiateAuthoredPrs,
   NegotiateBrief,
+  NegotiateOwnership,
   NegotiateReviewedPrs,
   NegotiateSubject,
   NegotiateTickets,
@@ -628,11 +629,45 @@ function renderNegotiateTickets(t: NegotiateTickets | null): string {
 }
 
 /**
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. The
+ * undercount guard (Task 4, spec § 5.A0) surfaces here as an unconditional line: it is a
+ * fact about the index (never an attribution to the subject), so it renders whenever it is
+ * non-zero, not just when the lane otherwise has something to say.
+ */
+function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
+  if (o === null) {
+    return ["## Ownership", "", "_could not be computed_"].join("\n");
+  }
+  const lines = ["## Ownership", ""];
+  if (o.services.length === 0 && o.directories.length === 0) {
+    lines.push("- no recorded ownership");
+  } else {
+    if (o.services.length > 0) lines.push(`- services: ${o.services.join(", ")}`);
+    if (o.directories.length > 0) lines.push(`- directories: ${o.directories.join(", ")}`);
+  }
+  lines.push(
+    o.lastPassAt === null
+      ? "- ownership pass: never run (`nimbus owners --refresh`)"
+      : `- ownership pass last ran ${new Date(o.lastPassAt).toISOString()}`,
+  );
+  if (o.truncated) {
+    lines.push("- list truncated at the display limit — more owned paths exist");
+  }
+  if (o.unmappedIdentitiesInIndex > 0) {
+    lines.push(
+      `- ${String(o.unmappedIdentitiesInIndex)} git identities in this index are not mapped ` +
+        "to a person; ownership attributed to them is not counted here.",
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
  * Task 1's version rendered only the subject, the window and generation time, the gap
  * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
- * reviewed PR lane sections; Task 3 adds the tickets lane — a lane whose field is `null`
- * renders as "could not be computed", never as `0`; each later lane task extends this
- * further the same way.
+ * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership — a lane
+ * whose field is `null` renders as "could not be computed", never as `0`; each later lane
+ * task extends this further the same way.
  */
 export function renderNegotiate(brief: NegotiateBrief): string {
   const days = Math.round(brief.query.sinceMs / 86_400_000);
@@ -644,6 +679,7 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);
   const reviewedPrs = renderNegotiateReviewedPrs(brief.reviewedPrs);
   const tickets = renderNegotiateTickets(brief.tickets);
+  const ownership = renderNegotiateOwnership(brief.ownership);
   const evidence = [
     "## Evidence not available from the index",
     "",
@@ -662,6 +698,8 @@ export function renderNegotiate(brief: NegotiateBrief): string {
     reviewedPrs,
     "",
     tickets,
+    "",
+    ownership,
     "",
     evidence,
     gaps,

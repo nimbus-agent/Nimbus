@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import type { SubTaskResult } from "../engine/coordinator.ts";
+import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { renderNegotiate } from "./_lib/render.ts";
@@ -295,6 +296,49 @@ test("tickets counts opened, and closed via an authored PR's resolves edge", asy
 
   expect(brief.tickets?.opened).toBe(1);
   expect(brief.tickets?.closedByAuthoredPr).toBe(1);
+  db.close();
+});
+
+test("ownership reports services and cites the pass timestamp", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  db.run("INSERT INTO ownership_pass_state (id, last_pass_at) VALUES (1, 1700000000000)");
+  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
+  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  upsertGraphRelation(db, me, svc, "owns", Date.now(), 0.8);
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.ownership?.services).toEqual(["api"]);
+  expect(brief.ownership?.lastPassAt).toBe(1700000000000);
+  db.close();
+});
+
+// THE UNDERCOUNT GUARD. Without it, work under an unmapped git alias vanishes silently.
+test("an unmapped git identity for the self subject raises a named gap", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name, canonical_email) VALUES (?, ?, ?)", [
+    "person:me",
+    "Me",
+    "me@work.example",
+  ]);
+  // Ownership recorded under a DIFFERENT, unmapped email — exactly what resolveOwner emits.
+  const ghost = upsertGraphEntity(db, {
+    type: "person",
+    externalId: "git:me@personal.example",
+    label: "me@personal.example",
+  });
+  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  upsertGraphRelation(db, ghost, svc, "owns", Date.now(), 0.9);
+
+  const brief = await runNegotiate(
+    { runGitOverride: async () => "me@personal.example", osUsernameOverride: "" },
+    ctxFor(db),
+  );
+
+  const gap = brief.gaps.find((g) => g.detail.includes("unmapped git identity"));
+  expect(gap).toBeDefined();
+  expect(gap?.category).toBe("missing_user_identity");
   db.close();
 });
 
