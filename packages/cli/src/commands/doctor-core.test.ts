@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { captureOutput } from "../../test/helpers/cli-output.ts";
@@ -20,6 +20,7 @@ import {
   runDoctor,
   worstHealthSeverity,
 } from "./doctor-core.ts";
+import type { FixKeyringDeps } from "./doctor-fix-keyring.ts";
 
 type WhichMap = Record<string, string | null>;
 
@@ -55,6 +56,22 @@ const FAKE_PATHS = {
   tempDir: join(FAKE_ROOT, "temp"),
 };
 
+function makeFixKeyringDeps(overrides: Partial<FixKeyringDeps> = {}): FixKeyringDeps {
+  return {
+    exec: {
+      findSecretTool: () => "/usr/bin/secret-tool",
+      lookupStderr: () => "",
+      hasBinary: () => true,
+      runQuery: () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    homeDir: () => "/home/tester",
+    statMode: () => null,
+    mkdirMode: () => {},
+    writeFileMode: () => {},
+    ...overrides,
+  };
+}
+
 function makeDeps(overrides: Partial<DoctorCoreDeps> = {}): DoctorCoreDeps {
   return {
     getCliPlatformPaths: (): CliPlatformPaths => FAKE_PATHS,
@@ -62,6 +79,7 @@ function makeDeps(overrides: Partial<DoctorCoreDeps> = {}): DoctorCoreDeps {
     isProcessAlive: (): boolean => true,
     gatewayStatePath: (): string => join(FAKE_ROOT, "gateway.json"),
     makeClient: (): IPCClient => createMockIpcClient([]).client,
+    fixKeyringDeps: makeFixKeyringDeps(),
     ...overrides,
   };
 }
@@ -255,6 +273,91 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
     );
     expect(out.stdout).toContain("[fail] Gateway: IPC failed");
     expect(process.exitCode).toBe(2);
+  });
+});
+
+describe("runDoctor --fix-keyring wiring", () => {
+  let origExitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    out.reset();
+    origExitCode = process.exitCode;
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+    if (origExitCode !== undefined) process.exitCode = origExitCode;
+  });
+
+  it("plain `nimbus doctor` (no flags) never touches fixKeyringDeps", async () => {
+    let statCalls = 0;
+    let mkdirCalls = 0;
+    let queryCalls = 0;
+    await runDoctor(
+      [],
+      makeDeps({
+        readGatewayState: async () => undefined,
+        fixKeyringDeps: makeFixKeyringDeps({
+          statMode: () => {
+            statCalls += 1;
+            return null;
+          },
+          mkdirMode: () => {
+            mkdirCalls += 1;
+          },
+          exec: {
+            findSecretTool: () => "/usr/bin/secret-tool",
+            lookupStderr: () => "",
+            hasBinary: () => true,
+            runQuery: () => {
+              queryCalls += 1;
+              return { code: 0, stdout: "", stderr: "" };
+            },
+          },
+        }),
+      }),
+    );
+    // The plain diagnostic sweep ran (proves the flag branch was skipped, not
+    // that runDoctor no-op'd for some other reason).
+    expect(out.stdout).toContain("[fail] Gateway: not running");
+    expect(statCalls).toBe(0);
+    expect(mkdirCalls).toBe(0);
+    expect(queryCalls).toBe(0);
+  });
+
+  // Real behaviour is Linux-only (`runFixKeyringCommand` short-circuits to
+  // not-applicable elsewhere), so these assert on the host's real platform()
+  // rather than hardcoding one OS — this suite runs on all three in CI.
+  it("--fix-keyring replaces the diagnostic sweep and returns the fixer's exit code", async () => {
+    await runDoctor(
+      ["--fix-keyring"],
+      makeDeps({
+        fixKeyringDeps: makeFixKeyringDeps({
+          statMode: (p) => (p.endsWith("login.keyring") ? 0o600 : null),
+        }),
+      }),
+    );
+    expect(out.stdout).not.toContain("Gateway:");
+    if (platform() === "linux") {
+      expect(out.stdout).toMatch(/already exists/i);
+      expect(process.exitCode).not.toBe(0);
+    } else {
+      expect(out.stdout).toMatch(/not applicable/i);
+      expect(process.exitCode).toBe(0);
+    }
+  });
+
+  it("--fix-keyring --dry-run reports the plan without exit-2 refusal noise", async () => {
+    await runDoctor(
+      ["--fix-keyring", "--dry-run"],
+      makeDeps({ fixKeyringDeps: makeFixKeyringDeps() }),
+    );
+    if (platform() === "linux") {
+      expect(out.stdout).toMatch(/0700/);
+    } else {
+      expect(out.stdout).toMatch(/not applicable/i);
+    }
+    expect(process.exitCode).toBe(0);
   });
 });
 

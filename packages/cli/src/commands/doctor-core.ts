@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import type { CliPlatformPaths } from "../paths.ts";
+import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
 
 const LINUX_SECRET_TOOL_HINT =
   "secret-tool not found. Install libsecret-tools (Debian/Ubuntu) or libsecret (Fedora/Arch) to use the OS vault on Linux.";
@@ -257,13 +258,17 @@ export function doctorVaultLine(
  * `keepStdout: false` leaves stdout unpiped entirely — used for the secret-tool
  * lookup so a matched secret has nowhere to go.
  */
-function spawnCapture(cmd: readonly string[], keepStdout: boolean): DoctorVaultRun {
+function spawnCapture(
+  cmd: readonly string[],
+  keepStdout: boolean,
+  timeoutMs: number = VAULT_PROBE_TIMEOUT_MS,
+): DoctorVaultRun {
   try {
     const p = Bun.spawnSync({
       cmd: [...cmd],
       stdout: keepStdout ? "pipe" : "ignore",
       stderr: "pipe",
-      timeout: VAULT_PROBE_TIMEOUT_MS,
+      timeout: timeoutMs,
     });
     // stdout is undefined whenever it was not piped, so this is "" by construction.
     return {
@@ -276,12 +281,18 @@ function spawnCapture(cmd: readonly string[], keepStdout: boolean): DoctorVaultR
   }
 }
 
-function createDoctorVaultExec(): DoctorVaultExec {
+/**
+ * `timeoutMs` defaults to the short probe timeout used for the read-only
+ * Vault health check. `--fix-keyring` (`doctor-fix-keyring.ts`) passes a much
+ * longer budget: it spawns a whole `dbus-run-session` + `gnome-keyring-daemon`
+ * round trip, not a single D-Bus property read.
+ */
+export function createDoctorVaultExec(timeoutMs: number = VAULT_PROBE_TIMEOUT_MS): DoctorVaultExec {
   return {
     findSecretTool: () => Bun.which("secret-tool"),
-    lookupStderr: (exe, args) => spawnCapture([exe, ...args], false).stderr,
+    lookupStderr: (exe, args) => spawnCapture([exe, ...args], false, timeoutMs).stderr,
     hasBinary: (name) => Bun.which(name) !== null,
-    runQuery: (cmd) => spawnCapture(cmd, true),
+    runQuery: (cmd) => spawnCapture(cmd, true, timeoutMs),
   };
 }
 
@@ -314,6 +325,8 @@ export interface DoctorCoreDeps {
   readonly isProcessAlive: (pid: number) => boolean;
   readonly gatewayStatePath: (paths: CliPlatformPaths) => string;
   readonly makeClient: (socketPath: string) => IPCClient;
+  /** DI seam for `--fix-keyring` (headless Linux Secret Service fix, #1168) — see doctor-fix-keyring.ts. */
+  readonly fixKeyringDeps: FixKeyringDeps;
 }
 
 export function worstHealthSeverity(rows: ConnectorHealthRow[]): "ok" | "warn" | "fail" {
@@ -437,7 +450,20 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   return exit;
 }
 
-export async function runDoctor(_args: string[], deps: DoctorCoreDeps): Promise<void> {
+export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<void> {
+  // Strictly opt-in: a plain `nimbus doctor` never touches `fixKeyringDeps` and
+  // stays read-only. Only an explicit `--fix-keyring` runs the fixer, and it
+  // replaces the normal diagnostic sweep rather than running alongside it.
+  if (args.includes("--fix-keyring")) {
+    const dryRun = args.includes("--dry-run");
+    const result = runFixKeyringCommand(platform(), deps.fixKeyringDeps, { dryRun });
+    for (const line of result.lines) {
+      console.log(line);
+    }
+    process.exitCode = result.exit;
+    return;
+  }
+
   const paths = deps.getCliPlatformPaths();
   let exit = 0;
   exit = Math.max(exit, doctorPrintBunCheck());
