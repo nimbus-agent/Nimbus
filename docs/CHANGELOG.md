@@ -8,6 +8,67 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-13 — `install.sh` / `install.ps1` can now install from a published release
+  (#1167, partial).** Both installers gain a remote mode: `--from-release [<ver>]` /
+  `-FromRelease <ver>` downloads the versioned asset from
+  `.../releases/download/<tag>/...`, sha256-verifies it against `SHA256SUMS` (an
+  **exactly-one-match**, case-sensitive, `^[0-9a-f]{64}$`-format rule on both scripts —
+  a mirror/proxy that prepends a shadow line for the same filename is rejected, not
+  first-match-accepted), and best-effort-verifies the GPG signature against the
+  embedded, pinned Nimbus release key (degrading to a clearly labelled
+  SIGNATURE-NOT-CHECKED notice when `gpg`/the `.asc` is unavailable — never a silent
+  downgrade). **The `curl | sh` / `irm | iex` one-liner is deliberately still absent
+  from user-facing docs** — issue #1167 is **not** fully closed by this PR; only the
+  underlying capability is real. Two reasons it's held back: (1) the capability
+  becomes true for real users only starting at the **next** release — until then,
+  `releases/latest/download/install.sh` continues to serve the old local-staging-only
+  script, so publishing the one-liner today would point at a script that can't yet do
+  what it claims; (2) `released-install-smoke.yml`, the new workflow that installs a
+  **real published release** end-to-end on all three OSes, ships **unproven** — it has
+  no `push` trigger and must be hand-dispatched once a real release exists. It is also
+  the **only** place anywhere (in this PR or the existing suite) that exercises the
+  GPG **true-positive** signature path — the pinned-fingerprint comparison and the
+  `$NF` primary-fingerprint extraction (the real key signs via a dedicated signing
+  subkey, so a naive substring match on the subkey fingerprint would silently reject
+  every genuine signature) are covered by **nothing else** in-repo, by deliberate
+  decision (a test-only fingerprint-override seam was rejected as a bypass footgun
+  for a `curl | sh` script — see the PR body). Other user-facing fixes bundled in:
+  `install.ps1` wraps its downloads in `$ProgressPreference = "SilentlyContinue"`,
+  measured at **22.8s → 0.13s (~182×)** for an 83.7 MB archive on real Windows
+  PowerShell 5.1 — a genuine 5.1 console-progress-rendering bottleneck, not a CI
+  workaround; the declared PowerShell floor moved **7+ → 5.1**, with the old
+  declarative `#Requires` replaced by a runtime version check (`#Requires` is inert
+  under `iex`, which is exactly how #1167's bug manifested); `--from-release` /
+  `-FromRelease` now **forces** remote mode even when binaries already sit staged
+  beside the script — a real behaviour change, since `release.yml` ships both
+  installer scripts *inside* every macOS tarball and the Windows zip, right next to
+  the binaries they'd otherwise silently prefer; `--local` + `--from-release`
+  together is now a hard error on **both** scripts (the Unix script moved off
+  last-wins to match); and the Linux/`.deb` install instructions on the two surfaces
+  #1169 missed move from `sudo dpkg -i` to `sudo apt install ./...deb` (dependency
+  resolution). Red-proven on Linux (Docker `oven/bun:1.3`): RED
+  <https://github.com/nimbus-agent/Nimbus/actions/runs/31700876964> and
+  <https://github.com/nimbus-agent/Nimbus/actions/runs/31713026480>, GREEN
+  <https://github.com/nimbus-agent/Nimbus/actions/runs/31713429813>.
+- **2026-08-13 — `nimbus doctor --fix-keyring` (Linux, #1168).** Deterministically
+  creates the default Secret Service collection (`login.keyring`) via
+  `dbus-run-session` + `secret-tool`, closing a measured **~1-in-40-to-50 D-Bus
+  name-ownership race** between the unlock and the next Secret Service client (a
+  from-scratch box that only waits on file existence still loses that race ~1/15;
+  polling ownership of `org.freedesktop.secrets` does not), and enforces `0700`/`0600`
+  permissions that gnome-keyring itself does **not** — a pre-loosened `0755` directory
+  or `0666` keyring is silently accepted and served uncorrected today. Refuses outright
+  (never overwrites, truncates, or touches) whenever ANY pre-existing `*.keyring`
+  material or a `default` pointer is already present. **This is justified by what was
+  measured, not by #1168's stated premise**: the issue (and the launch-execution notes
+  behind it) claims the printed remedy fails because `--unlock` must create the
+  collection, escalates to `gcr-prompter`, and dies with "cannot open display" — **that
+  root cause does not reproduce**, independently, on a clean `ubuntu:24.04` container
+  or across a 55-trial spike; the issue's text needs correcting when it closes, not
+  reused as this command's justification. One thing the fix does **not** change:
+  **`dbus-run-session` remains required for every `nimbus start`**, not only the
+  first — a fresh session that skips its own `--unlock` still fails on a from-scratch
+  box even with `login.keyring` already on disk from a prior `--fix-keyring` run.
 - **2026-08-12 — `nimbus negotiate`: the fourteenth built-in agent, a cited contribution brief.**
   `agents.negotiate` / `nimbus negotiate [--since <duration>] [--person <id>] [--json]`. Six
   parallel `AgentCoordinator` lanes assembled entirely from evidence already in the local index —
