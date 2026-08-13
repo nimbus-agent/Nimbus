@@ -48,6 +48,7 @@ dependency on Part A.
 | `scripts/install/lib/release-assets.test.ts` | **Create.** Unit tests for the above. |
 | `scripts/install/lib/release-assets-drift.test.ts` | **Create.** Asserts every requested asset is staged by `release.yml`. |
 | `scripts/install/install-remote.test.ts` | **Create.** Spawns `install.sh` against a locally served fake release. |
+| `scripts/install/serve-fixture.ts` | **Create.** One cross-platform fixture server for the CI job (no Python dependency). |
 | `scripts/install/unix/install.sh` | **Modify.** Add remote mode. |
 | `scripts/install/windows/install.ps1` | **Modify.** Add remote mode + 5.1 support. |
 | `packages/cli/src/commands/doctor-core.ts` | **Modify.** Arg parsing + `--fix-keyring`. |
@@ -371,6 +372,16 @@ MODE="auto"
 WANT_VERSION=""
 DOWNLOAD_DIR=""
 
+# A temp dir must not survive a failed or interrupted install. Each path is
+# guarded before removal: an unset variable would make this `rm -rf ""`, which
+# is harmless today but is one edit away from not being.
+cleanup() {
+  [ -n "${DOWNLOAD_DIR:-}" ] && [ -d "${DOWNLOAD_DIR:-}" ] && rm -rf "$DOWNLOAD_DIR"
+  [ -n "${GNUPGHOME:-}" ] && [ -d "${GNUPGHOME:-}" ] && rm -rf "$GNUPGHOME"
+  return 0
+}
+trap cleanup EXIT INT TERM
+
 resolve_latest_tag() {
   # Follow the /releases/latest redirect. No GitHub API: unauthenticated it is
   # 60 req/hour per IP, shared across CI runners.
@@ -407,7 +418,15 @@ sha256_of() {
 fetch_release() {
   version="$1"
   if [ -z "$version" ]; then
-    tag="$(resolve_latest_tag)" || { echo "Error: could not resolve the latest release" >&2; exit 1; }
+    # Resolution is the one network step with no fallback, so its failure message
+    # must name the escape hatch: --from-release skips resolution entirely, which
+    # is what a proxied or policy-restricted machine needs.
+    if ! tag="$(resolve_latest_tag)"; then
+      echo "Error: could not resolve the latest release tag (network, proxy or firewall)." >&2
+      echo "  Re-run with an explicit version to skip resolution:" >&2
+      echo "    --from-release 2.2.0" >&2
+      exit 1
+    fi
     version="${tag#v}"
   else
     tag="v${version#v}"; version="${tag#v}"
@@ -610,11 +629,36 @@ function Get-NimbusRelease {
 }
 ```
 
-- [ ] **Step 4: Wire remote mode into binary resolution**
+- [ ] **Step 4: Wire remote mode into binary resolution, with cleanup**
 
 Where lines 23-29 currently `throw "Cannot locate ..."`, first attempt
 `Get-NimbusRelease` unless `-Local` was passed, then re-resolve
 `$NimbusSrc` / `$GatewaySrc` from the extracted directory (top level, then `bin\`).
+
+Wrap the download-and-install body in `try`/`finally` so an interrupted or
+failed run does not leave the temp tree behind — the PowerShell equivalent of
+the shell `trap`:
+
+```powershell
+$work = $null
+try {
+  # ... Get-NimbusRelease assigns $work, verify, extract, install ...
+} finally {
+  if ($work -and (Test-Path $work)) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
+  Remove-Item Env:\GNUPGHOME -ErrorAction SilentlyContinue
+}
+```
+
+Also give `Resolve-LatestTag` the same actionable failure message as the shell
+side — resolution is the one step with no fallback, and `-FromRelease <ver>`
+skips it entirely:
+
+```powershell
+catch {
+  throw "Could not resolve the latest release tag (network, proxy or firewall). " +
+        "Re-run with an explicit version to skip resolution: -FromRelease 2.2.0"
+}
+```
 
 - [ ] **Step 5: Verify on PowerShell 7**
 
@@ -673,15 +717,27 @@ NIMBUS_SIGNING_KEY='-----BEGIN PGP PUBLIC KEY BLOCK-----
 <paste the armored key from Step 1 here, verbatim>
 -----END PGP PUBLIC KEY BLOCK-----'
 
+skip_signature_notice() {
+  # Say exactly what was and was not established. The sha256 manifest came down
+  # the same channel as the archive, so it proves integrity, NOT publisher
+  # authenticity — do not let the output imply otherwise.
+  echo "! $1"
+  echo "  Installed after SHA-256 verification only. The checksum manifest was"
+  echo "  fetched over the same channel as the archive, so this proves the file"
+  echo "  arrived intact — NOT that Nimbus published it."
+  echo "  To verify the publisher signature: scripts/release/nimbus-verify.sh --version <ver>"
+}
+
 verify_signature() {
   dir="$1"; base="$2"
-  if ! command -v gpg >/dev/null 2>&1; then
-    echo "! gpg not found — sha256 verified, SIGNATURE NOT CHECKED."
-    echo "  To check it later: scripts/release/nimbus-verify.sh --version <ver>"
+  # `command -v` succeeds for a broken symlink or a stub. Since signature
+  # checking is best-effort, a gpg that cannot run must degrade, not abort.
+  if ! command -v gpg >/dev/null 2>&1 || ! gpg --version >/dev/null 2>&1; then
+    skip_signature_notice "gpg not found or not runnable — SIGNATURE NOT CHECKED."
     return 0
   fi
   if ! curl -fsSL "${base}/SHA256SUMS.asc" -o "${dir}/SHA256SUMS.asc"; then
-    echo "! SHA256SUMS.asc unavailable — sha256 verified, SIGNATURE NOT CHECKED."
+    skip_signature_notice "SHA256SUMS.asc unavailable — SIGNATURE NOT CHECKED."
     return 0
   fi
   GNUPGHOME="$(mktemp -d)"; export GNUPGHOME
@@ -699,9 +755,59 @@ verify_signature() {
 
 - [ ] **Step 3: Implement the PowerShell equivalent**
 
-Same structure, guarded by `Get-Command gpg -ErrorAction SilentlyContinue`.
-Absent `gpg` — the norm on Windows — print the same "SIGNATURE NOT CHECKED"
-line and continue.
+**The key must be written as UTF-8 without a BOM, explicitly.** Measured: on
+Windows PowerShell 5.1 `Out-File` writes UTF-16LE with a BOM (`FF FE 2D 00 …`),
+while PS7 writes UTF-8 (`2D 2D 2D …`). `gpg --import` cannot parse a UTF-16
+armored block, so the embedded key would fail to import on exactly the runtime
+we committed to supporting. `-Encoding utf8` is **also** wrong on 5.1 — it emits
+a BOM, which `gpg` likewise rejects. Never use `Out-File`, `>`, or a pipeline
+into `gpg`.
+
+This path is not rare on Windows: Git for Windows bundles `gpg` and commonly
+puts it on `PATH`.
+
+```powershell
+function Test-NimbusSignature {
+  param([string]$Dir, [string]$Base)
+
+  # Get-Command succeeds for a stub or broken shim; require that it actually runs.
+  $gpg = Get-Command gpg -ErrorAction SilentlyContinue
+  if (-not $gpg) { Write-NimbusSkipNotice "gpg not found - SIGNATURE NOT CHECKED."; return }
+  try { & gpg --version *>$null; if ($LASTEXITCODE -ne 0) { throw } }
+  catch { Write-NimbusSkipNotice "gpg is present but not runnable - SIGNATURE NOT CHECKED."; return }
+
+  try {
+    Invoke-WebRequest -Uri "$Base/SHA256SUMS.asc" -OutFile (Join-Path $Dir "SHA256SUMS.asc") -UseBasicParsing
+  } catch { Write-NimbusSkipNotice "SHA256SUMS.asc unavailable - SIGNATURE NOT CHECKED."; return }
+
+  $home = Join-Path $Dir "gnupg"
+  New-Item -ItemType Directory -Path $home -Force | Out-Null
+  $keyPath = Join-Path $Dir "nimbus-key.asc"
+  # UTF8Encoding($false) == no BOM. This line is the fix; do not simplify it.
+  [System.IO.File]::WriteAllText($keyPath, $NimbusSigningKey, [System.Text.UTF8Encoding]::new($false))
+
+  $env:GNUPGHOME = $home
+  & gpg --quiet --import $keyPath *>$null
+  $out = & gpg --quiet --status-fd 1 --verify (Join-Path $Dir "SHA256SUMS.asc") (Join-Path $Dir "SHA256SUMS") 2>$null
+  Remove-Item Env:\GNUPGHOME -ErrorAction SilentlyContinue
+  if ($out -match "VALIDSIG $NimbusSigningFpr") {
+    Write-Host "OK: GPG signature verified ($NimbusSigningFpr)."
+  } else {
+    throw "SHA256SUMS.asc did not verify against the pinned Nimbus key - refusing to install."
+  }
+}
+```
+
+`Write-NimbusSkipNotice` prints the same wording as the shell
+`skip_signature_notice`: SHA-256 only, manifest fetched over the same channel,
+integrity not authenticity, plus the `nimbus-verify` pointer.
+
+- [ ] **Step 3b: Verify the encoding fix on 5.1**
+
+```powershell
+powershell.exe -NoProfile -Command "[System.IO.File]::WriteAllText(\"$env:TEMP\k.asc\", '-----BEGIN PGP PUBLIC KEY BLOCK-----', [System.Text.UTF8Encoding]::new(`$false)); [System.IO.File]::ReadAllBytes(\"$env:TEMP\k.asc\")[0..2]"
+```
+Expected: `45 45 45`-style ASCII bytes (`2D 2D 2D`), **not** `FF FE`.
 
 - [ ] **Step 4: Test the absent-gpg path**
 
@@ -731,7 +837,61 @@ an archive named exactly as the platform's real asset, computes `SHA256SUMS`,
 serves the directory on `127.0.0.1`, and runs the installer with
 `NIMBUS_INSTALL_BASE_URL` pointed at it.
 
-The Unix serving + install steps, concretely:
+**One server implementation, not three.** The first draft used a Python
+one-liner on Unix and left Windows as "mirror this", which is both a plan gap
+and a second OS-divergent implementation depending on Python being present and
+identical on all three runners. Instead, create
+`scripts/install/serve-fixture.ts` and use it verbatim on every OS — Bun is
+already provisioned on all runners by `.github/actions/setup-nimbus-ci`, and
+this reuses the same `Bun.serve` shape as the Task 3 unit test.
+
+```ts
+// scripts/install/serve-fixture.ts
+// Serves a directory of release fixtures for the install smoke test.
+// Usage: bun scripts/install/serve-fixture.ts <dir> <port>
+const dir = process.argv[2];
+const port = Number(process.argv[3] ?? 8788);
+if (!dir) throw new Error("usage: serve-fixture.ts <dir> <port>");
+
+Bun.serve({
+  port,
+  hostname: "127.0.0.1",
+  async fetch(req) {
+    const name = new URL(req.url).pathname.split("/").pop() ?? "";
+    const file = Bun.file(`${dir}/${name}`);
+    return (await file.exists()) ? new Response(file) : new Response("not found", { status: 404 });
+  },
+});
+console.log(`serving ${dir} on 127.0.0.1:${port}`);
+```
+
+Started in the background per OS, with teardown in an `always()` step so a
+failed install never orphans the process:
+
+```yaml
+      - name: Start the release fixture server
+        shell: bash
+        run: |
+          bun scripts/install/serve-fixture.ts "$RUNNER_TEMP/serve" 8788 &
+          echo $! > "$RUNNER_TEMP/serve.pid"
+          for _ in $(seq 1 50); do
+            curl -fsS "http://127.0.0.1:8788/SHA256SUMS" >/dev/null && break
+            sleep 0.2
+          done
+
+      # ... install steps ...
+
+      - name: Stop the release fixture server
+        if: always()
+        shell: bash
+        run: kill "$(cat "$RUNNER_TEMP/serve.pid")" 2>/dev/null || true
+```
+
+`shell: bash` works on the Windows runner too (Git Bash), so the server
+lifecycle is one implementation across the matrix; only the packing and the
+installer invocation differ per OS.
+
+The Unix packing + install step, concretely:
 
 ```yaml
       - name: Serve a release fixture and install from it (Unix)
@@ -754,21 +914,21 @@ The Unix serving + install steps, concretely:
           tar -czf "$SERVE/$ASSET" -C "$PAYLOAD" .
           ( cd "$SERVE" && shasum -a 256 "$ASSET" > SHA256SUMS )
 
-          ( cd "$SERVE" && python3 -m http.server 8788 --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > "$RUNNER_TEMP/serve.pid" )
-          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:8788/SHA256SUMS" >/dev/null && break; sleep 0.2; done
-
           # Sandboxed HOME so the runner's real profile is untouched.
           export HOME="$RUNNER_TEMP/fakehome"; mkdir -p "$HOME"
           NIMBUS_INSTALL_BASE_URL="http://127.0.0.1:8788" \
             sh scripts/install/unix/install.sh --from-release "$VER" --yes
 
-          kill "$(cat "$RUNNER_TEMP/serve.pid")" || true
           test -x "$HOME/.local/bin/nimbus" || { echo "::error::installer did not place the binary"; exit 1; }
           "$HOME/.local/bin/nimbus" --version
 ```
 
-Mirror for Windows with `Expand-Archive`-compatible zip packing and the same
-`NIMBUS_INSTALL_BASE_URL`.
+For Windows, pack `nimbus-headless-windows-x64.zip` with `Compress-Archive`,
+write `SHA256SUMS` with `Get-FileHash` (lower-cased, two-space separated to match
+the `shasum` format the installer parses), sandbox `$env:LOCALAPPDATA` to
+`$env:RUNNER_TEMP\fakelocal`, and invoke the installer with the same
+`NIMBUS_INSTALL_BASE_URL`. Run this leg **twice** — once under `shell: pwsh` and
+once under `shell: powershell` — per Step 2.
 
 **Naming caution:** `install-smoke.yml` already has a step called *"Stage a fake
 release dir"* which serves nothing — it is the local-staging copy. Do not reuse
