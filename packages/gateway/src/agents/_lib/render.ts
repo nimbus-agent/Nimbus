@@ -582,6 +582,54 @@ function renderNegotiateSubjectLine(subject: NegotiateSubject): string {
 }
 
 /**
+ * Escapes a citation title for the `[...]` position of a Markdown link.
+ *
+ * ONE pass over a character class that INCLUDES the backslash — deliberately not a chain of
+ * `.replace(/\[/g, "\\[").replace(/\]/g, "\\]")`. That chain is order-dependent and wrong:
+ * a title containing `\[` has its bracket escaped to `\\[`, where the doubled backslash
+ * renders as a literal backslash and the bracket is live again, breaking out of the link
+ * text. Item titles are EXTERNAL input (a PR title, an issue title, a decision statement),
+ * so "no one would write that" is not an argument. CodeQL `js/incomplete-sanitization`
+ * caught exactly this. Escaping the escape character first — or in the same pass — is the
+ * only correct shape.
+ */
+function escapeMarkdownLinkText(text: string): string {
+  return text.replace(/[\\[\]]/g, (c) => `\\${c}`);
+}
+
+/**
+ * The `(...)` target of a citation link, or `null` when the url cannot be rendered safely.
+ *
+ * Two separate guards, both fail-safe toward plain text:
+ *
+ * 1. **Scheme allow-list.** A connector-supplied `canonical_url` is external input, and this
+ *    brief is rendered in the Tauri renderer — a `javascript:` or `data:` target would be a
+ *    live script-execution vector with only the CSP (I8) behind it. Written as what MAY pass,
+ *    never as a list of what may not.
+ * 2. **Delimiter encoding.** `(`, `)` and whitespace terminate the target in Markdown, so a
+ *    url containing them would truncate the link and spill the remainder into the document
+ *    as text — worst case pointing the citation somewhere other than the evidence.
+ *
+ * The parens are encoded from an explicit map, NOT via `encodeURIComponent`: that function
+ * leaves `(`, `)`, `!`, `'` and `*` untouched — they are "unreserved marks" in its spec — so
+ * `encodeURIComponent(")")` returns `)` and the guard would be silently inert for the two
+ * characters it exists to neutralise. Whitespace is the one case `encodeURIComponent` does
+ * handle, and the `URL` parser has usually already encoded it.
+ */
+const HREF_DELIMITER_ESCAPES: Readonly<Record<string, string>> = { "(": "%28", ")": "%29" };
+
+function safeEvidenceHref(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  return parsed.href.replace(/[()\s]/g, (c) => HREF_DELIMITER_ESCAPES[c] ?? encodeURIComponent(c));
+}
+
+/**
  * The citation block under a lane's headline count.
  *
  * Returns `[]` — not a "no evidence" line — when there is nothing to cite: a lane that
@@ -589,15 +637,14 @@ function renderNegotiateSubjectLine(subject: NegotiateSubject): string {
  * truncation line is emitted from `total - refs.length` so a capped list can never read as
  * exhaustive, the same self-disclosure rule `statsCoverage` follows.
  *
- * A ref with no url renders as plain text, never as a link to nowhere. Titles are escaped
- * for the `[...]` position: an unescaped `]` in a PR title (`"fix [ci] flake"`) truncates
- * the link text mid-title in every Markdown renderer, silently mis-citing the evidence.
+ * A ref with no usable url renders as plain text, never as a link to nowhere.
  */
 function renderNegotiateEvidence(evidence: NegotiateEvidence): string[] {
   if (evidence.refs.length === 0) return [];
   const lines = evidence.refs.map((r) => {
-    const title = r.title.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
-    return r.url === null ? `  - ${title}` : `  - [${title}](${r.url})`;
+    const title = escapeMarkdownLinkText(r.title);
+    const href = r.url === null ? null : safeEvidenceHref(r.url);
+    return href === null ? `  - ${title}` : `  - [${title}](${href})`;
   });
   const remaining = evidence.total - evidence.refs.length;
   if (remaining > 0) lines.push(`  - …and ${String(remaining)} more not listed`);

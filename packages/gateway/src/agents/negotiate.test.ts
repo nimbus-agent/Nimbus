@@ -410,6 +410,50 @@ test("an evidence ref with no url renders as text, never as a link to nowhere", 
   db.close();
 });
 
+test("a citation cannot break out of its link via a crafted title or url", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:me");
+  // A title whose backslash re-arms the bracket under naive ordered escaping (`\[` becomes
+  // `\\[`), and a url whose `)` would terminate the Markdown target early.
+  db.run("UPDATE item SET title = ?, canonical_url = ?, url = NULL WHERE type = 'pr'", [
+    "evil\\[x](http://attacker.example)y",
+    "https://example.test/a)b c",
+  ]);
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  const markdown = renderNegotiate(brief);
+
+  // Asserted as the WHOLE bullet, because the halves are only safe together: the attacker's
+  // `](...)` survives as inert TEXT (its brackets escaped, so it cannot close the link text
+  // and open a target), while the real url supplies the only `(...)` target, with its `)`
+  // and space percent-encoded so they cannot terminate it early. Checking merely that the
+  // attacker string is absent would pass on a render that escaped nothing but dropped it.
+  expect(markdown).toContain(
+    "- [evil\\\\\\[x\\](http://attacker.example)y](https://example.test/a%29b%20c)",
+  );
+  db.close();
+});
+
+test("a non-http citation url degrades to plain text rather than a live link", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:me");
+  // This brief renders in the Tauri renderer; a `javascript:` target would be a script
+  // vector with only the CSP behind it. The scheme allow-list is written as what MAY pass.
+  db.run("UPDATE item SET canonical_url = ?, url = NULL WHERE type = 'pr'", [
+    "javascript:alert(1)",
+  ]);
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  const markdown = renderNegotiate(brief);
+
+  expect(markdown).not.toContain("javascript:");
+  // Degraded, not dropped — the evidence is still named.
+  expect(markdown).toContain("PR title 1");
+  db.close();
+});
+
 test("personal sources gate the evidence list exactly as they gate the counts", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
