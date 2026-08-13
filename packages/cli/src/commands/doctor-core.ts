@@ -81,13 +81,28 @@ const BOOL_PATTERN = /(?:^|\s)(?:boolean|b)\s+(true|false)\b/m;
 // ---------------------------------------------------------------------------
 // Per-state remedies (issue #1168, Controller Ruling 16)
 //
-// A 55-trial container spike (see doctor-fix-keyring.ts) found the wrapper
-// below genuinely works — no gcr-prompter escalation, no "cannot open
-// display" — so it is never described as broken. What IS true: each failing
-// state has a different cause, so each gets only the remedy that actually
-// addresses it:
-//   - not-installed / no-session-bus: `--fix-keyring` does not apply — the
-//     binary is missing, or there is no D-Bus session to run it in.
+// The 55-trials-0-failures result belongs to the POLLING-AUGMENTED sequence
+// inside doctor-fix-keyring.ts's buildFixScript() — the one that polls
+// ownership of org.freedesktop.secrets before touching Secret Service.
+// DBUS_SESSION_WRAPPER / SESSION_REQUIRED_HINT below is the PLAIN,
+// non-polling sequence handed to users across four states, and per Task 8's
+// own record it still loses the D-Bus name-ownership race roughly
+// 1-in-40-to-50 on a from-scratch box (no login.keyring yet) — the race is
+// closed only where the poll runs. Running `nimbus doctor --fix-keyring`
+// first removes that residual risk for the from-scratch case, since it
+// creates the keyring deterministically. Nothing here claims the plain
+// wrapper is broken — Ruling 16 confirmed it genuinely works, no
+// gcr-prompter escalation, no "cannot open display" — only that it carries
+// this specific, measured residual risk before a keyring exists.
+//
+// Each failing state has a different cause, so each gets only the remedy
+// that actually addresses it:
+//   - not-installed: `--fix-keyring` does not apply — secret-tool itself is
+//     missing, so nothing in the fixer can run either.
+//   - no-session-bus: `--fix-keyring` does not apply — it spawns its own
+//     ephemeral D-Bus session via dbus-run-session, but that session does
+//     not persist for the next `nimbus start`, so it cannot fix an ambient
+//     "no session bus" condition.
 //   - no-collection: exactly what `--fix-keyring` fixes (deterministically,
 //     closing the D-Bus name-ownership race and enforcing 0700/0600).
 //   - locked / no-secret-service: `--fix-keyring` refuses to touch an

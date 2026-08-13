@@ -152,6 +152,20 @@ describe("doctorVaultLine — marks and messages", () => {
     expect(line).toContain("nimbus doctor --fix-keyring");
   });
 
+  it("uses --fix-keyring exclusively for no-collection — no session-wrapper text alongside it", () => {
+    const line = lineOf({ alias: { code: 0, stdout: ALIAS_NONE, stderr: "" } });
+    expect(line).not.toContain("dbus-run-session");
+    expect(line).not.toContain("gnome-keyring-daemon --unlock");
+  });
+
+  it("gives unverified the session wrapper text too, not --fix-keyring", () => {
+    const line = lineOf({ tools: [] });
+    expect(line).toStartWith("[warn] Vault:");
+    expect(line).toContain("dbus-run-session");
+    expect(line).toContain("gnome-keyring-daemon --unlock");
+    expect(line).not.toContain("--fix-keyring");
+  });
+
   it("tells locked that --fix-keyring will not help and gives the session wrapper instead", () => {
     const line = lineOf({ locked: { code: 0, stdout: LOCKED_TRUE, stderr: "" } });
     expect(line).toContain("--fix-keyring will not help");
@@ -165,6 +179,7 @@ describe("doctorVaultLine — marks and messages", () => {
       { stderr: STDERR_NO_PROVIDER },
       { alias: { code: 0, stdout: ALIAS_NONE, stderr: "" } },
       { locked: { code: 0, stdout: LOCKED_TRUE, stderr: "" } },
+      { tools: [] }, // unverified
     ];
     for (const s of failures) {
       const line = lineOf(s);
