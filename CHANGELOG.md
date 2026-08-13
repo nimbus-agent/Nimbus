@@ -8,6 +8,7 @@ All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-
 ### Features
 
 * **agents:** nimbus negotiate — a cited contribution brief ([#1166](https://github.com/nimbus-agent/Nimbus/issues/1166)) ([fa807e3](https://github.com/nimbus-agent/Nimbus/commit/fa807e30377ae6e121b58eacb0b304d85b73a4fe))
+* **ipc:** tag agent.chunk with a client-supplied streamId and add workflow.cancel ([#1165](https://github.com/nimbus-agent/Nimbus/issues/1165)) ([5779488](https://github.com/nimbus-agent/Nimbus/commit/5779488c77871113aeaecb7c9fa33c2b82ab540b))
 
 ## [2.1.0](https://github.com/nimbus-agent/Nimbus/compare/v2.0.0...v2.1.0) (2026-08-12)
 
