@@ -720,7 +720,8 @@ jobs:
           # sqlite-vec sidecar — the real Windows zip ships vec0.dll at TOP LEVEL,
           # alongside the two .exe files (release.yml's `Stage Windows archive` step).
           # Copy-Item's wildcard below picks it up into the archive automatically.
-          Copy-Item (Join-Path "dist" "vec0.dll") (Join-Path $payload "vec0.dll")
+          # TEMP: red-proof — omitted on purpose to prove the new assertion can fail.
+          # Copy-Item (Join-Path "dist" "vec0.dll") (Join-Path $payload "vec0.dll")
 
           # scripts/install/lib/release-assets.ts's assetNameFor(): unversioned,
           # binaries at TOP LEVEL of the zip (unlike the Linux tarball's bin/).
