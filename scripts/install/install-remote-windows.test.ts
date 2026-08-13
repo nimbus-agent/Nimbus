@@ -1,13 +1,44 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const pwsh = Bun.which("pwsh");
 const skip = !pwsh;
+// The bad-signature test needs a REAL gpg to reject a bad signature with
+// (rather than degrade via the best-effort skip path), so it needs its own,
+// stricter guard on top of `skip`.
+const skipSigCheck = skip || !Bun.which("gpg");
 
 const ASSET_NAME = "nimbus-headless-windows-x64.zip";
 const INSTALL_PS1 = join("scripts", "install", "windows", "install.ps1");
+
+/**
+ * Builds a full process environment (same shape `runInstallPs1` accepts)
+ * with gpg's directory removed from PATH. Unlike the Unix side, this is
+ * safe as a plain directory-exclusion: install.ps1's happy path uses only
+ * built-in PowerShell cmdlets (Invoke-WebRequest, Expand-Archive,
+ * Get-FileHash, ...) for everything except gpg itself -- pwsh is already
+ * resolved by the PARENT process's own spawn call, not by this env -- so
+ * there is no risk of also removing some OTHER tool that happens to share
+ * gpg's directory (the risk that rules out this approach on the Unix side,
+ * where gpg/curl/tar/sha256sum commonly all live in /usr/bin together).
+ */
+function envWithoutGpg(
+  extra: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const gpgPath = Bun.which("gpg");
+  const env: Record<string, string | undefined> = { ...process.env, ...extra };
+  if (!gpgPath) return env;
+  const gpgDir = dirname(gpgPath).toLowerCase();
+  // Windows env var names are case-insensitive; process.env may key this as
+  // "Path" rather than "PATH" -- find whichever key is actually present so
+  // we rewrite it in place instead of leaving two ambiguous PATH-ish keys.
+  const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
+  const filtered = (env[pathKey] ?? "").split(";").filter((seg) => seg.toLowerCase() !== gpgDir);
+  env[pathKey] = filtered.join(";");
+  return env;
+}
 
 /**
  * Builds a zip from a payload directory using PowerShell's own
@@ -200,6 +231,100 @@ test.skipIf(skip)(
       });
       expect(exitCode).not.toBe(0);
       expect(stderr).toContain("checksum mismatch");
+      const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
+      expect(await Bun.file(installed).exists()).toBe(false);
+    } finally {
+      server.stop(true);
+      await cleanupUserPathContaining(localAppData);
+    }
+  },
+);
+
+test.skipIf(skip)(
+  "install.ps1 installs and prints the skip notice when gpg is absent",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-nogpg-"));
+    const localAppData = await mkdtemp(join(work, "lad-"));
+
+    const payload = await makePayload("genuine-cli\n");
+    const zipPath = join(work, ASSET_NAME);
+    await createZip(payload, zipPath);
+    const zipBytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex");
+    const sums = `${digest}  ${ASSET_NAME}\n`;
+
+    const server = serveFakeRelease(zipBytes, sums);
+    try {
+      const { stdout, stderr, exitCode } = await runInstallPs1(
+        ["-FromRelease", "2.2.0", "-Yes"],
+        envWithoutGpg({
+          LOCALAPPDATA: localAppData,
+          NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+        }),
+      );
+      const combined = stdout + stderr;
+      expect(combined).toContain("SIGNATURE NOT CHECKED");
+      expect(combined).toContain("gpg not found");
+      // The notice must say what WAS and was NOT established, not just fail silent.
+      expect(combined).toContain("proves the file");
+      expect(combined).toContain("NOT that Nimbus published it");
+      expect(combined).toContain("scripts/release/nimbus-verify.sh --version <ver>");
+      expect(stdout).toContain("sha256 verified");
+      expect(exitCode).toBe(0);
+      const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
+      expect(await Bun.file(installed).exists()).toBe(true);
+    } finally {
+      server.stop(true);
+      await cleanupUserPathContaining(localAppData);
+    }
+  },
+);
+
+test.skipIf(skipSigCheck)(
+  "install.ps1 aborts and installs nothing on a bad signature (gpg present)",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-badsig-"));
+    const localAppData = await mkdtemp(join(work, "lad-"));
+
+    const payload = await makePayload("genuine-cli\n");
+    const zipPath = join(work, ASSET_NAME);
+    await createZip(payload, zipPath);
+    const zipBytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex");
+    const sums = `${digest}  ${ASSET_NAME}\n`;
+
+    // Not a valid PGP signature at all — Test-NimbusSignature must reject
+    // this, never treat an unparsable .asc as "unavailable" (that would
+    // silently downgrade an abort into a skip).
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith("/SHA256SUMS.asc")) return new Response("this is not a signature\n");
+        if (path.endsWith("/SHA256SUMS")) return new Response(sums);
+        if (path.endsWith(`/${ASSET_NAME}`)) return new Response(zipBytes);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    try {
+      const { stdout, stderr, exitCode } = await runInstallPs1(["-FromRelease", "2.2.0", "-Yes"], {
+        ...process.env,
+        LOCALAPPDATA: localAppData,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      expect(exitCode).not.toBe(0);
+      // This is the top-level `throw` message at the Test-NimbusSignature
+      // call site (uncaught, so it lands on stderr) — Test-NimbusSignature's
+      // own more detailed Write-Warning text lands on stdout instead (Write-
+      // Warning is not a pipeline write, so it never risks the array-
+      // coercion trap, but it also does not land on stderr under `pwsh
+      // -File`; measured).
+      expect(stderr).toContain("signature verification failed");
+      const combined = stdout + stderr;
+      expect(combined).toContain("did not verify against the pinned Nimbus key");
+      // sha256 passed; only the signature failed — the abort must be reached,
+      // not the checksum-mismatch path from another test in this file.
+      expect(stdout).toContain("sha256 verified");
       const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
       expect(await Bun.file(installed).exists()).toBe(false);
     } finally {

@@ -14,14 +14,16 @@ DRY_RUN=0
 MODE="auto"
 WANT_VERSION=""
 FETCHED=0
+LOCAL_REQUESTED=0
+REMOTE_REQUESTED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes) ASSUME_YES=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
-    --local) MODE="local"; shift ;;
+    --local) LOCAL_REQUESTED=1; shift ;;
     --from-release)
-      MODE="remote"
+      REMOTE_REQUESTED=1
       # A following token that looks like another flag (or is absent) means
       # "latest" — don't swallow e.g. the --yes in `--from-release --yes`.
       case "${2:-}" in
@@ -30,7 +32,7 @@ while [ $# -gt 0 ]; do
       esac
       ;;
     --from-release=*)
-      MODE="remote"
+      REMOTE_REQUESTED=1
       WANT_VERSION="${1#*=}"
       shift
       ;;
@@ -41,6 +43,7 @@ Usage: $(basename "$0") [-y|--yes] [--dry-run] [--local] [--from-release [<ver>]
   --dry-run              Print planned actions and exit
   --local                Require binaries staged beside this script (no network)
   --from-release [<ver>] Download a release tarball (latest, or a specific version)
+  --local and --from-release are mutually exclusive.
 EOF
       exit 0
       ;;
@@ -51,6 +54,16 @@ EOF
   esac
 done
 
+# Mirrors install.ps1's explicit throw: silently honoring the last of two
+# contradictory flags is a surprise in the same class as Ruling 11 below —
+# fail loudly instead of guessing which one the caller meant.
+if [ "$LOCAL_REQUESTED" -eq 1 ] && [ "$REMOTE_REQUESTED" -eq 1 ]; then
+  echo "Error: --local and --from-release are mutually exclusive." >&2
+  exit 2
+fi
+[ "$LOCAL_REQUESTED" -eq 1 ] && MODE="local"
+[ "$REMOTE_REQUESTED" -eq 1 ] && MODE="remote"
+
 REPO="nimbus-agent/Nimbus"
 BASE_URL="${NIMBUS_INSTALL_BASE_URL:-}"   # testing seam; unset in real use
 DOWNLOAD_DIR=""
@@ -59,28 +72,100 @@ DOWNLOAD_DIR=""
 # guarded before removal: an unset variable would make this `rm -rf ""`, which
 # is harmless today but is one edit away from not being.
 #
-# GNUPGHOME is deliberately NOT cleaned up here. It is an inherited
-# environment variable this script never sets — `export GNUPGHOME=...` is a
-# common, documented way to point gpg at a real keyring — so removing it here
-# would delete a directory this script does not own. Task 5 (signature
-# verification) must clean up a SCRIPT-OWNED variable it sets itself (e.g. a
-# dedicated SIG_TMPDIR created via mktemp -d), never an inherited one.
+# GNUPGHOME is deliberately NOT cleaned up here, and this script never reads
+# or sets it. It is an inherited environment variable — `export
+# GNUPGHOME=...` is a common, documented way to point gpg at a real keyring —
+# so removing it here would delete a directory this script does not own.
+# verify_signature() below uses `gpg --homedir <script-owned dir>` for every
+# gpg invocation instead, which never touches $GNUPGHOME at all, and nests
+# that homedir inside $DOWNLOAD_DIR so this same trap cleans it up as part of
+# the download dir it already owns — no separate tracked variable needed.
 cleanup() {
   [ -n "${DOWNLOAD_DIR:-}" ] && [ -d "${DOWNLOAD_DIR:-}" ] && rm -rf "$DOWNLOAD_DIR"
   return 0
 }
 trap cleanup EXIT INT TERM
 
-# Signature verification is added in a later task. For now these are working
-# stubs: they print the skip notice and always succeed, so remote installs are
-# not blocked on a check that does not exist yet.
+# Pinned fingerprint of the PRIMARY Nimbus release-signing key. Embedded so no
+# keyserver is contacted at install time. NOTE: this is a RELIABILITY
+# measure, not a stronger trust root — an attacker who can swap this script
+# can swap this key too. It defends a tampered release asset given an
+# authentic script; scripts/release/nimbus-verify.sh --version <ver> is the
+# real, out-of-band publisher-authenticity check.
+NIMBUS_SIGNING_FPR="5A20457CCD8B53FFAA945240886ADA6B487CAB6E"
+NIMBUS_SIGNING_KEY='-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEafo5vhYJKwYBBAHaRw8BAQdAJ5GZYXl/HDGCuEDLnHgVMTuRJXhZ5fceSCmK
+Qi6Jj8G0N05pbWJ1cyBBZ2VudCBSZWxlYXNlIFNpZ25pbmcgPHJlbGVhc2VAbmlt
+YnVzLWFnZW50LmRldj6IkwQTFgoAOxYhBFogRXzNi1P/qpRSQIhq2mtIfKtuBQJp
++jm+AhsBBQsJCAcCAiICBhUKCQgLAgQWAgMBAh4HAheAAAoJEIhq2mtIfKtuwjIA
+/2wheC2uO3pTNCKKwilgaMsU8GRzs0ujJzkWoankadqjAP9VWiYFI2isRbhZaWbD
+v4twRB0VYQaD9dl4LBmZC+BBALgzBGn6Oc4WCSsGAQQB2kcPAQEHQB/G7FMHaU10
+cf031erCIP4kVrwf+FhuTRAh3uDL7X/LiPUEGBYKACYWIQRaIEV8zYtT/6qUUkCI
+atprSHyrbgUCafo5zgIbAgUJA8JnAACBCRCIatprSHyrbnYgBBkWCgAdFiEExPMx
+6Rgnz4l8bEfvFWVUZU9KBjkFAmn6Oc4ACgkQFWVUZU9KBjnhLgEAiaC4VLnPq7F/
+zlB+dF7ziR+F/OgB1glw+h9PrFzyMqYBAKRBn7vmY1bu6Y3PBmF6/7GDn3C6hDT4
+q5uKE64QVrQLbtEA/AqKCepCe7jvFFZCdYtOzm7vnZJGUeeKrionBzqtSQSmAQDG
+GZj8E1UHHwDCVM+4vVet/0q+U2Lgczx9nmZ2fjKlDw==
+=4lgY
+-----END PGP PUBLIC KEY BLOCK-----'
+
 skip_signature_notice() {
-  echo "SIGNATURE NOT CHECKED — publisher verification is not implemented yet." >&2
+  # Say exactly what was and was not established. The sha256 manifest came
+  # down the same channel as the archive, so it proves integrity, NOT
+  # publisher authenticity — do not let the output imply otherwise.
+  echo "! $1" >&2
+  echo "  Installed after SHA-256 verification only. The checksum manifest was" >&2
+  echo "  fetched over the same channel as the archive, so this proves the file" >&2
+  echo "  arrived intact — NOT that Nimbus published it." >&2
+  echo "  To verify the publisher signature: scripts/release/nimbus-verify.sh --version <ver>" >&2
 }
 
 verify_signature() {
-  skip_signature_notice
-  return 0
+  dir="$1"; base="$2"
+  # `command -v` succeeds for a broken symlink or a stub. Since signature
+  # checking is best-effort, a gpg that cannot run must degrade, not abort.
+  if ! command -v gpg >/dev/null 2>&1 || ! gpg --version >/dev/null 2>&1; then
+    skip_signature_notice "gpg not found or not runnable — SIGNATURE NOT CHECKED."
+    return 0
+  fi
+  if ! curl -fsSL "${base}/SHA256SUMS.asc" -o "${dir}/SHA256SUMS.asc"; then
+    skip_signature_notice "SHA256SUMS.asc unavailable — SIGNATURE NOT CHECKED."
+    return 0
+  fi
+
+  # A dedicated GNUPGHOME nested inside the already-tracked download dir
+  # ($dir == $DOWNLOAD_DIR) — never the caller's inherited $GNUPGHOME (this
+  # script never reads or sets that variable; --homedir is used instead of
+  # `export GNUPGHOME` for every gpg call below). Nesting it inside
+  # $DOWNLOAD_DIR means the existing `cleanup` trap removes it automatically;
+  # no new tracked global or trap arm is needed. See the warning above
+  # cleanup() for why an inherited GNUPGHOME must never be touched.
+  sig_home="${dir}/gnupg-sig"
+  mkdir -p "$sig_home"
+  chmod 700 "$sig_home" 2>/dev/null || true
+  printf '%s\n' "$NIMBUS_SIGNING_KEY" | gpg --homedir "$sig_home" --quiet --import 2>/dev/null
+
+  # VALIDSIG line layout (GPG 1.4+):
+  #   [GNUPG:] VALIDSIG <signing-fp> <date> <ts> <expire> <ver> <reserved>
+  #                     <pubkey-algo> <hash-algo> <sig-class> <primary-fp>
+  # Field 3 is the signing SUBKEY's fingerprint; the LAST field is the
+  # PRIMARY fingerprint, which is what NIMBUS_SIGNING_FPR pins. The real
+  # Nimbus release key signs via a dedicated signing subkey (verified against
+  # the local keyring while authoring this), so a naive
+  # `grep "VALIDSIG <fpr>"` anchors field 3 and would NEVER match a genuine
+  # signature — mirrors scripts/release/nimbus-verify.sh's field-extraction
+  # approach (awk $NF), not a substring grep.
+  verify_out="$(gpg --homedir "$sig_home" --quiet --status-fd 1 --verify "${dir}/SHA256SUMS.asc" "${dir}/SHA256SUMS" 2>/dev/null || true)"
+  primary_fp="$(printf '%s\n' "$verify_out" | awk '/^\[GNUPG:\] VALIDSIG/ {print $NF; exit}')"
+
+  if [ -n "$primary_fp" ] && [ "$primary_fp" = "$NIMBUS_SIGNING_FPR" ]; then
+    echo "✓ GPG signature verified (${NIMBUS_SIGNING_FPR})."
+    return 0
+  fi
+  echo "Error: SHA256SUMS.asc did not verify against the pinned Nimbus key — refusing to install." >&2
+  rm -rf "$dir"
+  exit 1
 }
 
 # Under `curl … | sh`, stdin IS the script — a bare `read -r` would consume
@@ -210,8 +295,15 @@ if [ ! -x "$NIMBUS_SRC" ] || [ ! -x "$GATEWAY_SRC" ]; then
   GATEWAY_SRC="${SCRIPT_DIR}/bin/nimbus-gateway"
 fi
 
+# An explicit --from-release always forces remote mode, even when binaries
+# are staged beside the script -- release.yml ships install.sh INSIDE both
+# macOS tarballs alongside the binaries they unpack with, so without this a
+# user who extracts 2.2.0 and runs `./install.sh --from-release 2.3.0` would
+# silently install 2.2.0 instead. Mirrors install.ps1's $NeedFetch.
 NEED_FETCH=0
-if { [ ! -x "$NIMBUS_SRC" ] || [ ! -x "$GATEWAY_SRC" ]; } && [ "$MODE" != "local" ]; then
+if [ "$MODE" = "remote" ]; then
+  NEED_FETCH=1
+elif [ "$MODE" != "local" ] && { [ ! -x "$NIMBUS_SRC" ] || [ ! -x "$GATEWAY_SRC" ]; }; then
   NEED_FETCH=1
 fi
 

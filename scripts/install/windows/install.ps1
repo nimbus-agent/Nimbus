@@ -49,11 +49,33 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin"
 $Repo = "nimbus-agent/Nimbus"
 $Asset = "nimbus-headless-windows-x64.zip"
 
-# Signature verification is added in a later task. For now these are working
-# stubs: they print the skip notice and always succeed, so remote installs are
-# not blocked on a check that does not exist yet.
-#
-# WARNING for Task 5: the call site below does `if (-not (Test-NimbusSignature ...))`.
+# Pinned fingerprint of the PRIMARY Nimbus release-signing key. Embedded so no
+# keyserver is contacted at install time. NOTE: this is a RELIABILITY
+# measure, not a stronger trust root -- an attacker who can swap this script
+# can swap this key too. It defends a tampered release asset given an
+# authentic script; scripts/release/nimbus-verify.sh --version <ver> is the
+# real, out-of-band publisher-authenticity check.
+$NimbusSigningFpr = "5A20457CCD8B53FFAA945240886ADA6B487CAB6E"
+$NimbusSigningKey = @'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEafo5vhYJKwYBBAHaRw8BAQdAJ5GZYXl/HDGCuEDLnHgVMTuRJXhZ5fceSCmK
+Qi6Jj8G0N05pbWJ1cyBBZ2VudCBSZWxlYXNlIFNpZ25pbmcgPHJlbGVhc2VAbmlt
+YnVzLWFnZW50LmRldj6IkwQTFgoAOxYhBFogRXzNi1P/qpRSQIhq2mtIfKtuBQJp
++jm+AhsBBQsJCAcCAiICBhUKCQgLAgQWAgMBAh4HAheAAAoJEIhq2mtIfKtuwjIA
+/2wheC2uO3pTNCKKwilgaMsU8GRzs0ujJzkWoankadqjAP9VWiYFI2isRbhZaWbD
+v4twRB0VYQaD9dl4LBmZC+BBALgzBGn6Oc4WCSsGAQQB2kcPAQEHQB/G7FMHaU10
+cf031erCIP4kVrwf+FhuTRAh3uDL7X/LiPUEGBYKACYWIQRaIEV8zYtT/6qUUkCI
+atprSHyrbgUCafo5zgIbAgUJA8JnAACBCRCIatprSHyrbnYgBBkWCgAdFiEExPMx
+6Rgnz4l8bEfvFWVUZU9KBjkFAmn6Oc4ACgkQFWVUZU9KBjnhLgEAiaC4VLnPq7F/
+zlB+dF7ziR+F/OgB1glw+h9PrFzyMqYBAKRBn7vmY1bu6Y3PBmF6/7GDn3C6hDT4
+q5uKE64QVrQLbtEA/AqKCepCe7jvFFZCdYtOzm7vnZJGUeeKrionBzqtSQSmAQDG
+GZj8E1UHHwDCVM+4vVet/0q+U2Lgczx9nmZ2fjKlDw==
+=4lgY
+-----END PGP PUBLIC KEY BLOCK-----
+'@
+
+# WARNING: the call site below does `if (-not (Test-NimbusSignature ...))`.
 # PowerShell functions implicitly return every unsuppressed pipeline output as
 # a single (possibly multi-element) array, and `-not` on a non-empty array is
 # ALWAYS $false regardless of its contents -- so a single stray unsuppressed
@@ -62,14 +84,90 @@ $Asset = "nimbus-headless-windows-x64.zip"
 # truthy array and the "if signature invalid, refuse to install" gate goes
 # fail-OPEN. Keep every intermediate step suppressed (`| Out-Null`, or
 # `[void]`) and end the function with exactly one bare `return $true`/`return $false`.
+# Write-Warning/Write-Host write to the Warning/host streams, not the success
+# (pipeline-output) stream, so they are safe to use unsuppressed for
+# human-facing text without risking the array-coercion trap above.
 function Write-SignatureSkipNotice {
-  Write-Warning "SIGNATURE NOT CHECKED -- publisher verification is not implemented yet."
+  param([string]$Reason)
+  # Say exactly what was and was not established. The sha256 manifest came
+  # down the same channel as the archive, so it proves integrity, NOT
+  # publisher authenticity -- do not let the output imply otherwise.
+  Write-Warning $Reason
+  Write-Warning "  Installed after SHA-256 verification only. The checksum manifest was"
+  Write-Warning "  fetched over the same channel as the archive, so this proves the file"
+  Write-Warning "  arrived intact -- NOT that Nimbus published it."
+  Write-Warning "  To verify the publisher signature: scripts/release/nimbus-verify.sh --version <ver>"
 }
 
 function Test-NimbusSignature {
   param([string]$Dir, [string]$Base)
-  Write-SignatureSkipNotice
-  return $true
+
+  # Get-Command succeeds for a stub or broken shim; require that it actually runs.
+  $gpgCmd = Get-Command gpg -ErrorAction SilentlyContinue
+  if (-not $gpgCmd) {
+    Write-SignatureSkipNotice "gpg not found -- SIGNATURE NOT CHECKED."
+    return $true
+  }
+  try {
+    & gpg --version *>$null
+    if ($LASTEXITCODE -ne 0) { throw "gpg exited $LASTEXITCODE" }
+  } catch {
+    Write-SignatureSkipNotice "gpg is present but not runnable -- SIGNATURE NOT CHECKED."
+    return $true
+  }
+
+  $ascPath = Join-Path $Dir "SHA256SUMS.asc"
+  try {
+    Invoke-WebRequest -Uri "$Base/SHA256SUMS.asc" -OutFile $ascPath -UseBasicParsing
+  } catch {
+    Write-SignatureSkipNotice "SHA256SUMS.asc unavailable -- SIGNATURE NOT CHECKED."
+    return $true
+  }
+
+  # A dedicated GNUPGHOME nested inside $Dir (the caller's already-tracked
+  # $WorkDir) -- never $env:GNUPGHOME, which this function never reads or
+  # sets. `--homedir` is used on every gpg invocation below instead of
+  # exporting the environment variable, so the caller's inherited
+  # $env:GNUPGHOME (if any) is never touched. Nesting under $Dir means the
+  # top-level `finally { Remove-Item -Recurse -Force $work }` cleans this up
+  # automatically -- no separate tracked path or cleanup arm needed. See the
+  # comment on that `finally` block for why an inherited GNUPGHOME must never
+  # be touched (install.sh had exactly this bug in an earlier draft).
+  $sigHome = Join-Path $Dir "gnupg-sig"
+  New-Item -ItemType Directory -Path $sigHome -Force | Out-Null
+  $keyPath = Join-Path $Dir "nimbus-signing-key.asc"
+  # UTF8Encoding($false) == no BOM. Measured: PS 5.1 `Out-File`/`-Encoding
+  # utf8` both emit a BOM (or UTF-16LE for plain Out-File) that `gpg --import`
+  # cannot parse. Do not simplify this to Out-File, `>`, or a gpg pipeline.
+  [System.IO.File]::WriteAllText($keyPath, $NimbusSigningKey, [System.Text.UTF8Encoding]::new($false))
+
+  & gpg --homedir $sigHome --quiet --import $keyPath *>$null
+  $out = & gpg --homedir $sigHome --quiet --status-fd 1 --verify $ascPath (Join-Path $Dir "SHA256SUMS") 2>$null
+
+  # VALIDSIG line layout (GPG 1.4+):
+  #   [GNUPG:] VALIDSIG <signing-fp> <date> <ts> <expire> <ver> <reserved>
+  #                     <pubkey-algo> <hash-algo> <sig-class> <primary-fp>
+  # Field 3 is the signing SUBKEY's fingerprint; the LAST field is the
+  # PRIMARY fingerprint, which is what $NimbusSigningFpr pins. The real
+  # Nimbus release key signs via a dedicated signing subkey (verified against
+  # the local keyring while authoring this), so a naive
+  # `-match "VALIDSIG $NimbusSigningFpr"` substring test anchors field 3 and
+  # would NEVER match a genuine signature -- mirrors
+  # scripts/release/nimbus-verify.sh's field-extraction approach, not a
+  # substring match.
+  $validsigLine = $out | Where-Object { $_ -match '^\[GNUPG:\] VALIDSIG' } | Select-Object -First 1
+  $primaryFp = $null
+  if ($validsigLine) {
+    $fields = -split $validsigLine
+    $primaryFp = $fields[$fields.Length - 1]
+  }
+
+  if ($primaryFp -and $primaryFp -eq $NimbusSigningFpr) {
+    Write-Host "OK: GPG signature verified ($NimbusSigningFpr)."
+    return $true
+  }
+  Write-Warning "SHA256SUMS.asc did not verify against the pinned Nimbus key -- refusing to install."
+  return $false
 }
 
 # Preflight a cmdlet this script depends on, with an actionable message --
