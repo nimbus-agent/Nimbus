@@ -31,16 +31,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   that matches no `person` row raises a `missing_user_identity` gap stating the counts below are
   STRUCTURALLY zero rather than measured. This covers the `git:<email>` blame-alias shape
   specifically — the identity the ownership pass emits for a git email with no `person` row, and
-  therefore not a `person.id`: the four lanes keyed on `item.author_id` can never match it, while
-  the ownership lane still can (it is the sole lane reading `owns` edges, the only edges that
-  ever carry a `git:` external id), so the two cases state different facts and are not collapsed.
+  therefore not a `person.id`: the three lanes keyed on `item.author_id` can never match it, and
+  the `authored`/`opened` graph edges are built from `item.author_id` too, so PRs authored and
+  tickets cannot either — five of the six lanes are structurally zero. Only the ownership lane can
+  still measure it (it is the sole lane reading `owns` edges, the only edges that ever carry a
+  `git:` external id), so the two cases state different facts and are not collapsed.
   Without it, an unresolvable id rendered as a person who shipped nothing.
   **Six limits stated on every brief, never decoration.** The window is "ACTIVE in", not
   "created in": `item` carries no creation timestamp, only `modified_at` (GitHub's `updated_at`,
   the last touch), so every item-backed lane windows on last-modified and the brief says so —
   otherwise "40 PR(s)" under a 90-day header reads as 40 authored this quarter when it means 40
   authored at any time and touched this quarter, a systematic overstatement of the headline
-  numbers. (The decisions lane is the exception: it windows on `decision_record.decided_at`.)
+  numbers. (Two lanes sit outside the window: decisions windows on `decision_record.decided_at`,
+  a real decision date, and ownership is not windowed at all — it is an all-time snapshot.)
   Ownership carries the same **authorship-derived, not accountability** label `nimbus owners`
   states unconditionally — it reads the same git-blame-derived `owns` edges, and under a
   contribution brief an unlabelled "services: checkout" reads as formal accountability. Ownership
