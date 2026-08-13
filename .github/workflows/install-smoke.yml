@@ -441,6 +441,110 @@ jobs:
             fi
           done
 
+      # ---------------------------------------------------------------------
+      # Served-release (remote-mode) proof (Unix).
+      #
+      # Everything above this point is LOCAL mode: binaries staged BESIDE the
+      # install script, no network. Task 3-5's scripts/install/install-remote*
+      # tests already run the real installer end-to-end against a served
+      # fixture in CI (test:ci's `scripts` target) — but with STUB binaries.
+      # The one gap those tests cannot close is that they never run the REAL
+      # binaries this job just built through the remote path. These steps
+      # close it: pack the SAME staged binaries from $STAGE into a
+      # correctly-named release archive, serve it over 127.0.0.1, and drive
+      # install.sh's --from-release path against it.
+      - name: Pack a served-release fixture from the staged binaries (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="0.0.0-test"
+          SERVE="$RUNNER_TEMP/serve"
+          PAYLOAD="$RUNNER_TEMP/remote-payload"
+          mkdir -p "$SERVE" "$PAYLOAD/bin"
+
+          # Reuse the binaries this job already built and staged — do not
+          # rebuild, do not use stand-ins.
+          cp "$STAGE/nimbus"         "$PAYLOAD/bin/nimbus"
+          cp "$STAGE/nimbus-gateway" "$PAYLOAD/bin/nimbus-gateway"
+          chmod +x "$PAYLOAD/bin/nimbus" "$PAYLOAD/bin/nimbus-gateway"
+
+          # Names + layout MUST match scripts/install/lib/release-assets.ts's
+          # assetNameFor() and the real release.yml packaging: the Linux
+          # tarball is versioned and nests binaries under bin/; the macOS
+          # tarball is unversioned and top-level. Do not "harmonise" these.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            ASSET="nimbus-headless-linux-amd64-v${VER}.tar.gz"
+            tar -czf "$SERVE/$ASSET" -C "$PAYLOAD" .
+          else
+            ARCH="$(uname -m)"
+            if [ "$ARCH" = "arm64" ]; then
+              ASSET="nimbus-headless-macos-arm64.tar.gz"
+            else
+              ASSET="nimbus-headless-macos-x64.tar.gz"
+            fi
+            tar -czf "$SERVE/$ASSET" -C "$PAYLOAD/bin" .
+          fi
+
+          # Real SHA256SUMS format: "<64 lowercase hex><TWO spaces><filename>".
+          # Written by hand rather than trusting sha256sum/shasum's own
+          # separator so the format is guaranteed regardless of which tool a
+          # given runner has.
+          if command -v sha256sum >/dev/null 2>&1; then
+            digest="$(sha256sum "$SERVE/$ASSET" | cut -d' ' -f1)"
+          else
+            digest="$(shasum -a 256 "$SERVE/$ASSET" | cut -d' ' -f1)"
+          fi
+          printf '%s  %s\n' "$digest" "$ASSET" > "$SERVE/SHA256SUMS"
+
+          echo "REMOTE_VER=$VER" >> "$GITHUB_ENV"
+          echo "REMOTE_ASSET=$ASSET" >> "$GITHUB_ENV"
+
+      - name: Start the release fixture server (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/install/serve-fixture.ts "$RUNNER_TEMP/serve" 8788 &
+          echo $! > "$RUNNER_TEMP/serve.pid"
+          for _ in $(seq 1 50); do
+            curl -fsS "http://127.0.0.1:8788/SHA256SUMS" >/dev/null && break
+            sleep 0.2
+          done
+          curl -fsS "http://127.0.0.1:8788/SHA256SUMS" >/dev/null || {
+            echo "::error::release fixture server never answered"; exit 1; }
+
+      - name: Install from a served release (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A FRESH sandboxed HOME, distinct from the local-mode HOME above —
+          # the runner's real profile stays untouched, and this run cannot be
+          # satisfied by a leftover local-mode install.
+          export HOME="$RUNNER_TEMP/fake-home-remote"
+          mkdir -p "$HOME"
+          NIMBUS_INSTALL_BASE_URL="http://127.0.0.1:8788" \
+            sh scripts/install/unix/install.sh --from-release "$REMOTE_VER" --yes \
+            | tee "$RUNNER_TEMP/remote-install.log"
+
+          # Asserting only that the binary exists would also pass under LOCAL
+          # mode — these two markers are printed ONLY by the remote fetch +
+          # verify path (fetch_release / verify), so they prove the remote
+          # path actually ran.
+          grep -q "Downloading" "$RUNNER_TEMP/remote-install.log" || {
+            echo "::error::installer never reported a download — the remote path did not run"; exit 1; }
+          grep -q "sha256 verified" "$RUNNER_TEMP/remote-install.log" || {
+            echo "::error::installer never reported sha256 verification — the remote path did not run"; exit 1; }
+
+          test -x "$HOME/.local/bin/nimbus" || { echo "::error::remote install did not place the binary"; exit 1; }
+          "$HOME/.local/bin/nimbus" --version
+
+      - name: Stop the release fixture server (Unix)
+        if: always() && runner.os != 'Windows'
+        shell: bash
+        run: kill "$(cat "$RUNNER_TEMP/serve.pid")" 2>/dev/null || true
+
       - name: Stage a fake release dir (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -557,3 +661,96 @@ jobs:
             Write-Error "uninstall did not remove the PATH segment"
             exit 1
           }
+
+      # ---------------------------------------------------------------------
+      # Served-release (remote-mode) proof (Windows). Mirrors the Unix block
+      # above: pack the SAME staged binaries into a correctly-named archive,
+      # serve it over 127.0.0.1, and drive install.ps1's -FromRelease path
+      # against it — proving the REAL built binaries survive the download
+      # path, not just the stub binaries scripts/install/install-remote-
+      # windows.test.ts already covers.
+      - name: Pack a served-release fixture from the staged binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = "0.0.0-test"
+          $serve = Join-Path $env:RUNNER_TEMP "serve"
+          $payload = Join-Path $env:RUNNER_TEMP "remote-payload"
+          New-Item -ItemType Directory -Path $serve -Force | Out-Null
+          New-Item -ItemType Directory -Path $payload -Force | Out-Null
+
+          # Reuse the binaries this job already built and staged — do not
+          # rebuild, do not use stand-ins.
+          Copy-Item (Join-Path $env:STAGE "nimbus.exe")         (Join-Path $payload "nimbus.exe")
+          Copy-Item (Join-Path $env:STAGE "nimbus-gateway.exe") (Join-Path $payload "nimbus-gateway.exe")
+
+          # scripts/install/lib/release-assets.ts's assetNameFor(): unversioned,
+          # binaries at TOP LEVEL of the zip (unlike the Linux tarball's bin/).
+          $asset = "nimbus-headless-windows-x64.zip"
+          $zipPath = Join-Path $serve $asset
+          Compress-Archive -Path (Join-Path $payload "*") -DestinationPath $zipPath -Force
+
+          # Real SHA256SUMS format: "<64 lowercase hex><TWO spaces><filename>".
+          $digest = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sumsPath = Join-Path $serve "SHA256SUMS"
+          [System.IO.File]::WriteAllText($sumsPath, "$digest  $asset`n", [System.Text.UTF8Encoding]::new($false))
+
+          "REMOTE_VER=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "REMOTE_ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Start the release fixture server (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/install/serve-fixture.ts "$RUNNER_TEMP/serve" 8788 &
+          echo $! > "$RUNNER_TEMP/serve.pid"
+          for _ in $(seq 1 50); do
+            curl -fsS "http://127.0.0.1:8788/SHA256SUMS" >/dev/null && break
+            sleep 0.2
+          done
+          curl -fsS "http://127.0.0.1:8788/SHA256SUMS" >/dev/null || {
+            echo "::error::release fixture server never answered"; exit 1; }
+
+      - name: Install from a served release (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # A FRESH sandboxed LOCALAPPDATA, distinct from the local-mode one
+          # above — the runner's real profile stays untouched, and this run
+          # cannot be satisfied by a leftover local-mode install.
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "fake-localappdata-remote"
+          New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
+          $env:NIMBUS_INSTALL_BASE_URL = "http://127.0.0.1:8788"
+
+          # *>&1, not 2>&1: install.ps1's "Downloading"/"sha256 verified"
+          # lines are Write-Host calls, which land on the Information stream
+          # (6) in PS 5.1+, NOT stdout/stderr — 2>&1 only merges the error
+          # stream and would silently miss them, turning a real remote-path
+          # regression into a false green.
+          $out = & "$env:STAGE\install.ps1" -FromRelease $env:REMOTE_VER -Yes *>&1 | Out-String
+          Write-Host $out
+
+          # Asserting only that the binary exists would also pass under LOCAL
+          # mode — these two markers are printed ONLY by the remote fetch +
+          # verify path (Get-NimbusRelease), so they prove the remote path
+          # actually ran.
+          if ($out -notmatch "Downloading") {
+            Write-Error "installer never reported a download — the remote path did not run"; exit 1
+          }
+          if ($out -notmatch "sha256 verified") {
+            Write-Error "installer never reported sha256 verification — the remote path did not run"; exit 1
+          }
+
+          $installedNimbus = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\nimbus.exe"
+          if (-not (Test-Path $installedNimbus)) {
+            Write-Error "remote install did not place the binary"; exit 1
+          }
+          $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"
+          nimbus --version
+
+      - name: Stop the release fixture server (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: bash
+        run: kill "$(cat "$RUNNER_TEMP/serve.pid")" 2>/dev/null || true
