@@ -716,52 +716,73 @@ async function handleOwnership(
  */
 const MAX_PREMORTEM_SERVICES = 32;
 
-function requirePremortemParams(params: unknown): PremortemInput {
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.premortem requires { epicRef: string }");
-  }
-  const p = params as { epicRef?: unknown; services?: unknown; repropose?: unknown };
-  if (typeof p.epicRef !== "string") {
+/**
+ * The `epicRef` string, validated and trimmed.
+ *
+ * Both the type check and the length check raise the SAME message on purpose:
+ * from the caller's side "you sent a number" and "you sent an empty string" are
+ * the same mistake — the ref is not a usable reference — and splitting the
+ * wording would imply a distinction the handler does not act on.
+ */
+function requireEpicRef(raw: unknown): string {
+  if (typeof raw !== "string") {
     throw new AgentsRpcError(
       -32602,
       `epicRef must be a non-empty string up to ${MAX_REF_LEN} chars`,
     );
   }
-  const trimmed = p.epicRef.trim();
+  const trimmed = raw.trim();
   if (trimmed.length < MIN_REF_LEN || trimmed.length > MAX_REF_LEN) {
     throw new AgentsRpcError(
       -32602,
       `epicRef must be a non-empty string up to ${MAX_REF_LEN} chars`,
     );
   }
-  let serviceOverrides: string[] | undefined;
-  if (p.services !== undefined) {
-    if (!Array.isArray(p.services)) {
-      throw new AgentsRpcError(-32602, "services must be an array of strings");
-    }
-    if (p.services.length > MAX_PREMORTEM_SERVICES) {
+  return trimmed;
+}
+
+/**
+ * The optional `services` override, or `undefined` when absent.
+ *
+ * Every rejection is a hard error rather than a filter: a caller who names five
+ * services and gets three silently dropped would read the resulting brief as
+ * covering all five. The count cap is enforced BEFORE the per-entry walk so a
+ * caller cannot make the gateway iterate an arbitrarily long array to discover
+ * it was too long.
+ */
+function readServiceOverrides(raw: unknown): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new AgentsRpcError(-32602, "services must be an array of strings");
+  }
+  if (raw.length > MAX_PREMORTEM_SERVICES) {
+    throw new AgentsRpcError(-32602, `services accepts at most ${MAX_PREMORTEM_SERVICES} entries`);
+  }
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== "string" || v.trim().length === 0 || v.length > MAX_SERVICE_LEN) {
       throw new AgentsRpcError(
         -32602,
-        `services accepts at most ${MAX_PREMORTEM_SERVICES} entries`,
+        `each service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
       );
     }
-    const out: string[] = [];
-    for (const v of p.services) {
-      if (typeof v !== "string" || v.trim().length === 0 || v.length > MAX_SERVICE_LEN) {
-        throw new AgentsRpcError(
-          -32602,
-          `each service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
-        );
-      }
-      out.push(v.trim());
-    }
-    serviceOverrides = out;
+    out.push(v.trim());
   }
+  return out;
+}
+
+function requirePremortemParams(params: unknown): PremortemInput {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.premortem requires { epicRef: string }");
+  }
+  const p = params as { epicRef?: unknown; services?: unknown; repropose?: unknown };
+  const epicRef = requireEpicRef(p.epicRef);
+  const serviceOverrides = readServiceOverrides(p.services);
   if (p.repropose !== undefined && typeof p.repropose !== "boolean") {
     throw new AgentsRpcError(-32602, "repropose must be a boolean");
   }
   return {
-    epicRef: trimmed,
+    epicRef,
     ...(serviceOverrides === undefined ? {} : { serviceOverrides }),
     ...(p.repropose === true ? { repropose: true } : {}),
   };

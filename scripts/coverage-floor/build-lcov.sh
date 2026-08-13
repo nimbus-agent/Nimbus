@@ -59,7 +59,11 @@ run_pkg () {
   ) || true  # tolerate failing tests; whatever coverage was collected still merges
 }
 
-for pkg in packages/gateway packages/cli; do
+# `mcp-launcher` is a published bin package with its own tests (resolve-binary,
+# exit-status). It was absent from this list while `sonar.sources=packages`
+# still scanned it, so Sonar reported its files at 0% coverage even though the
+# tests existed and passed — a measurement gap, not a testing gap.
+for pkg in packages/gateway packages/cli packages/mcp-launcher; do
   run_pkg "${pkg}"
 done
 

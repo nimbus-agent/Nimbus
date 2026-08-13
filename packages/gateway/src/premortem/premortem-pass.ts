@@ -103,6 +103,51 @@ function writeThemeRows(
 }
 
 /**
+ * Extract and persist one batch's themes. `null` means the model never examined
+ * the batch, so the caller must NOT advance the watermark.
+ *
+ * Split out of `runPremortemPass` for cognitive complexity (Sonar S3776). The
+ * first pass on this function took it 45 -> 18 by lifting `writeThemeRows`;
+ * that left it still over the limit, because the surviving loop body was itself
+ * a second unit of work — extract, resolve services, write — wrapped in a
+ * redundant `if (opts.llm !== undefined)` that the loop's own earlier guard had
+ * already made unreachable when undefined.
+ *
+ * `llm` is non-optional here, which is what removes that dead branch: the
+ * caller has already broken out of the loop when there is no model.
+ */
+async function processBatch(
+  db: Database,
+  batch: readonly DiscoveredEpic[],
+  llm: ThemeLlm,
+  nowMs: number,
+): Promise<number | null> {
+  const outcome = await extractThemes(batch, { llm });
+  if (outcome.kind === "no-model") {
+    return null;
+  }
+  const byId = new Map(batch.map((e) => [e.itemId, e]));
+
+  // A theme's service is the AFFECTED service its attesting epics touched
+  // (`billing-api`), never the connector that owns the row (`jira`). PR B
+  // matches themes against a cohort's affected services, so writing the
+  // connector service here would leave every lookup returning zero rows
+  // while both halves looked individually correct.
+  //
+  // Resolved for the WHOLE batch in one query, not once per epic: each
+  // call scans `item` in full (no expression index on `metadata.parent_key`
+  // exists anywhere in this repo), and this pass must not stall the
+  // interactive gateway with up to `batchSize` back-to-back scans and no
+  // `await` between them.
+  const servicesByEpic = affectedServicesForEpics(
+    db,
+    batch.map((e) => e.itemId),
+  );
+
+  return writeThemeRows(db, { themes: outcome.themes, byId, servicesByEpic, nowMs });
+}
+
+/**
  * discover -> extract -> reconcile, checkpointing the watermark PER BATCH.
  *
  * The watermark advances only when a batch was actually examined by a model.
@@ -162,44 +207,18 @@ export async function runPremortemPass(
     });
     if (batch.length === 0) break;
 
-    if (opts.llm !== undefined) {
-      const outcome = await extractThemes(batch, { llm: opts.llm });
-      if (outcome.kind === "no-model") {
-        // The corpus was NOT examined this batch — stop without advancing or
-        // checkpointing the watermark, and without charging a call that did
-        // not produce a usable result. A later pass (this gateway restarted
-        // against a working Ollama, or the same one once it recovers) resumes
-        // here and re-tries these exact epics.
-        noModel = true;
-        break;
-      }
-      llmCalls += 1;
-      const themes = outcome.themes;
-      const byId = new Map(batch.map((e) => [e.itemId, e]));
-
-      // A theme's service is the AFFECTED service its attesting epics touched
-      // (`billing-api`), never the connector that owns the row (`jira`). PR B
-      // matches themes against a cohort's affected services, so writing the
-      // connector service here would leave every lookup returning zero rows
-      // while both halves looked individually correct.
-      //
-      // Resolved for the WHOLE batch in one query, not once per epic: each
-      // call scans `item` in full (no expression index on `metadata.parent_key`
-      // exists anywhere in this repo), and this pass must not stall the
-      // interactive gateway with up to `batchSize` back-to-back scans and no
-      // `await` between them.
-      const servicesByEpic = affectedServicesForEpics(
-        db,
-        batch.map((e) => e.itemId),
-      );
-
-      themesWritten += writeThemeRows(db, {
-        themes,
-        byId,
-        servicesByEpic,
-        nowMs: opts.nowMs,
-      });
+    const step = await processBatch(db, batch, opts.llm, opts.nowMs);
+    if (step === null) {
+      // The corpus was NOT examined this batch — stop without advancing or
+      // checkpointing the watermark, and without charging a call that did not
+      // produce a usable result. A later pass (this gateway restarted against a
+      // working Ollama, or the same one once it recovers) resumes here and
+      // re-tries these exact epics.
+      noModel = true;
+      break;
     }
+    llmCalls += 1;
+    themesWritten += step;
 
     const last = batch.at(-1);
     if (last === undefined) break;

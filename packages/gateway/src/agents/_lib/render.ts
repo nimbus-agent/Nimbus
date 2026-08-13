@@ -528,7 +528,11 @@ export function renderPremortem(brief: PremortemBrief): string {
   }
 
   if (brief.services.length > 0) {
-    sections.push(`\n## Services\n\n${brief.services.map((s) => `- ${s}`).join("\n")}`);
+    // The bullet list is built first rather than nested inside the section
+    // template: a template literal inside a template literal is legal but reads
+    // as one expression when it is really two (Sonar S4624).
+    const serviceBullets = brief.services.map((s) => `- ${s}`).join("\n");
+    sections.push(`\n## Services\n\n${serviceBullets}`);
   }
 
   if (brief.cohort.members.length > 0) {

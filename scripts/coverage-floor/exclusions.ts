@@ -53,6 +53,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // their tests, so it can't be un-excluded without ripping mock.module out of 40+ files. Its real
   // logic is covered via the byte-identical `gw-state-helpers.ts` twin (which IS tested).
   { kind: "exact", path: "packages/cli/src/lib/gateway-process.ts" },
+  // `mcp-launcher/src/index.ts` is a shebang bin entry point: top-level side effects that
+  // resolve a binary and `spawn` it, then wire `process.exit` handlers. Same shape as
+  // `packages/cli/src/index.ts` above and excluded for the same reason — there is no seam to
+  // test without executing the launcher. The logic it delegates to (`resolveNimbusBinary`,
+  // `childExitCode`) is pure and IS tested.
+  { kind: "exact", path: "packages/mcp-launcher/src/index.ts" },
 
   // ── Cross-task test harness ──
   // `brief-test-server.ts` is test-only but not .test.ts-suffixed, so it isn't auto-skipped;
