@@ -761,10 +761,76 @@ jobs:
       # Before this leg, NOTHING anywhere — no CI job, no bun test — ever
       # executed install.ps1 on real Windows PowerShell 5.1; `shell: powershell`
       # appeared zero times in any workflow, and install-remote-windows.test.ts
-      # resolves pwsh too. Reuses the SAME fixture server + served archive the
-      # PS7 leg just used (still running — the "Stop" step below tears down
-      # both), with a THIRD distinct sandboxed LOCALAPPDATA so this leg cannot
-      # be satisfied by either the local-mode or the PS7 remote-mode install.
+      # resolves pwsh too. Reuses the SAME fixture server the PS7 leg used
+      # (still running — the "Stop" step below tears both down), with a THIRD
+      # distinct sandboxed LOCALAPPDATA so this leg cannot be satisfied by
+      # either the local-mode or the PS7 remote-mode install.
+      #
+      # STUB binaries only, deliberately — NOT the real ~50-80 MB compiled
+      # binaries the PS7 leg above just proved survive the remote path.
+      # Controller Ruling 17: downloading that archive over 127.0.0.1 under
+      # Windows PowerShell 5.1 specifically hits a well-diagnosed, runner-only
+      # artifact on GH-hosted windows-2022 runners — deterministic across
+      # retries (3/3 identical), never reproduces on a real off-CI PS 5.1
+      # process, PS7's HttpClient unaffected. Full root-cause investigation
+      # (including a raw-download diagnostic proving ~0.95 MB/s over loopback,
+      # consistent with real-time AV inline-scanning the legacy WinINet stack)
+      # is in the task report. This leg's UNIQUE value is proving the 5.1
+      # RUNTIME itself behaves correctly — the inert `#Requires` under `iex`,
+      # the null `$PSScriptRoot`, the ResponseUri-vs-RequestMessage split, and
+      # `Write-Host` stream capture via `*>&1` — NOT re-proving real-binary
+      # realism, which the PS7 leg in this SAME workflow already covers.
+      # If tempted to "upgrade" this back to the real binaries: that was
+      # tried, it is provably a CI-runner artifact and not a product bug, and
+      # the fix (an antivirus exclusion) is deliberately NOT applied here —
+      # that decision belongs to whoever owns the CI infrastructure, not to
+      # this workflow. See the task report before changing this.
+      - name: Pack a STUB served-release fixture for the PS5.1 leg (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $serve = Join-Path $env:RUNNER_TEMP "serve"
+          $stubDir = Join-Path $env:RUNNER_TEMP "ps51-stub-payload"
+          New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
+
+          # A real, tiny, RUNNABLE PE console app — not a renamed text file.
+          # This leg's final assertion actually EXECUTES the installed
+          # binary (`nimbus --version`), which a non-PE file cannot survive.
+          # Add-Type -OutputType ConsoleApplication only works under Windows
+          # PowerShell 5.1's classic CodeDom compiler (confirmed: pwsh/PS7
+          # rejects it with "assembly types ... are not currently
+          # supported") — another reason this step runs under
+          # `shell: powershell`, not `pwsh`.
+          # An array-of-strings joined with `n, not a `@'...'@` here-string:
+          # a here-string's closing delimiter must sit at column 0, which
+          # would terminate this step's own YAML block scalar early and
+          # produce a workflow GitHub silently runs as zero jobs.
+          $srcLines = @(
+            'using System;'
+            'class P {'
+            '  static void Main(string[] args) {'
+            '    Console.WriteLine("nimbus-stub 0.0.0-test");'
+            '  }'
+            '}'
+          )
+          $src = $srcLines -join "`n"
+          Add-Type -TypeDefinition $src -Language CSharp -OutputType ConsoleApplication `
+            -OutputAssembly (Join-Path $stubDir "nimbus.exe")
+          Add-Type -TypeDefinition $src -Language CSharp -OutputType ConsoleApplication `
+            -OutputAssembly (Join-Path $stubDir "nimbus-gateway.exe")
+
+          # Overwrites the SAME asset filename the PS7 leg already consumed
+          # and verified above — install.ps1's $Asset is a hardcoded literal
+          # ("nimbus-headless-windows-x64.zip"), so the served filename must
+          # stay identical for -FromRelease to find it.
+          $zipPath = Join-Path $serve $env:REMOTE_ASSET
+          Compress-Archive -Path (Join-Path $stubDir "*") -DestinationPath $zipPath -Force
+
+          $digest = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sumsPath = Join-Path $serve "SHA256SUMS"
+          [System.IO.File]::WriteAllText($sumsPath, "$digest  $($env:REMOTE_ASSET)`n", [System.Text.UTF8Encoding]::new($false))
+
       - name: Confirm this leg runs on Windows PowerShell 5.1, not pwsh (Windows)
         if: runner.os == 'Windows'
         shell: powershell
