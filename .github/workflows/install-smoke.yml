@@ -828,6 +828,10 @@ jobs:
           Compress-Archive -Path (Join-Path $stubDir "*") -DestinationPath $zipPath -Force
 
           $digest = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          # RED-PROVE STUB — deliberately corrupts the served checksum so the
+          # PS5.1 remote install must fail. Reverted immediately after the CI
+          # run this is pushed to prove red. DO NOT MERGE WITH THIS PRESENT.
+          $digest = "0000000000000000000000000000000000000000000000000000000000000000"
           $sumsPath = Join-Path $serve "SHA256SUMS"
           [System.IO.File]::WriteAllText($sumsPath, "$digest  $($env:REMOTE_ASSET)`n", [System.Text.UTF8Encoding]::new($false))
 
