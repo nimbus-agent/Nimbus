@@ -19,6 +19,34 @@ name: released-install-smoke
 # against a real published release. Keep the commands below in sync with those
 # two files — if they drift, this proves the wrong thing.
 
+# RULING 13 — the `documented-one-liner` job below (added alongside the
+# archive-based `documented-install` job above) is, deliberately, the ONLY
+# place in the whole repo that exercises the real GPG true-positive path: a
+# genuine `SHA256SUMS.asc` verifying against the pinned Nimbus release key,
+# ending in the "GPG signature verified" success line. We did NOT add a
+# test-only fingerprint-override seam to install.sh/install.ps1 for this,
+# because it would compose with the existing NIMBUS_INSTALL_BASE_URL testing
+# seam into a complete verification bypass reachable from environment alone.
+# Consequence: the in-repo unit tests only cover gpg-absent, garbage-signature,
+# and untrusted-key — every one of those aborts or skips BEFORE a VALIDSIG line
+# ever appears, so none of them can catch a regression in the pinned
+# fingerprint, the real `.asc` fetch/parse, or the `$NF`/last-field primary-
+# fingerprint extraction actually working end-to-end. `documented-one-liner`
+# asserts the runner's `curl … | sh` / `irm … | iex` output contains the
+# literal "GPG signature verified" success text (never a bare "SIGNATURE"
+# substring — several other branches, including the soft-skip ones, also emit
+# that word) — do not weaken, skip, or remove that assertion; it is the only
+# thing standing between a broken publisher-authenticity check and nobody
+# noticing.
+#
+# Gating reality: `documented-one-liner` downloads install.sh/install.ps1 from
+# `releases/latest/download/`, which today (through v2.2.0) still serves the
+# OLD, local-staging-only scripts (#1167) — they have no download capability
+# at all and exit before ever reaching a GPG check. So a RED run of this job
+# against the CURRENT v2.2.0 assets is EXPECTED, not a regression; it only
+# turns green once a release ships the new, self-bootstrapping scripts built
+# in this same change (see scripts/install/{unix/install.sh,windows/install.ps1}).
+
 on:
   workflow_dispatch:
   release:
@@ -114,3 +142,151 @@ jobs:
             Write-Error "nimbus is not on PATH after the documented install"; exit 1
           }
           nimbus --version
+
+  # See RULING 13 at the top of this file before touching anything below.
+  # This job proves the DOCUMENTED STANDALONE one-liner (curl|sh / irm|iex),
+  # not the archive-based path `documented-install` above already covers, and
+  # is the ONLY place the real GPG true-positive path runs end to end.
+  documented-one-liner:
+    name: ${{ matrix.os }} documented one-liner
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Linux — ensure gpg is present
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Do NOT assume the runner image ships gnupg — install it if absent,
+          # per RULING 13, so a missing-gpg runner can never masquerade as a
+          # "signature not checked, best-effort skip" result below.
+          if ! command -v gpg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq gnupg
+          fi
+          gpg --version
+
+      - name: macOS — ensure gpg is present
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v gpg >/dev/null 2>&1; then
+            brew install gnupg
+          fi
+          gpg --version
+
+      - name: Windows — ensure gpg is present
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # gpg ships with Git for Windows, which every GitHub-hosted Windows
+          # runner has preinstalled -- verify rather than assume (RULING 13),
+          # since `Get-Command` alone would miss it if it's simply not on PATH.
+          if (-not (Get-Command gpg -ErrorAction SilentlyContinue)) {
+            $gitGpgDir = "C:\Program Files\Git\usr\bin"
+            if (Test-Path (Join-Path $gitGpgDir "gpg.exe")) {
+              Write-Host "gpg found via Git for Windows at $gitGpgDir; adding to PATH."
+              $env:Path = "$gitGpgDir;$env:Path"
+              $gitGpgDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            } else {
+              Write-Host "gpg not found via Git for Windows; installing via Chocolatey."
+              choco install gnupg -y --no-progress
+              $env:Path = "C:\Program Files (x86)\GnuPG\bin;$env:Path"
+              "C:\Program Files (x86)\GnuPG\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            }
+          }
+          gpg --version
+
+      # --- Linux ---------------------------------------------------------
+      - name: Linux — documented one-liner (real GPG true-positive path)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT="$(curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh | sh -s -- --yes 2>&1)"
+          echo "$OUTPUT"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # Bind to the exact success wording (install.sh: `echo "✓ GPG signature
+          # verified (${NIMBUS_SIGNING_FPR})."`) — NOT a bare "SIGNATURE" match,
+          # which the soft-skip branches ("SIGNATURE NOT CHECKED") and the
+          # failure branch ("did not verify against the pinned Nimbus key") also
+          # contain. Only the true-positive VALIDSIG branch prints this text.
+          if ! printf '%s\n' "$OUTPUT" | grep -qF "GPG signature verified"; then
+            echo "::error::documented Linux one-liner did not print the GPG-verified success line -- either gpg is broken on this runner, or the real signature-verify true-positive path regressed. See RULING 13 at the top of this file: this job is the ONLY place that path is exercised."
+            exit 1
+          fi
+
+      - name: Linux — assert the one-liner install runs
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$HOME/.local/bin/nimbus" --version
+
+      # --- macOS -----------------------------------------------------------
+      - name: macOS — documented one-liner (real GPG true-positive path)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT="$(curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh | sh -s -- --yes 2>&1)"
+          echo "$OUTPUT"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          if ! printf '%s\n' "$OUTPUT" | grep -qF "GPG signature verified"; then
+            echo "::error::documented macOS one-liner did not print the GPG-verified success line -- either gpg is broken on this runner, or the real signature-verify true-positive path regressed. See RULING 13 at the top of this file: this job is the ONLY place that path is exercised."
+            exit 1
+          fi
+
+      - name: macOS — assert the one-liner install runs
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$HOME/.local/bin/nimbus" --version
+
+      # --- Windows (pwsh — PowerShell 7+) -----------------------------------
+      - name: Windows (pwsh) — documented one-liner (real GPG true-positive path)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1"
+          $output = ((& ([scriptblock]::Create((irm $url))) -Yes) *>&1 | Out-String)
+          Write-Host $output
+          "$env:LOCALAPPDATA\Programs\Nimbus\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          # Bind to the exact success wording (install.ps1: `Write-Host "OK: GPG
+          # signature verified ($NimbusSigningFpr)."`) -- NOT a bare "SIGNATURE"
+          # match, which the soft-skip and failure branches also contain.
+          if ($output -notmatch [regex]::Escape("GPG signature verified")) {
+            Write-Error "documented Windows (pwsh) one-liner did not print the GPG-verified success line -- either gpg is broken on this runner, or the real signature-verify true-positive path regressed. See RULING 13 at the top of this file: this job is the ONLY place that path is exercised."
+            exit 1
+          }
+          & "$env:LOCALAPPDATA\Programs\Nimbus\bin\nimbus.exe" --version
+
+      # --- Windows (powershell — Windows PowerShell 5.1, the declared floor,
+      # and where #1167's Windows bug actually lived) -----------------------
+      - name: Windows (powershell 5.1) — documented one-liner (real GPG true-positive path)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1"
+          $output = ((& ([scriptblock]::Create((irm $url))) -Yes) *>&1 | Out-String)
+          Write-Host $output
+          if ($output -notmatch [regex]::Escape("GPG signature verified")) {
+            Write-Error "documented Windows (powershell 5.1) one-liner did not print the GPG-verified success line -- either gpg is broken on this runner, or the real signature-verify true-positive path regressed. See RULING 13 at the top of this file: this job is the ONLY place that path is exercised."
+            exit 1
+          }
+          & "$env:LOCALAPPDATA\Programs\Nimbus\bin\nimbus.exe" --version
