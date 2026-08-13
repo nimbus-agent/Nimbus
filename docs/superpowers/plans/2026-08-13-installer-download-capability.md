@@ -1066,6 +1066,101 @@ git add docs/superpowers/plans/2026-08-13-installer-download-capability.md
 git commit -m "docs: record the verified headless keyring sequence"
 ```
 
+#### Spike result (2026-08-13, `ubuntu:24.04` containers, Docker Desktop/Windows host)
+
+**Premise confirmed, with a nuance:** the known-bad remedy reproduces the documented
+`gcr-prompter` / `cannot open display` failure, but it is a **D-Bus name-ownership race**, not a
+deterministic failure — naive repeats failed roughly 1 in 40–50 trials, not every time. Root
+cause: `gnome-keyring-daemon --unlock` forks to the background and returns before it necessarily
+owns the `org.freedesktop.secrets` D-Bus name; if the very next command (`secret-tool`, or
+`nimbus start`'s Vault access) asks for that name first, `dbus-daemon` D-Bus-activates a **second,
+fresh** `gnome-keyring-daemon --start --foreground` instance (per
+`/usr/share/dbus-1/services/org.freedesktop.secrets.service`) that was never given a password and
+can only resolve the request by prompting via `gcr-prompter`, which has no display and dies. This
+also means: even after a login keyring already durably exists on disk with a blank password, a
+**brand-new** D-Bus session that skips its own `--unlock` call still hits this failure 100% of the
+time — the fix does not remove the need to wrap every `nimbus start` in a
+`dbus-run-session` + `--unlock` pattern; it only removes the *race* in that pattern's first-ever
+run. See `.superpowers/sdd/2026-08-13-installer-download-capability/task-8-report.md` for the
+full trial data (55/55 clean runs of the sequence below, permission-enforcement tests, and the
+existing-keyring-safety test).
+
+Verified minimal working sequence — **0 failures in 55 trials** (two independent batches, fresh
+`ubuntu:24.04` container, `rm -rf ~/.local/share/keyrings ~/.cache/keyring-*` between each
+iteration to force a true from-scratch run every time):
+
+```bash
+# Run once, entirely inside one D-Bus session. No manual file authoring needed —
+# gnome-keyring-daemon creates login.keyring + user.keystore itself, at the right modes.
+dbus-run-session -- bash -c '
+  mkdir -p "$HOME/.local/share/keyrings"
+  chmod 0700 "$HOME/.local/share/keyrings"
+
+  # Newline-terminated (blank) password on stdin — a truly empty stdin (no newline byte)
+  # was tested and ALWAYS fails (5/5): the directory gets created but login.keyring never
+  # gets written, and the daemon falls through to prompting on the next request.
+  printf "\n" | gnome-keyring-daemon --unlock --components=secrets >/dev/null 2>&1
+
+  # Load-bearing: poll for org.freedesktop.secrets to be OWNED on the session bus before
+  # touching Secret Service. Polling for the login.keyring FILE to exist instead was tried
+  # first and is NOT sufficient — it still raced 1/15. The D-Bus name is the actual
+  # synchronization point; the file can exist before the daemon has claimed the name.
+  j=0
+  while [ $j -lt 100 ]; do
+    dbus-send --session --dest=org.freedesktop.DBus --print-reply \
+      /org/freedesktop/DBus org.freedesktop.DBus.GetNameOwner \
+      string:org.freedesktop.secrets >/dev/null 2>&1 && break
+    j=$((j + 1))
+    sleep 0.02
+  done
+
+  # Prove it with a real write + read (nothing short of this counts).
+  printf "s" | secret-tool store --label=nimbus-fix-keyring-check application nimbus-doctor-check key value
+  secret-tool lookup application nimbus-doctor-check key value
+  secret-tool clear application nimbus-doctor-check key value
+'
+```
+
+Resulting permissions with **zero manual file-content authoring** (only the defensive
+`mkdir`/`chmod 0700` above; the two keyring files are written by `gnome-keyring-daemon` itself):
+
+```
+700 /root/.local/share/keyrings
+600 /root/.local/share/keyrings/login.keyring
+600 /root/.local/share/keyrings/user.keystore
+```
+
+**gnome-keyring enforces none of this itself** — tested directly by pre-loosening the directory
+to `0755` and the file to `0666` before a fresh session: it still unlocked and served secrets
+without complaint or self-correction. Task 9 must actively `mkdir`+`chmod 0700` the directory
+before invoking the daemon; it cannot rely on gnome-keyring to fix a stale loose directory left
+by an earlier partial attempt.
+
+Answers driving Task 9's design:
+
+- **No hand-authored files needed** — not even a `default` file naming the keyring (a working
+  run's `keyrings/` directory contains only `login.keyring` + `user.keystore`). `writeFileMode` in
+  `FixKeyringDeps` is not expected to be called by a correct implementation; only `mkdirMode` for
+  the `0700` directory is needed.
+- **A D-Bus session is required, and remains required for every future `nimbus start`** — not
+  just for the one-time fix. `--fix-keyring`'s job is narrower than "fixes it forever": it safely
+  performs the from-scratch creation (closing the race) inside its own `dbus-run-session`
+  invocation (via `DoctorVaultExec.runQuery`); it does not remove the need for `nimbus start` to
+  keep running inside a `dbus-run-session` + `--unlock` wrapper afterward.
+- **Detect an existing keyring via file existence**: `statMode` on
+  `~/.local/share/keyrings/login.keyring`; if non-null, refuse unconditionally (matches the Task 9
+  test spec). Verified this is safe even as a backstop: running the blank-password `--unlock`
+  sequence against a keyring already protected by a **real** password fails closed (falls through
+  to the same `gcr-prompter` failure) and leaves the existing file **byte-for-byte unmodified**
+  (checked via `md5sum` + size before/after) — but the up-front existence check must still be the
+  primary gate; don't rely on this as the actual safety mechanism.
+
+Task 10 implication: keep the `dbus-run-session -- bash -c '<unlock>; nimbus start'` wrapper for
+ongoing use — it is structurally necessary, not the bug — but lead the replacement hint with
+`nimbus doctor --fix-keyring` as a one-time step to run first, since it closes the from-scratch
+creation race that the bare wrapper alone loses roughly 1 time in 40–50 on a box that has never
+had a login keyring.
+
 ---
 
 ### Task 9: `--fix-keyring` implementation
