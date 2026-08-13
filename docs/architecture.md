@@ -1548,6 +1548,14 @@ const streamReq: JSONRPCRequest = {
 //   silently disable an opt-in the user's `nimbus.toml` still claims); `personalDocsConfigured` is
 //   the INTERSECTION with the personal-capable service list, never the array length, and
 //   unrecognised entries are echoed back in the `sources` section rather than dropped.
+//   Each of the five item-backed lanes carries bounded EVIDENCE REFS (title +
+//   COALESCE(canonical_url, url), cap `NEGOTIATE_EVIDENCE_LIMIT` = 5, ordered
+//   `modified_at DESC, id ASC` for run-to-run stability). Truncation self-discloses via
+//   `NegotiateEvidence.total`, the same rule `statsCoverage` follows — a capped list must
+//   never read as exhaustive. Ownership carries none (it already enumerates its targets);
+//   tickets cites only the OPENED issues, never the closed-by-authored-PR hop, which would
+//   cite issues the subject did not file. The writing lane's evidence query reproduces the
+//   `personal_sources` gate exactly, so evidence can never disclose what the counts withhold.
 //   `agents.negotiate` is EXCLUDED from both the HTTP agent surface (`POST /v1/agents/{agent}`,
 //   `HTTP_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts`) and the MCP tool surface
 //   (`packages/cli/src/mcp/agent-tools.ts`) — but for a DIFFERENT reason than

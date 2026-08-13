@@ -30,6 +30,37 @@ export type NegotiateCoverage = {
   readonly total: number;
 };
 
+/**
+ * One item behind a lane's headline count — the citation half of the brief.
+ *
+ * A count with no way to check it is an assertion, not evidence: "12 PRs" is exactly as
+ * legible as "40 PRs" to a reader who cannot open either. These refs are what make the
+ * document checkable by the person on the other side of the conversation.
+ *
+ * `url` is `COALESCE(item.canonical_url, item.url)` and is NULLABLE — not every connector
+ * records one. A missing url renders as plain text rather than a dead link, and never as a
+ * fabricated one: a wrong link in a compensation document is worse than no link.
+ */
+export type NegotiateEvidenceRef = {
+  readonly title: string;
+  readonly url: string | null;
+};
+
+/**
+ * The bounded evidence list behind one lane.
+ *
+ * `refs` is capped at `NEGOTIATE_EVIDENCE_LIMIT` (`negotiate.ts`) — a year-long window can
+ * hold hundreds of PRs and an unbounded dump is not a brief. `total` is the population the
+ * refs were drawn from, so truncation is SELF-DISCLOSING: the renderer prints "and N more"
+ * from `total - refs.length` rather than letting a capped list read as an exhaustive one.
+ * That is the same rule `statsCoverage` follows — an aggregate over a subset states its own
+ * denominator.
+ */
+export type NegotiateEvidence = {
+  readonly refs: readonly NegotiateEvidenceRef[];
+  readonly total: number;
+};
+
 export type NegotiateBrief = {
   readonly kind: "negotiate";
   readonly agentVersion: 1;
@@ -95,6 +126,8 @@ export type NegotiateWriting = {
   readonly docs: number;
   readonly notes: number;
   readonly messages: number;
+  /** Documents, notes and messages behind the counts above, newest first. */
+  readonly evidence: NegotiateEvidence;
 };
 
 /**
@@ -108,11 +141,19 @@ export type NegotiateDecisions = {
   readonly authored: number;
   /** Decisions whose source item has no author — counted, never dropped (spec § 8.2). */
   readonly unattributable: number;
+  /**
+   * Decisions attributed to the SUBJECT, newest first. Drawn from `authored` only — never
+   * from `unattributable`, which is a fact about the index and not about this person, so
+   * citing those rows here would attach someone else's decisions to this brief.
+   */
+  readonly evidence: NegotiateEvidence;
 };
 
 export type NegotiateAuthoredPrs = {
   readonly count: number;
   readonly merged: number;
+  /** The authored PRs behind `count`, newest first. */
+  readonly evidence: NegotiateEvidence;
   readonly stats: {
     readonly additions: number;
     readonly deletions: number;
@@ -127,6 +168,8 @@ export type NegotiateReviewedPrs = {
   readonly changesRequested: number;
   /** `commented`, `dismissed`, or a null `metadata.state` — counted, never dropped. */
   readonly otherOrUnknown: number;
+  /** The reviews behind `count`, newest first. */
+  readonly evidence: NegotiateEvidence;
 };
 
 /**
@@ -138,6 +181,12 @@ export type NegotiateReviewedPrs = {
 export type NegotiateTickets = {
   readonly opened: number;
   readonly closedByAuthoredPr: number;
+  /**
+   * The issues behind `opened`, newest first. `closedByAuthoredPr` is a DISTINCT count over
+   * a two-hop traversal and is deliberately not cited here: its refs would be issues the
+   * subject did not open, which reads as ownership of someone else's ticket.
+   */
+  readonly evidence: NegotiateEvidence;
 };
 
 /**

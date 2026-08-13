@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it, mock, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
@@ -743,17 +743,21 @@ describe("dispatchAgentsRpc — agents.negotiate", () => {
     // Exercises the ctx.configDir !== undefined arm: a real [negotiate] section must be loaded,
     // not defaulted away, per Task 6/7's "personalSources is not optional" rule.
     const dir = mkdtempSync(join(tmpdir(), "nimbus-agents-"));
-    writeFileSync(
-      join(dir, "nimbus.toml"),
-      '[negotiate]\npersonal_sources = ["obsidian"]\n',
-      "utf8",
-    );
-    const out = await dispatchAgentsRpc(
-      "agents.negotiate",
-      {},
-      makeCtx(freshDb(), { configDir: dir }),
-    );
-    expect(out.kind).toBe("hit");
+    try {
+      writeFileSync(
+        join(dir, "nimbus.toml"),
+        '[negotiate]\npersonal_sources = ["obsidian"]\n',
+        "utf8",
+      );
+      const out = await dispatchAgentsRpc(
+        "agents.negotiate",
+        {},
+        makeCtx(freshDb(), { configDir: dir }),
+      );
+      expect(out.kind).toBe("hit");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

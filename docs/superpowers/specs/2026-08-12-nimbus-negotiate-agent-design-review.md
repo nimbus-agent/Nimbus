@@ -1,5 +1,18 @@
 # Nimbus Negotiate Agent Design Review
 
+> **HISTORICAL — do not read as current contract.** This is a point-in-time
+> review of the design spec, kept for provenance. It records open questions as
+> they stood *before* implementation; several were answered differently in the
+> shipped code. The authoritative current contract is
+> [`docs/cli-reference.md`](../../cli-reference.md)'s `nimbus negotiate`
+> section plus the `agents.negotiate` block in
+> [`docs/architecture.md`](../../architecture.md); the answers given at the
+> time are in
+> [`2026-08-12-nimbus-negotiate-agent-design-review-response.md`](./2026-08-12-nimbus-negotiate-agent-design-review-response.md).
+> Note in particular that the shipped agent is excluded from the MCP tool
+> surface as well as the local HTTP API, and that the personal-docs gate
+> resolves per SERVICE rather than per item type.
+
 ## Open Questions & Risks
 
 1. **Local HTTP API Exclusion (`HTTP_EXCLUDED_AGENT_METHODS`) vs. Client Integrations**

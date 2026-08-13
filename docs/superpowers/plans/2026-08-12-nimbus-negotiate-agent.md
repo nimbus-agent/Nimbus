@@ -468,7 +468,7 @@ git commit -m "feat(agents): negotiate shell, deterministic render, absent-evide
 
 ## Task 2: PR lanes — authored and reviewed
 
-> **Every lane task from here also extends `renderNegotiate`** in `agents/_lib/synthesize.ts` with
+> **Every lane task from here also extends `renderNegotiate`** in `agents/_lib/render.ts` with
 > its own section. A lane field left at `null` — meaning the lane failed — must render as "could not
 > be computed", never as `0`. That distinction is the whole point of the nullable fields Task 1
 > introduced, and it is lost the moment a renderer prints `?? 0`.

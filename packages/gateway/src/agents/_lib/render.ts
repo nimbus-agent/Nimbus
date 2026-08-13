@@ -24,6 +24,7 @@ import type {
   NegotiateAuthoredPrs,
   NegotiateBrief,
   NegotiateDecisions,
+  NegotiateEvidence,
   NegotiateOwnership,
   NegotiateReviewedPrs,
   NegotiateSubject,
@@ -581,6 +582,29 @@ function renderNegotiateSubjectLine(subject: NegotiateSubject): string {
 }
 
 /**
+ * The citation block under a lane's headline count.
+ *
+ * Returns `[]` — not a "no evidence" line — when there is nothing to cite: a lane that
+ * counted zero has already said so, and an empty population needs no citation. The
+ * truncation line is emitted from `total - refs.length` so a capped list can never read as
+ * exhaustive, the same self-disclosure rule `statsCoverage` follows.
+ *
+ * A ref with no url renders as plain text, never as a link to nowhere. Titles are escaped
+ * for the `[...]` position: an unescaped `]` in a PR title (`"fix [ci] flake"`) truncates
+ * the link text mid-title in every Markdown renderer, silently mis-citing the evidence.
+ */
+function renderNegotiateEvidence(evidence: NegotiateEvidence): string[] {
+  if (evidence.refs.length === 0) return [];
+  const lines = evidence.refs.map((r) => {
+    const title = r.title.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+    return r.url === null ? `  - ${title}` : `  - [${title}](${r.url})`;
+  });
+  const remaining = evidence.total - evidence.refs.length;
+  if (remaining > 0) lines.push(`  - …and ${String(remaining)} more not listed`);
+  return lines;
+}
+
+/**
  * A `null` lane means "could not be computed" (failed, or never attempted for lack of a
  * resolved subject) and must never render as `0` — that distinction is the entire reason
  * `authoredPrs` is nullable rather than defaulting to an all-zero object.
@@ -608,6 +632,7 @@ function renderNegotiateAuthoredPrs(a: NegotiateAuthoredPrs | null): string {
       )} file(s)${coverageSuffix}`,
     );
   }
+  lines.push(...renderNegotiateEvidence(a.evidence));
   return lines.join("\n");
 }
 
@@ -623,6 +648,7 @@ function renderNegotiateReviewedPrs(r: NegotiateReviewedPrs | null): string {
       r.changesRequested,
     )} changes requested, ${String(r.otherOrUnknown)} other/unknown`,
   ];
+  lines.push(...renderNegotiateEvidence(r.evidence));
   return lines.join("\n");
 }
 
@@ -636,6 +662,9 @@ function renderNegotiateTickets(t: NegotiateTickets | null): string {
     "",
     `- ${String(t.opened)} opened, ${String(t.closedByAuthoredPr)} closed by an authored PR`,
   ];
+  // Cites the OPENED issues only — see `NegotiateTickets.evidence` for why the
+  // closed-by-authored-PR hop is deliberately not cited here.
+  lines.push(...renderNegotiateEvidence(t.evidence));
   return lines.join("\n");
 }
 
@@ -734,6 +763,7 @@ function renderNegotiateDecisions(d: NegotiateDecisions | null, subject: Negotia
     `- ${String(d.unattributable)} decision(s) in this index have no indexed author and are ` +
       `not counted above — they are not necessarily ${voice.possessive}`,
   ];
+  lines.push(...renderNegotiateEvidence(d.evidence));
   return lines.join("\n");
 }
 
@@ -754,6 +784,7 @@ function renderNegotiateWriting(w: NegotiateWriting | null): string {
     "",
     `- ${String(w.docs)} doc(s), ${String(w.notes)} note(s), ${String(w.messages)} message(s) authored`,
   ];
+  lines.push(...renderNegotiateEvidence(w.evidence));
   return lines.join("\n");
 }
 
@@ -797,6 +828,29 @@ function renderIgnoredPersonalSources(unrecognised: readonly string[]): string {
 }
 
 /**
+ * The window label, at the coarsest unit that does not LOSE the caller's precision.
+ *
+ * `Math.round(sinceMs / 86_400_000)` alone rendered every sub-day window as "last 0d":
+ * `--since 1h` is a valid request (`parseDurationToMs` accepts `ms|s|m|h|d|w`, and the IPC
+ * bound is an upper one only), and "0d" states a window the lanes did not query. That is the
+ * same class of misstatement the window clause exists to prevent — the clause is a
+ * disclosure, so it cannot itself be wrong about the window.
+ *
+ * Rounding WITHIN a unit is fine (90d, 36h); collapsing to zero is not, hence the unit step
+ * down rather than a wider `toFixed`. A zero window renders `0ms`, which is accurate: it
+ * selects nothing.
+ */
+function negotiateWindowLabel(sinceMs: number): string {
+  const MINUTE = 60_000;
+  const HOUR = 3_600_000;
+  const DAY = 86_400_000;
+  if (sinceMs >= DAY) return `${String(Math.round(sinceMs / DAY))}d`;
+  if (sinceMs >= HOUR) return `${String(Math.round(sinceMs / HOUR))}h`;
+  if (sinceMs >= MINUTE) return `${String(Math.round(sinceMs / MINUTE))}m`;
+  return `${String(sinceMs)}ms`;
+}
+
+/**
  * Task 1's version rendered only the subject, the window and generation time, the gap
  * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
  * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership; Task 5
@@ -805,7 +859,6 @@ function renderIgnoredPersonalSources(unrecognised: readonly string[]): string {
  * same way.
  */
 export function renderNegotiate(brief: NegotiateBrief): string {
-  const days = Math.round(brief.query.sinceMs / 86_400_000);
   const header = "# Negotiation brief";
   const subjectLine = renderNegotiateSubjectLine(brief.subject);
   // The window clause is a disclosure, not decoration. `item` has no creation timestamp, so
@@ -814,9 +867,9 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   // when the query actually means "40 you authored at any time that were touched in this
   // window" — a systematic OVERSTATEMENT of the headline numbers, the failure direction this
   // agent exists to avoid. Re-querying on creation date is unavailable, so saying so is the fix.
-  const windowLine = `_window: last ${String(
-    days,
-  )}d — items authored by the subject that were ACTIVE in this window; the index records last-modified, not created. Two lanes sit outside it: decisions windows on its recorded decision date, and ownership is not windowed at all (it is an all-time snapshot) · generated ${new Date(
+  const windowLine = `_window: last ${negotiateWindowLabel(
+    brief.query.sinceMs,
+  )} — items authored by the subject that were ACTIVE in this window; the index records last-modified, not created. Two lanes sit outside it: decisions windows on its recorded decision date, and ownership is not windowed at all (it is an all-time snapshot) · generated ${new Date(
     brief.generatedAt,
   ).toISOString()}_`;
   const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);

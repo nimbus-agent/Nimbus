@@ -8,6 +8,7 @@ import type { NegotiateBrief } from "./_lib/negotiate-types.ts";
 import { renderNegotiate } from "./_lib/render.ts";
 import {
   emitNegotiateBrief,
+  NEGOTIATE_EVIDENCE_LIMIT,
   OWNERSHIP_LIMIT,
   reduceLaneResults,
   runNegotiate,
@@ -342,6 +343,135 @@ test("reviewed PRs split by state, with a null-state arm", async () => {
   expect(brief.reviewedPrs?.approved).toBe(1);
   expect(brief.reviewedPrs?.changesRequested).toBe(1);
   expect(brief.reviewedPrs?.otherOrUnknown).toBe(1);
+  db.close();
+});
+
+test("a review whose metadata is unreadable is still counted, landing in otherOrUnknown", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:author");
+  seedPr(db, 2, "person:author");
+  seedPr(db, 3, "person:author");
+  seedReview(db, 1, "person:me", "approved");
+  seedReview(db, 2, "person:me", "approved");
+  seedReview(db, 3, "person:me", "approved");
+  // The two shapes `json_extract` cannot read. Written with raw SQL on purpose: every
+  // production writer goes through `JSON.stringify`, so neither is reachable via `seedReview`.
+  db.run("UPDATE item SET metadata = '{not json' WHERE title = ?", ["Review on acme/app#2"]);
+  db.run("UPDATE item SET metadata = NULL WHERE title = ?", ["Review on acme/app#3"]);
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  // Red-proves the guard's PLACEMENT, not merely its presence. With `json_valid` as a WHERE
+  // predicate — the shape this replaced — both rows were dropped from the query entirely, so
+  // `count` read 1 and `otherOrUnknown` read 0: two real reviews silently vanished from a
+  // document about how much work someone did. The lane's contract is that every review is
+  // counted SOMEWHERE, so an unreadable one must survive into `otherOrUnknown`.
+  expect(brief.reviewedPrs?.count).toBe(3);
+  expect(brief.reviewedPrs?.approved).toBe(1);
+  expect(brief.reviewedPrs?.otherOrUnknown).toBe(2);
+  db.close();
+});
+
+test("lanes cite the items behind their counts, and disclose truncation", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  // One past the cap, so the truncation arm is exercised rather than assumed.
+  const total = NEGOTIATE_EVIDENCE_LIMIT + 1;
+  for (let n = 1; n <= total; n++) seedPr(db, n, "person:me");
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.authoredPrs?.count).toBe(total);
+  expect(brief.authoredPrs?.evidence.refs).toHaveLength(NEGOTIATE_EVIDENCE_LIMIT);
+  expect(brief.authoredPrs?.evidence.total).toBe(total);
+
+  const markdown = renderNegotiate(brief);
+  // A capped list that does not say it is capped reads as exhaustive — the whole reason
+  // `evidence.total` is carried separately from `refs.length`.
+  expect(markdown).toContain("…and 1 more not listed");
+  db.close();
+});
+
+test("an evidence ref with no url renders as text, never as a link to nowhere", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:me");
+  db.run("UPDATE item SET canonical_url = NULL, url = NULL WHERE type = 'pr'");
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  expect(brief.authoredPrs?.evidence.refs[0]?.url).toBeNull();
+
+  const markdown = renderNegotiate(brief);
+  // Not `[title]()` — an empty link target is a dead link, and a fabricated one would be
+  // worse. The title still appears so the evidence is not silently dropped.
+  expect(markdown).not.toContain("]()");
+  expect(markdown).toContain("PR title 1");
+  db.close();
+});
+
+test("personal sources gate the evidence list exactly as they gate the counts", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  upsertIndexedItem(db, {
+    service: "obsidian",
+    type: "obsidian_note",
+    externalId: "vault/private.md",
+    title: "Private vault note",
+    bodyPreview: "",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: "person:me",
+    metadata: {},
+  });
+
+  // Gate OFF: the note contributes to neither the count nor the citations. Evidence that
+  // leaked a personal note here would disclose exactly what the opt-in exists to withhold.
+  const off = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  expect(off.writing?.notes).toBe(0);
+  expect(off.writing?.evidence.refs).toHaveLength(0);
+  expect(renderNegotiate(off)).not.toContain("Private vault note");
+
+  // Gate ON: count and citations move together.
+  const on = await runNegotiate(
+    { mePersonIdOverride: "person:me" },
+    {
+      ...ctxFor(db),
+      personalSources: ["obsidian"],
+    },
+  );
+  expect(on.writing?.notes).toBe(1);
+  expect(on.writing?.evidence.refs).toHaveLength(1);
+  expect(renderNegotiate(on)).toContain("Private vault note");
+  db.close();
+});
+
+test("a sub-day window renders its real size, never 0d", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+
+  // `--since 1h` is a valid request; the IPC bound is an upper one only. Rounding to whole
+  // days printed "last 0d" — the window clause is a DISCLOSURE, so it stating a window the
+  // lanes did not query is the same failure it exists to prevent.
+  const hour = await runNegotiate(
+    { mePersonIdOverride: "person:me", sinceMs: 3_600_000 },
+    ctxFor(db),
+  );
+  expect(renderNegotiate(hour)).toContain("_window: last 1h");
+  expect(renderNegotiate(hour)).not.toContain("last 0d");
+
+  const minutes = await runNegotiate(
+    { mePersonIdOverride: "person:me", sinceMs: 900_000 },
+    ctxFor(db),
+  );
+  expect(renderNegotiate(minutes)).toContain("_window: last 15m");
+
+  // A whole-day window is unchanged — the step-down applies only below a day.
+  const days = await runNegotiate(
+    { mePersonIdOverride: "person:me", sinceMs: 90 * 86_400_000 },
+    ctxFor(db),
+  );
+  expect(renderNegotiate(days)).toContain("_window: last 90d");
   db.close();
 });
 
@@ -951,7 +1081,7 @@ test("an other subject with no id at all still reads as a third party", () => {
     reviewedPrs: null,
     tickets: null,
     ownership: null,
-    decisions: { authored: 0, unattributable: 0 },
+    decisions: { authored: 0, unattributable: 0, evidence: { refs: [], total: 0 } },
     writing: null,
   };
 

@@ -10,6 +10,7 @@ import type {
   NegotiateAuthoredPrs,
   NegotiateBrief,
   NegotiateDecisions,
+  NegotiateEvidenceRef,
   NegotiateInput,
   NegotiateOwnership,
   NegotiateReviewedPrs,
@@ -213,9 +214,22 @@ function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): Negot
       if (typeof c === "number") changedFiles += c;
     }
   }
+  const refs = evidenceRefsFor(
+    db,
+    `SELECT i.title AS title, COALESCE(i.canonical_url, i.url) AS url
+       FROM graph_relation r
+       JOIN graph_entity pe  ON pe.id = r.from_id AND pe.type = 'person'
+       JOIN graph_entity pre ON pre.id = r.to_id  AND pre.type = 'pr'
+       JOIN item i           ON i.id = pre.external_id
+      WHERE r.type = 'authored' AND pe.external_id = ? AND i.modified_at >= ?
+      ORDER BY i.modified_at DESC, i.id ASC
+      LIMIT ?`,
+    [personId, cutoff, NEGOTIATE_EVIDENCE_LIMIT],
+  );
   return {
     count: rows.length,
     merged,
+    evidence: { refs, total: rows.length },
     stats: covered === 0 ? null : { additions, deletions, changedFiles },
     statsCoverage: { covered, total: rows.length },
   };
@@ -226,9 +240,16 @@ function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): Negot
  * (GitHub can omit it), and every review must be counted somewhere — `otherOrUnknown` catches
  * `commented`, `dismissed`, and the null case, never silently dropping a row.
  *
- * `json_valid(i.metadata)` in the WHERE clause is required, not decorative: `json_extract`
- * raises on unparseable JSON, and an unguarded call in a WHERE clause kills the query for
- * every row, not just the bad one (measured on bun 1.3.14 / SQLite 3.53.0).
+ * The `json_valid` guard is required, not decorative: `json_extract` raises on unparseable
+ * JSON, and one bad row kills the whole query rather than just itself (measured on bun
+ * 1.3.14 / SQLite 3.53.0). It sits in the PROJECTION, inside a short-circuiting `CASE`, and
+ * NOT in the WHERE clause. As a WHERE predicate it silently DROPPED every row whose metadata
+ * is NULL or corrupt — removing them from `count` as well as from `otherOrUnknown`, which
+ * contradicts the "every review is counted somewhere" rule above and disagreed with
+ * `laneAuthoredPrs`, which deliberately keeps such rows in its headline count. Measured on a
+ * 4-row fixture (valid / NULL / corrupt / no-state): the WHERE form returned 2 rows, the
+ * `CASE` form returns all 4 with the two unreadable ones landing in `otherOrUnknown`.
+ * Do not "simplify" this back into the WHERE clause.
  *
  * No `item(author_id)` index: `item` narrows hard first on `service`/`type` before this
  * unindexed filter runs, which is deliberate for a personal index — see spec § 4/Task 2 brief.
@@ -237,13 +258,12 @@ function laneReviewedPrs(db: Database, personId: string, sinceMs: number): Negot
   const cutoff = Date.now() - sinceMs;
   const rows = db
     .query(
-      `SELECT json_extract(i.metadata, '$.state') AS state
+      `SELECT CASE WHEN json_valid(i.metadata) THEN json_extract(i.metadata, '$.state') END AS state
          FROM item i
         WHERE i.service = 'github'
           AND i.type = 'review'
           AND i.author_id = ?
-          AND i.modified_at >= ?
-          AND json_valid(i.metadata)`,
+          AND i.modified_at >= ?`,
     )
     .all(personId, cutoff) as Array<{ state: string | null }>;
 
@@ -255,7 +275,25 @@ function laneReviewedPrs(db: Database, personId: string, sinceMs: number): Negot
     else if (r.state === "changes_requested") changesRequested += 1;
     else otherOrUnknown += 1;
   }
-  return { count: rows.length, approved, changesRequested, otherOrUnknown };
+  const refs = evidenceRefsFor(
+    db,
+    `SELECT i.title AS title, COALESCE(i.canonical_url, i.url) AS url
+       FROM item i
+      WHERE i.service = 'github'
+        AND i.type = 'review'
+        AND i.author_id = ?
+        AND i.modified_at >= ?
+      ORDER BY i.modified_at DESC, i.id ASC
+      LIMIT ?`,
+    [personId, cutoff, NEGOTIATE_EVIDENCE_LIMIT],
+  );
+  return {
+    count: rows.length,
+    approved,
+    changesRequested,
+    otherOrUnknown,
+    evidence: { refs, total: rows.length },
+  };
 }
 
 /**
@@ -290,7 +328,53 @@ function laneTickets(db: Database, personId: string, sinceMs: number): Negotiate
     )
     .get(personId, cutoff) as { n: number };
 
-  return { opened: opened.n, closedByAuthoredPr: closed.n };
+  const refs = evidenceRefsFor(
+    db,
+    `SELECT i.title AS title, COALESCE(i.canonical_url, i.url) AS url
+       FROM graph_relation r
+       JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+       JOIN graph_entity ie ON ie.id = r.to_id   AND ie.type = 'issue'
+       JOIN item i          ON i.id = ie.external_id
+      WHERE r.type = 'opened' AND pe.external_id = ? AND i.modified_at >= ?
+      ORDER BY i.modified_at DESC, i.id ASC
+      LIMIT ?`,
+    [personId, cutoff, NEGOTIATE_EVIDENCE_LIMIT],
+  );
+  return {
+    opened: opened.n,
+    closedByAuthoredPr: closed.n,
+    evidence: { refs, total: opened.n },
+  };
+}
+
+/**
+ * How many evidence refs a single lane may carry (spec § 5.B, citation half).
+ *
+ * A 365-day window over an active repo holds hundreds of PRs; an unbounded list stops being
+ * a brief and becomes a data dump nobody reads, which defeats the purpose as thoroughly as
+ * having no citations at all. Truncation is safe here ONLY because it self-discloses:
+ * `NegotiateEvidence.total` carries the full population, so the renderer can say "and N
+ * more" instead of letting a capped list read as exhaustive. Exported so tests can seed
+ * exactly-at / one-past the boundary without duplicating the magic number.
+ */
+export const NEGOTIATE_EVIDENCE_LIMIT = 5;
+
+/**
+ * `title` + best-available url for the `item` rows a lane counted, newest first.
+ *
+ * Ordered `modified_at DESC, id ASC` — the `id` tiebreak is not decoration: without it two
+ * items sharing a timestamp (routine, since a sync stamps a batch) come back in whatever
+ * order SQLite chooses, so the same index could cite different PRs on two consecutive runs
+ * of an unchanged brief. `COALESCE(canonical_url, url)` because not every connector records
+ * a canonical url, and a null stays null rather than being invented.
+ */
+function evidenceRefsFor(
+  db: Database,
+  sql: string,
+  params: readonly (string | number)[],
+): NegotiateEvidenceRef[] {
+  const rows = db.query(sql).all(...params) as Array<{ title: string; url: string | null }>;
+  return rows.map((r) => ({ title: r.title, url: r.url }));
 }
 
 /** Exported so tests can seed exactly-at / one-past the boundary without duplicating the magic
@@ -405,7 +489,25 @@ function laneDecisions(db: Database, personId: string, sinceMs: number): Negotia
     )
     .get(cutoff) as { n: number };
 
-  return { authored: authored.n, unattributable: unattributable.n };
+  // Cited from `authored` ONLY. `d.statement` is nullable (a `pending` row has none, and an
+  // `extracted` one can still be null if extraction produced nothing usable), so fall back to
+  // the source item's title rather than rendering an empty bullet.
+  const refs = evidenceRefsFor(
+    db,
+    `SELECT COALESCE(NULLIF(d.statement, ''), i.title) AS title,
+            COALESCE(i.canonical_url, i.url) AS url
+       FROM decision_record d
+       JOIN item i ON i.id = d.source_item_id
+      WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id = ?
+      ORDER BY d.decided_at DESC, d.id ASC
+      LIMIT ?`,
+    [cutoff, personId, NEGOTIATE_EVIDENCE_LIMIT],
+  );
+  return {
+    authored: authored.n,
+    unattributable: unattributable.n,
+    evidence: { refs, total: authored.n },
+  };
 }
 
 const DOC_TYPES = ["page", "document"] as const;
@@ -559,6 +661,55 @@ function splitPersonalSources(personalSources: readonly string[]): {
   };
 }
 
+/**
+ * Evidence for the writing lane, reproducing `countAuthoredServiceGated`'s gate EXACTLY in
+ * one query: a gated type (doc/note) qualifies from a non-personal-capable service always, or
+ * from a personal-capable one only when recognised; a message qualifies unconditionally.
+ *
+ * The gate is duplicated here rather than shared because the counts are three separate
+ * `COUNT(*)`s and this is one ordered list — but it MUST agree with them. Evidence that
+ * disagrees with the count above it is worse than no evidence: it turns the citation from a
+ * check into a contradiction, and a reader who spots an Obsidian note cited under a brief
+ * whose `sources` block says personal docs are off has no reason to trust any other number.
+ * The `personal sources gate the evidence list exactly as it gates the counts` test pins it.
+ *
+ * `recognised` is interpolated as a literal `0` (false) when empty: `service IN ()` is a
+ * syntax error in SQLite, so the empty case must collapse the clause, not emit it.
+ */
+function laneWritingEvidence(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  personalSources: readonly string[],
+): NegotiateEvidenceRef[] {
+  const gatedTypes: readonly string[] = [...DOC_TYPES, ...NOTE_TYPES];
+  const { recognised } = splitPersonalSources(personalSources);
+  const ph = (n: number): string => Array.from({ length: n }, () => "?").join(", ");
+  const recognisedClause = recognised.length === 0 ? "0" : `service IN (${ph(recognised.length)})`;
+  return evidenceRefsFor(
+    db,
+    `SELECT title, COALESCE(canonical_url, url) AS url
+       FROM item
+      WHERE author_id = ? AND modified_at >= ?
+        AND (
+          (type IN (${ph(gatedTypes.length)})
+            AND (service NOT IN (${ph(PERSONAL_CAPABLE_SERVICES.length)}) OR ${recognisedClause}))
+          OR type IN (${ph(MESSAGE_TYPES.length)})
+        )
+      ORDER BY modified_at DESC, id ASC
+      LIMIT ?`,
+    [
+      personId,
+      cutoff,
+      ...gatedTypes,
+      ...PERSONAL_CAPABLE_SERVICES,
+      ...recognised,
+      ...MESSAGE_TYPES,
+      NEGOTIATE_EVIDENCE_LIMIT,
+    ],
+  );
+}
+
 /** Messages are a work artifact and are always in scope (spec § 3.3) — chat services are
  * not in `PERSONAL_CAPABLE_SERVICES`. */
 function laneWriting(
@@ -568,10 +719,17 @@ function laneWriting(
   personalSources: readonly string[],
 ): NegotiateWriting {
   const cutoff = Date.now() - sinceMs;
+  const docs = countAuthoredServiceGated(db, personId, cutoff, DOC_TYPES, personalSources);
+  const notes = countAuthoredServiceGated(db, personId, cutoff, NOTE_TYPES, personalSources);
+  const messages = countAuthoredByType(db, personId, cutoff, MESSAGE_TYPES);
   return {
-    docs: countAuthoredServiceGated(db, personId, cutoff, DOC_TYPES, personalSources),
-    notes: countAuthoredServiceGated(db, personId, cutoff, NOTE_TYPES, personalSources),
-    messages: countAuthoredByType(db, personId, cutoff, MESSAGE_TYPES),
+    docs,
+    notes,
+    messages,
+    evidence: {
+      refs: laneWritingEvidence(db, personId, cutoff, personalSources),
+      total: docs + notes + messages,
+    },
   };
 }
 

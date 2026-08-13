@@ -10,7 +10,16 @@ import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { insertPerson } from "../../../src/people/person-store.ts";
 
-const NOW = 1_800_000_000_000;
+/**
+ * Derived from the clock, never a fixed epoch. Every lane except ownership windows on
+ * `modified_at` against `Date.now() - sinceMs`, and this scenario runs the DEFAULT 90-day
+ * window. A hardcoded constant (this was `1_800_000_000_000` — 2027-01-15) therefore stops
+ * being inside the window on a fixed future date: after 2027-04-15 every seeded item would
+ * fall before the cutoff, all six lanes would return `0`, and the load-bearing assertions
+ * below would fail with nothing having changed in the code. A time-bomb in a test that only
+ * fires long after the PR merges is worse than no test.
+ */
+const NOW = Date.now();
 const PERSON_ID = "person:me";
 const UNAVAILABLE_EVIDENCE = ["incidents resolved", "on-call shifts", "deploys triggered"];
 
@@ -202,6 +211,14 @@ describe("nimbus negotiate (e2e, in-process)", () => {
       expect(params.brief).toContain("1 review(s): 1 approved");
       expect(params.brief).toContain("1 opened, 1 closed by an authored PR");
       expect(params.brief).toContain("services: checkout");
+
+      // Citations, end to end: the lanes must name the actual items behind their counts, not
+      // just the counts. Asserted on the seeded titles specifically — a brief that printed
+      // "2 PR(s)" with no way to check which two is the aggregate-only shape this replaced.
+      expect(params.brief).toContain("Fix checkout button");
+      expect(params.brief).toContain("Add checkout regression test");
+      expect(params.brief).toContain("Review on acme/widgets#9");
+      expect(params.brief).toContain("Checkout button unresponsive");
 
       // The absent-evidence note (spec § 5.D) is present UNCONDITIONALLY — incidents resolved,
       // on-call shifts and deploys triggered do not exist in the index at all, and the brief

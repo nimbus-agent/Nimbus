@@ -19,6 +19,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   90 days and tops out at 365 — negotiate's own bound, wider than the shared 90-day `MAX_SINCE_MS`
   every sibling agent uses, sized for an annual review cycle; a request above it is rejected
   outright (exit code 2), never silently clamped.
+  **Every item-backed lane cites its evidence.** A count with no way to check it is an
+  assertion, not evidence — "12 PRs" reads exactly like "40 PRs" to someone who cannot open
+  either. Each of the five item-backed lanes carries up to `NEGOTIATE_EVIDENCE_LIMIT` (5)
+  refs — title plus `COALESCE(item.canonical_url, item.url)` — ordered `modified_at DESC, id
+  ASC` so an unchanged index cites the same items on every run. Truncation self-discloses:
+  `NegotiateEvidence.total` holds the full population, so a capped list renders "…and N more
+  not listed" rather than reading as exhaustive. A ref with no url renders as plain text,
+  never as an empty link and never as a fabricated one. Two deliberate omissions: ownership
+  carries no refs (it already enumerates the services and directories it counted), and the
+  tickets lane cites only the issues the subject OPENED — citing the `closed by an authored
+  PR` hop would list issues someone else filed. The writing lane's evidence query reproduces
+  the `personal_sources` gate exactly, so a personal note can never appear as a citation
+  under a brief whose `sources` block says personal docs are off.
   **Personal sources are off unless configured.** Confluence pages and chat messages are always
   in scope; Obsidian notes and Notion pages are mined only when their service is named in
   `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the

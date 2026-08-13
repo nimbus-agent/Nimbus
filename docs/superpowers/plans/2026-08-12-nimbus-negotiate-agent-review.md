@@ -1,5 +1,17 @@
 # Nimbus Negotiate Agent Plan Review
 
+> **HISTORICAL — do not read as current contract.** This is a point-in-time
+> review of the implementation plan, kept for provenance. It records open
+> questions as they stood *before* implementation; several were answered
+> differently in the shipped code. The authoritative current contract is
+> [`docs/cli-reference.md`](../../cli-reference.md)'s `nimbus negotiate`
+> section plus the `agents.negotiate` block in
+> [`docs/architecture.md`](../../architecture.md); the answers given at the
+> time are in
+> [`2026-08-12-nimbus-negotiate-agent-review-response.md`](./2026-08-12-nimbus-negotiate-agent-review-response.md).
+> Note in particular that this document places `renderNegotiate` in
+> `agents/_lib/synthesize.ts`; it ships in `agents/_lib/render.ts`.
+
 ## Open Questions & Risks
 
 1. **Synthesizer LLM Fallback Behavior**
