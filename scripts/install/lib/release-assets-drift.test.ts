@@ -9,13 +9,14 @@ const INSTALL_PS1 = "./scripts/install/windows/install.ps1";
 // The macOS/Windows archive names are literal strings in release.yml. The
 // Linux tarball name, though, is never spelled out there — it's built in
 // scripts/package-linux-installers.ts (as `nimbus-headless-linux-amd64-v${version}.tar.gz`)
-// and staged into the release only via the glob `cp dist/installers/*`. So a
-// name that release.yml never mentions verbatim isn't necessarily undrifted:
-// it may still be produced by the packager script that the glob picks up.
-// This guard treats an asset as "produced" if EITHER file accounts for it —
-// that matches how the release pipeline actually stages assets, not just how
-// one workflow file happens to spell them.
-test("every asset the installer requests is produced by release.yml or the Linux packager script", async () => {
+// and staged into the release only via the glob `cp dist/installers/*`.
+// Pinned PER TARGET, not `producedByWorkflow || producedByLinuxPackager` for
+// every target: an OR across both files would let a stale mac/win stem
+// linger in package-linux-installers.ts (a file that has no business naming
+// them at all) mask a real break in release.yml — the OR would still pass
+// via the wrong file. Each target is checked against the ONE file that
+// actually produces it.
+test("every asset the installer requests is produced by its actual producer (release.yml, or the Linux packager for the Linux target)", async () => {
   const yaml = await Bun.file(WORKFLOW).text();
   const linuxPackager = await Bun.file(LINUX_PACKAGER).text();
   for (const target of SUPPORTED_TARGETS) {
@@ -23,9 +24,11 @@ test("every asset the installer requests is produced by release.yml or the Linux
     // workflow's/packager's `${version}`-interpolated form.
     const name = assetNameFor(target, "0.0.0").replace("-v0.0.0", "");
     const stem = name.replace(/\.tar\.gz$|\.zip$/, "");
-    const producedByWorkflow = yaml.includes(stem);
-    const producedByLinuxPackager = linuxPackager.includes(stem);
-    expect(producedByWorkflow || producedByLinuxPackager).toBe(true);
+    if (target.os === "linux") {
+      expect(linuxPackager).toContain(stem);
+    } else {
+      expect(yaml).toContain(stem);
+    }
   }
 });
 

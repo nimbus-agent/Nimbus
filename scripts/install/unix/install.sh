@@ -171,8 +171,11 @@ verify_signature() {
   if [ -n "$primary_fp" ] && [ "$primary_fp" = "$NIMBUS_SIGNING_FPR" ]; then
     # GPG emits EXPKEYSIG/REVKEYSIG ALONGSIDE VALIDSIG, not instead of it, so
     # this must be checked independently of the fingerprint match above —
-    # mirrors scripts/release/nimbus-verify.sh's own expired/revoked guard
-    # (grep -qE '^\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)') verbatim.
+    # mirrors the same expired/revoked guard scripts/release/nimbus-verify.sh
+    # applies (grep -qE '\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)'). NOT byte-for-byte
+    # verbatim, though: that script's pattern is unanchored, while this one
+    # anchors on `^` — functionally equivalent (gpg's status lines always
+    # start with the literal `[GNUPG:]` token), but the two patterns differ.
     if printf '%s\n' "$verify_out" | grep -qE '^\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)'; then
       echo "Error: SHA256SUMS.asc signing key is expired or revoked — refusing to install." >&2
       rm -rf "$dir"
@@ -286,10 +289,23 @@ fetch_release() {
 
   # awk, not grep: $asset is interpolated as a literal field match here, never
   # as a regex — the asset name has five literal dots that a BRE would treat
-  # as "any character", letting an unrelated line satisfy the match.
-  expected="$(awk -v a="$asset" '$2 == a { print $1; exit }' "${DOWNLOAD_DIR}/SHA256SUMS")"
+  # as "any character", letting an unrelated line satisfy the match. awk's
+  # `==` on strings is byte-exact (case-sensitive), matching install.ps1's
+  # `-ceq` twin. Counts every match instead of stopping at the first: a
+  # SHA256SUMS manifest with a case-varied or outright duplicate shadow line
+  # for the same filename is never legitimate, so more than one match is a
+  # REJECTION here too, not first-match-wins — mirrors install.ps1's
+  # `$checksumMatches.Length -ne 1` rule (an attacker who controls a
+  # mirror/proxy could otherwise prepend a shadow line ahead of the genuine
+  # one and have a tampered archive "verify").
+  matches="$(awk -v a="$asset" '$2 == a { count++; hash = $1 } END { printf "%s %s\n", count + 0, hash }' "${DOWNLOAD_DIR}/SHA256SUMS")"
+  match_count="${matches%% *}"
+  expected="${matches#* }"
   actual="$(sha256_of "${DOWNLOAD_DIR}/${asset}")" || exit 1
-  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+  # The real SHA256SUMS format is "<64-hex-hash><two spaces><filename>" — also
+  # mirrors install.ps1's `-notmatch '^[0-9a-f]{64}$'` hash-format guard.
+  if [ "$match_count" -ne 1 ] || ! printf '%s' "$expected" | grep -qE '^[0-9a-f]{64}$' ||
+    [ "$expected" != "$actual" ]; then
     echo "Error: sha256 checksum mismatch for ${asset} — refusing to install." >&2
     rm -rf "$DOWNLOAD_DIR"; exit 1
   fi

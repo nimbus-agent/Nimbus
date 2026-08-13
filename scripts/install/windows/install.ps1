@@ -77,13 +77,18 @@ GZj8E1UHHwDCVM+4vVet/0q+U2Lgczx9nmZ2fjKlDw==
 
 # WARNING: the call site below does `if (-not (Test-NimbusSignature ...))`.
 # PowerShell functions implicitly return every unsuppressed pipeline output as
-# a single (possibly multi-element) array, and `-not` on a non-empty array is
-# ALWAYS $false regardless of its contents -- so a single stray unsuppressed
-# write inside this function (a bare expression, `Write-Output`, an
-# un-`| Out-Null`'d cmdlet call, etc.) silently turns a real `$false` into a
-# truthy array and the "if signature invalid, refuse to install" gate goes
-# fail-OPEN. Keep every intermediate step suppressed (`| Out-Null`, or
-# `[void]`) and end the function with exactly one bare `return $true`/`return $false`.
+# a single (possibly multi-element) array. PowerShell only coerces a
+# SINGLE-element array to bool by looking at that one element's own
+# truthiness (so `-not @($false)` is `$true`, as expected) -- but an array of
+# TWO OR MORE elements coerces to $true UNCONDITIONALLY, regardless of what
+# those elements are, so `-not` on it is ALWAYS $false. That means a single
+# stray unsuppressed write inside this function (a bare expression,
+# `Write-Output`, an un-`| Out-Null`'d cmdlet call, etc.) ahead of the real
+# `return $false` turns the pipeline output into a 2-element array, silently
+# flips its truthiness, and the "if signature invalid, refuse to install"
+# gate goes fail-OPEN. Keep every intermediate step suppressed (`| Out-Null`,
+# or `[void]`) and end the function with exactly one bare `return
+# $true`/`return $false`.
 # Write-Warning/Write-Host write to the Warning/host streams, not the success
 # (pipeline-output) stream, so they are safe to use unsuppressed for
 # human-facing text without risking the array-coercion trap above.
