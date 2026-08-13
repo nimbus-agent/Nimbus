@@ -51,9 +51,22 @@ dbus-run-session -- bash -c 'echo "" | gnome-keyring-daemon --unlock --component
 ```
 
 On a box that has **never had a login keyring**, `--unlock` must *create* the
-collection, which escalates to `gcr-prompter`, which fails with
-`cannot open display`. A headless box is exactly the box with no login keyring,
-so the remedy fails precisely where it is printed. Detection is good — `no-bus`,
+collection — and the collection-creation path can escalate to `gcr-prompter`,
+which fails with `cannot open display`. **Correction (Controller Ruling 16,
+Task 8 spike — see the implementation plan's "Spike result" for the full
+data):** this is not a deterministic failure the way the paragraph above
+implies. It is a **~1-in-40-to-50 D-Bus name-ownership race** — root cause is
+that `gnome-keyring-daemon --unlock` forks to the background and returns
+before it necessarily owns the `org.freedesktop.secrets` D-Bus name, so an
+immediately-following Secret Service request can get D-Bus-activated onto a
+**second, fresh** daemon instance that was never given a password and can
+only resolve via the (display-less) `gcr-prompter`. A 55-trial spike (two
+independent batches, fresh `ubuntu:24.04` containers, forced from-scratch
+every run) found 0 failures for the polling-augmented sequence that closes
+the race by waiting on D-Bus name ownership rather than on file existence —
+that sequence is what `nimbus doctor --fix-keyring` (#1168) implements. A
+headless box with no login keyring is still where the race can occur; only
+the "must fail" framing above is wrong. Detection is good — `no-bus`,
 `no-provider` and `no-collection` are correctly distinguished; only the remedy
 is short.
 
