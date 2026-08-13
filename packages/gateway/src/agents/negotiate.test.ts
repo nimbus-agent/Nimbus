@@ -587,6 +587,66 @@ test("tickets counts opened, and closed via an authored PR's resolves edge", asy
   db.close();
 });
 
+test("tickets cites only issues the subject opened, never ones merely closed by their PR", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+
+  // Opened by SOMEONE ELSE, closed by the subject's PR. The existing tickets fixture cannot
+  // prove this exclusion: there every issue is both opened and closed by the subject, so a
+  // regression that cited the closed-by hop would still look correct.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#issue-42",
+    title: "Filed by a colleague",
+    bodyPreview: "",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: "person:other",
+    metadata: { repo: "acme/app", number: 42 },
+  });
+  // ...alongside one the subject DID open, so the assertion below is positive AND negative.
+  // A bare `refs).toEqual([])` would pass just as well against an evidence list that was
+  // simply broken and always empty; requiring the opened issue to be present rules that out.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#issue-43",
+    title: "Filed by the subject",
+    bodyPreview: "",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: "person:me",
+    metadata: { repo: "acme/app", number: 43 },
+  });
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/app#5",
+    title: "Fix the colleague's bug",
+    bodyPreview: "closes #42",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: "person:me",
+    metadata: { repo: "acme/app", number: 5 },
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  // The COUNT still credits the work — closing someone's bug is real contribution.
+  expect(brief.tickets?.closedByAuthoredPr).toBe(1);
+  expect(brief.tickets?.opened).toBe(1);
+
+  // But the CITATION must not, or the brief lists a colleague's ticket under a heading that
+  // reads as the subject's own filed work.
+  expect(brief.tickets?.evidence.refs.map((r) => r.title)).toEqual(["Filed by the subject"]);
+  expect(brief.tickets?.evidence.total).toBe(1);
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("1 opened, 1 closed by an authored PR");
+  expect(markdown).not.toContain("Filed by a colleague");
+  db.close();
+});
+
 test("ownership reports services and cites the pass timestamp", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
@@ -772,6 +832,15 @@ test("decisions counts authored and reports unattributable separately", async ()
 
   expect(brief.decisions?.authored).toBe(1);
   expect(brief.decisions?.unattributable).toBe(1);
+
+  // NEGATIVE citation assertion — the exclusion is the point, not a side effect. Evidence is
+  // drawn from `authored` only: `unattributable` counts decisions whose source item records
+  // no author AT ALL, so citing one would print someone else's decision under this person's
+  // name in a document that may affect their compensation. A future "cite everything the
+  // lane touched" simplification would look harmless and be exactly wrong.
+  expect(brief.decisions?.evidence.refs.map((r) => r.title)).toEqual(["we decided X"]);
+  expect(brief.decisions?.evidence.total).toBe(1);
+  expect(renderNegotiate(brief)).not.toContain("we decided Y");
 
   // The undercount failure inverted: `unattributable` must never read as work that might
   // belong to the subject — the rendered line has to say it is an index-wide fact, not
