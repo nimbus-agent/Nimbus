@@ -1,16 +1,19 @@
 ---
 title: Sentry
-description: Index Sentry projects and read unresolved issues + releases. Read-only.
+description: Index Sentry projects and issues, and read unresolved issues + releases. Read-only.
 ---
 
-The Sentry connector indexes project metadata into the local SQLite index and exposes read tools for unresolved issues and releases. Read-only — there are no write tools.
+The Sentry connector indexes project metadata **and issues** into the local SQLite index, and exposes read tools for unresolved issues and releases. Read-only — there are no write tools.
 
 ---
 
 ## What's indexed
 
 - **Service id:** `sentry`
-- **Item types:** `project`
+- **Item types:** `project`, `error_issue`
+
+Issues are pulled org-wide (not per-project), windowed by `lastSeen` with a 30-day cold start on
+first sync, and include resolved issues, not just unresolved ones.
 
 ## Authenticate
 
@@ -19,6 +22,17 @@ nimbus connector auth sentry
 ```
 
 Stored in the Vault as `sentry.url`, `sentry.org_slug`, and `sentry.auth_token` and injected at spawn as `SENTRY_URL`, `SENTRY_ORG_SLUG`, `SENTRY_AUTH_TOKEN`. The MCP server uses Bearer auth.
+
+### Required token scope
+
+The Sentry auth token **must carry the `event:read` scope** for issue indexing to work. The
+org-wide issues endpoint Nimbus polls rejects a `project:read`-only token with an HTTP 403 — but
+the projects list endpoint still succeeds with that same token, so a mis-scoped token looks
+configured: `project` items keep syncing normally while zero `error_issue` items are ever
+indexed. The gateway logs a warning (`sentry sync: issues forbidden — the auth token needs the
+event:read scope`) but does not surface this as an error. If issues never show up after
+authenticating, check the token's scopes first. An Organization Auth Token is not a substitute —
+it's meant for source-map upload in CI and its scope can't be changed after creation.
 
 ## Read tools (no HITL)
 

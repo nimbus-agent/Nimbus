@@ -1,6 +1,15 @@
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
+// `sentry:error_issue` deliberately stays OFF `PROSE_HEAVY_TYPES` (local
+// MiniLM 384-dim; see embedding/routing.ts). `buildBody` below is
+// `metadata.value` (the exception message, e.g. "TypeError: cannot read
+// property 'x' of undefined") plus `culprit` (a code location string, e.g.
+// "some/file.py in some_function") — a short, structured error signature,
+// not paragraph-shaped natural-language prose. It is also absent from
+// `LONG_BODY_TYPES` (index/body-caps.ts), which uses the same short/prose
+// distinction for the 512-char-vs-16-KiB body cap and agrees with this call.
+
 export type SentryIssueMappingContext = {
   readonly org: string;
   readonly syncedAt: number;

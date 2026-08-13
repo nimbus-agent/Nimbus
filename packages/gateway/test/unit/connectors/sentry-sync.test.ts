@@ -455,7 +455,7 @@ describe("sentry-sync — issue pass", () => {
     expect(ids).toEqual(["1", "2"]);
   });
 
-  test("stops early once a row is at or below the stored cursor", async () => {
+  test("skips (not stops) once a row is at or below the stored cursor", async () => {
     const cursor =
       CURSOR_V2_PREFIX +
       Buffer.from(

@@ -79,10 +79,21 @@ function buildNextCursor(
     return cursor;
   }
   if (issues.resumeUrl !== null) {
+    // No `?? prev?.pendingMax` fallback here: on a REJECTED resume,
+    // sentry-issue-sync.ts's `syncSentryIssuePass` deliberately resets its
+    // own `runningMaxMs` to `null` before starting a fresh walk — "the
+    // abandoned resume's pendingMax doesn't correspond to anything reachable
+    // from page 1" (see that reset's comment). Falling back to the STALE
+    // `prev?.pendingMax` here would silently reintroduce exactly the value
+    // that reset was meant to discard, if that fresh walk itself then gets
+    // budget-truncated before establishing any new max. In every OTHER
+    // (non-rejected) truncation, `issues.runningMaxMs` already reflects
+    // `prev?.pendingMax` — it was seeded from `input.pendingMax` at the
+    // pass's start — so dropping this fallback changes nothing there.
     return encodeCursor({
       lastSeenMs: prev?.lastSeenMs ?? 0,
       resume: issues.resumeUrl,
-      pendingMax: issues.runningMaxMs ?? prev?.pendingMax ?? 0,
+      pendingMax: issues.runningMaxMs ?? 0,
     });
   }
   const candidates = [prev?.pendingMax, issues.runningMaxMs, prev?.lastSeenMs].filter(
@@ -223,7 +234,23 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
       // own params, and never rebuilds this URL unless the resume is
       // rejected, in which case rebuilding with the shrunken window is
       // exactly what's wanted.
-      const sinceMs = prev === null ? coldFloorMs : Math.max(prev.lastSeenMs, windowFloorMs);
+      //
+      // Keyed on `prev.lastSeenMs === 0`, not only `prev === null`: a
+      // BUDGET-TRUNCATED walk during a COLD start persists exactly
+      // `{lastSeenMs: 0, resume, pendingMax}` (see `buildNextCursor`'s
+      // truncated arm — `prev?.lastSeenMs ?? 0` is `0` while `prev` is still
+      // `null` on that first pass). If the cold-start test read `prev ===
+      // null` alone, the very next tick would see a non-null `prev` and fall
+      // through to `windowFloorMs` — silently losing a caller-supplied
+      // `ctx.historyFloorMs` narrower/wider than the fixed 30-day window the
+      // moment a rejected resume forces a fresh `firstPageUrl` rebuild.
+      // `lastSeenMs` only ever becomes non-zero once a walk actually
+      // COMPLETES (a real `modifiedAt` was observed), so this stays cold for
+      // as long as the backfill genuinely still is.
+      const sinceMs =
+        prev === null || prev.lastSeenMs === 0
+          ? coldFloorMs
+          : Math.max(prev.lastSeenMs, windowFloorMs);
 
       const issues = await syncSentryIssuePass({
         ctx,
