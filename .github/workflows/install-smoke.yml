@@ -140,6 +140,17 @@ jobs:
       #   Gateway: dist/nimbus-gateway           (Unix, repo root dist/)
       #            dist/nimbus-gateway.exe       (Windows, repo root dist/)
 
+      # The sqlite-vec loadable extension. Every real release archive ships one beside the
+      # gateway binary (release.yml runs this exact script into `dist` before staging any
+      # archive/installer) and both install.ps1/install.sh have a sidecar-copy step that only
+      # this job's served-release legs exercise — so it has to be real, not a stub, to prove
+      # anything. `bun install` on this runner already resolved the platform-specific
+      # `sqlite-vec-<os>-<arch>` optional dependency the same way the release build does, so
+      # this reuses that same real native module rather than fabricating one — producing
+      # dist/vec0.so (Linux), dist/vec0.dylib (macOS) or dist/vec0.dll (Windows).
+      - name: Copy sqlite-vec sidecar
+        run: bun scripts/copy-vec0-sidecar.ts --dest dist
+
       - name: Stage a fake release dir (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -469,6 +480,20 @@ jobs:
           cp "$STAGE/nimbus-gateway" "$PAYLOAD/bin/nimbus-gateway"
           chmod +x "$PAYLOAD/bin/nimbus" "$PAYLOAD/bin/nimbus-gateway"
 
+          # sqlite-vec sidecar — real archives ship one (release.yml's stage-macos-*/
+          # headless-bundle steps; scripts/package-linux-installers.ts's stageVec0()).
+          # Placed in $PAYLOAD/bin regardless of OS: the packing branch below packs the
+          # Linux tarball FROM $PAYLOAD (bin/ prefix survives, matching the real
+          # bin/vec0.so layout) but the macOS tarball FROM $PAYLOAD/bin (flattened to
+          # top-level, matching the real top-level vec0.dylib layout) — so one source
+          # location produces the correct extracted layout on both.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            VEC0_SRC="dist/vec0.so"
+          else
+            VEC0_SRC="dist/vec0.dylib"
+          fi
+          cp "$VEC0_SRC" "$PAYLOAD/bin/$(basename "$VEC0_SRC")"
+
           # Names + layout MUST match scripts/install/lib/release-assets.ts's
           # assetNameFor() and the real release.yml packaging: the Linux
           # tarball is versioned and nests binaries under bin/; the macOS
@@ -538,6 +563,14 @@ jobs:
             echo "::error::installer never reported sha256 verification — the remote path did not run"; exit 1; }
 
           test -x "$HOME/.local/bin/nimbus" || { echo "::error::remote install did not place the binary"; exit 1; }
+
+          # Proves install.sh's sidecar-copy loop (the `for cand in ... vec0.so vec0.dylib
+          # ... bin/vec0.so bin/vec0.dylib` block) actually ran against the served archive,
+          # not just that binaries landed — the whole reason this job packs a real sidecar.
+          if [ "$RUNNER_OS" = "Linux" ]; then VEC0_NAME="vec0.so"; else VEC0_NAME="vec0.dylib"; fi
+          test -f "$HOME/.local/bin/$VEC0_NAME" || {
+            echo "::error::remote install did not place the sqlite-vec sidecar ($VEC0_NAME) — the sidecar-copy path in install.sh did not run"; exit 1; }
+
           "$HOME/.local/bin/nimbus" --version
 
       - name: Stop the release fixture server (Unix)
@@ -684,6 +717,11 @@ jobs:
           Copy-Item (Join-Path $env:STAGE "nimbus.exe")         (Join-Path $payload "nimbus.exe")
           Copy-Item (Join-Path $env:STAGE "nimbus-gateway.exe") (Join-Path $payload "nimbus-gateway.exe")
 
+          # sqlite-vec sidecar — the real Windows zip ships vec0.dll at TOP LEVEL,
+          # alongside the two .exe files (release.yml's `Stage Windows archive` step).
+          # Copy-Item's wildcard below picks it up into the archive automatically.
+          Copy-Item (Join-Path "dist" "vec0.dll") (Join-Path $payload "vec0.dll")
+
           # scripts/install/lib/release-assets.ts's assetNameFor(): unversioned,
           # binaries at TOP LEVEL of the zip (unlike the Linux tarball's bin/).
           $asset = "nimbus-headless-windows-x64.zip"
@@ -747,6 +785,15 @@ jobs:
           if (-not (Test-Path $installedNimbus)) {
             Write-Error "remote install did not place the binary"; exit 1
           }
+
+          # Proves install.ps1's sidecar-copy block ($Vec0Src = ... vec0.dll / bin\vec0.dll
+          # ... Copy-Item ...) actually ran against the served archive, not just that the
+          # binaries landed — the whole reason this job packs a real sidecar.
+          $installedVec0 = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\vec0.dll"
+          if (-not (Test-Path $installedVec0)) {
+            Write-Error "remote install did not place the sqlite-vec sidecar (vec0.dll) — the sidecar-copy path in install.ps1 did not run"; exit 1
+          }
+
           $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"
           nimbus --version
 
@@ -761,85 +808,79 @@ jobs:
       # Before this leg, NOTHING anywhere — no CI job, no bun test — ever
       # executed install.ps1 on real Windows PowerShell 5.1; `shell: powershell`
       # appeared zero times in any workflow, and install-remote-windows.test.ts
-      # resolves pwsh too. Reuses the SAME fixture server the PS7 leg used
-      # (still running — the "Stop" step below tears both down), with a THIRD
-      # distinct sandboxed LOCALAPPDATA so this leg cannot be satisfied by
-      # either the local-mode or the PS7 remote-mode install.
+      # resolves pwsh too. Reuses the SAME fixture server AND the SAME staged
+      # release archive the PS7 leg above already packed and verified (still
+      # running/served — the "Stop" step below tears the server down), with a
+      # THIRD distinct sandboxed LOCALAPPDATA so this leg cannot be satisfied
+      # by either the local-mode or the PS7 remote-mode install. No separate
+      # packing step is needed here for that reason: $env:REMOTE_ASSET at
+      # `http://127.0.0.1:8788/$env:REMOTE_ASSET` is already the real ~50-80
+      # MB built binaries.
       #
-      # STUB binaries only, deliberately — NOT the real ~50-80 MB compiled
-      # binaries the PS7 leg above just proved survive the remote path.
-      # Controller Ruling 17: downloading that archive over 127.0.0.1 under
-      # Windows PowerShell 5.1 specifically hits a well-diagnosed, runner-only
-      # artifact on GH-hosted windows-2022 runners — deterministic across
-      # retries (3/3 identical), never reproduces on a real off-CI PS 5.1
-      # process, PS7's HttpClient unaffected. Full root-cause investigation
-      # (including a raw-download diagnostic proving ~0.95 MB/s over loopback,
-      # consistent with real-time AV inline-scanning the legacy WinINet stack)
-      # is in the task report. This leg invokes install.ps1 as a FILE
-      # (`-File ... -FromRelease`, see the step below), not via `irm | iex`,
-      # so `$PSScriptRoot` is non-null and `param()` binds normally, and
-      # `-FromRelease` means `Resolve-LatestTag` is never called — none of
-      # those are exercised here. What this leg's real, UNIQUE value is: it
-      # proves the 5.1 RUNTIME behaves correctly for `Write-Host` stream
-      # capture via `*>&1`, the TLS 1.2 branch, and 5.1-specific
-      # `Invoke-WebRequest`/`Get-FileHash`/`Expand-Archive` behaviour — NOT
-      # re-proving real-binary realism, which the PS7 leg in this SAME
-      # workflow already covers. The genuine `irm | iex` one-liner PLUS the
-      # inert-`#Requires`-under-`iex` / null-`$PSScriptRoot` /
+      # REAL binaries, not stubs — Controller Ruling 17 revisited. This leg
+      # used to serve a tiny stand-in PE (`Add-Type -OutputType
+      # ConsoleApplication`) instead of the real archive: downloading the real
+      # archive over 127.0.0.1 under Windows PowerShell 5.1's legacy
+      # Invoke-WebRequest (WinINet-backed, unlike PS7's HttpClient) on
+      # GitHub-hosted windows-2022 runners was measured transferring at
+      # ~0.95 MB/s and landing PLAUSIBLE-SIZE-BUT-WRONG-CONTENT bytes —
+      # deterministic across retries (3/3 identical), never reproducing off
+      # CI and never on the PS7 leg in this same job. The working diagnosis
+      # was real-time antivirus inline-scanning interfering with the legacy
+      # WinINet stack's writes to disk. That diagnosis was never proven by a
+      # controlled A/B (AV on vs AV off) — it is circumstantial (loopback
+      # throughput collapse + PS7-immune + off-CI-immune), not confirmed.
+      # `Get-NimbusRelease` in install.ps1 also gained `$ProgressPreference =
+      # "SilentlyContinue"` around the same time (a REAL, separately-measured
+      # ~182x throughput fix for 5.1's per-chunk console progress rendering,
+      # not a CI-only workaround) — it is possible that fix alone removed
+      # whatever was triggering the corruption, and the AV theory was never
+      # re-tested in isolation after it landed. A future reader who sees this
+      # leg green for a long stretch should weigh removing the exclusion
+      # below (or re-running once without it) before assuming it is still
+      # load-bearing.
+      #
+      # THE EXCLUSION: the user explicitly authorised adding a Windows
+      # Defender path exclusion to this CI-only job to unblock real-binary
+      # coverage (this was previously refused as a security-sensitive change
+      # to shared CI infrastructure not owned by this change). It is scoped
+      # as narrowly as this workflow can make it:
+      #   - ONE directory: a dedicated, per-run temp folder under
+      #     $env:RUNNER_TEMP (NOT a drive, NOT $env:RUNNER_TEMP itself, NOT a
+      #     process-wide or file-extension-wide exclusion).
+      #   - install.ps1's own download temp dir (`Get-NimbusRelease`'s
+      #     $work, created under `[System.IO.Path]::GetTempPath()`) is
+      #     redirected into exactly that folder for this one step, by
+      #     overriding $env:TMP / $env:TEMP for that step's process only —
+      #     so the exclusion covers precisely where the bytes for THIS leg's
+      #     download land, and nothing else on the runner.
+      #   - Added immediately before the download step and removed
+      #     immediately after, in an `if: always()` step, so the runner is
+      #     never left with a lingering exclusion even if the install step
+      #     fails. GitHub-hosted runners are ephemeral and this VM is
+      #     discarded either way, but a leaked exclusion is exactly the kind
+      #     of thing a reused/self-hosted environment should never have to
+      #     rely on chance for.
+      #   - This exclusion is added and removed ONLY inside this CI job, on
+      #     GitHub-hosted `windows-2022` runners. It never touches a
+      #     developer machine or a user's install — nothing under
+      #     scripts/install/ references Defender or `Add-MpPreference`.
+      #
+      # This leg invokes install.ps1 as a FILE (`-File ... -FromRelease`, see
+      # the step below), not via `irm | iex`, so `$PSScriptRoot` is non-null
+      # and `param()` binds normally, and `-FromRelease` means
+      # `Resolve-LatestTag` is never called — none of those are exercised
+      # here. What this leg's real, UNIQUE value is: it proves the 5.1
+      # RUNTIME behaves correctly for `Write-Host` stream capture via
+      # `*>&1`, the TLS 1.2 branch, and 5.1-specific
+      # `Invoke-WebRequest`/`Get-FileHash`/`Expand-Archive` behaviour against
+      # the SAME real binaries the PS7 leg in this same workflow already
+      # proved survive the remote path — now with actual real-binary
+      # realism too, not a stand-in. The genuine `irm | iex` one-liner PLUS
+      # the inert-`#Requires`-under-`iex` / null-`$PSScriptRoot` /
       # `ResponseUri`-vs-`RequestMessage` behaviours, on real PowerShell 5.1,
       # are covered post-release, hand-dispatched, in
       # `released-install-smoke.yml:280-292`.
-      # If tempted to "upgrade" this back to the real binaries: that was
-      # tried, it is provably a CI-runner artifact and not a product bug, and
-      # the fix (an antivirus exclusion) is deliberately NOT applied here —
-      # that decision belongs to whoever owns the CI infrastructure, not to
-      # this workflow. See the task report before changing this.
-      - name: Pack a STUB served-release fixture for the PS5.1 leg (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          $serve = Join-Path $env:RUNNER_TEMP "serve"
-          $stubDir = Join-Path $env:RUNNER_TEMP "ps51-stub-payload"
-          New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
-
-          # A real, tiny, RUNNABLE PE console app — not a renamed text file.
-          # This leg's final assertion actually EXECUTES the installed
-          # binary (`nimbus --version`), which a non-PE file cannot survive.
-          # Add-Type -OutputType ConsoleApplication only works under Windows
-          # PowerShell 5.1's classic CodeDom compiler (confirmed: pwsh/PS7
-          # rejects it with "assembly types ... are not currently
-          # supported") — another reason this step runs under
-          # `shell: powershell`, not `pwsh`.
-          # An array-of-strings joined with `n, not a `@'...'@` here-string:
-          # a here-string's closing delimiter must sit at column 0, which
-          # would terminate this step's own YAML block scalar early and
-          # produce a workflow GitHub silently runs as zero jobs.
-          $srcLines = @(
-            'using System;'
-            'class P {'
-            '  static void Main(string[] args) {'
-            '    Console.WriteLine("nimbus-stub 0.0.0-test");'
-            '  }'
-            '}'
-          )
-          $src = $srcLines -join "`n"
-          Add-Type -TypeDefinition $src -Language CSharp -OutputType ConsoleApplication `
-            -OutputAssembly (Join-Path $stubDir "nimbus.exe")
-          Add-Type -TypeDefinition $src -Language CSharp -OutputType ConsoleApplication `
-            -OutputAssembly (Join-Path $stubDir "nimbus-gateway.exe")
-
-          # Overwrites the SAME asset filename the PS7 leg already consumed
-          # and verified above — install.ps1's $Asset is a hardcoded literal
-          # ("nimbus-headless-windows-x64.zip"), so the served filename must
-          # stay identical for -FromRelease to find it.
-          $zipPath = Join-Path $serve $env:REMOTE_ASSET
-          Compress-Archive -Path (Join-Path $stubDir "*") -DestinationPath $zipPath -Force
-
-          $digest = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          $sumsPath = Join-Path $serve "SHA256SUMS"
-          [System.IO.File]::WriteAllText($sumsPath, "$digest  $($env:REMOTE_ASSET)`n", [System.Text.UTF8Encoding]::new($false))
-
       - name: Confirm this leg runs on Windows PowerShell 5.1, not pwsh (Windows)
         if: runner.os == 'Windows'
         shell: powershell
@@ -850,6 +891,21 @@ jobs:
             Write-Error "'shell: powershell' resolved to PSVersion $v (PowerShell 6+) -- expected Windows PowerShell 5.1. This leg exists specifically to prove 5.1 coverage; refusing to silently pass on the wrong runtime."
             exit 1
           }
+
+      # See the big comment block above this leg for the full rationale.
+      # Scope: exactly $env:RUNNER_TEMP\ps51-dl-tmp, the folder the very next
+      # step points install.ps1's download temp dir at via $env:TMP/$env:TEMP
+      # — nothing broader. Created here (not just excluded) so the exclusion
+      # is in effect for a real, existing path before any bytes land in it.
+      - name: Add a narrowly-scoped Defender exclusion for the PS5.1 download workaround (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ps51DlTmp = Join-Path $env:RUNNER_TEMP "ps51-dl-tmp"
+          New-Item -ItemType Directory -Path $ps51DlTmp -Force | Out-Null
+          Add-MpPreference -ExclusionPath $ps51DlTmp
+          Write-Host "Defender exclusion added for $ps51DlTmp (CI-runner-only, removed later in this same job)."
 
       - name: Install from a served release (Windows PowerShell 5.1)
         if: runner.os == 'Windows'
@@ -862,6 +918,18 @@ jobs:
           $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "fake-localappdata-remote-ps51"
           New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
           $env:NIMBUS_INSTALL_BASE_URL = "http://127.0.0.1:8788"
+
+          # Route install.ps1's own download temp dir (`Get-NimbusRelease`'s
+          # $work, built from `[System.IO.Path]::GetTempPath()`) into the
+          # SAME folder the Defender-exclusion step above just excluded.
+          # .NET's GetTempPath() reads TMP, then TEMP, then USERPROFILE — set
+          # both so the resolution is unambiguous regardless of which one a
+          # future .NET/PowerShell version prefers. Scoped to THIS step's own
+          # process only (PowerShell steps are separate processes; nothing is
+          # written to $GITHUB_ENV), so no later step inherits it.
+          $ps51DlTmp = Join-Path $env:RUNNER_TEMP "ps51-dl-tmp"
+          $env:TMP = $ps51DlTmp
+          $env:TEMP = $ps51DlTmp
 
           # *>&1, not 2>&1: confirmed empirically (not assumed — this leg
           # exists precisely because 5.1 and 7 can differ) that Write-Host
@@ -882,8 +950,26 @@ jobs:
           if (-not (Test-Path $installedNimbus)) {
             Write-Error "remote install (PowerShell 5.1) did not place the binary"; exit 1
           }
+
+          # Same proof as the PS7 leg above, on PowerShell 5.1's own Copy-Item behaviour.
+          $installedVec0 = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\vec0.dll"
+          if (-not (Test-Path $installedVec0)) {
+            Write-Error "remote install (PowerShell 5.1) did not place the sqlite-vec sidecar (vec0.dll) -- the sidecar-copy path in install.ps1 did not run"; exit 1
+          }
+
           $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"
           nimbus --version
+
+      # Mirrors the Add- step above: removes the SAME single path, always,
+      # regardless of whether the install step above passed or failed — so a
+      # failure in the leg this exclusion supports can never leave it behind.
+      - name: Remove the Defender exclusion for the PS5.1 download workaround (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ps51DlTmp = Join-Path $env:RUNNER_TEMP "ps51-dl-tmp"
+          Remove-MpPreference -ExclusionPath $ps51DlTmp -ErrorAction SilentlyContinue
+          Write-Host "Defender exclusion removed for $ps51DlTmp (best-effort; runner is discarded after this job regardless)."
 
       - name: Stop the release fixture server (Windows)
         if: always() && runner.os == 'Windows'
