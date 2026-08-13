@@ -217,6 +217,49 @@ See the full walkthrough: [Verify your download](/user-guide/verify-your-downloa
 
 ---
 
+## Headless Linux (no desktop session)
+
+Credentials live in the OS keystore, and on Linux that is `libsecret` talking to
+a Secret Service provider over D-Bus. Installing `libsecret-tools` is necessary
+but **not sufficient**: the provider also needs a session bus and an unlocked
+default collection. A server, container, SSH session or WSL install usually has
+neither, and the Gateway will exit with
+`org.freedesktop.secrets has no default collection`.
+
+Run `nimbus doctor` first — it distinguishes "no session bus", "no Secret
+Service provider" and "no default collection", so you only fix what is missing.
+
+If the machine has **never had a login keyring**, create one before unlocking.
+Creating it otherwise escalates to a GUI prompt that a headless box cannot
+answer:
+
+```bash
+sudo apt install -y gnome-keyring dbus-x11
+
+mkdir -p ~/.local/share/keyrings
+printf '[keyring]\ndisplay-name=login\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' \
+  > ~/.local/share/keyrings/login.keyring
+printf 'login' > ~/.local/share/keyrings/default
+chmod 600 ~/.local/share/keyrings/login.keyring
+```
+
+Then start Nimbus inside a session:
+
+```bash
+dbus-run-session -- bash -c \
+  'printf "\n" | gnome-keyring-daemon --unlock --components=secrets; nimbus start'
+```
+
+`nimbus doctor` should then report
+`[ok] Vault: Secret Service reachable with an unlocked default keyring`.
+
+:::note
+This keyring is unencrypted at rest. That is the standard trade-off for an
+unattended machine — the secret has to be readable without a human to type a
+passphrase. On a machine with a real desktop session, log in normally instead
+and skip all of the above.
+:::
+
 ## AppImage (Linux alternative)
 
 If you prefer a portable single-file executable that does not require `dpkg`,

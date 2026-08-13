@@ -66,17 +66,6 @@ nimbus --version
 # Credentials live in the OS keystore, and the Gateway will not start without it:
 sudo apt install libsecret-tools   # Debian/Ubuntu
 # sudo dnf install libsecret       # Fedora/RHEL
-# Headless box — server, container, SSH session or WSL? libsecret also needs a
-# D-Bus session and an unlocked keyring, which those machines usually lack;
-# `nimbus doctor` tells you which of the two is missing. If the machine has
-# never had a login keyring, create one first (creating it otherwise needs a
-# GUI prompt no headless box can answer):
-#   mkdir -p ~/.local/share/keyrings
-#   printf '[keyring]\ndisplay-name=login\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' \
-#     > ~/.local/share/keyrings/login.keyring
-#   printf 'login' > ~/.local/share/keyrings/default
-# then start Nimbus inside a session:
-#   dbus-run-session -- bash -c 'printf "\n" | gnome-keyring-daemon --unlock --components=secrets; nimbus start'
 
 curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus_amd64.deb -o /tmp/nimbus.deb
 # apt, not `dpkg -i` — the package depends on bubblewrap and libcap2-bin,
@@ -86,6 +75,11 @@ nimbus --version
 ```
 
 Prefer no `sudo`? The [AppImage](https://nimbus-agent.dev/user-guide/install/#appimage-linux-alternative) is a portable single file.
+
+**Headless box** — server, container, SSH session or WSL? `libsecret` also needs
+a D-Bus session and an unlocked keyring, which those machines usually lack. Run
+`nimbus doctor`; it names which piece is missing. Full recipe:
+[Headless Linux](https://nimbus-agent.dev/user-guide/install/#headless-linux-no-desktop-session).
 
 </details>
 
