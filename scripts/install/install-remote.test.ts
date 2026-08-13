@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -52,7 +52,11 @@ async function signManifestWithUntrustedKey(
   work: string,
   manifestContent: string,
 ): Promise<string> {
-  const gnupghome = await mkdtemp(join(tmpdir(), "nimbus-untrusted-key-"));
+  // Nested under `work` (not a sibling mkdtemp under the OS tmpdir) so the
+  // caller's `work` cleanup also removes this throwaway, UNENCRYPTED
+  // (gen-test-key.sh's `%no-protection`) private key + agent socket instead
+  // of leaking it outside the tracked work tree on every test run.
+  const gnupghome = join(work, "gnupg");
   const gen = spawnSync(BASH_BIN, [GEN_KEY_SH, gnupghome], { encoding: "utf8" });
   if (gen.status !== 0) throw new Error(`gen-test-key.sh failed: ${gen.stderr}`);
   const fingerprint = gen.stdout.trim();
@@ -218,6 +222,7 @@ test.skipIf(skip)("install.sh installs from a served release", async () => {
     expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(true);
   } finally {
     server.stop(true);
+    await rm(work, { recursive: true, force: true });
   }
 });
 
@@ -255,6 +260,7 @@ test.skipIf(skip)("install.sh aborts on a tampered archive", async () => {
     expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
   } finally {
     server.stop(true);
+    await rm(work, { recursive: true, force: true });
   }
 });
 
@@ -285,6 +291,8 @@ test.skipIf(skip)("install.sh installs and prints the skip notice when gpg is ab
     expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(true);
   } finally {
     server.stop(true);
+    await rm(work, { recursive: true, force: true });
+    await rm(shimPath, { recursive: true, force: true });
   }
 });
 
@@ -327,6 +335,7 @@ test.skipIf(skipSigCheck)(
       expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
     } finally {
       server.stop(true);
+      await rm(work, { recursive: true, force: true });
     }
   },
 );
@@ -374,6 +383,7 @@ test.skipIf(skipSigCheck)(
       expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
     } finally {
       server.stop(true);
+      await rm(work, { recursive: true, force: true });
     }
   },
 );

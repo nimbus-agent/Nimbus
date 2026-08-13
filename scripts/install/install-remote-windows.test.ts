@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -129,7 +129,11 @@ async function signManifestWithUntrustedKey(
   work: string,
   manifestContent: string,
 ): Promise<string> {
-  const gnupghome = await mkdtemp(join(tmpdir(), "nimbus-ps1-untrusted-key-"));
+  // Nested under `work` (not a sibling mkdtemp under the OS tmpdir) so the
+  // caller's `work` cleanup also removes this throwaway, UNENCRYPTED
+  // (gen-test-key.sh's `%no-protection`) private key + agent socket instead
+  // of leaking it outside the tracked work tree on every test run.
+  const gnupghome = join(work, "gnupg");
   // gen-test-key.sh runs under bash (MSYS on Windows). GPG_BIN below is the
   // native gpg.exe, which is ALSO MSYS2-linked on Git for Windows and reads
   // GNUPGHOME through its own POSIX path translation -- a Windows-style
@@ -240,7 +244,14 @@ async function cleanupUserPathContaining(fragment: string): Promise<void> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  await proc.exited;
+  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  // This is the one helper in this file that mutates the REAL, machine-wide
+  // HKCU\Environment PATH on a Windows dev box — a silently-swallowed
+  // failure here leaves a test-fixture segment behind in a real user's
+  // shell PATH forever. Fail loudly instead.
+  if (exitCode !== 0) {
+    throw new Error(`cleanupUserPathContaining failed (exit ${exitCode}): ${stderr}`);
+  }
 }
 
 async function makePayload(content: string): Promise<string> {
@@ -282,6 +293,7 @@ test.skipIf(skip)("install.ps1 installs from a served release", async () => {
   } finally {
     server.stop(true);
     await cleanupUserPathContaining(localAppData);
+    await rm(work, { recursive: true, force: true });
   }
 });
 
@@ -311,6 +323,7 @@ test.skipIf(skip)("install.ps1 aborts on a tampered archive", async () => {
   } finally {
     server.stop(true);
     await cleanupUserPathContaining(localAppData);
+    await rm(work, { recursive: true, force: true });
   }
 });
 
@@ -357,6 +370,54 @@ test.skipIf(skip)(
     } finally {
       server.stop(true);
       await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+);
+
+// S11 (final fix wave): the C1 regression test above pins only the CASE-
+// SENSITIVITY half of the fix (`-ceq` vs `-eq`) — its shadow line carries a
+// hash that does NOT match the served bytes, so a partial revert to
+// `-ceq` + first-match-wins (dropping only the `$checksumMatches.Length -ne 1`
+// exactly-one-match rule) still passes it: the first (and only accepted)
+// match's hash still fails the final `-ne $actual` comparison. This fixture
+// isolates the Length rule on its own: TWO lines for the asset, SAME case,
+// BOTH carrying the hash of the bytes actually served — first-match-wins
+// would accept either one and the final hash comparison would also pass, so
+// only `-ne 1` catches this. Must be RED against a stash of the Length check
+// (confirmed below) and GREEN with it restored.
+test.skipIf(skip)(
+  "install.ps1 rejects a duplicate identical checksum entry for the same asset (Length-1 regression)",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-dup-"));
+    const localAppData = await mkdtemp(join(work, "lad-"));
+
+    const payload = await makePayload("genuine-cli\n");
+    const zipPath = join(work, ASSET_NAME);
+    await createZip(payload, zipPath);
+    const zipBytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex");
+
+    // Two byte-identical lines: same case-exact filename, same hash, and
+    // that hash IS what was actually served. A hash-only check can never
+    // reject this -- only "exactly one match" can.
+    const sums = `${digest}  ${ASSET_NAME}\n${digest}  ${ASSET_NAME}\n`;
+
+    const server = serveFakeRelease(zipBytes, sums);
+    try {
+      const { stderr, exitCode } = await runInstallPs1(["-FromRelease", "2.2.0", "-Yes"], {
+        ...process.env,
+        LOCALAPPDATA: localAppData,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain("checksum mismatch");
+      const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
+      expect(await Bun.file(installed).exists()).toBe(false);
+    } finally {
+      server.stop(true);
+      await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
     }
   },
 );
@@ -397,6 +458,7 @@ test.skipIf(skip)(
     } finally {
       server.stop(true);
       await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
     }
   },
 );
@@ -451,6 +513,7 @@ test.skipIf(skipSigCheck)(
     } finally {
       server.stop(true);
       await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
     }
   },
 );
@@ -498,6 +561,7 @@ test.skipIf(skipUntrustedKeyTest)(
     } finally {
       server.stop(true);
       await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
     }
   },
 );
