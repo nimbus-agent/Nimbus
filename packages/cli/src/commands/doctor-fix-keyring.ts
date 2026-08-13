@@ -125,7 +125,9 @@ function verifiedFromOutput(result: { code: number | null; stdout: string }): bo
 }
 
 const PLAN_LINES: readonly string[] = [
-  "Plan: create ~/.local/share/keyrings at mode 0700 (only if it does not already exist).",
+  "Plan: create ~/.local/share/keyrings if missing, and tighten its mode to 0700 either way " +
+    "(gnome-keyring does not enforce this itself, so a pre-existing, loosely-permissioned " +
+    "directory is retightened too).",
   "Plan: run gnome-keyring-daemon --unlock (blank password) inside a fresh D-Bus session.",
   "Plan: poll ownership of org.freedesktop.secrets before touching Secret Service (closes the creation race).",
   "Plan: re-assert 0600 on login.keyring / user.keystore (gnome-keyring does not enforce this itself).",
@@ -224,14 +226,15 @@ export function fixKeyring(deps: FixKeyringDeps, opts: { dryRun: boolean }): Fix
     return { exit: 2, lines };
   }
 
-  // Only chmod a directory we are creating, never one that already exists —
-  // the plan above promises "only if it does not already exist" and this is
-  // what makes that true (the directory can pre-exist without login.keyring,
-  // e.g. left behind by an earlier partial attempt, or ruled out above by
-  // existingKeyringPath if it holds another collection).
-  if (deps.statMode(keyringsDir) === null) {
-    deps.mkdirMode(keyringsDir, KEYRINGS_DIR_MODE);
-  }
+  // Unconditional, matching the plan text and buildFixScript()'s own
+  // `mkdir -p` + `chmod 700` above: gnome-keyring enforces no permissions
+  // itself (a pre-loosened 0755 directory was silently accepted and served
+  // uncorrected in the Task 8 spike), so a pre-existing keyrings directory
+  // is retightened to 0700 here too, not just left alone. `mkdirMode`'s
+  // production implementation is `mkdirSync(recursive) + chmodSync`, so this
+  // is a no-op create + an idempotent chmod when the directory already
+  // exists — one code path, agreeing with what the script does below.
+  deps.mkdirMode(keyringsDir, KEYRINGS_DIR_MODE);
 
   const result = deps.exec.runQuery(["dbus-run-session", "--", "bash", "-c", buildFixScript()]);
 

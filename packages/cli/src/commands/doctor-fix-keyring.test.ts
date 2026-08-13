@@ -128,37 +128,43 @@ describe("fixKeyring", () => {
     expect(result.exit).toBe(0);
   });
 
-  test("creates the directory at 0700 and files at 0600", () => {
+  // B-1 (round 2): gnome-keyring enforces no permissions itself, so a
+  // pre-existing, loosely-permissioned keyrings directory must be
+  // RETIGHTENED to 0700, not left alone -- the plan text says this happens
+  // "either way". The JS-side mkdirMode seam is one half of that promise
+  // (mkdirMode's real implementation is mkdirSync(recursive) + chmodSync, so
+  // this is what retightens an already-existing directory); buildFixScript()'s
+  // own `chmod 700` (asserted in the script-content test below) is the other
+  // half, where the retightening actually executes for real.
+  test("always calls mkdirMode for the keyrings directory at 0700, even if it already exists", () => {
     const modes = new Map<string, number>();
     fixKeyring(
       deps({
+        statMode: (p) => (p.endsWith("keyrings") ? 0o755 : null), // dir pre-exists, loosely permissioned
+        listDir: () => [], // empty -- no collection inside, so no refusal
         mkdirMode: (p, m) => modes.set(p, m),
-        writeFileMode: (p, _d, m) => modes.set(p, m),
       }),
       { dryRun: false },
     );
     const dir = [...modes.entries()].find(([p]) => p.endsWith("keyrings"));
     expect(dir?.[1]).toBe(0o700);
-    for (const [p, m] of modes) if (!p.endsWith("keyrings")) expect(m).toBe(0o600);
   });
 
-  // B-1: the plan text promises the directory is only created "if it does
-  // not already exist" — prove the real run honours that, not just claims it.
-  test("does not chmod a keyrings directory that already exists", () => {
-    let mkdirCalls = 0;
-    const result = fixKeyring(
+  // writeFileMode is never called by a correct run -- gnome-keyring writes
+  // login.keyring/user.keystore itself. Asserted directly (not via a
+  // zero-iteration loop over calls that never happen) so this claim can
+  // actually fail if the implementation stops being true.
+  test("never calls writeFileMode", () => {
+    const calls: string[] = [];
+    fixKeyring(
       deps({
-        statMode: (p) => (p.endsWith("keyrings") ? 0o755 : null), // dir pre-exists, loosely permissioned
-        listDir: () => [], // empty -- no collection inside, so no refusal
-        mkdirMode: () => {
-          mkdirCalls += 1;
+        writeFileMode: (p) => {
+          calls.push(p);
         },
       }),
       { dryRun: false },
     );
-    expect(mkdirCalls).toBe(0);
-    // The run still proceeds (dir existing-but-empty is not a refusal case).
-    expect(result.lines.join("\n")).not.toMatch(/already exists/i);
+    expect(calls).toEqual([]);
   });
 
   test("succeeds when the store+lookup round-trip verifies", () => {
