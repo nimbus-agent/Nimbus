@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-12  
 **Reviewer:** AI Assistant (Antigravity)  
-**Target Doc:** [2026-08-12-sentry-issue-indexing-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/incident-attribution/docs/superpowers/specs/2026-08-12-sentry-issue-indexing-design.md)
+**Target Doc:** [2026-08-12-sentry-issue-indexing-design.md](./2026-08-12-sentry-issue-indexing-design.md)
 
 ---
 
