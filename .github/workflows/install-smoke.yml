@@ -775,11 +775,20 @@ jobs:
       # process, PS7's HttpClient unaffected. Full root-cause investigation
       # (including a raw-download diagnostic proving ~0.95 MB/s over loopback,
       # consistent with real-time AV inline-scanning the legacy WinINet stack)
-      # is in the task report. This leg's UNIQUE value is proving the 5.1
-      # RUNTIME itself behaves correctly — the inert `#Requires` under `iex`,
-      # the null `$PSScriptRoot`, the ResponseUri-vs-RequestMessage split, and
-      # `Write-Host` stream capture via `*>&1` — NOT re-proving real-binary
-      # realism, which the PS7 leg in this SAME workflow already covers.
+      # is in the task report. This leg invokes install.ps1 as a FILE
+      # (`-File ... -FromRelease`, see the step below), not via `irm | iex`,
+      # so `$PSScriptRoot` is non-null and `param()` binds normally, and
+      # `-FromRelease` means `Resolve-LatestTag` is never called — none of
+      # those are exercised here. What this leg's real, UNIQUE value is: it
+      # proves the 5.1 RUNTIME behaves correctly for `Write-Host` stream
+      # capture via `*>&1`, the TLS 1.2 branch, and 5.1-specific
+      # `Invoke-WebRequest`/`Get-FileHash`/`Expand-Archive` behaviour — NOT
+      # re-proving real-binary realism, which the PS7 leg in this SAME
+      # workflow already covers. The genuine `irm | iex` one-liner PLUS the
+      # inert-`#Requires`-under-`iex` / null-`$PSScriptRoot` /
+      # `ResponseUri`-vs-`RequestMessage` behaviours, on real PowerShell 5.1,
+      # are covered post-release, hand-dispatched, in
+      # `released-install-smoke.yml:280-292`.
       # If tempted to "upgrade" this back to the real binaries: that was
       # tried, it is provably a CI-runner artifact and not a product bug, and
       # the fix (an antivirus exclusion) is deliberately NOT applied here —
