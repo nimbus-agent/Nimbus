@@ -1124,7 +1124,7 @@ dbus-run-session -- bash -c '
 Resulting permissions with **zero manual file-content authoring** (only the defensive
 `mkdir`/`chmod 0700` above; the two keyring files are written by `gnome-keyring-daemon` itself):
 
-```
+```text
 700 /root/.local/share/keyrings
 600 /root/.local/share/keyrings/login.keyring
 600 /root/.local/share/keyrings/user.keystore
