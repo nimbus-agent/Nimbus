@@ -559,6 +559,66 @@ Like `nimbus owners`/`nimbus glossary`, `nimbus pre-mortem` **hard-rejects** an 
 
 ---
 
+### `nimbus negotiate`
+
+The fourteenth built-in agent: a cited contribution brief for one person over a time window, assembled entirely from evidence already in the local index — no connector is opened and nothing is fetched live. Six lanes: PRs authored (with size stats where the enrichment pass has reached them), PRs reviewed (approve / changes-requested / other), tickets opened and tickets closed by an authored PR, code and services owned, decisions authored, and documents/notes/messages written.
+
+```text
+Usage: nimbus negotiate [--since <duration>] [--person <id>] [--json]
+  --since    window to summarise, e.g. 90d (default 90d, max 365d)
+  --person   brief a different person by id (defaults to you)
+```
+
+```bash
+nimbus negotiate
+nimbus negotiate --since 180d
+nimbus negotiate --person person:jane
+nimbus negotiate --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--since <duration>` | Window to summarise (`ms\|s\|m\|h\|d\|w`, e.g. `90d`). Defaults to `90d`. The gateway rejects anything above `365d` outright (exit code 2, naming the 365-day bound) rather than silently clamping it — sized for a full annual review cycle, wider than every sibling agent's shared 90-day cap. |
+| `--person <id>` | Brief a different, already-indexed person instead of yourself. Takes a **`person.id`** (`person:…`) — run `nimbus people search <name>` to find one. A `git:<email>` blame alias is **not** a person id: it is the identity the ownership pass emits for a git email with no `person` row, so **ownership is the only one of the six lanes that can measure it** — the three lanes keyed on `item.author_id` (always a `person.id`) can never match it, and the `authored`/`opened` graph edges are built from `item.author_id` too, so PRs authored and tickets cannot either. An id that resolves to no person is not silently briefed as zero — the brief carries a gap note saying the counts are structurally zero rather than measured. Resolved **entirely from locally indexed data** — this opens no connector and fetches nothing live, the same as a self brief. |
+| `--json` | Machine-readable JSON output (otherwise Markdown). |
+
+Like `nimbus owners`/`nimbus pre-mortem`, `nimbus negotiate` **hard-rejects** an unrecognised flag rather than ignoring it — a typo'd `--persn` would otherwise silently fall through to the local user's own brief in response to a question about someone else, a wrong answer that looks like a right one.
+
+**Every item-backed lane cites its evidence.** Under each count, the brief lists up to **5** of the actual items behind it — newest first, linked where the connector recorded a URL and plain text where it did not (never an empty or invented link). When a lane counted more than it lists, it says so: `…and N more not listed`. Two lanes differ on purpose: **ownership** carries no citations because it already names the services and directories it counted, and **tickets** cites only the issues you opened — the "closed by an authored PR" figure would otherwise cite issues someone else filed. The citation list obeys the same `personal_sources` gate as the counts, so a personal note never appears as a citation under a brief that says personal docs are off.
+
+**Personal sources are off unless configured.** Confluence pages and chat messages are always in scope. Obsidian notes and Notion pages are mined only when their service is named in `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the `[glossary.terms]` precedent. The brief's `sources` block reports whether the opt-in is active and names the config key it reads. Entries are case-folded (`"Obsidian"` works), and an entry that names no recognised personal-document service is reported back in the brief as ignored rather than dropped in silence — "configured" means an entry actually widened the query, never merely that the key is present.
+
+**The ownership section is authorship-derived, exactly as `nimbus owners` says.** The lane reads the same precomputed `owns` edges, derived from recency-weighted `git blame`. Every brief states plainly that this is who wrote the lines, not who is formally accountable: there is no CODEOWNERS and no on-call rotation in the local index, and reviewer data (the `reviewed` edges the "PRs reviewed" section above is built from) is **not** factored into the ownership ranking.
+
+**Six limits every brief states plainly — not decoration, the point of the command:**
+
+- **The window is "active in", not "created in".** `item` carries no creation timestamp, only `modified_at` — which for GitHub is `updated_at`, the last touch. Every item-backed lane therefore filters on last-modified, so `--since 90d` means "authored by the subject at any time and touched within the last 90 days", not "authored within the last 90 days"; a ticket closed two years ago still counts if a bot commented on its PR last week. That would overstate the headline numbers silently, so the window line in every brief says so outright. (Two lanes sit outside the window: decisions windows on `decision_record.decided_at`, a real decision date, and ownership is not windowed at all — it is an all-time snapshot.)
+- **Ownership can understate.** The ownership lane counts only `git_blame_line` rows whose git email maps to a known `person` row. Work committed under an unmapped alias — a second machine, an old address, a GitHub `noreply` address — is attributed to a separate, unmapped identity in the index and is **not** counted toward the subject. For a self brief the agent can usually detect this (it knows which git email self-resolution attempted) and adds a gap note naming it; for an explicit `--person` subject it cannot, since someone else's alias set is unknowable from here, and heuristically guessing by name/email was deliberately rejected as worse than an acknowledged gap.
+- **Ownership can also be stale, or never computed.** The ownership lane is a read over the precomputed `owns` graph, not a live derivation, so every brief also states when that background pass last ran — or, if it has never run, says so and names `nimbus owners --refresh` as the fix — rather than presenting a possibly-outdated or empty list as current.
+- **PR size stats carry their own coverage.** `additions`/`deletions`/`changed_files` live in a PR's metadata only where the enrichment pass has already run. `authoredPrs.stats` is an aggregate over whatever subset was enriched, and `authoredPrs.statsCoverage` (`covered` of `total`) is reported alongside it so the aggregate is never read as if it covered every authored PR.
+- **Unattributable decisions are a fact about the index, not about the subject.** `decisions.unattributable` counts decisions mined from a source (Obsidian, Teams) that records no author at all — it is an index-wide count, never the subject's own. Reading "N authored, M unattributable" as "N + M decisions are mine, M just aren't linked to me" turns an undercount into an overstatement, so the brief spells out that those M decisions are not counted above and are not necessarily the subject's.
+- **Incidents resolved, on-call shifts, and deploys triggered are not available at all.** The local index carries no attribution for any of the three. The brief names all three, unconditionally, on every run — never only when they would otherwise read as an empty or zero section, so a genuine zero is never confused with "cannot be computed."
+
+The brief is also recomputed fresh on every invocation rather than cached, so two runs a window apart can legitimately disagree as the underlying index changes.
+
+**Not reachable over the local HTTP API, nor as an MCP tool.** `agents.negotiate` is served on the CLI/Tauri socket only — it is excluded from the HTTP agent surface (`POST /v1/agents/{agent}`) and it defines no MCP tool, so a model driving `nimbus mcp` cannot invoke it either. Unlike `agents.preflight`/`agents.premortem` (excluded for their side effects) it writes nothing, but combined with `--person` an exposed version would let any holder of the `agents` bearer token — or any model driving the tool server — assemble a contribution dossier on any indexed person without the local owner initiating it. The CLI and Tauri renderer are same-machine, owner-initiated surfaces; the local HTTP API and the MCP tool server are not.
+
+**Configuration — `[negotiate]` in `nimbus.toml`:**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `personal_sources` | `[]` | Personal-document services to mine in the docs/notes lanes — currently `obsidian` and/or `notion`. Empty means work artifacts only (Confluence, chat messages, and any other always-in-scope service). |
+
+**Output (Markdown):** the resolved subject, the query window, each lane's counts (or a gap note where a lane could not be computed), the unconditional unavailable-evidence list, and the personal-sources status.
+
+**Read-only:** never triggers HITL, never makes a live connector API call, never calls `connectors.dispatch` — every lane reads only the already-indexed graph and item tables. Zero `egress_ledger` rows.
+
+**Exit codes:** `1` = gateway not running, or an unrecognised flag / unexpected argument (rejected by `parseNegotiateArgs` before the gateway is ever called); `2` = agent error (an out-of-range `--since`, or a malformed `agents.negotiate` response).
+
+---
+
 ### `nimbus catchup`
 
 Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike a uniform, service-scoped digest, `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).

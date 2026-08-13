@@ -1,0 +1,956 @@
+import type { Database } from "bun:sqlite";
+import { userInfo } from "node:os";
+
+import { AgentCoordinator, type SubTask, type SubTaskResult } from "../engine/coordinator.ts";
+import { normalizeEmail } from "../people/person-store.ts";
+import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
+import type { GapNote } from "./_lib/findings.ts";
+import { detectEmptyIndex } from "./_lib/gap-notes.ts";
+import type {
+  NegotiateAuthoredPrs,
+  NegotiateBrief,
+  NegotiateDecisions,
+  NegotiateEvidenceRef,
+  NegotiateInput,
+  NegotiateOwnership,
+  NegotiateReviewedPrs,
+  NegotiateSubject,
+  NegotiateTickets,
+  NegotiateWriting,
+} from "./_lib/negotiate-types.ts";
+import {
+  defaultRunGitConfigUserEmail,
+  type GitRunner,
+  resolveSelfPerson,
+} from "./_lib/self-person.ts";
+import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+
+const DEFAULT_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
+/**
+ * The agent's own window ceiling — a year, sized for an annual review cycle rather than
+ * `catchup`'s "what happened while I was away" quarter. EXPORTED so `ipc/agents-rpc.ts`'s
+ * `requireNegotiateParams` validates against this same literal instead of re-declaring it:
+ * two copies drifting apart fails SILENTLY (the IPC accepts a window the agent then clamps),
+ * which is exactly the silent-clamping bug the explicit IPC rejection exists to prevent.
+ */
+export const MAX_SINCE_MS = 365 * 24 * 60 * 60 * 1000;
+
+export type NegotiateContext = {
+  db: Database;
+  llm?: SynthesizerLlm;
+  notify: (method: string, params: unknown) => void;
+  sessionId: string;
+  /**
+   * `[negotiate] personal_sources` (spec § 3.3): personal-document services the local
+   * owner has named as in scope. Not optional — a caller must resolve config (or supply
+   * `[]`) explicitly rather than silently disabling an opt-in the user believes is active.
+   */
+  personalSources: readonly string[];
+};
+
+const PERSONAL_DOCS_CONFIG_KEY = "[negotiate] personal_sources";
+
+const UNAVAILABLE_EVIDENCE: readonly string[] = Object.freeze([
+  "incidents resolved",
+  "on-call shifts",
+  "deploys triggered",
+]);
+
+function safeOsUsername(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return "";
+  }
+}
+
+function unresolvedIdentityGap(): GapNote {
+  return {
+    category: "missing_user_identity",
+    detail:
+      "Could not resolve the subject — no override / git email / OS username matched a known person.",
+    remediation:
+      "Set `[user] me_person_id` in your active profile's nimbus.toml, or run `nimbus people search <you>` to find your person id.",
+  };
+}
+
+/**
+ * How an explicit `--person <id>` matched the index.
+ *
+ * - `person` — a real `person` row. Every lane can measure this subject.
+ * - `graph-only` — no `person` row, but a `person`-typed `graph_entity` with that
+ *   `external_id` exists. Typically the `git:<email>` blame-alias shape (`resolveOwner`,
+ *   `ownership/owner-identity.ts`), though a stale entity whose `person` row is gone lands
+ *   here too. OWNERSHIP IS THE ONLY LANE THAT CAN MEASURE SUCH AN ID. It is tempting to
+ *   assume the other graph-traversing lanes can too — they cannot: `authored` and `opened`
+ *   edges are built from `row.authorId` (`graph/graph-populator.ts`), which only ever holds
+ *   a `person.id`, so a `git:` entity is never their `from`. The ownership pass is the sole
+ *   writer that puts such an external id on a graph entity, and it emits only `owns` edges.
+ *   Authored PRs, reviewed PRs, tickets, decisions and writing are therefore ALL
+ *   structurally zero here.
+ * - `none` — nothing in the index carries that id at all: every lane is structurally zero.
+ */
+type ExplicitSubjectMatch = "person" | "graph-only" | "none";
+
+function classifyExplicitSubject(db: Database, personId: string): ExplicitSubjectMatch {
+  const person = db.query("SELECT 1 AS n FROM person WHERE id = ? LIMIT 1").get(personId) as {
+    n?: number;
+  } | null;
+  if (person !== null) return "person";
+  const entity = db
+    .query("SELECT 1 AS n FROM graph_entity WHERE type = 'person' AND external_id = ? LIMIT 1")
+    .get(personId) as { n?: number } | null;
+  return entity === null ? "none" : "graph-only";
+}
+
+/**
+ * The honesty contract's hardest case (spec § 3.2): an explicit `--person <id>` that resolves
+ * to nothing is NOT `personId === null`, so `unresolvedIdentityGap()` never fires for it, and
+ * `personDisplayNameOrNull` returns `null` for an unknown id — nothing in the rendered brief
+ * gives it away. Six lanes then each honestly return `0` and the document reads as a person who
+ * shipped nothing, which in a compensation conversation is the worst possible failure.
+ *
+ * A structural zero is not a measurement, so it must be labelled as one. The two arms state
+ * DIFFERENT facts and are not collapsed: with a `graph-only` match the graph lanes really did
+ * measure something (that is precisely why a `git:` id looks like it worked — ownership comes
+ * back populated), and claiming every count is structurally zero would be its own false
+ * statement in the opposite direction.
+ *
+ * Returns `null` for a `person` match — the ordinary case, which needs no disclosure.
+ */
+function explicitSubjectGap(match: ExplicitSubjectMatch, personId: string): GapNote | null {
+  if (match === "person") return null;
+  const remediation =
+    "Pass a `person.id` — run `nimbus people search <name>` to find it. A `git:<email>` blame " +
+    "alias is a graph entity, not a person id.";
+  if (match === "none") {
+    return {
+      category: "missing_user_identity",
+      detail:
+        `\`--person ${personId}\` matched no indexed person; every count attributed to this id ` +
+        "below is structurally zero, not a measurement. (The index-wide figures — decisions " +
+        "with no indexed author, unmapped git identities — are real counts about the index, " +
+        "not about this id.)",
+      remediation,
+    };
+  }
+  return {
+    category: "missing_user_identity",
+    detail:
+      `\`--person ${personId}\` matched no \`person\` record — only a graph entity (typically ` +
+      "the `git:<email>` blame-alias shape). Ownership below is the ONLY lane that can measure " +
+      "this id: PRs authored, PRs reviewed, tickets, decisions and writing are every one of " +
+      "them structurally zero for it, not measurements.",
+    remediation,
+  };
+}
+
+/**
+ * A lane that fails degrades to a gap note, never a silent zero (spec § 4). `laneName` is
+ * carried in `detail` (not just `taskIndex`) so a reader — and Task 2's red-prove test — can
+ * tell which lane broke; the literal word "lane" is load-bearing for that match.
+ */
+function laneFailureGap(laneName: string, r: SubTaskResult): GapNote {
+  return {
+    category: "missing_connector",
+    detail: `negotiate lane \`${laneName}\` failed${
+      r.errorText === undefined ? "" : `: ${r.errorText}`
+    }`,
+  };
+}
+
+/**
+ * `person --authored--> pr` (graph_relation) joined back to `item` for the PR's metadata.
+ * PR size stats (`additions`/`deletions`/`changed_files`) live in that metadata only where
+ * the enrichment pass has run, hence `statsCoverage`: an aggregate over a partial subset
+ * must disclose its own denominator rather than be printed as if it covered everything.
+ */
+function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): NegotiateAuthoredPrs {
+  const cutoff = Date.now() - sinceMs;
+  const rows = db
+    .query(
+      `SELECT i.metadata AS metadata
+         FROM graph_relation r
+         JOIN graph_entity pe  ON pe.id = r.from_id AND pe.type = 'person'
+         JOIN graph_entity pre ON pre.id = r.to_id  AND pre.type = 'pr'
+         JOIN item i           ON i.id = pre.external_id
+        WHERE r.type = 'authored' AND pe.external_id = ? AND i.modified_at >= ?`,
+    )
+    .all(personId, cutoff) as Array<{ metadata: string }>;
+
+  let merged = 0;
+  let covered = 0;
+  let additions = 0;
+  let deletions = 0;
+  let changedFiles = 0;
+  for (const row of rows) {
+    let meta: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(row.metadata);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        meta = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Unparseable metadata contributes to neither the merged count nor stats coverage —
+      // but it DOES stay in `count`/`statsCoverage.total`, because the PR itself is real
+      // evidence and dropping it would understate the headline number. The consequence is
+      // asymmetric disclosure: the stats half is self-disclosing (`statsCoverage` renders
+      // `covered/total`, so an unparseable row visibly widens the gap), while the `merged`
+      // half is not — `merged` carries no denominator of its own, so a PR whose metadata
+      // will not parse is silently absent from it. Only a genuinely corrupt `item.metadata`
+      // reaches here (every writer goes through `JSON.stringify`), so this is a
+      // never-in-practice edge rather than a live undercount; a `mergedCoverage` companion
+      // field is the fix if it ever stops being one.
+      continue;
+    }
+    if (meta["merged"] === true) merged += 1;
+    const a = meta["additions"];
+    if (typeof a === "number") {
+      covered += 1;
+      additions += a;
+      const d = meta["deletions"];
+      if (typeof d === "number") deletions += d;
+      const c = meta["changed_files"];
+      if (typeof c === "number") changedFiles += c;
+    }
+  }
+  const refs = evidenceRefsFor(
+    db,
+    `SELECT i.title AS title, COALESCE(i.canonical_url, i.url) AS url
+       FROM graph_relation r
+       JOIN graph_entity pe  ON pe.id = r.from_id AND pe.type = 'person'
+       JOIN graph_entity pre ON pre.id = r.to_id  AND pre.type = 'pr'
+       JOIN item i           ON i.id = pre.external_id
+      WHERE r.type = 'authored' AND pe.external_id = ? AND i.modified_at >= ?
+      ORDER BY i.modified_at DESC, i.id ASC
+      LIMIT ?`,
+    [personId, cutoff, NEGOTIATE_EVIDENCE_LIMIT],
+  );
+  return {
+    count: rows.length,
+    merged,
+    evidence: { refs, total: rows.length },
+    stats: covered === 0 ? null : { additions, deletions, changedFiles },
+    statsCoverage: { covered, total: rows.length },
+  };
+}
+
+/**
+ * Queries `item` directly (not the graph): a `review` item's `metadata.state` is nullable
+ * (GitHub can omit it), and every review must be counted somewhere — `otherOrUnknown` catches
+ * `commented`, `dismissed`, and the null case, never silently dropping a row.
+ *
+ * The `json_valid` guard is required, not decorative: `json_extract` raises on unparseable
+ * JSON, and one bad row kills the whole query rather than just itself (measured on bun
+ * 1.3.14 / SQLite 3.53.0). It sits in the PROJECTION, inside a short-circuiting `CASE`, and
+ * NOT in the WHERE clause. As a WHERE predicate it silently DROPPED every row whose metadata
+ * is NULL or corrupt — removing them from `count` as well as from `otherOrUnknown`, which
+ * contradicts the "every review is counted somewhere" rule above and disagreed with
+ * `laneAuthoredPrs`, which deliberately keeps such rows in its headline count. Measured on a
+ * 4-row fixture (valid / NULL / corrupt / no-state): the WHERE form returned 2 rows, the
+ * `CASE` form returns all 4 with the two unreadable ones landing in `otherOrUnknown`.
+ * Do not "simplify" this back into the WHERE clause.
+ *
+ * No `item(author_id)` index: `item` narrows hard first on `service`/`type` before this
+ * unindexed filter runs, which is deliberate for a personal index — see spec § 4/Task 2 brief.
+ */
+function laneReviewedPrs(db: Database, personId: string, sinceMs: number): NegotiateReviewedPrs {
+  const cutoff = Date.now() - sinceMs;
+  const rows = db
+    .query(
+      `SELECT CASE WHEN json_valid(i.metadata) THEN json_extract(i.metadata, '$.state') END AS state
+         FROM item i
+        WHERE i.service = 'github'
+          AND i.type = 'review'
+          AND i.author_id = ?
+          AND i.modified_at >= ?`,
+    )
+    .all(personId, cutoff) as Array<{ state: string | null }>;
+
+  let approved = 0;
+  let changesRequested = 0;
+  let otherOrUnknown = 0;
+  for (const r of rows) {
+    if (r.state === "approved") approved += 1;
+    else if (r.state === "changes_requested") changesRequested += 1;
+    else otherOrUnknown += 1;
+  }
+  const refs = evidenceRefsFor(
+    db,
+    `SELECT i.title AS title, COALESCE(i.canonical_url, i.url) AS url
+       FROM item i
+      WHERE i.service = 'github'
+        AND i.type = 'review'
+        AND i.author_id = ?
+        AND i.modified_at >= ?
+      ORDER BY i.modified_at DESC, i.id ASC
+      LIMIT ?`,
+    [personId, cutoff, NEGOTIATE_EVIDENCE_LIMIT],
+  );
+  return {
+    count: rows.length,
+    approved,
+    changesRequested,
+    otherOrUnknown,
+    evidence: { refs, total: rows.length },
+  };
+}
+
+/**
+ * `opened`: `person --opened--> issue` (graph_relation), joined back to `item` for the
+ * window cutoff. `closedByAuthoredPr`: `person --authored--> pr --resolves--> issue`,
+ * `DISTINCT`-counted on the issue side so one PR resolving multiple issues (or, in
+ * principle, multiple authored PRs resolving the same issue) does not double-count.
+ * Windowed on the PR's `modified_at`, matching `laneAuthoredPrs`.
+ */
+function laneTickets(db: Database, personId: string, sinceMs: number): NegotiateTickets {
+  const cutoff = Date.now() - sinceMs;
+  const opened = db
+    .query(
+      `SELECT COUNT(*) AS n
+         FROM graph_relation r
+         JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+         JOIN graph_entity ie ON ie.id = r.to_id   AND ie.type = 'issue'
+         JOIN item i          ON i.id = ie.external_id
+        WHERE r.type = 'opened' AND pe.external_id = ? AND i.modified_at >= ?`,
+    )
+    .get(personId, cutoff) as { n: number };
+
+  const closed = db
+    .query(
+      `SELECT COUNT(DISTINCT res.to_id) AS n
+         FROM graph_relation auth
+         JOIN graph_entity pe   ON pe.id = auth.from_id AND pe.type = 'person'
+         JOIN graph_entity pre  ON pre.id = auth.to_id  AND pre.type = 'pr'
+         JOIN item pri          ON pri.id = pre.external_id
+         JOIN graph_relation res ON res.from_id = pre.id AND res.type = 'resolves'
+        WHERE auth.type = 'authored' AND pe.external_id = ? AND pri.modified_at >= ?`,
+    )
+    .get(personId, cutoff) as { n: number };
+
+  const refs = evidenceRefsFor(
+    db,
+    `SELECT i.title AS title, COALESCE(i.canonical_url, i.url) AS url
+       FROM graph_relation r
+       JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+       JOIN graph_entity ie ON ie.id = r.to_id   AND ie.type = 'issue'
+       JOIN item i          ON i.id = ie.external_id
+      WHERE r.type = 'opened' AND pe.external_id = ? AND i.modified_at >= ?
+      ORDER BY i.modified_at DESC, i.id ASC
+      LIMIT ?`,
+    [personId, cutoff, NEGOTIATE_EVIDENCE_LIMIT],
+  );
+  return {
+    opened: opened.n,
+    closedByAuthoredPr: closed.n,
+    evidence: { refs, total: opened.n },
+  };
+}
+
+/**
+ * How many evidence refs a single lane may carry (spec § 5.B, citation half).
+ *
+ * A 365-day window over an active repo holds hundreds of PRs; an unbounded list stops being
+ * a brief and becomes a data dump nobody reads, which defeats the purpose as thoroughly as
+ * having no citations at all. Truncation is safe here ONLY because it self-discloses:
+ * `NegotiateEvidence.total` carries the full population, so the renderer can say "and N
+ * more" instead of letting a capped list read as exhaustive. Exported so tests can seed
+ * exactly-at / one-past the boundary without duplicating the magic number.
+ */
+export const NEGOTIATE_EVIDENCE_LIMIT = 5;
+
+/**
+ * `title` + best-available url for the `item` rows a lane counted, newest first.
+ *
+ * Ordered `modified_at DESC, id ASC` — the `id` tiebreak is not decoration: without it two
+ * items sharing a timestamp (routine, since a sync stamps a batch) come back in whatever
+ * order SQLite chooses, so the same index could cite different PRs on two consecutive runs
+ * of an unchanged brief. `COALESCE(canonical_url, url)` because not every connector records
+ * a canonical url, and a null stays null rather than being invented.
+ */
+function evidenceRefsFor(
+  db: Database,
+  sql: string,
+  params: readonly (string | number)[],
+): NegotiateEvidenceRef[] {
+  const rows = db.query(sql).all(...params) as Array<{ title: string; url: string | null }>;
+  return rows.map((r) => ({ title: r.title, url: r.url }));
+}
+
+/** Exported so tests can seed exactly-at / one-past the boundary without duplicating the magic
+ * number. */
+export const OWNERSHIP_LIMIT = 50;
+
+/**
+ * A graph read, never a `git_blame_line` scan (spec § 5.A0) — the ownership pass
+ * (`ownership/ownership-pass.ts`) already did the expensive derivation and left `owns`
+ * edges behind; this lane only aggregates them. `maxOwnersPerPath` bounds owners PER PATH,
+ * not paths per owner, so a long-tenured person can carry thousands of `owns` edges —
+ * hence the explicit `LIMIT` here and the directory/service-only aggregation (never files).
+ */
+function laneOwnership(db: Database, personId: string): NegotiateOwnership {
+  const rows = db
+    .query(
+      `SELECT te.type AS target_type, te.label AS label
+         FROM graph_relation r
+         JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+         JOIN graph_entity te ON te.id = r.to_id
+        WHERE r.type = 'owns'
+          AND pe.external_id = ?
+          AND te.type IN ('service', 'directory')
+        ORDER BY r.weight DESC
+        LIMIT ?`,
+    )
+    .all(personId, OWNERSHIP_LIMIT + 1) as Array<{ target_type: string; label: string }>;
+
+  const truncated = rows.length > OWNERSHIP_LIMIT;
+  const kept = truncated ? rows.slice(0, OWNERSHIP_LIMIT) : rows;
+  const state = db.query("SELECT last_pass_at FROM ownership_pass_state WHERE id = 1").get() as {
+    last_pass_at: number | null;
+  } | null;
+
+  return {
+    services: kept.filter((r) => r.target_type === "service").map((r) => r.label),
+    directories: kept.filter((r) => r.target_type === "directory").map((r) => r.label),
+    lastPassAt: state?.last_pass_at ?? null,
+    truncated,
+    unmappedIdentitiesInIndex: countUnmappedOwnerIdentities(db),
+  };
+}
+
+/**
+ * Spec § 5.A0. `resolveOwner` (`ownership/owner-identity.ts`) emits `git:<email>` for a
+ * blame email with no matching `person` row, so ownership recorded under an unmapped alias
+ * is attributed to a SEPARATE graph entity and would silently vanish from a person-id-keyed
+ * lane like `laneOwnership`. For the SELF subject we know the git email that self-resolution
+ * attempted (whether or not it ended up mapping to a person), so we can name the gap
+ * precisely instead of carrying a generic caveat. Never called for an explicit `--person`
+ * subject: someone else's alias set is unknowable from here (see `countUnmappedOwnerIdentities`).
+ */
+function detectUnmappedGitIdentity(db: Database, gitEmail: string | null): GapNote | null {
+  if (gitEmail === null || gitEmail.trim() === "") return null;
+  const row = db
+    .query(
+      `SELECT 1 AS n FROM graph_entity
+        WHERE type = 'person' AND external_id = ? LIMIT 1`,
+    )
+    .get(`git:${normalizeEmail(gitEmail)}`) as { n?: number } | null;
+  if (row === null) return null;
+  return {
+    category: "missing_user_identity",
+    detail:
+      "Some of your ownership is recorded under an unmapped git identity and is not counted here.",
+    remediation:
+      "Add that git email to your person record so blame lines written under it are attributed to you.",
+  };
+}
+
+/**
+ * A fact about the INDEX, never a guess about the SUBJECT. Matching `git:`-prefixed
+ * entities to an explicit `--person` subject by name or email substring was proposed and
+ * rejected (spec § 5.A0): a heuristic attribution is wrong in a document that may affect
+ * someone's compensation, which is worse than an acknowledged gap. This count is always
+ * true regardless of who the brief is about.
+ */
+function countUnmappedOwnerIdentities(db: Database): number {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM graph_entity
+        WHERE type = 'person' AND external_id LIKE 'git:%'`,
+    )
+    .get() as { n: number };
+  return row.n;
+}
+
+/**
+ * `decision_record.source_item_id` joins to `item`, and the item's `author_id` gives the
+ * decision's author — a join nothing under `decisions/` performs today. `obsidian-sync.ts`
+ * and `teams-sync.ts` set no `authorId` at all, so a decision mined from either source
+ * resolves to an item with `author_id IS NULL`; `unattributable` counts those rows rather
+ * than silently dropping them from the denominator (spec § 8.2, Task 5 brief).
+ */
+function laneDecisions(db: Database, personId: string, sinceMs: number): NegotiateDecisions {
+  const cutoff = Date.now() - sinceMs;
+  const authored = db
+    .query(
+      `SELECT COUNT(*) AS n
+         FROM decision_record d
+         JOIN item i ON i.id = d.source_item_id
+        WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id = ?`,
+    )
+    .get(cutoff, personId) as { n: number };
+
+  const unattributable = db
+    .query(
+      `SELECT COUNT(*) AS n
+         FROM decision_record d
+         JOIN item i ON i.id = d.source_item_id
+        WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id IS NULL`,
+    )
+    .get(cutoff) as { n: number };
+
+  // Cited from `authored` ONLY. `d.statement` is nullable (a `pending` row has none, and an
+  // `extracted` one can still be null if extraction produced nothing usable), so fall back to
+  // the source item's title rather than rendering an empty bullet.
+  const refs = evidenceRefsFor(
+    db,
+    `SELECT COALESCE(NULLIF(d.statement, ''), i.title) AS title,
+            COALESCE(i.canonical_url, i.url) AS url
+       FROM decision_record d
+       JOIN item i ON i.id = d.source_item_id
+      WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id = ?
+      ORDER BY d.decided_at DESC, d.id ASC
+      LIMIT ?`,
+    [cutoff, personId, NEGOTIATE_EVIDENCE_LIMIT],
+  );
+  return {
+    authored: authored.n,
+    unattributable: unattributable.n,
+    evidence: { refs, total: authored.n },
+  };
+}
+
+const DOC_TYPES = ["page", "document"] as const;
+const NOTE_TYPES = ["obsidian_note"] as const;
+const MESSAGE_TYPES = ["message"] as const;
+
+/**
+ * Services whose content is mined only when the user names them in
+ * `[negotiate] personal_sources` (spec § 3.3). The gate operates on the SERVICE, not the
+ * item type: `type: "page"` is emitted by BOTH `confluence-sync.ts` (a work wiki) and
+ * `notion-sync.ts` (commonly personal), so a type-only filter cannot separate them —
+ * without a service filter, an unconfigured Notion workspace would be counted
+ * unconditionally, contradicting "excluded by default, opt in via config".
+ *
+ * - `obsidian`: an unambiguously personal, local notes vault.
+ * - `notion`: commonly a personal workspace, and named explicitly in the brief's own
+ *   `[negotiate]` example.
+ *
+ * A future connector belongs here only if its content is similarly personal by default.
+ * Everything else — Confluence, Slack, Teams, Discord, … — is a work artifact and stays
+ * always in scope; it is never gated by `personal_sources`.
+ */
+const PERSONAL_CAPABLE_SERVICES = ["obsidian", "notion"] as const;
+
+function countAuthoredByType(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  types: readonly string[],
+): number {
+  const placeholders = types.map(() => "?").join(", ");
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM item
+        WHERE author_id = ? AND modified_at >= ? AND type IN (${placeholders})`,
+    )
+    .get(personId, cutoff, ...types) as { n: number };
+  return row.n;
+}
+
+/** `types` authored by `personId`, from services NOT in `excludedServices` — the
+ * always-on half of the personal-sources gate (work artifacts). */
+function countAuthoredExcludingServices(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  types: readonly string[],
+  excludedServices: readonly string[],
+): number {
+  const typePlaceholders = types.map(() => "?").join(", ");
+  const servicePlaceholders = excludedServices.map(() => "?").join(", ");
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM item
+        WHERE author_id = ? AND modified_at >= ?
+          AND type IN (${typePlaceholders})
+          AND service NOT IN (${servicePlaceholders})`,
+    )
+    .get(personId, cutoff, ...types, ...excludedServices) as { n: number };
+  return row.n;
+}
+
+/**
+ * `types` authored by `personId`, from services IN `services` — the opt-in half of the
+ * personal-sources gate. `services` is a bound `IN (...)` list, so an unrecognised or
+ * typo'd service name simply matches no rows: it never throws and never widens to
+ * "everything" (spec: fail-safe toward excluding). An empty `services` list
+ * short-circuits to `0` without querying at all.
+ */
+function countAuthoredForServices(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  types: readonly string[],
+  services: readonly string[],
+): number {
+  if (services.length === 0) return 0;
+  const typePlaceholders = types.map(() => "?").join(", ");
+  const servicePlaceholders = services.map(() => "?").join(", ");
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM item
+        WHERE author_id = ? AND modified_at >= ?
+          AND type IN (${typePlaceholders})
+          AND service IN (${servicePlaceholders})`,
+    )
+    .get(personId, cutoff, ...types, ...services) as { n: number };
+  return row.n;
+}
+
+/**
+ * Counts `types` authored by `personId`, applying the `[negotiate] personal_sources`
+ * gate PER SERVICE (spec § 3.3, see `PERSONAL_CAPABLE_SERVICES`): every service outside
+ * `PERSONAL_CAPABLE_SERVICES` always contributes (work artifacts); a service inside it
+ * contributes only when the caller has named it in `personalSources`. Used for both
+ * `docs` (Confluence always, Notion opt-in) and `notes` (Obsidian opt-in only — no
+ * non-personal-capable service emits `obsidian_note`, so this collapses to the prior
+ * "notes is zero unless configured" behaviour).
+ */
+function countAuthoredServiceGated(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  types: readonly string[],
+  personalSources: readonly string[],
+): number {
+  const alwaysOn = countAuthoredExcludingServices(
+    db,
+    personId,
+    cutoff,
+    types,
+    PERSONAL_CAPABLE_SERVICES,
+  );
+  const gated = countAuthoredForServices(
+    db,
+    personId,
+    cutoff,
+    types,
+    splitPersonalSources(personalSources).recognised,
+  );
+  return alwaysOn + gated;
+}
+
+/**
+ * The `[negotiate] personal_sources` list, split into the entries that actually WIDEN the
+ * query and the entries that match nothing.
+ *
+ * The one authority for both halves of the disclosure: `countAuthoredServiceGated` widens on
+ * `recognised`, and `renderNegotiateSources` reports the same `recognised`/`unrecognised`
+ * split — so "personal document sources are configured" can never mean anything other than
+ * "at least one configured entry actually contributed". Deriving `personalDocsConfigured`
+ * from `personalSources.length` instead made a typo'd or mis-capitalised entry render as
+ * complete coverage over an undercount, in the one section whose whole job is to disclose
+ * whether the opt-in applied. Case-folding is handled upstream at parse time
+ * (`config/nimbus-toml.ts` `parsePersonalSources`), so `"Obsidian"` reaches here as
+ * `"obsidian"` and is recognised.
+ *
+ * `recognised` is ordered by `PERSONAL_CAPABLE_SERVICES`, not by config order, so it is
+ * deduplicated and stable regardless of how the user wrote the list. `unrecognised` is
+ * deduplicated explicitly to match: it is echoed back to the reader verbatim, and
+ * `2 unrecognised entries ignored: "foo", "foo"` reads as two distinct mistakes.
+ */
+function splitPersonalSources(personalSources: readonly string[]): {
+  recognised: readonly string[];
+  unrecognised: readonly string[];
+} {
+  const capable: readonly string[] = PERSONAL_CAPABLE_SERVICES;
+  return {
+    recognised: capable.filter((s) => personalSources.includes(s)),
+    unrecognised: [...new Set(personalSources.filter((s) => !capable.includes(s)))],
+  };
+}
+
+/**
+ * Evidence for the writing lane, reproducing `countAuthoredServiceGated`'s gate EXACTLY in
+ * one query: a gated type (doc/note) qualifies from a non-personal-capable service always, or
+ * from a personal-capable one only when recognised; a message qualifies unconditionally.
+ *
+ * The gate is duplicated here rather than shared because the counts are three separate
+ * `COUNT(*)`s and this is one ordered list — but it MUST agree with them. Evidence that
+ * disagrees with the count above it is worse than no evidence: it turns the citation from a
+ * check into a contradiction, and a reader who spots an Obsidian note cited under a brief
+ * whose `sources` block says personal docs are off has no reason to trust any other number.
+ * The `personal sources gate the evidence list exactly as it gates the counts` test pins it.
+ *
+ * `recognised` is interpolated as a literal `0` (false) when empty: `service IN ()` is a
+ * syntax error in SQLite, so the empty case must collapse the clause, not emit it.
+ */
+function laneWritingEvidence(
+  db: Database,
+  personId: string,
+  cutoff: number,
+  personalSources: readonly string[],
+): NegotiateEvidenceRef[] {
+  const gatedTypes: readonly string[] = [...DOC_TYPES, ...NOTE_TYPES];
+  const { recognised } = splitPersonalSources(personalSources);
+  const ph = (n: number): string => Array.from({ length: n }, () => "?").join(", ");
+  const recognisedClause = recognised.length === 0 ? "0" : `service IN (${ph(recognised.length)})`;
+  return evidenceRefsFor(
+    db,
+    `SELECT title, COALESCE(canonical_url, url) AS url
+       FROM item
+      WHERE author_id = ? AND modified_at >= ?
+        AND (
+          (type IN (${ph(gatedTypes.length)})
+            AND (service NOT IN (${ph(PERSONAL_CAPABLE_SERVICES.length)}) OR ${recognisedClause}))
+          OR type IN (${ph(MESSAGE_TYPES.length)})
+        )
+      ORDER BY modified_at DESC, id ASC
+      LIMIT ?`,
+    [
+      personId,
+      cutoff,
+      ...gatedTypes,
+      ...PERSONAL_CAPABLE_SERVICES,
+      ...recognised,
+      ...MESSAGE_TYPES,
+      NEGOTIATE_EVIDENCE_LIMIT,
+    ],
+  );
+}
+
+/** Messages are a work artifact and are always in scope (spec § 3.3) — chat services are
+ * not in `PERSONAL_CAPABLE_SERVICES`. */
+function laneWriting(
+  db: Database,
+  personId: string,
+  sinceMs: number,
+  personalSources: readonly string[],
+): NegotiateWriting {
+  const cutoff = Date.now() - sinceMs;
+  const docs = countAuthoredServiceGated(db, personId, cutoff, DOC_TYPES, personalSources);
+  const notes = countAuthoredServiceGated(db, personId, cutoff, NOTE_TYPES, personalSources);
+  const messages = countAuthoredByType(db, personId, cutoff, MESSAGE_TYPES);
+  return {
+    docs,
+    notes,
+    messages,
+    evidence: {
+      refs: laneWritingEvidence(db, personId, cutoff, personalSources),
+      total: docs + notes + messages,
+    },
+  };
+}
+
+/**
+ * The `sources` block (spec § 5.F). `personalDocsConfigured` is the INTERSECTION with
+ * `PERSONAL_CAPABLE_SERVICES` — see `splitPersonalSources` — never `personalSources.length`;
+ * and entries that matched nothing are carried through to the render rather than dropped
+ * silently, so a typo is visible to the person holding the brief.
+ */
+function personalDocsSources(personalSources: readonly string[]): NegotiateBrief["sources"] {
+  const { recognised, unrecognised } = splitPersonalSources(personalSources);
+  return {
+    personalDocsConfigured: recognised.length > 0,
+    personalDocsRecognised: recognised,
+    personalDocsUnrecognised: unrecognised,
+    personalDocsConfigKey: PERSONAL_DOCS_CONFIG_KEY,
+  };
+}
+
+function laneTask(execute: () => unknown): SubTask {
+  return {
+    taskType: "agent_step",
+    prompt: "",
+    execute: async () => ({ text: JSON.stringify(execute()), tokensIn: 0, tokensOut: 0 }),
+  };
+}
+
+/**
+ * Extracted from `runNegotiate` so it can be unit-tested directly against synthetic
+ * `SubTaskResult[]` input: Task 1 wires this mechanism with zero real lanes (`tasks` is
+ * always `[]`), so the loop body never runs end-to-end via `runNegotiate` itself, and a
+ * coverage floor requires exercising it — building fake `SubTaskResult`s is the only way
+ * to reach it without inventing a lane, which is Task 2's job, not Task 1's.
+ */
+export function reduceLaneResults(
+  results: readonly SubTaskResult[],
+  laneNames: readonly string[],
+): GapNote[] {
+  const gaps: GapNote[] = [];
+  for (const r of results) {
+    if (r.status !== "done" || r.text === undefined) {
+      gaps.push(laneFailureGap(laneNames[r.taskIndex] ?? `#${String(r.taskIndex)}`, r));
+    }
+  }
+  return gaps;
+}
+
+export async function runNegotiate(
+  input: NegotiateInput,
+  ctx: NegotiateContext,
+): Promise<NegotiateBrief> {
+  const start = performance.now();
+  const sinceMs = Math.min(input.sinceMs ?? DEFAULT_SINCE_MS, MAX_SINCE_MS);
+  const gaps: GapNote[] = [];
+
+  const empty = detectEmptyIndex(ctx.db);
+  if (empty !== null) gaps.push(empty);
+
+  const { subject, gitEmailAttempted, subjectGap } = await resolveSubject(ctx.db, input);
+  if (subject.personId === null) gaps.push(unresolvedIdentityGap());
+  if (subjectGap !== null) gaps.push(subjectGap);
+  // Never when `--person` named SOMEONE ELSE — their alias set is unknowable from here
+  // (spec § 5.A0); `gitEmailAttempted` is only meaningful for the local self. Keyed on
+  // `isOther`, not on `source === "explicit"`: `--person <your own id>` is still a brief
+  // about you, resolved from your own git email, and dropping the undercount caveat there
+  // would render a bare run and an explicit self run identically while one of them silently
+  // omits a disclosure the other makes.
+  if (!subject.isOther) {
+    const gitGap = detectUnmappedGitIdentity(ctx.db, gitEmailAttempted);
+    if (gitGap !== null) gaps.push(gitGap);
+  }
+
+  // Lane mechanism (spec § 4): every lane-backed field on `NegotiateBrief` must be
+  // declared `… | null` and initialised to `null` before the coordinator runs, so a
+  // lane that failed is distinguishable from a lane that ran and found nothing (`0`).
+  // Each lane pushes a `{ name, task }` pair (name into `laneNames`, task into `tasks`,
+  // same index); after the coordinator runs, `r.text` is decoded with `JSON.parse` for
+  // `status === "done"` results and merged into the matching `NegotiateBrief` field —
+  // leaving that field at `null` and pushing a `laneFailureGap` for any other status
+  // (or for text that fails to decode).
+  const laneNames: string[] = [];
+  const tasks: SubTask[] = [];
+  // Only attempt the PR lanes with a resolved subject: `laneAuthoredPrs`/`laneReviewedPrs`
+  // require a concrete `personId`, and an unresolved subject already carries its own
+  // `missing_user_identity` gap above — leaving these fields at their initial `null` here
+  // is "not attempted", the same "could not be computed" meaning as a lane that threw.
+  if (subject.personId !== null) {
+    const personId = subject.personId;
+    laneNames.push("authoredPrs", "reviewedPrs", "tickets", "ownership", "decisions", "writing");
+    tasks.push(
+      laneTask(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
+      laneTask(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
+      laneTask(() => laneTickets(ctx.db, personId, sinceMs)),
+      laneTask(() => laneOwnership(ctx.db, personId)),
+      laneTask(() => laneDecisions(ctx.db, personId, sinceMs)),
+      laneTask(() => laneWriting(ctx.db, personId, sinceMs, ctx.personalSources)),
+    );
+  }
+  const coordinator = new AgentCoordinator({
+    sessionId: ctx.sessionId,
+    parentId: `negotiate:${ctx.sessionId}`,
+    depth: 1,
+    toolCallCount: { value: 0 },
+  });
+  const results = await coordinator.run(tasks);
+  gaps.push(...reduceLaneResults(results, laneNames));
+
+  let authoredPrs: NegotiateAuthoredPrs | null = null;
+  let reviewedPrs: NegotiateReviewedPrs | null = null;
+  let tickets: NegotiateTickets | null = null;
+  let ownership: NegotiateOwnership | null = null;
+  let decisions: NegotiateDecisions | null = null;
+  let writing: NegotiateWriting | null = null;
+  for (const r of results) {
+    if (r.status !== "done" || r.text === undefined) continue;
+    const laneName = laneNames[r.taskIndex];
+    try {
+      const decoded: unknown = JSON.parse(r.text);
+      if (laneName === "authoredPrs") authoredPrs = decoded as NegotiateAuthoredPrs;
+      else if (laneName === "reviewedPrs") reviewedPrs = decoded as NegotiateReviewedPrs;
+      else if (laneName === "tickets") tickets = decoded as NegotiateTickets;
+      else if (laneName === "ownership") ownership = decoded as NegotiateOwnership;
+      else if (laneName === "decisions") decisions = decoded as NegotiateDecisions;
+      else if (laneName === "writing") writing = decoded as NegotiateWriting;
+    } catch {
+      gaps.push(laneFailureGap(laneName ?? `#${String(r.taskIndex)}`, r));
+    }
+  }
+
+  return {
+    kind: "negotiate",
+    agentVersion: 1,
+    generatedAt: Date.now(),
+    latencyMs: Math.round(performance.now() - start),
+    gaps,
+    query: { sinceMs },
+    subject,
+    sources: personalDocsSources(ctx.personalSources),
+    unavailableEvidence: UNAVAILABLE_EVIDENCE,
+    authoredPrs,
+    reviewedPrs,
+    tickets,
+    ownership,
+    decisions,
+    writing,
+  };
+}
+
+/**
+ * `gitEmailAttempted` captures the raw email `resolveSelfPerson` tried against git config
+ * (whether or not it ended up mapping to a `person` row) so `runNegotiate` can pass it to
+ * `detectUnmappedGitIdentity`. It stays `null` whenever git was never consulted — e.g. an
+ * `override`/explicit `mePersonIdOverride` short-circuits `resolveSelfPerson` before it
+ * calls `runGit` at all — matching "call only when a git email is otherwise known" (Task 4
+ * brief step 4).
+ */
+async function resolveSubject(
+  db: Database,
+  input: NegotiateInput,
+): Promise<{
+  subject: NegotiateSubject;
+  gitEmailAttempted: string | null;
+  subjectGap: GapNote | null;
+}> {
+  let gitEmailAttempted: string | null = null;
+  const baseRunGit = input.runGitOverride ?? defaultRunGitConfigUserEmail;
+  const capturingRunGit: GitRunner = async () => {
+    const raw = await baseRunGit();
+    gitEmailAttempted = raw === null || raw.trim() === "" ? null : raw;
+    return raw;
+  };
+  // Always resolve the local self id, even for an explicit `--person`: `isOther` means
+  // "named someone other than the resolved local user" (see `NegotiateSubject.isOther`'s
+  // docstring), which is a comparison, not a fact derivable from `--person` being present.
+  const resolution = await resolveSelfPerson(db, {
+    ...(input.mePersonIdOverride === undefined ? {} : { override: input.mePersonIdOverride }),
+    runGit: capturingRunGit,
+    osUsername: input.osUsernameOverride ?? safeOsUsername(),
+  });
+  if (input.personId !== undefined && input.personId.length > 0) {
+    return {
+      subject: {
+        personId: input.personId,
+        source: "explicit",
+        displayName: personDisplayNameOrNull(db, input.personId),
+        isOther: input.personId !== resolution.personId,
+      },
+      gitEmailAttempted,
+      subjectGap: explicitSubjectGap(classifyExplicitSubject(db, input.personId), input.personId),
+    };
+  }
+  return {
+    subject: {
+      personId: resolution.personId,
+      source: resolution.source,
+      displayName:
+        resolution.personId === null ? null : personDisplayNameOrNull(db, resolution.personId),
+      isOther: false,
+    },
+    gitEmailAttempted,
+    subjectGap: null,
+  };
+}
+
+function personDisplayNameOrNull(db: Database, personId: string): string | null {
+  const row = db.query("SELECT display_name FROM person WHERE id = ?").get(personId) as {
+    display_name: string | null;
+  } | null;
+  return row?.display_name ?? null;
+}
+
+export function emitNegotiateBrief(
+  input: NegotiateInput,
+  ctx: NegotiateContext,
+): Promise<{ sessionId: string }> {
+  return emitBriefWithSynthesis({
+    sessionId: ctx.sessionId,
+    briefReadyMethod: "negotiate.briefReady",
+    briefErrorMethod: "negotiate.briefError",
+    notify: ctx.notify,
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    buildBrief: () => runNegotiate(input, ctx),
+  });
+}

@@ -8,6 +8,83 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-12 — `nimbus negotiate`: the fourteenth built-in agent, a cited contribution brief.**
+  `agents.negotiate` / `nimbus negotiate [--since <duration>] [--person <id>] [--json]`. Six
+  parallel `AgentCoordinator` lanes assembled entirely from evidence already in the local index —
+  no connector is opened and nothing is fetched live, including for `--person`, which briefs a
+  different already-indexed person from the same local data, never a live one: PRs authored (with
+  size stats where the enrichment pass has reached them), PRs reviewed (approve /
+  changes-requested / other), tickets opened and tickets closed by an authored PR, code and
+  services owned, decisions authored, and documents/notes/messages written. `--since` defaults to
+  90 days and tops out at 365 — negotiate's own bound, wider than the shared 90-day `MAX_SINCE_MS`
+  every sibling agent uses, sized for an annual review cycle; a request above it is rejected
+  outright (exit code 2), never silently clamped.
+  **Every item-backed lane cites its evidence.** A count with no way to check it is an
+  assertion, not evidence — "12 PRs" reads exactly like "40 PRs" to someone who cannot open
+  either. Each of the five item-backed lanes carries up to `NEGOTIATE_EVIDENCE_LIMIT` (5)
+  refs — title plus `COALESCE(item.canonical_url, item.url)` — ordered `modified_at DESC, id
+  ASC` so an unchanged index cites the same items on every run. Truncation self-discloses:
+  `NegotiateEvidence.total` holds the full population, so a capped list renders "…and N more
+  not listed" rather than reading as exhaustive. A ref with no url renders as plain text,
+  never as an empty link and never as a fabricated one. Two deliberate omissions: ownership
+  carries no refs (it already enumerates the services and directories it counted), and the
+  tickets lane cites only the issues the subject OPENED — citing the `closed by an authored
+  PR` hop would list issues someone else filed. The writing lane's evidence query reproduces
+  the `personal_sources` gate exactly, so a personal note can never appear as a citation
+  under a brief whose `sources` block says personal docs are off.
+  **Personal sources are off unless configured.** Confluence pages and chat messages are always
+  in scope; Obsidian notes and Notion pages are mined only when their service is named in
+  `[negotiate] personal_sources` in `nimbus.toml` — configuration IS the consent, following the
+  `[glossary.terms]` precedent, resolved per SERVICE (not per item type) because Confluence and
+  Notion both emit `type: "page"`. Entries are case-folded at parse time, "configured" means the
+  INTERSECTION with the recognised personal-capable services rather than merely a non-empty list,
+  and an entry naming nothing is echoed back in the brief as ignored — so a mis-typed or
+  mis-capitalised opt-in can never render an undercount as complete coverage.
+  **An unresolvable `--person` is disclosed, never briefed as zero.** An explicit `--person` id
+  that matches no `person` row raises a `missing_user_identity` gap stating the counts below are
+  STRUCTURALLY zero rather than measured. This covers the `git:<email>` blame-alias shape
+  specifically — the identity the ownership pass emits for a git email with no `person` row, and
+  therefore not a `person.id`: the three lanes keyed on `item.author_id` can never match it, and
+  the `authored`/`opened` graph edges are built from `item.author_id` too, so PRs authored and
+  tickets cannot either — five of the six lanes are structurally zero. Only the ownership lane can
+  still measure it (it is the sole lane reading `owns` edges, the only edges that ever carry a
+  `git:` external id), so the two cases state different facts and are not collapsed.
+  Without it, an unresolvable id rendered as a person who shipped nothing.
+  **Six limits stated on every brief, never decoration.** The window is "ACTIVE in", not
+  "created in": `item` carries no creation timestamp, only `modified_at` (GitHub's `updated_at`,
+  the last touch), so every item-backed lane windows on last-modified and the brief says so —
+  otherwise "40 PR(s)" under a 90-day header reads as 40 authored this quarter when it means 40
+  authored at any time and touched this quarter, a systematic overstatement of the headline
+  numbers. (Two lanes sit outside the window: decisions windows on `decision_record.decided_at`,
+  a real decision date, and ownership is not windowed at all — it is an all-time snapshot.)
+  Ownership carries the same **authorship-derived, not accountability** label `nimbus owners`
+  states unconditionally — it reads the same git-blame-derived `owns` edges, and under a
+  contribution brief an unlabelled "services: checkout" reads as formal accountability. Ownership
+  counts only
+  `git_blame_line` rows whose git email maps to a known `person` row — work committed under an
+  unmapped alias (a second machine, an old address, a GitHub `noreply` address) is attributed
+  elsewhere and not counted; the brief flags this for a self subject when it can detect it, and
+  never guesses for an explicit `--person` subject, since someone else's alias set is unknowable
+  from here. Ownership can also be stale, or never computed at all: the lane reads the
+  precomputed `owns` graph, not a live derivation, so every brief states when that background
+  pass last ran, or names `nimbus owners --refresh` when it never has. PR size stats exist only
+  where the enrichment pass has run, so `authoredPrs.stats` carries its own `statsCoverage`
+  (covered of total) rather than implying completeness. `decisions.unattributable` is a fact
+  about the INDEX, not the subject — decisions mined from a source (Obsidian, Teams) that
+  records no author at all — and the render spells that out, since reading "N authored, M
+  unattributable" as "N + M decisions are mine" turns an undercount into an overstatement.
+  Incidents resolved, on-call shifts, and deploys triggered are not available in the index at
+  all — named unconditionally on every run, so an empty section is never read as a zero.
+  **Not reachable over the HTTP API — nor as an MCP tool**, for a different reason than
+  `agents.preflight` / `agents.premortem` (excluded for their side effects): `agents.negotiate`
+  writes nothing, but
+  combined with `--person` an HTTP-exposed version would let any holder of the `agents` bearer
+  token — or any model driving the MCP tool server — assemble a contribution dossier on any
+  indexed person without the local owner initiating it. The CLI and Tauri renderer are
+  same-machine, owner-initiated surfaces (I7's XSS threat model, not "arbitrary network caller");
+  the local HTTP API is not. Tauri `ALLOWED_METHODS` 105 → 106 (I7); no new invariant and no
+  schema change. Documented in `docs/cli-reference.md`'s `nimbus negotiate` section, the
+  built-in-agent table + IPC-method catalogue in `docs/architecture.md`, and `docs/roadmap.md`.
 - **2026-08-11 — `EgressCompleteness.tier` is gone; the coverage vector is the only claim (#1057).**
   The last step of a three-repo sequence. `tier: "authorized-actions"` was a deprecated additive
   wire shim, kept because the published `@nimbus-dev/client@0.15.x`'s `validateEgressCompleteness`

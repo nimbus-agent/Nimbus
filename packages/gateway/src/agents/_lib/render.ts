@@ -20,6 +20,17 @@ import type {
   PreflightDownstream,
 } from "./findings.ts";
 import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
+import type {
+  NegotiateAuthoredPrs,
+  NegotiateBrief,
+  NegotiateDecisions,
+  NegotiateEvidence,
+  NegotiateOwnership,
+  NegotiateReviewedPrs,
+  NegotiateSubject,
+  NegotiateTickets,
+  NegotiateWriting,
+} from "./negotiate-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
 import type { WhyBrief, WhyLane } from "./why-types.ts";
@@ -551,4 +562,401 @@ export function renderPremortem(brief: PremortemBrief): string {
   const gaps = renderGaps(brief.gaps);
   const footer = renderLatency(brief.latencyMs);
   return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+/**
+ * `subject.isOther` is true only when `--person <id>` named someone whose id differs
+ * from the separately-resolved local user (`negotiate.ts` `resolveSubject` always
+ * resolves both and compares) — `--person <your own id>` reads as a normal self brief,
+ * not "someone other than you". The explicit-subject case always has a non-null
+ * `personId`, so the fallback below is defensive, not reachable in practice. The
+ * local-user case deliberately does not name the person: an unresolved local subject
+ * already carries a `missing_user_identity` gap note.
+ */
+function renderNegotiateSubjectLine(subject: NegotiateSubject): string {
+  if (subject.isOther) {
+    const label = subject.displayName ?? subject.personId ?? "unknown person";
+    return `**Subject:** ${label} — brief requested for someone other than you`;
+  }
+  return "**Subject:** you";
+}
+
+/**
+ * Escapes a citation title for the `[...]` position of a Markdown link.
+ *
+ * ONE pass over a character class that INCLUDES the backslash — deliberately not a chain of
+ * `.replace(/\[/g, "\\[").replace(/\]/g, "\\]")`. That chain is order-dependent and wrong:
+ * a title containing `\[` has its bracket escaped to `\\[`, where the doubled backslash
+ * renders as a literal backslash and the bracket is live again, breaking out of the link
+ * text. Item titles are EXTERNAL input (a PR title, an issue title, a decision statement),
+ * so "no one would write that" is not an argument. CodeQL `js/incomplete-sanitization`
+ * caught exactly this. Escaping the escape character first — or in the same pass — is the
+ * only correct shape.
+ */
+function escapeMarkdownLinkText(text: string): string {
+  return text.replace(/[\\[\]]/g, (c) => `\\${c}`);
+}
+
+/**
+ * The `(...)` target of a citation link, or `null` when the url cannot be rendered safely.
+ *
+ * Two separate guards, both fail-safe toward plain text:
+ *
+ * 1. **Scheme allow-list.** A connector-supplied `canonical_url` is external input, and this
+ *    brief is rendered in the Tauri renderer — a `javascript:` or `data:` target would be a
+ *    live script-execution vector with only the CSP (I8) behind it. Written as what MAY pass,
+ *    never as a list of what may not.
+ * 2. **Delimiter encoding.** `(`, `)` and whitespace terminate the target in Markdown, so a
+ *    url containing them would truncate the link and spill the remainder into the document
+ *    as text — worst case pointing the citation somewhere other than the evidence.
+ *
+ * The parens are encoded from an explicit map, NOT via `encodeURIComponent`: that function
+ * leaves `(`, `)`, `!`, `'` and `*` untouched — they are "unreserved marks" in its spec — so
+ * `encodeURIComponent(")")` returns `)` and the guard would be silently inert for the two
+ * characters it exists to neutralise. Whitespace is the one case `encodeURIComponent` does
+ * handle, and the `URL` parser has usually already encoded it.
+ */
+const HREF_DELIMITER_ESCAPES: Readonly<Record<string, string>> = { "(": "%28", ")": "%29" };
+
+function safeEvidenceHref(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  return parsed.href.replace(/[()\s]/g, (c) => HREF_DELIMITER_ESCAPES[c] ?? encodeURIComponent(c));
+}
+
+/**
+ * The citation block under a lane's headline count.
+ *
+ * Returns `[]` — not a "no evidence" line — when there is nothing to cite: a lane that
+ * counted zero has already said so, and an empty population needs no citation. The
+ * truncation line is emitted from `total - refs.length` so a capped list can never read as
+ * exhaustive, the same self-disclosure rule `statsCoverage` follows.
+ *
+ * A ref with no usable url renders as plain text, never as a link to nowhere.
+ */
+function renderNegotiateEvidence(evidence: NegotiateEvidence): string[] {
+  if (evidence.refs.length === 0) return [];
+  const lines = evidence.refs.map((r) => {
+    const title = escapeMarkdownLinkText(r.title);
+    const href = r.url === null ? null : safeEvidenceHref(r.url);
+    return href === null ? `  - ${title}` : `  - [${title}](${href})`;
+  });
+  const remaining = evidence.total - evidence.refs.length;
+  if (remaining > 0) lines.push(`  - …and ${String(remaining)} more not listed`);
+  return lines;
+}
+
+/**
+ * A `null` lane means "could not be computed" (failed, or never attempted for lack of a
+ * resolved subject) and must never render as `0` — that distinction is the entire reason
+ * `authoredPrs` is nullable rather than defaulting to an all-zero object.
+ */
+function renderNegotiateAuthoredPrs(a: NegotiateAuthoredPrs | null): string {
+  if (a === null) {
+    return ["## PRs authored", "", "_could not be computed_"].join("\n");
+  }
+  const lines = ["## PRs authored", "", `- ${String(a.count)} PR(s), ${String(a.merged)} merged`];
+  if (a.stats === null) {
+    // Only when there was something to enrich. With zero authored PRs in the window,
+    // "no enriched PR in this window" reads as a coverage failure over a real population
+    // rather than what it is — an empty population, already stated by the line above.
+    if (a.statsCoverage.total > 0) {
+      lines.push("- stats: not available (no enriched PR in this window)");
+    }
+  } else {
+    const coverageSuffix =
+      a.statsCoverage.covered < a.statsCoverage.total
+        ? ` (stats coverage ${String(a.statsCoverage.covered)}/${String(a.statsCoverage.total)})`
+        : "";
+    lines.push(
+      `- stats: +${String(a.stats.additions)} / -${String(a.stats.deletions)} across ${String(
+        a.stats.changedFiles,
+      )} file(s)${coverageSuffix}`,
+    );
+  }
+  lines.push(...renderNegotiateEvidence(a.evidence));
+  return lines.join("\n");
+}
+
+/** Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. */
+function renderNegotiateReviewedPrs(r: NegotiateReviewedPrs | null): string {
+  if (r === null) {
+    return ["## PRs reviewed", "", "_could not be computed_"].join("\n");
+  }
+  const lines = [
+    "## PRs reviewed",
+    "",
+    `- ${String(r.count)} review(s): ${String(r.approved)} approved, ${String(
+      r.changesRequested,
+    )} changes requested, ${String(r.otherOrUnknown)} other/unknown`,
+  ];
+  lines.push(...renderNegotiateEvidence(r.evidence));
+  return lines.join("\n");
+}
+
+/** Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. */
+function renderNegotiateTickets(t: NegotiateTickets | null): string {
+  if (t === null) {
+    return ["## Tickets", "", "_could not be computed_"].join("\n");
+  }
+  const lines = [
+    "## Tickets",
+    "",
+    `- ${String(t.opened)} opened, ${String(t.closedByAuthoredPr)} closed by an authored PR`,
+  ];
+  // Cites the OPENED issues only — see `NegotiateTickets.evidence` for why the
+  // closed-by-authored-PR hop is deliberately not cited here.
+  lines.push(...renderNegotiateEvidence(t.evidence));
+  return lines.join("\n");
+}
+
+/**
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. The
+ * undercount guard (Task 4, spec § 5.A0) surfaces here as an unconditional line: it is a
+ * fact about the index (never an attribution to the subject), so it renders whenever it is
+ * non-zero, not just when the lane otherwise has something to say.
+ */
+function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
+  if (o === null) {
+    return ["## Ownership", "", "_could not be computed_"].join("\n");
+  }
+  const lines = ["## Ownership", ""];
+  if (o.services.length === 0 && o.directories.length === 0) {
+    lines.push("- no recorded ownership");
+  } else {
+    if (o.services.length > 0) lines.push(`- services: ${o.services.join(", ")}`);
+    if (o.directories.length > 0) lines.push(`- directories: ${o.directories.join(", ")}`);
+  }
+  lines.push(
+    o.lastPassAt === null
+      ? "- ownership pass: never run (`nimbus owners --refresh`)"
+      : `- ownership pass last ran ${new Date(o.lastPassAt).toISOString()}`,
+  );
+  if (o.truncated) {
+    lines.push("- list truncated at the display limit — more owned paths exist");
+  }
+  if (o.unmappedIdentitiesInIndex > 0) {
+    lines.push(
+      `- ${String(o.unmappedIdentitiesInIndex)} git identities in this index are not mapped ` +
+        "to a person; ownership attributed to them is not counted here.",
+    );
+  }
+  // Unconditional, exactly as `nimbus owners` states it in every brief (`agents/ownership.ts`):
+  // this lane reads the SAME `owns` edges, which are derived from git blame. Under a heading
+  // like "## Ownership — services: checkout", inside a document about someone's contribution,
+  // an unlabelled ownership claim reads as formal accountability.
+  lines.push(
+    // Do NOT shorten this to "there is no reviewer data in the index" — this same brief renders
+    // a measured "PRs reviewed" section, so that claim would contradict it. `nimbus owners`
+    // (`agents/ownership.ts`) is deliberately narrower for the same reason; match it.
+    "- this is authorship-derived ownership — who wrote the lines, not who is formally " +
+      "accountable. There is no CODEOWNERS and no on-call rotation in the index, and reviewer " +
+      "data (`reviewed` edges from GitHub PR reviews) is not factored into this ranking.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * How to address the subject in running prose. A self brief says "you"/"yours"; a
+ * `--person <someone-else>` brief must not, or the section contradicts the subject line
+ * three sections above it ("brief requested for someone other than you", then "attributed
+ * to you"). Falls back to `personId`, then a neutral noun, so an unnamed subject still
+ * reads as a third party rather than silently reverting to "you".
+ */
+function negotiateSubjectVoice(subject: NegotiateSubject): {
+  addressed: string;
+  possessive: string;
+} {
+  if (!subject.isOther) return { addressed: "you", possessive: "yours" };
+  return {
+    addressed: subject.displayName ?? subject.personId ?? "the subject",
+    possessive: "theirs",
+  };
+}
+
+/**
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. Same
+ * disambiguation problem as `renderNegotiateOwnership`'s `unmappedIdentitiesInIndex`
+ * (Task 4): `unattributable` is a fact about the INDEX — decisions mined from a source
+ * (Obsidian, Teams) that records no author AT ALL, which is precisely and only what
+ * `laneDecisions` queries (`i.author_id IS NULL`). It is NOT "decisions authored by someone
+ * else": those are simply absent from both counts. Do not widen the query to match a looser
+ * reading of this comment — that would inflate `unattributable` and make the rendered line
+ * below false.
+ *
+ * Printed next to `authored` with no disambiguating text, a reader (or their manager) could
+ * misread "N authored, M unattributable" as "N + M decisions, M just not linked to me" — the
+ * undercount failure inverted into an overstatement, which is worse (spec § 8.2, Task 5
+ * fix-round-1). The line must therefore read as "N decisions attributed to <subject>; M
+ * decisions exist in the index with no attributable author, not counted above and not
+ * necessarily <subject>'s" — matching `renderNegotiateOwnership`'s "attributed to them is not
+ * counted here" phrasing. The subject is threaded in rather than hardcoded to "you" for the
+ * same reason `renderNegotiateSubjectLine` takes it.
+ */
+function renderNegotiateDecisions(d: NegotiateDecisions | null, subject: NegotiateSubject): string {
+  if (d === null) {
+    return ["## Decisions", "", "_could not be computed_"].join("\n");
+  }
+  const voice = negotiateSubjectVoice(subject);
+  const lines = [
+    "## Decisions",
+    "",
+    `- ${String(d.authored)} decision(s) attributed to ${voice.addressed}`,
+    `- ${String(d.unattributable)} decision(s) in this index have no indexed author and are ` +
+      `not counted above — they are not necessarily ${voice.possessive}`,
+  ];
+  lines.push(...renderNegotiateEvidence(d.evidence));
+  return lines.join("\n");
+}
+
+/**
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. `docs` and
+ * `notes` each partly reflect the `[negotiate] personal_sources` gate (spec § 3.3) — see
+ * `NegotiateWriting`'s docstring and `negotiate.ts`'s `PERSONAL_CAPABLE_SERVICES` for which
+ * services that covers; this line never explains *why* a count reads low/zero — that
+ * disclosure lives in `renderNegotiateSources`, unconditionally, so it is stated once
+ * rather than repeated (and not restated here, so the two cannot drift apart).
+ */
+function renderNegotiateWriting(w: NegotiateWriting | null): string {
+  if (w === null) {
+    return ["## Writing", "", "_could not be computed_"].join("\n");
+  }
+  const lines = [
+    "## Writing",
+    "",
+    `- ${String(w.docs)} doc(s), ${String(w.notes)} note(s), ${String(w.messages)} message(s) authored`,
+  ];
+  lines.push(...renderNegotiateEvidence(w.evidence));
+  return lines.join("\n");
+}
+
+/**
+ * Sources the brief drew on (spec § 5.F). Rendered unconditionally, like
+ * `unavailableEvidence`: when no personal source is configured, the section states so by
+ * name — `personalDocsConfigKey` — so an empty personal-sources result reads as "not
+ * enabled", never as "nothing found".
+ */
+function renderNegotiateSources(sources: NegotiateBrief["sources"]): string {
+  const ignored = renderIgnoredPersonalSources(sources.personalDocsUnrecognised);
+  // Three states, not two. Telling a reader to "set `[negotiate] personal_sources`" when they
+  // have already set it — and every entry was unrecognised — is the advice that wastes the
+  // most time, so that case gets its own line saying what actually went wrong.
+  let line: string;
+  if (sources.personalDocsConfigured) {
+    line = `- personal document sources: ${sources.personalDocsRecognised.join(
+      ", ",
+    )} — configured and included in the writing lane above${ignored}`;
+  } else if (sources.personalDocsUnrecognised.length > 0) {
+    line = `- personal document sources are not enabled: no entry in \`${sources.personalDocsConfigKey}\` matched a personal-capable service${ignored}`;
+  } else {
+    line = `- personal document sources are not enabled (set \`${sources.personalDocsConfigKey}\` in nimbus.toml to include them)`;
+  }
+  return ["## Sources", "", line].join("\n");
+}
+
+/**
+ * The disclosure half of the `personalDocsConfigured` fix. An entry that matches no
+ * personal-capable service widens nothing, so dropping it silently leaves a mis-typed or
+ * mis-named opt-in indistinguishable from a source that was genuinely empty — and, before
+ * `personalDocsConfigured` became an intersection, made an undercount render as complete
+ * coverage. The entries are echoed back quoted so the reader can see the exact string their
+ * `nimbus.toml` carries.
+ */
+function renderIgnoredPersonalSources(unrecognised: readonly string[]): string {
+  if (unrecognised.length === 0) return "";
+  const noun = unrecognised.length === 1 ? "entry" : "entries";
+  const quoted = unrecognised.map((s) => `"${s}"`).join(", ");
+  return ` (${String(unrecognised.length)} unrecognised ${noun} ignored: ${quoted})`;
+}
+
+/**
+ * The window label, at the coarsest unit that does not LOSE the caller's precision.
+ *
+ * `Math.round(sinceMs / 86_400_000)` alone rendered every sub-day window as "last 0d":
+ * `--since 1h` is a valid request (`parseDurationToMs` accepts `ms|s|m|h|d|w`, and the IPC
+ * bound is an upper one only), and "0d" states a window the lanes did not query. That is the
+ * same class of misstatement the window clause exists to prevent — the clause is a
+ * disclosure, so it cannot itself be wrong about the window.
+ *
+ * Rounding WITHIN a unit is fine (90d, 36h); collapsing to zero is not, hence the unit step
+ * down rather than a wider `toFixed`. A zero window renders `0ms`, which is accurate: it
+ * selects nothing.
+ */
+function negotiateWindowLabel(sinceMs: number): string {
+  const MINUTE = 60_000;
+  const HOUR = 3_600_000;
+  const DAY = 86_400_000;
+  if (sinceMs >= DAY) return `${String(Math.round(sinceMs / DAY))}d`;
+  if (sinceMs >= HOUR) return `${String(Math.round(sinceMs / HOUR))}h`;
+  if (sinceMs >= MINUTE) return `${String(Math.round(sinceMs / MINUTE))}m`;
+  return `${String(sinceMs)}ms`;
+}
+
+/**
+ * Task 1's version rendered only the subject, the window and generation time, the gap
+ * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
+ * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership; Task 5
+ * adds decisions; Task 6 adds writing + sources — a lane whose field is `null` renders as
+ * "could not be computed", never as `0`; each later lane task extends this further the
+ * same way.
+ */
+export function renderNegotiate(brief: NegotiateBrief): string {
+  const header = "# Negotiation brief";
+  const subjectLine = renderNegotiateSubjectLine(brief.subject);
+  // The window clause is a disclosure, not decoration. `item` has no creation timestamp, so
+  // every item-backed lane filters on `modified_at` — GitHub's `updated_at`, i.e. LAST TOUCH.
+  // Under a bare "_window: last 90d_" header, "40 PR(s)" is read as "40 authored this quarter"
+  // when the query actually means "40 you authored at any time that were touched in this
+  // window" — a systematic OVERSTATEMENT of the headline numbers, the failure direction this
+  // agent exists to avoid. Re-querying on creation date is unavailable, so saying so is the fix.
+  const windowLine = `_window: last ${negotiateWindowLabel(
+    brief.query.sinceMs,
+  )} — items authored by the subject that were ACTIVE in this window; the index records last-modified, not created. Two lanes sit outside it: decisions windows on its recorded decision date, and ownership is not windowed at all (it is an all-time snapshot) · generated ${new Date(
+    brief.generatedAt,
+  ).toISOString()}_`;
+  const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);
+  const reviewedPrs = renderNegotiateReviewedPrs(brief.reviewedPrs);
+  const tickets = renderNegotiateTickets(brief.tickets);
+  const ownership = renderNegotiateOwnership(brief.ownership);
+  const decisions = renderNegotiateDecisions(brief.decisions, brief.subject);
+  const writing = renderNegotiateWriting(brief.writing);
+  const sources = renderNegotiateSources(brief.sources);
+  const evidence = [
+    "## Evidence not available from the index",
+    "",
+    ...brief.unavailableEvidence.map((e) => `- ${e}`),
+  ].join("\n");
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [
+    header,
+    "",
+    subjectLine,
+    windowLine,
+    "",
+    authoredPrs,
+    "",
+    reviewedPrs,
+    "",
+    tickets,
+    "",
+    ownership,
+    "",
+    decisions,
+    "",
+    writing,
+    "",
+    sources,
+    "",
+    evidence,
+    gaps,
+    footer,
+  ]
+    .filter((s) => s !== "")
+    .join("\n");
 }

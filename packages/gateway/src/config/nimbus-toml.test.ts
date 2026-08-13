@@ -44,6 +44,7 @@ import {
   loadNimbusLanFromConfigDir,
   loadNimbusLanFromPath,
   loadNimbusLlmFromConfigDir,
+  loadNimbusNegotiateFromConfigDir,
   loadNimbusPreflightFromConfigDir,
   loadNimbusPremortemFromConfigDir,
   loadNimbusQuorumFromConfigDir,
@@ -62,6 +63,7 @@ import {
   parseNimbusFederationToml,
   parseNimbusIdentityToml,
   parseNimbusLanToml,
+  parseNimbusNegotiateToml,
   parseNimbusPagerdutyToml,
   parseNimbusPremortemToml,
   parseNimbusScimToml,
@@ -1621,5 +1623,74 @@ describe("[premortem] (Spine S1)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [negotiate] — personal-docs opt-in (Task 6)
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusNegotiateToml", () => {
+  test("[negotiate] personal_sources parses a service list", () => {
+    const parsed = parseNimbusNegotiateToml(
+      '[negotiate]\npersonal_sources = ["obsidian", "notion"]\n',
+    );
+    expect(parsed.personalSources).toEqual(["obsidian", "notion"]);
+  });
+
+  test("[negotiate] absent yields an empty list, not undefined", () => {
+    expect(parseNimbusNegotiateToml("").personalSources).toEqual([]);
+  });
+
+  test("blank and non-string entries are dropped at parse time", () => {
+    const parsed = parseNimbusNegotiateToml(
+      '[negotiate]\npersonal_sources = ["obsidian", "", 42]\n',
+    );
+    expect(parsed.personalSources).toEqual(["obsidian"]);
+  });
+
+  // `item.service` is always a lower-case connector id, and the consumer matches on it
+  // exactly. `["Obsidian"]` is a natural thing to write in TOML and matched NOTHING before
+  // this fold — an undercount that `nimbus negotiate` reported as configured coverage.
+  test("entries are case-folded so a capitalised service name still matches", () => {
+    const parsed = parseNimbusNegotiateToml(
+      '[negotiate]\npersonal_sources = ["Obsidian", "NOTION"]\n',
+    );
+    expect(parsed.personalSources).toEqual(["obsidian", "notion"]);
+  });
+
+  test("whitespace-only entries are dropped, not folded into a blank service name", () => {
+    expect(
+      parseNimbusNegotiateToml('[negotiate]\npersonal_sources = ["  ", "obsidian"]\n')
+        .personalSources,
+    ).toEqual(["obsidian"]);
+  });
+
+  test("a malformed (non-array) value falls back to an empty list, never throws", () => {
+    expect(() =>
+      parseNimbusNegotiateToml("[negotiate]\npersonal_sources = not-an-array\n"),
+    ).not.toThrow();
+    expect(
+      parseNimbusNegotiateToml("[negotiate]\npersonal_sources = not-an-array\n").personalSources,
+    ).toEqual([]);
+  });
+});
+
+describe("loadNimbusNegotiateFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, '[negotiate]\npersonal_sources = ["obsidian"]\n');
+    expect(loadNimbusNegotiateFromConfigDir(dir).personalSources).toEqual(["obsidian"]);
+  });
+
+  test("a missing file yields the default (empty list)", () => {
+    expect(loadNimbusNegotiateFromConfigDir(dir).personalSources).toEqual([]);
   });
 });

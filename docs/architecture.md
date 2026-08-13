@@ -1131,6 +1131,7 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 | S1 | `decisions` | `nimbus decisions [--since <duration>] [--service <name>] [--min-confidence <0..1>] [--explain] [--json] [--refresh \| --rebuild [--yes]]` | `agents.decisions` (read); `decisions.refresh` / `decisions.rebuild` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-08-02 — the third member of the implicit-knowledge triad, after `why` and `glossary`: recovers "we decided X because Y, alternatives were Z" statements buried in chat / wiki / issue prose and corroborates each against downstream PRs, commits and ADRs already in the Phase 3 relationship graph; the brief is a chronological, confidence-scored list read straight from the materialized `decision_record` table (V47) — no model call on the read path; the extraction pass (discover → extract → corroborate) runs off the debounced connector-sync seam by default, or on-demand via `--refresh`/`--rebuild`; emits `decisions.briefReady` |
 | S1 | `ownership` | `nimbus owners [<path>] [--service <name>] [--json] [--refresh]` | `agents.ownership` (read); `ownership.refresh` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-08-07 — the read surface over the git-blame-derived ownership graph (**V51**, PR A 2026-08-07): ranks `person --owns--> source_file \| directory \| service` edges for a requested path or `[ci.service.<id>]` id, falls back to the parent directory so a one-committer file still routes somewhere, and reports the bound-service list + last-pass coverage stats with no argument at all; the pass itself is a debounced post-sync aggregation of already-indexed `git_blame_line` rows, not a live git call on the read path. **This is authorship-derived ownership — who wrote the lines, not who is formally accountable** — there is no CODEOWNERS, reviewer or on-call data in the index, and every brief says so via an unconditional gap note; emits `ownership.briefReady` |
 | S1 | `pre-mortem` | `nimbus pre-mortem <epic-ref> [--service <name>]… [--json] [--refresh] [--repropose]` | `agents.premortem` (read + paused-watcher writes, Tauri-exposed, HTTP/MCP-excluded); `premortem.refresh` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-08-11 — the thirteenth built-in agent and PR B of the S1 pre-mortem work (PR A shipped schema **V53** + the background theme pass 2026-08-09): four sequential lanes resolve a Jira epic to its affected services, build an IDF-weighted service-overlap cohort of comparable closed epics, compute five structural risks (cycle-time overrun, size overrun, review drag, incident coupling, abandonment), and read recurring blocker themes from V53. **The one built-in agent that is not purely read-only**: it proposes — via the narrowly-bounded exception in `nimbus-agent-patterns` — one paused (`enabled = 0`) `incident_opened` watcher per affected service that resolves to a configured `[ci.service.<id>]` id — scoped by `filter.affectedService`, never armed by the agent itself, and an unmapped repo gets no watcher plus a named gap. **No deploy-failure watcher is proposed**: the engine now supports the same scoping there, but `deployment/annotate.ts` (the only writer of the `metadata.conclusion` that condition matches) creates no `deployment` graph entity, so one would match nothing until `nimbus index regraph` runs. Review drag is unmeasurable for EVERY repo today (no connector indexes a PR's opened timestamp; the measured path activates when one does); Jira-only, and `parent_key`-derived cohort membership is team-managed-Jira-only — no `linear:project` items are indexed at all. Confidence ceiling 0.86, matching `glossary`/`decisions`. Excluded from the HTTP + MCP agent surfaces (matching `agents.preflight`) since its writes have no HITL gate; emits `premortem.briefReady` |
+| S1 | `negotiate` | `nimbus negotiate [--since <duration>] [--person <id>] [--json]` | `agents.negotiate` (read; Tauri-exposed, HTTP/MCP-excluded) | ✅ Shipped 2026-08-12 — the fourteenth built-in agent: a cited contribution brief for one person over a window (default 90d, max **365d** — its own bound, wider than every sibling's shared 90-day cap, sized for an annual review cycle), assembled entirely from the local index; opens no connector. Six parallel lanes — PRs authored (with `statsCoverage` on the partially-enriched size stats), PRs reviewed, tickets opened / closed by an authored PR, ownership, decisions authored, and docs/notes/messages written. **Honesty contract:** every lane field is `\| null`, a lane that failed or never ran renders "could not be computed" and never `0`, and there is no `?? 0` in the code — a number that was not measured must never render as a zero. An unresolvable `--person` (including a `git:<email>` blame alias, which is not a `person.id`) is disclosed as a `missing_user_identity` gap saying the counts are structurally zero rather than measured. The window is "ACTIVE in", not "created in" — `item` has no creation timestamp — and the brief says so; the ownership section carries the same **authorship-derived, not accountability** label `nimbus owners` states unconditionally; incidents resolved / on-call shifts / deploys triggered are named as unavailable on every run. Personal document sources (Obsidian, Notion) are off unless named in `[negotiate] personal_sources`; "configured" means an entry actually widened the query, and unrecognised entries are reported back rather than dropped. Tauri `ALLOWED_METHODS` 105 → 106 (I7); emits `negotiate.briefReady` |
 | 7 | `excellence` | `nimbus excellence [--service \| --team]` | `agents.excellence` | Planned — parallel sub-agents over service catalog, DORA, feature flags, recent activity |
 | 8 | `security` | `nimbus security <repo\|service>` | `agents.security` | Planned — vulns, CVEs, secrets, IaC misconfigs, license issues for a repo or service |
 | 8 | `posture` | `nimbus posture <cloud-account\|cluster>` | `agents.posture` | Planned — CSPM findings + IaC drift + over-privileged identities + exposure ranked by exploitability × blast radius |
@@ -1546,6 +1547,59 @@ const streamReq: JSONRPCRequest = {
 //   children to walk), so the pass yields no theme for it — and `agents.premortem`'s own
 //   affected-service derivation hits the same wall for the SAME reason (see `nimbus pre-mortem`
 //   in the CLI reference).
+
+// --- Contribution brief (S1 "Local Brain", shipped 2026-08-12) ---------------------------
+// agents.negotiate  — the fourteenth built-in agent. Async, returns { sessionId } immediately,
+//   emits negotiate.briefReady / negotiate.briefError; renderer-exposed (Tauri count 105 → 106).
+//   Purely read-only: no HITL, no `connectors.dispatch`, and no `item`/graph write at all —
+//   unlike `agents.premortem` above, it is the ordinary built-in-agent shape.
+//   Params: `{ sinceMs?: number, personId?: string }`. `sinceMs` is bounded at **365 days**, not
+//   the shared 90-day `MAX_SINCE_MS` every sibling validator uses — an annual review needs a year
+//   of evidence. `requireNegotiateParams` IMPORTS that ceiling from `agents/negotiate.ts` rather
+//   than restating the literal: two copies drifting apart fails silently (the IPC accepts a window
+//   the agent then clamps with `Math.min`), which is the silent-clamping behaviour the explicit
+//   -32602 rejection exists to replace. `personId` is trimmed and capped at 256 chars.
+//   Six lanes run through `AgentCoordinator` (authored PRs, reviewed PRs, tickets, ownership,
+//   decisions, writing). **Honesty contract — the load-bearing property of this agent:** every
+//   lane-backed field on `NegotiateBrief` is `| null` and starts at `null`; a lane that threw, or
+//   never ran for want of a resolved subject, stays `null` and renders "_could not be computed_".
+//   There is no `?? 0` anywhere in this agent and none may be added — a number that was not
+//   measured must never render as a zero, because the artifact is one a person may carry into a
+//   compensation conversation. The same contract drives four disclosures the brief makes
+//   unconditionally: (a) an explicit `--person` that matches no `person` row raises a
+//   `missing_user_identity` gap stating the counts are STRUCTURALLY zero rather than measured —
+//   including the `git:<email>` blame-alias shape, which is a `graph_entity`, not a `person.id`,
+//   so only the ownership lane can measure it: the three `item.author_id`-keyed lanes cannot,
+//   and neither can PRs authored or tickets, whose graph edges are built from `item.author_id`
+//   (the two cases state different facts and are not collapsed); (b) the window is "ACTIVE in",
+//   not "created in", since `item` carries no creation timestamp and every item-backed lane
+//   filters on `modified_at` (GitHub's `updated_at`); (c) the ownership section repeats
+//   `nimbus owners`' authorship-derived-not-accountability label, since it reads the same `owns`
+//   edges; (d) incidents resolved / on-call shifts / deploys triggered are named as unavailable
+//   on every run. Personal document sources are gated by `[negotiate] personal_sources`, resolved
+//   in `handleNegotiate` from `configDir` (never defaulted inside the agent, so no caller can
+//   silently disable an opt-in the user's `nimbus.toml` still claims); `personalDocsConfigured` is
+//   the INTERSECTION with the personal-capable service list, never the array length, and
+//   unrecognised entries are echoed back in the `sources` section rather than dropped.
+//   Each of the five item-backed lanes carries bounded EVIDENCE REFS (title +
+//   COALESCE(canonical_url, url), cap `NEGOTIATE_EVIDENCE_LIMIT` = 5, ordered
+//   `modified_at DESC, id ASC` for run-to-run stability). Truncation self-discloses via
+//   `NegotiateEvidence.total`, the same rule `statsCoverage` follows — a capped list must
+//   never read as exhaustive. Ownership carries none (it already enumerates its targets);
+//   tickets cites only the OPENED issues, never the closed-by-authored-PR hop, which would
+//   cite issues the subject did not file. The writing lane's evidence query reproduces the
+//   `personal_sources` gate exactly, so evidence can never disclose what the counts withhold.
+//   `agents.negotiate` is EXCLUDED from both the HTTP agent surface (`POST /v1/agents/{agent}`,
+//   `HTTP_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts`) and the MCP tool surface
+//   (`packages/cli/src/mcp/agent-tools.ts`) — but for a DIFFERENT reason than
+//   `agents.preflight`/`agents.premortem`: it has no side effects and its shape fits the
+//   runId+poll contract fine. The reason is the SUBJECT. Combined with `--person`, an exposed
+//   version would let any holder of the `agents` bearer token — or any model driving the tool
+//   server — assemble a compensation-relevant dossier on any indexed person without the machine's
+//   owner initiating it. The CLI socket and the Tauri renderer are same-machine, owner-initiated
+//   surfaces (I7's XSS threat model, not "arbitrary network caller"); the local HTTP API is not.
+//   This is the surface to consult before adding any future agent to the HTTP list: "writes
+//   nothing" is NOT sufficient grounds for exposure.
 ```
 
 ### AbortController scope in `engine.cancelStream`

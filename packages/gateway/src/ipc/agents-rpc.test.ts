@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it, mock, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
@@ -602,6 +602,23 @@ describe("agents.ghost / conflicts / huddle dispatch", () => {
       ),
     ).rejects.toThrow();
   });
+
+  it(
+    "agents.huddle still rejects sinceMs above the shared 90-day bound (200 days) — proves " +
+      "agents.negotiate's own 365-day bound did not leak into the shared MAX_SINCE_MS",
+    async () => {
+      await expect(
+        dispatchAgentsRpc(
+          "agents.huddle",
+          { sinceMs: 200 * 24 * 60 * 60 * 1000 },
+          ctxWithFederation(),
+        ),
+      ).rejects.toMatchObject({
+        rpcCode: -32602,
+        message: expect.stringContaining("90 days"),
+      });
+    },
+  );
 });
 
 describe("dispatchAgentsRpc — agents.decisions", () => {
@@ -629,6 +646,117 @@ describe("dispatchAgentsRpc — agents.decisions", () => {
     if (out.kind === "hit") {
       const v = out.value as { sessionId: string };
       expect(v.sessionId).toMatch(/^decisions/);
+    }
+  });
+});
+
+describe("dispatchAgentsRpc — agents.negotiate", () => {
+  test("rejects a non-integer sinceMs", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.negotiate", { sinceMs: 1.5 }, makeCtx(freshDb())),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: expect.stringContaining("sinceMs"),
+    });
+  });
+
+  // Negotiate's own 365-day bound (review-cycle evidence), NOT the shared 90-day MAX_SINCE_MS
+  // every sibling validator uses — see MAX_NEGOTIATE_SINCE_MS's comment in agents-rpc.ts. The
+  // sibling test above ("agents.huddle still rejects sinceMs above the shared 90-day bound")
+  // is what proves this per-method raise did not leak into the shared constant.
+  test("accepts sinceMs at exactly 365 days", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.negotiate",
+      { sinceMs: 365 * 24 * 60 * 60 * 1000 },
+      makeCtx(freshDb()),
+    );
+    expect(out.kind).toBe("hit");
+  });
+
+  test("rejects sinceMs above 365 days, naming the negotiate bound", async () => {
+    await expect(
+      dispatchAgentsRpc(
+        "agents.negotiate",
+        { sinceMs: 366 * 24 * 60 * 60 * 1000 },
+        makeCtx(freshDb()),
+      ),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: expect.stringContaining("365 days"),
+    });
+  });
+
+  test("rejects an empty personId", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.negotiate", { personId: "   " }, makeCtx(freshDb())),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: expect.stringContaining("personId"),
+    });
+  });
+
+  test("rejects a personId longer than the bound", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.negotiate", { personId: "x".repeat(257) }, makeCtx(freshDb())),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: expect.stringContaining("personId"),
+    });
+  });
+
+  test("rejects a non-object payload", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.negotiate", "nope", makeCtx(freshDb())),
+    ).rejects.toMatchObject({ rpcCode: -32602 });
+  });
+
+  test("returns a sessionId for valid (empty) params", async () => {
+    const out = await dispatchAgentsRpc("agents.negotiate", {}, makeCtx(freshDb()));
+    expect(out.kind).toBe("hit");
+    if (out.kind === "hit") {
+      const v = out.value as { sessionId: string };
+      expect(v.sessionId).toMatch(/^negotiate/);
+    }
+  });
+
+  test("returns a sessionId for a valid explicit personId", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.negotiate",
+      { personId: "person-abc" },
+      makeCtx(freshDb()),
+    );
+    expect(out.kind).toBe("hit");
+    if (out.kind === "hit") {
+      const v = out.value as { sessionId: string };
+      expect(v.sessionId).toMatch(/^negotiate/);
+    }
+  });
+
+  test("with no configDir, personalSources defaults to empty (no crash, docs/notes stay gated off)", async () => {
+    // Exercises the ctx.configDir === undefined arm of negotiatePersonalSources — the
+    // test/embedded shape must not throw, and must not silently widen the consent gate.
+    const out = await dispatchAgentsRpc("agents.negotiate", {}, makeCtx(freshDb()));
+    expect(out.kind).toBe("hit");
+  });
+
+  test("with a configDir, [negotiate] personal_sources is read from nimbus.toml", async () => {
+    // Exercises the ctx.configDir !== undefined arm: a real [negotiate] section must be loaded,
+    // not defaulted away, per Task 6/7's "personalSources is not optional" rule.
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-agents-"));
+    try {
+      writeFileSync(
+        join(dir, "nimbus.toml"),
+        '[negotiate]\npersonal_sources = ["obsidian"]\n',
+        "utf8",
+      );
+      const out = await dispatchAgentsRpc(
+        "agents.negotiate",
+        {},
+        makeCtx(freshDb(), { configDir: dir }),
+      );
+      expect(out.kind).toBe("hit");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
@@ -673,6 +801,16 @@ describe("the HTTP-invokable agent set", () => {
     // inline-result route, which is a later decision — not a second response shape bolted on here.
     expect(resolveHttpAgentMethod("whyPeek")).toBeNull();
     expect(HTTP_AGENT_NAMES).not.toContain("whyPeek");
+  });
+
+  test("agents.negotiate is NOT on the HTTP agent surface", () => {
+    // Unlike the three exclusions above, negotiate is a pure read with no side effects — it is
+    // excluded for a different reason: combined with `--person`, HTTP exposure would let any
+    // holder of the `agents` token assemble a contribution dossier on any indexed person without
+    // the owner initiating it. CLI and Tauri are same-machine, owner-initiated; the local HTTP
+    // API is not.
+    expect(resolveHttpAgentMethod("negotiate")).toBeNull();
+    expect(HTTP_AGENT_NAMES).not.toContain("negotiate");
   });
 
   test("ghost and huddle stay in, as they did for MCP", () => {

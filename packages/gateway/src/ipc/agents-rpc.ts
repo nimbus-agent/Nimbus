@@ -14,6 +14,7 @@ import { emitGlossaryBrief } from "../agents/glossary.ts";
 import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
 import { emitJanitorBrief } from "../agents/janitor.ts";
+import { emitNegotiateBrief, MAX_SINCE_MS as MAX_NEGOTIATE_SINCE_MS } from "../agents/negotiate.ts";
 import { emitOwnershipBrief } from "../agents/ownership.ts";
 import { emitPreflightBrief } from "../agents/preflight.ts";
 import { emitPremortemBrief } from "../agents/premortem.ts";
@@ -22,6 +23,7 @@ import { runWhyPeek } from "../agents/why-peek.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   loadNimbusDecisionsFromConfigDir,
+  loadNimbusNegotiateFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
   loadNimbusUserFromConfigDir,
 } from "../config/nimbus-toml.ts";
@@ -214,7 +216,8 @@ function newSessionId(
     | "why"
     | "decisions"
     | "ownership"
-    | "premortem",
+    | "premortem"
+    | "negotiate",
 ): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -558,6 +561,85 @@ async function handleDecisions(
   });
 }
 
+const MAX_PERSON_ID_LEN = 256;
+
+/**
+ * `agents.negotiate`'s OWN `sinceMs` bound — deliberately NOT the shared `MAX_SINCE_MS` (90
+ * days) every sibling validator uses. `MAX_SINCE_MS` is sized for `catchup`'s "what happened
+ * while I was away" use case; negotiate's headline use is preparing for a review cycle, and an
+ * annual review needs a year of evidence. Clamping negotiate to a quarter would make the agent
+ * unable to answer the question it exists for — see `agents/negotiate.ts`'s own
+ * `MAX_SINCE_MS = 365 days`, which this IMPORTS (aliased) rather than restates. A second copy of
+ * the literal was the shape to avoid: the two files diverging fails SILENTLY — the IPC would
+ * accept a window `runNegotiate` then clamps with `Math.min`, printing a smaller window than the
+ * caller asked for, which is the exact silent-clamping behaviour the explicit rejection below
+ * exists to replace. This is a per-method bound, not a broader raise: every other `require*Params`
+ * validator in this file stays on the shared 90-day constant.
+ */
+function requireNegotiateParams(params: unknown): { sinceMs?: number; personId?: string } {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.negotiate requires an object payload");
+  }
+  const p = params as { sinceMs?: unknown; personId?: unknown };
+  const out: { sinceMs?: number; personId?: string } = {};
+  if (p.sinceMs !== undefined) {
+    if (
+      typeof p.sinceMs !== "number" ||
+      !Number.isInteger(p.sinceMs) ||
+      p.sinceMs < 0 ||
+      p.sinceMs > MAX_NEGOTIATE_SINCE_MS
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `sinceMs must be a non-negative integer up to ${MAX_NEGOTIATE_SINCE_MS} ms (365 days)`,
+      );
+    }
+    out.sinceMs = p.sinceMs;
+  }
+  if (p.personId !== undefined) {
+    if (
+      typeof p.personId !== "string" ||
+      p.personId.trim().length === 0 ||
+      p.personId.length > MAX_PERSON_ID_LEN
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `personId must be a non-empty string up to ${MAX_PERSON_ID_LEN} chars`,
+      );
+    }
+    out.personId = p.personId.trim();
+  }
+  return out;
+}
+
+/**
+ * `[negotiate] personal_sources` (spec § 3.3) — the personal-docs consent gate. Resolved HERE,
+ * not defaulted inside `agents/negotiate.ts`, mirroring `handleOwnership`'s root-resolution rule:
+ * `NegotiateContext.personalSources` is a REQUIRED field (Task 6), specifically so no caller can
+ * omit it and silently disable the opt-in while `nimbus.toml` still claims it is active. With no
+ * `configDir` — the test/embedded shape — the personal-docs opt-in is off (empty list), the same
+ * fail-safe-toward-excluding default `nimbus-toml.ts` uses when the section is absent.
+ */
+function negotiatePersonalSources(ctx: AgentsRpcContext): readonly string[] {
+  return ctx.configDir === undefined
+    ? []
+    : loadNimbusNegotiateFromConfigDir(ctx.configDir).personalSources;
+}
+
+async function handleNegotiate(
+  params: unknown,
+  ctx: AgentsRpcContext,
+): Promise<{ sessionId: string }> {
+  const input = requireNegotiateParams(params);
+  return await emitNegotiateBrief(input, {
+    db: ctx.db,
+    notify: ctx.notify,
+    sessionId: newSessionId("negotiate"),
+    personalSources: negotiatePersonalSources(ctx),
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+  });
+}
+
 function requireOwnershipParams(params: unknown): OwnershipInput {
   if (params === null || params === undefined) return {};
   if (typeof params !== "object" || Array.isArray(params)) {
@@ -766,7 +848,7 @@ async function handlePremortem(
  * The `agents.*` methods this module answers.
  *
  * Declared once and used for BOTH the egress-append test and the dispatch, so the ledgered set is
- * definitionally the served set. A second, hand-maintained list of the same thirteen strings is how
+ * definitionally the served set. A second, hand-maintained list of the same fifteen strings is how
  * the over-counting defect this replaces was introduced: `method.startsWith("agents.")` appended an
  * `authorized` row for `agents.<anything>`, which then failed `-32601` having done no work — so
  * `nimbus prove` over-counted, and an unbounded caller-supplied `method` reached a hashed,
@@ -787,6 +869,7 @@ const AGENTS_RPC_HANDLERS = {
   "agents.whyPeek": handleWhyPeek,
   "agents.glossary": handleGlossary,
   "agents.decisions": handleDecisions,
+  "agents.negotiate": handleNegotiate,
 } as const satisfies RpcMethodHandlerMap<AgentsRpcContext>;
 
 const AGENTS_METHOD_PREFIX = "agents.";
@@ -817,11 +900,21 @@ const AGENTS_METHOD_PREFIX = "agents.";
  * caller can trigger without the owner initiating them. Keep this out of the HTTP surface until
  * that gets its own deliberate review — carried over from the MCP tool surface, which also does
  * not define a premortem tool.
+ *
+ * `agents.negotiate` — excluded for a DIFFERENT reason than the three above: it has no side
+ * effects (it writes nothing) and its response shape fits the runId+poll contract fine, so
+ * neither the `preflight`/`premortem` nor the `whyPeek` criterion applies. Combined with
+ * `--person`, HTTP exposure would let any holder of the `agents` token assemble a contribution
+ * dossier on any indexed person without the owner initiating it. The CLI and Tauri renderer are
+ * same-machine, owner-initiated surfaces (I7's XSS threat model, not "arbitrary network caller");
+ * the local HTTP API is not — a bearer token can be held and replayed by anything on the
+ * loopback/LAN boundary that surface trusts.
  */
 const HTTP_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
   "agents.preflight",
   "agents.premortem",
   "agents.whyPeek",
+  "agents.negotiate",
 ]);
 
 /**
