@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const isWindows = process.platform === "win32";
+// A missing curl must read as SKIPPED, never as a checksum failure — the
+// verify:docker image (oven/bun:1.3) ships neither curl nor wget.
+const skip = isWindows || !Bun.which("curl");
 
 /** Serves a fake release: one tarball plus a matching SHA256SUMS. */
 async function serveFakeRelease(dir: string, tarballName: string) {
@@ -47,7 +50,7 @@ async function runInstallSh(env: Record<string, string | undefined>) {
   return { stdout, stderr, exitCode };
 }
 
-test.skipIf(isWindows)("install.sh installs from a served release", async () => {
+test.skipIf(skip)("install.sh installs from a served release", async () => {
   const work = await mkdtemp(join(tmpdir(), "nimbus-remote-"));
   const home = join(work, "home");
   const payload = join(work, "payload");
@@ -71,6 +74,14 @@ test.skipIf(isWindows)("install.sh installs from a served release", async () => 
       NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
     });
     expect(stderr + stdout).not.toContain("cannot locate");
+    // `not.toContain("cannot locate")` + exit 0 + the file existing are all
+    // also satisfied by LOCAL mode if binaries happen to already sit beside
+    // the script — this test invokes install.sh by a repo-relative path, so
+    // SCRIPT_DIR resolves to the real scripts/install/unix/ (which has no
+    // binaries in this repo, but the assertion must not rely on that being
+    // true forever). Assert the remote path was actually taken.
+    expect(stdout).toContain("Downloading");
+    expect(stdout).toContain("sha256 verified");
     expect(exitCode).toBe(0);
     expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(true);
   } finally {
@@ -78,7 +89,7 @@ test.skipIf(isWindows)("install.sh installs from a served release", async () => 
   }
 });
 
-test.skipIf(isWindows)("install.sh aborts on a tampered archive", async () => {
+test.skipIf(skip)("install.sh aborts on a tampered archive", async () => {
   const work = await mkdtemp(join(tmpdir(), "nimbus-tamper-"));
   const home = join(work, "home");
   await mkdir(home, { recursive: true });
@@ -103,7 +114,12 @@ test.skipIf(isWindows)("install.sh aborts on a tampered archive", async () => {
       NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
     });
     expect(exitCode).not.toBe(0);
-    expect(stderr).toMatch(/checksum|sha256/i);
+    // Bind to the exact message the checksum COMPARISON itself emits, not a
+    // loose /checksum|sha256/i pattern — that pattern also matches unrelated
+    // stderr lines ("could not fetch SHA256SUMS", "neither sha256sum nor
+    // shasum found", the signature-skip notice), any of which would let this
+    // test pass while the comparison never ran.
+    expect(stderr).toContain("checksum mismatch");
     expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
   } finally {
     server.stop(true);

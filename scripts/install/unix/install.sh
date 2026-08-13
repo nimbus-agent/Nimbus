@@ -55,12 +55,18 @@ REPO="nimbus-agent/Nimbus"
 BASE_URL="${NIMBUS_INSTALL_BASE_URL:-}"   # testing seam; unset in real use
 DOWNLOAD_DIR=""
 
-# A temp dir must not survive a failed or interrupted install. Each path is
+# A temp dir must not survive a failed or interrupted install. The path is
 # guarded before removal: an unset variable would make this `rm -rf ""`, which
 # is harmless today but is one edit away from not being.
+#
+# GNUPGHOME is deliberately NOT cleaned up here. It is an inherited
+# environment variable this script never sets — `export GNUPGHOME=...` is a
+# common, documented way to point gpg at a real keyring — so removing it here
+# would delete a directory this script does not own. Task 5 (signature
+# verification) must clean up a SCRIPT-OWNED variable it sets itself (e.g. a
+# dedicated SIG_TMPDIR created via mktemp -d), never an inherited one.
 cleanup() {
   [ -n "${DOWNLOAD_DIR:-}" ] && [ -d "${DOWNLOAD_DIR:-}" ] && rm -rf "$DOWNLOAD_DIR"
-  [ -n "${GNUPGHOME:-}" ] && [ -d "${GNUPGHOME:-}" ] && rm -rf "$GNUPGHOME"
   return 0
 }
 trap cleanup EXIT INT TERM
@@ -80,15 +86,27 @@ verify_signature() {
 # Under `curl … | sh`, stdin IS the script — a bare `read -r` would consume
 # script text instead of a real answer. Read from the controlling terminal
 # when one exists; otherwise refuse to prompt and require --yes.
+#
+# [ -r /dev/tty ] is NOT a controlling-terminal test: the device node exists
+# and reads as readable under cron, systemd, and `docker run` without -t —
+# it's the OPEN that fails there (ENXIO), not the readability check. A real
+# open attempt is required instead — but NOT via `exec`: per POSIX, a
+# redirection failure on the `exec` special builtin terminates the whole
+# (non-interactive) shell unconditionally, even inside `if`/`{ }` — dash
+# does this in practice, verified: `exec 3<>/dev/tty` with no controlling
+# terminal kills the entire script before the intended fallback ever runs.
+# A plain `printf … > /dev/tty` is an ordinary simple command, so its
+# redirection failure is just that command's exit status — safe to test in
+# an `if`, even under `set -e`, because it sits in a tested position.
 prompt_yes_no() {
   # $1 = prompt text. Returns 0 for yes.
   if [ "$ASSUME_YES" -eq 1 ]; then return 0; fi
-  if [ -r /dev/tty ]; then
-    printf '%s' "$1" > /dev/tty
-    read -r reply < /dev/tty
+  reply=""
+  if printf '%s' "$1" 2>/dev/null > /dev/tty; then
+    read -r reply < /dev/tty 2>/dev/null || reply=""
   elif [ -t 0 ]; then
     printf '%s' "$1"
-    read -r reply
+    read -r reply || reply=""
   else
     echo "Refusing to prompt with no terminal — re-run with --yes." >&2
     exit 1
@@ -129,8 +147,17 @@ sha256_of() {
   fi
 }
 
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Error: '$1' is required to download a release. Install it, or download the tarball manually and run install.sh from inside it." >&2
+    exit 1
+  }
+}
+
 fetch_release() {
   FETCHED=1
+  require_cmd curl
+  require_cmd tar
   version="$1"
   if [ -z "$version" ]; then
     # Resolution is the one network step with no fallback, so its failure message
@@ -154,7 +181,10 @@ fetch_release() {
   curl -fsSL "${base}/${asset}"     -o "${DOWNLOAD_DIR}/${asset}"   || { echo "Error: download failed" >&2; exit 1; }
   curl -fsSL "${base}/SHA256SUMS"   -o "${DOWNLOAD_DIR}/SHA256SUMS" || { echo "Error: could not fetch SHA256SUMS" >&2; exit 1; }
 
-  expected="$(grep " ${asset}\$" "${DOWNLOAD_DIR}/SHA256SUMS" | cut -d' ' -f1 | head -n1)"
+  # awk, not grep: $asset is interpolated as a literal field match here, never
+  # as a regex — the asset name has five literal dots that a BRE would treat
+  # as "any character", letting an unrelated line satisfy the match.
+  expected="$(awk -v a="$asset" '$2 == a { print $1; exit }' "${DOWNLOAD_DIR}/SHA256SUMS")"
   actual="$(sha256_of "${DOWNLOAD_DIR}/${asset}")" || exit 1
   if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
     echo "Error: sha256 checksum mismatch for ${asset} — refusing to install." >&2
@@ -179,7 +209,32 @@ if [ ! -x "$NIMBUS_SRC" ] || [ ! -x "$GATEWAY_SRC" ]; then
   NIMBUS_SRC="${SCRIPT_DIR}/bin/nimbus"
   GATEWAY_SRC="${SCRIPT_DIR}/bin/nimbus-gateway"
 fi
+
+NEED_FETCH=0
 if { [ ! -x "$NIMBUS_SRC" ] || [ ! -x "$GATEWAY_SRC" ]; } && [ "$MODE" != "local" ]; then
+  NEED_FETCH=1
+fi
+
+# --dry-run must "print planned actions and exit" — touching nothing,
+# including the network. Handle the remote-fetch case here, before
+# fetch_release (which downloads, verifies, and extracts) ever runs.
+if [ "$DRY_RUN" -eq 1 ] && [ "$NEED_FETCH" -eq 1 ]; then
+  echo "About to install Nimbus (dry run):"
+  if [ -n "$WANT_VERSION" ]; then
+    tag="v${WANT_VERSION#v}"
+    asset="$(detect_asset "${tag#v}")" || exit 1
+    base="${BASE_URL:-https://github.com/${REPO}/releases/download/${tag}}"
+    echo "  Would download:  ${base}/${asset}"
+    echo "  Would verify against: ${base}/SHA256SUMS"
+  else
+    echo "  Would resolve the latest release tag from https://github.com/${REPO}/releases/latest,"
+    echo "  then download and sha256-verify the matching release asset."
+  fi
+  echo "(--dry-run; no changes made, no network request performed)"
+  exit 0
+fi
+
+if [ "$NEED_FETCH" -eq 1 ]; then
   fetch_release "$WANT_VERSION"
   NIMBUS_SRC="${SCRIPT_DIR}/nimbus"; GATEWAY_SRC="${SCRIPT_DIR}/nimbus-gateway"
   if [ ! -x "$NIMBUS_SRC" ] || [ ! -x "$GATEWAY_SRC" ]; then

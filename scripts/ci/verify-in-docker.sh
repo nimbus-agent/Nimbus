@@ -82,9 +82,11 @@ FROM ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 # Same packages CI's ubuntu runner has. Without libsecret/gnome-keyring/dbus the vault and PAL
 # tests fail, which falsely un-covers every subsystem they exercise. gnupg is required by
-# scripts/release/fixtures/gen-test-key.sh (the release signature-verification tests).
+# scripts/release/fixtures/gen-test-key.sh (the release signature-verification tests). curl is
+# required by scripts/install/install-remote.test.ts (install.sh's remote-download mode) —
+# oven/bun:1.3 ships neither curl nor wget.
 RUN apt-get update -qq \
- && apt-get install -y -qq git libsecret-tools gnome-keyring dbus gnupg \
+ && apt-get install -y -qq git libsecret-tools gnome-keyring dbus gnupg curl \
  && rm -rf /var/lib/apt/lists/*
 # Pre-create /src and the bun install-cache mount point owned by the image's built-in "bun" user
 # (uid 1000 — oven/bun ships it) so the container can run non-root. GitHub Actions' ubuntu
