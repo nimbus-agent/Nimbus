@@ -791,7 +791,71 @@ first command the README gives a new user.
   sequence verbatim — which means it belongs in a post-release or scheduled
   workflow, not PR CI, since a PR has no published release to test against.
 
-- [ ] Linux: clean `ubuntu:24.04` container, no Bun preinstalled. Run the README quickstart verbatim against a **cloned third-party repo**, not Nimbus. (#925 is fixed, but a headless container is precisely where it bit — verify the documented prerequisite is sufficient in practice.)
+**Action taken (2026-08-13).** The product freeze was kept: no installer code
+was changed under this plan.
+
+- **Docs rewritten to the paths that actually work**, on both surfaces, and each
+  one verified rather than assumed. `README.md` and
+  `packages/docs/src/content/docs/user-guide/install.mdx` now document: macOS →
+  tarball → `./install.sh`; Linux → `.deb`; Windows → zip → `.\install.ps1`.
+- **`sudo dpkg -i` does NOT work** and was caught only by running it: the package
+  depends on `bubblewrap` and `libcap2-bin`, which `dpkg` will not resolve, so it
+  exits 1 leaving the package unconfigured. The documented command is
+  `sudo apt install /tmp/nimbus.deb`, verified green on a clean container. The
+  first draft of this very fix had the wrong command in it — which is the whole
+  argument for the runbook.
+- **Two further false claims removed from `install.mdx`** while correcting it: it
+  described an installer that "detects your architecture, downloads the matching
+  `.deb`, verifies the GPG signature and SHA-256" — none of which exists — and
+  three **Autostart** rows (a systemd user unit, a LaunchAgent plist, and an
+  `HKCU\...\Run` entry). Nothing anywhere in the repo creates any of them.
+- **[#1167](https://github.com/nimbus-agent/Nimbus/issues/1167)** tracks giving
+  the installers a real download mode (with GPG + SHA-256 verification, since an
+  installer that downloads without verifying would be a downgrade).
+- **`.github/workflows/released-install-smoke.yml`** closes the CI blind spot: it
+  runs the documented commands verbatim against PUBLISHED assets on
+  `release: published`, weekly, and on dispatch. It stops at `nimbus --version`
+  by design — first-run behaviour stays with `install-smoke.yml`.
+
+**Remaining install gaps, recorded not fixed.** The Linux tarball is the only
+archive with a *versioned* asset name, so it cannot be linked from docs that
+outlive a release; and the `.rpm` is versioned-only, which leaves **Fedora/RHEL
+with no documented install command**. Both pre-date this work.
+
+- [x] Linux: clean `ubuntu:24.04` container, no Bun preinstalled. Run the README quickstart verbatim against a **cloned third-party repo**, not Nimbus. (#925 is fixed, but a headless container is precisely where it bit — verify the documented prerequisite is sufficient in practice.)
+
+  **PERFORMED 2026-08-13. Green end to end on the corrected docs**, against
+  `chalk/ansi-styles` (119 commits) in a clean `ubuntu:24.04` container with no
+  Bun: install → `nimbus --version` → `2.1.0`, `nimbus doctor` →
+  `[ok] Vault: Secret Service reachable with an unlocked default keyring`,
+  `nimbus init` → gateway up and index populated, and `nimbus why index.js:1` →
+  a real `## Authorship` section (`Richie Bendall · 9150f611ced8`, 2020-12-01).
+
+  **The documented prerequisite is NOT sufficient in practice — answering the
+  question this checkbox was written to ask.** `libsecret-tools` alone leaves a
+  headless machine unable to start: the Gateway exits 2 with
+  `org.freedesktop.secrets has no default collection`. The diagnosis is
+  excellent and the failure is fast, so this is a docs gap, not a hang.
+
+  **`nimbus doctor`'s printed remedy is INCOMPLETE, and this is worth its own
+  fix.** `VAULT_UNLOCK_HINT` (`doctor-core.ts`) tells a headless user to run
+  `dbus-run-session -- bash -c 'echo "" | gnome-keyring-daemon --unlock
+  --components=secrets; nimbus start'`. Run verbatim on a bare container that
+  has **never had a login keyring**, that command fails: gnome-keyring must
+  *create* the collection, creation escalates to the GUI prompter, and
+  `gcr-prompter` dies with `cannot open display`. The ONLY difference between
+  the failing run and the green one was pre-creating
+  `~/.local/share/keyrings/login.keyring` plus a `default` pointer. The hint is
+  aimed squarely at headless machines, which are exactly the machines with no
+  login keyring. The README now carries the complete recipe, and the hint itself
+  is tracked as
+  **[#1168](https://github.com/nimbus-agent/Nimbus/issues/1168)**.
+
+  **Caveat on what this proves.** The container's embedding worker failed to
+  initialize (`semantic search disabled`), so this proves the deterministic
+  path — index, authorship, briefs — and *not* semantic search. The gateway
+  still bound and served, which is #928's bind-first fix behaving correctly.
+  This is the same boundary the macOS row below already records.
 - [ ] Windows: fresh local user account or a VM (Win 11 Home has neither Hyper-V nor Windows Sandbox). Same quickstart, same foreign repo. **Least-covered platform:** no first-run defect was ever found here, which is weaker evidence than it looks — the macOS and Linux failures were only found because CI ran them.
 - [ ] macOS: partly covered by Task 1's `macos-14` job, which no longer sets `NIMBUS_SKIP_EMBEDDING_RUNTIME` and now asserts embeddings are not `disabled`. **Remaining gap:** it accepts `warming` and `unavailable`, so it proves the shipped configuration boots — **not** that the MiniLM download completes. A human still has to do one genuinely cold macOS first-run and confirm semantic search actually works afterwards.
 - [ ] Every break gets a fix **and** a regression test at the real-gateway layer. A unit test with an injected fake does not count.

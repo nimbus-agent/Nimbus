@@ -1,0 +1,116 @@
+name: released-install-smoke
+
+# SCOPE: this proves the DOCUMENTED INSTALL PATH works against PUBLISHED assets.
+# It deliberately stops at `nimbus --version` — first-run behaviour (init → why)
+# is already covered by `install-smoke.yml` against freshly built binaries.
+# The gap this closes is narrower, and was real: see #1167.
+
+# Why this exists, separately from `install-smoke.yml`:
+#
+# `install-smoke.yml` copies the built binaries next to the install script and
+# then runs it. That proves the TARBALL path. It cannot prove the path the docs
+# actually tell a user to take, because on a PR there is no published release to
+# install from. That blind spot is how #1167 shipped: `install.sh` was published
+# as a standalone asset the README told people to curl, but it has no download
+# capability, so the documented one-liner failed on every platform while
+# install-smoke stayed green.
+#
+# So this workflow runs the commands from README.md / install.mdx VERBATIM
+# against a real published release. Keep the commands below in sync with those
+# two files — if they drift, this proves the wrong thing.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  schedule:
+    # Weekly: catches a release asset that is renamed, dropped, or unpublished
+    # after the fact, which no release-time check can see.
+    - cron: "37 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  documented-install:
+    name: ${{ matrix.os }} documented install
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Linux — install exactly as the docs say
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          BASE: https://github.com/nimbus-agent/Nimbus/releases/latest/download
+        run: |
+          set -euo pipefail
+          # Documented prerequisite.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsecret-tools
+
+          curl -fsSL "$BASE/nimbus_amd64.deb" -o /tmp/nimbus.deb
+          # apt, NOT `dpkg -i` — the package depends on bubblewrap and
+          # libcap2-bin, and dpkg does not resolve those. Documented as apt
+          # because `dpkg -i` was verified to fail on a clean ubuntu:24.04.
+          sudo apt-get install -y /tmp/nimbus.deb
+
+      - name: macOS — install exactly as the docs say
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          BASE: https://github.com/nimbus-agent/Nimbus/releases/latest/download
+        run: |
+          set -euo pipefail
+          # macos-14 is Apple silicon; the docs tell Intel users to swap to -x64.
+          curl -fsSL "$BASE/nimbus-headless-macos-arm64.tar.gz" -o /tmp/nimbus.tar.gz
+          mkdir -p /tmp/nimbus && tar -xzf /tmp/nimbus.tar.gz -C /tmp/nimbus
+          # `--yes` is the ONLY divergence from the documented command: the docs
+          # show the interactive form, which cannot answer a prompt in CI.
+          /tmp/nimbus/install.sh --yes
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Windows — install exactly as the docs say
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus-headless-windows-x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\nimbus.zip"
+          Expand-Archive -Path "$env:TEMP\nimbus.zip" -DestinationPath "$env:TEMP\nimbus" -Force
+          # `-Yes` is the ONLY divergence from the documented command.
+          & "$env:TEMP\nimbus\install.ps1" -Yes
+          # install.ps1 sets the USER PATH, which this already-running job will
+          # not pick up; mirror its target so later steps resolve `nimbus`.
+          "$env:LOCALAPPDATA\Programs\Nimbus\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Assert the installed binary runs (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v nimbus || { echo "::error::nimbus is not on PATH after the documented install"; exit 1; }
+          nimbus --version
+
+      - name: Assert the installed binary runs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Get-Command nimbus -ErrorAction SilentlyContinue)) {
+            Write-Error "nimbus is not on PATH after the documented install"; exit 1
+          }
+          nimbus --version

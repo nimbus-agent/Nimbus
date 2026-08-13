@@ -16,23 +16,28 @@ data directory, and configures the Gateway to autostart with your session.
 <Tabs>
   <TabItem label="Linux (.deb)">
 
-Import the Nimbus signing key, then download and run the install script:
+Download the `.deb`, verify its signature, then install it:
 
 ```bash
 # Import the signing key (fingerprint cross-checked in scripts/release/nimbus-verify.sh)
 gpg --keyserver keys.openpgp.org --recv-keys 5A20457CCD8B53FFAA945240886ADA6B487CAB6E
 
-# Download and run the installer
-curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh \
-  -o /tmp/nimbus-install.sh
-# Inspect the script before running it (recommended):
-# less /tmp/nimbus-install.sh
-bash /tmp/nimbus-install.sh
+# Download the package and its detached signature
+curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus_amd64.deb \
+  -o /tmp/nimbus.deb
+curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus_amd64.deb.asc \
+  -o /tmp/nimbus.deb.asc
+
+# Verify BEFORE installing — this step is yours, nothing does it for you
+gpg --verify /tmp/nimbus.deb.asc /tmp/nimbus.deb
+
+# Install with apt, NOT `dpkg -i` — the package depends on bubblewrap and
+# libcap2-bin, and dpkg will not resolve those for you.
+sudo apt install /tmp/nimbus.deb
 ```
 
-The install script detects your architecture (`amd64` / `arm64`), downloads the
-matching `.deb` package, verifies the GPG signature and SHA-256 hash, then
-installs it with `dpkg`.
+`libsecret-tools` is required — credentials live in the OS keystore and the
+Gateway will not start without it (`sudo apt install libsecret-tools`).
 
 After installation:
 
@@ -43,18 +48,24 @@ nimbus --version
   </TabItem>
   <TabItem label="macOS">
 
-Download and run the install script:
+Download the archive for your architecture, extract it, and run the installer
+it contains:
 
 ```bash
-curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh \
-  -o /tmp/nimbus-install.sh
+# Apple silicon — for Intel, swap arm64 → x64.
+curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus-headless-macos-arm64.tar.gz \
+  -o /tmp/nimbus.tar.gz
+mkdir -p /tmp/nimbus && tar -xzf /tmp/nimbus.tar.gz -C /tmp/nimbus
+
 # Inspect the script before running it (recommended):
-# less /tmp/nimbus-install.sh
-bash /tmp/nimbus-install.sh
+# less /tmp/nimbus/install.sh
+/tmp/nimbus/install.sh
 ```
 
-The script downloads a signed `SHA256SUMS.asc` manifest and verifies the
-tarball hash before extracting. **Gatekeeper note:** macOS will display an
+`install.sh` installs the binaries that were extracted alongside it into
+`~/.local/bin` and updates your shell `PATH`. To check the download's integrity,
+verify it against the signed `SHA256SUMS.asc` manifest — see
+[Verify your download](/user-guide/verify-your-download/). **Gatekeeper note:** macOS will display an
 "unverified developer" warning the first time the `nimbus` binary runs. See
 [First-run setup](/user-guide/first-run-setup/) for the one-time bypass step.
 
@@ -67,27 +78,27 @@ nimbus --version
   </TabItem>
   <TabItem label="Windows">
 
-Open **PowerShell** (no administrator required) and run:
-
-```powershell
-irm https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1 |
-  Invoke-Expression
-```
-
-Or download first and inspect before running (recommended):
+Open **PowerShell** (no administrator required). Download the archive, expand
+it, and run the installer it contains:
 
 ```powershell
 # Download
-Invoke-WebRequest `
-  -Uri "https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1" `
-  -OutFile "$env:TEMP\nimbus-install.ps1"
+$url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus-headless-windows-x64.zip"
+Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\nimbus.zip"
 
-# Inspect
-notepad "$env:TEMP\nimbus-install.ps1"
+# Expand
+Expand-Archive -Path "$env:TEMP\nimbus.zip" -DestinationPath "$env:TEMP\nimbus" -Force
+
+# Inspect the script before running it (recommended)
+notepad "$env:TEMP\nimbus\install.ps1"
 
 # Run
-& "$env:TEMP\nimbus-install.ps1"
+& "$env:TEMP\nimbus\install.ps1"
 ```
+
+`install.ps1` installs the binaries expanded alongside it and updates your user
+`PATH`. Prefer a packaged install? `nimbus-headless-windows-x64.msi` is on the
+same release page (that one does require administrator).
 
 **SmartScreen note:** Windows may show an "unrecognised app" warning. Click
 **More info → Run anyway**. The `SHA256SUMS.asc` GPG manifest is your
@@ -111,15 +122,18 @@ The installer is non-privileged and idempotent on all three platforms.
 
 ### Linux
 
+Installed from the `.deb`:
+
 | Item | Location |
 |---|---|
-| `nimbus` binary | `~/.local/bin/nimbus` |
+| `nimbus`, `nimbus-gateway` | `/usr/local/bin/` (thin wrappers; real binaries under `/usr/lib/nimbus/bin/`) |
 | Gateway data dir | `~/.local/share/nimbus/` |
-| Shell PATH update | Sentinel marker block added to `~/.bashrc`, `~/.zshrc`, `~/.profile` |
-| Autostart | `~/.config/systemd/user/nimbus-gateway.service` (if systemd available) |
+| Shell PATH update | None needed — `/usr/local/bin` is already on `PATH` |
 
-The installer checks for the sentinel block before writing — it will not
-duplicate PATH entries.
+If you install from the tarball or AppImage instead, `install.sh` copies the
+binaries to `~/.local/bin` and adds a sentinel marker block to `~/.bashrc`,
+`~/.zshrc` or `~/.profile`. It checks for that block before writing, so it will
+not duplicate PATH entries.
 
 ### macOS
 
@@ -128,7 +142,6 @@ duplicate PATH entries.
 | `nimbus` binary | `~/.local/bin/nimbus` |
 | Gateway data dir | `~/Library/Application Support/nimbus/` |
 | Shell PATH update | Sentinel marker block added to `~/.zshrc` (and `~/.bash_profile` if present) |
-| Autostart | `~/Library/LaunchAgents/dev.nimbus-agent.gateway.plist` |
 
 ### Windows
 
@@ -137,10 +150,12 @@ duplicate PATH entries.
 | `nimbus.exe`, `nimbus-gateway.exe` | `%LOCALAPPDATA%\Programs\Nimbus\bin\` |
 | Gateway data dir | `%LOCALAPPDATA%\nimbus\` |
 | PATH update | User `PATH` registry key under `HKCU\Environment` |
-| Autostart | `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` |
 
 The installer performs a case-insensitive PATH segment check before writing —
 it will not add a duplicate entry if `Nimbus\bin` is already present.
+
+None of the installers configure autostart on any platform — start the Gateway
+yourself with `nimbus init` or `nimbus start`.
 
 ---
 
