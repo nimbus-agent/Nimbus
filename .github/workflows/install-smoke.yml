@@ -776,37 +776,6 @@ jobs:
             exit 1
           }
 
-      # TEMPORARY DIAGNOSTIC — isolates whether the checksum mismatch below
-      # originates in a raw PS 5.1 Invoke-WebRequest download itself (bypassing
-      # install.ps1's Get-NimbusRelease entirely) on the actual failing runner.
-      # Removed once root-caused; see the task report for what this reveals.
-      - name: DIAGNOSTIC - raw PS5.1 download + hash (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          Write-Host "PSVersion: $($PSVersionTable.PSVersion)"
-          $asset = $env:REMOTE_ASSET
-          $base = "http://127.0.0.1:8788"
-          $work = Join-Path $env:RUNNER_TEMP "diag-ps51"
-          New-Item -ItemType Directory -Path $work -Force | Out-Null
-          $zip = Join-Path $work $asset
-          $sums = Join-Path $work "SHA256SUMS"
-          $sw = [System.Diagnostics.Stopwatch]::StartNew()
-          Invoke-WebRequest -Uri "$base/$asset" -OutFile $zip -UseBasicParsing
-          $sw.Stop()
-          Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sums -UseBasicParsing
-          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          Write-Host "download took: $($sw.Elapsed.TotalSeconds)s"
-          Write-Host "downloaded size: $((Get-Item $zip).Length)"
-          Write-Host "downloaded hash: $actual"
-          Write-Host "SHA256SUMS content:"
-          Get-Content $sums | Write-Host
-          $sumsLine = Get-Content $sums | Where-Object { $_ -match [regex]::Escape($asset) }
-          $expected = ($sumsLine -split '\s+', 2)[0]
-          Write-Host "expected hash: $expected"
-          Write-Host "MATCH: $($expected -eq $actual)"
-
       - name: Install from a served release (Windows PowerShell 5.1)
         if: runner.os == 'Windows'
         shell: powershell
@@ -824,40 +793,7 @@ jobs:
           # output is likewise invisible to 2>&1 and visible to *>&1 under
           # real Windows PowerShell 5.1, via an isolated local repro before
           # trusting it here. See the task report for that repro.
-          #
-          # Bounded retry (3 attempts, 5s apart) around ONLY this leg's
-          # install.ps1 call: observed on real GH-hosted windows-2022 runners
-          # (2/2 dispatches) that immediately after the PS7 leg above
-          # successfully downloads and verifies this SAME archive from this
-          # SAME still-running server, this PS5.1 leg's OWN independent
-          # download of it intermittently produces a well-formed-but-WRONG
-          # sha256 (a genuine "$checksumMatches[0] -ne $actual" mismatch, not
-          # a parse failure) — never reproduced across repeated attempts on
-          # real Windows PowerShell 5.1 on a dev machine doing the identical
-          # PS7-then-PS5.1 sequence against the same server. Consistent with
-          # a runner-only artifact of Windows PowerShell 5.1's legacy
-          # System.Net.HttpWebRequest-based Invoke-WebRequest (unlike PS7's
-          # HttpClient) — e.g. WinINet response-cache interaction or Defender
-          # real-time-scan I/O contention on a fresh runner — neither
-          # provable from inside a CI job. This retry EXISTS ONLY to absorb
-          # that transient condition. It cannot mask a genuine regression:
-          # a truly broken remote path (corrupted archive, wrong URL, a bad
-          # SHA256SUMS) is deterministic and fails identically on every
-          # attempt, so the loop still exhausts and the step still fails —
-          # red-proved by corrupting the served checksum and confirming this
-          # leg fails after all 3 attempts, not just the first.
-          $out = $null
-          $maxAttempts = 3
-          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-            try {
-              $out = & "$env:STAGE\install.ps1" -FromRelease $env:REMOTE_VER -Yes *>&1 | Out-String
-              break
-            } catch {
-              if ($attempt -eq $maxAttempts) { throw }
-              Write-Warning "Attempt $attempt/$maxAttempts failed ($($_.Exception.Message)); retrying in 5s..."
-              Start-Sleep -Seconds 5
-            }
-          }
+          $out = & "$env:STAGE\install.ps1" -FromRelease $env:REMOTE_VER -Yes *>&1 | Out-String
           Write-Host $out
 
           if ($out -notmatch "Downloading") {
