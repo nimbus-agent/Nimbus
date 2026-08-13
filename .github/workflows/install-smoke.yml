@@ -495,6 +495,10 @@ jobs:
           else
             digest="$(shasum -a 256 "$SERVE/$ASSET" | cut -d' ' -f1)"
           fi
+          # RED-PROVE STUB — deliberately corrupts the served checksum so the
+          # remote install must fail. Reverted immediately after the CI run
+          # this is pushed to prove red. DO NOT MERGE WITH THIS LINE PRESENT.
+          digest="0000000000000000000000000000000000000000000000000000000000000000"
           printf '%s  %s\n' "$digest" "$ASSET" > "$SERVE/SHA256SUMS"
 
           echo "REMOTE_VER=$VER" >> "$GITHUB_ENV"
@@ -692,6 +696,10 @@ jobs:
 
           # Real SHA256SUMS format: "<64 lowercase hex><TWO spaces><filename>".
           $digest = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          # RED-PROVE STUB — deliberately corrupts the served checksum so the
+          # remote install must fail. Reverted immediately after the CI run
+          # this is pushed to prove red. DO NOT MERGE WITH THIS LINE PRESENT.
+          $digest = "0000000000000000000000000000000000000000000000000000000000000000"
           $sumsPath = Join-Path $serve "SHA256SUMS"
           [System.IO.File]::WriteAllText($sumsPath, "$digest  $asset`n", [System.Text.UTF8Encoding]::new($false))
 
