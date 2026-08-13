@@ -140,6 +140,17 @@ jobs:
       #   Gateway: dist/nimbus-gateway           (Unix, repo root dist/)
       #            dist/nimbus-gateway.exe       (Windows, repo root dist/)
 
+      # The sqlite-vec loadable extension. Every real release archive ships one beside the
+      # gateway binary (release.yml runs this exact script into `dist` before staging any
+      # archive/installer) and both install.ps1/install.sh have a sidecar-copy step that only
+      # this job's served-release legs exercise — so it has to be real, not a stub, to prove
+      # anything. `bun install` on this runner already resolved the platform-specific
+      # `sqlite-vec-<os>-<arch>` optional dependency the same way the release build does, so
+      # this reuses that same real native module rather than fabricating one — producing
+      # dist/vec0.so (Linux), dist/vec0.dylib (macOS) or dist/vec0.dll (Windows).
+      - name: Copy sqlite-vec sidecar
+        run: bun scripts/copy-vec0-sidecar.ts --dest dist
+
       - name: Stage a fake release dir (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -469,6 +480,20 @@ jobs:
           cp "$STAGE/nimbus-gateway" "$PAYLOAD/bin/nimbus-gateway"
           chmod +x "$PAYLOAD/bin/nimbus" "$PAYLOAD/bin/nimbus-gateway"
 
+          # sqlite-vec sidecar — real archives ship one (release.yml's stage-macos-*/
+          # headless-bundle steps; scripts/package-linux-installers.ts's stageVec0()).
+          # Placed in $PAYLOAD/bin regardless of OS: the packing branch below packs the
+          # Linux tarball FROM $PAYLOAD (bin/ prefix survives, matching the real
+          # bin/vec0.so layout) but the macOS tarball FROM $PAYLOAD/bin (flattened to
+          # top-level, matching the real top-level vec0.dylib layout) — so one source
+          # location produces the correct extracted layout on both.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            VEC0_SRC="dist/vec0.so"
+          else
+            VEC0_SRC="dist/vec0.dylib"
+          fi
+          cp "$VEC0_SRC" "$PAYLOAD/bin/$(basename "$VEC0_SRC")"
+
           # Names + layout MUST match scripts/install/lib/release-assets.ts's
           # assetNameFor() and the real release.yml packaging: the Linux
           # tarball is versioned and nests binaries under bin/; the macOS
@@ -538,6 +563,14 @@ jobs:
             echo "::error::installer never reported sha256 verification — the remote path did not run"; exit 1; }
 
           test -x "$HOME/.local/bin/nimbus" || { echo "::error::remote install did not place the binary"; exit 1; }
+
+          # Proves install.sh's sidecar-copy loop (the `for cand in ... vec0.so vec0.dylib
+          # ... bin/vec0.so bin/vec0.dylib` block) actually ran against the served archive,
+          # not just that binaries landed — the whole reason this job packs a real sidecar.
+          if [ "$RUNNER_OS" = "Linux" ]; then VEC0_NAME="vec0.so"; else VEC0_NAME="vec0.dylib"; fi
+          test -f "$HOME/.local/bin/$VEC0_NAME" || {
+            echo "::error::remote install did not place the sqlite-vec sidecar ($VEC0_NAME) — the sidecar-copy path in install.sh did not run"; exit 1; }
+
           "$HOME/.local/bin/nimbus" --version
 
       - name: Stop the release fixture server (Unix)
@@ -684,6 +717,11 @@ jobs:
           Copy-Item (Join-Path $env:STAGE "nimbus.exe")         (Join-Path $payload "nimbus.exe")
           Copy-Item (Join-Path $env:STAGE "nimbus-gateway.exe") (Join-Path $payload "nimbus-gateway.exe")
 
+          # sqlite-vec sidecar — the real Windows zip ships vec0.dll at TOP LEVEL,
+          # alongside the two .exe files (release.yml's `Stage Windows archive` step).
+          # Copy-Item's wildcard below picks it up into the archive automatically.
+          Copy-Item (Join-Path "dist" "vec0.dll") (Join-Path $payload "vec0.dll")
+
           # scripts/install/lib/release-assets.ts's assetNameFor(): unversioned,
           # binaries at TOP LEVEL of the zip (unlike the Linux tarball's bin/).
           $asset = "nimbus-headless-windows-x64.zip"
@@ -747,6 +785,15 @@ jobs:
           if (-not (Test-Path $installedNimbus)) {
             Write-Error "remote install did not place the binary"; exit 1
           }
+
+          # Proves install.ps1's sidecar-copy block ($Vec0Src = ... vec0.dll / bin\vec0.dll
+          # ... Copy-Item ...) actually ran against the served archive, not just that the
+          # binaries landed — the whole reason this job packs a real sidecar.
+          $installedVec0 = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\vec0.dll"
+          if (-not (Test-Path $installedVec0)) {
+            Write-Error "remote install did not place the sqlite-vec sidecar (vec0.dll) — the sidecar-copy path in install.ps1 did not run"; exit 1
+          }
+
           $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"
           nimbus --version
 
@@ -903,6 +950,13 @@ jobs:
           if (-not (Test-Path $installedNimbus)) {
             Write-Error "remote install (PowerShell 5.1) did not place the binary"; exit 1
           }
+
+          # Same proof as the PS7 leg above, on PowerShell 5.1's own Copy-Item behaviour.
+          $installedVec0 = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\vec0.dll"
+          if (-not (Test-Path $installedVec0)) {
+            Write-Error "remote install (PowerShell 5.1) did not place the sqlite-vec sidecar (vec0.dll) -- the sidecar-copy path in install.ps1 did not run"; exit 1
+          }
+
           $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"
           nimbus --version
 
