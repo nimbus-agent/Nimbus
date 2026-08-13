@@ -104,6 +104,58 @@ function Write-SignatureSkipNotice {
   Write-Warning "  To verify the publisher signature: scripts/release/nimbus-verify.sh --version <ver>"
 }
 
+# Pure decision function over `gpg --status-fd 1 --verify` output lines: no
+# gpg invocation, no network, no filesystem access. Exists so the VALIDSIG
+# PARSING (which field is the primary fingerprint vs. the signing-subkey
+# fingerprint) and the EXPKEYSIG/REVKEYSIG rejection can be unit-tested
+# against canned/realistic gpg status lines -- including a real capture from
+# `gpg --status-fd 1 --verify` against the actual published v2.3.0
+# SHA256SUMS.asc and the real Nimbus signing key -- without ever running gpg
+# and without any caller-suppliable trust anchor: $ExpectedFingerprint is
+# always the module-private $NimbusSigningFpr constant at the one production
+# call site below, never something a test (or an env var) can override. A
+# fingerprint-override seam was deliberately refused elsewhere in this file
+# for exactly that reason (it would compose with $env:NIMBUS_INSTALL_BASE_URL
+# into a full verification bypass) -- this function does not reopen that; it
+# only tests the PARSING half.
+#
+# VALIDSIG line layout (GPG 1.4+):
+#   [GNUPG:] VALIDSIG <signing-fp> <date> <ts> <expire> <ver> <reserved>
+#                     <pubkey-algo> <hash-algo> <sig-class> <primary-fp>
+# Field 3 is the signing SUBKEY's fingerprint; the LAST field is the PRIMARY
+# fingerprint, which is what $ExpectedFingerprint pins. The real Nimbus
+# release key signs via a dedicated signing subkey, so a naive
+# `-match "VALIDSIG $ExpectedFingerprint"` substring test anchors field 3 and
+# would NEVER match a genuine signature -- mirrors
+# scripts/release/nimbus-verify.ps1's field-extraction approach, not a
+# substring match.
+#
+# Returns exactly one PSCustomObject (never zero, never more than one) --
+# same array-coercion discipline as the rest of this file: Valid / Reason /
+# PrimaryFingerprint, no intermediate unsuppressed pipeline output.
+function Resolve-SignatureVerdict {
+  param([string[]]$StatusLines, [string]$ExpectedFingerprint)
+
+  $validsigLine = $StatusLines | Where-Object { $_ -match '^\[GNUPG:\] VALIDSIG' } | Select-Object -First 1
+  $primaryFp = $null
+  if ($validsigLine) {
+    $fields = -split $validsigLine
+    $primaryFp = $fields[$fields.Length - 1]
+  }
+
+  if ($primaryFp -and $primaryFp -eq $ExpectedFingerprint) {
+    # GPG emits EXPKEYSIG/REVKEYSIG ALONGSIDE VALIDSIG, not instead of it, so
+    # this must be checked independently of the fingerprint match above --
+    # mirrors scripts/release/nimbus-verify.ps1's own expired/revoked guard
+    # (`$out -match '\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)'`) verbatim.
+    if ($StatusLines -match '\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)') {
+      return [pscustomobject]@{ Valid = $false; Reason = "expired-or-revoked"; PrimaryFingerprint = $primaryFp }
+    }
+    return [pscustomobject]@{ Valid = $true; Reason = $null; PrimaryFingerprint = $primaryFp }
+  }
+  return [pscustomobject]@{ Valid = $false; Reason = "no-match"; PrimaryFingerprint = $primaryFp }
+}
+
 function Test-NimbusSignature {
   param([string]$Dir, [string]$Base)
 
@@ -138,7 +190,35 @@ function Test-NimbusSignature {
   # automatically -- no separate tracked path or cleanup arm needed. See the
   # comment on that `finally` block for why an inherited GNUPGHOME must never
   # be touched (install.sh had exactly this bug in an earlier draft).
-  $sigHome = Join-Path $Dir "gnupg-sig"
+  #
+  # $sigHomeName is deliberately a bare, RELATIVE leaf name, never the full
+  # $sigHome path, when it reaches --homedir below. Root cause of a real
+  # windows-2022 CI failure against the published v2.3.0 assets (run
+  # 31735428461): Git for Windows bundles an MSYS2-compiled gpg.exe, and
+  # THAT gpg's own "is this --homedir absolute" check only recognizes a
+  # leading "/" (POSIX form) -- confirmed empirically against real
+  # Git-for-Windows gpg 2.4.8, both slash directions ("C:\Users\...\gnupg-sig"
+  # and "C:/Users/...\gnupg-sig") fail identically. Not recognized as
+  # absolute, gpg silently treats it as RELATIVE and prepends its own
+  # (MSYS-translated) cwd, producing a nonexistent keyring resource.
+  # `--import` then fails ("no writable keyring found"), which the `*>$null`
+  # below silently swallows, so `--verify` runs against an unreachable
+  # keyring, the pinned key is never imported, VALIDSIG never appears, and
+  # this function returns $false -- exactly the observed
+  # "signature verification failed - refusing to install." abort against a
+  # genuinely valid signature. A native (non-MSYS) gpg build (e.g. Gpg4win)
+  # has no such bug and resolves a Windows-style --homedir path fine either
+  # way. The fix that works for BOTH gpg flavors without detecting which one
+  # is installed: run gpg with $Dir as its working directory and pass a
+  # RELATIVE homedir name -- ordinary relative-path resolution against the
+  # real process cwd is correct under a native Win32 gpg.exe and an
+  # MSYS-translated one alike, since it never exercises the broken
+  # "is this string absolute" heuristic at all. Every other gpg argument
+  # below (key/asc/sums paths) already works fine as an absolute Windows
+  # path under both flavors -- confirmed empirically -- so only --homedir
+  # needs this treatment.
+  $sigHomeName = "gnupg-sig"
+  $sigHome = Join-Path $Dir $sigHomeName
   New-Item -ItemType Directory -Path $sigHome -Force | Out-Null
   $keyPath = Join-Path $Dir "nimbus-signing-key.asc"
   # UTF8Encoding($false) == no BOM. Measured: PS 5.1 `Out-File`/`-Encoding
@@ -146,38 +226,27 @@ function Test-NimbusSignature {
   # cannot parse. Do not simplify this to Out-File, `>`, or a gpg pipeline.
   [System.IO.File]::WriteAllText($keyPath, $NimbusSigningKey, [System.Text.UTF8Encoding]::new($false))
 
-  & gpg --homedir $sigHome --quiet --import $keyPath *>$null
-  $out = & gpg --homedir $sigHome --quiet --status-fd 1 --verify $ascPath (Join-Path $Dir "SHA256SUMS") 2>$null
-
-  # VALIDSIG line layout (GPG 1.4+):
-  #   [GNUPG:] VALIDSIG <signing-fp> <date> <ts> <expire> <ver> <reserved>
-  #                     <pubkey-algo> <hash-algo> <sig-class> <primary-fp>
-  # Field 3 is the signing SUBKEY's fingerprint; the LAST field is the
-  # PRIMARY fingerprint, which is what $NimbusSigningFpr pins. The real
-  # Nimbus release key signs via a dedicated signing subkey (verified against
-  # the local keyring while authoring this), so a naive
-  # `-match "VALIDSIG $NimbusSigningFpr"` substring test anchors field 3 and
-  # would NEVER match a genuine signature -- mirrors
-  # scripts/release/nimbus-verify.sh's field-extraction approach, not a
-  # substring match.
-  $validsigLine = $out | Where-Object { $_ -match '^\[GNUPG:\] VALIDSIG' } | Select-Object -First 1
-  $primaryFp = $null
-  if ($validsigLine) {
-    $fields = -split $validsigLine
-    $primaryFp = $fields[$fields.Length - 1]
+  Push-Location -LiteralPath $Dir
+  try {
+    & gpg --homedir $sigHomeName --quiet --import $keyPath *>$null
+    $out = & gpg --homedir $sigHomeName --quiet --status-fd 1 --verify $ascPath (Join-Path $Dir "SHA256SUMS") 2>$null
+  } finally {
+    Pop-Location
   }
 
-  if ($primaryFp -and $primaryFp -eq $NimbusSigningFpr) {
-    # GPG emits EXPKEYSIG/REVKEYSIG ALONGSIDE VALIDSIG, not instead of it, so
-    # this must be checked independently of the fingerprint match above --
-    # mirrors scripts/release/nimbus-verify.ps1's own expired/revoked guard
-    # (`$out -match '\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)'`) verbatim.
-    if ($out -match '\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)') {
-      Write-Warning "SHA256SUMS.asc signing key is expired or revoked -- refusing to install."
-      return $false
-    }
+  # Parsing + trust decision both live in Resolve-SignatureVerdict now (see
+  # its own doc comment for the VALIDSIG field layout and why the LAST field,
+  # not field 3, is the primary fingerprint). $NimbusSigningFpr is the sole,
+  # hardcoded, non-overridable expected fingerprint passed in here.
+  $verdict = Resolve-SignatureVerdict -StatusLines $out -ExpectedFingerprint $NimbusSigningFpr
+
+  if ($verdict.Valid) {
     Write-Host "OK: GPG signature verified ($NimbusSigningFpr)."
     return $true
+  }
+  if ($verdict.Reason -eq "expired-or-revoked") {
+    Write-Warning "SHA256SUMS.asc signing key is expired or revoked -- refusing to install."
+    return $false
   }
   Write-Warning "SHA256SUMS.asc did not verify against the pinned Nimbus key -- refusing to install."
   return $false
