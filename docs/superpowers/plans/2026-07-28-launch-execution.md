@@ -754,6 +754,43 @@ All three were product-behaviour changes, deliberately **not** made under this
 plan's original freeze; the freeze was lifted for them once they proved to be
 Gate 1 blockers rather than polish.
 
+**A FOURTH Gate 1 blocker, found 2026-08-13 by performing the Linux checkbox
+below — OPEN. The documented one-liner install is broken on all three
+platforms.** The Linux run never reached `nimbus init`; it failed on the very
+first command the README gives a new user.
+
+- **Evidence (Linux, live).** In a clean `ubuntu:24.04` container with no Bun
+  preinstalled, the README quickstart run verbatim —
+  `curl -fsSL .../releases/latest/download/install.sh -o /tmp/nimbus-install.sh`
+  then `bash /tmp/nimbus-install.sh` — exits 1 with
+  `Error: cannot locate 'nimbus' or 'nimbus-gateway' beside /tmp/nimbus-install.sh`.
+  Every later step then fails 127 (`nimbus: No such file or directory`).
+- **Root cause.** `scripts/install/unix/install.sh` is a *local-staging*
+  installer: it resolves binaries from `$SCRIPT_DIR` (falling back to
+  `$SCRIPT_DIR/bin/`) and has **no download capability at all**. Downloading the
+  script on its own therefore cannot ever work.
+- **Windows is broken by the same shape, and slightly worse.**
+  `scripts/install/windows/install.ps1` resolves `$ScriptDir` from
+  `Split-Path -Parent $MyInvocation.MyCommand.Path`. Under the documented
+  `irm ... | Invoke-Expression`, `$MyInvocation.MyCommand.Path` is **null**
+  (verified live), so `Split-Path` throws under the script's own
+  `$ErrorActionPreference = "Stop"`. The install guide's download-then-run
+  alternative fails the same way Unix does — no binaries beside the script.
+- **Both surfaces carry the broken instructions:** `README.md` and
+  `packages/docs/src/content/docs/user-guide/install.mdx`.
+- **Not affected:** the AppImage path (its URL resolves 200) and the tarball
+  path. The release tarball ships `install.sh` alongside `bin/nimbus` +
+  `bin/nimbus-gateway`, which is exactly the layout `install.sh` expects, so
+  *extract-then-run* works. Only the standalone-download one-liner is broken.
+- **Why CI never caught it — the blind spot is structural, and it is Task 1's.**
+  `install-smoke.yml` **stages the binaries beside the script** (lines 147–156
+  Unix, 450–454 Windows) and then runs `"$STAGE/install.sh"`. That proves the
+  *tarball* path and has never once exercised the *documented* path. This is the
+  #895 pattern exactly: a green install job on an install route no user takes.
+  A regression test here must fetch the published assets and run the README
+  sequence verbatim — which means it belongs in a post-release or scheduled
+  workflow, not PR CI, since a PR has no published release to test against.
+
 - [ ] Linux: clean `ubuntu:24.04` container, no Bun preinstalled. Run the README quickstart verbatim against a **cloned third-party repo**, not Nimbus. (#925 is fixed, but a headless container is precisely where it bit — verify the documented prerequisite is sufficient in practice.)
 - [ ] Windows: fresh local user account or a VM (Win 11 Home has neither Hyper-V nor Windows Sandbox). Same quickstart, same foreign repo. **Least-covered platform:** no first-run defect was ever found here, which is weaker evidence than it looks — the macOS and Linux failures were only found because CI ran them.
 - [ ] macOS: partly covered by Task 1's `macos-14` job, which no longer sets `NIMBUS_SKIP_EMBEDDING_RUNTIME` and now asserts embeddings are not `disabled`. **Remaining gap:** it accepts `warming` and `unavailable`, so it proves the shipped configuration boots — **not** that the MiniLM download completes. A human still has to do one genuinely cold macOS first-run and confirm semantic search actually works afterwards.
@@ -790,12 +827,25 @@ Gate 1 blockers rather than polish.
 
 ### Gate 3 runbook — public launch
 
-- [ ] Confirm launch copy cites the Task 2 audit numbers, not "80+", unless the audit supports it.
+- [x] Confirm launch copy cites the Task 2 audit numbers, not "80+", unless the audit supports it.
 
-  **Audit result (run 2026-07-29):** `tier1=4 implemented=85 unknown=5 total=94`.
-  So **89 of 94 connectors register MCP tools and make outbound calls** — the
-  "80+ services" claim is supported on the static evidence, provided it is
-  never phrased as live-API verification (only 4 have any test at all).
+  **Audit re-run 2026-08-13:** `tier1=5 implemented=84 unknown=5 total=94`
+  (was `4 / 85 / 5 / 94` on 2026-07-29 — one connector gained a test; the
+  totals are unchanged). So **89 of 94 connectors register MCP tools and make
+  outbound calls**, and the conclusion below is unchanged: the claim is
+  supported on static evidence, provided it is never phrased as live-API
+  verification (only 5 have any test at all).
+
+  **Copy verified 2026-08-13.** `docs/launch-messaging.md` carries no
+  connector-count claim, so there was nothing there to correct. The public
+  counts live in `README.md` and the docs-site index, and one of them was
+  wrong: the "How it works" diagram said `90+ cloud services`, but only 89
+  connectors reach a network — the other 5 (`dataprofile`,
+  `great-expectations`, `localdb`, `obsidian`, `storybook`) are pure
+  local-filesystem readers. Corrected to `~90 cloud services` (same character
+  width, so the diagram stays aligned). The other counts were checked and are
+  accurate as written: "90+ first-party MCP connectors" and "90+ connectors"
+  describe all 94, and "~90 cloud services" / "~90 others" ≈ 89.
 
   **Known tier-definition gap — decide before writing copy.** All 5 `unknown`
   connectors (`dataprofile`, `great-expectations`, `localdb`, `obsidian`,
@@ -803,7 +853,11 @@ Gate 1 blockers rather than polish.
   `makesOutboundCalls` is legitimately `false` for them. They are implemented;
   the tier scheme just has no "local-only" bucket. Treat 89 as a floor, not a
   ceiling — the honest full count of implemented connectors is 94 of 94.
-- [ ] Confirm the telemetry position from Task 3 is in the copy.
+- [x] Confirm the telemetry position from Task 3 is in the copy.
+
+  **Verified 2026-08-13:** `docs/launch-messaging.md` § "Pre-empt: the telemetry
+  question" is present with the quotable paragraph intact, and the README's
+  opt-in note survives. Nothing to change.
 - [ ] Re-read `docs/launch-messaging.md` honesty guardrails immediately before posting.
 - [ ] Fire channels in order, spaced out — MCP directories and `awesome-*` lists, then Lobsters and r/selfhosted, then r/devops and r/sre, then Show HN last.
 - [ ] **Exit:** Show HN posted with the funnel already known-good.

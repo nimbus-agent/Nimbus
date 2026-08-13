@@ -119,7 +119,7 @@ nimbus ask "what PRs did I open in the last 7 days?"
 ## How it works
 
 ```text
-90+ cloud services ─▶ first-party MCP connectors ─▶ local SQLite index (+ embeddings)
+~90 cloud services ─▶ first-party MCP connectors ─▶ local SQLite index (+ embeddings)
                                                           │
                               your question ─▶ engine ─▶ HITL consent gate ─▶ action
                                                           │
