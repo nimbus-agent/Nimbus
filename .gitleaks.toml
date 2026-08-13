@@ -51,6 +51,22 @@
 #        header trips the default `private-key` rule, but the body is the literal
 #        `abc` — never a real key. Path allowlist, same rationale as entry 1.
 #
+#   6. scripts/install/windows/signature-verdict.test.ts
+#      — pins the REAL, PUBLIC Nimbus release-signing GPG fingerprints: the
+#        published primary (`5A20457C…`) and its signing subkey (`C4F331E9…`),
+#        both already public in docs/SECURITY.md, scripts/release/nimbus-verify.sh,
+#        and the installers themselves. The test's whole point is proving
+#        Resolve-SignatureVerdict matches the PRIMARY fingerprint — the LAST
+#        VALIDSIG field — and never the subkey at field 3, which was the
+#        actual shipped Windows bug (a field-3-anchored implementation would
+#        wrongly accept a signature). A synthetic/low-entropy substitute would
+#        still pass while proving nothing real. Only the subkey line trips the
+#        default `generic-api-key` rule (on entropy, via the `SUBKEY_FP`
+#        identifier) — `PINNED_FP` on the very next line, same file, same
+#        shape, does not, which is itself evidence of a false positive: a GPG
+#        public key fingerprint is not a secret regardless of which side of
+#        that rule's entropy threshold it happens to land on.
+#
 # Why path-based instead of fingerprint pins in `.gitleaksignore`:
 # fingerprints are `<commit-sha>:<path>:<rule>:<line>`. Squash-merges rewrite
 # the SHA, rebases shift line numbers, and the pin then misses the (now
@@ -62,11 +78,12 @@
 useDefault = true
 
 [allowlist]
-description = "Synthetic fixtures for the secret-pattern + log-scrubber unit tests + pruned plan docs + dev-subagent instruction docs (historical commits)"
+description = "Synthetic fixtures for the secret-pattern + log-scrubber unit tests + pruned plan docs + dev-subagent instruction docs (historical commits) + a real-public-GPG-fingerprint parsing test"
 paths = [
   '''packages/gateway/src/security/secret-patterns\.test\.ts''',
   '''packages/gateway/src/platform/gateway-log-file\.test\.ts''',
   '''packages/gateway/src/connectors/lazy-mesh/phase3-config\.test\.ts''',
   '''docs/superpowers/plans/.*\.md''',
   '''\.claude/agents/.*\.md''',
+  '''scripts/install/windows/signature-verdict\.test\.ts''',
 ]

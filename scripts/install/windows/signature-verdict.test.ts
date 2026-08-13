@@ -99,7 +99,35 @@ $v | ConvertTo-Json -Compress
   if (exitCode !== 0) {
     throw new Error(`pwsh failed (exit ${exitCode}): ${stderr}`);
   }
-  return JSON.parse(stdout.trim());
+  return parseVerdict(stdout.trim());
+}
+
+/**
+ * `JSON.parse` returns `any`, which would silently defeat this file's
+ * `Promise<Verdict>` return type even under strict mode (an `any` is
+ * assignable to anything without complaint) -- exactly the gap CLAUDE.md's
+ * "no `any` -- use `unknown` for external data" rule exists to close. `pwsh`
+ * output is a subprocess boundary like any other: decode as `unknown` first,
+ * then validate the three fields this file actually reads before
+ * constructing a `Verdict`, so a malformed/unexpected shape fails loudly
+ * here instead of silently propagating `undefined`s into assertions.
+ */
+function parseVerdict(raw: string): Verdict {
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error(`Resolve-SignatureVerdict output was not a JSON object: ${raw}`);
+  }
+  const { Valid, Reason, PrimaryFingerprint } = parsed as Record<string, unknown>;
+  if (typeof Valid !== "boolean") {
+    throw new Error(`Resolve-SignatureVerdict output has a non-boolean Valid: ${raw}`);
+  }
+  if (Reason !== null && typeof Reason !== "string") {
+    throw new Error(`Resolve-SignatureVerdict output has an invalid Reason: ${raw}`);
+  }
+  if (PrimaryFingerprint !== null && typeof PrimaryFingerprint !== "string") {
+    throw new Error(`Resolve-SignatureVerdict output has an invalid PrimaryFingerprint: ${raw}`);
+  }
+  return { Valid, Reason, PrimaryFingerprint };
 }
 
 const PINNED_FP = "5A20457CCD8B53FFAA945240886ADA6B487CAB6E";
