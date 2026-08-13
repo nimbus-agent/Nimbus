@@ -776,6 +776,37 @@ jobs:
             exit 1
           }
 
+      # TEMPORARY DIAGNOSTIC — isolates whether the checksum mismatch below
+      # originates in a raw PS 5.1 Invoke-WebRequest download itself (bypassing
+      # install.ps1's Get-NimbusRelease entirely) on the actual failing runner.
+      # Removed once root-caused; see the task report for what this reveals.
+      - name: DIAGNOSTIC - raw PS5.1 download + hash (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "PSVersion: $($PSVersionTable.PSVersion)"
+          $asset = $env:REMOTE_ASSET
+          $base = "http://127.0.0.1:8788"
+          $work = Join-Path $env:RUNNER_TEMP "diag-ps51"
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          $zip = Join-Path $work $asset
+          $sums = Join-Path $work "SHA256SUMS"
+          $sw = [System.Diagnostics.Stopwatch]::StartNew()
+          Invoke-WebRequest -Uri "$base/$asset" -OutFile $zip -UseBasicParsing
+          $sw.Stop()
+          Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sums -UseBasicParsing
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "download took: $($sw.Elapsed.TotalSeconds)s"
+          Write-Host "downloaded size: $((Get-Item $zip).Length)"
+          Write-Host "downloaded hash: $actual"
+          Write-Host "SHA256SUMS content:"
+          Get-Content $sums | Write-Host
+          $sumsLine = Get-Content $sums | Where-Object { $_ -match [regex]::Escape($asset) }
+          $expected = ($sumsLine -split '\s+', 2)[0]
+          Write-Host "expected hash: $expected"
+          Write-Host "MATCH: $($expected -eq $actual)"
+
       - name: Install from a served release (Windows PowerShell 5.1)
         if: runner.os == 'Windows'
         shell: powershell
