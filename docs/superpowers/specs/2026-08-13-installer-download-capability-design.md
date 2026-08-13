@@ -101,18 +101,42 @@ following the `/releases/latest` redirect instead:
 
 - Unix: `curl -fsSLI -o /dev/null -w '%{url_effective}' <repo>/releases/latest`
   → `.../releases/tag/vX.Y.Z`, take the last segment.
-- PowerShell 7: `$r.BaseResponse.RequestMessage.RequestUri`, same extraction.
+- PowerShell: the property differs by runtime and **must be probed, not
+  assumed** — measured, not inferred:
 
-Resolution is required regardless of platform, because the Linux tarball name
-carries the version.
+  | | PS 5.1 | PS 7.6 |
+  | --- | --- | --- |
+  | `BaseResponse` type | `System.Net.HttpWebResponse` | `System.Net.Http.HttpResponseMessage` |
+  | `.RequestMessage` | **`<NULL>`** | resolved URI |
+  | `.ResponseUri` | resolved URI | **absent** |
 
-| Platform | Asset | Base |
-| --- | --- | --- |
-| linux x64 | `nimbus-headless-linux-amd64-v<ver>.tar.gz` | `/releases/download/v<ver>/` |
-| macos arm64 | `nimbus-headless-macos-arm64.tar.gz` | `/releases/latest/download/` |
-| macos x64 | `nimbus-headless-macos-x64.tar.gz` | `/releases/latest/download/` |
-| windows x64 | `nimbus-headless-windows-x64.zip` | `/releases/latest/download/` |
-| **linux arm64** | **none published** | fail with an explicit message |
+  Use `ResponseUri` when present, else `RequestMessage.RequestUri`. Reaching for
+  `RequestMessage.RequestUri` unconditionally null-derefs on 5.1 — structurally
+  the same defect as the `$MyInvocation.MyCommand.Path` bug this work fixes.
+
+**One base URL for every platform.** Once the tag is resolved, all assets are
+fetched from `/releases/download/<tag>/<name>`. GitHub serves the unversioned
+assets under the tag path as well (verified: the macOS tarball and `SHA256SUMS`
+both return 200 at `/releases/download/v2.2.0/…`), so there is no reason to
+route some platforms through `/releases/latest/download/`. Doing so would make
+`--from-release <ver>` silently install the *latest* build on macOS and Windows
+while honouring the pin on Linux.
+
+Asset names below were checked against `gh release view v2.2.0`.
+
+| Platform | Asset |
+| --- | --- |
+| linux x64 | `nimbus-headless-linux-amd64-v<ver>.tar.gz` |
+| macos arm64 | `nimbus-headless-macos-arm64.tar.gz` |
+| macos x64 | `nimbus-headless-macos-x64.tar.gz` |
+| windows x64 | `nimbus-headless-windows-x64.zip` |
+| **linux arm64** | **none published** — fail with an explicit message |
+
+Assets are deliberately **not** renamed to a uniform versioned scheme. The
+unversioned names are load-bearing: `latest/download/<name>` resolves an exact
+name and does not glob, so the aliasing block at `release.yml:640-657` exists
+precisely to keep unversioned names linkable from docs that outlive one release.
+Renaming to fix the installer would re-open the docs bug that block closed.
 
 Linux arm64 is a real gap, not a theoretical one: Ampere, Graviton, Raspberry Pi,
 and any arm64 Linux container on an Apple Silicon host land there. The installer
@@ -131,6 +155,17 @@ emulation" rather than requesting a URL that 404s.
 4. If `gpg` is available, fetch `SHA256SUMS.asc` and verify it against the pinned
    fingerprint `5A20457CCD8B53FFAA945240886ADA6B487CAB6E` (the value already in
    `scripts/release/nimbus-verify.sh`). A verification failure aborts.
+
+   The public key is **embedded inline** in both scripts and imported into a
+   temporary `GNUPGHOME`; no keyserver is contacted. Keyserver lookups fail
+   transiently, time out, and are firewalled in corporate networks, and under a
+   best-effort policy every such failure degrades silently to "not verified" —
+   so a keyserver-dependent check would seldom actually run. To be exact about
+   what this buys: embedding is a **reliability** fix, not a stronger trust
+   root. An attacker who can tamper with the delivered script can swap the
+   embedded key as easily as a pinned fingerprint. Both defend a compromised
+   release asset given an authentic script; neither defends a compromised
+   script.
 5. If `gpg` is absent, continue, and print that the signature was **not**
    checked, naming `nimbus-verify.sh` as the way to check it.
 
@@ -155,6 +190,24 @@ Treat a null `$PSScriptRoot` / `$PSCommandPath` as *remote mode* instead of an
 error; that null-deref under `ErrorActionPreference = "Stop"` is the live bug.
 The documented argument-passing form is
 `& ([scriptblock]::Create((irm <url>))) -Yes`.
+
+**Windows — the `#Requires` guard is inert under `iex`.** `install.ps1` declares
+`#Requires -Version 7.0`, which is silently bypassed when the script is
+evaluated as text rather than run as a file. Measured on 5.1.26100.9168:
+
+```
+> Invoke-Expression "#Requires -Version 7.0`nWrite-Host RAN-ANYWAY"
+RAN-ANYWAY
+```
+
+Stock Windows 10/11 ships 5.1 as `powershell.exe` and PS7 is a separate
+install, so the documented one-liner runs under 5.1 on a default machine with
+its declared version requirement doing nothing. The script therefore needs a
+**runtime** version check, not a declarative one.
+
+Whether that check refuses on 5.1 or 5.1 becomes supported is an open decision —
+see the review response. The redirect probing above is written to work on both
+either way.
 
 ### Anti-drift
 
@@ -194,6 +247,20 @@ the feature and gets a dedicated test.
 
 The command creates the collection and nothing else. It stores no secret and
 writes no Nimbus credential.
+
+### Permissions
+
+`gnome-keyring` cares about mode, and a directory created under a default umask
+lands at `0755`, which it may ignore or refuse to load. Whatever mechanism the
+spike settles on must set **`0700` on `~/.local/share/keyrings`** and **`0600`
+on keyring files**. This constrains the mechanism without specifying it.
+
+### Dry run
+
+`--fix-keyring` supports `--dry-run`, and on an interactive TTY prints the exact
+planned actions — directory, mode, files — and asks for confirmation before
+writing. This makes the spec's "announces what it will do" requirement a
+testable surface rather than a stylistic one.
 
 ### Mechanism: deliberately unspecified here
 
@@ -295,3 +362,20 @@ Order:
    container.
 9. Every asset name the installer requests is staged by `release.yml`, enforced
    by test.
+10. `--from-release <ver>` installs **that** version on every platform, not the
+    latest — asserted per-platform, since this was a live defect in the first
+    draft of this design.
+11. `--fix-keyring` leaves `~/.local/share/keyrings` at `0700` and keyring files
+    at `0600`.
+12. The Windows runtime version check behaves correctly under `irm | iex` on
+    PowerShell 5.1 — the declarative `#Requires` does not fire there, so this
+    must be asserted against a real 5.1 host.
+
+## Open decision (blocking the implementation plan)
+
+**Does the Windows one-liner support PowerShell 5.1, or refuse cleanly on it?**
+Stock Windows has only 5.1, so refusing means the flagship one-liner fails on a
+default machine — awkward against non-negotiable #5 (platform equality).
+Supporting it costs explicit TLS 1.2, `-UseBasicParsing`, the dual redirect
+property, and a 5.1 CI leg. Carried into the plan unresolved; see the review
+response.
