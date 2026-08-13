@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 import { IPCClient } from "../ipc-client/index.ts";
@@ -35,12 +35,21 @@ function writeFileMode(path: string, data: string, mode: number): void {
   chmodSync(path, mode);
 }
 
+function listDir(path: string): readonly string[] {
+  try {
+    return readdirSync(path);
+  } catch {
+    return [];
+  }
+}
+
 const fixKeyringDeps: FixKeyringDeps = {
   exec: createDoctorVaultExec(FIX_KEYRING_EXEC_TIMEOUT_MS),
   homeDir: () => homedir(),
   statMode,
   mkdirMode,
   writeFileMode,
+  listDir,
 };
 
 const productionDeps: DoctorCoreDeps = {

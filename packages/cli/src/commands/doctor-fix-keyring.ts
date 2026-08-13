@@ -24,11 +24,16 @@ import type { DoctorVaultExec } from "./doctor-core.ts";
 //   - the `~/.local/share/keyrings` directory is forced to 0700
 //   - the keyring files it creates are defensively re-asserted at 0600
 //
-// And the single most important behaviour: an existing `login.keyring` is
-// NEVER touched. Overwriting it would destroy every credential the user has
-// stored — this repo already shipped one bug in this area (a cleanup trap
-// that `rm -rf`'d an inherited `$GNUPGHOME` and destroyed a real keyring), so
-// "never damage user key material" is the governing constraint here too.
+// And the single most important behaviour: NO pre-existing keyring material
+// is ever touched. Overwriting it would destroy every credential the user
+// has stored — this repo already shipped one bug in this area (a cleanup
+// trap that `rm -rf`'d an inherited `$GNUPGHOME` and destroyed a real
+// keyring), so "never damage user key material" is the governing constraint
+// here, and it is enforced broadly: not just an existing `login.keyring`,
+// but any `*.keyring` collection or `default`-alias pointer already sitting
+// in the keyrings directory (e.g. a user who has a non-default-named
+// collection and no `login.keyring` at all) refuses the run too, before
+// anything is written.
 // ---------------------------------------------------------------------------
 
 export interface FixKeyringDeps {
@@ -37,6 +42,14 @@ export interface FixKeyringDeps {
   readonly statMode: (p: string) => number | null;
   readonly mkdirMode: (p: string, mode: number) => void;
   readonly writeFileMode: (p: string, data: string, mode: number) => void;
+  /**
+   * Basenames only (no full paths); returns `[]` when `p` does not exist.
+   * Optional so existing `FixKeyringDeps` producers built before B-2 (broader
+   * pre-existing-collection detection) keep compiling; a caller that omits it
+   * still gets the `login.keyring`-exact refusal check, just not the broader
+   * `*.keyring`/`default`-alias sweep.
+   */
+  readonly listDir?: (p: string) => readonly string[];
 }
 
 export interface FixKeyringResult {
@@ -120,21 +133,75 @@ const PLAN_LINES: readonly string[] = [
 ];
 
 /**
+ * The binaries the fixer needs, and the Debian/Ubuntu package that provides
+ * each — checked, and reported, BEFORE any filesystem mutation (never after
+ * `mkdirMode`), so a box missing one of them is left untouched rather than
+ * left with a freshly chmod'd, still-broken directory. `gnome-keyring-daemon`
+ * is the component that actually creates the keyring and is routinely absent
+ * on exactly the headless boxes #1168 is about; its own stderr is suppressed
+ * inside the script (`>/dev/null 2>&1`, needed so the poll loop's noise
+ * doesn't leak), so this precheck is the only place its absence surfaces.
+ */
+const REQUIRED_BINARIES: readonly { readonly bin: string; readonly debianPkg: string }[] = [
+  { bin: "dbus-run-session", debianPkg: "dbus-x11" },
+  { bin: "gnome-keyring-daemon", debianPkg: "gnome-keyring" },
+  { bin: "secret-tool", debianPkg: "libsecret-tools" },
+];
+
+function missingBinaryLine(exec: DoctorVaultExec): string | null {
+  const missing = REQUIRED_BINARIES.filter((r) => !exec.hasBinary(r.bin));
+  if (missing.length === 0) return null;
+  const bins = missing.map((m) => m.bin).join(", ");
+  const pkgs = [...new Set(missing.map((m) => m.debianPkg))].join(" ");
+  return (
+    `[fail] --fix-keyring: missing required binaries: ${bins}. ` +
+    `Install ${pkgs} (Debian/Ubuntu) or the equivalent packages for your distro.`
+  );
+}
+
+/**
+ * Finds a pre-existing keyring collection this run must not touch: an exact
+ * `login.keyring`, or — since a user can have a non-default-named collection
+ * with no `login.keyring` at all — any other `*.keyring` file or a `default`
+ * alias pointer already sitting in the keyrings directory. Returns the path
+ * found, or `null` if the directory is clear (including "does not exist").
+ */
+function existingKeyringPath(
+  deps: FixKeyringDeps,
+  keyringsDir: string,
+  loginKeyring: string,
+): string | null {
+  if (deps.statMode(loginKeyring) !== null) {
+    return loginKeyring;
+  }
+  if (deps.statMode(keyringsDir) === null) {
+    return null;
+  }
+  for (const name of (deps.listDir ?? (() => []))(keyringsDir)) {
+    if (name === "default" || name.endsWith(".keyring")) {
+      return join(keyringsDir, name);
+    }
+  }
+  return null;
+}
+
+/**
  * Creates and unlocks a fresh Linux Secret Service keyring for a headless
  * box, closing the D-Bus name-ownership race identified in the Task 8 spike.
- * Refuses unconditionally if a `login.keyring` already exists. Callers are
- * responsible for the Linux-only gate — see `runFixKeyringCommand`.
+ * Refuses unconditionally if any pre-existing keyring material is found.
+ * Callers are responsible for the Linux-only gate — see `runFixKeyringCommand`.
  */
 export function fixKeyring(deps: FixKeyringDeps, opts: { dryRun: boolean }): FixKeyringResult {
   const home = deps.homeDir();
   const keyringsDir = keyringsDirFor(home);
   const loginKeyring = loginKeyringPathFor(home);
 
-  if (deps.statMode(loginKeyring) !== null) {
+  const existing = existingKeyringPath(deps, keyringsDir, loginKeyring);
+  if (existing !== null) {
     return {
       exit: 2,
       lines: [
-        `[fail] --fix-keyring: ${loginKeyring} already exists.`,
+        `[fail] --fix-keyring: ${existing} already exists.`,
         "Refusing to touch it: overwriting an existing keyring would destroy every credential",
         "already stored in it. If you intend to reset it, back it up and remove it yourself",
         "first, then re-run: nimbus doctor --fix-keyring.",
@@ -151,14 +218,19 @@ export function fixKeyring(deps: FixKeyringDeps, opts: { dryRun: boolean }): Fix
 
   const lines: string[] = [...PLAN_LINES];
 
-  deps.mkdirMode(keyringsDir, KEYRINGS_DIR_MODE);
-
-  if (!deps.exec.hasBinary("dbus-run-session") || !deps.exec.hasBinary("secret-tool")) {
-    lines.push(
-      "[fail] --fix-keyring: dbus-run-session and/or secret-tool not found — install dbus-x11 " +
-        "and libsecret-tools (Debian/Ubuntu) or the equivalent packages for your distro.",
-    );
+  const missing = missingBinaryLine(deps.exec);
+  if (missing !== null) {
+    lines.push(missing);
     return { exit: 2, lines };
+  }
+
+  // Only chmod a directory we are creating, never one that already exists —
+  // the plan above promises "only if it does not already exist" and this is
+  // what makes that true (the directory can pre-exist without login.keyring,
+  // e.g. left behind by an earlier partial attempt, or ruled out above by
+  // existingKeyringPath if it holds another collection).
+  if (deps.statMode(keyringsDir) === null) {
+    deps.mkdirMode(keyringsDir, KEYRINGS_DIR_MODE);
   }
 
   const result = deps.exec.runQuery(["dbus-run-session", "--", "bash", "-c", buildFixScript()]);
