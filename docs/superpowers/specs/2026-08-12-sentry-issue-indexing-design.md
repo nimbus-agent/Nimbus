@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-12
 **Branch:** `dev/asafgolombek/incident-attribution`
-**Status:** approved, ready for an implementation plan
+**Status:** implemented (PR #1172) — see `packages/gateway/src/connectors/{sentry-sync.ts,sentry-issue-sync.ts}`
 
 ## Goal
 

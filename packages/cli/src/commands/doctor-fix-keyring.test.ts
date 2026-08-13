@@ -99,6 +99,41 @@ describe("fixKeyring", () => {
     expect(result.lines.join("\n")).toMatch(/already exists/i);
   });
 
+  // B1 (review round 2): a `listDir` that CANNOT enumerate the directory
+  // (EACCES, EPERM, ...) must fail closed -- never silently read as "no
+  // keyring material" the way `[]` would. Only reached once `statMode`
+  // already confirms the directory exists, so this is unambiguously an
+  // enumeration failure, not "directory absent".
+  test("fails closed when the keyrings directory cannot be enumerated (EACCES)", () => {
+    let mkdirCalls = 0;
+    let queryCalls = 0;
+    const result = fixKeyring(
+      deps({
+        statMode: (p) => (p.endsWith("keyrings") ? 0o700 : null), // dir exists
+        listDir: () => {
+          const err = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+          err.code = "EACCES";
+          throw err;
+        },
+        mkdirMode: () => {
+          mkdirCalls += 1;
+        },
+        exec: makeExec({
+          runQuery: () => {
+            queryCalls += 1;
+            return { code: 0, stdout: "", stderr: "" };
+          },
+        }),
+      }),
+      { dryRun: false },
+    );
+    expect(result.exit).not.toBe(0);
+    expect(result.lines.join("\n")).toMatch(/could not list/i);
+    // Fail-closed means unconditional refusal -- no mutation, no unlock attempt.
+    expect(mkdirCalls).toBe(0);
+    expect(queryCalls).toBe(0);
+  });
+
   test("does not refuse over an unrelated file in an existing, otherwise-empty keyrings dir", () => {
     const result = fixKeyring(
       deps({
@@ -181,6 +216,11 @@ describe("fixKeyring", () => {
     );
     expect(result.exit).toBe(0);
     expect(result.lines.join("\n")).toMatch(/verified/i);
+    // Vault tests must prove no secret value escapes through any interface:
+    // the probe value comes back on stdout from `secret-tool lookup`, but
+    // must never itself be echoed into the user-facing report lines.
+    expect(result.lines).not.toContain("nimbus-fix-keyring-check-ok");
+    expect(result.lines.join("\n")).not.toContain("nimbus-fix-keyring-check-ok");
   });
 
   test("fails when the round-trip does not return the expected marker", () => {

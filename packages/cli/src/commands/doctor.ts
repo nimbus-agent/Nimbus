@@ -35,12 +35,12 @@ function writeFileMode(path: string, data: string, mode: number): void {
   chmodSync(path, mode);
 }
 
+// Deliberately does NOT catch: doctor-fix-keyring.ts's `existingKeyringPath`
+// calls this only after its own `statMode` check has confirmed the
+// directory exists, so any error here (EACCES, EPERM, ...) is a genuine
+// enumeration failure the fail-closed guard must see, not "empty directory".
 function listDir(path: string): readonly string[] {
-  try {
-    return readdirSync(path);
-  } catch {
-    return [];
-  }
+  return readdirSync(path);
 }
 
 const fixKeyringDeps: FixKeyringDeps = {

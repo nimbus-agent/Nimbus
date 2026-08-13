@@ -14,6 +14,15 @@ const skip = isWindows || !Bun.which("curl");
 // stricter guard on top of `skip`.
 const skipSigCheck = skip || !Bun.which("gpg");
 
+// Same exposure as the Windows twin (install-remote-windows.test.ts): every
+// test here spawns multiple subprocesses (sh/bash/curl/tar/gpg, via
+// runInstallSh and/or signManifestWithUntrustedKey) and cold subprocess spawn
+// on a loaded CI runner can eat into bun's 5000ms default test timeout even
+// when nothing is actually hung. Give every subprocess-driven test the same
+// generous headroom the Windows twin got, for the same reason — don't trim
+// it back.
+const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
+
 const GEN_KEY_SH = join("scripts", "release", "fixtures", "gen-test-key.sh");
 const BASH_BIN = "/bin/bash";
 function resolveGpgBin(): string {
@@ -186,83 +195,91 @@ async function runInstallSh(env: Record<string, string | undefined>) {
   return { stdout, stderr, exitCode };
 }
 
-test.skipIf(skip)("install.sh installs from a served release", async () => {
-  const work = await mkdtemp(join(tmpdir(), "nimbus-remote-"));
-  const home = join(work, "home");
-  const payload = join(work, "payload");
-  await mkdir(join(payload, "bin"), { recursive: true });
-  await mkdir(home, { recursive: true });
+test.skipIf(skip)(
+  "install.sh installs from a served release",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-remote-"));
+    const home = join(work, "home");
+    const payload = join(work, "payload");
+    await mkdir(join(payload, "bin"), { recursive: true });
+    await mkdir(home, { recursive: true });
 
-  // A stand-in for the real binaries: install.sh only copies and chmods them.
-  for (const name of ["nimbus", "nimbus-gateway"]) {
-    const p = join(payload, "bin", name);
-    await writeFile(p, "#!/bin/sh\necho 2.2.0\n");
-    await chmod(p, 0o755);
-  }
-  const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
-  await Bun.$`tar -czf ${join(work, tarballName)} -C ${payload} .`.quiet();
+    // A stand-in for the real binaries: install.sh only copies and chmods them.
+    for (const name of ["nimbus", "nimbus-gateway"]) {
+      const p = join(payload, "bin", name);
+      await writeFile(p, "#!/bin/sh\necho 2.2.0\n");
+      await chmod(p, 0o755);
+    }
+    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    await Bun.$`tar -czf ${join(work, tarballName)} -C ${payload} .`.quiet();
 
-  const server = await serveFakeRelease(work, tarballName);
-  try {
-    const { stdout, stderr, exitCode } = await runInstallSh({
-      ...process.env,
-      HOME: home,
-      NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+    const server = await serveFakeRelease(work, tarballName);
+    try {
+      const { stdout, stderr, exitCode } = await runInstallSh({
+        ...process.env,
+        HOME: home,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      expect(stderr + stdout).not.toContain("cannot locate");
+      // `not.toContain("cannot locate")` + exit 0 + the file existing are all
+      // also satisfied by LOCAL mode if binaries happen to already sit beside
+      // the script — this test invokes install.sh by a repo-relative path, so
+      // SCRIPT_DIR resolves to the real scripts/install/unix/ (which has no
+      // binaries in this repo, but the assertion must not rely on that being
+      // true forever). Assert the remote path was actually taken.
+      expect(stdout).toContain("Downloading");
+      expect(stdout).toContain("sha256 verified");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(true);
+    } finally {
+      server.stop(true);
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+  SUBPROCESS_TEST_TIMEOUT_MS,
+);
+
+test.skipIf(skip)(
+  "install.sh aborts on a tampered archive",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-tamper-"));
+    const home = join(work, "home");
+    await mkdir(home, { recursive: true });
+    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    await writeFile(join(work, tarballName), "not a real tarball");
+
+    // SHA256SUMS advertises a digest that does not match the served bytes.
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith("/SHA256SUMS")) {
+          return new Response(`${"0".repeat(64)}  ${tarballName}\n`);
+        }
+        return new Response("not a real tarball");
+      },
     });
-    expect(stderr + stdout).not.toContain("cannot locate");
-    // `not.toContain("cannot locate")` + exit 0 + the file existing are all
-    // also satisfied by LOCAL mode if binaries happen to already sit beside
-    // the script — this test invokes install.sh by a repo-relative path, so
-    // SCRIPT_DIR resolves to the real scripts/install/unix/ (which has no
-    // binaries in this repo, but the assertion must not rely on that being
-    // true forever). Assert the remote path was actually taken.
-    expect(stdout).toContain("Downloading");
-    expect(stdout).toContain("sha256 verified");
-    expect(exitCode).toBe(0);
-    expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(true);
-  } finally {
-    server.stop(true);
-    await rm(work, { recursive: true, force: true });
-  }
-});
-
-test.skipIf(skip)("install.sh aborts on a tampered archive", async () => {
-  const work = await mkdtemp(join(tmpdir(), "nimbus-tamper-"));
-  const home = join(work, "home");
-  await mkdir(home, { recursive: true });
-  const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
-  await writeFile(join(work, tarballName), "not a real tarball");
-
-  // SHA256SUMS advertises a digest that does not match the served bytes.
-  const server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      const path = new URL(req.url).pathname;
-      if (path.endsWith("/SHA256SUMS")) {
-        return new Response(`${"0".repeat(64)}  ${tarballName}\n`);
-      }
-      return new Response("not a real tarball");
-    },
-  });
-  try {
-    const { stderr, exitCode } = await runInstallSh({
-      ...process.env,
-      HOME: home,
-      NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
-    });
-    expect(exitCode).not.toBe(0);
-    // Bind to the exact message the checksum COMPARISON itself emits, not a
-    // loose /checksum|sha256/i pattern — that pattern also matches unrelated
-    // stderr lines ("could not fetch SHA256SUMS", "neither sha256sum nor
-    // shasum found", the signature-skip notice), any of which would let this
-    // test pass while the comparison never ran.
-    expect(stderr).toContain("checksum mismatch");
-    expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
-  } finally {
-    server.stop(true);
-    await rm(work, { recursive: true, force: true });
-  }
-});
+    try {
+      const { stderr, exitCode } = await runInstallSh({
+        ...process.env,
+        HOME: home,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      expect(exitCode).not.toBe(0);
+      // Bind to the exact message the checksum COMPARISON itself emits, not a
+      // loose /checksum|sha256/i pattern — that pattern also matches unrelated
+      // stderr lines ("could not fetch SHA256SUMS", "neither sha256sum nor
+      // shasum found", the signature-skip notice), any of which would let this
+      // test pass while the comparison never ran.
+      expect(stderr).toContain("checksum mismatch");
+      expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
+    } finally {
+      server.stop(true);
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+  SUBPROCESS_TEST_TIMEOUT_MS,
+);
 
 // N2 (final re-review): install.sh's checksum rule was harmonized to the
 // stricter install.ps1 rule (exactly-one-match + `^[0-9a-f]{64}$` format
@@ -317,39 +334,44 @@ test.skipIf(skip)(
       await rm(work, { recursive: true, force: true });
     }
   },
+  SUBPROCESS_TEST_TIMEOUT_MS,
 );
 
-test.skipIf(skip)("install.sh installs and prints the skip notice when gpg is absent", async () => {
-  const work = await mkdtemp(join(tmpdir(), "nimbus-nogpg-remote-"));
-  const home = join(work, "home");
-  await mkdir(home, { recursive: true });
-  const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
-  await makeTarball(work, tarballName);
+test.skipIf(skip)(
+  "install.sh installs and prints the skip notice when gpg is absent",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-nogpg-remote-"));
+    const home = join(work, "home");
+    await mkdir(home, { recursive: true });
+    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    await makeTarball(work, tarballName);
 
-  const server = await serveFakeRelease(work, tarballName);
-  const shimPath = await pathWithoutGpg();
-  try {
-    const { stdout, stderr, exitCode } = await runInstallSh({
-      HOME: home,
-      PATH: shimPath,
-      NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
-    });
-    const combined = stdout + stderr;
-    expect(combined).toContain("SIGNATURE NOT CHECKED");
-    expect(combined).toContain("gpg not found or not runnable");
-    // The notice must say what WAS and was NOT established, not just fail silent.
-    expect(combined).toContain("proves the file");
-    expect(combined).toContain("NOT that Nimbus published it");
-    expect(combined).toContain("scripts/release/nimbus-verify.sh --version <ver>");
-    expect(stdout).toContain("sha256 verified");
-    expect(exitCode).toBe(0);
-    expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(true);
-  } finally {
-    server.stop(true);
-    await rm(work, { recursive: true, force: true });
-    await rm(shimPath, { recursive: true, force: true });
-  }
-});
+    const server = await serveFakeRelease(work, tarballName);
+    const shimPath = await pathWithoutGpg();
+    try {
+      const { stdout, stderr, exitCode } = await runInstallSh({
+        HOME: home,
+        PATH: shimPath,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      const combined = stdout + stderr;
+      expect(combined).toContain("SIGNATURE NOT CHECKED");
+      expect(combined).toContain("gpg not found or not runnable");
+      // The notice must say what WAS and was NOT established, not just fail silent.
+      expect(combined).toContain("proves the file");
+      expect(combined).toContain("NOT that Nimbus published it");
+      expect(combined).toContain("scripts/release/nimbus-verify.sh --version <ver>");
+      expect(stdout).toContain("sha256 verified");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(true);
+    } finally {
+      server.stop(true);
+      await rm(work, { recursive: true, force: true });
+      await rm(shimPath, { recursive: true, force: true });
+    }
+  },
+  SUBPROCESS_TEST_TIMEOUT_MS,
+);
 
 test.skipIf(skipSigCheck)(
   "install.sh aborts and installs nothing on a bad signature (gpg present)",
@@ -393,6 +415,7 @@ test.skipIf(skipSigCheck)(
       await rm(work, { recursive: true, force: true });
     }
   },
+  SUBPROCESS_TEST_TIMEOUT_MS,
 );
 
 test.skipIf(skipSigCheck)(
@@ -441,4 +464,5 @@ test.skipIf(skipSigCheck)(
       await rm(work, { recursive: true, force: true });
     }
   },
+  SUBPROCESS_TEST_TIMEOUT_MS,
 );

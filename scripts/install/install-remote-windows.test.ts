@@ -15,6 +15,14 @@ const skipSigCheck = skip || !Bun.which("gpg");
 // needs bash on PATH (Git for Windows bundles it, same as gpg).
 const skipUntrustedKeyTest = skipSigCheck || !Bun.which("bash");
 
+// Every test in this file spawns `pwsh` at least twice (createZip and/or
+// runInstallPs1, plus cleanupUserPathContaining in every `finally`) — pwsh
+// cold start on the Linux `pr-quality` runner is slow enough to blow past
+// bun's 5000ms default test timeout even though nothing is actually hung
+// (two tests timed out there while passing locally in a faster container).
+// Give every pwsh-driven test real headroom instead of trimming it back.
+const PWSH_TEST_TIMEOUT_MS = 60_000;
+
 const ASSET_NAME = "nimbus-headless-windows-x64.zip";
 const INSTALL_PS1 = join("scripts", "install", "windows", "install.ps1");
 // MSYS bash mishandles Windows-style backslash paths as arguments (backslash
@@ -261,71 +269,79 @@ async function makePayload(content: string): Promise<string> {
   return dir;
 }
 
-test.skipIf(skip)("install.ps1 installs from a served release", async () => {
-  const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-remote-"));
-  const localAppData = await mkdtemp(join(work, "lad-"));
+test.skipIf(skip)(
+  "install.ps1 installs from a served release",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-remote-"));
+    const localAppData = await mkdtemp(join(work, "lad-"));
 
-  const payload = await makePayload("genuine-cli\n");
-  const zipPath = join(work, ASSET_NAME);
-  await createZip(payload, zipPath);
-  const zipBytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
-  const digest = new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex");
-  const sums = `${digest}  ${ASSET_NAME}\n`;
+    const payload = await makePayload("genuine-cli\n");
+    const zipPath = join(work, ASSET_NAME);
+    await createZip(payload, zipPath);
+    const zipBytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex");
+    const sums = `${digest}  ${ASSET_NAME}\n`;
 
-  const server = serveFakeRelease(zipBytes, sums);
-  try {
-    const { stdout, stderr, exitCode } = await runInstallPs1(["-FromRelease", "2.2.0", "-Yes"], {
-      ...process.env,
-      LOCALAPPDATA: localAppData,
-      NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
-    });
-    // `not.toContain("Cannot locate")` + exit 0 + the file existing are all
-    // also satisfiable by LOCAL mode if binaries happen to sit beside the
-    // real scripts/install/windows/install.ps1 in this repo (they don't, but
-    // the assertion must not rely on that being true forever) — assert the
-    // remote path was actually taken.
-    expect(stderr + stdout).not.toContain("Cannot locate");
-    expect(stdout).toContain("Downloading");
-    expect(stdout).toContain("sha256 verified");
-    expect(exitCode).toBe(0);
-    const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
-    expect(await Bun.file(installed).exists()).toBe(true);
-  } finally {
-    server.stop(true);
-    await cleanupUserPathContaining(localAppData);
-    await rm(work, { recursive: true, force: true });
-  }
-});
+    const server = serveFakeRelease(zipBytes, sums);
+    try {
+      const { stdout, stderr, exitCode } = await runInstallPs1(["-FromRelease", "2.2.0", "-Yes"], {
+        ...process.env,
+        LOCALAPPDATA: localAppData,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      // `not.toContain("Cannot locate")` + exit 0 + the file existing are all
+      // also satisfiable by LOCAL mode if binaries happen to sit beside the
+      // real scripts/install/windows/install.ps1 in this repo (they don't, but
+      // the assertion must not rely on that being true forever) — assert the
+      // remote path was actually taken.
+      expect(stderr + stdout).not.toContain("Cannot locate");
+      expect(stdout).toContain("Downloading");
+      expect(stdout).toContain("sha256 verified");
+      expect(exitCode).toBe(0);
+      const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
+      expect(await Bun.file(installed).exists()).toBe(true);
+    } finally {
+      server.stop(true);
+      await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+  PWSH_TEST_TIMEOUT_MS,
+);
 
-test.skipIf(skip)("install.ps1 aborts on a tampered archive", async () => {
-  const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-tamper-"));
-  const localAppData = await mkdtemp(join(work, "lad-"));
+test.skipIf(skip)(
+  "install.ps1 aborts on a tampered archive",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-tamper-"));
+    const localAppData = await mkdtemp(join(work, "lad-"));
 
-  const zipBytes = new TextEncoder().encode("not a real zip");
-  // SHA256SUMS advertises a digest that does not match the served bytes.
-  const sums = `${"0".repeat(64)}  ${ASSET_NAME}\n`;
+    const zipBytes = new TextEncoder().encode("not a real zip");
+    // SHA256SUMS advertises a digest that does not match the served bytes.
+    const sums = `${"0".repeat(64)}  ${ASSET_NAME}\n`;
 
-  const server = serveFakeRelease(zipBytes, sums);
-  try {
-    const { stderr, exitCode } = await runInstallPs1(["-FromRelease", "2.2.0", "-Yes"], {
-      ...process.env,
-      LOCALAPPDATA: localAppData,
-      NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
-    });
-    expect(exitCode).not.toBe(0);
-    // Bind to the exact message the comparison itself emits, not a loose
-    // /checksum|sha256/i pattern — that would also match the unrelated
-    // signature-skip notice and let this test pass while the real
-    // comparison never ran.
-    expect(stderr).toContain("checksum mismatch");
-    const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
-    expect(await Bun.file(installed).exists()).toBe(false);
-  } finally {
-    server.stop(true);
-    await cleanupUserPathContaining(localAppData);
-    await rm(work, { recursive: true, force: true });
-  }
-});
+    const server = serveFakeRelease(zipBytes, sums);
+    try {
+      const { stderr, exitCode } = await runInstallPs1(["-FromRelease", "2.2.0", "-Yes"], {
+        ...process.env,
+        LOCALAPPDATA: localAppData,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      expect(exitCode).not.toBe(0);
+      // Bind to the exact message the comparison itself emits, not a loose
+      // /checksum|sha256/i pattern — that would also match the unrelated
+      // signature-skip notice and let this test pass while the real
+      // comparison never ran.
+      expect(stderr).toContain("checksum mismatch");
+      const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
+      expect(await Bun.file(installed).exists()).toBe(false);
+    } finally {
+      server.stop(true);
+      await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+  PWSH_TEST_TIMEOUT_MS,
+);
 
 // C1 regression (review round 1): the checksum lookup used PowerShell's
 // default `-eq`, which is case-INSENSITIVE for strings, combined with
@@ -373,6 +389,7 @@ test.skipIf(skip)(
       await rm(work, { recursive: true, force: true });
     }
   },
+  PWSH_TEST_TIMEOUT_MS,
 );
 
 // S11 (final fix wave): the C1 regression test above pins only the CASE-
@@ -420,6 +437,7 @@ test.skipIf(skip)(
       await rm(work, { recursive: true, force: true });
     }
   },
+  PWSH_TEST_TIMEOUT_MS,
 );
 
 test.skipIf(skip)(
@@ -461,6 +479,7 @@ test.skipIf(skip)(
       await rm(work, { recursive: true, force: true });
     }
   },
+  PWSH_TEST_TIMEOUT_MS,
 );
 
 test.skipIf(skipSigCheck)(
@@ -516,6 +535,7 @@ test.skipIf(skipSigCheck)(
       await rm(work, { recursive: true, force: true });
     }
   },
+  PWSH_TEST_TIMEOUT_MS,
 );
 
 test.skipIf(skipUntrustedKeyTest)(
@@ -564,4 +584,5 @@ test.skipIf(skipUntrustedKeyTest)(
       await rm(work, { recursive: true, force: true });
     }
   },
+  PWSH_TEST_TIMEOUT_MS,
 );

@@ -68,6 +68,7 @@ function makeFixKeyringDeps(overrides: Partial<FixKeyringDeps> = {}): FixKeyring
     statMode: () => null,
     mkdirMode: () => {},
     writeFileMode: () => {},
+    listDir: () => [],
     ...overrides,
   };
 }

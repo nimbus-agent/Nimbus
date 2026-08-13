@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { assetNameFor, SUPPORTED_TARGETS } from "./release-assets.ts";
 
-const WORKFLOW = "./.github/workflows/release.yml";
-const LINUX_PACKAGER = "./scripts/package-linux-installers.ts";
-const INSTALL_SH = "./scripts/install/unix/install.sh";
-const INSTALL_PS1 = "./scripts/install/windows/install.ps1";
+const WORKFLOW = join(".github", "workflows", "release.yml");
+const LINUX_PACKAGER = join("scripts", "package-linux-installers.ts");
+const INSTALL_SH = join("scripts", "install", "unix", "install.sh");
+const INSTALL_PS1 = join("scripts", "install", "windows", "install.ps1");
 
 // The macOS/Windows archive names are literal strings in release.yml. The
 // Linux tarball name, though, is never spelled out there — it's built in

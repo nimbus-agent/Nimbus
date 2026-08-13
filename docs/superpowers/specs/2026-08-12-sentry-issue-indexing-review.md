@@ -4,6 +4,15 @@
 **Reviewer:** AI Assistant (Antigravity)  
 **Target Doc:** [2026-08-12-sentry-issue-indexing-design.md](./2026-08-12-sentry-issue-indexing-design.md)
 
+> **HISTORICAL.** This is a point-in-time review: pre-implementation questions and
+> recommendations, some of which the response
+> ([2026-08-12-sentry-issue-indexing-review-response.md](./2026-08-12-sentry-issue-indexing-review-response.md))
+> and the design doc itself later rejected, deferred, or superseded (notably item 3,
+> "Checkpoint the cursor on partial pagination failure" — rejected as originally
+> proposed, but the design doc's own later `CORRECTED 2026-08-12` note revises the
+> conclusion further still). Read the response and the design doc's current text for
+> the shipped contract; do not treat this file as it.
+
 ---
 
 ## Suggestions & Open Questions

@@ -95,6 +95,18 @@ way to eliminate the rework is persisting Sentry's **opaque page cursor** to res
 mid-scan — a different design, requiring evidence about how long those cursors stay
 valid.
 
+> **CORRECTED 2026-08-12, after the Task 4 review (recorded here, not rewritten above —
+> see the design doc's own `CORRECTED 2026-08-12` note for the full argument).** The
+> "different design, requiring evidence" framing above is superseded: persisting the
+> opaque resume cursor is not an optional follow-up, it is **required for correctness**.
+> A descending scan's high-water mark cannot express "the page budget stopped here, not
+> at end of data" — advancing it past a budget-truncated page silently drops every older,
+> unfetched issue on every future run, not just the current one. The design doc's
+> `resume` field is that fix, shipped in this PR
+> (`packages/gateway/src/connectors/sentry-issue-sync.ts`). Do not read the paragraph
+> above as license to defer resume-cursor persistence — it does not describe the shipped
+> behaviour.
+
 ## 4. `initialSyncDepthDays` override — accepted
 
 Answering the question as asked: it is a **hardcoded field on the `Syncable` interface**

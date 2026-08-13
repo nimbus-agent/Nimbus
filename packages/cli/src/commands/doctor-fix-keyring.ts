@@ -43,13 +43,18 @@ export interface FixKeyringDeps {
   readonly mkdirMode: (p: string, mode: number) => void;
   readonly writeFileMode: (p: string, data: string, mode: number) => void;
   /**
-   * Basenames only (no full paths); returns `[]` when `p` does not exist.
-   * Optional so existing `FixKeyringDeps` producers built before B-2 (broader
-   * pre-existing-collection detection) keep compiling; a caller that omits it
-   * still gets the `login.keyring`-exact refusal check, just not the broader
-   * `*.keyring`/`default`-alias sweep.
+   * Basenames only (no full paths). `existingKeyringPath` calls this ONLY
+   * after `statMode` has already confirmed the directory exists, so any
+   * error thrown here (EACCES, EPERM, ...) is a genuine enumeration
+   * failure, never "directory absent" — implementations MUST propagate
+   * that failure (throw), never swallow it into `[]`. An unreadable
+   * keyrings directory is exactly the broken-permissions scenario this
+   * command targets, and it may well contain real `*.keyring` files or a
+   * `default` pointer; silently reading it as empty would let the fixer
+   * mkdir/chmod/unlock over it. Required (not optional): an absent seam
+   * must not silently degrade to "nothing there" either.
    */
-  readonly listDir?: (p: string) => readonly string[];
+  readonly listDir: (p: string) => readonly string[];
 }
 
 export interface FixKeyringResult {
@@ -158,29 +163,49 @@ function missingBinaryLine(exec: DoctorVaultExec): string | null {
 }
 
 /**
+ * Outcome of the pre-existing-keyring scan:
+ *  - "found": an exact `login.keyring`, another `*.keyring` file, or a
+ *    `default` alias pointer already sits in the keyrings directory.
+ *  - "clear": the directory does not exist, or exists and holds none of
+ *    the above — safe to proceed.
+ *  - "enumeration-failed": the directory exists but its contents could not
+ *    be listed (permission denied or similar) — fail closed, never treat
+ *    this the same as "clear".
+ */
+type ExistingKeyringOutcome =
+  | { readonly kind: "found"; readonly path: string }
+  | { readonly kind: "clear" }
+  | { readonly kind: "enumeration-failed"; readonly dir: string };
+
+/**
  * Finds a pre-existing keyring collection this run must not touch: an exact
  * `login.keyring`, or — since a user can have a non-default-named collection
  * with no `login.keyring` at all — any other `*.keyring` file or a `default`
- * alias pointer already sitting in the keyrings directory. Returns the path
- * found, or `null` if the directory is clear (including "does not exist").
+ * alias pointer already sitting in the keyrings directory.
  */
 function existingKeyringPath(
   deps: FixKeyringDeps,
   keyringsDir: string,
   loginKeyring: string,
-): string | null {
+): ExistingKeyringOutcome {
   if (deps.statMode(loginKeyring) !== null) {
-    return loginKeyring;
+    return { kind: "found", path: loginKeyring };
   }
   if (deps.statMode(keyringsDir) === null) {
-    return null;
+    return { kind: "clear" };
   }
-  for (const name of (deps.listDir ?? (() => []))(keyringsDir)) {
+  let names: readonly string[];
+  try {
+    names = deps.listDir(keyringsDir);
+  } catch {
+    return { kind: "enumeration-failed", dir: keyringsDir };
+  }
+  for (const name of names) {
     if (name === "default" || name.endsWith(".keyring")) {
-      return join(keyringsDir, name);
+      return { kind: "found", path: join(keyringsDir, name) };
     }
   }
-  return null;
+  return { kind: "clear" };
 }
 
 /**
@@ -195,14 +220,25 @@ export function fixKeyring(deps: FixKeyringDeps, opts: { dryRun: boolean }): Fix
   const loginKeyring = loginKeyringPathFor(home);
 
   const existing = existingKeyringPath(deps, keyringsDir, loginKeyring);
-  if (existing !== null) {
+  if (existing.kind === "found") {
     return {
       exit: 2,
       lines: [
-        `[fail] --fix-keyring: ${existing} already exists.`,
+        `[fail] --fix-keyring: ${existing.path} already exists.`,
         "Refusing to touch it: overwriting an existing keyring would destroy every credential",
         "already stored in it. If you intend to reset it, back it up and remove it yourself",
         "first, then re-run: nimbus doctor --fix-keyring.",
+      ],
+    };
+  }
+  if (existing.kind === "enumeration-failed") {
+    return {
+      exit: 2,
+      lines: [
+        `[fail] --fix-keyring: could not list the contents of ${existing.dir}.`,
+        "Refusing to touch it: an unreadable keyrings directory may already hold real keyring",
+        "material this tool must not overwrite. Fix the directory's permissions yourself (or",
+        "back it up and remove it), then re-run: nimbus doctor --fix-keyring.",
       ],
     };
   }

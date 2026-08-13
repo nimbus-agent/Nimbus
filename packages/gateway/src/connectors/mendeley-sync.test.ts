@@ -1,55 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import pino from "pino";
-import { createMemoryIndexDb } from "./connector-sync-test-helpers.ts";
+import type { SyncContext } from "../sync/types.ts";
+import {
+  createMemoryIndexDb,
+  createStubVault,
+  syncTestContext,
+} from "./connector-sync-test-helpers.ts";
 import { createMendeleySyncable, formatCursorDate } from "./mendeley-sync.ts";
 
-function makeCtx(hasSecret: boolean) {
-  const dir = mkdtempSync(join(tmpdir(), "mendeley-sync-"));
-  return {
-    vault: {
-      get: async (k: string) =>
-        hasSecret && k === "mendeley.oauth"
-          ? JSON.stringify({
-              accessToken: "tok-abc",
-              refreshToken: "ref",
-              expiresAt: Date.now() + 3_600_000,
-              scopes: ["all"],
-            })
-          : null,
-      set: async () => {},
-      delete: async () => {},
-      listKeys: async () => [],
-    },
-    db: createMemoryIndexDb(),
-    logger: pino({ level: "silent" }),
-    rateLimiter: { acquire: async () => {} },
-    sandboxCwd: dir,
-    credentialFor: () => ({ credential: "personal" as const }),
-    runTeamList: async () => [],
-    depth: "full" as const,
-  };
+// `syncTestContext`/`createStubVault` (connector-sync-test-helpers.ts) build a
+// real, fully-typed `SyncContext` -- no `any` cast needed at any `sync()`
+// call site below, and no missing required field can hide behind one either.
+function makeCtx(hasSecret: boolean): SyncContext {
+  const secret = hasSecret
+    ? JSON.stringify({
+        accessToken: "tok-abc",
+        refreshToken: "ref",
+        expiresAt: Date.now() + 3_600_000,
+        scopes: ["all"],
+      })
+    : null;
+  return syncTestContext(createMemoryIndexDb(), createStubVault({ "mendeley.oauth": secret }));
 }
 
-function makeCtxWithSecret(secret: string) {
-  const dir = mkdtempSync(join(tmpdir(), "mendeley-sync-"));
-  return {
-    vault: {
-      get: async (k: string) => (k === "mendeley.oauth" ? secret : null),
-      set: async () => {},
-      delete: async () => {},
-      listKeys: async () => [],
-    },
-    db: createMemoryIndexDb(),
-    logger: pino({ level: "silent" }),
-    rateLimiter: { acquire: async () => {} },
-    sandboxCwd: dir,
-    credentialFor: () => ({ credential: "personal" as const }),
-    runTeamList: async () => [],
-    depth: "full" as const,
-  };
+function makeCtxWithSecret(secret: string): SyncContext {
+  return syncTestContext(createMemoryIndexDb(), createStubVault({ "mendeley.oauth": secret }));
 }
 
 function jsonResponse(body: unknown, link?: string): Response {
@@ -68,8 +42,7 @@ describe("createMendeleySyncable", () => {
   test("no-ops when the OAuth secret is absent", async () => {
     const ctx = makeCtx(false);
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} });
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -88,8 +61,7 @@ describe("createMendeleySyncable", () => {
     }) as unknown as typeof fetch;
     const ctx = makeCtx(true);
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(2);
     expect(calls).toHaveLength(2);
     expect(calls[0]).toContain("/documents?view=all&limit=100");
@@ -109,8 +81,7 @@ describe("createMendeleySyncable", () => {
     }) as unknown as typeof fetch;
     const ctx = makeCtx(true);
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(2);
     expect(calls[1]).toBe("https://api.mendeley.com/documents?marker=REL2");
   });
@@ -140,8 +111,7 @@ describe("createMendeleySyncable", () => {
       }),
     );
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
 
     expect(calls).toHaveLength(2);
     expect(calls[1]).toBe("https://api.mendeley.com/documents?marker=ORD2");
@@ -160,8 +130,7 @@ describe("createMendeleySyncable", () => {
       JSON.stringify({ since: "2024-03-02T08:00:00Z" }),
       "utf8",
     ).toString("base64url")}`;
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    await syncable.sync(ctx as any, cursor);
+    await syncable.sync(ctx, cursor);
     expect(calls[0]).toContain("modified_since=2024-03-02T08%3A00%3A00Z");
   });
 
@@ -169,8 +138,7 @@ describe("createMendeleySyncable", () => {
     const fetchFn = (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
     const ctx = makeCtx(true);
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -181,8 +149,7 @@ describe("createMendeleySyncable", () => {
     }) as unknown as typeof fetch;
     const ctx = makeCtxWithSecret("not-json");
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -194,8 +161,7 @@ describe("createMendeleySyncable", () => {
     }) as unknown as typeof fetch;
     const ctx = makeCtx(true);
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    await syncable.sync(ctx as any, "nimbus-other:whatever");
+    await syncable.sync(ctx, "nimbus-other:whatever");
     expect(calls[0]).not.toContain("modified_since");
   });
 
@@ -212,8 +178,7 @@ describe("createMendeleySyncable", () => {
     }) as unknown as typeof fetch;
     const ctx = makeCtx(true);
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -225,8 +190,7 @@ describe("createMendeleySyncable", () => {
       })) as unknown as typeof fetch;
     const ctx = makeCtx(true);
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
   });
 });

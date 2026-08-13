@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13
 **Issues:** [#1167](https://github.com/nimbus-agent/Nimbus/issues/1167), [#1168](https://github.com/nimbus-agent/Nimbus/issues/1168)
-**Status:** design approved, implementation pending
+**Status:** implemented (PR #1172) — see `scripts/install/{unix/install.sh,windows/install.ps1}` and `packages/cli/src/commands/doctor-fix-keyring.ts`
 
 ---
 
