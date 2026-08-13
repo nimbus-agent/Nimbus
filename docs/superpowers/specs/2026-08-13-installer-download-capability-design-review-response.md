@@ -20,7 +20,7 @@ wrote.
 scope. It is not — that declaration is silently bypassed when the script is
 evaluated as text:
 
-```
+```text
 PS 5.1.26100.9168 > Invoke-Expression "#Requires -Version 7.0`nWrite-Host RAN-ANYWAY"
 RAN-ANYWAY
 ```
@@ -49,7 +49,7 @@ bypassed version guard and a runtime-specific property. Using the raw
 `HttpWebRequest` API would not have fixed either.
 
 **Escalated.** Whether to *support* 5.1 or *refuse cleanly* on it is a scope
-decision, not a technical one — see [Open decision](#open-decision) below. Either
+decision, not a technical one — see [Open decision](#escalated-decision--resolved-2026-08-13) below. Either
 way, the version guard and the cross-runtime redirect are in.
 
 ## 2. Asset versioning inconsistency — ACCEPTED (finding), REJECTED (proposed fix)
@@ -75,7 +75,7 @@ renamed, `--from-release` becomes correct everywhere, and the two-base-URL
 inconsistency disappears. Verified against the live release — the tag-pinned
 path serves the unversioned assets too:
 
-```
+```text
 /releases/download/v2.2.0/nimbus-headless-macos-arm64.tar.gz -> HTTP 200
 /releases/download/v2.2.0/SHA256SUMS                          -> HTTP 200
 ```
@@ -151,7 +151,7 @@ first point.
 
 **Windows PowerShell 5.1 is supported.** Refusing would leave the flagship
 one-liner broken on a stock Windows box, which is the same class of failure as
-#1167 and sits badly against non-negotiable #5 (platform equality).
+issue #1167 and sits badly against non-negotiable #5 (platform equality).
 
 Accepted cost: explicit TLS 1.2
 (`[Net.ServicePointManager]::SecurityProtocol`), `-UseBasicParsing`, the dual

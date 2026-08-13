@@ -15,6 +15,7 @@
    - Task 6 Step 1 details starting the Python HTTP server on Unix, and says "Mirror for Windows with Expand-Archive-compatible zip packing".
    - **Question**: How should the background HTTP server be started and stopped on Windows in GitHub Actions without blocking the runner or leaving orphaned processes?
    - **Suggestion**: In Windows PowerShell/pwsh, use `Start-Process` to run Python in the background, saving the process handle or ID to stop it afterward:
+
      ```powershell
      $job = Start-Process python -ArgumentList "-m http.server 8788 --bind 127.0.0.1" -PassThru
      # ... run tests ...

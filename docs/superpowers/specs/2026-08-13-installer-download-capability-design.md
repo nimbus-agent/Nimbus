@@ -17,7 +17,7 @@ all**. Both are nevertheless published as standalone release assets
 (`release.yml:634-637`), where no binaries sit beside them. Fetched standalone,
 `install.sh` exits 1:
 
-```
+```text
 Error: cannot locate 'nimbus' or 'nimbus-gateway' beside /tmp/nimbus-install.sh
 ```
 
@@ -195,7 +195,7 @@ The documented argument-passing form is
 `#Requires -Version 7.0`, which is silently bypassed when the script is
 evaluated as text rather than run as a file. Measured on 5.1.26100.9168:
 
-```
+```text
 > Invoke-Expression "#Requires -Version 7.0`nWrite-Host RAN-ANYWAY"
 RAN-ANYWAY
 ```

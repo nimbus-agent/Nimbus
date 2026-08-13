@@ -8,11 +8,13 @@
 
 1. **Windows PowerShell 5.1 vs. PowerShell Core (7+) Compatibility**
    - The design spec under § "Version and asset resolution" suggests:
+
      ```powershell
      $r.BaseResponse.RequestMessage.RequestUri
      ```
+
      which is tailored for PowerShell 7.
-   - **Question**: Standard Windows installations only have Windows PowerShell 5.1 pre-installed by default. Will this redirect-resolution logic work on Windows PowerShell 5.1? 
+   - **Question**: Standard Windows installations only have Windows PowerShell 5.1 pre-installed by default. Will this redirect-resolution logic work on Windows PowerShell 5.1?
    - **Suggestion**: In Windows PowerShell 5.1, `Invoke-WebRequest` does not have a `BaseResponse` on the return value if it auto-redirects unless you specify `-MaximumRedirection 0` or catch the redirect exception, or inspect the underlying session/headers. We must ensure the PowerShell code gracefully handles both PowerShell 5.1 and PowerShell 7+, perhaps by using `[System.Net.HttpWebRequest]` or inspecting the headers/exception details.
 
 2. **Asset Versioning Inconsistency Across Platforms**

@@ -61,15 +61,17 @@ dependency on Part A.
 
 ---
 
-# Part A — the downloading installer (#1167)
+## Part A — the downloading installer (#1167)
 
 ### Task 1: Pure asset + URL resolution
 
 **Files:**
+
 - Create: `scripts/install/lib/release-assets.ts`
 - Test: `scripts/install/lib/release-assets.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `type InstallTarget = { os: "linux" | "darwin" | "win32"; arch: "x64" | "arm64" }`;
   `assetNameFor(target: InstallTarget, version: string): string` (throws on an
@@ -185,9 +187,11 @@ git commit -m "feat(install): pure release asset + URL resolution"
 ### Task 2: Drift test — requested assets must be staged
 
 **Files:**
+
 - Create: `scripts/install/lib/release-assets-drift.test.ts`
 
 **Interfaces:**
+
 - Consumes: `assetNameFor`, `SUPPORTED_TARGETS` from Task 1.
 - Produces: nothing importable; a guard.
 
@@ -241,10 +245,12 @@ git commit -m "test(install): assert requested assets are staged by release.yml"
 ### Task 3: `install.sh` remote mode
 
 **Files:**
+
 - Modify: `scripts/install/unix/install.sh`
 - Test: `scripts/install/install-remote.test.ts` (created here)
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks (the shell script is standalone by
   design — see the spec's "one file" constraint).
 - Produces: env seam `NIMBUS_INSTALL_BASE_URL` (testing-only) and flags
@@ -532,9 +538,11 @@ git commit -m "feat(install): download capability for install.sh"
 ### Task 4: `install.ps1` remote mode + PowerShell 5.1 support
 
 **Files:**
+
 - Modify: `scripts/install/windows/install.ps1`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: same flags/seam as Task 3, plus `-FromRelease <ver>` / `-Local`.
 
@@ -676,6 +684,7 @@ tested; do not skip it.**
 ```powershell
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Get-Content -Raw scripts/install/windows/install.ps1))) -DryRun"
 ```
+
 Expected: exits 0 with no null-path error — the original #1167 repro.
 
 - [ ] **Step 8: Commit**
@@ -690,9 +699,11 @@ git commit -m "feat(install): download capability for install.ps1, with PS 5.1 s
 ### Task 5: Embed the signing key and verify best-effort
 
 **Files:**
+
 - Modify: `scripts/install/unix/install.sh`, `scripts/install/windows/install.ps1`
 
 **Interfaces:**
+
 - Consumes: `fetch_release` / `Get-NimbusRelease` from Tasks 3-4.
 - Produces: `verify_signature <dir> <base>` (sh) and `Test-NimbusSignature` (ps1).
 
@@ -807,6 +818,7 @@ integrity not authenticity, plus the `nimbus-verify` pointer.
 ```powershell
 powershell.exe -NoProfile -Command "[System.IO.File]::WriteAllText(\"$env:TEMP\k.asc\", '-----BEGIN PGP PUBLIC KEY BLOCK-----', [System.Text.UTF8Encoding]::new(`$false)); [System.IO.File]::ReadAllBytes(\"$env:TEMP\k.asc\")[0..2]"
 ```
+
 Expected: `45 45 45`-style ASCII bytes (`2D 2D 2D`), **not** `FF FE`.
 
 - [ ] **Step 4: Test the absent-gpg path**
@@ -827,6 +839,7 @@ git commit -m "feat(install): embedded-key GPG verification, best-effort"
 ### Task 6: PR-time served-release CI job
 
 **Files:**
+
 - Modify: `.github/workflows/install-smoke.yml`
 
 - [ ] **Step 1: Add the job**
@@ -965,6 +978,7 @@ git commit -m "ci(install): prove the download path against a served release"
 ### Task 7: Post-release verification of the real one-liner
 
 **Files:**
+
 - Modify: `.github/workflows/released-install-smoke.yml`
 
 - [ ] **Step 1: Add the one-liner steps**
@@ -1004,7 +1018,7 @@ git commit -m "ci(install): verify the documented one-liner post-release"
 
 ---
 
-# Part B — headless-Linux keyring remedy (#1168)
+## Part B — headless-Linux keyring remedy (#1168)
 
 ### Task 8: Container spike — determine the mechanism
 
@@ -1021,11 +1035,13 @@ docker run --rm -it ubuntu:24.04 bash -c '
   dbus-run-session -- bash -c "echo \"\" | gnome-keyring-daemon --unlock --components=secrets; echo exit=\$?"
 '
 ```
+
 Expected: failure referencing `gcr-prompter` / `cannot open display`.
 
 - [ ] **Step 2: Find the sequence that works**
 
 Try, in order, recording exactly what succeeds:
+
 1. `--unlock` with the password on stdin after pre-creating the directory at `0700`.
 2. `gnome-keyring-daemon --start --components=secrets` with `--daemonize`.
 3. Pre-creating `~/.local/share/keyrings/` (mode `0700`) plus a `default` file
@@ -1055,11 +1071,13 @@ git commit -m "docs: record the verified headless keyring sequence"
 ### Task 9: `--fix-keyring` implementation
 
 **Files:**
+
 - Create: `packages/cli/src/commands/doctor-fix-keyring.ts`
 - Create: `packages/cli/src/commands/doctor-fix-keyring.test.ts`
 - Modify: `packages/cli/src/commands/doctor-core.ts` (arg parsing; `runDoctor` at line 440 currently ignores `_args`)
 
 **Interfaces:**
+
 - Consumes: `DoctorVaultExec` (`doctor-core.ts:43`) for command execution.
 - Produces: `export interface FixKeyringDeps { readonly exec: DoctorVaultExec; readonly homeDir: () => string; readonly statMode: (p: string) => number | null; readonly mkdirMode: (p: string, mode: number) => void; readonly writeFileMode: (p: string, data: string, mode: number) => void; }`
   and `export function fixKeyring(deps: FixKeyringDeps, opts: { dryRun: boolean }): { exit: number; lines: readonly string[] }`.
@@ -1170,6 +1188,7 @@ git commit -m "feat(cli): nimbus doctor --fix-keyring"
 ### Task 10: Point the remedy at the new command
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/doctor-core.ts:80-81`
 
 - [ ] **Step 1: Replace `VAULT_UNLOCK_HINT`**
@@ -1196,11 +1215,12 @@ git commit -m "fix(cli): a headless-Linux vault remedy that works"
 
 ---
 
-# Part C — docs, release wiring, and the PR
+## Part C — docs, release wiring, and the PR
 
 ### Task 11: Correct the stale docs and release comment
 
 **Files:**
+
 - Modify: `docs/install.md:31`, `docs/README.md:362`, `.github/workflows/release.yml:625-633`
 
 - [ ] **Step 1: Fix `dpkg -i`**
@@ -1266,7 +1286,7 @@ git push -u origin dev/asafgolombek/incident-attribution
 
 PR title (this is the squash commit subject, and what release-please parses):
 
-```
+```text
 feat(connectors): index Sentry issues, and make the published installers able to install
 ```
 

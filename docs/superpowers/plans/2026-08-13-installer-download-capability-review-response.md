@@ -95,7 +95,7 @@ equivalent.
 **Measured, not assumed.** Windows PowerShell 5.1 `Out-File` writes UTF-16LE
 with a BOM; PowerShell 7 writes UTF-8:
 
-```
+```text
 PS 5.1  Out-File first 6 bytes : FF FE 2D 00 2D 00   <- UTF-16LE + BOM
 PS 7.6  Out-File first 6 bytes : 2D 2D 2D 2D 2D 42   <- UTF-8
 ```
