@@ -107,7 +107,7 @@ const BOOL_PATTERN = /(?:^|\s)(?:boolean|b)\s+(true|false)\b/m;
 //     closing the D-Bus name-ownership race and enforcing 0700/0600).
 //   - locked: a locked collection implies keyring material already exists on
 //     disk — `existingKeyringPath` (doctor-fix-keyring.ts) refuses on an
-//     exact `login.keyring`, any other `*.keyring` file, or a `default`-alias
+//     exact `login.keyring`, another `*.keyring` file, or a `default`-alias
 //     pointer, not just `login.keyring` by name, so `--fix-keyring` refuses
 //     this state every time. The session wrapper is the only route.
 //   - no-secret-service: applicability genuinely DEPENDS on on-disk state
