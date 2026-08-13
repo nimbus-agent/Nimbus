@@ -860,21 +860,6 @@ jobs:
           Add-MpPreference -ExclusionPath $ps51DlTmp
           Write-Host "Defender exclusion added for $ps51DlTmp (CI-runner-only, removed later in this same job)."
 
-      # TEMPORARY red-proof step — NOT part of the real change. Deliberately
-      # corrupts the already-served SHA256SUMS (the PS7 leg above already
-      # consumed and verified the real one) so the very next step's own
-      # sha256 check must fail. Proves this leg can actually go red, not just
-      # always pass. Reverted immediately after the failing run is recorded.
-      - name: TEMP RED-PROOF ONLY — corrupt the served checksum
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          $sumsPath = Join-Path (Join-Path $env:RUNNER_TEMP "serve") "SHA256SUMS"
-          $bad = "0" * 64
-          [System.IO.File]::WriteAllText($sumsPath, "$bad  $($env:REMOTE_ASSET)`n", [System.Text.UTF8Encoding]::new($false))
-          Write-Host "RED-PROOF: wrote a deliberately wrong checksum to $sumsPath"
-
       - name: Install from a served release (Windows PowerShell 5.1)
         if: runner.os == 'Windows'
         shell: powershell
