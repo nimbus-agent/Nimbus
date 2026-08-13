@@ -28,7 +28,7 @@ All downloads are checksummed in `SHA256SUMS` and GPG-signed; verify with
 | macOS (Apple Silicon) | `nimbus-headless-macos-arm64.pkg` | Per-user (`~/.local`), no sudo |
 | macOS (Intel) | `nimbus-headless-macos-x64.pkg` | Per-user (`~/.local`), no sudo |
 | Linux (RPM) | `nimbus-headless-<ver>-x86_64.rpm` | `sudo dnf install ./...rpm` |
-| Linux (DEB) | `nimbus-headless_<ver>_amd64.deb` | `sudo dpkg -i ...deb` |
+| Linux (DEB) | `nimbus-headless_<ver>_amd64.deb` | `sudo apt install ./...deb` |
 
 Native installers and package-manager builds disable the self-updater — the
 installer/package owns updates. The standalone tarball keeps the self-updater on.

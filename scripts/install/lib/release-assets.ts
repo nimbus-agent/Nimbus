@@ -12,9 +12,14 @@ export const SUPPORTED_TARGETS: readonly InstallTarget[] = [
 ];
 
 /**
- * Only the Linux tarball carries the version in its filename. The others are
- * deliberately unversioned so docs can link them across releases — see the
- * aliasing block in release.yml. Do NOT "harmonise" these names.
+ * Only the Linux tarball carries the version in its filename. The macOS
+ * tarballs and the Windows zip are unversioned FROM THE START —
+ * `release.yml:522-549` builds them that way, so docs can link a name that
+ * survives every release; they never needed aliasing. (The separate aliasing
+ * block at `release.yml:640-657` gives an unversioned alias to the `.deb` and
+ * the AppImage, which — unlike these two — DO carry a version in their real
+ * filename; it has nothing to do with the macOS/Windows names here.) Do NOT
+ * "harmonise" these names.
  */
 export function assetNameFor(target: InstallTarget, version: string): string {
   const { os, arch } = target;

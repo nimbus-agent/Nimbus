@@ -622,15 +622,16 @@ jobs:
           cp scripts/release/nimbus-verify.ps1                                  dist/stage/
 
           # Install scripts, as STANDALONE assets — not just bundled inside the
-          # archives. README.md's quickstart tells people to fetch these straight
-          # off the release:
-          #   curl .../releases/latest/download/install.sh
-          #   irm   .../releases/latest/download/install.ps1
-          # `install.ps1` was never staged here, so that URL 404'd and the entire
-          # Windows quickstart was dead — a platform-equality break (non-negotiable
-          # #5) sitting on the front page. Staging all four keeps the documented
-          # URLs true on every future release instead of depending on which files
-          # happened to survive from an earlier one.
+          # archives. Unlike an ordinary bundled copy, these ARE the documented
+          # remote-install entry point: install.sh / install.ps1 are
+          # self-bootstrapping — run standalone (`curl … | sh`, `irm … | iex`)
+          # with no archive beside them, they detect that and download +
+          # sha256/GPG-verify a matching release on their own (see the
+          # NIMBUS_INSTALL_BASE_URL testing seam and the --from-release /
+          # -FromRelease flag in scripts/install/{unix/install.sh,windows/install.ps1}).
+          # Staging all four here keeps releases/latest/download/install.{sh,ps1}
+          # resolving on every future release instead of depending on which
+          # files happened to survive from an earlier one.
           cp scripts/install/unix/install.sh                                    dist/stage/
           cp scripts/install/unix/uninstall.sh                                  dist/stage/
           cp scripts/install/windows/install.ps1                                dist/stage/

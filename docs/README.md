@@ -359,7 +359,7 @@ curl -L "https://github.com/nimbus-agent/Nimbus/releases/download/v${VER}/nimbus
 curl -L "https://github.com/nimbus-agent/Nimbus/releases/download/v${VER}/nimbus-headless_${VER}_amd64.deb.asc" -o nimbus.deb.asc
 gpg --keyserver keys.openpgp.org --recv-keys 5A20457CCD8B53FFAA945240886ADA6B487CAB6E
 gpg --verify nimbus.deb.asc nimbus.deb
-sudo dpkg -i nimbus.deb
+sudo apt install ./nimbus.deb
 ```
 
 The `.deb` installs `nimbus` and `nimbus-gateway` wrappers under `/usr/local/bin` — already on `PATH` for any Debian/Ubuntu user.
@@ -391,7 +391,7 @@ cd (Get-ChildItem nimbus-*).Name
 nimbus --version
 ```
 
-The bundled `install.ps1` (PowerShell 7+) copies the binaries to `%LOCALAPPDATA%\Programs\Nimbus\bin` and adds it to your User PATH via the `.NET` registry API (no admin required, no `setx` truncation risk). Run `.\uninstall.ps1 -Yes` to reverse.
+The bundled `install.ps1` (PowerShell 5.1+) copies the binaries to `%LOCALAPPDATA%\Programs\Nimbus\bin` and adds it to your User PATH via the `.NET` registry API (no admin required, no `setx` truncation risk). Run `.\uninstall.ps1 -Yes` to reverse.
 
 #### AppImage (Linux)
 

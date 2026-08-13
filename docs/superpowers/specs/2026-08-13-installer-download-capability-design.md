@@ -134,9 +134,14 @@ Asset names below were checked against `gh release view v2.2.0`.
 
 Assets are deliberately **not** renamed to a uniform versioned scheme. The
 unversioned names are load-bearing: `latest/download/<name>` resolves an exact
-name and does not glob, so the aliasing block at `release.yml:640-657` exists
-precisely to keep unversioned names linkable from docs that outlive one release.
-Renaming to fix the installer would re-open the docs bug that block closed.
+name and does not glob. For the macOS tarballs and the Windows zip that's
+because they are built unversioned FROM THE START (`release.yml:522-549`) —
+they never needed aliasing. Only the `.deb` and the AppImage carry a version in
+their real filename; the aliasing block at `release.yml:640-657` exists solely
+to give THOSE two an unversioned alias so docs can link them across releases.
+Renaming any of these assets to a uniform versioned scheme would re-open the
+docs bug that block closed for the `.deb`/AppImage, and would newly break the
+already-unversioned macOS/Windows names.
 
 Linux arm64 is a real gap, not a theoretical one: Ampere, Graviton, Raspberry Pi,
 and any arm64 Linux container on an Apple Silicon host land there. The installer
