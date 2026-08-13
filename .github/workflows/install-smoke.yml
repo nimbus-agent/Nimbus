@@ -750,6 +750,66 @@ jobs:
           $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"
           nimbus --version
 
+      # ---------------------------------------------------------------------
+      # Windows PowerShell 5.1 leg. Everything above on Windows (both the
+      # local-mode job earlier and the served-release step just above) runs
+      # under `shell: pwsh` — PowerShell 7. Stock Windows ships only 5.1, and
+      # it was chosen as the declared support floor deliberately (install.ps1
+      # carries `#Requires -Version 5.1` plus PS-5.1-specific TLS 1.2 and
+      # $PSScriptRoot/$PSCommandPath handling for exactly this reason — see
+      # the #1167 fix, both of whose failure modes were 5.1-only behaviours).
+      # Before this leg, NOTHING anywhere — no CI job, no bun test — ever
+      # executed install.ps1 on real Windows PowerShell 5.1; `shell: powershell`
+      # appeared zero times in any workflow, and install-remote-windows.test.ts
+      # resolves pwsh too. Reuses the SAME fixture server + served archive the
+      # PS7 leg just used (still running — the "Stop" step below tears down
+      # both), with a THIRD distinct sandboxed LOCALAPPDATA so this leg cannot
+      # be satisfied by either the local-mode or the PS7 remote-mode install.
+      - name: Confirm this leg runs on Windows PowerShell 5.1, not pwsh (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $v = $PSVersionTable.PSVersion
+          Write-Host "PSVersionTable.PSVersion: $v"
+          if ($v.Major -ge 6) {
+            Write-Error "'shell: powershell' resolved to PSVersion $v (PowerShell 6+) -- expected Windows PowerShell 5.1. This leg exists specifically to prove 5.1 coverage; refusing to silently pass on the wrong runtime."
+            exit 1
+          }
+
+      - name: Install from a served release (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          # A THIRD sandboxed LOCALAPPDATA — distinct from BOTH the local-mode
+          # one and the PS7 remote-mode one above — so this leg cannot be
+          # satisfied by either earlier phase's install.
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "fake-localappdata-remote-ps51"
+          New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
+          $env:NIMBUS_INSTALL_BASE_URL = "http://127.0.0.1:8788"
+
+          # *>&1, not 2>&1: confirmed empirically (not assumed — this leg
+          # exists precisely because 5.1 and 7 can differ) that Write-Host
+          # output is likewise invisible to 2>&1 and visible to *>&1 under
+          # real Windows PowerShell 5.1, via an isolated local repro before
+          # trusting it here. See the task report for that repro.
+          $out = & "$env:STAGE\install.ps1" -FromRelease $env:REMOTE_VER -Yes *>&1 | Out-String
+          Write-Host $out
+
+          if ($out -notmatch "Downloading") {
+            Write-Error "installer never reported a download on PowerShell 5.1 -- the remote path did not run"; exit 1
+          }
+          if ($out -notmatch "sha256 verified") {
+            Write-Error "installer never reported sha256 verification on PowerShell 5.1 -- the remote path did not run"; exit 1
+          }
+
+          $installedNimbus = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\nimbus.exe"
+          if (-not (Test-Path $installedNimbus)) {
+            Write-Error "remote install (PowerShell 5.1) did not place the binary"; exit 1
+          }
+          $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"
+          nimbus --version
+
       - name: Stop the release fixture server (Windows)
         if: always() && runner.os == 'Windows'
         shell: bash
