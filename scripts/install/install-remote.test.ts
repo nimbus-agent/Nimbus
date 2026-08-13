@@ -264,6 +264,61 @@ test.skipIf(skip)("install.sh aborts on a tampered archive", async () => {
   }
 });
 
+// N2 (final re-review): install.sh's checksum rule was harmonized to the
+// stricter install.ps1 rule (exactly-one-match + `^[0-9a-f]{64}$` format
+// guard, see the comment at install.sh's checksum block), but nothing here
+// isolated the count half of that rule — a hash-only comparison would also
+// pass this test if the count check were dropped, since first-match-wins
+// would still land on a correct hash. This fixture mirrors install-remote-
+// windows.test.ts's "duplicate identical checksum entry" case: TWO lines for
+// the asset, byte-identical, BOTH carrying the hash of the bytes actually
+// served. Only `[ "$match_count" -ne 1 ]` catches this; the final
+// `$expected != $actual` hash comparison alone would accept it. Must be RED
+// against a revert of install.sh's match-count check (confirmed manually)
+// and GREEN with it restored.
+test.skipIf(skip)(
+  "install.sh rejects a duplicate identical checksum entry for the same asset (match-count regression)",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-dup-"));
+    const home = join(work, "home");
+    await mkdir(home, { recursive: true });
+    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    const tarballPath = await makeTarball(work, tarballName);
+    const tarball = await Bun.file(tarballPath).arrayBuffer();
+    const digest = new Bun.CryptoHasher("sha256").update(tarball).digest("hex");
+
+    // Two byte-identical lines: same case-exact filename, same hash, and
+    // that hash IS what was actually served. A hash-only check can never
+    // reject this — only "exactly one match" can.
+    const sums = `${digest}  ${tarballName}\n${digest}  ${tarballName}\n`;
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith("/SHA256SUMS")) return new Response(sums);
+        if (path.endsWith(`/${tarballName}`)) return new Response(tarball);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    try {
+      const { stderr, exitCode } = await runInstallSh({
+        ...process.env,
+        HOME: home,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      expect(exitCode).not.toBe(0);
+      // Bind to the exact message the comparison itself emits (matches the
+      // tamper test's binding above), not a loose /checksum|sha256/i pattern.
+      expect(stderr).toContain("checksum mismatch");
+      expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
+    } finally {
+      server.stop(true);
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+);
+
 test.skipIf(skip)("install.sh installs and prints the skip notice when gpg is absent", async () => {
   const work = await mkdtemp(join(tmpdir(), "nimbus-nogpg-remote-"));
   const home = join(work, "home");
