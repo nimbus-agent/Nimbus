@@ -147,18 +147,16 @@ first point.
 
 ---
 
-## Open decision
+## Escalated decision — RESOLVED 2026-08-13
 
-**Does the Windows one-liner support PowerShell 5.1, or refuse cleanly on it?**
+**Windows PowerShell 5.1 is supported.** Refusing would leave the flagship
+one-liner broken on a stock Windows box, which is the same class of failure as
+#1167 and sits badly against non-negotiable #5 (platform equality).
 
-- *Refuse cleanly* — keep the existing PS7-only contract, add a real runtime
-  guard that prints "install PowerShell 7, or use the .msi / winget". Small,
-  honest. Cost: the flagship one-liner fails on a stock Windows box, which sits
-  awkwardly against non-negotiable #5 (platform equality).
-- *Support 5.1* — the existing local-path code already looks 5.1-compatible, and
-  `Get-FileHash`, `Expand-Archive` and `Invoke-WebRequest` all exist there. Cost
-  is real but bounded: explicit TLS 1.2 (`[Net.ServicePointManager]::SecurityProtocol`),
-  `-UseBasicParsing`, the dual redirect property above, and a 5.1 CI leg.
+Accepted cost: explicit TLS 1.2
+(`[Net.ServicePointManager]::SecurityProtocol`), `-UseBasicParsing`, the dual
+redirect property above, a runtime version floor replacing the inert
+`#Requires`, and a 5.1 CI leg that runs the full documented one-liner rather
+than asserting a guard fires.
 
-This is not settled in the spec; it is carried into the implementation plan as a
-blocking question.
+Recorded in the spec under *Resolved: PowerShell 5.1 is supported*.

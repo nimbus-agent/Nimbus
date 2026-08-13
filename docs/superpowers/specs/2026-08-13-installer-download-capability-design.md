@@ -205,9 +205,8 @@ install, so the documented one-liner runs under 5.1 on a default machine with
 its declared version requirement doing nothing. The script therefore needs a
 **runtime** version check, not a declarative one.
 
-Whether that check refuses on 5.1 or 5.1 becomes supported is an open decision —
-see the review response. The redirect probing above is written to work on both
-either way.
+**Resolved: 5.1 is supported** (see below), so the runtime check is a floor at
+the lowest tested version, not a refusal at 7.0.
 
 ### Anti-drift
 
@@ -367,15 +366,29 @@ Order:
     draft of this design.
 11. `--fix-keyring` leaves `~/.local/share/keyrings` at `0700` and keyring files
     at `0600`.
-12. The Windows runtime version check behaves correctly under `irm | iex` on
-    PowerShell 5.1 — the declarative `#Requires` does not fire there, so this
-    must be asserted against a real 5.1 host.
+12. The documented `irm | iex` one-liner completes successfully under **Windows
+    PowerShell 5.1**, asserted on a real 5.1 host — the declarative `#Requires`
+    does not fire there, so nothing about this can be inferred from a PS7 run.
 
-## Open decision (blocking the implementation plan)
+## Resolved: PowerShell 5.1 is supported
 
-**Does the Windows one-liner support PowerShell 5.1, or refuse cleanly on it?**
-Stock Windows has only 5.1, so refusing means the flagship one-liner fails on a
-default machine — awkward against non-negotiable #5 (platform equality).
-Supporting it costs explicit TLS 1.2, `-UseBasicParsing`, the dual redirect
-property, and a 5.1 CI leg. Carried into the plan unresolved; see the review
-response.
+**Decision (2026-08-13): the Windows one-liner supports Windows PowerShell 5.1.**
+Stock Windows 10/11 ships only 5.1, so refusing would leave the flagship
+one-liner failing on a default machine — the same class of failure as #1167 and
+in tension with non-negotiable #5 (platform equality).
+
+What this requires, beyond the dual redirect property already specified:
+
+- Explicit TLS 1.2: `[Net.ServicePointManager]::SecurityProtocol` — 5.1 does not
+  reliably negotiate it by default, and GitHub requires it.
+- `-UseBasicParsing` on `Invoke-WebRequest`, so the call does not depend on the
+  Internet Explorer engine.
+- A runtime version floor replacing the inert `#Requires`, set to the lowest
+  version actually tested rather than to 7.0.
+- A **5.1 CI leg** running the full documented one-liner under `powershell.exe`,
+  not merely asserting a guard fires.
+
+`Get-FileHash`, `Expand-Archive` and `Invoke-WebRequest` all exist on 5.1, and
+the existing local-path code uses no PS7-only syntax, so the local mode is
+expected to work unchanged there — **expected, not verified**; the plan verifies
+it rather than assuming it.
