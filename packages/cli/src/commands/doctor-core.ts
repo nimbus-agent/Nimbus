@@ -105,8 +105,24 @@ const BOOL_PATTERN = /(?:^|\s)(?:boolean|b)\s+(true|false)\b/m;
 //     "no session bus" condition.
 //   - no-collection: exactly what `--fix-keyring` fixes (deterministically,
 //     closing the D-Bus name-ownership race and enforcing 0700/0600).
-//   - locked / no-secret-service: `--fix-keyring` refuses to touch an
-//     existing login.keyring, so these need the session wrapper directly.
+//   - locked: a locked collection implies keyring material already exists on
+//     disk — `existingKeyringPath` (doctor-fix-keyring.ts) refuses on an
+//     exact `login.keyring`, any other `*.keyring` file, or a `default`-alias
+//     pointer, not just `login.keyring` by name, so `--fix-keyring` refuses
+//     this state every time. The session wrapper is the only route.
+//   - no-secret-service: applicability genuinely DEPENDS on on-disk state
+//     this probe cannot see — the state is derived purely from a live D-Bus
+//     name-ownership query (stateFromDiagnostic() below), which says nothing
+//     about what is on disk. If no Secret Service provider is installed at
+//     all, `--fix-keyring` cannot help either — its own precheck names
+//     gnome-keyring-daemon and reports it missing. If a provider is
+//     installed but has never created a collection, `--fix-keyring` would
+//     apply — but even then it only prepares on-disk state inside its own
+//     ephemeral session; it does not start a provider on the CURRENT
+//     session, so the wrapper is still the unconditional next step either
+//     way. The printed hint stays wrapper-only: recommending `--fix-keyring`
+//     here would frequently be wrong (refuses whenever keyring material
+//     already exists) without ever being sufficient by itself.
 //   - Every state that needs the wrapper is also told it is not a one-time
 //     fix: a fresh D-Bus session that skips its own --unlock fails every
 //     `nimbus start`, even after `--fix-keyring` has run once.
