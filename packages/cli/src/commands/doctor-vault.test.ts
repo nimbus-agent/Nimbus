@@ -173,18 +173,45 @@ describe("doctorVaultLine — marks and messages", () => {
     expect(line).toContain("gnome-keyring-daemon --unlock");
   });
 
-  it("never claims the session wrapper itself is broken", () => {
+  it("never claims the session-wrapper remedy itself is broken (Controller Ruling 16: it isn't — see #1168)", () => {
+    // Bound to the actual remedy TEXT, not the whole line: the vault-state
+    // description legitimately says things like "every Vault write fails"
+    // (a `not.toContain("fails")` over the FULL line would false-fail on
+    // that), so this slices from the remedy command onward and checks only
+    // that segment. The design spec for #1167/#1168 briefly asserted this
+    // exact disproven premise (`--unlock` deterministically escalates to
+    // `gcr-prompter` / `cannot open display`) before Controller Ruling 16
+    // corrected it to the real ~1-in-40-to-50 D-Bus name-ownership race —
+    // this pins the CLI's own remedy text against the same regression.
     const failures: Scenario[] = [
       { stderr: STDERR_NO_SESSION_BUS },
       { stderr: STDERR_NO_PROVIDER },
-      { alias: { code: 0, stdout: ALIAS_NONE, stderr: "" } },
       { locked: { code: 0, stdout: LOCKED_TRUE, stderr: "" } },
       { tools: [] }, // unverified
     ];
+    const badRemedyClaims = [
+      "gcr-prompter",
+      "cannot open display",
+      "does not work",
+      "is broken",
+      "will fail",
+    ];
     for (const s of failures) {
       const line = lineOf(s);
-      expect(line).not.toContain("cannot work");
-      expect(line).not.toContain("cannot open display");
+      const wrapperIdx = line.indexOf("dbus-run-session");
+      expect(wrapperIdx).toBeGreaterThanOrEqual(0);
+      const remedyText = line.slice(wrapperIdx);
+      for (const claim of badRemedyClaims) {
+        expect(remedyText).not.toContain(claim);
+      }
+    }
+
+    const noCollectionLine = lineOf({ alias: { code: 0, stdout: ALIAS_NONE, stderr: "" } });
+    const fixKeyringIdx = noCollectionLine.indexOf("nimbus doctor --fix-keyring");
+    expect(fixKeyringIdx).toBeGreaterThanOrEqual(0);
+    const fixKeyringRemedyText = noCollectionLine.slice(fixKeyringIdx);
+    for (const claim of badRemedyClaims) {
+      expect(fixKeyringRemedyText).not.toContain(claim);
     }
   });
 

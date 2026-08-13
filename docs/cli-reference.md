@@ -2097,6 +2097,38 @@ nimbus doctor
 
 **Exit codes:** `0` = all healthy, `1` = warnings, `2` = hard failures.
 
+#### `nimbus doctor --fix-keyring`
+
+**Linux only** (issue #1168). Creates and unlocks a fresh default Secret Service keyring
+collection on a headless Linux box where none exists yet — the `no-collection` Vault state
+`nimbus doctor` reports when a Secret Service provider (e.g. `gnome-keyring`) is running over
+D-Bus but has never created a default collection. It runs the whole sequence (create the
+`~/.local/share/keyrings` directory at `0700`, unlock `gnome-keyring-daemon` inside a fresh D-Bus
+session, poll for ownership of `org.freedesktop.secrets` to close a D-Bus name-ownership race,
+re-assert `0600` on the keyring files it writes) inside one ephemeral `dbus-run-session`, then
+verifies the result with a live `secret-tool` store + lookup + clear round-trip.
+
+```bash
+nimbus doctor --fix-keyring
+nimbus doctor --fix-keyring --dry-run
+```
+
+- `--dry-run` prints the same plan without writing anything or spawning `dbus-run-session`.
+- On macOS and Windows this is a no-op (`[ok]`, exit `0`) — those platforms use their native
+  credential stores (Keychain / DPAPI) and never reach the Secret Service probe.
+- **It refuses to run if any keyring material already exists** — an exact `login.keyring`, any
+  other `*.keyring` file, or a `default`-alias pointer already present under
+  `~/.local/share/keyrings` — to avoid destroying stored credentials. Back up and remove the
+  existing keyring yourself first if you intend to reset it.
+- It does not apply to every failing Vault state: `not-installed` (missing `secret-tool` and
+  friends) and `locked` (a keyring already exists, just locked) are not fixed by this command —
+  `nimbus doctor`'s own output names the right remedy for those states, which is the
+  `dbus-run-session -- bash -c 'echo "" | gnome-keyring-daemon --unlock --components=secrets;
+  nimbus start'` wrapper, needed on every `nimbus start`, not just once.
+
+**Exit codes:** `0` = fixed (or not applicable / dry run), `2` = refused (missing binaries,
+pre-existing keyring material, or verification failed).
+
 ---
 
 ### `nimbus diag`

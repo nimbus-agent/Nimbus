@@ -73,10 +73,6 @@ function loginKeyringPathFor(home: string): string {
   return join(keyringsDirFor(home), "login.keyring");
 }
 
-function userKeystorePathFor(home: string): string {
-  return join(keyringsDirFor(home), "user.keystore");
-}
-
 /**
  * The verified minimal sequence from the Task 8 spike, transcribed exactly
  * (mode literals included) plus a defensive `chmod 0600` re-assertion on the
@@ -274,17 +270,4 @@ export function runFixKeyringCommand(
     return { exit: 0, lines: [NOT_APPLICABLE_LINE] };
   }
   return fixKeyring(deps, opts);
-}
-
-// Exposed for production wiring (packages/cli/src/commands/doctor.ts).
-export function keyringPathsFor(home: string): {
-  readonly dir: string;
-  readonly loginKeyring: string;
-  readonly userKeystore: string;
-} {
-  return {
-    dir: keyringsDirFor(home),
-    loginKeyring: loginKeyringPathFor(home),
-    userKeystore: userKeystorePathFor(home),
-  };
 }
