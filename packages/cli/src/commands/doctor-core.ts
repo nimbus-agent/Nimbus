@@ -78,8 +78,36 @@ const NO_PROVIDER_PATTERN = /not provided by|ServiceUnknown/i;
 const OBJECT_PATH_PATTERN = /(?:^|\s)(?:object path|o)\s+"([^"]*)"/m;
 const BOOL_PATTERN = /(?:^|\s)(?:boolean|b)\s+(true|false)\b/m;
 
-const VAULT_UNLOCK_HINT =
-  "On a headless machine start Nimbus inside a session, e.g. dbus-run-session -- bash -c 'echo \"\" | gnome-keyring-daemon --unlock --components=secrets; nimbus start'.";
+// ---------------------------------------------------------------------------
+// Per-state remedies (issue #1168, Controller Ruling 16)
+//
+// A 55-trial container spike (see doctor-fix-keyring.ts) found the wrapper
+// below genuinely works — no gcr-prompter escalation, no "cannot open
+// display" — so it is never described as broken. What IS true: each failing
+// state has a different cause, so each gets only the remedy that actually
+// addresses it:
+//   - not-installed / no-session-bus: `--fix-keyring` does not apply — the
+//     binary is missing, or there is no D-Bus session to run it in.
+//   - no-collection: exactly what `--fix-keyring` fixes (deterministically,
+//     closing the D-Bus name-ownership race and enforcing 0700/0600).
+//   - locked / no-secret-service: `--fix-keyring` refuses to touch an
+//     existing login.keyring, so these need the session wrapper directly.
+//   - Every state that needs the wrapper is also told it is not a one-time
+//     fix: a fresh D-Bus session that skips its own --unlock fails every
+//     `nimbus start`, even after `--fix-keyring` has run once.
+// ---------------------------------------------------------------------------
+
+const DBUS_SESSION_WRAPPER =
+  "dbus-run-session -- bash -c 'echo \"\" | gnome-keyring-daemon --unlock --components=secrets; nimbus start'";
+
+const SESSION_REQUIRED_HINT =
+  `Nimbus needs a D-Bus session with an unlocked keyring for every \`nimbus start\` on headless ` +
+  `Linux — not only the first time: ${DBUS_SESSION_WRAPPER}`;
+
+const FIX_KEYRING_HINT =
+  "Run: nimbus doctor --fix-keyring — it creates and unlocks a fresh default keyring collection " +
+  "deterministically (closing a rare D-Bus name-ownership race) and verifies it with a live " +
+  "secret-tool round-trip.";
 
 const VAULT_REPORT: Readonly<Record<DoctorVaultState, { mark: string; text: string }>> = {
   "not-applicable": { mark: "[ok]", text: "OS-native store — no Linux Secret Service check." },
@@ -87,23 +115,23 @@ const VAULT_REPORT: Readonly<Record<DoctorVaultState, { mark: string; text: stri
   "not-installed": { mark: "[fail]", text: LINUX_SECRET_TOOL_HINT },
   "no-session-bus": {
     mark: "[fail]",
-    text: `secret-tool is installed but there is no D-Bus session bus, so the OS keyring is unreachable and every Vault operation fails. ${VAULT_UNLOCK_HINT}`,
+    text: `secret-tool is installed but there is no D-Bus session bus, so the OS keyring is unreachable and every Vault operation fails. ${SESSION_REQUIRED_HINT}`,
   },
   "no-secret-service": {
     mark: "[fail]",
-    text: `a D-Bus session bus is present but no Secret Service provider owns ${SECRETS_NAME} — install and run gnome-keyring, KWallet, or KeePassXC with Secret Service enabled. ${VAULT_UNLOCK_HINT}`,
+    text: `a D-Bus session bus is present but no Secret Service provider owns ${SECRETS_NAME} — install and run gnome-keyring, KWallet, or KeePassXC with Secret Service enabled inside that session. ${SESSION_REQUIRED_HINT}`,
   },
   "no-collection": {
     mark: "[fail]",
-    text: `a Secret Service provider is running over D-Bus but exposes no default keyring collection, so every Vault write fails. ${VAULT_UNLOCK_HINT}`,
+    text: `a Secret Service provider is running over D-Bus but exposes no default keyring collection, so every Vault write fails. ${FIX_KEYRING_HINT}`,
   },
   locked: {
     mark: "[fail]",
-    text: `the default Secret Service keyring collection is locked over D-Bus, so every Vault write fails. ${VAULT_UNLOCK_HINT}`,
+    text: `the default Secret Service keyring collection is locked over D-Bus, so every Vault write fails. nimbus doctor --fix-keyring will not help here — it refuses to touch an existing keyring. ${SESSION_REQUIRED_HINT}`,
   },
   unverified: {
     mark: "[warn]",
-    text: `a Secret Service provider answered but its keyring state could not be verified — install busctl (systemd) or dbus-send (dbus) for a complete check. ${VAULT_UNLOCK_HINT}`,
+    text: `a Secret Service provider answered but its keyring state could not be verified — install busctl (systemd) or dbus-send (dbus) for a complete check. ${SESSION_REQUIRED_HINT}`,
   },
 };
 

@@ -122,7 +122,7 @@ describe("doctorVaultLine — marks and messages", () => {
     expect(line).toContain("libsecret");
   });
 
-  it("names D-Bus and the unlock remedy for every runtime failure", () => {
+  it("names D-Bus for every runtime failure and never blames the wrong thing", () => {
     const failures: Scenario[] = [
       { stderr: STDERR_NO_SESSION_BUS },
       { stderr: STDERR_NO_PROVIDER },
@@ -133,10 +133,43 @@ describe("doctorVaultLine — marks and messages", () => {
       const line = lineOf(s);
       expect(line).toStartWith("[fail] Vault:");
       expect(line).toContain("D-Bus");
-      expect(line).toContain("dbus-run-session");
-      expect(line).toContain("gnome-keyring-daemon --unlock");
       // The old message blamed the wrong thing.
       expect(line).not.toContain("secret-tool is on PATH");
+    }
+  });
+
+  it("points no-session-bus and no-secret-service at the session wrapper, not --fix-keyring", () => {
+    for (const s of [{ stderr: STDERR_NO_SESSION_BUS }, { stderr: STDERR_NO_PROVIDER }]) {
+      const line = lineOf(s);
+      expect(line).toContain("dbus-run-session");
+      expect(line).toContain("gnome-keyring-daemon --unlock");
+      expect(line).not.toContain("--fix-keyring");
+    }
+  });
+
+  it("points no-collection at --fix-keyring — the state it actually fixes", () => {
+    const line = lineOf({ alias: { code: 0, stdout: ALIAS_NONE, stderr: "" } });
+    expect(line).toContain("nimbus doctor --fix-keyring");
+  });
+
+  it("tells locked that --fix-keyring will not help and gives the session wrapper instead", () => {
+    const line = lineOf({ locked: { code: 0, stdout: LOCKED_TRUE, stderr: "" } });
+    expect(line).toContain("--fix-keyring will not help");
+    expect(line).toContain("dbus-run-session");
+    expect(line).toContain("gnome-keyring-daemon --unlock");
+  });
+
+  it("never claims the session wrapper itself is broken", () => {
+    const failures: Scenario[] = [
+      { stderr: STDERR_NO_SESSION_BUS },
+      { stderr: STDERR_NO_PROVIDER },
+      { alias: { code: 0, stdout: ALIAS_NONE, stderr: "" } },
+      { locked: { code: 0, stdout: LOCKED_TRUE, stderr: "" } },
+    ];
+    for (const s of failures) {
+      const line = lineOf(s);
+      expect(line).not.toContain("cannot work");
+      expect(line).not.toContain("cannot open display");
     }
   });
 
