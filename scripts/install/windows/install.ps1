@@ -163,6 +163,14 @@ function Test-NimbusSignature {
   }
 
   if ($primaryFp -and $primaryFp -eq $NimbusSigningFpr) {
+    # GPG emits EXPKEYSIG/REVKEYSIG ALONGSIDE VALIDSIG, not instead of it, so
+    # this must be checked independently of the fingerprint match above --
+    # mirrors scripts/release/nimbus-verify.ps1's own expired/revoked guard
+    # (`$out -match '\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)'`) verbatim.
+    if ($out -match '\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)') {
+      Write-Warning "SHA256SUMS.asc signing key is expired or revoked -- refusing to install."
+      return $false
+    }
     Write-Host "OK: GPG signature verified ($NimbusSigningFpr)."
     return $true
   }

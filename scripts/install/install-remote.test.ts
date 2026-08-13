@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +13,77 @@ const skip = isWindows || !Bun.which("curl");
 // (rather than degrade via the best-effort skip path), so it needs its own,
 // stricter guard on top of `skip`.
 const skipSigCheck = skip || !Bun.which("gpg");
+
+const GEN_KEY_SH = join("scripts", "release", "fixtures", "gen-test-key.sh");
+const BASH_BIN = "/bin/bash";
+function resolveGpgBin(): string {
+  for (const p of ["/usr/bin/gpg", "/opt/homebrew/bin/gpg", "/usr/local/bin/gpg"]) {
+    if (existsSync(p)) return p;
+  }
+  return "gpg";
+}
+const GPG_BIN = resolveGpgBin();
+
+/**
+ * Signs `manifestContent` with a FRESH, throwaway key (never the pinned
+ * Nimbus key) via scripts/release/fixtures/gen-test-key.sh, which mirrors
+ * production key hygiene (certify-only primary + dedicated signing
+ * subkey — the same structure that made the brief's field-3 substring grep
+ * wrong, see the VALIDSIG comment in install.sh). Returns the armored
+ * detached-signature text.
+ *
+ * NOTE on what this does and doesn't exercise: install.sh's verification
+ * keyring only ever imports the ONE pinned key, so gpg can never actually
+ * find this throwaway key's public key to check the signature against —
+ * verified directly (`gpg --status-fd 1 --verify` against a pinned-only
+ * keyring): it emits `ERRSIG`/`NO_PUBKEY`, never `VALIDSIG`. That is a
+ * cryptographically well-formed OpenPGP signature packet gpg fully PARSED
+ * but cannot verify (no public key) — a genuinely different gpg code path
+ * than a garbage-bytes ".asc" (which emits `NODATA`: gpg can't even find an
+ * OpenPGP packet at all). It does NOT reach the primary-fingerprint STRING
+ * COMPARISON specifically — that branch is structurally unreachable from
+ * outside, since VALIDSIG never appears for a signer gpg doesn't hold the
+ * key for. Both this and the garbage-bytes case fall through to the same
+ * "did not verify — refusing to install" abort; this test's job is proving
+ * that fallthrough is reached from a REAL, parseable-but-untrusted signature
+ * too, not only from bytes gpg rejects outright.
+ */
+async function signManifestWithUntrustedKey(
+  work: string,
+  manifestContent: string,
+): Promise<string> {
+  const gnupghome = await mkdtemp(join(tmpdir(), "nimbus-untrusted-key-"));
+  const gen = spawnSync(BASH_BIN, [GEN_KEY_SH, gnupghome], { encoding: "utf8" });
+  if (gen.status !== 0) throw new Error(`gen-test-key.sh failed: ${gen.stderr}`);
+  const fingerprint = gen.stdout.trim();
+  if (!/^[0-9A-F]{40}$/.test(fingerprint)) {
+    throw new Error(`unexpected fingerprint from gen-test-key.sh: "${fingerprint}"`);
+  }
+  const manifestPath = join(work, "SHA256SUMS-untrusted-src");
+  await writeFile(manifestPath, manifestContent);
+  const ascPath = join(work, "SHA256SUMS.untrusted.asc");
+  const sign = spawnSync(
+    GPG_BIN,
+    [
+      "--batch",
+      "--yes",
+      "--pinentry-mode",
+      "loopback",
+      "--homedir",
+      gnupghome,
+      "--detach-sign",
+      "--armor",
+      "--output",
+      ascPath,
+      manifestPath,
+    ],
+    { encoding: "utf8" },
+  );
+  if (sign.status !== 0) {
+    throw new Error(`gpg --detach-sign (untrusted key) failed: ${sign.stderr}`);
+  }
+  return await Bun.file(ascPath).text();
+}
 
 /**
  * Builds a PATH that resolves every external command install.sh's happy
@@ -250,6 +323,53 @@ test.skipIf(skipSigCheck)(
       expect(stderr).toContain("did not verify against the pinned Nimbus key");
       // sha256 passed; only the signature failed — the abort must be reached,
       // not the checksum-mismatch path from the OTHER test in this file.
+      expect(stdout).toContain("sha256 verified");
+      expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  },
+);
+
+test.skipIf(skipSigCheck)(
+  "install.sh aborts and installs nothing when signed by an UNTRUSTED key",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-untrusted-"));
+    const home = join(work, "home");
+    await mkdir(home, { recursive: true });
+    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    const tarballPath = await makeTarball(work, tarballName);
+    const tarball = await Bun.file(tarballPath).arrayBuffer();
+    const digest = new Bun.CryptoHasher("sha256").update(tarball).digest("hex");
+    const sums = `${digest}  ${tarballName}\n`;
+
+    // A cryptographically well-formed OpenPGP signature gpg fully PARSES —
+    // signed by a throwaway key, never the pinned Nimbus key, so gpg (whose
+    // verification keyring only ever holds the ONE pinned key) reports
+    // NO_PUBKEY, not VALIDSIG. Different gpg code path from "bad signature"
+    // below (garbage bytes -> NODATA: gpg can't find OpenPGP data at all);
+    // see signManifestWithUntrustedKey's docstring for exactly what this
+    // does and does not prove.
+    const asc = await signManifestWithUntrustedKey(work, sums);
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith("/SHA256SUMS.asc")) return new Response(asc);
+        if (path.endsWith("/SHA256SUMS")) return new Response(sums);
+        if (path.endsWith(`/${tarballName}`)) return new Response(tarball);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    try {
+      const { stdout, stderr, exitCode } = await runInstallSh({
+        ...process.env,
+        HOME: home,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain("did not verify against the pinned Nimbus key");
       expect(stdout).toContain("sha256 verified");
       expect(await Bun.file(join(home, ".local", "bin", "nimbus")).exists()).toBe(false);
     } finally {

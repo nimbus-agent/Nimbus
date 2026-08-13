@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, join } from "node:path";
 
 const pwsh = Bun.which("pwsh");
 const skip = !pwsh;
@@ -9,20 +11,47 @@ const skip = !pwsh;
 // (rather than degrade via the best-effort skip path), so it needs its own,
 // stricter guard on top of `skip`.
 const skipSigCheck = skip || !Bun.which("gpg");
+// gen-test-key.sh is a bash script; the untrusted-key test additionally
+// needs bash on PATH (Git for Windows bundles it, same as gpg).
+const skipUntrustedKeyTest = skipSigCheck || !Bun.which("bash");
 
 const ASSET_NAME = "nimbus-headless-windows-x64.zip";
 const INSTALL_PS1 = join("scripts", "install", "windows", "install.ps1");
+// MSYS bash mishandles Windows-style backslash paths as arguments (backslash
+// is a shell escape character). `toUnix` (script path) and `toMsys2` (the
+// GNUPGHOME target dir, which bash's `export GNUPGHOME=...` inside
+// gen-test-key.sh must also resolve correctly) mirror
+// scripts/release/nimbus-verify-ps1.test.ts's identical conversions for the
+// identical gen-test-key.sh call verbatim -- an already-proven-working
+// pattern, not a fresh guess.
+const toUnix = (p: string) => p.replaceAll("\\", "/");
+const toMsys2 = (p: string) =>
+  p.replace(/^([A-Za-z]):/, (_, d: string) => `/${d.toLowerCase()}`).replaceAll("\\", "/");
+const REPO_ROOT = new URL("../..", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1");
+const GEN_KEY_SH = toUnix(join(REPO_ROOT, "scripts", "release", "fixtures", "gen-test-key.sh"));
+const BASH_BIN = "bash";
+const GPG_BIN = Bun.which("gpg") ?? "gpg";
 
 /**
  * Builds a full process environment (same shape `runInstallPs1` accepts)
- * with gpg's directory removed from PATH. Unlike the Unix side, this is
- * safe as a plain directory-exclusion: install.ps1's happy path uses only
- * built-in PowerShell cmdlets (Invoke-WebRequest, Expand-Archive,
- * Get-FileHash, ...) for everything except gpg itself -- pwsh is already
- * resolved by the PARENT process's own spawn call, not by this env -- so
- * there is no risk of also removing some OTHER tool that happens to share
- * gpg's directory (the risk that rules out this approach on the Unix side,
- * where gpg/curl/tar/sha256sum commonly all live in /usr/bin together).
+ * with every PATH entry that could resolve "gpg" removed. This file's guard
+ * is only `!pwsh` (no win32-only skip) — ubuntu-latest ships pwsh, so this
+ * ALSO runs on the Linux `pr-quality` gate, where the PATH delimiter is `:`
+ * (never hardcode `;`).
+ *
+ * Deliberately NOT "remove gpg's own directory (dirname) from PATH": on a
+ * merged-/usr Linux distro (Debian/Ubuntu, including ubuntu-latest) `/bin`
+ * is a SYMLINK to `/usr/bin`, so a gpg living in `/usr/bin` is reachable via
+ * BOTH the `/usr/bin` PATH entry AND the separate `/bin` PATH entry —
+ * removing only the directory the resolved path happens to report leaves
+ * the alias intact and gpg still gets found. Reproduced directly (Docker
+ * `oven/bun:1.3`): `readlink -f /bin/gpg` and `readlink -f /usr/bin/gpg`
+ * both resolve to the identical `/usr/bin/gpg`, and with only `/usr/bin`
+ * excluded, `Get-Command gpg` inside pwsh still found `/bin/gpg`.
+ * Instead: for EVERY PATH segment, check whether a `gpg`/`gpg.exe` file
+ * exists there, and if its REALPATH (symlinks resolved) matches the
+ * REALPATH of the gpg this process itself resolved — exclude that segment.
+ * This closes every alias, not just the one `dirname` happens to report.
  */
 function envWithoutGpg(
   extra: Record<string, string | undefined>,
@@ -30,13 +59,32 @@ function envWithoutGpg(
   const gpgPath = Bun.which("gpg");
   const env: Record<string, string | undefined> = { ...process.env, ...extra };
   if (!gpgPath) return env;
-  const gpgDir = dirname(gpgPath).toLowerCase();
+  let gpgReal: string;
+  try {
+    gpgReal = realpathSync(gpgPath);
+  } catch {
+    gpgReal = gpgPath;
+  }
+  const candidateNames = process.platform === "win32" ? ["gpg.exe", "gpg"] : ["gpg"];
+  const resolvesToGpg = (segment: string): boolean => {
+    if (!segment) return false;
+    for (const name of candidateNames) {
+      const candidate = join(segment, name);
+      if (!existsSync(candidate)) continue;
+      try {
+        if (realpathSync(candidate) === gpgReal) return true;
+      } catch {
+        // Unreadable/broken entry — not a match, keep scanning.
+      }
+    }
+    return false;
+  };
   // Windows env var names are case-insensitive; process.env may key this as
   // "Path" rather than "PATH" -- find whichever key is actually present so
   // we rewrite it in place instead of leaving two ambiguous PATH-ish keys.
   const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
-  const filtered = (env[pathKey] ?? "").split(";").filter((seg) => seg.toLowerCase() !== gpgDir);
-  env[pathKey] = filtered.join(";");
+  const filtered = (env[pathKey] ?? "").split(delimiter).filter((seg) => !resolvesToGpg(seg));
+  env[pathKey] = filtered.join(delimiter);
   return env;
 }
 
@@ -51,12 +99,76 @@ function envWithoutGpg(
 async function createZip(payloadDir: string, destZip: string): Promise<void> {
   const wildcard = join(payloadDir, "*");
   const script = `Compress-Archive -Path '${wildcard}' -DestinationPath '${destZip}' -Force`;
-  const proc = Bun.spawn(["pwsh", "-NoProfile", "-Command", script], {
+  const proc = Bun.spawn([pwsh ?? "pwsh", "-NoProfile", "-Command", script], {
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
   if (exitCode !== 0) throw new Error(`Compress-Archive failed (exit ${exitCode}): ${stderr}`);
+}
+
+/**
+ * Signs `manifestContent` with a FRESH, throwaway key (never the pinned
+ * Nimbus key) via scripts/release/fixtures/gen-test-key.sh. Returns the
+ * armored detached-signature text.
+ *
+ * NOTE on what this does and doesn't exercise (mirrors install-remote.test.ts's
+ * Unix twin): install.ps1's verification GNUPGHOME only ever imports the ONE
+ * pinned key, so gpg can never find this throwaway key's public key to
+ * check the signature against — it emits ERRSIG/NO_PUBKEY, never VALIDSIG.
+ * That is a cryptographically well-formed OpenPGP packet gpg fully PARSED
+ * but cannot verify, a different gpg code path than a garbage-bytes ".asc"
+ * (NODATA: gpg can't find OpenPGP data at all). It does NOT reach the
+ * primary-fingerprint comparison specifically — that branch is structurally
+ * unreachable from outside, since VALIDSIG never appears for a signer gpg
+ * doesn't hold the key for. Both fall through to the same "did not verify"
+ * abort; this proves that fallthrough is reached from a real, parseable-but-
+ * untrusted signature too, not only from bytes gpg rejects outright.
+ */
+async function signManifestWithUntrustedKey(
+  work: string,
+  manifestContent: string,
+): Promise<string> {
+  const gnupghome = await mkdtemp(join(tmpdir(), "nimbus-ps1-untrusted-key-"));
+  // gen-test-key.sh runs under bash (MSYS on Windows). GPG_BIN below is the
+  // native gpg.exe, which is ALSO MSYS2-linked on Git for Windows and reads
+  // GNUPGHOME through its own POSIX path translation -- a Windows-style
+  // `--homedir C:\...` argument gets misinterpreted as relative and
+  // concatenated onto gpg's msys-style CWD (reproduced directly: gpg then
+  // reported a keyblock resource path like
+  // "/c/.../repo/C:\Users\...\nimbus-ps1-untrusted-key-XXXX/pubring.kbx").
+  // Passing GNUPGHOME as an msys2-style env var (never a `--homedir` CLI
+  // flag) instead is the exact pattern
+  // scripts/release/nimbus-verify-ps1.test.ts already uses successfully for
+  // this identical gen-test-key.sh + gpg --detach-sign combination.
+  const gen = spawnSync(BASH_BIN, [GEN_KEY_SH, toMsys2(gnupghome)], { encoding: "utf8" });
+  if (gen.status !== 0) throw new Error(`gen-test-key.sh failed: ${gen.stderr}`);
+  const fingerprint = gen.stdout.trim();
+  if (!/^[0-9A-F]{40}$/.test(fingerprint)) {
+    throw new Error(`unexpected fingerprint from gen-test-key.sh: "${fingerprint}"`);
+  }
+  const manifestPath = join(work, "SHA256SUMS-untrusted-src");
+  await writeFile(manifestPath, manifestContent);
+  const ascPath = join(work, "SHA256SUMS.untrusted.asc");
+  const sign = spawnSync(
+    GPG_BIN,
+    [
+      "--batch",
+      "--yes",
+      "--pinentry-mode",
+      "loopback",
+      "--detach-sign",
+      "--armor",
+      "--output",
+      toUnix(ascPath),
+      toUnix(manifestPath),
+    ],
+    { encoding: "utf8", env: { ...process.env, GNUPGHOME: toMsys2(gnupghome) } },
+  );
+  if (sign.status !== 0) {
+    throw new Error(`gpg --detach-sign (untrusted key) failed: ${sign.stderr}`);
+  }
+  return await Bun.file(ascPath).text();
 }
 
 /** Serves a fixed set of bytes for the asset and a fixed SHA256SUMS body. */
@@ -80,9 +192,18 @@ function serveFakeRelease(zipBytes: Uint8Array, sums: string) {
  * waiting on a response from `Bun.serve` — which is a self-deadlock. This is
  * the exact trap `install-remote.test.ts` documents (and hit) for
  * `install.sh`'s equivalent `curl` call; it applies identically here.
+ *
+ * Uses the pwsh path RESOLVED AT MODULE LOAD (`pwsh` from `Bun.which`), never
+ * the bare string "pwsh": `env` here is a fully custom environment (built by
+ * `envWithoutGpg` for the gpg-absent test), and `Bun.spawn` resolves argv[0]
+ * against the CHILD's PATH, not the parent's — confirmed by the Unix twin's
+ * `pathWithoutGpg`, which has to symlink `sh` itself into its shim dir for
+ * exactly this reason. Once gpg's directory is correctly excluded (the C1
+ * fix above), that can be /usr/bin on Linux, which is also where `pwsh`
+ * lives on Ubuntu — an unresolved "pwsh" would then fail to spawn at all.
  */
 async function runInstallPs1(args: string[], env: Record<string, string | undefined>) {
-  const proc = Bun.spawn(["pwsh", "-NoProfile", "-File", INSTALL_PS1, ...args], {
+  const proc = Bun.spawn([pwsh ?? "pwsh", "-NoProfile", "-File", INSTALL_PS1, ...args], {
     env,
     stdout: "pipe",
     stderr: "pipe",
@@ -115,7 +236,7 @@ async function cleanupUserPathContaining(fragment: string): Promise<void> {
       if ($clean -ne $p) { [Environment]::SetEnvironmentVariable('PATH', $clean, 'User') }
     }
   `;
-  const proc = Bun.spawn(["pwsh", "-NoProfile", "-Command", script], {
+  const proc = Bun.spawn([pwsh ?? "pwsh", "-NoProfile", "-Command", script], {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -324,6 +445,53 @@ test.skipIf(skipSigCheck)(
       expect(combined).toContain("did not verify against the pinned Nimbus key");
       // sha256 passed; only the signature failed — the abort must be reached,
       // not the checksum-mismatch path from another test in this file.
+      expect(stdout).toContain("sha256 verified");
+      const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
+      expect(await Bun.file(installed).exists()).toBe(false);
+    } finally {
+      server.stop(true);
+      await cleanupUserPathContaining(localAppData);
+    }
+  },
+);
+
+test.skipIf(skipUntrustedKeyTest)(
+  "install.ps1 aborts and installs nothing when signed by an UNTRUSTED key",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-untrusted-"));
+    const localAppData = await mkdtemp(join(work, "lad-"));
+
+    const payload = await makePayload("genuine-cli\n");
+    const zipPath = join(work, ASSET_NAME);
+    await createZip(payload, zipPath);
+    const zipBytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex");
+    const sums = `${digest}  ${ASSET_NAME}\n`;
+
+    // See signManifestWithUntrustedKey's docstring for exactly what this
+    // does and does not prove (mirrors the Unix twin's identical test).
+    const asc = await signManifestWithUntrustedKey(work, sums);
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith("/SHA256SUMS.asc")) return new Response(asc);
+        if (path.endsWith("/SHA256SUMS")) return new Response(sums);
+        if (path.endsWith(`/${ASSET_NAME}`)) return new Response(zipBytes);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    try {
+      const { stdout, stderr, exitCode } = await runInstallPs1(["-FromRelease", "2.2.0", "-Yes"], {
+        ...process.env,
+        LOCALAPPDATA: localAppData,
+        NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+      });
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain("signature verification failed");
+      const combined = stdout + stderr;
+      expect(combined).toContain("did not verify against the pinned Nimbus key");
       expect(stdout).toContain("sha256 verified");
       const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
       expect(await Bun.file(installed).exists()).toBe(false);

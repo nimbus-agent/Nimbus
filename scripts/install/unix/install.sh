@@ -144,7 +144,16 @@ verify_signature() {
   sig_home="${dir}/gnupg-sig"
   mkdir -p "$sig_home"
   chmod 700 "$sig_home" 2>/dev/null || true
-  printf '%s\n' "$NIMBUS_SIGNING_KEY" | gpg --homedir "$sig_home" --quiet --import 2>/dev/null
+  # `|| true`: this pipeline sits in a NON-tested position under `set -eu` —
+  # `cmd1 | cmd2` with cmd2 failing (a locked-down homedir, a gpg-agent
+  # socket issue, a build that chokes on the block) would otherwise abort
+  # the WHOLE script here, silently (stderr is /dev/null'd), right after the
+  # user saw "sha256 verified" — the worst failure mode for a curl|sh
+  # installer. Confirmed: `sh -c 'set -eu; printf "x\n" | false 2>/dev/null;
+  # echo SURVIVED'` exits 1 and prints nothing. A failed import here just
+  # means the VALIDSIG check below finds nothing and falls through to the
+  # normal, MESSAGED "did not verify" abort.
+  printf '%s\n' "$NIMBUS_SIGNING_KEY" | gpg --homedir "$sig_home" --quiet --import 2>/dev/null || true
 
   # VALIDSIG line layout (GPG 1.4+):
   #   [GNUPG:] VALIDSIG <signing-fp> <date> <ts> <expire> <ver> <reserved>
@@ -160,6 +169,15 @@ verify_signature() {
   primary_fp="$(printf '%s\n' "$verify_out" | awk '/^\[GNUPG:\] VALIDSIG/ {print $NF; exit}')"
 
   if [ -n "$primary_fp" ] && [ "$primary_fp" = "$NIMBUS_SIGNING_FPR" ]; then
+    # GPG emits EXPKEYSIG/REVKEYSIG ALONGSIDE VALIDSIG, not instead of it, so
+    # this must be checked independently of the fingerprint match above —
+    # mirrors scripts/release/nimbus-verify.sh's own expired/revoked guard
+    # (grep -qE '^\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)') verbatim.
+    if printf '%s\n' "$verify_out" | grep -qE '^\[GNUPG:\] (EXPKEYSIG|REVKEYSIG)'; then
+      echo "Error: SHA256SUMS.asc signing key is expired or revoked — refusing to install." >&2
+      rm -rf "$dir"
+      exit 1
+    fi
     echo "✓ GPG signature verified (${NIMBUS_SIGNING_FPR})."
     return 0
   fi
