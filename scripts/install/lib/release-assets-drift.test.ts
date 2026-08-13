@@ -4,6 +4,7 @@ import { assetNameFor, SUPPORTED_TARGETS } from "./release-assets.ts";
 const WORKFLOW = "./.github/workflows/release.yml";
 const LINUX_PACKAGER = "./scripts/package-linux-installers.ts";
 const INSTALL_SH = "./scripts/install/unix/install.sh";
+const INSTALL_PS1 = "./scripts/install/windows/install.ps1";
 
 // The macOS/Windows archive names are literal strings in release.yml. The
 // Linux tarball name, though, is never spelled out there — it's built in
@@ -44,9 +45,39 @@ test("SHA256SUMS is staged, since verification is mandatory", async () => {
 test("install.sh's remote-mode asset names match the release-assets SSoT", async () => {
   const installSh = await Bun.file(INSTALL_SH).text();
   for (const target of SUPPORTED_TARGETS) {
-    if (target.os === "win32") continue; // install.sh is the macOS/Linux installer only
+    // install.sh is the macOS/Linux installer only — win32 is install.ps1's
+    // job, covered by the test immediately below. Skipping win32 here used
+    // to leave it with NO drift guard at all (a stale comment claimed the
+    // opposite); that gap is exactly the failure class #1167 was, on the
+    // one platform where it had never been fixed.
+    if (target.os === "win32") continue;
     const name = assetNameFor(target, "0.0.0").replace("-v0.0.0", "");
     const stem = name.replace(/\.tar\.gz$|\.zip$/, "");
     expect(installSh).toContain(stem);
   }
+});
+
+// The Windows counterpart of the guard above: install.ps1 also re-hardcodes
+// its asset name (it too is a standalone, single-file script, fetched and
+// run on its own). Only win32 applies here — install.ps1 is the Windows
+// installer only.
+test("install.ps1's remote-mode asset name matches the release-assets SSoT", async () => {
+  const installPs1 = await Bun.file(INSTALL_PS1).text();
+  for (const target of SUPPORTED_TARGETS) {
+    if (target.os !== "win32") continue;
+    const name = assetNameFor(target, "0.0.0").replace("-v0.0.0", "");
+    const stem = name.replace(/\.tar\.gz$|\.zip$/, "");
+    expect(installPs1).toContain(stem);
+  }
+});
+
+// `/releases/latest/download/` resolves an exact filename and silently
+// ignores a pinned version — forbidden by both installers' own remote-mode
+// contract (a pinned -FromRelease/--from-release must not be ignored). Cheap
+// guard against either script regressing onto it.
+test("neither installer uses the forbidden /releases/latest/download/ URL form", async () => {
+  const installSh = await Bun.file(INSTALL_SH).text();
+  const installPs1 = await Bun.file(INSTALL_PS1).text();
+  expect(installSh).not.toContain("/releases/latest/download/");
+  expect(installPs1).not.toContain("/releases/latest/download/");
 });

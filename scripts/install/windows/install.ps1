@@ -52,6 +52,16 @@ $Asset = "nimbus-headless-windows-x64.zip"
 # Signature verification is added in a later task. For now these are working
 # stubs: they print the skip notice and always succeed, so remote installs are
 # not blocked on a check that does not exist yet.
+#
+# WARNING for Task 5: the call site below does `if (-not (Test-NimbusSignature ...))`.
+# PowerShell functions implicitly return every unsuppressed pipeline output as
+# a single (possibly multi-element) array, and `-not` on a non-empty array is
+# ALWAYS $false regardless of its contents -- so a single stray unsuppressed
+# write inside this function (a bare expression, `Write-Output`, an
+# un-`| Out-Null`'d cmdlet call, etc.) silently turns a real `$false` into a
+# truthy array and the "if signature invalid, refuse to install" gate goes
+# fail-OPEN. Keep every intermediate step suppressed (`| Out-Null`, or
+# `[void]`) and end the function with exactly one bare `return $true`/`return $false`.
 function Write-SignatureSkipNotice {
   Write-Warning "SIGNATURE NOT CHECKED -- publisher verification is not implemented yet."
 }
@@ -95,10 +105,19 @@ function Resolve-LatestTag {
 }
 
 # Downloads, sha256-verifies, and extracts a release build. Returns the
-# extracted directory. Throws on any failure -- the caller's try/finally is
-# responsible for removing the parent temp tree this creates.
+# extracted directory. Throws on any failure.
+#
+# $WorkDir is created by the CALLER (via its own New-Item), before this
+# function is invoked -- never inside here. That is deliberate: this
+# function can throw at several points (a failed download, a checksum
+# mismatch, a future failed signature check), and if the temp dir were only
+# assigned to the caller's cleanup variable on a SUCCESSFUL return, every one
+# of those throw paths would leak it (the caller's `finally` would find its
+# tracking variable still $null and remove nothing). Assigning it in the
+# caller immediately after creation means the `finally` always knows what to
+# remove, regardless of where inside this function things go wrong.
 function Get-NimbusRelease {
-  param([string]$Version)
+  param([string]$Version, [string]$WorkDir)
 
   Assert-NimbusCommand -Name "Invoke-WebRequest"
   Assert-NimbusCommand -Name "Expand-Archive"
@@ -119,10 +138,8 @@ function Get-NimbusRelease {
   $base = if ($env:NIMBUS_INSTALL_BASE_URL) { $env:NIMBUS_INSTALL_BASE_URL }
           else { "https://github.com/$Repo/releases/download/$tag" }
 
-  $work = Join-Path ([System.IO.Path]::GetTempPath()) ("nimbus-" + [Guid]::NewGuid())
-  New-Item -ItemType Directory -Path $work -Force | Out-Null
-  $zip = Join-Path $work $Asset
-  $sumsPath = Join-Path $work "SHA256SUMS"
+  $zip = Join-Path $WorkDir $Asset
+  $sumsPath = Join-Path $WorkDir "SHA256SUMS"
 
   Write-Host "Downloading $Asset ($tag)..."
   Invoke-WebRequest -Uri "$base/$Asset"     -OutFile $zip      -UseBasicParsing
@@ -130,27 +147,38 @@ function Get-NimbusRelease {
 
   $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 
-  # Exact field match, never a regex/substring match -- the asset name
-  # contains literal dots that a pattern match would treat as "any
-  # character", letting an unrelated line satisfy the match. The real
-  # SHA256SUMS format is "<64-hex-hash><two spaces><filename>", no "*" marker.
-  $expected = $null
-  foreach ($line in Get-Content -Path $sumsPath) {
-    $fields = $line -split '\s+', 2
-    if ($fields.Length -eq 2 -and $fields[1] -eq $Asset) {
-      $expected = $fields[0].ToLowerInvariant()
-      break
-    }
+  # Exact, CASE-SENSITIVE field match on BOTH the hash and the filename --
+  # never a regex/substring match, and never PowerShell's default `-eq`
+  # (which is case-INSENSITIVE for strings: "ABC.ZIP" -eq "abc.zip" is
+  # $true). A checksum manifest with a case-varied duplicate entry is never
+  # legitimate, so more than one matching line is a REJECTION, not a
+  # first-match-wins race -- an attacker who controls a mirror/proxy could
+  # otherwise prepend a shadow line (e.g. an uppercase-named entry hashing a
+  # tampered archive) ahead of the genuine line and have the tampered build
+  # "verify". The real SHA256SUMS format is
+  # "<64-hex-hash><two spaces><filename>", no "*" marker.
+  # Named $checksumMatches, deliberately NOT $matches: PowerShell variable
+  # names are case-insensitive, and $Matches is the automatic variable that
+  # -match/-notmatch populate as a side effect -- reusing that name here
+  # would have the -notmatch check below silently clobber our own result
+  # before it's read on the next line.
+  $checksumMatches = @(Get-Content -Path $sumsPath | ForEach-Object {
+    $fields = $_ -split '\s+', 2
+    if ($fields.Length -eq 2 -and $fields[1] -ceq $Asset) { $fields[0].ToLowerInvariant() }
+  })
+  if ($checksumMatches.Length -ne 1 -or $checksumMatches[0] -notmatch '^[0-9a-f]{64}$') {
+    throw "sha256 checksum mismatch for $Asset - refusing to install."
   }
-  if (-not $expected -or $expected -ne $actual) {
-    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+  if ($checksumMatches[0] -ne $actual) {
     throw "sha256 checksum mismatch for $Asset - refusing to install."
   }
   Write-Host "OK: sha256 verified."
 
-  Test-NimbusSignature -Dir $work -Base $base | Out-Null
+  if (-not (Test-NimbusSignature -Dir $WorkDir -Base $base)) {
+    throw "signature verification failed - refusing to install."
+  }
 
-  $dest = Join-Path $work "extracted"
+  $dest = Join-Path $WorkDir "extracted"
   Expand-Archive -Path $zip -DestinationPath $dest -Force
   return $dest
 }
@@ -172,7 +200,16 @@ if ($ScriptDir) {
   $HaveLocal = (Test-Path $NimbusSrc) -and (Test-Path $GatewaySrc)
 }
 
-$NeedFetch = (-not $HaveLocal) -and (-not $Local)
+if ($Local -and $FromRelease) {
+  throw "-Local and -FromRelease are mutually exclusive."
+}
+
+# An explicit -FromRelease always forces remote mode, even when binaries are
+# staged beside the script -- release.yml ships install.ps1 INSIDE
+# nimbus-headless-windows-x64.zip alongside the binaries it unpacks with, so
+# without this a user who extracts 2.2.0 and runs
+# `.\install.ps1 -FromRelease 2.3.0` would silently install 2.2.0 instead.
+$NeedFetch = $FromRelease -or ((-not $HaveLocal) -and (-not $Local))
 
 # -DryRun must "print planned actions and exit" -- touching nothing,
 # including the network. Handle the remote-fetch case here, before
@@ -193,18 +230,27 @@ if ($DryRun -and $NeedFetch) {
   exit 0
 }
 
-# $work is the top-level temp tree Get-NimbusRelease creates via its own
-# New-Item call. It is the ONLY thing this finally block removes -- never a
-# path or environment variable inherited from the caller. (install.sh's
-# cleanup trap had exactly this class of bug: an earlier version also
-# removed $GNUPGHOME, an INHERITED env var the script never sets, which
-# destroyed real user GPG keyrings whenever one was exported. Fixed there by
-# deleting that arm entirely; never reintroduced here.)
+# $work is the top-level temp tree this script creates via its own New-Item
+# call -- assigned HERE, immediately after creation, and BEFORE
+# Get-NimbusRelease (which can throw at several points: a failed download, a
+# checksum mismatch, a failed signature check) is ever invoked. That
+# ordering matters: if $work were instead only assigned from
+# Get-NimbusRelease's return value (i.e. after it succeeds), any throw
+# inside that function would leave $work still $null here and the `finally`
+# below would remove nothing, leaking the directory on every failure path
+# but the happy one. It is the ONLY thing this finally block removes --
+# never a path or environment variable inherited from the caller.
+# (install.sh's cleanup trap had exactly this class of bug in a different
+# form: an earlier version also removed $GNUPGHOME, an INHERITED env var the
+# script never sets, which destroyed real user GPG keyrings whenever one was
+# exported. Fixed there by deleting that arm entirely; never reintroduced
+# here.)
 $work = $null
 try {
   if ($NeedFetch) {
-    $dest = Get-NimbusRelease -Version $FromRelease
-    $work = Split-Path -Parent $dest
+    $work = Join-Path ([System.IO.Path]::GetTempPath()) ("nimbus-" + [Guid]::NewGuid())
+    New-Item -ItemType Directory -Path $work -Force | Out-Null
+    $dest = Get-NimbusRelease -Version $FromRelease -WorkDir $work
     $BinaryRoot = $dest
     $NimbusSrc  = Join-Path $BinaryRoot "nimbus.exe"
     $GatewaySrc = Join-Path $BinaryRoot "nimbus-gateway.exe"
