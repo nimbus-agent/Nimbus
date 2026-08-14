@@ -242,10 +242,14 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.filter.outputs.cross-platform-matrix) }}
     runs-on: ${{ matrix.os }}
-    # Backstop only — each test attempt has its own 10-min wall-clock cap (see the
+    # Backstop only — each test attempt has its own 15-min wall-clock cap (see the
     # unit-tests step), so a hang fails fast via retry rather than burning this
-    # ceiling. Sized for setup + retried typecheck + 2 capped test attempts.
-    timeout-minutes: 25
+    # ceiling. Sized for setup + retried typecheck + 2 capped test attempts:
+    # 2 × 15 min of tests alone is 30 min, so this MUST stay above that or a
+    # double-timeout is cancelled at the job ceiling ("The operation was canceled")
+    # instead of surfacing the wrapper's exit 124 — the very failure mode the
+    # per-attempt cap exists to prevent. Raise both together or neither.
+    timeout-minutes: 40
     permissions:
       contents: read
 
@@ -327,20 +331,32 @@ jobs:
         # true hang; assertion failures fail in <1 s regardless of `--timeout`,
         # so this does not mask logic bugs.
         #
-        # Each attempt is additionally wrapped in a 10-minute wall-clock timeout
+        # Each attempt is additionally wrapped in a 15-minute wall-clock timeout
         # (`scripts/run-with-timeout.ts` — portable because GNU `timeout` is not on
         # the macOS runner). `--timeout 60000` is PER-TEST and does not fire on a
         # hung-at-exit `bun test` (a lingering timer keeps the process alive after
         # all tests finish); without a whole-run cap such a hang spins until the
         # job's `timeout-minutes` ceiling and surfaces as "The operation was
-        # canceled.". The wrapper kills the hang at 10 min (exit 124) so retry-once
-        # actually runs — recovering a transient hang in minutes instead of burning
-        # the full ceiling. 10 min is far above a healthy Windows run (~2-3 min), so
-        # it never false-kills a merely-slow run.
+        # canceled.". The wrapper kills the hang (exit 124) so retry-once actually
+        # runs — recovering a transient hang in minutes instead of burning the full
+        # ceiling.
+        #
+        # The cap is 900 s, NOT the 600 s it was through 2026-08-14. The old value
+        # was justified by "far above a healthy Windows run (~2-3 min)", and that
+        # premise silently expired: the gateway leg on windows-2025 drifted to
+        # 340 s → 404 s → 516 s → 557 s over a single day, and the run that broke it
+        # was killed mid-suite at 600 s (exit 124 on BOTH attempts, zero test
+        # failures). The runner is also highly variable — 11,166 tests / 796 files
+        # took 404 s and then 516 s on consecutive runs, a 28 % swing on identical
+        # work — so a cap sized to the observed mean will keep false-killing green
+        # suites. 900 s sits far enough above the worst observed healthy run (557 s)
+        # to absorb that variance while still bounding a true hang well under the
+        # job ceiling. Re-check this number if a healthy run ever exceeds ~700 s;
+        # the durable fix is making the suite faster, not raising the cap again.
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 600 bun test "packages/${{ matrix.pkg }}/src" --timeout 60000
+            bun scripts/run-with-timeout.ts 900 bun test "packages/${{ matrix.pkg }}/src" --timeout 60000
             code=$?
             if [ "$code" -eq 0 ]; then
               exit 0
