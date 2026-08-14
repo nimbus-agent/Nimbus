@@ -228,6 +228,12 @@ describe("nimbus negotiate (e2e, in-process)", () => {
       for (const term of UNAVAILABLE_EVIDENCE) {
         expect(params.brief).toContain(term);
       }
+
+      // This fixture seeds NO PagerDuty data at all — no incidents, no `sync_state` row — so
+      // it exercises the first of the honesty contract's four zeros (spec § 5.8): "no
+      // PagerDuty connector at all". The lane must not render a bare `0 resolved, 0 assigned`
+      // as if it were a real measurement; it must carry a named `missing_connector` gap note.
+      expect(params.brief).toContain("No sync_state row for service `pagerduty`");
     },
   );
 });

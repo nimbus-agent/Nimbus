@@ -1469,3 +1469,70 @@ test("an incident assigned to someone other than the subject is not unattributab
   expect(brief.incidents?.unattributable).toBe(0);
   db.close();
 });
+
+// THE FOUR-ZERO HONESTY CONTRACT (spec § 5.8). An index with no PagerDuty data must never
+// render the same bare "0 resolved, 0 assigned" as a real measurement — each of the four
+// distinct causes gets its own disclosure, or (for the fourth) none at all because it is a
+// genuine count.
+
+test("no PagerDuty connector at all raises a missing_connector gap naming pagerduty", async () => {
+  const db = freshDb();
+  seedMe(db);
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  const gap = brief.gaps.find(
+    (g) => g.category === "missing_connector" && g.detail.includes("pagerduty"),
+  );
+  expect(gap).toBeDefined();
+  expect(brief.gaps.some((g) => g.category === "missing_relation_emit")).toBe(false);
+  db.close();
+});
+
+test("connector present but no incident edges raises missing_relation_emit, not missing_connector", async () => {
+  const db = freshDb();
+  seedMe(db);
+  db.run("INSERT INTO sync_state (connector_id) VALUES ('pagerduty')");
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(
+    brief.gaps.some((g) => g.category === "missing_connector" && g.detail.includes("pagerduty")),
+  ).toBe(false);
+  const gap = brief.gaps.find((g) => g.category === "missing_relation_emit");
+  expect(gap).toBeDefined();
+  expect(gap?.detail).toContain("resolves");
+  expect(gap?.detail).toContain("incident");
+  db.close();
+});
+
+test("incidents measured but attributed to nobody is a real count, not a gap", async () => {
+  const db = freshDb();
+  seedMe(db);
+  db.run("INSERT INTO sync_state (connector_id) VALUES ('pagerduty')");
+  // A `resolves` edge must exist elsewhere in the index so `detectMissingRelationToEntityType`
+  // self-suppresses — this test is specifically about the `unattributable` MEASUREMENT, not
+  // about the "no edges emitted yet" gap covered by the previous test.
+  seedIncident(db, "PD-1", { assignees: ["jane@example.com"], resolvedBy: "jane@example.com" });
+  seedIncident(db, "PD-2", {});
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.incidents?.unattributable).toBeGreaterThan(0);
+  expect(brief.gaps.some((g) => g.category === "missing_connector")).toBe(false);
+  expect(brief.gaps.some((g) => g.category === "missing_relation_emit")).toBe(false);
+  db.close();
+});
+
+test("healthy incident attribution raises neither gap note", async () => {
+  const db = freshDb();
+  seedMe(db);
+  db.run("INSERT INTO sync_state (connector_id) VALUES ('pagerduty')");
+  seedIncident(db, "PD-1", { assignees: ["jane@example.com"], resolvedBy: "jane@example.com" });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.gaps.some((g) => g.category === "missing_connector")).toBe(false);
+  expect(brief.gaps.some((g) => g.category === "missing_relation_emit")).toBe(false);
+  db.close();
+});

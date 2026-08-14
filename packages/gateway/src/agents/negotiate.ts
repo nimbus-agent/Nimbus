@@ -5,7 +5,11 @@ import { AgentCoordinator, type SubTask, type SubTaskResult } from "../engine/co
 import { normalizeEmail } from "../people/person-store.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
-import { detectEmptyIndex } from "./_lib/gap-notes.ts";
+import {
+  detectEmptyIndex,
+  detectMissingConnector,
+  detectMissingRelationToEntityType,
+} from "./_lib/gap-notes.ts";
 import type {
   NegotiateAuthoredPrs,
   NegotiateBrief,
@@ -879,6 +883,24 @@ export async function runNegotiate(
   // is "not attempted", the same "could not be computed" meaning as a lane that threw.
   if (subject.personId !== null) {
     const personId = subject.personId;
+    // The incidents lane's four-zero honesty contract (spec § 5.8): a structural zero
+    // caused by "no PagerDuty connector" or "connector present, no incident edges yet"
+    // must never render identically to a real `unattributable` measurement. Gated the
+    // same as the lane itself — an unresolved subject already carries its own
+    // `missing_user_identity` gap and must not also emit connector noise. Ordered more
+    // fundamental cause first: no connector before no edges, since a missing connector
+    // implies missing edges too and naming both would be redundant.
+    const missingPagerdutyConnector = detectMissingConnector(ctx.db, "pagerduty");
+    if (missingPagerdutyConnector !== null) {
+      gaps.push(missingPagerdutyConnector);
+    } else {
+      const missingIncidentEdges = detectMissingRelationToEntityType(
+        ctx.db,
+        "resolves",
+        "incident",
+      );
+      if (missingIncidentEdges !== null) gaps.push(missingIncidentEdges);
+    }
     laneNames.push(
       "authoredPrs",
       "reviewedPrs",
