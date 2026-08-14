@@ -8,6 +8,35 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-14 — PagerDuty incidents are now attributed to people (no schema change).**
+  Two new graph edges: `person --assigned--> incident` (from `assignments[].assignee`)
+  and `person --resolves--> incident` (from the actor who moved a resolved incident to
+  `resolved`, `last_status_change_by`). Both are read by `nimbus catchup`, `nimbus expert`
+  (a wired `subIncidentResolved` lane, mirroring `subPrReviewed`'s join-then-gap-note
+  shape) and the new `nimbus negotiate` incidents lane (independent `resolved` /
+  `assigned` / `unattributable` counts, never summed). Actor identity is harvested from
+  the existing `include[]=assignees,acknowledgers,users`-expanded incidents-list call
+  first, falling back to a capped, sequential `/users/{id}` lookup
+  (`MAX_USER_LOOKUPS_PER_SYNC = 25`) only for ids the page left unexpanded. **Scope
+  change: assignee attribution needs no new PagerDuty token scope — it rides the
+  existing incidents-list call — but resolver attribution's `/users/{id}` fallback
+  needs a token with user-read access; a token scoped before this feature existed gets
+  a 403 there, which degrades to an unattributed incident (logged, counted) rather than
+  failing the sync.** A service-type actor (auto-ack/auto-resolve) attributes to
+  nobody and is never counted as a loss. Recovery for incidents indexed before this
+  shipped: they carry `metadata.meta_v` below `PAGERDUTY_INCIDENT_META_VERSION = 1`,
+  which makes them eligible for `nimbus index rebody --service pagerduty` to re-fetch
+  and backfill attribution; the connector's own re-walk depth is bounded by its
+  `initialSyncDepthDays = 30` unless `--since` is supplied, which `rebody` now passes
+  through and the connector honours on a cold start via `SyncContext.historyFloorMs`.
+  This command was not executed as part of this delivery — no live PagerDuty
+  credentials were available in this environment — so no real recovery-window number
+  is claimed; the above is the structural behavior, verified by reading the connector
+  and `index-rebody-rpc.ts` source, not by running the command. **Open pre-merge
+  requirement:** two payload-shape assumptions — whether `include[]` expands
+  `last_status_change_by`, and the exact assignee-reference shape — are unverified
+  against a real PagerDuty API response and remain so; a human with credentials must
+  capture a real payload and add it as a fixture before this ships.
 - **2026-08-13 — `install.sh` / `install.ps1` can now install from a published release
   (#1167, partial).** Both installers gain a remote mode: `--from-release [<ver>]` /
   `-FromRelease <ver>` downloads the versioned asset from

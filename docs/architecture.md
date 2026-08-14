@@ -1091,6 +1091,19 @@ Logical relation kinds map to concrete `graph_relation.type` edges:
 The feature is gated by `[automation].graph_conditions = true` in `nimbus.toml`
 (default enabled for v0.1.0).
 
+**Person → incident attribution (S1, 2026-08-14).** `graph/graph-populator.ts`'s
+`syncIncidentPersonEdges` emits two further `graph_relation.type` edges from a
+PagerDuty incident's indexed `metadata.assignee_emails[]` / `metadata.resolved_by_email`:
+`person --assigned--> incident` (one edge per resolvable assignee) and
+`person --resolves--> incident` (the actor who moved the incident to `resolved`).
+`resolves` is a `CROSS_ITEM_RELATION_TYPES` member and is retired on the incident's
+own incoming side (`clearIncomingRelationsOfType`) so a re-sync or re-open never
+leaves a stale edge; a service-type actor (auto-ack/auto-resolve) attributes to
+nobody without counting as a loss. Read by `nimbus catchup`, `nimbus expert`'s
+`subIncidentResolved` lane, and `nimbus negotiate`'s incidents lane. **Not** wired
+into the `owned_by` / `upstream_of` / `downstream_of` watcher `graph_predicate_json`
+kinds above — a watcher cannot filter on either edge yet.
+
 ---
 
 ## Built-in Agents Pattern
