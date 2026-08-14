@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assetNameFor, SUPPORTED_TARGETS } from "./release-assets.ts";
+import { assetNameFor, type InstallTarget, SUPPORTED_TARGETS } from "./release-assets.ts";
 
 const WORKFLOW = join(".github", "workflows", "release.yml");
 const LINUX_PACKAGER = join("scripts", "package-linux-installers.ts");
@@ -74,6 +76,78 @@ test("install.ps1's remote-mode asset name matches the release-assets SSoT", asy
     expect(installPs1).toContain(stem);
   }
 });
+
+/**
+ * The `toContain` guards above prove each stem is PRESENT in install.sh. They
+ * cannot prove install.sh actually RESOLVES to that name on a given platform —
+ * a stem can sit in a dead branch, or be paired with the wrong `uname` arm.
+ *
+ * This runs install.sh for real, in `--dry-run` mode (which "prints planned
+ * actions and exits", touching neither disk nor network), with `uname` stubbed
+ * to each supported platform, and compares the name it would request against
+ * the SSoT by EXACT equality.
+ *
+ * The point is that it does this for macOS from a Linux runner. install.sh's
+ * macOS naming previously had no executable cover at PR time at all: the
+ * PR-time cross-platform job runs gateway/CLI unit tests only, so a macOS-only
+ * naming break could only ever be caught by the post-merge matrix — which is
+ * exactly how five install tests stayed red on main for six consecutive runs.
+ */
+const UNAME_FOR: Record<string, { readonly s: string; readonly m: string }> = {
+  "linux/x64": { s: "Linux", m: "x86_64" },
+  "darwin/arm64": { s: "Darwin", m: "arm64" },
+  "darwin/x64": { s: "Darwin", m: "x86_64" },
+};
+
+/** A directory holding a `uname` that reports the given platform. */
+function unameShimDir(os: string, machine: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-uname-"));
+  const shim = join(dir, "uname");
+  writeFileSync(
+    shim,
+    `#!/bin/sh\ncase "$1" in\n  -m) echo ${machine} ;;\n  *) echo ${os} ;;\nesac\n`,
+  );
+  chmodSync(shim, 0o755);
+  return dir;
+}
+
+async function dryRunAssetName(target: InstallTarget, version: string): Promise<string> {
+  const uname = UNAME_FOR[`${target.os}/${target.arch}`];
+  if (uname === undefined) throw new Error(`no uname mapping for ${target.os}/${target.arch}`);
+  const shim = unameShimDir(uname.s, uname.m);
+  const proc = Bun.spawn(["sh", INSTALL_SH, "--dry-run", "--from-release", version, "--yes"], {
+    // POSIX-only by construction (skipped on Windows), so ":" is correct here.
+    env: { ...process.env, PATH: `${shim}:${process.env["PATH"]}` }, // cross-platform-ok
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  await proc.exited;
+  const line = stdout.split("\n").find((l) => l.includes("Would download:"));
+  if (line === undefined) {
+    throw new Error(
+      `install.sh --dry-run printed no download plan.\nstdout:${stdout}\nstderr:${stderr}`,
+    );
+  }
+  return line.slice(line.lastIndexOf("/") + 1).trim();
+}
+
+const skipDryRun = process.platform === "win32" || !Bun.which("sh");
+
+test.skipIf(skipDryRun)(
+  "install.sh --dry-run resolves EXACTLY the SSoT asset name on every supported target",
+  async () => {
+    const version = "2.2.0";
+    for (const target of SUPPORTED_TARGETS) {
+      if (target.os === "win32") continue; // install.ps1's job.
+      expect(await dryRunAssetName(target, version)).toBe(assetNameFor(target, version));
+    }
+  },
+  30_000,
+);
 
 // `/releases/latest/download/` resolves an exact filename and silently
 // ignores a pinned version — forbidden by both installers' own remote-mode
