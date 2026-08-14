@@ -49,20 +49,6 @@ name: released-install-smoke
 
 on:
   workflow_dispatch:
-    # TEMPORARY (see the `Windows -- gpg-agent diagnostic` steps below and
-    # scripts/install/windows/diagnose-gpg-agent.ps1). Both default to false,
-    # so a `release` or `schedule` run -- where the `inputs` context is empty
-    # and these read as falsy -- behaves exactly as before. Remove both inputs
-    # together with the diagnostic steps once the cause is proven.
-    inputs:
-      diagnostics:
-        description: "TEMPORARY: run the windows-2022 gpg-agent diagnostic steps"
-        type: boolean
-        default: false
-      skip_harden_runner:
-        description: "TEMPORARY: skip harden-runner on documented-one-liner, to eliminate it as the cause"
-        type: boolean
-        default: false
   release:
     types: [published]
   schedule:
@@ -171,13 +157,7 @@ jobs:
         os: [ubuntu-24.04, macos-14, windows-2022]
 
     steps:
-      # TEMPORARY `if:` — lets one dispatch run this job with harden-runner
-      # absent, which is the only way to ELIMINATE its monitoring agent as the
-      # reason gpg cannot spawn gpg-agent on windows-2022 (egress-policy is
-      # `audit`, which should not block a child process — but "should not" is
-      # not evidence). Restore to an unconditional step with the diagnostics.
       - name: Harden Runner
-        if: ${{ !inputs.skip_harden_runner }}
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
         with:
           egress-policy: audit
@@ -228,75 +208,6 @@ jobs:
             }
           }
           gpg --version
-
-      # --- TEMPORARY gpg-agent diagnostics --------------------------------
-      # Why these exist: install.ps1 runs its import as
-      #   & gpg --homedir $sigHomeName --quiet --import $keyPath *>$null
-      # so the only thing run 31767719056 ever showed was the outer wrapper,
-      # `gpg: error running '/usr/bin/gpg-agent': exit status 2`. The agent's
-      # own message -- the part that names the cause -- went to $null.
-      #
-      # The two steps are an EXPERIMENT, not just a log dump. Reading the logs
-      # of that run establishes something the failure text alone hides: the
-      # pwsh (PowerShell 7) one-liner step SUCCEEDED end to end ("OK: GPG
-      # signature verified"), and only the Windows PowerShell 5.1 step that
-      # runs immediately AFTER it failed. Two candidate causes are confounded
-      # there -- the shell, and the leftover state (a lingering gpg-agent
-      # whose homedir the first run then deleted). So:
-      #
-      #   COLD  -- 5.1, before anything else has touched gpg. Fails here =>
-      #            the shell/environment is the cause.
-      #   AFTER -- 5.1, once the pwsh one-liner has run. Clean COLD + failing
-      #            AFTER => leftover state is the cause.
-      #
-      # Delete both steps, the checkout, the two dispatch inputs, and
-      # scripts/install/windows/diagnose-gpg-agent.ps1 together.
-      - name: Checkout (diagnostics only)
-        if: ${{ runner.os == 'Windows' && inputs.diagnostics }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Windows (powershell 5.1) — gpg-agent diagnostic, COLD
-        if: ${{ runner.os == 'Windows' && inputs.diagnostics }}
-        shell: powershell
-        run: |
-          .\scripts\install\windows\diagnose-gpg-agent.ps1 -Label "cold-51" -RunPatchedInstaller
-          # A probe that FAILS is the evidence; it must not end the job and
-          # skip every later step. Run 31781159052 lost the pwsh control arm
-          # exactly that way, when the patched installer's expected throw
-          # became the step's exit code.
-          exit 0
-
-      # The PASSING shell, same probe. Run 31780941563 proved the 5.1 failure
-      # is a too-long gpg-agent socket path, but a root cause that cannot say
-      # why the OTHER five legs pass is only half an explanation. This arm
-      # exists to make pwsh's own GetTempPath() / cygpath / socket length
-      # observable rather than inferred.
-      - name: Windows (pwsh) — gpg-agent diagnostic, control
-        if: ${{ runner.os == 'Windows' && inputs.diagnostics }}
-        shell: pwsh
-        run: |
-          .\scripts\install\windows\diagnose-gpg-agent.ps1 -Label "control-pwsh"
-          exit 0
-
-      # TEMPORARY — proves the FIX on the runner that reproduces the bug.
-      # It cannot be proven through the `documented one-liner` steps below:
-      # those fetch install.ps1 from releases/latest/download, which serves
-      # the PUBLISHED (still-broken) script until a release ships. So run the
-      # CHECKED-OUT installer instead, in the failing shell, against the same
-      # real published artefacts, and assert the same success line RULING 13
-      # binds to. -FromRelease pins the version the failing runs installed.
-      - name: Windows (powershell 5.1) — verify the FIXED installer
-        if: ${{ runner.os == 'Windows' && inputs.diagnostics }}
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Continue"
-          $output = ((& .\scripts\install\windows\install.ps1 -Yes -FromRelease 2.3.1) *>&1 | Out-String)
-          Write-Host $output
-          if ($output -notmatch [regex]::Escape("GPG signature verified")) {
-            Write-Error "the FIXED install.ps1 still did not print the GPG-verified success line"
-            exit 1
-          }
-          Write-Host "FIX VERIFIED: checked-out install.ps1 verified the signature under Windows PowerShell 5.1."
 
       # --- Linux ---------------------------------------------------------
       - name: Linux — documented one-liner (real GPG true-positive path)
@@ -363,17 +274,6 @@ jobs:
             exit 1
           }
           & "$env:LOCALAPPDATA\Programs\Nimbus\bin\nimbus.exe" --version
-
-      # TEMPORARY — the AFTER arm of the experiment described above: the same
-      # diagnostic, in the same shell as the failing step, but run once the
-      # pwsh one-liner has already installed and left whatever it leaves
-      # behind. This is the step that reproduces the failing CONDITION with
-      # gpg's stderr intact.
-      - name: Windows (powershell 5.1) — gpg-agent diagnostic, AFTER the pwsh one-liner
-        if: ${{ runner.os == 'Windows' && inputs.diagnostics }}
-        shell: powershell
-        run: |
-          .\scripts\install\windows\diagnose-gpg-agent.ps1 -Label "after-51" -RunPatchedInstaller
 
       # --- Windows (powershell — Windows PowerShell 5.1, the declared floor,
       # and where #1167's Windows bug actually lived) -----------------------
