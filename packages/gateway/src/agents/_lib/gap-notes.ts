@@ -5,7 +5,9 @@ const ENTITY_TYPE_REMEDIATIONS: Readonly<Record<string, string>> = Object.freeze
   dashboard: "Phase 5 Wave D will populate `dashboard` via Metabase / Superset connectors.",
   data_model: "Phase 5 Wave D will populate `data_model` via dbt-schema / warehouse connectors.",
   upstream_refs: "Phase 5 Wave D will populate `upstream_refs` alongside data-warehouse coverage.",
-  incident: "Tracked as a graph-populator follow-up on existing PagerDuty / Sentry connectors.",
+  incident:
+    "Run `nimbus connector sync pagerduty`. Incidents indexed before attribution shipped carry " +
+    "no actor emails — `nimbus index rebody --service pagerduty` re-fetches them.",
   alert: "Tracked as a graph-populator follow-up on existing observability connectors.",
   pipeline_run: "Tracked as a graph-populator follow-up on the existing CI/CD connectors.",
 });
@@ -70,11 +72,11 @@ export function detectMissingRelationEmit(
 /**
  * I-2: like `detectMissingRelationEmit`, but scoped to edges of `relationType`
  * whose TARGET is `targetEntityType`. `detectMissingRelationEmit` probes for
- * *any* `graph_relation` row of the given type, of any endpoint shape — once
- * a second populator starts emitting the same relation type between different
- * entity kinds (e.g. `pr -> issue "resolves"` alongside a future
- * `person -> incident "resolves"`), that broad probe finds the unrelated edge
- * and the gap note for the lane that still has nothing goes silently missing.
+ * *any* `graph_relation` row of the given type, of any endpoint shape — and
+ * `resolves` now has TWO emitters with different endpoint shapes
+ * (`pr -> issue` from `syncPrGraph`, `person -> incident` from
+ * `syncIncidentPersonEdges`), so that broad probe finds the unrelated edge and
+ * the gap note for the lane that still has nothing goes silently missing.
  * Scoping to the endpoint the caller's lane actually reads keeps the two
  * independent.
  */

@@ -80,13 +80,23 @@ describe("remediationForEntityType", () => {
     expect(remediationForEntityType("data_model")).toMatch(/Wave D/);
   });
 
-  test("returns a graph-populator hint for incident / alert / pipeline_run", () => {
-    expect(remediationForEntityType("incident")).toMatch(/graph-populator/);
+  test("returns a graph-populator hint for alert / pipeline_run", () => {
+    expect(remediationForEntityType("alert")).toMatch(/graph-populator/);
     expect(remediationForEntityType("pipeline_run")).toMatch(/graph-populator/);
   });
 
   test("returns undefined for unknown types", () => {
     expect(remediationForEntityType("unknown_type")).toBeUndefined();
+  });
+
+  test("the incident remediation no longer promises a future populator", () => {
+    expect(remediationForEntityType("incident") ?? "").not.toContain("follow-up");
+  });
+
+  test("returns a sync/rebody hint for incident", () => {
+    const hint = remediationForEntityType("incident") ?? "";
+    expect(hint).toMatch(/nimbus connector sync pagerduty/);
+    expect(hint).toMatch(/nimbus index rebody/);
   });
 });
 

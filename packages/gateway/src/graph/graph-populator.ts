@@ -729,7 +729,7 @@ function resolveAffectedService(
  * `resolvePersonForSync` returns a `person.id` (a UUID), while
  * `upsertGraphRelation`'s endpoints are `graph_entity.id` values (SHA-256, via
  * `deterministicGraphEntityId`). The person UUID is the graph entity's
- * `external_id`, never its `id` — that is also what lets `catchup.ts:324` match
+ * `external_id`, never its `id` — that is also what lets `catchup.ts:325` match
  * `pe.external_id = ?` against a person id.
  *
  * `usableActorEmail` gates the call because `resolvePersonForSync` CREATES a
