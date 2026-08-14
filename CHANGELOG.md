@@ -2,7 +2,12 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
-## [2.4.1](https://github.com/nimbus-agent/Nimbus/compare/v2.4.0...v2.4.1) (2026-08-14)
+## [2.5.0](https://github.com/nimbus-agent/Nimbus/compare/v2.4.0...v2.5.0) (2026-08-14)
+
+
+### Features
+
+* **agents:** attribute Sentry error issues to people ([#1182](https://github.com/nimbus-agent/Nimbus/issues/1182)) ([ffa54b3](https://github.com/nimbus-agent/Nimbus/commit/ffa54b3eafdbf2370b39e850e0a3ee0209894a7d))
 
 
 ### Bug Fixes
