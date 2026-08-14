@@ -114,6 +114,37 @@ test("caps assignees and counts the overflow", () => {
   expect(actors.unattributed).toBe(3);
 });
 
+test("skips a service-type assignee without counting it as unattributed", () => {
+  const actors = extractPagerdutyActors(
+    {
+      id: "PD-1",
+      status: "triggered",
+      assignments: [{ assignee: { id: "PSVC1", type: "service_reference" } }],
+    },
+    EMPTY,
+  );
+  expect(actors.assigneeEmails).toEqual([]);
+  expect(actors.unattributed).toBe(0);
+});
+
+test("keeps exactly the cap with zero overflow at the boundary", () => {
+  const assignments = Array.from({ length: MAX_ASSIGNEES_PER_INCIDENT }, (_, i) => ({
+    assignee: { id: `PUSER${String(i)}`, email: `u${String(i)}@example.com` },
+  }));
+  const actors = extractPagerdutyActors({ id: "PD-1", status: "triggered", assignments }, EMPTY);
+  expect(actors.assigneeEmails).toHaveLength(MAX_ASSIGNEES_PER_INCIDENT);
+  expect(actors.unattributed).toBe(0);
+});
+
+test("overflows by exactly one past the cap boundary", () => {
+  const assignments = Array.from({ length: MAX_ASSIGNEES_PER_INCIDENT + 1 }, (_, i) => ({
+    assignee: { id: `PUSER${String(i)}`, email: `u${String(i)}@example.com` },
+  }));
+  const actors = extractPagerdutyActors({ id: "PD-1", status: "triggered", assignments }, EMPTY);
+  expect(actors.assigneeEmails).toHaveLength(MAX_ASSIGNEES_PER_INCIDENT);
+  expect(actors.unattributed).toBe(1);
+});
+
 test("resolves last_status_change_by only when the incident is resolved", () => {
   const row = {
     id: "PD-1",

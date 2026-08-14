@@ -702,8 +702,10 @@ describe("runExpert — subIncidentResolved regression: entity exists but relati
 
     // Index a real PagerDuty-shaped incident item through the same
     // item-store path a connector sync uses. This drives the real graph
-    // populator, so `incident` graph entities genuinely exist — nothing here
-    // fabricates a `resolves` relation, because no populator emits one.
+    // populator, so `incident` graph entities genuinely exist. The metadata
+    // deliberately omits `assignee_emails`/`resolved_by_email`, so
+    // `syncIncidentPersonEdges` emits no person edge here — this fixture is
+    // exercising the genuinely-empty case, not a populator gap.
     upsertIndexedItem(db, {
       service: "pagerduty",
       type: "incident",

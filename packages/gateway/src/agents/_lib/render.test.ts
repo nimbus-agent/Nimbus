@@ -82,7 +82,9 @@ describe("renderExpert", () => {
           category: "missing_entity_type",
           detail: "No `incident` graph entities — 0 incidents considered.",
           remediation:
-            "Tracked as a graph-populator follow-up on existing PagerDuty / Sentry connectors.",
+            "Run `nimbus connector sync pagerduty`. Incidents indexed before attribution " +
+            "shipped carry no actor emails — `nimbus index rebody --service pagerduty` " +
+            "re-fetches them.",
         },
       ],
       query: { topicOrFile: "src/billing/retry.ts" },
@@ -93,7 +95,7 @@ describe("renderExpert", () => {
     expect(md).toContain("_no people matched_");
     expect(md).toContain("## Gaps");
     expect(md).toContain("`incident` graph entities");
-    expect(md).toContain("graph-populator follow-up");
+    expect(md).toContain("nimbus index rebody --service pagerduty");
   });
 
   test("renderExpert is deterministic across two calls with the same brief", () => {

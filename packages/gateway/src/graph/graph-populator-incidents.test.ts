@@ -948,18 +948,67 @@ test("a malformed email creates neither an edge nor a person row", () => {
   expect(n.n).toBe(0);
 });
 
+// `clearIncomingRelationsOfType` retires the incident's OWN incoming
+// `resolves` edges (person --resolves--> incident) so a re-sync must not
+// touch a `pr --resolves--> issue` edge that has nothing to do with this
+// incident. This is only proven by having a REAL such edge present — a
+// prior version of this test never indexed a pr/issue at all, so it passed
+// even with an unscoped `DELETE FROM graph_relation WHERE type = 'resolves'`.
+function prResolvesIssue(db: Database): boolean {
+  return (
+    db
+      .query(
+        `SELECT 1
+           FROM graph_relation r
+           JOIN graph_entity f ON f.id = r.from_id
+           JOIN graph_entity t ON t.id = r.to_id
+          WHERE r.type = 'resolves' AND f.external_id = ? AND t.external_id = ?`,
+      )
+      .get("github:acme/app#1", "github:acme/app#4") !== null
+  );
+}
+
 test("a pr --resolves--> issue edge is untouched by an incident re-sync", () => {
   const db = freshDb();
+  const now = Date.now();
+
+  // A genuine pr --resolves--> issue edge, from the existing PR-body-ref
+  // populator (see graph-populator-resolves.test.ts) — not the incident code
+  // under test here.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#4",
+    title: "Login broken",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: { repo: "acme/app" },
+  });
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/app#1",
+    title: "Fix login",
+    bodyPreview: "closes #4",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: { repo: "acme/app" },
+  });
+  expect(prResolvesIssue(db)).toBe(true);
+
+  // Re-sync an unrelated incident, resolved, which is exactly the path that
+  // calls clearIncomingRelationsOfType(db, incidentEntityId, "resolves").
   indexIncident(db, "PD-6", {
     service: "checkout",
     assignee_emails: [],
     resolved_by_email: "jane@example.com",
   });
-  const before = edgesTo(db, "resolves").length;
   indexIncident(db, "PD-6", {
     service: "checkout",
     assignee_emails: [],
     resolved_by_email: "jane@example.com",
   });
-  expect(edgesTo(db, "resolves")).toHaveLength(before);
+
+  expect(prResolvesIssue(db)).toBe(true);
 });
