@@ -720,6 +720,13 @@ function renderNegotiateIncidents(i: NegotiateIncidents | null): string {
     "",
     `- ${String(i.resolved)} resolved, ${String(i.assigned)} assigned`,
   ];
+  // Its own line, never summed into the incident counts (spec § 5.7). Suppressed
+  // at zero: with no Sentry connector this lane is structurally empty, and a
+  // printed "0 assigned" would read as a measurement of the person rather than
+  // of the index. The gap note carries that case instead.
+  if (i.errorIssuesAssigned > 0) {
+    lines.push(`- ${String(i.errorIssuesAssigned)} Sentry error issue(s) assigned`);
+  }
   if (i.unattributable > 0) {
     lines.push(
       `- ${String(i.unattributable)} in-window incident(s) have no indexed assignee or ` +

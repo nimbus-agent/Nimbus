@@ -1626,3 +1626,32 @@ test("a healthy sentry index emits neither sentry gap", async () => {
   expect(sentryGaps).toHaveLength(0);
   db.close();
 });
+
+test("renders error-issue assignments on their own line", async () => {
+  const db = freshDb();
+  seedMe(db);
+  db.run("INSERT INTO sync_state (connector_id) VALUES (?)", ["sentry"]);
+  seedErrorIssue(db, "S-1", "jane@example.com");
+  seedErrorIssue(db, "S-2", "jane@example.com");
+
+  const markdown = renderNegotiate(
+    await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db)),
+  );
+  expect(markdown).toContain("## Incidents");
+  expect(markdown).toContain("2 Sentry error issue(s) assigned");
+  // Must NOT be folded into the incident line.
+  expect(markdown).toContain("0 resolved, 0 assigned");
+  db.close();
+});
+
+// Zero prints nothing: "0 Sentry error issues assigned" in a brief for someone
+// with no Sentry connector reads as a measured zero, which it is not.
+test("omits the error-issue line when it is zero", async () => {
+  const db = freshDb();
+  seedMe(db);
+  const markdown = renderNegotiate(
+    await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db)),
+  );
+  expect(markdown).not.toContain("Sentry error issue");
+  db.close();
+});
