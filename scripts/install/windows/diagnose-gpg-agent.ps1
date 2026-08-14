@@ -234,6 +234,11 @@ if ($RunPatchedInstaller) {
   Write-Section "published install.ps1, with the *>`$null swallow removed"
   $url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1"
   $src = (Invoke-WebRequest -Uri $url -UseBasicParsing).Content
+  # Windows PowerShell 5.1 hands back a BYTE ARRAY here, not a string, when the
+  # response has no text content-type -- observed on the runner, where it made
+  # .Contains() a membership test and .Replace() a missing-method error. PS7
+  # returns a string. Normalise before touching it either way.
+  if ($src -is [byte[]]) { $src = [System.Text.Encoding]::UTF8.GetString($src) }
   # Literal, non-regex replacement of the two redirections that hide gpg's
   # stderr. The Contains() check is not decoration: a silent no-op patch would
   # produce a run that looks clean and proves nothing, which is precisely the
@@ -246,7 +251,11 @@ if ($RunPatchedInstaller) {
     Write-Host "!! published install.ps1 no longer contains the expected import line -- the run below is UNPATCHED and proves nothing about gpg's stderr"
   }
   $patched = $src.Replace($importOld, $importNew).Replace($verifyOld, $verifyNew)
-  Write-Host "patched = $($patched -ne $src)"
+  # Report the ACTUAL outcome. An earlier version printed `$patched -ne $src`,
+  # which reads $true even when $patched is $null because the replace threw --
+  # a "patched = True" line above a stack trace saying otherwise.
+  Write-Host "import redirection removed: $(-not $patched.Contains($importOld))"
+  Write-Host "verify redirection removed: $(-not $patched.Contains($verifyOld))"
   try {
     & ([scriptblock]::Create($patched)) -Yes 2>&1 | ForEach-Object { Write-Host "  | $_" }
   } catch {

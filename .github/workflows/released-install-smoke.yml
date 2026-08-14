@@ -261,6 +261,17 @@ jobs:
         run: |
           .\scripts\install\windows\diagnose-gpg-agent.ps1 -Label "cold-51" -RunPatchedInstaller
 
+      # The PASSING shell, same probe. Run 31780941563 proved the 5.1 failure
+      # is a too-long gpg-agent socket path, but a root cause that cannot say
+      # why the OTHER five legs pass is only half an explanation. This arm
+      # exists to make pwsh's own GetTempPath() / cygpath / socket length
+      # observable rather than inferred.
+      - name: Windows (pwsh) — gpg-agent diagnostic, control
+        if: ${{ runner.os == 'Windows' && inputs.diagnostics }}
+        shell: pwsh
+        run: |
+          .\scripts\install\windows\diagnose-gpg-agent.ps1 -Label "control-pwsh"
+
       # --- Linux ---------------------------------------------------------
       - name: Linux — documented one-liner (real GPG true-positive path)
         if: runner.os == 'Linux'
