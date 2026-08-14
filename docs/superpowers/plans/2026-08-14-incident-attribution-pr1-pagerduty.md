@@ -20,6 +20,7 @@
 - **Attribution failures never abort a sync.** A failed user lookup is logged, counted, and skipped.
 - **Bounded regex quantifiers**, per house style at `updater/manifest-fetcher.ts:3` (`{1,256}`, never bare `+` on user input).
 - **Branch:** work on `dev/asafgolombek/incident-attribution-pr1`. Never commit on `main`.
+- **Format before every commit:** `bun run lint:fix` (`biome check --write --error-on-warnings .`). Biome's configured `quoteStyle` is `"double"` (`biome.json:75`), so TypeScript string literals use `"`. Single quotes inside a template literal are SQL syntax (`type = 'person'`) and Biome does not touch them — do not "fix" those. The `lint` gate runs with `--error-on-warnings`, so a warning fails CI exactly like an error.
 - **Before pushing:** `bun run preflight:fast`. If tests or logic changed, run the touched suites too.
 
 ---
@@ -769,6 +770,41 @@ test("a 403 on one actor leaves the sync succeeding and every incident indexed",
   expect(readIncidentMetadata(db, "PD-2").resolved_by_email).toBe("bob@example.com");
 });
 
+// A 200 with a body that is empty, non-JSON, or missing `user` must degrade to
+// an unattributed incident, never throw. `JSON.parse` sits INSIDE the try for
+// exactly this reason, and `asRecord` returns undefined for null, a primitive,
+// or an array — so no level of the traversal can explode.
+test.each([
+  ["an empty body", ""],
+  ["non-JSON", "<html>502</html>"],
+  ["JSON with no user block", '{"meta":{}}'],
+  ["a JSON array", "[]"],
+  ["a JSON null", "null"],
+  ["a user with no email", '{"user":{"id":"PUSER9"}}'],
+])("survives a 200 carrying %s", async (_label, body) => {
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = urlFromFetchInput(input);
+    if (url.startsWith("https://api.pagerduty.com/incidents")) {
+      return new Response(
+        JSON.stringify({ incidents: [resolvedIncident("PD-1", "PUSER9")], more: false }),
+        { status: 200 },
+      );
+    }
+    return new Response(body, { status: 200 });
+  }) as typeof fetch;
+
+  const db = createMemoryIndexDb();
+  const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+  const result: SyncResult = await syncable.sync(
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    null,
+  );
+
+  expect(result.itemsUpserted).toBe(1);
+  expect(readIncidentMetadata(db, "PD-1").resolved_by_email).toBeNull();
+  expect(readIncidentMetadata(db, "PD-1").unattributed_actors).toBe(1);
+});
+
 test("stops at the lookup cap and counts the rest", async () => {
   const incidents = Array.from({ length: MAX_USER_LOOKUPS_PER_SYNC + 5 }, (_, i) =>
     resolvedIncident(`PD-${String(i)}`, `PUSER${String(i)}`),
@@ -850,6 +886,13 @@ async function resolveMissingActorEmails(
         );
         continue;
       }
+      // Do NOT "simplify" this into a hand-rolled `typeof parsed === "object"
+      // && parsed !== null` guard. `asRecord` already rejects null, primitives
+      // AND arrays (`unknown-record.ts:1-6`); an inline guard drops the array
+      // check, and binding `JSON.parse(text)` to a `const` without `as unknown`
+      // types it `any`, which the no-`any` rule forbids. `JSON.parse` sits
+      // inside the try precisely so an empty or non-JSON 200 body degrades to
+      // an unattributed incident rather than throwing.
       const user = asRecord(asRecord(JSON.parse(text) as unknown)?.["user"]);
       const email = user === undefined ? null : usableActorEmail(user["email"]);
       if (email !== null) emailById.set(id, email);
@@ -1334,6 +1377,29 @@ test("re-syncing with different actors retires the previous edges", () => {
   const resolves = edgesTo(db, "resolves");
   expect(resolves).toHaveLength(1);
   expect(resolves[0]?.from_ext).toBe(bob.id);
+});
+
+// The other direction of the same clear: an incident RE-OPENED upstream stops
+// being resolved, so the connector writes `resolved_by_email: null` and the
+// edge must disappear. Without the explicit incoming clear it survives forever,
+// and the brief keeps crediting a resolution that was undone. The `assigned`
+// edge correctly survives — they are still on the hook.
+test("re-opening a resolved incident retires only the resolves edge", () => {
+  const db = freshDb();
+  indexIncident(db, "PD-7", {
+    service: "checkout",
+    assignee_emails: ["jane@example.com"],
+    resolved_by_email: "jane@example.com",
+  });
+  expect(edgesTo(db, "resolves")).toHaveLength(1);
+
+  indexIncident(db, "PD-7", {
+    service: "checkout",
+    assignee_emails: ["jane@example.com"],
+    resolved_by_email: null,
+  });
+  expect(edgesTo(db, "resolves")).toHaveLength(0);
+  expect(edgesTo(db, "assigned")).toHaveLength(1);
 });
 
 test("a malformed email creates neither an edge nor a person row", () => {
