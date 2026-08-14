@@ -65,3 +65,98 @@ export function pagerdutyEmailMapFromIncidents(incidents: readonly unknown[]): M
   }
   return map;
 }
+
+/**
+ * `assignments[]` is caller-controlled and unbounded. Ten is generous for a
+ * real incident; beyond it the extras are COUNTED as unattributed rather than
+ * dropped, so a truncated list can never read as an exhaustive one.
+ */
+export const MAX_ASSIGNEES_PER_INCIDENT = 10;
+
+export type PagerdutyIncidentActors = {
+  readonly assigneeEmails: string[];
+  readonly resolvedByEmail: string | null;
+  /** Actors seen but not attributable. Service actors are NOT counted here. */
+  readonly unattributed: number;
+};
+
+/** The resolver reference, but only for an incident that is actually resolved. */
+function resolverRef(row: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (stringField(row, "status") !== "resolved") return undefined;
+  return asRecord(row["last_status_change_by"]);
+}
+
+/** An actor's email: its own expanded field first, then the page-wide map. */
+function emailForActor(
+  actor: Record<string, unknown>,
+  emailById: ReadonlyMap<string, string>,
+): string | null {
+  const own = usableActorEmail(actor["email"]);
+  if (own !== null) return own;
+  const id = stringField(actor, "id");
+  if (id === undefined || id === "") return null;
+  return emailById.get(id) ?? null;
+}
+
+export function extractPagerdutyActors(
+  row: Record<string, unknown>,
+  emailById: ReadonlyMap<string, string>,
+): PagerdutyIncidentActors {
+  const assigneeEmails: string[] = [];
+  let unattributed = 0;
+
+  const assignments = Array.isArray(row["assignments"]) ? row["assignments"] : [];
+  for (const a of assignments) {
+    const assignee = asRecord(asRecord(a)?.["assignee"]);
+    if (assignee === undefined || isServiceActor(assignee)) continue;
+    const email = emailForActor(assignee, emailById);
+    if (email === null) {
+      unattributed += 1;
+      continue;
+    }
+    if (assigneeEmails.includes(email)) continue;
+    if (assigneeEmails.length >= MAX_ASSIGNEES_PER_INCIDENT) {
+      unattributed += 1;
+      continue;
+    }
+    assigneeEmails.push(email);
+  }
+
+  let resolvedByEmail: string | null = null;
+  const resolver = resolverRef(row);
+  // A service resolver (auto-resolve) attributes to nobody and is NOT a
+  // failure — nothing was lost, so it must not inflate `unattributed`.
+  if (resolver !== undefined && !isServiceActor(resolver)) {
+    resolvedByEmail = emailForActor(resolver, emailById);
+    if (resolvedByEmail === null) unattributed += 1;
+  }
+
+  return { assigneeEmails, resolvedByEmail, unattributed };
+}
+
+/**
+ * Actor ids on this page that still have no email — the only ids worth spending
+ * a `/users/{id}` request on. Service actors are excluded so an auto-resolving
+ * tenant never burns the lookup budget.
+ */
+export function pagerdutyUnresolvedActorIds(
+  incidents: readonly unknown[],
+  emailById: ReadonlyMap<string, string>,
+): string[] {
+  const ids = new Set<string>();
+  for (const raw of incidents) {
+    const row = asRecord(raw);
+    if (row === undefined) continue;
+    const candidates = [...actorsOnIncident(row)];
+    const resolver = resolverRef(row);
+    if (resolver !== undefined) candidates.push(resolver);
+    for (const actor of candidates) {
+      if (isServiceActor(actor)) continue;
+      if (usableActorEmail(actor["email"]) !== null) continue;
+      const id = stringField(actor, "id");
+      if (id === undefined || id === "" || emailById.has(id)) continue;
+      ids.add(id);
+    }
+  }
+  return [...ids];
+}
