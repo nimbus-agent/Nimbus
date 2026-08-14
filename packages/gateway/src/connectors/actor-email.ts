@@ -2,8 +2,10 @@
  * Bounded quantifiers, matching the house style in `updater/manifest-fetcher.ts:3`.
  * Every segment is capped, so no input can drive superlinear backtracking; the
  * length check below runs BEFORE the regex so nothing pathological reaches it.
+ * All label classes exclude `.` to prevent backtracking folds of leading/doubled dots.
  */
-const ACTOR_EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,63}(?:\.[^\s@.]{1,63}){1,8}$/;
+const ACTOR_EMAIL_RE =
+  /^[^\s@.]{1,64}(?:\.[^\s@.]{1,63}){0,8}@[^\s@.]{1,63}(?:\.[^\s@.]{1,63}){1,8}$/;
 
 /** RFC 5321's ceiling on a full address. */
 const MAX_EMAIL_LENGTH = 254;
