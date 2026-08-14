@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.4.0](https://github.com/nimbus-agent/Nimbus/compare/v2.3.1...v2.4.0) (2026-08-14)
+
+
+### Features
+
+* **connectors:** attribute PagerDuty incidents to people ([#1177](https://github.com/nimbus-agent/Nimbus/issues/1177)) ([20b51f6](https://github.com/nimbus-agent/Nimbus/commit/20b51f645fb118c388a4ba763514e9272ba627b2))
+
 ## [2.3.1](https://github.com/nimbus-agent/Nimbus/compare/v2.3.0...v2.3.1) (2026-08-14)
 
 
