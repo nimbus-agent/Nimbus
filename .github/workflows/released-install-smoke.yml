@@ -260,6 +260,11 @@ jobs:
         shell: powershell
         run: |
           .\scripts\install\windows\diagnose-gpg-agent.ps1 -Label "cold-51" -RunPatchedInstaller
+          # A probe that FAILS is the evidence; it must not end the job and
+          # skip every later step. Run 31781159052 lost the pwsh control arm
+          # exactly that way, when the patched installer's expected throw
+          # became the step's exit code.
+          exit 0
 
       # The PASSING shell, same probe. Run 31780941563 proved the 5.1 failure
       # is a too-long gpg-agent socket path, but a root cause that cannot say
@@ -271,6 +276,27 @@ jobs:
         shell: pwsh
         run: |
           .\scripts\install\windows\diagnose-gpg-agent.ps1 -Label "control-pwsh"
+          exit 0
+
+      # TEMPORARY — proves the FIX on the runner that reproduces the bug.
+      # It cannot be proven through the `documented one-liner` steps below:
+      # those fetch install.ps1 from releases/latest/download, which serves
+      # the PUBLISHED (still-broken) script until a release ships. So run the
+      # CHECKED-OUT installer instead, in the failing shell, against the same
+      # real published artefacts, and assert the same success line RULING 13
+      # binds to. -FromRelease pins the version the failing runs installed.
+      - name: Windows (powershell 5.1) — verify the FIXED installer
+        if: ${{ runner.os == 'Windows' && inputs.diagnostics }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Continue"
+          $output = ((& .\scripts\install\windows\install.ps1 -Yes -FromRelease 2.3.1) *>&1 | Out-String)
+          Write-Host $output
+          if ($output -notmatch [regex]::Escape("GPG signature verified")) {
+            Write-Error "the FIXED install.ps1 still did not print the GPG-verified success line"
+            exit 1
+          }
+          Write-Host "FIX VERIFIED: checked-out install.ps1 verified the signature under Windows PowerShell 5.1."
 
       # --- Linux ---------------------------------------------------------
       - name: Linux — documented one-liner (real GPG true-positive path)

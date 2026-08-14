@@ -226,10 +226,40 @@ function Test-NimbusSignature {
   # cannot parse. Do not simplify this to Out-File, `>`, or a gpg pipeline.
   [System.IO.File]::WriteAllText($keyPath, $NimbusSigningKey, [System.Text.UTF8Encoding]::new($false))
 
+  # --no-autostart on BOTH calls. Root cause of the windows-2022
+  # `documented one-liner` failure against v2.3.0/v2.3.1 (runs 31767719056,
+  # 31780941563): gpg 2.x autostarts a gpg-agent for any keyring operation,
+  # and the MSYS-compiled agent Git for Windows ships binds POSIX AF_UNIX
+  # sockets under the homedir. sun_path caps those at ~107 characters. On a
+  # GitHub windows-2022 runner the homedir resolves to
+  #   /c/Users/runneradmin/AppData/Local/Temp/nimbus-<36-char-guid>/gnupg-sig
+  # so S.gpg-agent lands at 105 chars and fits -- but the agent ALSO binds
+  # S.gpg-agent.extra, six characters longer, at 111. It aborts with
+  # "socket name '...S.gpg-agent.extra' is too long" and exit status 2, which
+  # gpg surfaces only as the opaque
+  #   gpg: error running '/usr/bin/gpg-agent': exit status 2
+  # captured verbatim in run 31780941563's diagnostic step on a COLD runner.
+  #
+  # Neither call needs an agent: importing a PUBLIC key and verifying a
+  # detached signature touch no secret key. --no-autostart makes gpg skip the
+  # spawn entirely (it emits a "no gpg-agent running in this session" notice
+  # and proceeds), which removes the length ceiling rather than merely staying
+  # under it -- verified against the real published v2.3.1 SHA256SUMS/.asc
+  # with every agent killed first: import exit 0, VALIDSIG present, primary
+  # fingerprint matching the pinned key, and ZERO gpg-agent processes after.
+  # Shortening the path instead would only buy a few characters of headroom
+  # and would break again for any user whose name or TEMP is longer.
+  #
+  # Why the other five smoke legs stayed green: PowerShell 7's
+  # [System.IO.Path]::GetTempPath() and Windows PowerShell 5.1's return
+  # DIFFERENT strings on that runner ($env:TEMP is the 8.3 form
+  # C:\Users\RUNNER~1\..., and only 5.1 expands it to C:\Users\runneradmin\...),
+  # and the two translate to different-length MSYS paths. The Unix legs are
+  # unaffected because their sockets live under a short /tmp.
   Push-Location -LiteralPath $Dir
   try {
-    & gpg --homedir $sigHomeName --quiet --import $keyPath *>$null
-    $out = & gpg --homedir $sigHomeName --quiet --status-fd 1 --verify $ascPath (Join-Path $Dir "SHA256SUMS") 2>$null
+    & gpg --homedir $sigHomeName --no-autostart --quiet --import $keyPath *>$null
+    $out = & gpg --homedir $sigHomeName --no-autostart --quiet --status-fd 1 --verify $ascPath (Join-Path $Dir "SHA256SUMS") 2>$null
   } finally {
     Pop-Location
   }
