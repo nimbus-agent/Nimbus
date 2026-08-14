@@ -204,6 +204,7 @@ export async function seedPaymentServiceFixture(db: Database): Promise<{ config:
     pdIncidents,
     new Date(FIXTURE_NOW_MS - 30 * DAY).toISOString(),
     FIXTURE_NOW_MS,
+    new Map(),
   );
 
   const config: ServiceConfig = {

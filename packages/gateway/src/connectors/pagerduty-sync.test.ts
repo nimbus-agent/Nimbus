@@ -21,6 +21,10 @@ type IncidentMetadata = {
   pagerduty_service_id?: string;
   severity?: string;
   urgency?: string;
+  assignee_emails?: string[];
+  resolved_by_email?: string | null;
+  unattributed_actors?: number;
+  meta_v?: number;
 };
 
 function readIncidentMetadata(db: Database, externalId: string): IncidentMetadata {
@@ -818,6 +822,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
       [null, "string-item", 42, true, undefined],
       since,
       Date.now(),
+      new Map(),
     );
     expect(upserted).toBe(0);
     expectServiceItemCount(db, "pagerduty", 0);
@@ -836,6 +841,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
       ],
       since,
       Date.now(),
+      new Map(),
     );
     // Only the item with VALID_ID should be upserted
     expect(upserted).toBe(1);
@@ -860,6 +866,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
       ],
       recentSince,
       Date.now(),
+      new Map(),
     );
     // maxUpdated must not go backwards (must stay at recentSince)
     expect(maxUpdated).toBe(recentSince);
@@ -1052,5 +1059,73 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(url).toContain("include%5B%5D=assignees");
     expect(url).toContain("include%5B%5D=acknowledgers");
     expect(url).toContain("include%5B%5D=users");
+  });
+
+  // ── attribution metadata ──────────────────────────────────────────────
+
+  test("writes assignee, resolver and meta_v into incident metadata", async () => {
+    stubPagerdutyIncidents([
+      {
+        id: "PD-1",
+        title: "Checkout 500s",
+        status: "resolved",
+        updated_at: isoHoursAgo(1),
+        created_at: isoHoursAgo(2),
+        assignments: [{ assignee: { id: "PUSER1", email: "jane@example.com" } }],
+        last_status_change_by: { id: "PUSER1", type: "user_reference" },
+      },
+    ]);
+    const db = createMemoryIndexDb();
+    const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+
+    const meta = readIncidentMetadata(db, "PD-1");
+    expect(meta.assignee_emails).toEqual(["jane@example.com"]);
+    expect(meta.resolved_by_email).toBe("jane@example.com");
+    expect(meta.unattributed_actors).toBe(0);
+    expect(meta.meta_v).toBe(1);
+  });
+
+  // `?? null` rather than a conditional key, so "nobody resolved this" is
+  // recorded rather than being indistinguishable from "this connector version
+  // did not capture resolution" — the same rule Spec A applied to assignedTo.
+  test("records an absent resolver as null, not as a missing key", async () => {
+    stubPagerdutyIncidents([
+      {
+        id: "PD-2",
+        title: "Still burning",
+        status: "triggered",
+        updated_at: isoHoursAgo(1),
+        created_at: isoHoursAgo(2),
+      },
+    ]);
+    const db = createMemoryIndexDb();
+    const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+
+    const meta = readIncidentMetadata(db, "PD-2");
+    expect(meta.resolved_by_email).toBeNull();
+    expect(meta.assignee_emails).toEqual([]);
+  });
+
+  test("the item still carries no author", async () => {
+    stubPagerdutyIncidents([
+      {
+        id: "PD-3",
+        title: "Paged",
+        status: "resolved",
+        updated_at: isoHoursAgo(1),
+        created_at: isoHoursAgo(2),
+        assignments: [{ assignee: { id: "PUSER1", email: "jane@example.com" } }],
+      },
+    ]);
+    const db = createMemoryIndexDb();
+    const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+
+    const row = db
+      .query("SELECT author_id FROM item WHERE service = 'pagerduty' AND external_id = 'PD-3'")
+      .get() as { author_id: string | null };
+    expect(row.author_id).toBeNull();
   });
 });

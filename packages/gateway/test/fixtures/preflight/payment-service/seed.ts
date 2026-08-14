@@ -84,6 +84,7 @@ export async function seedPaymentServicePreflightFixture(
     pdIncidents,
     new Date(now - 30 * DAY).toISOString(),
     now,
+    new Map(),
   );
 
   ins(db, {

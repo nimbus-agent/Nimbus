@@ -508,7 +508,7 @@ test("a PagerDuty incident (pagerduty_service_id) and a Vercel deployment (repo)
     priority: { name: "P1" },
     urgency: "high",
   };
-  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR);
+  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR, new Map());
 
   // Real `mapVercelDeploymentToItem`-shaped raw deployment payload: the
   // git-integrated `meta` block carries the owning GitHub repo, never a
@@ -556,7 +556,7 @@ test("without resolveServiceId wired, the same PagerDuty/Vercel pair emits no co
     priority: { name: "P1" },
     urgency: "high",
   };
-  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR);
+  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR, new Map());
 
   const deploymentRaw = {
     uid: "dpl_123",
@@ -626,7 +626,7 @@ test("I-1: a Vercel preview deployment does not correlate, but a production depl
     priority: { name: "P1" },
     urgency: "high",
   };
-  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR);
+  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR, new Map());
 
   const previewRaw = {
     uid: "dpl_preview",

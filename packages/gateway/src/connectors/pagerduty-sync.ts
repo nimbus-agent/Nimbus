@@ -2,6 +2,11 @@ import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import {
+  extractPagerdutyActors,
+  PAGERDUTY_INCIDENT_META_VERSION,
+  pagerdutyEmailMapFromIncidents,
+} from "./pagerduty-attribution.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "pagerduty";
@@ -56,15 +61,30 @@ function pdPriorityName(row: Record<string, unknown>): string | undefined {
   return pri === undefined ? undefined : stringField(pri, "name");
 }
 
-function buildPagerdutyMetadata(row: Record<string, unknown>, id: string): Record<string, unknown> {
+function buildPagerdutyMetadata(
+  row: Record<string, unknown>,
+  id: string,
+  emailById: ReadonlyMap<string, string>,
+): Record<string, unknown> {
   const status = stringField(row, "status");
   const createdAt = stringField(row, "created_at");
   const openedAtMs = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
   const serviceId = pdServiceId(row);
   const severity = pdPriorityName(row);
   const urgency = stringField(row, "urgency");
+  const actors = extractPagerdutyActors(row, emailById);
 
-  const metadata: Record<string, unknown> = { status: status ?? null, incidentId: id };
+  const metadata: Record<string, unknown> = {
+    status: status ?? null,
+    incidentId: id,
+    // Always present, never conditional: an absent key would be
+    // indistinguishable from a connector version that never captured actors,
+    // which is exactly what `meta_v` and `nimbus index rebody` exist to detect.
+    assignee_emails: actors.assigneeEmails,
+    resolved_by_email: actors.resolvedByEmail,
+    unattributed_actors: actors.unattributed,
+    meta_v: PAGERDUTY_INCIDENT_META_VERSION,
+  };
   if (Number.isFinite(openedAtMs)) metadata["opened_at_ms"] = openedAtMs;
   if (serviceId !== undefined && serviceId !== "") metadata["pagerduty_service_id"] = serviceId;
   if (severity !== undefined && severity !== "") metadata["severity"] = severity;
@@ -77,6 +97,7 @@ function upsertPagerdutyIncident(
   row: Record<string, unknown>,
   id: string,
   now: number,
+  emailById: ReadonlyMap<string, string>,
 ): void {
   const title = stringField(row, "title") ?? `Incident ${id}`;
   const status = stringField(row, "status");
@@ -94,7 +115,7 @@ function upsertPagerdutyIncident(
     canonicalUrl: htmlUrl ?? null,
     modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : now,
     authorId: null,
-    metadata: buildPagerdutyMetadata(row, id),
+    metadata: buildPagerdutyMetadata(row, id, emailById),
     pinned: false,
     syncedAt: now,
   });
@@ -105,6 +126,7 @@ export function syncPagerdutyIncidentItems(
   incidents: unknown[],
   since: string,
   now: number,
+  emailById: ReadonlyMap<string, string>,
 ): { upserted: number; maxUpdated: string } {
   let upserted = 0;
   let maxUpdated = since;
@@ -121,7 +143,7 @@ export function syncPagerdutyIncidentItems(
     if (updated !== undefined && updated > maxUpdated) {
       maxUpdated = updated;
     }
-    upsertPagerdutyIncident(ctx, row, id, now);
+    upsertPagerdutyIncident(ctx, row, id, now, emailById);
     upserted += 1;
   }
   return { upserted, maxUpdated };
@@ -157,6 +179,8 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
       let maxUpdated = since;
       let totalBytesTransferred = 0;
       let pdHasMore = false;
+      // Run-scoped, so a repeated actor is harvested once per SYNC, not per page.
+      const emailById = new Map<string, string>();
 
       while (pagesFetched < maxPagesPerSync) {
         await ctx.rateLimiter.acquire("pagerduty");
@@ -207,11 +231,14 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
             bytesTransferred: totalBytesTransferred,
           };
         }
+        const pageEmails = pagerdutyEmailMapFromIncidents(parsed.incidents);
+        for (const [k, v] of pageEmails) if (!emailById.has(k)) emailById.set(k, v);
         const { upserted, maxUpdated: pageMax } = syncPagerdutyIncidentItems(
           ctx,
           parsed.incidents,
           maxUpdated,
           now,
+          emailById,
         );
         totalUpserted += upserted;
         maxUpdated = pageMax;

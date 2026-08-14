@@ -486,7 +486,7 @@ describe("runWhy", () => {
       priority: { name: "P1" },
       urgency: "high",
     };
-    syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR);
+    syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR, new Map());
 
     // Real `mapVercelDeploymentToItem`-shaped raw deployment payload — copied
     // verbatim from graph-populator-incidents.test.ts:513-532.
