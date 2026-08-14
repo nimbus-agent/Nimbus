@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { usableActorEmail } from "../connectors/actor-email.ts";
+import { asRecord } from "../connectors/unknown-record.ts";
 import { dbRun } from "../db/write.ts";
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
@@ -866,6 +867,26 @@ function syncTimelineEventGraph(
 }
 
 /**
+ * Sentry stores `assignedTo` as a nullable ACTOR OBJECT, not an email string
+ * (`connectors/sentry-issue-mapping.ts:87` keeps it raw for exactly this).
+ * Only a USER actor maps to a person: Sentry also allows assigning to a team,
+ * which has no canonical email, and handing one to `resolvePersonForSync` would
+ * mint a junk person row that outlives the sync.
+ *
+ * Returns the raw email for `linkActorToEntity` to validate — `usableActorEmail`
+ * is the single gate and lives there, so this must not re-implement it.
+ *
+ * The presence of `email` on a user actor is UNVERIFIED against a real Sentry
+ * response (spec § 4.4); a shape mismatch therefore yields no edge, never a
+ * wrong one.
+ */
+function sentryAssigneeEmail(metadata: Record<string, unknown>): unknown {
+  const actor = asRecord(metadata["assignedTo"]);
+  if (actor === undefined) return undefined;
+  return stringField(actor, "type") === "user" ? actor["email"] : undefined;
+}
+
+/**
  * A Sentry error group. Deliberately NOT an `incident` entity: an error group
  * with a large event count that never paged anyone is not an incident, and
  * counting it as one inflates every downstream contribution brief.
@@ -887,6 +908,11 @@ function syncErrorIssueGraph(db: Database, row: IndexedItemGraphInput, now: numb
     metadata: { project: project ?? null },
   });
   clearRelationsTouchingEntity(db, entityId);
+
+  // AFTER the clear, or it wipes what we just wrote. `assigned` is NOT in
+  // CROSS_ITEM_RELATION_TYPES, so that generic clear is what retires this edge
+  // on re-assignment — no explicit clear needed here, unlike `resolves`.
+  linkActorToEntity(db, row, entityId, sentryAssigneeEmail(row.metadata), "assigned", now);
 
   if (project !== undefined) {
     const serviceId = upsertGraphEntity(db, {
