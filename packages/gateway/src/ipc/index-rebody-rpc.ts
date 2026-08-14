@@ -118,9 +118,9 @@ export type RebodyParams = {
   dryRun?: boolean;
   /**
    * Widens the cold-start window a connector re-walks, in days, for THIS run
-   * only. Honored by the connectors that read `SyncContext.historyFloorMs`
-   * (jira, linear); every other connector ignores it and keeps its own
-   * `initialSyncDepthDays`.
+   * only. Honored only by connectors that opt in by reading
+   * `SyncContext.historyFloorMs`; every other connector ignores it and keeps
+   * its own `initialSyncDepthDays`.
    */
   sinceDays?: number;
 };

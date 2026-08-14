@@ -685,6 +685,56 @@ describe("nimbus index rebody — IPC flow (--dry-run)", () => {
     expect(out.stdout).toMatch(/pending metadata: jira 340, linear 88/);
   });
 
+  // FIX 5: `pagerduty` is the first `cannotImprove` service that ALSO has recoverable
+  // metadata — the "cannot improve" line must not read as "don't bother running this"
+  // when the exact command it names (`nimbus index rebody --service pagerduty`) IS the
+  // recovery path for its actor-email metadata.
+  it("qualifies cannotImprove for a service that also has recoverable metadata, instead of telling the caller not to bother", async () => {
+    const mock = createMockIpcClient([{ jobId: "job-rebody-pagerduty" }]);
+    const baseClient = mock.client as unknown as {
+      call: (m: string, p: unknown) => Promise<unknown>;
+    };
+    const wrappedCall = async (m: string, p: unknown): Promise<unknown> => {
+      const r = await baseClient.call(m, p);
+      if (m === "index.rebody") {
+        setTimeout(() => {
+          mock.emit("index.rebodyDone", {
+            jobId: "job-rebody-pagerduty",
+            durationMs: 5,
+            dryRun: true,
+            pending: {},
+            pendingMeta: { pagerduty: 40 },
+            cannotImprove: ["pagerduty"],
+          });
+        }, 0);
+      }
+      return r;
+    };
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: wrappedCall,
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (e: string, h: (params: unknown) => void): void => {
+          (
+            mock.client as unknown as {
+              onNotification: (e: string, h: (params: unknown) => void) => void;
+            }
+          ).onNotification(e, h);
+        },
+      },
+    });
+    await runIndexCmd(["rebody", "--dry-run"]);
+    expect(out.stdout).toMatch(/pending metadata: pagerduty 40/);
+    // The un-qualified "cannot improve: pagerduty — ... will not change this count." line
+    // must NOT appear — that phrasing is exactly the "don't bother" reading this fix removes.
+    expect(out.stdout).not.toMatch(/^cannot improve: pagerduty/m);
+    expect(out.stdout).toMatch(
+      /pagerduty.*do not yet index full bodies.*pending metadata to recover/s,
+    );
+  });
+
   it("prints the metadata transition and the retained-window warning on a failed --since run", async () => {
     const mock = createMockIpcClient([{ jobId: "job-rebody-real" }]);
     const baseClient = mock.client as unknown as {

@@ -214,9 +214,13 @@ export type NegotiateOwnership = {
  *
  * `unattributable` is a fact about the INDEX, not about this person: in-window
  * incidents carrying no person edge at all. It is counted rather than dropped
- * so a small `resolved` count cannot be read as "they did nothing" when the
- * real cause is an unexpanded actor payload or a token without user-read scope.
- * The same rule `NegotiateDecisions.unattributable` follows.
+ * so a small `resolved` count cannot be read as "they did nothing" — but the
+ * count names no cause: it is dominated by populations the code cannot tell
+ * apart (chiefly auto-resolved incidents with no human actor, deliberately not
+ * a loss — see `extractPagerdutyActors`), so asserting a specific cause (an
+ * unexpanded actor payload, a token without user-read scope) would itself be a
+ * false claim in the common case. The same rule `NegotiateDecisions.unattributable`
+ * follows.
  */
 export type NegotiateIncidents = {
   readonly resolved: number;

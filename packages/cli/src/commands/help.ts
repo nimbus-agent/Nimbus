@@ -26,7 +26,7 @@ Usage:
   nimbus index rebody [--service <name>] [--type <t>] [--limit N] [--since <days>] [--dry-run] [--yes] [--json]
                             Re-fetch indexed depth: truncated legacy bodies, and Jira/Linear metadata below the
                             required version. --since widens the cold-start window past the connector's built-in
-                            30 days (jira/linear only; others ignore it).
+                            30 days for connectors that opt in; others keep their own initial depth.
                             Real outbound API traffic (can re-walk a WHOLE account); required --yes for non-dry runs
   nimbus catchup [--since 3d] [--json] [--service <id>]   Personalised retrospective digest weighted by your involvement
   nimbus glossary [<term>] [--limit N] [--json]   The team's own terminology, mined from the local index

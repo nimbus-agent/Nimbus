@@ -1099,8 +1099,9 @@ PagerDuty incident's indexed `metadata.assignee_emails[]` / `metadata.resolved_b
 `resolves` is a `CROSS_ITEM_RELATION_TYPES` member and is retired on the incident's
 own incoming side (`clearIncomingRelationsOfType`) so a re-sync or re-open never
 leaves a stale edge; a service-type actor (auto-ack/auto-resolve) attributes to
-nobody without counting as a loss. Read by `nimbus catchup`, `nimbus expert`'s
-`subIncidentResolved` lane, and `nimbus negotiate`'s incidents lane. **Not** wired
+nobody without counting as a loss. `resolves` is read by `nimbus catchup`,
+`nimbus expert`'s `subIncidentResolved` lane, and `nimbus negotiate`'s incidents
+lane; `assigned` is read only by `negotiate`'s incidents lane. **Not** wired
 into the `owned_by` / `upstream_of` / `downstream_of` watcher `graph_predicate_json`
 kinds above — a watcher cannot filter on either edge yet.
 

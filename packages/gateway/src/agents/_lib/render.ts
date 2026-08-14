@@ -703,10 +703,13 @@ function renderNegotiateReviewedPrs(r: NegotiateReviewedPrs | null): string {
 /**
  * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. `unattributable`
  * follows the same disclosure shape as `NegotiateDecisions.unattributable` (see
- * `renderNegotiateDecisions`'s docstring), but with one difference: a zero `unattributable` is
- * omitted entirely rather than stated as zero. "0 incidents attributed to nobody" reads as a
+ * `renderNegotiateDecisions`'s docstring), but with TWO differences: a zero `unattributable` is
+ * omitted entirely rather than stated as zero ("0 incidents attributed to nobody" reads as a
  * warning about a problem that does not exist — the counted lines above it already say what did
- * happen, so a zero here has nothing to add.
+ * happen, so a zero here has nothing to add), and the caveat names no cause at all. This count is
+ * dominated by cases the code cannot distinguish from each other — chiefly incidents that
+ * auto-resolved with no human actor, which is not a data-quality problem — so, exactly like the
+ * decisions caveat, it states the fact and disclaims a specific reading without asserting why.
  */
 function renderNegotiateIncidents(i: NegotiateIncidents | null): string {
   if (i === null) {
@@ -719,8 +722,8 @@ function renderNegotiateIncidents(i: NegotiateIncidents | null): string {
   ];
   if (i.unattributable > 0) {
     lines.push(
-      `- ${String(i.unattributable)} in-window incident(s) attributed to nobody — an unexpanded ` +
-        "actor payload or a PagerDuty token without user-read scope, not necessarily inactivity",
+      `- ${String(i.unattributable)} in-window incident(s) have no indexed assignee or ` +
+        "resolver and are not counted above — not necessarily inactivity",
     );
   }
   lines.push(...renderNegotiateEvidence(i.evidence));

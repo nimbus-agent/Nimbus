@@ -245,8 +245,8 @@ function parseRebodyLimit(raw: string | undefined): number | undefined {
  * Like `--limit`, `--since` bounds real outbound API traffic — it widens the
  * connector's cold-start window from its built-in 30 days, so a malformed
  * value is rejected client-side rather than silently becoming the default
- * walk. Honored only by the connectors that read `SyncContext.historyFloorMs`
- * (jira, linear); every other connector ignores it.
+ * walk. Honored only by connectors that opt in by reading
+ * `SyncContext.historyFloorMs`; every other connector ignores it.
  */
 function parseRebodySince(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
@@ -295,7 +295,8 @@ function printPlannedRebody(p: RebodyOptions): void {
       "status and dates) by clearing a connector's sync watermark and letting it re-sync — this " +
       "is real outbound API traffic, potentially tens of thousands of requests for a full-scan " +
       "connector (e.g. Notion). Bounded-window connectors default to roughly the last 30 days; " +
-      "pass --since <days> to widen that for connectors that support it (jira, linear).",
+      "pass --since <days> to widen that for connectors that opt in; others keep their own " +
+      "initial depth.",
   );
   console.log(
     "Re-run with --yes to execute, or --dry-run to see the per-service pending counts first.",
@@ -309,12 +310,38 @@ function formatCounts(counts: Record<string, number>): string {
     .join(", ");
 }
 
-function printCannotImprove(cannotImprove: string[] | undefined): void {
+/**
+ * `cannotImprove` names services outside `REBODY_IMPROVABLE_SERVICES` — their BODY count can
+ * never move. That is a correct statement about bodies, but `rebody` recovers TWO independent
+ * kinds of depth (see `pendingMeta`/`RebodyDonePayload`'s docstring), and `pagerduty` is the
+ * first service in `REBODY_REQUIRED_META_VERSION` that is ALSO in `cannotImprove` — its
+ * incidents carry `bodyPreview` only, never a full body, but DO carry recoverable metadata
+ * (actor emails). Printing the bare "cannot improve" line for such a service reads as "don't
+ * bother running this", which defeats the exact recovery path a caller was told to use. A
+ * service is split into its own qualified line whenever `pendingMeta` shows it has real
+ * metadata to recover — the payload already carries that signal, so no new RPC field is needed.
+ */
+function printCannotImprove(
+  cannotImprove: string[] | undefined,
+  pendingMeta: Record<string, number> | undefined,
+): void {
   if (cannotImprove === undefined || cannotImprove.length === 0) return;
-  console.log(
-    `cannot improve: ${cannotImprove.join(", ")} — connector(s) do not yet index full bodies; ` +
-      `re-fetching will not change this count.`,
-  );
+  const meta = pendingMeta ?? {};
+  const bodyOnly = cannotImprove.filter((s) => !(s in meta));
+  const alsoRecoverable = cannotImprove.filter((s) => s in meta);
+  if (bodyOnly.length > 0) {
+    console.log(
+      `cannot improve: ${bodyOnly.join(", ")} — connector(s) do not yet index full bodies; ` +
+        `re-fetching will not change this count.`,
+    );
+  }
+  if (alsoRecoverable.length > 0) {
+    console.log(
+      `${alsoRecoverable.join(", ")} — connector(s) do not yet index full bodies, so that ` +
+        `count will not change; they DO have pending metadata to recover (see "pending ` +
+        `metadata" above) — still worth running.`,
+    );
+  }
 }
 
 /**
@@ -420,14 +447,14 @@ function printRebodySummaryText(summary: RebodyDonePayload, sinceDays?: number):
         : `pending bodies: ${formatCounts(pending)}`,
     );
     printPendingMeta(summary.pendingMeta ?? {});
-    printCannotImprove(summary.cannotImprove);
+    printCannotImprove(summary.cannotImprove, summary.pendingMeta);
     printRewalkCaveat();
     return;
   }
 
   printPendingTransition(summary.pendingBefore ?? {}, summary.pendingAfter ?? {});
   printPendingMetaTransition(summary.pendingMetaBefore ?? {}, summary.pendingMetaAfter ?? {});
-  printCannotImprove(summary.cannotImprove);
+  printCannotImprove(summary.cannotImprove, summary.pendingMetaBefore);
   printRewalkCaveat();
   console.log(
     `targeted ${String(summary.targeted?.length ?? 0)} service(s); succeeded ` +
@@ -527,7 +554,7 @@ Usage:
   nimbus index rebody [--service <name>]
                       [--type <t>]
                       [--limit N]
-                      [--since <days>]      (jira/linear only; others ignore it)
+                      [--since <days>]      (connectors that opt in; others ignore it)
                       [--dry-run]
                       [--yes]               (required for non-dry runs)
                       [--json]
@@ -537,7 +564,7 @@ Usage:
                        re-syncs from scratch — real outbound API traffic, potentially the WHOLE
                        account for a full-scan connector, not just the pending count shown.
                        --since widens the cold-start window past the connector's built-in 30
-                       days, for the connectors that honor it (jira, linear).
+                       days, for connectors that opt in; others keep their own initial depth.
   nimbus index regraph [--json]
                        Re-run the graph populator over every indexed item (backfills resolves/mentions/correlates_with)
                        Note: 'graphed' counts items that actually wrote graph rows, not items dispatched.

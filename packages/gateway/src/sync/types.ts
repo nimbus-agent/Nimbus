@@ -50,8 +50,8 @@ export interface SyncContext {
    * `nimbus index rebody --since <days>`.
    *
    * OPT-IN per connector: a connector that does not read it is unaffected, and
-   * the two that do (jira, linear) say so in their own doc comments. Absent —
-   * the normal case — every connector keeps its own `initialSyncDepthDays`.
+   * connectors that opt in say so in their own doc comments. Absent — the
+   * normal case — every connector keeps its own `initialSyncDepthDays`.
    * It overrides only the COLD-START floor; an established cursor always wins,
    * since it is more recent by construction.
    */

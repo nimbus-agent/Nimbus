@@ -11,10 +11,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 - **2026-08-14 — PagerDuty incidents are now attributed to people (no schema change).**
   Two new graph edges: `person --assigned--> incident` (from `assignments[].assignee`)
   and `person --resolves--> incident` (from the actor who moved a resolved incident to
-  `resolved`, `last_status_change_by`). Both are read by `nimbus catchup`, `nimbus expert`
-  (a wired `subIncidentResolved` lane, mirroring `subPrReviewed`'s join-then-gap-note
-  shape) and the new `nimbus negotiate` incidents lane (independent `resolved` /
-  `assigned` / `unattributable` counts, never summed). Actor identity is harvested from
+  `resolved`, `last_status_change_by`). `resolves` is read by `nimbus catchup`, `nimbus
+  expert` (a wired `subIncidentResolved` lane, mirroring `subPrReviewed`'s
+  join-then-gap-note shape) and the new `nimbus negotiate` incidents lane; `assigned` is
+  read only by `negotiate`'s incidents lane, which reports both edges as independent
+  `resolved` / `assigned` / `unattributable` counts, never summed. Actor identity is harvested from
   the existing `include[]=assignees,acknowledgers,users`-expanded incidents-list call
   first, falling back to a capped, sequential `/users/{id}` lookup
   (`MAX_USER_LOOKUPS_PER_SYNC = 25`) only for ids the page left unexpanded. **Scope
