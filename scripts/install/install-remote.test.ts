@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assetNameFor, type InstallTarget } from "./lib/release-assets.ts";
+import { assetNameFor, findSupportedTarget } from "./lib/release-assets.ts";
 
 const isWindows = process.platform === "win32";
 
@@ -14,18 +14,14 @@ const isWindows = process.platform === "win32";
  */
 const FIXTURE_VERSION = "2.2.0";
 
-/** This host as an `InstallTarget`, or null when no build is published for it. */
-function hostTarget(): InstallTarget | null {
-  const os = process.platform;
-  const arch = process.arch;
-  if (os !== "linux" && os !== "darwin" && os !== "win32") return null;
-  if (arch !== "x64" && arch !== "arm64") return null;
-  // assetNameFor() throws for Linux arm64 — no such build is published.
-  if (os === "linux" && arch === "arm64") return null;
-  return { os, arch };
-}
-
-const HOST_TARGET = hostTarget();
+/**
+ * This host as an `InstallTarget`, or null when no build is published for it.
+ * Resolved from `SUPPORTED_TARGETS` rather than by hand-listing the unsupported
+ * pairs: `TARBALL_NAME` below is computed at module scope, so a target this
+ * returns that `assetNameFor` then rejects throws while LOADING the file —
+ * before `skip` is evaluated — turning a should-be-skip into a hard failure.
+ */
+const HOST_TARGET = findSupportedTarget(process.platform, process.arch);
 
 /**
  * The asset name install.sh will ACTUALLY request on this host, derived from
