@@ -21,7 +21,7 @@ import { insertPerson } from "../../../src/people/person-store.ts";
  */
 const NOW = Date.now();
 const PERSON_ID = "person:me";
-const UNAVAILABLE_EVIDENCE = ["incidents resolved", "on-call shifts", "deploys triggered"];
+const UNAVAILABLE_EVIDENCE = ["on-call shifts", "deploys triggered"];
 
 /** Narrows the `negotiate.briefReady` payload instead of casting it into shape. */
 function isBriefReadyParams(v: unknown): v is { brief: string; findings: { kind: string } } {
@@ -220,9 +220,11 @@ describe("nimbus negotiate (e2e, in-process)", () => {
       expect(params.brief).toContain("Review on acme/widgets#9");
       expect(params.brief).toContain("Checkout button unresponsive");
 
-      // The absent-evidence note (spec § 5.D) is present UNCONDITIONALLY — incidents resolved,
-      // on-call shifts and deploys triggered do not exist in the index at all, and the brief
-      // names them on every run so an empty section is never read as zero.
+      // The absent-evidence note (spec § 5.D) is present UNCONDITIONALLY — on-call shifts and
+      // deploys triggered do not exist in the index at all, and the brief names them on every
+      // run so an empty section is never read as zero. Incidents resolved is no longer on this
+      // list: PR 1 wired the `person --resolves--> incident` graph edge and the negotiate
+      // `incidents` lane now measures it directly instead of declaring it unavailable.
       for (const term of UNAVAILABLE_EVIDENCE) {
         expect(params.brief).toContain(term);
       }

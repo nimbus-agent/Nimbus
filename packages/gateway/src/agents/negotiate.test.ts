@@ -47,6 +47,43 @@ function seedReview(db: Database, num: number, reviewerId: string, state: string
   });
 }
 
+/**
+ * Writes a pagerduty incident and lets the REAL populator build the edges —
+ * `upsertIndexedItem` calls `syncGraphFromIndexedItem` synchronously. Seeding
+ * graph rows by hand would test the lane against a graph shape the populator
+ * never produces.
+ */
+function seedIncident(
+  db: Database,
+  id: string,
+  actors: { assignees?: string[]; resolvedBy?: string | null; modifiedAt?: number },
+): void {
+  upsertIndexedItem(db, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: id,
+    title: `Incident ${id}`,
+    bodyPreview: "",
+    modifiedAt: actors.modifiedAt ?? Date.now(),
+    syncedAt: Date.now(),
+    metadata: {
+      service: "checkout",
+      assignee_emails: actors.assignees ?? [],
+      resolved_by_email: actors.resolvedBy ?? null,
+    },
+  });
+}
+
+/** `resolvePersonForSync` matches on canonical_email, so it must be set. */
+function seedMe(db: Database): string {
+  db.run("INSERT INTO person (id, display_name, canonical_email) VALUES (?, ?, ?)", [
+    "person:me",
+    "Me",
+    "jane@example.com",
+  ]);
+  return "person:me";
+}
+
 function freshDb(): Database {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
@@ -105,11 +142,7 @@ test("the brief always names the evidence that does not exist", async () => {
   );
   const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
 
-  expect(brief.unavailableEvidence).toEqual([
-    "incidents resolved",
-    "on-call shifts",
-    "deploys triggered",
-  ]);
+  expect(brief.unavailableEvidence).toEqual(["on-call shifts", "deploys triggered"]);
   db.close();
 });
 
@@ -135,7 +168,7 @@ test("renders deterministically with no LLM configured", async () => {
   // build+synthesize+notify chain runs. Give that chain a macrotask tick, matching the
   // pattern in premortem.test.ts's "emitPremortemBrief notifies ..." tests.
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(captured?.brief ?? "").toContain("incidents resolved");
+  expect(captured?.brief ?? "").toContain("on-call shifts");
   db.close();
 });
 
@@ -1192,6 +1225,7 @@ test("an other subject with no id at all still reads as a third party", () => {
     unavailableEvidence: [],
     authoredPrs: null,
     reviewedPrs: null,
+    incidents: null,
     tickets: null,
     ownership: null,
     decisions: { authored: 0, unattributable: 0, evidence: { refs: [], total: 0 } },
@@ -1300,5 +1334,56 @@ test("the stats-unavailable note still fires when an unenriched PR exists", asyn
   const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
 
   expect(renderNegotiate(brief)).toContain("no enriched PR in this window");
+  db.close();
+});
+
+test("counts incidents resolved and assigned to the subject", async () => {
+  const db = freshDb();
+  seedMe(db);
+  seedIncident(db, "PD-1", { assignees: ["jane@example.com"], resolvedBy: "jane@example.com" });
+  seedIncident(db, "PD-2", { assignees: ["jane@example.com"] });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  expect(brief.incidents?.resolved).toBe(1);
+  expect(brief.incidents?.assigned).toBe(2);
+  db.close();
+});
+
+test("counts in-window incidents nobody could be attributed to", async () => {
+  const db = freshDb();
+  seedMe(db);
+  seedIncident(db, "PD-1", { assignees: ["jane@example.com"] });
+  seedIncident(db, "PD-2", {});
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  expect(brief.incidents?.unattributable).toBe(1);
+  db.close();
+});
+
+test("excludes incidents outside the window", async () => {
+  const db = freshDb();
+  seedMe(db);
+  seedIncident(db, "PD-OLD", {
+    assignees: ["jane@example.com"],
+    resolvedBy: "jane@example.com",
+    modifiedAt: Date.now() - 200 * 86_400_000,
+  });
+
+  const brief = await runNegotiate(
+    { sinceMs: 90 * 24 * 60 * 60 * 1000, mePersonIdOverride: "person:me" },
+    ctxFor(db),
+  );
+  expect(brief.incidents?.resolved).toBe(0);
+  db.close();
+});
+
+test("a re-synced incident counts once, not twice", async () => {
+  const db = freshDb();
+  seedMe(db);
+  seedIncident(db, "PD-1", { assignees: ["jane@example.com"], resolvedBy: "jane@example.com" });
+  seedIncident(db, "PD-1", { assignees: ["jane@example.com"], resolvedBy: "jane@example.com" });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  expect(brief.incidents?.resolved).toBe(1);
   db.close();
 });
