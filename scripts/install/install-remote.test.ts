@@ -4,11 +4,50 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { assetNameFor, type InstallTarget } from "./lib/release-assets.ts";
 
 const isWindows = process.platform === "win32";
+
+/**
+ * The version every test here passes to `install.sh --from-release`. The
+ * fixture asset name is derived from it, so the two can never drift apart.
+ */
+const FIXTURE_VERSION = "2.2.0";
+
+/** This host as an `InstallTarget`, or null when no build is published for it. */
+function hostTarget(): InstallTarget | null {
+  const os = process.platform;
+  const arch = process.arch;
+  if (os !== "linux" && os !== "darwin" && os !== "win32") return null;
+  if (arch !== "x64" && arch !== "arm64") return null;
+  // assetNameFor() throws for Linux arm64 — no such build is published.
+  if (os === "linux" && arch === "arm64") return null;
+  return { os, arch };
+}
+
+const HOST_TARGET = hostTarget();
+
+/**
+ * The asset name install.sh will ACTUALLY request on this host, derived from
+ * the same `release-assets.ts` SSoT that `release-assets-drift.test.ts` pins
+ * install.sh's own `detect_asset()` against.
+ *
+ * This was previously hardcoded to the Linux name. Because the Linux tarball
+ * is the ONE asset carrying its version in the filename
+ * (`nimbus-headless-linux-amd64-v2.2.0.tar.gz`) while the macOS tarballs are
+ * unversioned (`nimbus-headless-macos-arm64.tar.gz`), the fixture server
+ * answered 404 for the name install.sh asked for on every macOS runner — so
+ * five tests in this file failed on macos-15 while passing on ubuntu, and
+ * main stayed red. Deriving the name means each OS exercises its own real
+ * asset name instead of Linux's.
+ */
+const TARBALL_NAME = HOST_TARGET ? assetNameFor(HOST_TARGET, FIXTURE_VERSION) : "";
+
 // A missing curl must read as SKIPPED, never as a checksum failure — the
-// verify:docker image (oven/bun:1.3) ships neither curl nor wget.
-const skip = isWindows || !Bun.which("curl");
+// verify:docker image (oven/bun:1.3) ships neither curl nor wget. A host with
+// no published build likewise skips rather than failing on a name it could
+// never have served.
+const skip = isWindows || !Bun.which("curl") || HOST_TARGET === null;
 // The bad-signature test needs a REAL gpg to reject a bad signature with
 // (rather than degrade via the best-effort skip path), so it needs its own,
 // stricter guard on top of `skip`.
@@ -180,7 +219,7 @@ async function makeTarball(work: string, tarballName: string): Promise<string> {
  */
 async function runInstallSh(env: Record<string, string | undefined>) {
   const proc = Bun.spawn(
-    ["sh", "scripts/install/unix/install.sh", "--from-release", "2.2.0", "--yes"],
+    ["sh", "scripts/install/unix/install.sh", "--from-release", FIXTURE_VERSION, "--yes"],
     {
       env,
       stdout: "pipe",
@@ -210,7 +249,7 @@ test.skipIf(skip)(
       await writeFile(p, "#!/bin/sh\necho 2.2.0\n");
       await chmod(p, 0o755);
     }
-    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    const tarballName = TARBALL_NAME;
     await Bun.$`tar -czf ${join(work, tarballName)} -C ${payload} .`.quiet();
 
     const server = await serveFakeRelease(work, tarballName);
@@ -245,7 +284,7 @@ test.skipIf(skip)(
     const work = await mkdtemp(join(tmpdir(), "nimbus-tamper-"));
     const home = join(work, "home");
     await mkdir(home, { recursive: true });
-    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    const tarballName = TARBALL_NAME;
     await writeFile(join(work, tarballName), "not a real tarball");
 
     // SHA256SUMS advertises a digest that does not match the served bytes.
@@ -299,7 +338,7 @@ test.skipIf(skip)(
     const work = await mkdtemp(join(tmpdir(), "nimbus-dup-"));
     const home = join(work, "home");
     await mkdir(home, { recursive: true });
-    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    const tarballName = TARBALL_NAME;
     const tarballPath = await makeTarball(work, tarballName);
     const tarball = await Bun.file(tarballPath).arrayBuffer();
     const digest = new Bun.CryptoHasher("sha256").update(tarball).digest("hex");
@@ -343,7 +382,7 @@ test.skipIf(skip)(
     const work = await mkdtemp(join(tmpdir(), "nimbus-nogpg-remote-"));
     const home = join(work, "home");
     await mkdir(home, { recursive: true });
-    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    const tarballName = TARBALL_NAME;
     await makeTarball(work, tarballName);
 
     const server = await serveFakeRelease(work, tarballName);
@@ -379,7 +418,7 @@ test.skipIf(skipSigCheck)(
     const work = await mkdtemp(join(tmpdir(), "nimbus-badsig-"));
     const home = join(work, "home");
     await mkdir(home, { recursive: true });
-    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    const tarballName = TARBALL_NAME;
     const tarballPath = await makeTarball(work, tarballName);
     const tarball = await Bun.file(tarballPath).arrayBuffer();
     const digest = new Bun.CryptoHasher("sha256").update(tarball).digest("hex");
@@ -424,7 +463,7 @@ test.skipIf(skipSigCheck)(
     const work = await mkdtemp(join(tmpdir(), "nimbus-untrusted-"));
     const home = join(work, "home");
     await mkdir(home, { recursive: true });
-    const tarballName = "nimbus-headless-linux-amd64-v2.2.0.tar.gz";
+    const tarballName = TARBALL_NAME;
     const tarballPath = await makeTarball(work, tarballName);
     const tarball = await Bun.file(tarballPath).arrayBuffer();
     const digest = new Bun.CryptoHasher("sha256").update(tarball).digest("hex");
