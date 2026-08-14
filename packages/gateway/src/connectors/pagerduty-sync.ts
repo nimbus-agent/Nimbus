@@ -1,11 +1,13 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { usableActorEmail } from "./actor-email.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import {
   extractPagerdutyActors,
   PAGERDUTY_INCIDENT_META_VERSION,
   pagerdutyEmailMapFromIncidents,
+  pagerdutyUnresolvedActorIds,
 } from "./pagerduty-attribution.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -149,6 +151,79 @@ export function syncPagerdutyIncidentItems(
   return { upserted, maxUpdated };
 }
 
+/**
+ * Hard ceiling on identity lookups per sync run. The expansion in Task 4
+ * covers assignees for free, so this only ever pays for actors that arrive as
+ * bare references — normally a handful. Exported so the test can seed exactly
+ * at the boundary without duplicating the number.
+ */
+export const MAX_USER_LOOKUPS_PER_SYNC = 25;
+
+/**
+ * Fill `emailById` for actor ids the page did not expand.
+ *
+ * Sequential on purpose. The cap bounds TOTAL requests, not their burst rate;
+ * fanning 25 concurrent requests at a shared limiter is precisely the spike the
+ * limiter exists to smooth. Each lookup acquires the limiter exactly as the
+ * list requests do (`:186`).
+ *
+ * Every failure mode — non-OK status, thrown request, unparseable body — is
+ * caught PER LOOKUP and memoised as a miss, then attribution simply degrades to
+ * an unattributed count. A 403 here is the expected steady state for any token
+ * scoped before this feature existed, so losing the whole incident index over
+ * it would be a far worse outcome than an unattributed incident.
+ *
+ * Returns the bytes transferred so the caller keeps its accounting honest.
+ */
+async function resolveMissingActorEmails(
+  ctx: SyncContext,
+  token: string,
+  ids: readonly string[],
+  emailById: Map<string, string>,
+  attempted: Set<string>,
+): Promise<number> {
+  let bytes = 0;
+  for (const id of ids) {
+    if (attempted.size >= MAX_USER_LOOKUPS_PER_SYNC) return bytes;
+    if (attempted.has(id) || emailById.has(id)) continue;
+    attempted.add(id);
+    await ctx.rateLimiter.acquire("pagerduty");
+    try {
+      const res = await fetch(`https://api.pagerduty.com/users/${encodeURIComponent(id)}`, {
+        headers: {
+          Accept: "application/vnd.pagerduty+json;version=2",
+          Authorization: `Token token=${token.trim()}`,
+        },
+      });
+      const text = await res.text();
+      bytes += text.length;
+      if (!res.ok) {
+        ctx.logger.warn(
+          { serviceId: SERVICE_ID, status: res.status },
+          "pagerduty sync: user lookup failed; incident left unattributed",
+        );
+        continue;
+      }
+      // Do NOT "simplify" this into a hand-rolled `typeof parsed === "object"
+      // && parsed !== null` guard. `asRecord` already rejects null, primitives
+      // AND arrays (`unknown-record.ts:1-6`); an inline guard drops the array
+      // check, and binding `JSON.parse(text)` to a `const` without `as unknown`
+      // types it `any`, which the no-`any` rule forbids. `JSON.parse` sits
+      // inside the try precisely so an empty or non-JSON 200 body degrades to
+      // an unattributed incident rather than throwing.
+      const user = asRecord(asRecord(JSON.parse(text) as unknown)?.["user"]);
+      const email = user === undefined ? null : usableActorEmail(user["email"]);
+      if (email !== null) emailById.set(id, email);
+    } catch (err) {
+      ctx.logger.warn(
+        { serviceId: SERVICE_ID, err },
+        "pagerduty sync: user lookup threw; incident left unattributed",
+      );
+    }
+  }
+  return bytes;
+}
+
 export type PagerdutySyncableOptions = {
   ensurePagerdutyMcpRunning: () => Promise<void>;
   maxPagesPerSync?: number;
@@ -181,6 +256,8 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
       let pdHasMore = false;
       // Run-scoped, so a repeated actor is harvested once per SYNC, not per page.
       const emailById = new Map<string, string>();
+      // Run-scoped, so a repeated actor costs one lookup per SYNC, not per page.
+      const attemptedUserIds = new Set<string>();
 
       while (pagesFetched < maxPagesPerSync) {
         await ctx.rateLimiter.acquire("pagerduty");
@@ -233,6 +310,14 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
         }
         const pageEmails = pagerdutyEmailMapFromIncidents(parsed.incidents);
         for (const [k, v] of pageEmails) if (!emailById.has(k)) emailById.set(k, v);
+        totalBytesTransferred += await resolveMissingActorEmails(
+          ctx,
+          token,
+          pagerdutyUnresolvedActorIds(parsed.incidents, emailById),
+          emailById,
+          attemptedUserIds,
+        );
+
         const { upserted, maxUpdated: pageMax } = syncPagerdutyIncidentItems(
           ctx,
           parsed.incidents,
