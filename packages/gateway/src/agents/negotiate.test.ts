@@ -1501,8 +1501,13 @@ test("connector present but no incident edges raises missing_relation_emit, not 
   ).toBe(false);
   const gap = brief.gaps.find((g) => g.category === "missing_relation_emit");
   expect(gap).toBeDefined();
-  expect(gap?.detail).toContain("resolves");
-  expect(gap?.detail).toContain("incident");
+  // Pinned against the honest, scoped detail `detectMissingIncidentPersonEdges` builds —
+  // the shared default ("not yet emitted by the graph populator") is false since
+  // `syncIncidentPersonEdges` shipped, and this must not silently revert to it.
+  expect(gap?.detail).toBe(
+    "No PagerDuty incident in the index is attributed to a person — either none carry " +
+      "an assignee or resolver, or their actor payloads carry no usable email.",
+  );
   db.close();
 });
 
@@ -1610,6 +1615,18 @@ test("sentry present but no assignment edges yields a missing_relation_emit gap"
   // The remediation must be actionable, not the shared default — the default says
   // the edges are "not yet emitted by the graph populator", which is false here.
   expect(relationGaps.some((g) => (g.remediation ?? "").includes("sentry"))).toBe(true);
+  // Pinned against the honest, scoped detail `detectMissingErrorIssuePersonEdges` builds
+  // — an unassigned Sentry issue is the NORM, so this must not silently revert to the
+  // shared default detail (which would make `nimbus index regraph` read as the fix for
+  // the common case, when it is a no-op there).
+  expect(
+    relationGaps.some(
+      (g) =>
+        g.detail ===
+        "No Sentry issue in the index is assigned to a resolvable person — either none " +
+          "are assigned, or the assignee actors carry no usable email.",
+    ),
+  ).toBe(true);
   db.close();
 });
 

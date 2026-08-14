@@ -860,6 +860,50 @@ export function reduceLaneResults(
   return gaps;
 }
 
+/**
+ * Resolution-aware probe for the incidents lane's `resolves -> incident` edge (spec §
+ * 5.8). `detectMissingRelationToEntityType`'s shared default detail says the edge is
+ * "defined in the schema but not yet emitted by the graph populator" — false here,
+ * since `syncIncidentPersonEdges` emits it. Build an honest, scoped `GapNote` from its
+ * result instead of changing the shared helper's detail for every other relation type
+ * (the pattern `expert.ts`'s `detectUnresolvedReviewedRelation` already establishes).
+ */
+function detectMissingIncidentPersonEdges(db: Database): GapNote | null {
+  const missingEmit = detectMissingRelationToEntityType(db, "resolves", "incident");
+  if (missingEmit === null) return null;
+  const note: GapNote = {
+    category: missingEmit.category,
+    detail:
+      "No PagerDuty incident in the index is attributed to a person — either none carry " +
+      "an assignee or resolver, or their actor payloads carry no usable email.",
+  };
+  const remediation = remediationForEntityType("incident");
+  if (remediation !== undefined) note.remediation = remediation;
+  return note;
+}
+
+/**
+ * Same shape as `detectMissingIncidentPersonEdges`, for the `assigned -> error_issue`
+ * edge `syncErrorIssueGraph` emits. An unassigned Sentry issue is the NORM, so the
+ * shared default detail's remediation (`nimbus index regraph`) would be a no-op for the
+ * most common case — a user with many indexed-but-unassigned issues would be told to
+ * run a command that reports "graphed N" and changes nothing. State the actual cause
+ * instead.
+ */
+function detectMissingErrorIssuePersonEdges(db: Database): GapNote | null {
+  const missingEmit = detectMissingRelationToEntityType(db, "assigned", "error_issue");
+  if (missingEmit === null) return null;
+  const note: GapNote = {
+    category: missingEmit.category,
+    detail:
+      "No Sentry issue in the index is assigned to a resolvable person — either none are " +
+      "assigned, or the assignee actors carry no usable email.",
+  };
+  const remediation = remediationForEntityType("error_issue");
+  if (remediation !== undefined) note.remediation = remediation;
+  return note;
+}
+
 export async function runNegotiate(
   input: NegotiateInput,
   ctx: NegotiateContext,
@@ -912,21 +956,11 @@ export async function runNegotiate(
     if (missingPagerdutyConnector !== null) {
       gaps.push(missingPagerdutyConnector);
     } else {
-      // The remediation is REQUIRED here, not optional polish. Without it this
-      // note falls back to `detectMissingRelationToEntityType`'s shared default
-      // detail, which says the edges are "not yet emitted by the graph
-      // populator" — false since `syncIncidentPersonEdges` shipped. The real
-      // cause is missing PagerDuty actor data, which is exactly what
-      // `remediationForEntityType("incident")` explains, and it is the same
-      // string `expert.ts`'s `subIncidentResolved` passes for this identical
-      // condition. Omitting it gave the recovery steps in one brief and not the
-      // other, for the same underlying state.
-      const missingIncidentEdges = detectMissingRelationToEntityType(
-        ctx.db,
-        "resolves",
-        "incident",
-        remediationForEntityType("incident"),
-      );
+      // `detectMissingIncidentPersonEdges` builds an honest, scoped `GapNote` rather
+      // than falling back to `detectMissingRelationToEntityType`'s shared default
+      // detail, which says the edges are "not yet emitted by the graph populator" —
+      // false since `syncIncidentPersonEdges` shipped.
+      const missingIncidentEdges = detectMissingIncidentPersonEdges(ctx.db);
       if (missingIncidentEdges !== null) gaps.push(missingIncidentEdges);
     }
     // Same shape as the PagerDuty block above, for the same reason: no Sentry
@@ -936,12 +970,10 @@ export async function runNegotiate(
     if (missingSentryConnector !== null) {
       gaps.push(missingSentryConnector);
     } else {
-      const missingErrorIssueEdges = detectMissingRelationToEntityType(
-        ctx.db,
-        "assigned",
-        "error_issue",
-        remediationForEntityType("error_issue"),
-      );
+      // `detectMissingErrorIssuePersonEdges` builds an honest, scoped `GapNote` — an
+      // unassigned Sentry issue is the NORM, so the shared default detail's
+      // `nimbus index regraph` remediation would be a no-op in the common case.
+      const missingErrorIssueEdges = detectMissingErrorIssuePersonEdges(ctx.db);
       if (missingErrorIssueEdges !== null) gaps.push(missingErrorIssueEdges);
     }
     laneNames.push(
