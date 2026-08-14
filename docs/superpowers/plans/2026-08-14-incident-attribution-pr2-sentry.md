@@ -63,6 +63,13 @@ Sentry's `assignedTo` is stored raw by `sentry-issue-mapping.ts:87` — a nullab
 2. **Emit AFTER the existing `clearRelationsTouchingEntity(db, entityId)` call**, or the clear wipes what you just wrote. The function's own doc comment says this.
 3. **`error_issue` is replayed by `regraph`** via the catch-all slice at `regraph.ts:233-234` (it is deliberately absent from `REGRAPH_TYPE_ORDER`, which is an ordering hint, not a filter). That is what makes this backfill without a re-sync.
 
+**Both guards in `sentryAssigneeEmail` were checked against their implementations, so the helper is
+safe on a malformed payload without any extra defensive code:** `asRecord`
+(`connectors/unknown-record.ts:1-6`) returns `undefined` for `null`, primitives **and arrays**;
+`stringField` (`graph-populator.ts:56-59`) is
+`typeof v === "string" && v.trim() !== "" ? v : undefined`, so a missing key yields `undefined`
+rather than throwing, and `undefined === "user"` is `false`. Do not add null-checks on top of these.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
@@ -427,8 +434,18 @@ no edges, so firing both would emit two notes for one root cause.
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/gateway/src/agents/`
-Expected: PASS. Any existing test constructing a `NegotiateIncidents` literal now needs the new
-required field — `typecheck` will name them; update rather than making the field optional.
+Expected: PASS, with **no other test needing an edit** — verified, not assumed:
+
+- `grep -n "incidents: {" packages/gateway/src/agents/**/*.test.ts` returns **nothing**. No test
+  constructs a `NegotiateIncidents` literal, so adding a required field breaks none of them.
+- `emptyNegotiateBriefForRender` (`negotiate.test.ts:1214`, used at `:1245` and `:1439`) sets
+  `incidents: null`. `null` stays assignable to `NegotiateIncidents | null`, so it is unaffected.
+  **Do NOT "helpfully" change it to an object literal** — its `null` is load-bearing for the
+  `a null incidents lane renders as could-not-be-computed, never as zero` test, which exists to
+  prove `null` and `0` are not collapsed. Turning it into a literal would silently delete that proof.
+
+If `typecheck` nevertheless names a file, fix that file — never make the field optional, which would
+let a caller silently omit it.
 
 - [ ] **Step 5: Commit**
 
