@@ -666,13 +666,17 @@ test.skipIf(!windowsPowerShell)(
       // same probe returns MISSING with a pwsh-derived PSModulePath and FOUND
       // with this one. CI's `shell: powershell` starts from a clean environment
       // and never sees this; a test spawned from a Bun process does.
-      env["PSModulePath"] = join(
-        process.env["SystemRoot"] ?? "C:\\Windows",
-        "system32",
-        "WindowsPowerShell",
-        "v1.0",
-        "Modules",
-      );
+      // Read SystemRoot rather than assuming "C:\Windows": Windows is not
+      // always on C:, and silently guessing the wrong module root would
+      // resurrect the very "Get-FileHash is missing" confusion this line
+      // exists to prevent -- as an unexplained failure instead of a clear one.
+      // The variable is always set on Windows, and this test runs nowhere
+      // else, so an absent one means something is wrong enough to say so.
+      const systemRoot = process.env["SystemRoot"];
+      if (!systemRoot) {
+        throw new Error("SystemRoot is unset; cannot locate the Windows PowerShell 5.1 modules");
+      }
+      env["PSModulePath"] = join(systemRoot, "system32", "WindowsPowerShell", "v1.0", "Modules");
 
       const proc = Bun.spawn(
         [
