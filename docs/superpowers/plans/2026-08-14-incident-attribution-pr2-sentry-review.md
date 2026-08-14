@@ -1,7 +1,7 @@
 # Review of Incident Attribution — PR 2 (Sentry) Implementation Plan
 
 **Date:** 2026-08-14
-**Plan File:** [2026-08-14-incident-attribution-pr2-sentry.md](file:///C:/gitrep/Nimbus/.claude/worktrees/incident-attribution-pr2-sentry/docs/superpowers/plans/2026-08-14-incident-attribution-pr2-sentry.md)
+**Plan File:** [2026-08-14-incident-attribution-pr2-sentry.md](./2026-08-14-incident-attribution-pr2-sentry.md)
 
 ---
 
