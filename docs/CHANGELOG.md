@@ -8,6 +8,35 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-14 — the one-liner install is documented again, and #1167 is closed
+  (docs only).** The 2026-08-13 entry below held the `curl | sh` / `irm | iex`
+  one-liner back from user-facing docs for two stated reasons; both are now
+  discharged. (1) `v2.4.1` is the first published release whose
+  `releases/latest/download/install.{sh,ps1}` are the download-capable scripts, so
+  the documented URL now serves a script that can do what the docs claim. (2)
+  `released-install-smoke.yml` is no longer unproven: its `release:` trigger fired
+  on `v2.4.1` and **all six jobs passed** (run `31791116081`) — `documented install`
+  and `documented one-liner` on ubuntu-24.04, macos-14 and windows-2022, the last of
+  those covering **both** PowerShell 7 and stock Windows PowerShell 5.1, which had
+  never once passed before the `EAP=Continue` fix in #1179. That run is also the
+  first green exercise anywhere of the GPG **true-positive** path. `README.md` and
+  the install guide now lead each platform with the exact spelling that green run
+  executed — `curl … | sh -s -- --yes` and
+  `& ([scriptblock]::Create((irm $url))) -Yes`, the latter because `iex` cannot pass
+  `-Yes` through — and keep the extract-then-run archive path below it, itself
+  covered by the `documented install` jobs. So **every install command in the docs
+  is now backed by a green post-release job**, which is precisely what #1167 lacked.
+  Three honesty corrections ride along, all verified against the installer sources
+  rather than restated from the previous docs: the Linux one-liner is **x86-64 only**
+  and only *warns* about `bubblewrap` (the `.deb` remains the sole path that resolves
+  dependencies); the archive path performs **no download and therefore no
+  verification**, making it strictly less checked than the one-liner it was offered
+  as the cautious alternative to; and signature verification is skipped — with a
+  labelled `SIGNATURE NOT CHECKED` notice, never silently — when **`gpg` is missing
+  or unrunnable**, not only when the `.asc` is unavailable. The install guide's
+  standing claim that the installer "configures the Gateway to autostart with your
+  session" was **false on all three platforms** and is removed; the same file's
+  "What the installer does" section already said the opposite.
 - **2026-08-14 — Sentry error issues are now attributed to people (no schema change,
   no re-sync).** A new graph edge, `person --assigned--> error_issue`, built from
   Sentry's `assignedTo` actor. Unlike the PagerDuty half of this feature (below), this

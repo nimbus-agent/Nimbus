@@ -49,12 +49,23 @@ Three things, in one query:
 #            security default-keychain -s nimbus.keychain
 #            security unlock-keychain  -p "" nimbus.keychain
 
+curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh | sh -s -- --yes
+# then open a new shell:
+nimbus --version
+```
+
+The installer picks Apple silicon or Intel from `uname -m`, verifies the release
+signature before it installs anything, and copies the binaries to `~/.local/bin`.
+
+Rather read the script before running it? Download the archive and run the copy
+inside it — same installer, no pipe:
+
+```bash
 # Apple silicon — for Intel, swap arm64 → x64.
 curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus-headless-macos-arm64.tar.gz -o /tmp/nimbus.tar.gz
 mkdir -p /tmp/nimbus && tar -xzf /tmp/nimbus.tar.gz -C /tmp/nimbus
-# inspect it first if you like:  less /tmp/nimbus/install.sh
+less /tmp/nimbus/install.sh
 /tmp/nimbus/install.sh
-nimbus --version
 ```
 
 </details>
@@ -74,7 +85,21 @@ sudo apt install /tmp/nimbus.deb
 nimbus --version
 ```
 
-Prefer no `sudo`? The [AppImage](https://nimbus-agent.dev/user-guide/install/#appimage-linux-alternative) is a portable single file.
+Prefer no `sudo`? Two options, neither of which resolves the dependencies for
+you — the `.deb` above is the only path that does:
+
+```bash
+# x86-64 only; there is no published Linux arm64 build.
+curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh | sh -s -- --yes
+# then open a new shell:
+nimbus --version
+```
+
+This installs to `~/.local/bin` and updates your shell `PATH`. It **warns** if
+`bubblewrap` is missing rather than installing it — and the Gateway will not
+start without it (`sudo apt install bubblewrap`). The
+[AppImage](https://nimbus-agent.dev/user-guide/install/#appimage-linux-alternative)
+is the other no-`sudo` route: a portable single file.
 
 **Headless box** — server, container, SSH session or WSL? `libsecret` also needs
 a D-Bus session and an unlocked keyring, which those machines usually lack. Run
@@ -87,18 +112,30 @@ a D-Bus session and an unlocked keyring, which those machines usually lack. Run
 <summary><b>Windows (PowerShell, no admin)</b></summary>
 
 ```powershell
+$url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1"
+& ([scriptblock]::Create((irm $url))) -Yes
+# then open a new PowerShell window:
+nimbus --version
+```
+
+Works on stock Windows PowerShell 5.1 as well as PowerShell 7. It is spelled
+`& ([scriptblock]::Create(...))` rather than `irm ... | iex` because `iex`
+cannot pass `-Yes` to the script.
+
+Rather read the script before running it? Download the archive and run the copy
+inside it — same installer, no pipe:
+
+```powershell
 $url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus-headless-windows-x64.zip"
 Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\nimbus.zip"
 Expand-Archive -Path "$env:TEMP\nimbus.zip" -DestinationPath "$env:TEMP\nimbus" -Force
-# inspect it first if you like:  notepad "$env:TEMP\nimbus\install.ps1"
+notepad "$env:TEMP\nimbus\install.ps1"
 & "$env:TEMP\nimbus\install.ps1"
-# open a new PowerShell window:
-nimbus --version
 ```
 
 </details>
 
-Every release artefact is GPG-signed (key `5A20457CCD8B53FFAA945240886ADA6B487CAB6E`) with a SHA-256 manifest and build-provenance attestations — see [Verify your download](https://nimbus-agent.dev/user-guide/verify-your-download/). Homebrew and Scoop taps are also available (see the [install guide](https://nimbus-agent.dev/user-guide/install/)).
+Every release artefact is GPG-signed (key `5A20457CCD8B53FFAA945240886ADA6B487CAB6E`) with a SHA-256 manifest and build-provenance attestations. When it downloads a release, the installer runs that check for you: it verifies `SHA256SUMS.asc` against a fingerprint pinned inside the script itself, refuses to install on a mismatched, expired or revoked key, then checks the downloaded archive against the manifest. If `gpg` is missing, or the signature file cannot be fetched, it installs on the checksum alone and says so — `SIGNATURE NOT CHECKED` — rather than letting a checksum pass read as a signature pass. To verify by hand instead, see [Verify your download](https://nimbus-agent.dev/user-guide/verify-your-download/). Homebrew and Scoop taps are also available (see the [install guide](https://nimbus-agent.dev/user-guide/install/)).
 
 **2. Index a repo you already have** — no account, no token, no API key:
 

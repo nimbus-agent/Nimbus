@@ -6,8 +6,9 @@ description: Install Nimbus on Windows, macOS, or Linux. Per-user, no admin requ
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
 Nimbus installs per-user — no administrator or sudo access required on any
-platform. The installer places the `nimbus` binary on your PATH, creates a
-data directory, and configures the Gateway to autostart with your session.
+platform. The installer places the `nimbus` binary on your PATH and creates a
+data directory. It does **not** configure autostart on any platform — you start
+the Gateway yourself with `nimbus init` or `nimbus start`.
 
 ---
 
@@ -45,11 +46,40 @@ After installation:
 nimbus --version
 ```
 
+**Without `sudo`:** the one-liner installs the tarball to `~/.local/bin`
+instead. It is x86-64 only — there is no published Linux arm64 build — and it
+**warns** about `bubblewrap` rather than installing it, so you still need
+`sudo apt install bubblewrap libsecret-tools` for the Gateway to start. The
+`.deb` above is the only path that resolves those dependencies for you.
+
+```bash
+curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh | sh -s -- --yes
+```
+
   </TabItem>
   <TabItem label="macOS">
 
-Download the archive for your architecture, extract it, and run the installer
-it contains:
+One command. The installer resolves the latest release, picks Apple silicon or
+Intel from `uname -m`, verifies the release signature, and installs to
+`~/.local/bin`:
+
+```bash
+curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh | sh -s -- --yes
+```
+
+Open a new shell, then:
+
+```bash
+nimbus --version
+```
+
+**Gatekeeper note:** macOS will display an "unverified developer" warning the
+first time the `nimbus` binary runs. See
+[First-run setup](/user-guide/first-run-setup/) for the one-time bypass step.
+
+#### Prefer to read the script first?
+
+Download the archive and run the copy inside it — the same installer, no pipe:
 
 ```bash
 # Apple silicon — for Intel, swap arm64 → x64.
@@ -57,59 +87,60 @@ curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbu
   -o /tmp/nimbus.tar.gz
 mkdir -p /tmp/nimbus && tar -xzf /tmp/nimbus.tar.gz -C /tmp/nimbus
 
-# Inspect the script before running it (recommended):
-# less /tmp/nimbus/install.sh
+less /tmp/nimbus/install.sh
 /tmp/nimbus/install.sh
 ```
 
-`install.sh` installs the binaries that were extracted alongside it into
-`~/.local/bin` and updates your shell `PATH`. To check the download's integrity,
-verify it against the signed `SHA256SUMS.asc` manifest — see
-[Verify your download](/user-guide/verify-your-download/). **Gatekeeper note:** macOS will display an
-"unverified developer" warning the first time the `nimbus` binary runs. See
-[First-run setup](/user-guide/first-run-setup/) for the one-time bypass step.
-
-After installation:
-
-```bash
-nimbus --version
-```
+Run this way, `install.sh` installs the binaries extracted alongside it and
+performs no download, so nothing verifies them for you — check them against the
+signed `SHA256SUMS.asc` manifest yourself. See
+[Verify your download](/user-guide/verify-your-download/).
 
   </TabItem>
   <TabItem label="Windows">
 
-Open **PowerShell** (no administrator required). Download the archive, expand
-it, and run the installer it contains:
+Open **PowerShell** (no administrator required). One command — it resolves the
+latest release, verifies the release signature, and installs to
+`%LOCALAPPDATA%\Programs\Nimbus\bin`:
 
 ```powershell
-# Download
-$url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus-headless-windows-x64.zip"
-Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\nimbus.zip"
-
-# Expand
-Expand-Archive -Path "$env:TEMP\nimbus.zip" -DestinationPath "$env:TEMP\nimbus" -Force
-
-# Inspect the script before running it (recommended)
-notepad "$env:TEMP\nimbus\install.ps1"
-
-# Run
-& "$env:TEMP\nimbus\install.ps1"
+$url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1"
+& ([scriptblock]::Create((irm $url))) -Yes
 ```
 
-`install.ps1` installs the binaries expanded alongside it and updates your user
-`PATH`. Prefer a packaged install? `nimbus-headless-windows-x64.msi` is on the
-same release page (that one does require administrator).
+This works on stock **Windows PowerShell 5.1** as well as PowerShell 7. It is
+spelled `& ([scriptblock]::Create(...))` rather than `irm ... | iex` because
+`iex` cannot pass `-Yes` through to the script.
 
-**SmartScreen note:** Windows may show an "unrecognised app" warning. Click
-**More info → Run anyway**. The `SHA256SUMS.asc` GPG manifest is your
-cryptographic integrity proof — see [Verify your download](/user-guide/verify-your-download/)
-for details.
-
-After installation, open a **new** PowerShell window:
+Open a **new** PowerShell window, then:
 
 ```powershell
 nimbus --version
 ```
+
+Prefer a packaged install? `nimbus-headless-windows-x64.msi` is on the same
+release page (that one does require administrator).
+
+**SmartScreen note:** Windows may show an "unrecognised app" warning. Click
+**More info → Run anyway**.
+
+#### Prefer to read the script first?
+
+Download the archive and run the copy inside it — the same installer, no pipe:
+
+```powershell
+$url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus-headless-windows-x64.zip"
+Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\nimbus.zip"
+Expand-Archive -Path "$env:TEMP\nimbus.zip" -DestinationPath "$env:TEMP\nimbus" -Force
+
+notepad "$env:TEMP\nimbus\install.ps1"
+& "$env:TEMP\nimbus\install.ps1"
+```
+
+Run this way, `install.ps1` installs the binaries expanded alongside it and
+performs no download, so nothing verifies them for you — check them against the
+signed `SHA256SUMS.asc` manifest yourself. See
+[Verify your download](/user-guide/verify-your-download/).
 
   </TabItem>
 </Tabs>
@@ -119,6 +150,42 @@ nimbus --version
 ## What the installer does
 
 The installer is non-privileged and idempotent on all three platforms.
+
+### Installing from a release (the one-liner)
+
+`install.sh` and `install.ps1` work in two modes. When the binaries are sitting
+beside the script — as they are inside every archive — the script installs those
+and downloads nothing. When they are not, as with the one-liner, the script
+fetches the release itself and verifies it before installing:
+
+1. Resolves the latest release tag, or the one you name (`--from-release <ver>` /
+   `-FromRelease <ver>`, which forces this mode even when binaries are staged
+   beside the script).
+2. Downloads `SHA256SUMS` and its detached signature `SHA256SUMS.asc` into a
+   temporary directory.
+3. Verifies that signature in a throwaway GPG keyring built for the purpose. The
+   release public key is **embedded in the script**, and its primary fingerprint
+   `5A20457CCD8B53FFAA945240886ADA6B487CAB6E` is pinned there too — no keyserver
+   is contacted, so nothing on the network can substitute a different key. A
+   mismatched fingerprint, or a signing key that is expired or revoked, aborts
+   the install.
+4. Downloads the asset for your platform and checks it against the manifest,
+   requiring exactly one manifest line to name that file.
+5. Extracts and installs it, then updates your `PATH` as described below.
+
+Step 3 is skipped in two cases: **`gpg` is not installed or not runnable**, or
+`SHA256SUMS.asc` cannot be fetched. The install then continues on the checksum
+alone, but prints `SIGNATURE NOT CHECKED` and states plainly that the archive
+was verified against a manifest whose own signature was never established — a
+checksum pass is never presented as a signature pass. Install `gpg` first if you
+want the signature checked. A verification that *fails* is different from one
+that is skipped: a mismatched fingerprint, an expired or revoked key, or a
+checksum mismatch installs nothing at all.
+
+There is deliberately **no environment variable that overrides the pinned
+fingerprint**, in either script. Combined with the base-URL override used by our
+own release tests, one would amount to a complete verification bypass from the
+environment alone.
 
 ### Linux
 
