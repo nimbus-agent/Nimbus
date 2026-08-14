@@ -2,7 +2,13 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { emitExpertBrief, rankExpertFindings, runExpert, subPrReviewed } from "./expert.ts";
+import {
+  emitExpertBrief,
+  rankExpertFindings,
+  runExpert,
+  subIncidentResolved,
+  subPrReviewed,
+} from "./expert.ts";
 
 describe("rankExpertFindings", () => {
   test("merges evidence from multiple streams by personId, summing weights", () => {
@@ -367,6 +373,103 @@ describe("subPrReviewed", () => {
 
     expect(result.stream).toBeUndefined();
     expect(result.gap).toBeUndefined();
+    db.close();
+  });
+});
+
+describe("subIncidentResolved", () => {
+  test("an incident resolved by a person, matching the topic, surfaces incident_resolved evidence", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name, canonical_email) VALUES (?, ?, ?)", [
+      "person:jane",
+      "Jane",
+      "jane@example.com",
+    ]);
+
+    // Index a real PagerDuty-shaped incident item through the same
+    // item-store path a connector sync uses, so the REAL graph populator
+    // (syncIncidentPersonEdges) builds the `person -> incident "resolves"`
+    // edge instead of the test fabricating one.
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "PD-1",
+      title: "Checkout 500s",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: {
+        service: "checkout",
+        assignee_emails: ["jane@example.com"],
+        resolved_by_email: "jane@example.com",
+      },
+    });
+
+    const result = await subIncidentResolved(db, "checkout");
+
+    expect(result.gap).toBeUndefined();
+    expect(result.stream?.personId).toBe("person:jane");
+    expect(result.stream?.displayName).toBe("Jane");
+    expect(result.stream?.evidence).toHaveLength(1);
+    expect(result.stream?.evidence[0]?.type).toBe("incident_resolved");
+    expect(result.stream?.evidence[0]?.itemId).toBe("pagerduty:PD-1");
+    db.close();
+  });
+
+  test("a pr --resolves--> issue edge is NOT reported as a resolved incident (pins the ie.type filter)", async () => {
+    // This fabricates a `person --resolves--> <non-incident>` edge: the
+    // `pe.type = 'person'` join already excludes the real `pr -> issue
+    // "resolves"` edge production emits (its `from_id` is a `pr` entity, not
+    // a `person` one), so pinning `ie.type = 'incident'` requires a fixture
+    // that clears every OTHER filter and would slip through on the target
+    // side alone if that condition were removed.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name, canonical_email) VALUES (?, ?, ?)", [
+      "person:jane",
+      "Jane",
+      "jane@example.com",
+    ]);
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["github:acme/app#4", "github", "issue", "acme/app#4", "Login broken", now, now],
+    );
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:person:jane", "person", "person:jane", "Jane", "github"],
+    );
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:issue:4", "issue", "github:acme/app#4", "Login broken", "github"],
+    );
+    db.run("INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)", [
+      "ge:person:jane",
+      "ge:issue:4",
+      "resolves",
+      now,
+    ]);
+
+    const result = await subIncidentResolved(db, "login");
+
+    // No `incident` graph entity exists at all in this fixture, so the
+    // real query correctly finds nothing (the join's `ie.type = 'incident'`
+    // condition rejects the `issue` entity) and the lane explains why via a
+    // gap note instead of fabricating a finding from the `issue` edge.
+    expect(result.stream).toBeUndefined();
+    expect(result.gap).toBeDefined();
+    db.close();
+  });
+
+  test("the empty case still returns a gap note, not silence", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const result = await subIncidentResolved(db, "anything");
+    expect(result.stream).toBeUndefined();
+    expect(result.gap).toBeDefined();
+    expect(result.gap?.category).toBe("missing_entity_type");
     db.close();
   });
 });

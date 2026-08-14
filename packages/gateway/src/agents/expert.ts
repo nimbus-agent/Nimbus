@@ -8,6 +8,7 @@ import {
   detectMissingEntityType,
   detectMissingRelationEmit,
   detectMissingRelationToEntityType,
+  remediationForEntityType,
 } from "./_lib/gap-notes.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
@@ -393,24 +394,91 @@ export async function subPrReviewed(db: Database, input: string): Promise<SubAge
   return winner === undefined ? {} : { stream: winner };
 }
 
-async function subIncidentResolved(db: Database, _input: string): Promise<SubAgentResult> {
-  const missingEntityGap = detectMissingEntityType(db, "incident");
-  if (missingEntityGap !== null) return { gap: missingEntityGap };
-  // `incident` entities existing is necessary but not sufficient: this lane's
-  // findings depend on a `resolves` edge targeting an `incident` (person ->
-  // incident), which no populator currently emits. Scoped to that endpoint
-  // (not `detectMissingRelationEmit`'s any-endpoint probe) because this
-  // branch made `pr -> issue "resolves"` edges real — an unscoped probe would
-  // find those and suppress this gap note even though this lane still has
-  // nothing, going silently empty instead of explaining why.
-  const missingRelationGap = detectMissingRelationToEntityType(
-    db,
-    "resolves",
-    "incident",
-    "Tracked as a graph-populator follow-up on existing PagerDuty / Sentry connectors.",
-  );
-  if (missingRelationGap !== null) return { gap: missingRelationGap };
-  return {};
+/**
+ * `person --resolves--> incident` lane, mirroring `subPrReviewed`'s shape:
+ * join `graph_relation` -> `graph_entity` (person) -> `person` ->
+ * `graph_entity` (incident) -> `item`, filtered on the topic.
+ *
+ * The `ie.type = 'incident'` join condition is load-bearing: `resolves` is
+ * polysemous — `syncPrGraph` also emits `pr -> issue "resolves"`. Scoping the
+ * TARGET side to `incident` keeps the two lanes independent even if a future
+ * emitter ever puts a `person` on the source side of a non-incident
+ * `resolves` edge; today it also matches production reality, since
+ * `syncIncidentPersonEdges` is the only emitter of `resolves` edges whose
+ * source is a `person` entity (see that function's doc comment).
+ */
+export async function subIncidentResolved(db: Database, input: string): Promise<SubAgentResult> {
+  const rows = db
+    .query(
+      `SELECT
+         p.id                           AS person_id,
+         COALESCE(p.display_name, p.id) AS display_name,
+         i.id                           AS item_id,
+         i.title                        AS title,
+         i.modified_at                  AS modified_at,
+         i.service                      AS service_id
+       FROM graph_relation gr
+       JOIN graph_entity  pe ON pe.id = gr.from_id AND pe.type = 'person'
+       JOIN person        p  ON p.id = pe.external_id
+       JOIN graph_entity  ie ON ie.id = gr.to_id AND ie.type = 'incident'
+       JOIN item          i  ON i.id = ie.external_id
+       WHERE gr.type = 'resolves'
+         AND (i.title LIKE '%' || ? || '%' OR i.body_preview LIKE '%' || ? || '%')
+       ORDER BY i.modified_at DESC
+       LIMIT 50`,
+    )
+    .all(input, input) as Array<{
+    person_id: string;
+    display_name: string;
+    item_id: string;
+    title: string;
+    modified_at: number;
+    service_id: string;
+  }>;
+
+  if (rows.length === 0) {
+    const missingEntityGap = detectMissingEntityType(db, "incident");
+    if (missingEntityGap !== null) return { gap: missingEntityGap };
+    // `incident` entities existing is necessary but not sufficient: this
+    // lane's findings depend on a `resolves` edge targeting an `incident`
+    // (person -> incident). Scoped to that endpoint (not
+    // `detectMissingRelationEmit`'s any-endpoint probe) because `pr -> issue
+    // "resolves"` edges are also real — an unscoped probe would find those
+    // and suppress this gap note even though this lane still has nothing,
+    // going silently empty instead of explaining why.
+    const missingRelationGap = detectMissingRelationToEntityType(
+      db,
+      "resolves",
+      "incident",
+      remediationForEntityType("incident"),
+    );
+    if (missingRelationGap !== null) return { gap: missingRelationGap };
+    return {};
+  }
+
+  const merged = new Map<string, ExpertEvidenceStream>();
+  for (const r of rows) {
+    const ev: Evidence = {
+      itemId: r.item_id,
+      type: "incident_resolved",
+      serviceId: r.service_id,
+      title: r.title.slice(0, 512),
+      modifiedAt: r.modified_at,
+      weight: 0.8,
+    };
+    const existing = merged.get(r.person_id);
+    if (existing === undefined) {
+      merged.set(r.person_id, {
+        personId: r.person_id,
+        displayName: r.display_name,
+        evidence: [ev],
+      });
+    } else {
+      existing.evidence.push(ev);
+    }
+  }
+  const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
+  return winner === undefined ? {} : { stream: winner };
 }
 
 async function subChatMentions(db: Database, input: string): Promise<SubAgentResult> {
