@@ -1204,11 +1204,15 @@ test("the decisions section addresses the named subject, not 'you'", async () =>
   db.close();
 });
 
-// The defensive arm: `resolveSubject`'s explicit path always sets a non-null `personId`, so a
-// null id with `isOther` is unreachable through `runNegotiate` — but if it ever became
-// reachable it must NOT silently revert to addressing the reader as the subject.
-test("an other subject with no id at all still reads as a third party", () => {
-  const brief: NegotiateBrief = {
+/**
+ * A minimal `NegotiateBrief` literal for tests that exercise `renderNegotiate` directly rather
+ * than through `runNegotiate` — e.g. a `null` lane, which no real run produces without forcing
+ * a failure. `db` is accepted (unused) to match the idiom every other test in this file follows
+ * of threading a fresh db through, so a future variant that DOES need to read the db can be
+ * added without changing every call site's shape.
+ */
+function emptyNegotiateBriefForRender(_db: Database): NegotiateBrief {
+  return {
     kind: "negotiate",
     agentVersion: 1,
     generatedAt: 0,
@@ -1231,11 +1235,20 @@ test("an other subject with no id at all still reads as a third party", () => {
     decisions: { authored: 0, unattributable: 0, evidence: { refs: [], total: 0 } },
     writing: null,
   };
+}
+
+// The defensive arm: `resolveSubject`'s explicit path always sets a non-null `personId`, so a
+// null id with `isOther` is unreachable through `runNegotiate` — but if it ever became
+// reachable it must NOT silently revert to addressing the reader as the subject.
+test("an other subject with no id at all still reads as a third party", () => {
+  const db = freshDb();
+  const brief = emptyNegotiateBriefForRender(db);
 
   const markdown = renderNegotiate(brief);
   expect(markdown).toContain("decision(s) attributed to the subject");
   expect(markdown).toContain("not necessarily theirs");
   expect(markdown).toContain("unknown person");
+  db.close();
 });
 
 test("an unnamed other subject falls back to the id, never to 'you'", async () => {
@@ -1385,5 +1398,74 @@ test("a re-synced incident counts once, not twice", async () => {
 
   const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
   expect(brief.incidents?.resolved).toBe(1);
+  db.close();
+});
+
+test("renders incident counts and cites the incidents resolved", async () => {
+  const db = freshDb();
+  seedMe(db);
+  seedIncident(db, "PD-1", { assignees: ["jane@example.com"], resolvedBy: "jane@example.com" });
+  seedIncident(db, "PD-2", { assignees: ["jane@example.com"] });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  const markdown = renderNegotiate(brief);
+  expect(markdown).toContain("## Incidents");
+  expect(markdown).toContain("1 resolved, 2 assigned");
+  expect(markdown).toContain("Incident PD-1");
+  db.close();
+});
+
+// Zero unattributable must print nothing rather than "0 attributed to nobody",
+// which reads as a warning about a problem that does not exist.
+test("omits the unattributable line when it is zero", async () => {
+  const db = freshDb();
+  seedMe(db);
+  seedIncident(db, "PD-1", { assignees: ["jane@example.com"] });
+
+  const markdown = renderNegotiate(
+    await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db)),
+  );
+  expect(markdown).not.toContain("attributed to nobody");
+  db.close();
+});
+
+// A null lane means "could not be computed" and must never render as 0 — the
+// same rule every other negotiate lane follows. Driven from a brief literal
+// because no real run produces a null lane without forcing a failure.
+test("a null incidents lane renders as could-not-be-computed, never as zero", () => {
+  const db = freshDb();
+  seedMe(db);
+  const base = {
+    ...emptyNegotiateBriefForRender(db),
+    incidents: null,
+  } satisfies NegotiateBrief;
+  const markdown = renderNegotiate(base);
+  expect(markdown).toContain("## Incidents");
+  expect(markdown).toContain("_could not be computed_");
+  expect(markdown).not.toContain("0 resolved");
+  db.close();
+});
+
+// UNATTRIBUTABLE DISCRIMINATOR. `unattributable` is documented as counting in-window incidents
+// with NO person edge AT ALL — not incidents merely lacking an edge to the SUBJECT. Every other
+// fixture in this file seeds either an incident tied to the subject or one with no
+// assignee/resolver at all, so both readings ("no edge to anyone" vs. "no edge to the subject")
+// happen to agree. Here the incident carries a real person edge — just to a DIFFERENT person —
+// so a wrong implementation that filtered `unattributable` on "no edge to the subject" would
+// report 1, while the correct "no person edge at all" reading reports 0.
+test("an incident assigned to someone other than the subject is not unattributable", async () => {
+  const db = freshDb();
+  seedMe(db);
+  db.run("INSERT INTO person (id, display_name, canonical_email) VALUES (?, ?, ?)", [
+    "person:other",
+    "Other Person",
+    "other@example.com",
+  ]);
+  seedIncident(db, "PD-1", { assignees: ["other@example.com"] });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  expect(brief.incidents?.assigned).toBe(0);
+  expect(brief.incidents?.resolved).toBe(0);
+  expect(brief.incidents?.unattributable).toBe(0);
   db.close();
 });

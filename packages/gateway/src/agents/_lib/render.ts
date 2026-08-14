@@ -25,6 +25,7 @@ import type {
   NegotiateBrief,
   NegotiateDecisions,
   NegotiateEvidence,
+  NegotiateIncidents,
   NegotiateOwnership,
   NegotiateReviewedPrs,
   NegotiateSubject,
@@ -699,6 +700,33 @@ function renderNegotiateReviewedPrs(r: NegotiateReviewedPrs | null): string {
   return lines.join("\n");
 }
 
+/**
+ * Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. `unattributable`
+ * follows the same disclosure shape as `NegotiateDecisions.unattributable` (see
+ * `renderNegotiateDecisions`'s docstring), but with one difference: a zero `unattributable` is
+ * omitted entirely rather than stated as zero. "0 incidents attributed to nobody" reads as a
+ * warning about a problem that does not exist — the counted lines above it already say what did
+ * happen, so a zero here has nothing to add.
+ */
+function renderNegotiateIncidents(i: NegotiateIncidents | null): string {
+  if (i === null) {
+    return ["## Incidents", "", "_could not be computed_"].join("\n");
+  }
+  const lines = [
+    "## Incidents",
+    "",
+    `- ${String(i.resolved)} resolved, ${String(i.assigned)} assigned`,
+  ];
+  if (i.unattributable > 0) {
+    lines.push(
+      `- ${String(i.unattributable)} in-window incident(s) attributed to nobody — an unexpanded ` +
+        "actor payload or a PagerDuty token without user-read scope, not necessarily inactivity",
+    );
+  }
+  lines.push(...renderNegotiateEvidence(i.evidence));
+  return lines.join("\n");
+}
+
 /** Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. */
 function renderNegotiateTickets(t: NegotiateTickets | null): string {
   if (t === null) {
@@ -901,9 +929,9 @@ function negotiateWindowLabel(sinceMs: number): string {
  * Task 1's version rendered only the subject, the window and generation time, the gap
  * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
  * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership; Task 5
- * adds decisions; Task 6 adds writing + sources — a lane whose field is `null` renders as
- * "could not be computed", never as `0`; each later lane task extends this further the
- * same way.
+ * adds decisions; Task 6 adds writing + sources; Task 11 adds incidents, between tickets
+ * and ownership — a lane whose field is `null` renders as "could not be computed", never
+ * as `0`; each later lane task extends this further the same way.
  */
 export function renderNegotiate(brief: NegotiateBrief): string {
   const header = "# Negotiation brief";
@@ -922,6 +950,7 @@ export function renderNegotiate(brief: NegotiateBrief): string {
   const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);
   const reviewedPrs = renderNegotiateReviewedPrs(brief.reviewedPrs);
   const tickets = renderNegotiateTickets(brief.tickets);
+  const incidents = renderNegotiateIncidents(brief.incidents);
   const ownership = renderNegotiateOwnership(brief.ownership);
   const decisions = renderNegotiateDecisions(brief.decisions, brief.subject);
   const writing = renderNegotiateWriting(brief.writing);
@@ -944,6 +973,8 @@ export function renderNegotiate(brief: NegotiateBrief): string {
     reviewedPrs,
     "",
     tickets,
+    "",
+    incidents,
     "",
     ownership,
     "",
