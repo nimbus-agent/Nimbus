@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
@@ -19,10 +19,82 @@ const STATUS_READERS: StatusReaders = {
   syncFreshnessMs: () => 0,
 };
 
+/**
+ * Per-test DBs used to be built by replaying the whole migration chain inside every
+ * `beforeEach` — up to CURRENT_SCHEMA_VERSION migrations per test across ~50 tests. That cost
+ * ~114 s on the Windows CI runner (20 % of the entire gateway suite) and was a large part of
+ * why the job reached its wall-clock cap. Each distinct DB shape is now migrated ONCE into a
+ * module-scoped template file and copied per test: every test still gets its own pristine
+ * file, so isolation is unchanged, but the per-test cost is a file copy rather than a
+ * migration replay.
+ *
+ * Copying the bare `.db` is sufficient: `runIndexedSchemaMigrations` never switches the
+ * database to WAL, so a closed template leaves no `-wal`/`-shm` sidecar holding pages that
+ * the copy would miss.
+ */
+const templateDir = mkdtempSync(join(tmpdir(), "nimbus-http-server-templates-"));
+const dbTemplates = new Map<string, string>();
+
+afterAll(() => {
+  try {
+    rmSync(templateDir, { recursive: true, force: true });
+  } catch {
+    /* non-fatal */
+  }
+});
+
+/** Materialize `dbPath` from a lazily-built, cached template for `shape`. */
+function materializeDb(dbPath: string, shape: string, build: (templatePath: string) => void): void {
+  let template = dbTemplates.get(shape);
+  if (template === undefined) {
+    template = join(templateDir, `${shape}.db`);
+    build(template);
+    dbTemplates.set(shape, template);
+  }
+  copyFileSync(template, dbPath);
+}
+
 function makeEmptyDb(dbPath: string, targetVersion = 28): void {
-  const db = new Database(dbPath);
-  runIndexedSchemaMigrations(db, targetVersion);
-  db.close();
+  materializeDb(dbPath, `empty-v${targetVersion}`, (templatePath) => {
+    const db = new Database(templatePath);
+    runIndexedSchemaMigrations(db, targetVersion);
+    db.close();
+  });
+}
+
+/** An index at CURRENT_SCHEMA_VERSION carrying the one item/person/audit/sync_state row
+ *  that the read-only route assertions expect. */
+function makeSeededDb(dbPath: string): void {
+  materializeDb(dbPath, "routes-seeded", (templatePath) => {
+    const db = new Database(templatePath);
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url,
+                         canonical_url, modified_at, author_id, metadata,
+                         synced_at, pinned)
+       VALUES ('github:pr_1', 'github', 'pr', 'pr_1', 'Hello',
+               'preview', NULL, NULL, 1000, NULL, NULL, 2000, 0)`,
+    );
+    db.run(
+      `INSERT INTO person (id, display_name, canonical_email,
+                           github_login, gitlab_login, slack_handle,
+                           linear_member_id, jira_account_id, notion_user_id,
+                           metadata, linked)
+       VALUES ('person:1', 'Alice', 'alice@example.com',
+               NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1)`,
+    );
+    db.run(
+      `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp)
+       VALUES ('test.action', 'not_required', '{"k":"v"}', 1000)`,
+    );
+    db.run(
+      `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token,
+                               health_state, retry_after, backoff_until,
+                               backoff_attempt, last_error)
+       VALUES ('github', 1000, NULL, 'healthy', NULL, NULL, 0, NULL)`,
+    );
+    db.close();
+  });
 }
 
 /** Path to the real built admin-console dist (packages/admin-console/dist). */
@@ -311,34 +383,7 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-server-routes-"));
     dbPath = join(tmpDir, "nimbus.db");
-    const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
-    db.run(
-      `INSERT INTO item (id, service, type, external_id, title, body_preview, url,
-                         canonical_url, modified_at, author_id, metadata,
-                         synced_at, pinned)
-       VALUES ('github:pr_1', 'github', 'pr', 'pr_1', 'Hello',
-               'preview', NULL, NULL, 1000, NULL, NULL, 2000, 0)`,
-    );
-    db.run(
-      `INSERT INTO person (id, display_name, canonical_email,
-                           github_login, gitlab_login, slack_handle,
-                           linear_member_id, jira_account_id, notion_user_id,
-                           metadata, linked)
-       VALUES ('person:1', 'Alice', 'alice@example.com',
-               NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1)`,
-    );
-    db.run(
-      `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp)
-       VALUES ('test.action', 'not_required', '{"k":"v"}', 1000)`,
-    );
-    db.run(
-      `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token,
-                               health_state, retry_after, backoff_until,
-                               backoff_attempt, last_error)
-       VALUES ('github', 1000, NULL, 'healthy', NULL, NULL, 0, NULL)`,
-    );
-    db.close();
+    makeSeededDb(dbPath);
     handle = startReadOnlyHttpServer(dbPath, 0);
   });
 
