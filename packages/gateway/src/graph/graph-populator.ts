@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
 
+import { usableActorEmail } from "../connectors/actor-email.ts";
 import { dbRun } from "../db/write.ts";
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { resolvePersonForSync } from "../people/linker.ts";
 import { extractCommitShas, extractIssueRefs, type IssueRefs } from "./graph-refs.ts";
 import {
   ensureGraphEntity,
@@ -721,6 +723,71 @@ function resolveAffectedService(
 }
 
 /**
+ * Resolve one actor email to a person and link it to `toEntityId`.
+ *
+ * Two distinct id spaces meet here and must not be conflated:
+ * `resolvePersonForSync` returns a `person.id` (a UUID), while
+ * `upsertGraphRelation`'s endpoints are `graph_entity.id` values (SHA-256, via
+ * `deterministicGraphEntityId`). The person UUID is the graph entity's
+ * `external_id`, never its `id` — that is also what lets `catchup.ts:324` match
+ * `pe.external_id = ?` against a person id.
+ *
+ * `usableActorEmail` gates the call because `resolvePersonForSync` CREATES a
+ * person row for whatever it is handed, and a junk row outlives the sync.
+ */
+function linkActorToEntity(
+  db: Database,
+  row: IndexedItemGraphInput,
+  toEntityId: string,
+  rawEmail: unknown,
+  relationType: string,
+  now: number,
+): void {
+  const email = usableActorEmail(rawEmail);
+  if (email === null) return;
+  const personId = resolvePersonForSync(db, { canonicalEmail: email });
+  if (personId === null) return;
+  const personEntityId = upsertGraphEntity(db, {
+    type: "person",
+    externalId: personId,
+    label: personDisplayName(db, personId) ?? email,
+    service: row.service,
+  });
+  upsertGraphRelation(db, personEntityId, toEntityId, relationType, now);
+}
+
+/**
+ * `person --assigned--> incident` and `person --resolves--> incident` from the
+ * emails the connector stored (spec § 5.4).
+ *
+ * Retirement works differently for the two types, which is the easiest thing
+ * here to get wrong:
+ *
+ * - `assigned` is NOT in CROSS_ITEM_RELATION_TYPES, so the caller's
+ *   `clearRelationsTouchingEntity` already retired it — a reassigned incident
+ *   self-heals with no extra code.
+ * - `resolves` IS in that set, so the generic clear deliberately skipped it and
+ *   it must be retired explicitly here.
+ *
+ * The blanket incoming clear is safe only because no other populator emits
+ * `resolves` INTO an `incident`: `syncPrGraph`'s `resolves` edges target
+ * `issue` entities exclusively via `findIssueEntityIds`. If a second emitter
+ * ever targets incidents, this must become endpoint-scoped.
+ */
+function syncIncidentPersonEdges(
+  db: Database,
+  row: IndexedItemGraphInput,
+  incidentEntityId: string,
+  now: number,
+): void {
+  clearIncomingRelationsOfType(db, incidentEntityId, "resolves");
+  for (const email of stringArrayField(row.metadata, "assignee_emails")) {
+    linkActorToEntity(db, row, incidentEntityId, email, "assigned", now);
+  }
+  linkActorToEntity(db, row, incidentEntityId, row.metadata["resolved_by_email"], "resolves", now);
+}
+
+/**
  * Incidents and deployments are timeline anchors: the graph needs them as
  * entities so a change can be correlated with what it responded to or
  * caused. `occurredAt` is the item's `modified_at`, which every connector
@@ -758,6 +825,13 @@ function syncTimelineEventGraph(
     clearOutgoingRelationsOfType(db, entityId, "correlates_with");
   } else {
     clearIncomingRelationsOfType(db, entityId, "correlates_with");
+  }
+
+  // BEFORE the affectedService bail-out: that bail is about deploy<->incident
+  // correlation, which needs a service. Attribution does not, and an incident
+  // with no bound service is still someone's work.
+  if (entityType === "incident") {
+    syncIncidentPersonEdges(db, row, entityId, now);
   }
 
   // A null service correlates with nothing. Bail out only AFTER the clears.
