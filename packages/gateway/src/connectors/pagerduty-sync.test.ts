@@ -1041,4 +1041,23 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.itemsUpserted).toBe(0);
     expect(result.cursor).toBeNull();
   });
+
+  test("requests expanded actors so assignee emails cost no extra requests", async () => {
+    const { calls } = stubPagerdutyPages([{ incidents: [], more: false }]);
+    const db = createMemoryIndexDb();
+    const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    await syncable.sync(
+      syncTestContext(
+        db,
+        createStubVault({ "pagerduty.api_token": "t" }),
+        silentSyncContextExtras(),
+      ),
+      null,
+    );
+
+    const url = calls[0] ?? "";
+    expect(url).toContain("include%5B%5D=assignees");
+    expect(url).toContain("include%5B%5D=acknowledgers");
+    expect(url).toContain("include%5B%5D=users");
+  });
 });

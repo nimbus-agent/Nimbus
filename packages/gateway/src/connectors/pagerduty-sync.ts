@@ -165,6 +165,15 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
         u.searchParams.set("sort_by", "updated_at:asc");
         u.searchParams.set("since", since);
         u.searchParams.set("offset", String(pagesFetched * PAGE_SIZE));
+        // Expanded actors carry `email`, which is what makes assignee
+        // attribution cost ZERO extra requests. `acknowledgers` is requested
+        // even though no acknowledger edge is emitted: it is an identity
+        // source for `last_status_change_by`, which arrives as a bare
+        // reference (spec § 3.2). `append`, not `set` — `set` would replace
+        // the previous value and only the last would survive.
+        u.searchParams.append("include[]", "assignees");
+        u.searchParams.append("include[]", "acknowledgers");
+        u.searchParams.append("include[]", "users");
         const res = await fetch(u.toString(), {
           headers: {
             Accept: "application/vnd.pagerduty+json;version=2",
