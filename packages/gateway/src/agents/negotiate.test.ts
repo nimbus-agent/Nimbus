@@ -1515,18 +1515,16 @@ test("incidents measured but attributed to nobody is a real count, not a gap", a
   // about the "no edges emitted yet" gap covered by the previous test.
   seedIncident(db, "PD-1", { assignees: ["jane@example.com"], resolvedBy: "jane@example.com" });
   seedIncident(db, "PD-2", {});
+  // Also suppress the Sentry gap block (a sibling, structurally independent lane) so the
+  // unscoped assertions below genuinely mean "no gap from any source", not "no pagerduty gap".
+  db.run("INSERT INTO sync_state (connector_id) VALUES (?)", ["sentry"]);
+  seedErrorIssue(db, "S-1", "jane@example.com");
 
   const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
 
   expect(brief.incidents?.unattributable).toBeGreaterThan(0);
-  // Scoped to pagerduty: this test seeds no sentry connector, so a sentry
-  // `missing_connector` gap is expected and is not what this test is about.
-  expect(
-    brief.gaps.some((g) => g.category === "missing_connector" && g.detail.includes("pagerduty")),
-  ).toBe(false);
-  expect(
-    brief.gaps.some((g) => g.category === "missing_relation_emit" && g.detail.includes("incident")),
-  ).toBe(false);
+  expect(brief.gaps.some((g) => g.category === "missing_connector")).toBe(false);
+  expect(brief.gaps.some((g) => g.category === "missing_relation_emit")).toBe(false);
   db.close();
 });
 
@@ -1535,17 +1533,15 @@ test("healthy incident attribution raises neither gap note", async () => {
   seedMe(db);
   db.run("INSERT INTO sync_state (connector_id) VALUES ('pagerduty')");
   seedIncident(db, "PD-1", { assignees: ["jane@example.com"], resolvedBy: "jane@example.com" });
+  // Also suppress the Sentry gap block (a sibling, structurally independent lane) so the
+  // unscoped assertions below genuinely mean "no gap from any source", not "no pagerduty gap".
+  db.run("INSERT INTO sync_state (connector_id) VALUES (?)", ["sentry"]);
+  seedErrorIssue(db, "S-1", "jane@example.com");
 
   const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
 
-  // Scoped to pagerduty: this test seeds no sentry connector, so a sentry
-  // `missing_connector` gap is expected and is not what this test is about.
-  expect(
-    brief.gaps.some((g) => g.category === "missing_connector" && g.detail.includes("pagerduty")),
-  ).toBe(false);
-  expect(
-    brief.gaps.some((g) => g.category === "missing_relation_emit" && g.detail.includes("incident")),
-  ).toBe(false);
+  expect(brief.gaps.some((g) => g.category === "missing_connector")).toBe(false);
+  expect(brief.gaps.some((g) => g.category === "missing_relation_emit")).toBe(false);
   db.close();
 });
 
