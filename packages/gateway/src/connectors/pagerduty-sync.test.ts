@@ -13,6 +13,7 @@ import {
   testConnectorSyncNoop,
   urlFromFetchInput,
 } from "./connector-sync-test-helpers.ts";
+import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import {
   createPagerdutySyncable,
   MAX_USER_LOOKUPS_PER_SYNC,
@@ -1283,5 +1284,37 @@ describeWithFetchRestore("pagerduty-sync", () => {
     await syncable.sync(ctx, null);
     expect(userCalls).toHaveLength(MAX_USER_LOOKUPS_PER_SYNC);
     expectServiceItemCount(db, "pagerduty", MAX_USER_LOOKUPS_PER_SYNC + 5);
+  });
+
+  // ── historyFloorMs opt-in ────────────────────────────────────────────────
+
+  test("a cold start honours historyFloorMs", async () => {
+    const { calls } = stubPagerdutyPages([{ incidents: [], more: false }]);
+    const db = createMemoryIndexDb();
+    const floorMs = Date.now() - 200 * 86_400_000;
+    const ctx = {
+      ...syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
+      historyFloorMs: floorMs,
+    };
+    const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    await syncable.sync(ctx, null);
+
+    const since = new URL(calls[0] ?? "").searchParams.get("since") ?? "";
+    expect(Date.parse(since)).toBeCloseTo(floorMs, -4);
+  });
+
+  test("an established cursor beats historyFloorMs", async () => {
+    const cursorIso = isoHoursAgo(2);
+    const { calls } = stubPagerdutyPages([{ incidents: [], more: false }]);
+    const db = createMemoryIndexDb();
+    const ctx = {
+      ...syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
+      historyFloorMs: Date.now() - 200 * 86_400_000,
+    };
+    const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const cursor = encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: cursorIso });
+    await syncable.sync(ctx, cursor);
+
+    expect(new URL(calls[0] ?? "").searchParams.get("since")).toBe(cursorIso);
   });
 });

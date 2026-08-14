@@ -246,8 +246,16 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
       }
       const prev = decodeCursor(cursor);
       const now = Date.now();
-      const floorIso = new Date(now - initialSyncDepthDays * 86_400_000).toISOString();
-      const since = prev?.lastUpdated ?? floorIso;
+      // Honors `SyncContext.historyFloorMs` (opt-in, see `sync/types.ts`) on a COLD
+      // START only; an established cursor is more recent by construction and wins.
+      // Opted in because an attribution substrate is exactly the case the mechanism
+      // was built for — assembling a contribution brief needs more than 30 days of
+      // history, once, without permanently widening every routine sync.
+      const coldFloorMs =
+        ctx.historyFloorMs !== undefined && Number.isFinite(ctx.historyFloorMs)
+          ? ctx.historyFloorMs
+          : now - initialSyncDepthDays * 86_400_000;
+      const since = prev?.lastUpdated ?? new Date(coldFloorMs).toISOString();
 
       let pagesFetched = 0;
       let totalUpserted = 0;
