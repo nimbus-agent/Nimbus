@@ -21,6 +21,11 @@
 - **Bounded regex quantifiers**, per house style at `updater/manifest-fetcher.ts:3` (`{1,256}`, never bare `+` on user input).
 - **Branch:** work on `dev/asafgolombek/incident-attribution-pr1`. Never commit on `main`.
 - **Format before every commit:** `bun run lint:fix` (`biome check --write --error-on-warnings .`). Biome's configured `quoteStyle` is `"double"` (`biome.json:75`), so TypeScript string literals use `"`. Single quotes inside a template literal are SQL syntax (`type = 'person'`) and Biome does not touch them — do not "fix" those. The `lint` gate runs with `--error-on-warnings`, so a warning fails CI exactly like an error.
+- **Run `bun run typecheck` before every commit, not just the tests.** Bun does not typecheck at
+  runtime, so a wrong-arity call or a bad type passes the entire suite and fails CI. This bit Task 4:
+  `syncTestContext(db, vault)` takes TWO parameters and already spreads `silentSyncContextExtras()`
+  internally — an earlier draft of this plan passed it a third argument in 11 places, 42 tests went
+  green, and `typecheck` exited 1. Green tests are not evidence of a green build.
 - **Before pushing:** `bun run preflight:fast`. If tests or logic changed, run the touched suites too.
 
 ---
@@ -615,7 +620,7 @@ test("requests expanded actors so assignee emails cost no extra requests", async
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
 
@@ -725,7 +730,7 @@ test("resolves an unexpanded resolver through one /users lookup", async () => {
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
 
@@ -741,7 +746,7 @@ test("looks a repeated actor up only once per run", async () => {
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
   expect(userCalls).toHaveLength(1);
@@ -759,7 +764,7 @@ test("a 403 on one actor leaves the sync succeeding and every incident indexed",
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   const result: SyncResult = await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
 
@@ -796,7 +801,7 @@ test.each([
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   const result: SyncResult = await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
 
@@ -813,7 +818,7 @@ test("stops at the lookup cap and counts the rest", async () => {
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
   expect(userCalls).toHaveLength(MAX_USER_LOOKUPS_PER_SYNC);
@@ -994,7 +999,7 @@ test("writes assignee, resolver and meta_v into incident metadata", async () => 
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
 
@@ -1021,7 +1026,7 @@ test("records an absent resolver as null, not as a missing key", async () => {
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
 
@@ -1044,7 +1049,7 @@ test("the item still carries no author", async () => {
   const db = createMemoryIndexDb();
   const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   await syncable.sync(
-    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), silentSyncContextExtras()),
+    syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
     null,
   );
 
@@ -1137,7 +1142,6 @@ test("a cold start honours historyFloorMs", async () => {
     ...syncTestContext(
       db,
       createStubVault({ "pagerduty.api_token": "t" }),
-      silentSyncContextExtras(),
     ),
     historyFloorMs: floorMs,
   };
@@ -1158,7 +1162,6 @@ test("an established cursor beats historyFloorMs", async () => {
     ...syncTestContext(
       db,
       createStubVault({ "pagerduty.api_token": "t" }),
-      silentSyncContextExtras(),
     ),
     historyFloorMs: Date.now() - 200 * 86_400_000,
   };
