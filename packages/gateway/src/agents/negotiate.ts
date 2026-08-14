@@ -555,6 +555,22 @@ function laneIncidents(db: Database, personId: string, sinceMs: number): Negotia
   ).n;
 
   const resolved = countEdge("resolves");
+
+  // Deliberately NOT `countEdge("assigned")` — that helper hardcodes
+  // `ie.type = 'incident'` and would silently count the wrong population.
+  const errorIssuesAssigned = (
+    db
+      .query(
+        `SELECT COUNT(DISTINCT ie.id) AS n
+           FROM graph_relation r
+           JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+           JOIN graph_entity ie ON ie.id = r.to_id   AND ie.type = 'error_issue'
+           JOIN item i          ON i.id = ie.external_id
+          WHERE r.type = 'assigned' AND pe.external_id = ? AND i.modified_at >= ?`,
+      )
+      .get(personId, cutoff) as { n: number }
+  ).n;
+
   const refs = evidenceRefsFor(
     db,
     `SELECT i.title AS title, COALESCE(i.canonical_url, i.url) AS url
@@ -572,6 +588,7 @@ function laneIncidents(db: Database, personId: string, sinceMs: number): Negotia
     resolved,
     assigned: countEdge("assigned"),
     unattributable,
+    errorIssuesAssigned,
     evidence: { refs, total: resolved },
   };
 }
@@ -911,6 +928,21 @@ export async function runNegotiate(
         remediationForEntityType("incident"),
       );
       if (missingIncidentEdges !== null) gaps.push(missingIncidentEdges);
+    }
+    // Same shape as the PagerDuty block above, for the same reason: no Sentry
+    // connector structurally implies no `person --assigned--> error_issue`
+    // edges, so firing both would emit two notes for one root cause.
+    const missingSentryConnector = detectMissingConnector(ctx.db, "sentry");
+    if (missingSentryConnector !== null) {
+      gaps.push(missingSentryConnector);
+    } else {
+      const missingErrorIssueEdges = detectMissingRelationToEntityType(
+        ctx.db,
+        "assigned",
+        "error_issue",
+        remediationForEntityType("error_issue"),
+      );
+      if (missingErrorIssueEdges !== null) gaps.push(missingErrorIssueEdges);
     }
     laneNames.push(
       "authoredPrs",

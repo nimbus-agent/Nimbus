@@ -226,6 +226,13 @@ export type NegotiateIncidents = {
   readonly resolved: number;
   readonly assigned: number;
   readonly unattributable: number;
+  /**
+   * Sentry error issues assigned to the subject. Counted and rendered SEPARATELY
+   * from incident work, never summed into it: an error group that never paged
+   * anyone is not an incident, which is exactly why Spec A gave it its own
+   * entity type. Folding the two would discard that decision at the last step.
+   */
+  readonly errorIssuesAssigned: number;
   /** Incidents the subject RESOLVED, newest first — never drawn from `unattributable`. */
   readonly evidence: NegotiateEvidence;
 };

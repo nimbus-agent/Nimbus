@@ -8,6 +8,9 @@ const ENTITY_TYPE_REMEDIATIONS: Readonly<Record<string, string>> = Object.freeze
   incident:
     "Run `nimbus connector sync pagerduty`. Incidents indexed before attribution shipped carry " +
     "no actor emails — `nimbus index rebody --service pagerduty` re-fetches them.",
+  error_issue:
+    "Run `nimbus connector sync sentry`. Sentry issues indexed before attribution shipped " +
+    "already carry the data — `nimbus index regraph` rebuilds the edges with no re-sync.",
   alert: "Tracked as a graph-populator follow-up on existing observability connectors.",
   pipeline_run: "Tracked as a graph-populator follow-up on the existing CI/CD connectors.",
 });
