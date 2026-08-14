@@ -146,6 +146,36 @@ The populator calls `resolvePersonForSync(db, { canonicalEmail, displayName })`
 with the git/GitHub-derived identity — or creates one. Synchronous and DB-only, so it is
 safe to call from a populator.
 
+**One shared email guard, applied by both connectors.** `resolvePersonForSync` will
+*create a person row* for whatever string it is handed, and `normalizeEmail`
+(`people/person-store.ts:6-8`) only trims and lowercases — it does not validate. So an
+actor payload carrying `"unknown"`, `"n/a"`, `""`, or a display name where an email was
+expected would mint a junk person that then pollutes every people-based brief and can
+never be merged away. A single predicate gates every call site:
+
+```ts
+// Bounded quantifiers, matching the house style in updater/manifest-fetcher.ts:3.
+// 254 is the RFC 5321 ceiling; the length check runs BEFORE the regex so no
+// pathological input ever reaches it.
+const ACTOR_EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,63}(?:\.[^\s@.]{1,63}){1,8}$/;
+
+function usableActorEmail(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const e = raw.trim();
+  if (e.length === 0 || e.length > 254) return null;
+  return ACTOR_EMAIL_RE.test(e) ? e : null;
+}
+```
+
+Rejection is not an error: return `null`, emit no edge, increment the unattributable
+count. Case is deliberately **not** handled here — `resolvePersonForSync` already
+lowercases via `normalizeEmail`, and a second lowercasing at the call site would be
+duplicated logic that can drift.
+
+This guard is deliberately **not** Sentry-only. PagerDuty resolves emails on exactly the
+same path with the same exposure, and applying the check to one connector would leave
+the other minting junk people from the identical failure mode.
+
 ### 5.2 PagerDuty connector changes
 
 Add to the List Incidents request (`pagerduty-sync.ts:163-167`):
@@ -185,6 +215,22 @@ Three-step ladder, fail-closed at every rung:
 
 If all three fail, no `resolves` edge is emitted and `unattributed_actors` increments.
 
+**Step 3 is a network call and must be governed like every other one in this connector:**
+
+- `await ctx.rateLimiter.acquire("pagerduty")` before each lookup, matching the existing
+  per-request call at `pagerduty-sync.ts:162`. The memo map means the limiter is hit once
+  per *distinct* actor, not once per incident.
+- Lookups run **sequentially**, not `Promise.all`-fanned. The cap bounds total requests,
+  not their burst rate; 25 concurrent requests against a shared limiter is precisely the
+  spike the limiter exists to prevent.
+- A non-OK response or a thrown request (404 for a deleted user, 403 for a token without
+  user-read scope, network error) is caught per-lookup: log at `warn`, increment
+  `unattributed_actors`, memoize the failure so it is not retried within the run, and
+  continue. **A failed lookup never aborts the sync** — attribution is an enrichment, and
+  losing the whole incident index because one user record is unreadable is a far worse
+  outcome than an unattributed incident. A 403 in particular is the expected steady state
+  for an existing token that was scoped before this feature existed.
+
 A `service_reference` (auto-resolve) short-circuits at step 0: attribute to nobody, and
 do **not** spend a lookup on it.
 
@@ -195,10 +241,37 @@ a resolver.
 ### 5.4 Graph population — incidents
 
 Inside `syncTimelineEventGraph`'s incident arm, after the existing
-`clearRelationsTouchingEntity(db, entityId)` call:
+`clearRelationsTouchingEntity(db, entityId)` call.
 
-- for each `assignee_emails` entry → resolve → `upsertGraphRelation(person, incident, "assigned", now)`
-- if `resolved_by_email` → resolve → `upsertGraphRelation(person, incident, "resolves", now)`
+**Two distinct id spaces are involved and must not be conflated.**
+`resolvePersonForSync` returns a `person.id` (a UUID from the `person` table), while
+`upsertGraphRelation`'s `from_id`/`to_id` are `graph_entity.id` values (SHA-256, from
+`deterministicGraphEntityId`). Passing the person UUID straight into the relation would
+create an edge pointing at a non-existent entity — and because `graph_relation.from_id`
+is `REFERENCES graph_entity(id)` with `PRAGMA foreign_keys = ON` (§ 4.2), it would fail
+at insert rather than corrupt silently. The person UUID is the graph entity's
+`external_id`, never its `id`:
+
+```ts
+const personId = resolvePersonForSync(db, { canonicalEmail: email });
+if (personId === null) continue;                       // counted, no edge
+const personEntityId = upsertGraphEntity(db, {
+  type: "person",
+  externalId: personId,                                // person.id, not entity id
+  label: personDisplayName(db, personId) ?? email,
+  service: row.service,
+});
+upsertGraphRelation(db, personEntityId, entityId, "assigned", now);
+```
+
+Applied as:
+
+- for each `assignee_emails` entry → the block above with `"assigned"`
+- if `resolved_by_email` → the same block with `"resolves"`
+
+This is the shape `syncPrGraph` already uses (`graph-populator.ts:266-276`), and using
+`external_id = person.id` is what lets `catchup.ts:324` and `expert.ts` match on
+`pe.external_id = ?` with a person id.
 
 **`assigned` is not in `CROSS_ITEM_RELATION_TYPES`, and that is the point.** Because the
 edge is re-emitted by the same populator that just cleared, a reassigned incident
@@ -222,9 +295,6 @@ That asymmetry — one edge type self-heals via the generic clear, the other nee
 explicit incoming clear — is the single most error-prone part of this design and is
 called out in § 8 as a required red-proven test.
 
-The `person` entity is created with `upsertGraphEntity({ type: "person", externalId:
-<person.id>, label: personDisplayName(db, id) ?? email })`, matching `syncPrGraph`
-(`graph-populator.ts:266-276`).
 
 ### 5.5 Graph population — Sentry error issues
 
@@ -262,6 +332,39 @@ written to prevent.
 
 `nimbus index rebody` and `nimbus index regraph` both already exist. No gap note in this
 spec may cite a command that does not.
+
+#### 5.6.1 A pre-existing pagination stall this spec increases exposure to — DEFERRED
+
+`pagerduty-sync.ts` advances its cursor only on a strict `updated > maxUpdated`
+(`:121-123`), and `maxUpdated` is seeded from `since` (`:157`). Offset is derived from
+`pagesFetched` and resets to 0 every run (`:167`). So if a full truncated run — all
+`maxPagesPerSync * PAGE_SIZE` = **2000** incidents — returns rows whose `updated_at` all
+equal the incoming cursor, `maxUpdated` never advances, the cursor is re-encoded
+unchanged, and the next run re-fetches the identical 2000 rows. `hasMore` is `true` in
+that state, so the scheduler re-runs immediately: a no-progress spin, not merely a slow
+sync. Realistic trigger is a bulk automated resolve/migration touching >2000 incidents.
+
+Two corrections to the review's framing: PagerDuty's `updated_at` is second-resolution,
+not millisecond, so the collision window is 1000× wider than stated; and the comparison
+is string-lexicographic on the raw ISO value, not numeric.
+
+**This is pre-existing and is NOT fixed here** — it is a pagination-cursor defect with no
+relationship to attribution, it needs its own test, and folding it into an attribution PR
+is exactly the cross-concern seam that has repeatedly produced blocking findings in this
+repo.
+
+It is recorded here rather than merely deferred because **§ 5.6's `historyFloorMs`
+opt-in increases exposure to it**: widening the cold-start window makes a truncated
+first run (the stall's precondition) substantially more likely. The opt-in does not
+create the bug and does not make a stall certain — that still needs 2000 same-second
+rows — but this spec is the reason the precondition gets hit more often, so shipping it
+silently would be dishonest.
+
+Mitigation shape for whoever takes it, so it is not re-derived: carry `offset` in the
+cursor payload when a run ends truncated **and** `maxUpdated` equals the incoming
+`lastUpdated`, and reset it to 0 as soon as `maxUpdated` advances. That is a
+`PdCursorV1` → `PdCursorV2` change, so it also needs the decode-tolerates-old-shape
+handling the connector already does for unparseable cursors (`:16-33`).
 
 ### 5.7 Readers
 
@@ -330,6 +433,8 @@ observable effect at all.
 - No on-call shifts (sub-project D) and no deploy actor (sub-project E).
 - No `author_id` writes.
 - No migration.
+- **No fix for the PagerDuty pagination stall** (§ 5.6.1), despite this spec increasing
+  exposure to it. Deferred deliberately, with the mitigation shape recorded.
 - No changes to `why`, `impact`, `ghost`, or `huddle`. `why.ts:433` also probes
   `resolves`, but scoped to `issue`, and is unaffected.
 
@@ -341,6 +446,9 @@ observable effect at all.
 | Assignee present, no email | No edge; `unattributed_actors` increments |
 | `last_status_change_by` is a `service_reference` | No edge, no lookup spent; not counted as a failure |
 | `/users/{id}` lookup cap hit | Remaining actors skipped and counted; sync succeeds |
+| `/users/{id}` returns 403 (token lacks user-read scope) | Caught per-lookup, memoized as failed, counted; **sync succeeds**. Expected steady state for tokens scoped before this feature existed |
+| `/users/{id}` returns 404 (deleted user) or throws | Same handling as 403 |
+| An actor's `email` is present but not a valid address | Rejected by `usableActorEmail` (§ 5.1); no person created, no edge, counted |
 | Sentry `assignedTo` is a team actor | No edge; counted |
 | Person resolves to a brand-new person row | Correct and intended — `resolvePersonForSync` creates it and later syncs merge on email |
 | An incident is reassigned upstream | Old `assigned` edge retired by the generic clear; old `resolves` edge retired by the explicit incoming clear (§ 5.4) |
@@ -363,17 +471,27 @@ Non-negotiable, in addition to ordinary unit coverage:
    rows with no network.
 4. **A test that the `/users/{id}` fallback cap is enforced** and that exceeding it
    increments the counter rather than silently truncating.
-5. **A gap-note test per zero** in § 5.8 — four distinct cases, four distinct notes.
-6. Per-file coverage floor ≥85% line / ≥80% branch, Docker-Linux-authoritative.
+5. **A lookup-failure isolation test**: a 403 on one actor's `/users/{id}` leaves the
+   sync succeeding with every other incident indexed. Red-prove it — an implementation
+   that lets the rejection propagate passes any test that only asserts "no edge".
+6. **An email-guard test table** covering `""`, `"unknown"`, `"Jane Doe"`, a 300-char
+   string, and a valid address, asserting that only the last creates a `person` row.
+   Assert on the `person` table, not just on edge absence: the failure this guard
+   prevents is a junk person that outlives the sync, and an edge-only assertion passes
+   while the row is still written.
+7. **A gap-note test per zero** in § 5.8 — four distinct cases, four distinct notes.
+8. Per-file coverage floor ≥85% line / ≥80% branch, Docker-Linux-authoritative.
 
 ## 9. Delivery
 
 Two PRs. This spans two connectors and two entity types, and the repeated lesson in this
 repo is that cross-connector seams are where the blocking findings hide.
 
-**PR 1 — PagerDuty.** `include[]` fetch, metadata keys, both incident edges, the
-explicit `resolves` clear, `historyFloorMs` opt-in, the `REBODY_REQUIRED_META_VERSION`
-row, `negotiate`'s new lane, and every § 5.8 honesty change. `catchup` and `expert` come
+**PR 1 — PagerDuty.** `include[]` fetch, the rate-limited and failure-isolated
+`/users/{id}` fallback, the shared `usableActorEmail` guard (§ 5.1 — lands here, reused
+by PR 2), metadata keys, both incident edges, the explicit `resolves` clear,
+`historyFloorMs` opt-in, the `REBODY_REQUIRED_META_VERSION` row, `negotiate`'s new lane,
+and every § 5.8 honesty change. `catchup` and `expert` come
 alive on merge day.
 
 **PR 2 — Sentry.** `syncErrorIssueGraph`'s `assigned` edge and the lane's
@@ -390,3 +508,5 @@ missed findings that live in files no individual task touched.
 | Sentry `assignedTo` has no `email` key → the whole Sentry half is inert | Fails closed and counted; PR 2 is populator-only so the cost of being wrong is low. Verify against one real payload before writing PR 2's brief copy |
 | Overloading `resolves` across two endpoint shapes corrupts an existing reader | All 10 non-test read sites across 8 files were audited at `a68945e5` (`catchup`, `expert`, `negotiate`, `premortem`, `epic-services` ×2, `why` ×2, `why-peek`, `decision-corroborate`); every one is endpoint-type-scoped or bound to a specific `from_id`. Re-audit if an 11th appears |
 | The 30-day recovery bound is stated wrongly in the brief | Run `nimbus index rebody --service pagerduty` and observe the real window before writing the sentence (§ 5.8) |
+| The deferred pagination stall (§ 5.6.1) fires on a real tenant, and the `historyFloorMs` opt-in shipped here is what surfaced it | Accepted knowingly, not discovered later. Needs >2000 same-second incidents; mitigation shape is recorded so the fix is a small follow-up, not a re-investigation. If a tenant hits it before then, the symptom is a connector that re-syncs forever without advancing — diagnosable from `sync_state` alone |
+| A token scoped before this feature makes every `/users/{id}` lookup 403, so `resolves` is empty on upgrade for reasons that look like "no incident work" | The `unattributable` count and the § 5.8 gap notes distinguish "measured, nobody attributable" from "not measured". The 403 case is called out in the § 7 table so it is diagnosed, not guessed at |
