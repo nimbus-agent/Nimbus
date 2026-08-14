@@ -160,6 +160,10 @@ test.each([
   ["a user actor with a junk email", { type: "user", id: "42", email: "unknown" }],
   ["a bare string", "jane@example.com"],
   ["a number", 42],
+  // Pins the `type === "user"` guard itself: a team actor CARRYING an email is
+  // the one shape that would produce a WRONG edge (a team's address resolving
+  // to a person row) rather than merely no edge, if the guard were removed.
+  ["a team actor that carries an email", { type: "team", id: "7", email: "team@example.com" }],
 ])("emits nothing for %s", (_label, assignedTo) => {
   const db = freshDb();
   indexErrorIssue(db, "SENTRY-3", assignedTo);
