@@ -231,6 +231,15 @@ export type NegotiateIncidents = {
    * from incident work, never summed into it: an error group that never paged
    * anyone is not an incident, which is exactly why Spec A gave it its own
    * entity type. Folding the two would discard that decision at the last step.
+   *
+   * The renderer suppresses this field at `0` (unlike `resolved`/`assigned`, which
+   * print even at zero) — deliberately, for the structural-zero case (no Sentry
+   * connector, or Sentry connected but no `assigned` edges at all), where the
+   * `missing_connector`/`missing_relation_emit` gap notes above already carry the
+   * disambiguation. This also silences a genuinely MEASURED zero — Sentry
+   * configured, other people have assignments, this subject just has none — which
+   * renders no line and no gap note. Nothing false is asserted in that case; the
+   * information is simply absent from the brief rather than stated as "0 assigned".
    */
   readonly errorIssuesAssigned: number;
   /** Incidents the subject RESOLVED, newest first — never drawn from `unattributable`. */

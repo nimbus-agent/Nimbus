@@ -69,8 +69,9 @@ test("an issue with no project slug still yields an entity and no belongs_to edg
   db.close();
 });
 
-// SPEC A ATTRIBUTES NOTHING.
-test("no person edge is emitted for an error_issue", () => {
+// `seedErrorIssue` writes no `assignedTo`, so this only holds for an unassigned issue —
+// see the `test.each` below for the assigned case, which DOES emit a person edge.
+test("an error issue with no assignee emits no person edge", () => {
   const db = freshDb();
   seedErrorIssue(db, "4711", "web");
   const n = db
@@ -139,6 +140,7 @@ test("a user-assigned sentry issue gets a person --assigned--> error_issue edge"
     .query("SELECT id FROM person WHERE canonical_email = 'jane@example.com'")
     .get() as { id: string };
   expect(edges[0]?.from_ext).toBe(person.id);
+  db.close();
 });
 
 // A team actor is not a person. Sentry allows assigning to a team, and a team
@@ -150,6 +152,7 @@ test("a team-assigned issue produces no edge and no person row", () => {
   expect(assignedEdges(db)).toHaveLength(0);
   const n = db.query("SELECT COUNT(*) AS n FROM person").get() as { n: number };
   expect(n.n).toBe(0);
+  db.close();
 });
 
 // §4.4: the presence of `email` on a user actor is UNVERIFIED against a real
@@ -170,6 +173,7 @@ test.each([
   expect(assignedEdges(db)).toHaveLength(0);
   const n = db.query("SELECT COUNT(*) AS n FROM person").get() as { n: number };
   expect(n.n).toBe(0);
+  db.close();
 });
 
 // `assigned` is not a CROSS_ITEM type, so the existing clear retires it.
@@ -185,6 +189,7 @@ test("re-assigning an issue retires the previous edge", () => {
     id: string;
   };
   expect(edges[0]?.from_ext).toBe(bob.id);
+  db.close();
 });
 
 // The whole reason this PR needs no re-sync: attribution rebuilds from rows
@@ -200,4 +205,5 @@ test("regraph rebuilds attribution from stored rows alone", () => {
 
   regraphAllItems(db);
   expect(assignedEdges(db)).toHaveLength(1);
+  db.close();
 });

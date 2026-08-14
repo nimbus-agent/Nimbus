@@ -894,7 +894,9 @@ function sentryAssigneeEmail(metadata: Record<string, unknown>): unknown {
  * `clearRelationsTouchingEntity` removes every edge touching this entity except
  * the four CROSS_ITEM_RELATION_TYPES, so ANY edge a later change wants to keep
  * across re-syncs must be re-emitted HERE, in this function. That includes the
- * `person --assigned--> error_issue` edge planned for the attribution spec.
+ * `person --assigned--> error_issue` edge the attribution spec calls for — it IS
+ * emitted below, and must stay re-emitted after the clear on every future change
+ * to this function.
  */
 function syncErrorIssueGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
   const projectRaw = row.metadata["project"];

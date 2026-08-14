@@ -234,6 +234,11 @@ describe("nimbus negotiate (e2e, in-process)", () => {
       // PagerDuty connector at all". The lane must not render a bare `0 resolved, 0 assigned`
       // as if it were a real measurement; it must carry a named `missing_connector` gap note.
       expect(params.brief).toContain("No sync_state row for service `pagerduty`");
+
+      // The fixture seeds NO Sentry data either — no error issues, no `sync_state` row — so
+      // the sibling Sentry gap note fires alongside the PagerDuty one and must be asserted
+      // too, not left to pass silently just because the brief happens to contain it.
+      expect(params.brief).toContain("No sync_state row for service `sentry`");
     },
   );
 });
