@@ -165,12 +165,25 @@ function Test-NimbusSignature {
     Write-SignatureSkipNotice "gpg not found -- SIGNATURE NOT CHECKED."
     return $true
   }
+  # Same EAP relaxation as the import/verify block below, and here it is a
+  # FAIL-OPEN guard, not just a crash guard. Under Windows PowerShell 5.1 any
+  # stderr byte from a native command becomes a terminating NativeCommandError
+  # while $ErrorActionPreference is "Stop" -- so a gpg that merely WARNS on
+  # --version (an unsafe-permissions notice, a locale or config warning) would
+  # throw, land in the catch below, and quietly downgrade this whole function
+  # to "SIGNATURE NOT CHECKED" while the install proceeded. The runnability
+  # check must key on the EXIT CODE, which is what it claims to test, not on
+  # whether gpg happened to print something.
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   try {
     & gpg --version *>$null
     if ($LASTEXITCODE -ne 0) { throw "gpg exited $LASTEXITCODE" }
   } catch {
     Write-SignatureSkipNotice "gpg is present but not runnable -- SIGNATURE NOT CHECKED."
     return $true
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
   }
 
   $ascPath = Join-Path $Dir "SHA256SUMS.asc"
@@ -226,12 +239,61 @@ function Test-NimbusSignature {
   # cannot parse. Do not simplify this to Out-File, `>`, or a gpg pipeline.
   [System.IO.File]::WriteAllText($keyPath, $NimbusSigningKey, [System.Text.UTF8Encoding]::new($false))
 
+  # $ErrorActionPreference is relaxed to "Continue" for EXACTLY these two gpg
+  # calls, then restored. This is the fix for the windows-2022
+  # `documented one-liner` failure against v2.3.0/v2.3.1 (runs 31767719056,
+  # 31780941563, 31781383717), and the reason is a PowerShell behaviour, not a
+  # gpg one:
+  #
+  # Windows PowerShell 5.1 wraps ANY output a native command writes to stderr
+  # in a NativeCommandError record. Under the script-wide
+  # `$ErrorActionPreference = "Stop"` set at the top of this file that record
+  # is TERMINATING, so the first byte gpg writes to stderr aborts the whole
+  # install -- and `*>$null` does NOT prevent it, because the record is raised
+  # by the native-command wrapper rather than being part of the redirected
+  # stream. Red/green-proved locally: with EAP=Stop the statement after the
+  # import is never reached (FullyQualifiedErrorId NativeCommandError); with
+  # EAP=Continue it is reached with exit 0. PowerShell 7 does not do this
+  # conversion at all, which is the ENTIRE reason the pwsh leg of the smoke
+  # workflow passed while the 5.1 leg failed on the same runner, in the same
+  # job, seconds apart.
+  #
+  # What gpg was writing to stderr, and why it is harmless: gpg 2.x autostarts
+  # a gpg-agent for keyring work, and the MSYS-compiled agent Git for Windows
+  # ships binds POSIX AF_UNIX sockets under the homedir, where sun_path caps a
+  # path at ~107 characters. On a windows-2022 runner the homedir resolves to
+  #   /c/Users/runneradmin/AppData/Local/Temp/nimbus-<36-char-guid>/gnupg-sig
+  # putting S.gpg-agent at 105 (fits) but S.gpg-agent.extra at 111 (does not).
+  # The agent aborts, and gpg reports the opaque
+  #   gpg: error running '/usr/bin/gpg-agent': exit status 2
+  # Measured on the runner: BOTH shells hit this, and in BOTH the subsequent
+  # keyring operation still succeeds -- the missing agent is genuinely
+  # inconsequential here, because importing a PUBLIC key and verifying a
+  # DETACHED signature touch no secret key. Only 5.1's stderr-to-terminating-
+  # error conversion turned it fatal.
+  #
+  # --no-autostart is secondary, and is NOT what unbreaks this: it stops gpg
+  # from spawning an agent that cannot bind its sockets in the first place, so
+  # no orphaned agent process is left behind on a user's machine. It swaps one
+  # stderr line for a quieter one ("no gpg-agent running in this session") --
+  # which, on its own, still aborted 5.1 (run 31781383717). Verified against
+  # the real published v2.3.1 SHA256SUMS/.asc with every agent killed first:
+  # import exit 0, VALIDSIG present, primary fingerprint matching the pinned
+  # key, zero gpg-agent processes after.
+  #
+  # Relaxing EAP here costs nothing: the trust decision below is made ONLY by
+  # parsing --status-fd output for VALIDSIG in Resolve-SignatureVerdict, never
+  # by whether these calls threw. A gpg that fails now yields no VALIDSIG and
+  # is rejected on exactly the same path as before.
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   Push-Location -LiteralPath $Dir
   try {
-    & gpg --homedir $sigHomeName --quiet --import $keyPath *>$null
-    $out = & gpg --homedir $sigHomeName --quiet --status-fd 1 --verify $ascPath (Join-Path $Dir "SHA256SUMS") 2>$null
+    & gpg --homedir $sigHomeName --no-autostart --quiet --import $keyPath *>$null
+    $out = & gpg --homedir $sigHomeName --no-autostart --quiet --status-fd 1 --verify $ascPath (Join-Path $Dir "SHA256SUMS") 2>$null
   } finally {
     Pop-Location
+    $ErrorActionPreference = $previousErrorActionPreference
   }
 
   # Parsing + trust decision both live in Resolve-SignatureVerdict now (see

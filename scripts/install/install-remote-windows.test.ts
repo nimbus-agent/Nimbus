@@ -586,3 +586,133 @@ test.skipIf(skipUntrustedKeyTest)(
   },
   PWSH_TEST_TIMEOUT_MS,
 );
+
+/**
+ * Windows PowerShell 5.1 ONLY. Every other test in this file drives install.ps1
+ * through `pwsh`, and this regression is INVISIBLE there: PowerShell 7 does not
+ * convert a native command's stderr into an error record, so under pwsh the
+ * broken and fixed scripts behave identically. Running this through `pwsh` would
+ * be a test that cannot fail.
+ *
+ * The bug: 5.1 wraps ANY stderr output from a native command in a terminating
+ * NativeCommandError while $ErrorActionPreference is "Stop" (which install.ps1
+ * sets globally). Test-NimbusSignature's runnability probe, `& gpg --version`,
+ * sat inside a try/catch whose catch prints "SIGNATURE NOT CHECKED" and returns
+ * $true -- so a gpg that merely WARNED on stderr while exiting 0 silently
+ * downgraded the whole publisher-authenticity check and let the install proceed.
+ * That is a fail-OPEN, which is why it is worth a dedicated shell.
+ *
+ * The shim is a gpg that writes a warning to stderr and exits 0 for every
+ * invocation -- exactly the shape that used to trip the conversion. Post-fix the
+ * runnability probe correctly keys on the EXIT CODE, so verification proceeds,
+ * finds no VALIDSIG (the shim signs nothing) and REFUSES. Pre-fix it soft-skips
+ * and installs. The two outcomes are opposites, so the assertions below cannot
+ * both pass by accident.
+ */
+const windowsPowerShell =
+  process.platform === "win32"
+    ? (Bun.which("powershell") ?? Bun.which("powershell.exe") ?? null)
+    : null;
+
+test.skipIf(!windowsPowerShell)(
+  "install.ps1 does not soft-skip signature verification when gpg warns on stderr (PS 5.1)",
+  async () => {
+    const work = await mkdtemp(join(tmpdir(), "nimbus-ps51-stderr-"));
+    const localAppData = await mkdtemp(join(work, "lad-"));
+    const shimDir = await mkdtemp(join(work, "shim-"));
+    // Exits 0 for EVERY call, so the ONLY thing that can abort the install is
+    // the stderr-to-terminating-error conversion this test exists to pin.
+    await writeFile(
+      join(shimDir, "gpg.cmd"),
+      "@echo off\r\necho gpg: WARNING: unsafe permissions on homedir 1>&2\r\nexit /b 0\r\n",
+    );
+
+    const payload = await makePayload("genuine-cli\n");
+    const zipPath = join(work, ASSET_NAME);
+    await createZip(payload, zipPath);
+    const zipBytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex");
+    const sums = `${digest}  ${ASSET_NAME}\n`;
+
+    // Serves a SHA256SUMS.asc as well as the manifest. Without one, install.ps1
+    // takes its "SHA256SUMS.asc unavailable -- SIGNATURE NOT CHECKED" branch and
+    // this test would trip on that skip instead of the one it means to pin --
+    // two different roads to the same string. The body's content is irrelevant:
+    // the shim gpg never reads it.
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith("/SHA256SUMS.asc")) return new Response("this is not a signature\n");
+        if (path.endsWith("/SHA256SUMS")) return new Response(sums);
+        if (path.endsWith(`/${ASSET_NAME}`)) return new Response(zipBytes);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    try {
+      const env = { ...process.env } as Record<string, string | undefined>;
+      // Match the real key's case rather than adding a second PATH-ish key --
+      // same reasoning as envWithoutGpg above.
+      const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
+      env[pathKey] = `${shimDir}${delimiter}${env[pathKey] ?? ""}`;
+      env["LOCALAPPDATA"] = localAppData;
+      env["NIMBUS_INSTALL_BASE_URL"] = `http://127.0.0.1:${server.port}`;
+      // Point 5.1 at its OWN module root. An inherited PSModulePath that leads
+      // with PowerShell 7's module directories shadows Windows PowerShell 5.1's
+      // Microsoft.PowerShell.Utility, which makes `Get-FileHash` genuinely
+      // unresolvable -- install.ps1 then aborts in Assert-NimbusCommand long
+      // before it reaches any gpg call, and this test would "fail" for a reason
+      // that has nothing to do with what it asserts. Reproduced directly: the
+      // same probe returns MISSING with a pwsh-derived PSModulePath and FOUND
+      // with this one. CI's `shell: powershell` starts from a clean environment
+      // and never sees this; a test spawned from a Bun process does.
+      // Read SystemRoot rather than assuming "C:\Windows": Windows is not
+      // always on C:, and silently guessing the wrong module root would
+      // resurrect the very "Get-FileHash is missing" confusion this line
+      // exists to prevent -- as an unexplained failure instead of a clear one.
+      // The variable is always set on Windows, and this test runs nowhere
+      // else, so an absent one means something is wrong enough to say so.
+      const systemRoot = process.env["SystemRoot"];
+      if (!systemRoot) {
+        throw new Error("SystemRoot is unset; cannot locate the Windows PowerShell 5.1 modules");
+      }
+      env["PSModulePath"] = join(systemRoot, "system32", "WindowsPowerShell", "v1.0", "Modules");
+
+      const proc = Bun.spawn(
+        [
+          windowsPowerShell ?? "powershell",
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          INSTALL_PS1,
+          "-FromRelease",
+          "2.2.0",
+          "-Yes",
+        ],
+        { env, stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      const combined = stdout + stderr;
+
+      // The load-bearing assertion: a warning on stderr must NOT be read as
+      // "gpg is not runnable".
+      expect(combined).not.toContain("SIGNATURE NOT CHECKED");
+      expect(combined).not.toContain("gpg is present but not runnable");
+      // ...and having stayed on the real path, the unsigned manifest is refused.
+      expect(combined).toContain("did not verify against the pinned Nimbus key");
+      expect(exitCode).not.toBe(0);
+      const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
+      expect(await Bun.file(installed).exists()).toBe(false);
+    } finally {
+      server.stop(true);
+      await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+  PWSH_TEST_TIMEOUT_MS,
+);
