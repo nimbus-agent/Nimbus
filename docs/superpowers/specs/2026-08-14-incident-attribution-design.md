@@ -180,7 +180,7 @@ the other minting junk people from the identical failure mode.
 
 Add to the List Incidents request (`pagerduty-sync.ts:163-167`):
 
-```
+```text
 include[]=assignees
 include[]=acknowledgers
 include[]=users
@@ -294,7 +294,6 @@ edges and must become endpoint-scoped.
 That asymmetry — one edge type self-heals via the generic clear, the other needs an
 explicit incoming clear — is the single most error-prone part of this design and is
 called out in § 8 as a required red-proven test.
-
 
 ### 5.5 Graph population — Sentry error issues
 

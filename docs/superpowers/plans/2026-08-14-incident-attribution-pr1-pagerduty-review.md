@@ -12,10 +12,12 @@
 
 * **The Issue:** In Task 5, `resolveMissingActorEmails` handles fetch/parse failures gracefully inside a `try/catch` block. However, if the API returns a standard `200 OK` but with an empty/unexpected body or missing `user` block, `JSON.parse(text)` will succeed but `asRecord(JSON.parse(text))` could result in unexpected shapes.
 * **Recommendation:** Ensure the implementation safely guards against unexpected structures using `asRecord` checks at every level of the parsed payload:
+
   ```typescript
   const parsed = JSON.parse(text);
   const user = typeof parsed === "object" && parsed !== null ? asRecord((parsed as Record<string, unknown>)["user"]) : undefined;
   ```
+
   The proposed code does `asRecord(asRecord(JSON.parse(text) as unknown)?.["user"])`, which is safe but a little verbose. Ensuring a cleaner type-safe traversal is recommended.
 
 ### 2. Biome Linter / Formatter Compliance

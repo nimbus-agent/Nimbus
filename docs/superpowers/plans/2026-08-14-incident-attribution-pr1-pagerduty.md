@@ -62,10 +62,12 @@
 `resolvePersonForSync` **creates a person row** for whatever string it is handed, and `normalizeEmail` (`people/person-store.ts:6-8`) is only `raw.trim().toLowerCase()` — it does not validate. An actor payload carrying `"unknown"` would mint a junk person that pollutes every people-based brief and can never be merged away.
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/actor-email.ts`
 - Test: `packages/gateway/src/connectors/actor-email.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing
 - Produces: `usableActorEmail(raw: unknown): string | null`
 
@@ -177,10 +179,12 @@ git commit -m "add the shared actor-email guard"
 With `include[]=assignees` and `include[]=acknowledgers`, PagerDuty replaces user *references* with full user objects carrying `email`. This task harvests those into a lookup keyed by user id, so a bare reference elsewhere in the same response (notably `last_status_change_by`) can be resolved for free.
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/pagerduty-attribution.ts`
 - Test: `packages/gateway/src/connectors/pagerduty-attribution.test.ts`
 
 **Interfaces:**
+
 - Consumes: `usableActorEmail` (Task 1); `asRecord`, `stringField` from `./unknown-record.ts`
 - Produces: `pagerdutyEmailMapFromIncidents(incidents: readonly unknown[]): Map<string, string>`
 
@@ -340,10 +344,12 @@ git commit -m "harvest expanded pagerduty actor emails into an id map"
 Pure, single-pass, and runs **after** the map is complete (including any fallback lookups from Task 5), so it never needs the network.
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/pagerduty-attribution.ts`
 - Test: `packages/gateway/src/connectors/pagerduty-attribution.test.ts`
 
 **Interfaces:**
+
 - Consumes: `pagerdutyEmailMapFromIncidents` (Task 2)
 - Produces:
   - `MAX_ASSIGNEES_PER_INCIDENT = 10`
@@ -603,10 +609,12 @@ git commit -m "extract pagerduty incident assignees and resolver"
 ### Task 4: Request expanded actors
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/pagerduty-sync.ts:163-167`
 - Test: `packages/gateway/src/connectors/pagerduty-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing new
 - Produces: list requests carrying `include[]=assignees`, `include[]=acknowledgers`, `include[]=users`
 
@@ -673,10 +681,12 @@ git commit -m "request expanded pagerduty actors on the incident list"
 The one place this PR adds network traffic. It runs **once per page**, before mapping — not once per incident.
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/pagerduty-sync.ts`
 - Test: `packages/gateway/src/connectors/pagerduty-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `pagerdutyUnresolvedActorIds` (Task 3)
 - Produces: `MAX_USER_LOOKUPS_PER_SYNC = 25`; an internal `resolveMissingActorEmails(...)` that mutates a run-scoped `Map<string, string>`
 
@@ -971,10 +981,12 @@ git commit -m "resolve unexpanded pagerduty actors through a bounded user lookup
 ### Task 6: Write the attribution metadata
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/pagerduty-sync.ts:59-128`
 - Test: `packages/gateway/src/connectors/pagerduty-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `extractPagerdutyActors` (Task 3)
 - Produces: `syncPagerdutyIncidentItems(ctx, incidents, since, now, emailById)` — a fifth required parameter; item metadata gains `assignee_emails`, `resolved_by_email`, `unattributed_actors`, `meta_v`
 
@@ -1123,10 +1135,12 @@ git commit -m "write pagerduty attribution metadata onto incident items"
 Without this, `nimbus index rebody --service pagerduty --since 365` is accepted and then silently narrowed to the connector's own 30 days — the exact "accepted a flag and quietly narrowed it" failure `index-rebody-rpc.ts:104-108` exists to prevent.
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/pagerduty-sync.ts:150-153`
 - Test: `packages/gateway/src/connectors/pagerduty-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SyncContext.historyFloorMs` (`sync/types.ts:58`)
 - Produces: nothing new
 
@@ -1213,10 +1227,12 @@ git commit -m "opt pagerduty into the cold-start history floor"
 ### Task 8: Make already-indexed incidents recoverable
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/index-rebody-rpc.ts:1-10,134-137`
 - Test: `packages/gateway/src/ipc/index-rebody-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PAGERDUTY_INCIDENT_META_VERSION` (Task 2)
 - Produces: `REBODY_REQUIRED_META_VERSION` gains a `pagerduty` entry
 
@@ -1273,10 +1289,12 @@ The heart of the PR. Two placement details are load-bearing and are the most lik
 2. **`resolves` is in `CROSS_ITEM_RELATION_TYPES` (`graph-populator.ts:90`), so `clearRelationsTouchingEntity` skips it** and it needs an explicit `clearIncomingRelationsOfType`. `assigned` is NOT in that set, so the generic clear already retires it. The two edge types retire by different mechanisms.
 
 **Files:**
+
 - Modify: `packages/gateway/src/graph/graph-populator.ts`
 - Test: `packages/gateway/src/graph/graph-populator-incidents.test.ts`
 
 **Interfaces:**
+
 - Consumes: `usableActorEmail` (Task 1); `resolvePersonForSync` from `../people/linker.ts`
 - Produces: `person --assigned--> incident` and `person --resolves--> incident` edges, with `graph_entity.external_id` on the person side set to the `person.id`
 
@@ -1557,10 +1575,12 @@ git commit -m "emit person assigned/resolves edges for pagerduty incidents"
 ### Task 10: The `negotiate` incidents lane
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/_lib/negotiate-types.ts`, `packages/gateway/src/agents/negotiate.ts`
 - Test: `packages/gateway/src/agents/negotiate.test.ts`
 
 **Interfaces:**
+
 - Consumes: the edges from Task 9
 - Produces:
   - `type NegotiateIncidents = { resolved: number; assigned: number; unattributable: number; evidence: NegotiateEvidence }`
@@ -1786,10 +1806,12 @@ git commit -m "add the negotiate incidents lane"
 ### Task 11: Render the incidents section
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/_lib/render.ts:687-700,908-959`
 - Test: `packages/gateway/src/agents/negotiate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `NegotiateIncidents` (Task 10)
 - Produces: `renderNegotiateIncidents(i: NegotiateIncidents | null): string`
 
@@ -1902,10 +1924,12 @@ git commit -m "render the negotiate incidents section"
 Three strings and one comment become false the moment Task 9 merges. They claim the edge does not exist yet.
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/_lib/gap-notes.ts:8,70-79`, `packages/gateway/src/agents/expert.ts:410`
 - Test: `packages/gateway/src/agents/expert.test.ts`, `packages/gateway/src/agents/_lib/gap-notes.test.ts`
 
 **Interfaces:**
+
 - Consumes: the edges from Task 9
 - Produces: no API change
 
@@ -2005,6 +2029,7 @@ git commit -m "retire the gap notes that promised a future incident populator"
 Two of the three edges depend on payload shapes that could not be verified from documentation (spec § 4.4). "Fails closed" and "emits zero rows in production while every test is green" are the same observable, so a fixture written from the same assumption as the parser cannot catch a wrong assumption.
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/__fixtures__/pagerduty-incidents-expanded.json`
 - Modify: `packages/gateway/src/connectors/pagerduty-sync.test.ts`, `docs/CHANGELOG.md`, `docs/architecture.md`
 

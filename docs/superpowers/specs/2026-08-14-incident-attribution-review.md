@@ -21,10 +21,11 @@
 
 ### 3. Graph Populator ID Mappings (UUID vs. Graph Entity ID)
 
-* **The Issue:** Section 5.4 uses shorthand for relation creation: 
+* **The Issue:** Section 5.4 uses shorthand for relation creation:
   * `for each assignee_emails entry → resolve → upsertGraphRelation(person, incident, "assigned", now)`
 * **Clarification:** `resolvePersonForSync` returns a `person.id` (a UUID string from the `person` table). However, `upsertGraphRelation` requires `from_id` and `to_id` to refer to `graph_entity.id` values (SHA-256 strings generated via `deterministicGraphEntityId`).
 * **Recommendation:** Make it explicit that the populator must first upsert a `person` type `graph_entity` using the resolved person UUID as the `externalId`:
+
   ```typescript
   const personEntityId = upsertGraphEntity(db, {
     type: "person",
@@ -32,13 +33,16 @@
     label: personDisplayName(db, resolvedPersonId) ?? email,
   });
   ```
+
   And then link `personEntityId` to the `incidentEntityId`.
 
 ### 4. Sentry `assignedTo` format differences
 
 * **The Issue:** Sentry's `assignedTo` payload is indeed typically structured as:
+
   ```json
   {"type": "user", "id": "...", "name": "...", "email": "..."}
   ```
+
   However, on some self-hosted Sentry instances or with tokens having restricted scopes, `email` might be omitted from public member representations or replaced by a generic username/ID representation.
 * **Recommendation:** In the implementation of `syncErrorIssueGraph` (PR 2), ensure the parser safely extracts the email only after validating its existence, cased-insensitivity, and format, falling back to a structured null (no edge emitted) rather than risking type-errors or parsing failures on a `undefined` email value.
