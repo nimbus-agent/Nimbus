@@ -1105,6 +1105,17 @@ lane; `assigned` is read only by `negotiate`'s incidents lane. **Not** wired
 into the `owned_by` / `upstream_of` / `downstream_of` watcher `graph_predicate_json`
 kinds above — a watcher cannot filter on either edge yet.
 
+Beside it, `syncErrorIssueGraph` emits `person --assigned--> error_issue` from a
+Sentry error issue's stored `metadata.assignedTo` actor (a `type: "user"` actor with
+a usable email only — a team actor attributes to nobody). `assigned` is not a
+`CROSS_ITEM_RELATION_TYPES` member here; `syncErrorIssueGraph`'s own generic
+`clearRelationsTouchingEntity` call retires the edge on re-assignment instead. Because
+the source data was already stored in `item.metadata` before this edge existed, the
+edge is rebuildable from stored rows alone — `nimbus index regraph` backfills it for
+every already-indexed Sentry issue with no re-sync. Also read only by `negotiate`'s
+incidents lane, as its own line (`errorIssuesAssigned`), never summed into the
+PagerDuty incident counts above.
+
 ---
 
 ## Built-in Agents Pattern

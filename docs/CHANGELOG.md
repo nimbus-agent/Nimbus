@@ -8,6 +8,27 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-14 — Sentry error issues are now attributed to people (no schema change,
+  no re-sync).** A new graph edge, `person --assigned--> error_issue`, built from
+  Sentry's `assignedTo` actor. Unlike the PagerDuty half of this feature (below), this
+  needed **no connector change, no re-sync, and no new Sentry token scope**:
+  `sentry-issue-mapping.ts` already stored `assignedTo` raw in `item.metadata` (shipped
+  in #1172 for exactly this reason), so `nimbus index regraph` rebuilds attribution for
+  every Sentry issue already in the index, from stored rows alone, with no network call.
+  Only a `type: "user"` actor with a usable email resolves to a person; Sentry also
+  allows assigning an issue to a team, and a team has no canonical email, so a
+  team-assigned issue attributes to nobody by design rather than minting a person row
+  that would pollute every people-based brief. **Sentry gets no "resolved by" edge** —
+  determining who resolved an issue needs a per-issue activity-feed request, a
+  request-per-issue cost the design declined to pay rather than guess at. The edge is
+  read only by the new `nimbus negotiate` incidents lane, which reports Sentry
+  error-issue assignments (`errorIssuesAssigned`) as a count and a rendered line kept
+  **separate** from the PagerDuty incident counts, never summed into them: an error
+  group that never paged anyone is not an incident. **Open caveat carried forward:**
+  whether a real Sentry user actor's payload actually carries an `email` field is still
+  unverified against a live API response; the populator fails closed on a shape
+  mismatch — a missing or malformed `email` yields no edge rather than a wrong one —
+  and that is a deliberate posture, not an assumption that the shape is correct.
 - **2026-08-14 — PagerDuty incidents are now attributed to people (no schema change).**
   Two new graph edges: `person --assigned--> incident` (from `assignments[].assignee`)
   and `person --resolves--> incident` (from the actor who moved a resolved incident to
