@@ -165,12 +165,25 @@ function Test-NimbusSignature {
     Write-SignatureSkipNotice "gpg not found -- SIGNATURE NOT CHECKED."
     return $true
   }
+  # Same EAP relaxation as the import/verify block below, and here it is a
+  # FAIL-OPEN guard, not just a crash guard. Under Windows PowerShell 5.1 any
+  # stderr byte from a native command becomes a terminating NativeCommandError
+  # while $ErrorActionPreference is "Stop" -- so a gpg that merely WARNS on
+  # --version (an unsafe-permissions notice, a locale or config warning) would
+  # throw, land in the catch below, and quietly downgrade this whole function
+  # to "SIGNATURE NOT CHECKED" while the install proceeded. The runnability
+  # check must key on the EXIT CODE, which is what it claims to test, not on
+  # whether gpg happened to print something.
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   try {
     & gpg --version *>$null
     if ($LASTEXITCODE -ne 0) { throw "gpg exited $LASTEXITCODE" }
   } catch {
     Write-SignatureSkipNotice "gpg is present but not runnable -- SIGNATURE NOT CHECKED."
     return $true
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
   }
 
   $ascPath = Join-Path $Dir "SHA256SUMS.asc"
@@ -226,42 +239,61 @@ function Test-NimbusSignature {
   # cannot parse. Do not simplify this to Out-File, `>`, or a gpg pipeline.
   [System.IO.File]::WriteAllText($keyPath, $NimbusSigningKey, [System.Text.UTF8Encoding]::new($false))
 
-  # --no-autostart on BOTH calls. Root cause of the windows-2022
+  # $ErrorActionPreference is relaxed to "Continue" for EXACTLY these two gpg
+  # calls, then restored. This is the fix for the windows-2022
   # `documented one-liner` failure against v2.3.0/v2.3.1 (runs 31767719056,
-  # 31780941563): gpg 2.x autostarts a gpg-agent for any keyring operation,
-  # and the MSYS-compiled agent Git for Windows ships binds POSIX AF_UNIX
-  # sockets under the homedir. sun_path caps those at ~107 characters. On a
-  # GitHub windows-2022 runner the homedir resolves to
+  # 31780941563, 31781383717), and the reason is a PowerShell behaviour, not a
+  # gpg one:
+  #
+  # Windows PowerShell 5.1 wraps ANY output a native command writes to stderr
+  # in a NativeCommandError record. Under the script-wide
+  # `$ErrorActionPreference = "Stop"` set at the top of this file that record
+  # is TERMINATING, so the first byte gpg writes to stderr aborts the whole
+  # install -- and `*>$null` does NOT prevent it, because the record is raised
+  # by the native-command wrapper rather than being part of the redirected
+  # stream. Red/green-proved locally: with EAP=Stop the statement after the
+  # import is never reached (FullyQualifiedErrorId NativeCommandError); with
+  # EAP=Continue it is reached with exit 0. PowerShell 7 does not do this
+  # conversion at all, which is the ENTIRE reason the pwsh leg of the smoke
+  # workflow passed while the 5.1 leg failed on the same runner, in the same
+  # job, seconds apart.
+  #
+  # What gpg was writing to stderr, and why it is harmless: gpg 2.x autostarts
+  # a gpg-agent for keyring work, and the MSYS-compiled agent Git for Windows
+  # ships binds POSIX AF_UNIX sockets under the homedir, where sun_path caps a
+  # path at ~107 characters. On a windows-2022 runner the homedir resolves to
   #   /c/Users/runneradmin/AppData/Local/Temp/nimbus-<36-char-guid>/gnupg-sig
-  # so S.gpg-agent lands at 105 chars and fits -- but the agent ALSO binds
-  # S.gpg-agent.extra, six characters longer, at 111. It aborts with
-  # "socket name '...S.gpg-agent.extra' is too long" and exit status 2, which
-  # gpg surfaces only as the opaque
+  # putting S.gpg-agent at 105 (fits) but S.gpg-agent.extra at 111 (does not).
+  # The agent aborts, and gpg reports the opaque
   #   gpg: error running '/usr/bin/gpg-agent': exit status 2
-  # captured verbatim in run 31780941563's diagnostic step on a COLD runner.
+  # Measured on the runner: BOTH shells hit this, and in BOTH the subsequent
+  # keyring operation still succeeds -- the missing agent is genuinely
+  # inconsequential here, because importing a PUBLIC key and verifying a
+  # DETACHED signature touch no secret key. Only 5.1's stderr-to-terminating-
+  # error conversion turned it fatal.
   #
-  # Neither call needs an agent: importing a PUBLIC key and verifying a
-  # detached signature touch no secret key. --no-autostart makes gpg skip the
-  # spawn entirely (it emits a "no gpg-agent running in this session" notice
-  # and proceeds), which removes the length ceiling rather than merely staying
-  # under it -- verified against the real published v2.3.1 SHA256SUMS/.asc
-  # with every agent killed first: import exit 0, VALIDSIG present, primary
-  # fingerprint matching the pinned key, and ZERO gpg-agent processes after.
-  # Shortening the path instead would only buy a few characters of headroom
-  # and would break again for any user whose name or TEMP is longer.
+  # --no-autostart is secondary, and is NOT what unbreaks this: it stops gpg
+  # from spawning an agent that cannot bind its sockets in the first place, so
+  # no orphaned agent process is left behind on a user's machine. It swaps one
+  # stderr line for a quieter one ("no gpg-agent running in this session") --
+  # which, on its own, still aborted 5.1 (run 31781383717). Verified against
+  # the real published v2.3.1 SHA256SUMS/.asc with every agent killed first:
+  # import exit 0, VALIDSIG present, primary fingerprint matching the pinned
+  # key, zero gpg-agent processes after.
   #
-  # Why the other five smoke legs stayed green: PowerShell 7's
-  # [System.IO.Path]::GetTempPath() and Windows PowerShell 5.1's return
-  # DIFFERENT strings on that runner ($env:TEMP is the 8.3 form
-  # C:\Users\RUNNER~1\..., and only 5.1 expands it to C:\Users\runneradmin\...),
-  # and the two translate to different-length MSYS paths. The Unix legs are
-  # unaffected because their sockets live under a short /tmp.
+  # Relaxing EAP here costs nothing: the trust decision below is made ONLY by
+  # parsing --status-fd output for VALIDSIG in Resolve-SignatureVerdict, never
+  # by whether these calls threw. A gpg that fails now yields no VALIDSIG and
+  # is rejected on exactly the same path as before.
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   Push-Location -LiteralPath $Dir
   try {
     & gpg --homedir $sigHomeName --no-autostart --quiet --import $keyPath *>$null
     $out = & gpg --homedir $sigHomeName --no-autostart --quiet --status-fd 1 --verify $ascPath (Join-Path $Dir "SHA256SUMS") 2>$null
   } finally {
     Pop-Location
+    $ErrorActionPreference = $previousErrorActionPreference
   }
 
   # Parsing + trust decision both live in Resolve-SignatureVerdict now (see
