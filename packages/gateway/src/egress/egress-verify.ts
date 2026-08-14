@@ -10,7 +10,7 @@ import {
   weakestCoverage,
 } from "./egress-coverage.ts";
 import { computeEgressRowHash } from "./egress-ledger.ts";
-import { isMarkerSourceType } from "./egress-source-type.ts";
+import { MARKER_SOURCE_TYPES } from "./egress-source-type.ts";
 
 /** Hard ceiling on `listEgress` rows — bounds the cost of an IPC-supplied `limit`. */
 const MAX_EGRESS_LIST_LIMIT = 5000;
@@ -185,6 +185,55 @@ export function listEgress(
     )
     .all(since, until, limit) as RawRow[];
   return rows.map(toRow);
+}
+
+/**
+ * The exact number of OUTBOUND rows in a window — counted in SQL, never by filtering a page.
+ *
+ * `listEgress` returns at most 1000 rows by default (5000 hard ceiling) ordered `id ASC`, so
+ * deriving this count from its result silently under-reports on any window wider than a page, and
+ * drops the MOST RECENT rows while doing it. That is the worst possible direction for a primitive
+ * whose entire job is to state how much left the machine: it under-claims egress with
+ * `indeterminate: false`, which reads as a confident, verified number.
+ *
+ * This is the same pagination hazard `lastMarkerAtOrBefore` already had to escape (see its note on
+ * "fix 1"); the marker lookup was moved into SQL and this count was not.
+ *
+ * Predicate parity with `isMarkerSourceType` is deliberate and load-bearing: markers legitimately
+ * carry `result_status='authorized'`, and an UNKNOWN `source_type` must COUNT rather than be
+ * dropped. `NOT IN` alone would silently exclude a NULL `source_type`, so NULL is counted
+ * explicitly — an unrecognised row inflating the number is safe; one vanishing from it is not.
+ */
+export function countOutboundEgress(
+  db: Database,
+  opts: { since?: number | undefined; until?: number | undefined },
+): number {
+  const since = opts.since ?? 0;
+  const until = opts.until ?? Number.MAX_SAFE_INTEGER;
+  const markers = [...MARKER_SOURCE_TYPES];
+  const placeholders = markers.map(() => "?").join(", ");
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM egress_ledger
+       WHERE timestamp >= ? AND timestamp <= ?
+         AND result_status = 'authorized'
+         AND (source_type IS NULL OR source_type NOT IN (${placeholders}))`,
+    )
+    .get(since, until, ...markers) as { n: number } | null;
+  return row?.n ?? 0;
+}
+
+/** Total rows in the window, so a truncated page can say what it is a page OF. */
+export function countEgressRows(
+  db: Database,
+  opts: { since?: number | undefined; until?: number | undefined },
+): number {
+  const since = opts.since ?? 0;
+  const until = opts.until ?? Number.MAX_SAFE_INTEGER;
+  const row = db
+    .query(`SELECT COUNT(*) AS n FROM egress_ledger WHERE timestamp >= ? AND timestamp <= ?`)
+    .get(since, until) as { n: number } | null;
+  return row?.n ?? 0;
 }
 
 type MarkerRow = { id: number; timestamp: number; source_id: string | null };
@@ -383,18 +432,29 @@ export type EgressCompleteness = {
 export function proveWindow(
   db: Database,
   opts: { since?: number | undefined; until?: number | undefined },
-): { rows: EgressRow[]; completeness: EgressCompleteness; verify: EgressVerifyResult } {
+): {
+  rows: EgressRow[];
+  rowsTotal: number;
+  rowsTruncated: boolean;
+  completeness: EgressCompleteness;
+  verify: EgressVerifyResult;
+} {
   const rows = listEgress(db, {
     ...(opts.since !== undefined && { since: opts.since }),
     ...(opts.until !== undefined && { until: opts.until }),
   });
-  const outbound = rows.filter(
-    (r) => r.resultStatus === "authorized" && !isMarkerSourceType(r.sourceType),
-  ).length;
+  // Counted in SQL over the WHOLE window. Deriving it from `rows` capped the answer at the
+  // 1000-row page and dropped the newest rows — see `countOutboundEgress`.
+  const outbound = countOutboundEgress(db, opts);
+  // `rows` stays paginated on purpose: it crosses IPC to the CLI, and an unbounded window would
+  // ship the entire ledger. What changes is that the page no longer PRETENDS to be the window.
+  const rowsTotal = countEgressRows(db, opts);
   const coverage = coverageForWindow(db, opts);
   const indeterminate = COVERAGE_CLASSES.every((c) => coverage[c] === "none");
   return {
     rows,
+    rowsTotal,
+    rowsTruncated: rows.length < rowsTotal,
     completeness: { coverage, outboundEgressEvents: outbound, indeterminate },
     verify: verifyEgressChain(db),
   };

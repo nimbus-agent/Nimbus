@@ -81,7 +81,10 @@ async function handleProveWindow(
   const rec = asRecord(params);
   const sign = rec?.["sign"] === true;
   if (!sign) return window;
-  const digest = digestEgressWindow(window.rows);
+  const digest = digestEgressWindow(window.rows, {
+    outboundEgressEvents: window.completeness.outboundEgressEvents,
+    rowsTotal: window.rowsTotal,
+  });
   const { sigB64, pubkeyB64 } = await signWindowDigest(ctx.vault, digest);
   return { ...window, receipt: { sigB64, pubkeyB64, digest } };
 }

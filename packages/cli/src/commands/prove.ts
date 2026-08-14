@@ -15,6 +15,9 @@ export interface ProveCompleteness {
 
 type ProveResult = {
   rows: EgressRow[];
+  /** Total rows in the window. `rows` is a page of at most 1000 of them. */
+  rowsTotal?: number;
+  rowsTruncated?: boolean;
   completeness: ProveCompleteness;
   verify: VerifyResult;
   receipt?: { sigB64: string; pubkeyB64: string; digest: string };
@@ -219,6 +222,13 @@ export async function runEgressReport(
   for (const r of out.rows) {
     const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
     console.log(`  ${ts}  ${r.method.padEnd(28)} ${r.resultStatus}`);
+  }
+  if (out.rowsTruncated === true) {
+    // The COUNT above is exact for the whole window; only this listing is a page. Saying so keeps
+    // the listing from reading as the complete set of what left.
+    console.log(
+      `  … showing the oldest ${String(out.rows.length)} of ${String(out.rowsTotal ?? out.rows.length)} rows in this window (the count above covers all of them)`,
+    );
   }
   if (out.receipt !== undefined) {
     console.log(`receipt: digest=${out.receipt.digest} sig=${out.receipt.sigB64.slice(0, 16)}…`);

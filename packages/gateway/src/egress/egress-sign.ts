@@ -5,10 +5,33 @@ import nacl from "tweetnacl";
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
-/** A stable BLAKE3 digest over a window's ordered row hashes — the thing the receipt signs. */
-export function digestEgressWindow(rows: readonly { rowHash: string }[]): string {
-  const encoder = new TextEncoder();
-  return bytesToHex(blake3(encoder.encode(rows.map((r) => r.rowHash).join("|"))));
+/**
+ * A stable BLAKE3 digest over a window's ordered row hashes AND its counted totals — the thing the
+ * receipt signs.
+ *
+ * The totals are bound in, not just the rows, because `rows` is a page: `listEgress` caps it at
+ * 1000 by default. Signing the page alone produced a receipt that attested a truncated prefix of
+ * the window while the printed count claimed the whole of it — the signature was over different
+ * evidence than the claim it accompanied. Binding `outboundEgressEvents` and `rowsTotal` means a
+ * receipt cannot be reused to vouch for a window whose totals differ, even when the visible page
+ * is identical.
+ *
+ * The `v2` tag is part of the hashed payload so a digest produced under the old (rows-only) rule
+ * can never collide with one produced under this rule. Receipts are local and short-lived (the
+ * portable EAF artifact is deferred), and nothing verifies a stored digest, so there is no
+ * compatibility surface to preserve here.
+ */
+export function digestEgressWindow(
+  rows: readonly { rowHash: string }[],
+  summary: { outboundEgressEvents: number; rowsTotal: number },
+): string {
+  const payload = [
+    "nimbus-egress-window-v2",
+    `outbound=${summary.outboundEgressEvents}`,
+    `rowsTotal=${summary.rowsTotal}`,
+    rows.map((r) => r.rowHash).join("|"),
+  ].join("\n");
+  return bytesToHex(blake3(new TextEncoder().encode(payload)));
 }
 
 /**

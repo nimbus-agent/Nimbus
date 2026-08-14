@@ -6,7 +6,18 @@ import { appendBootMarker } from "./egress-boot-marker.ts";
 import { THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import type { EgressEntry } from "./egress-record.ts";
-import { egressHead, listEgress, proveWindow, verifyEgressChain } from "./egress-verify.ts";
+import {
+  EGRESS_SOURCE_TYPES,
+  isMarkerSourceType,
+  MARKER_SOURCE_TYPES,
+} from "./egress-source-type.ts";
+import {
+  countOutboundEgress,
+  egressHead,
+  listEgress,
+  proveWindow,
+  verifyEgressChain,
+} from "./egress-verify.ts";
 
 function e(over: Partial<EgressEntry> = {}): EgressEntry {
   return {
@@ -183,5 +194,89 @@ describe("proveWindow", () => {
     const out = proveWindow(db, {});
     expect(out.completeness.indeterminate).toBe(true);
     expect(out.completeness.coverage.task).toBe("none");
+  });
+});
+
+/**
+ * `nimbus prove` is the product's honesty primitive: the number it prints is a claim about how
+ * much left this machine. Before this, `outboundEgressEvents` was derived by filtering the rows
+ * `listEgress` returned — a page capped at 1000 and ordered `id ASC` — so any window with more
+ * than a page of rows under-reported, dropped the NEWEST rows while doing it, and still said
+ * `indeterminate: false` with `verify.ok: true`. A confident wrong number is worse than an
+ * admitted unknown, which is the rule the rest of this module is built around.
+ */
+describe("proveWindow — the count is not a page", () => {
+  const PAGE = 1000; // listEgress' default page size
+
+  test("counts every outbound row in the window, well past the page limit", () => {
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 1);
+    const total = PAGE * 3;
+    for (let i = 0; i < total; i++) {
+      appendEgressEntry(db, e({ timestamp: 100 + i, method: `m.${String(i)}` }));
+    }
+
+    const out = proveWindow(db, {});
+
+    expect(out.completeness.outboundEgressEvents).toBe(total);
+    // The page itself stays bounded — that is deliberate, it crosses IPC.
+    expect(out.rows.length).toBe(PAGE);
+    // ...but it must announce that it is a page, not the window.
+    expect(out.rowsTruncated).toBe(true);
+    expect(out.rowsTotal).toBe(total + 1); // + the boot marker row
+    expect(out.completeness.indeterminate).toBe(false);
+  });
+
+  test("counts past the page limit inside an explicit since/until window too", () => {
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 1);
+    for (let i = 0; i < PAGE + 500; i++) {
+      appendEgressEntry(db, e({ timestamp: 100 + i, method: `m.${String(i)}` }));
+    }
+    const out = proveWindow(db, { since: 100, until: 100 + PAGE + 500 });
+    expect(out.completeness.outboundEgressEvents).toBe(PAGE + 500);
+  });
+
+  test("a window that fits in one page reports rowsTruncated false", () => {
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 1);
+    appendEgressEntry(db, e({ timestamp: 100 }));
+    const out = proveWindow(db, {});
+    expect(out.rowsTruncated).toBe(false);
+    expect(out.completeness.outboundEgressEvents).toBe(1);
+  });
+
+  test("blocked rows are never counted as outbound, at any size", () => {
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 1);
+    for (let i = 0; i < PAGE + 10; i++) {
+      appendEgressEntry(db, e({ timestamp: 100 + i, resultStatus: "blocked" }));
+    }
+    appendEgressEntry(db, e({ timestamp: 9000 }));
+    expect(proveWindow(db, {}).completeness.outboundEgressEvents).toBe(1);
+  });
+});
+
+/**
+ * The SQL predicate in `countOutboundEgress` and the TypeScript predicate `isMarkerSourceType` are
+ * two encodings of one rule. Asserting them against each other for EVERY member of the frozen
+ * source-type union is what stops them drifting: adding a member to `MARKER_SOURCE_TYPES` without
+ * teaching the SQL about it (or the reverse) fails here rather than silently mis-counting egress.
+ */
+describe("countOutboundEgress — marker parity with isMarkerSourceType", () => {
+  test("every source type is counted iff it is not a marker", () => {
+    let expected = 0;
+    for (const [i, sourceType] of EGRESS_SOURCE_TYPES.entries()) {
+      appendEgressEntry(db, e({ timestamp: 100 + i, sourceType, method: `m.${sourceType}` }));
+      if (!isMarkerSourceType(sourceType)) expected++;
+    }
+    expect(countOutboundEgress(db, {})).toBe(expected);
+    // Guard against the loop asserting nothing if the union is emptied.
+    expect(expected).toBeGreaterThan(0);
+    expect(EGRESS_SOURCE_TYPES.length - expected).toBe(MARKER_SOURCE_TYPES.size);
+  });
+
+  test("an UNRECOGNISED source type counts, rather than vanishing from the total", () => {
+    // isMarkerSourceType documents this: "Unknown values are NOT markers — an unknown row counts."
+    // A `NOT IN (...)` predicate would agree, but a naive `IN (known outbound types)` would not,
+    // and would under-report — the direction that matters for a proof.
+    appendEgressEntry(db, e({ timestamp: 100, sourceType: "not-a-known-type" as never }));
+    expect(countOutboundEgress(db, {})).toBe(1);
   });
 });
