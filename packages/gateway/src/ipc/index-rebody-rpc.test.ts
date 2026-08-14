@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import pino from "pino";
+import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -733,5 +734,11 @@ describe("resolveTargetServices", () => {
     seedIncomplete(db, "b", "1");
     seedIncomplete(db, "a", "1");
     expect(resolveTargetServices({ limit: 1 }, db)).toEqual(["a"]);
+  });
+});
+
+describe("REBODY_REQUIRED_META_VERSION", () => {
+  test("pagerduty rows below the attribution meta version are eligible for rebody", () => {
+    expect(REBODY_REQUIRED_META_VERSION.get("pagerduty")).toBe(PAGERDUTY_INCIDENT_META_VERSION);
   });
 });

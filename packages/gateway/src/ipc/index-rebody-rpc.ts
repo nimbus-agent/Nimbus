@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
+import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
 import { TICKET_META_VERSION } from "../connectors/ticket-depth.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import { clearSchedulerCursor } from "../sync/scheduler-store.ts";
@@ -134,6 +135,10 @@ export type RebodyParams = {
 export const REBODY_REQUIRED_META_VERSION: ReadonlyMap<string, number> = new Map([
   ["jira", TICKET_META_VERSION],
   ["linear", TICKET_META_VERSION],
+  // Incidents indexed before Spec B carry no actor emails. The data was never
+  // fetched, so unlike Sentry this is not recoverable from stored rows —
+  // it needs a re-fetch.
+  ["pagerduty", PAGERDUTY_INCIDENT_META_VERSION],
 ]);
 
 /**
