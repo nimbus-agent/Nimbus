@@ -1269,7 +1269,19 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const incidents = Array.from({ length: MAX_USER_LOOKUPS_PER_SYNC + 5 }, (_, i) =>
       resolvedIncident(`PD-${String(i)}`, `PUSER${String(i)}`),
     );
-    const { userCalls } = stubPagerdutyWithUsers(incidents, {});
+    // Every id BELOW the cap resolves to a real email; ids beyond it are never
+    // requested. Serving no email at all (the earlier form of this test) made a
+    // capped incident and an uncapped one indistinguishable — both came back
+    // unattributed — so the assertions below could not tell "skipped and
+    // counted" from "skipped and silently dropped", which is the whole point of
+    // the cap contract.
+    const users = Object.fromEntries(
+      Array.from({ length: MAX_USER_LOOKUPS_PER_SYNC }, (_, i) => [
+        `PUSER${String(i)}`,
+        { email: `u${String(i)}@example.com` },
+      ]),
+    );
+    const { userCalls } = stubPagerdutyWithUsers(incidents, users);
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const fastLimiter = new ProviderRateLimiter({
@@ -1284,6 +1296,17 @@ describeWithFetchRestore("pagerduty-sync", () => {
     await syncable.sync(ctx, null);
     expect(userCalls).toHaveLength(MAX_USER_LOOKUPS_PER_SYNC);
     expectServiceItemCount(db, "pagerduty", MAX_USER_LOOKUPS_PER_SYNC + 5);
+
+    // Below the cap: resolved, and nothing counted as lost.
+    const underCap = readIncidentMetadata(db, "PD-0");
+    expect(underCap.resolved_by_email).toBe("u0@example.com");
+    expect(underCap.unattributed_actors).toBe(0);
+
+    // Beyond the cap: skipped, and COUNTED. This is the assertion the test name
+    // promises — it fails if the overflow is silently truncated instead.
+    const overCap = readIncidentMetadata(db, `PD-${String(MAX_USER_LOOKUPS_PER_SYNC + 4)}`);
+    expect(overCap.resolved_by_email).toBeNull();
+    expect(overCap.unattributed_actors).toBe(1);
   });
 
   // ── historyFloorMs opt-in ────────────────────────────────────────────────

@@ -9,6 +9,7 @@ import {
   detectEmptyIndex,
   detectMissingConnector,
   detectMissingRelationToEntityType,
+  remediationForEntityType,
 } from "./_lib/gap-notes.ts";
 import type {
   NegotiateAuthoredPrs,
@@ -894,10 +895,20 @@ export async function runNegotiate(
     if (missingPagerdutyConnector !== null) {
       gaps.push(missingPagerdutyConnector);
     } else {
+      // The remediation is REQUIRED here, not optional polish. Without it this
+      // note falls back to `detectMissingRelationToEntityType`'s shared default
+      // detail, which says the edges are "not yet emitted by the graph
+      // populator" — false since `syncIncidentPersonEdges` shipped. The real
+      // cause is missing PagerDuty actor data, which is exactly what
+      // `remediationForEntityType("incident")` explains, and it is the same
+      // string `expert.ts`'s `subIncidentResolved` passes for this identical
+      // condition. Omitting it gave the recovery steps in one brief and not the
+      // other, for the same underlying state.
       const missingIncidentEdges = detectMissingRelationToEntityType(
         ctx.db,
         "resolves",
         "incident",
+        remediationForEntityType("incident"),
       );
       if (missingIncidentEdges !== null) gaps.push(missingIncidentEdges);
     }
