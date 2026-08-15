@@ -158,3 +158,6 @@ docs/structure-audit/db-run-census.json
 packages/docs/src/assets/nimbus-wordmark-*.svg
 packages/docs/src/assets/architecture-*.svg
 .sonar/
+
+# lychee link-check cache (scripts/check-links.sh); successes only, 1h TTL
+.lycheecache

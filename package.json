@@ -198,7 +198,7 @@
     "audit:secret-inventory": "bun scripts/structure-audit/check-secret-inventory.ts",
     "audit:actions-allowlist": "bun scripts/structure-audit/check-actions-allowlist.ts",
     "audit:secrets": "gitleaks detect --source . --no-banner --redact --exit-code 1",
-    "audit:links": "lychee --no-progress --config lychee.toml \"docs/**/*.md\" \"*.md\"",
+    "audit:links": "bash scripts/check-links.sh",
     "lint": "bun scripts/lib/run-gate-with-work-check.ts lint biome check --error-on-warnings .",
     "lint:fix": "biome check --write --error-on-warnings .",
     "lint:markdown": "bun scripts/lib/run-gate-with-work-check.ts lint:markdown markdownlint-cli2",

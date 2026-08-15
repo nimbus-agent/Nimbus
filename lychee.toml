@@ -40,15 +40,24 @@ exclude = [
 accept = ["200", "202", "203", "204", "206", "301", "302", "304"]
 max_redirects = 5
 timeout = 30
-max_retries = 3
-# A 504 from github.com means the server timed out, not that the link is broken.
-# It has red-flagged this gate twice on URLs verified live at HTTP 200 seconds
-# later, so the failures cost a re-run each and teach people to ignore this job —
-# the worst outcome for a link checker.
+# CORRECTION (supersedes the claim this comment used to make): `max_retries` and
+# `retry_wait_time` DO NOT apply to a rejected status code. Measured against a local
+# server that counts requests — a 504 and a 503 were each fetched exactly ONCE, while
+# a dropped connection was fetched FOUR times (1 + 3 retries). lychee retries
+# TRANSPORT errors only; a response that arrives and fails the `accept` list is final.
 #
-# `max_retries` alone did not prevent it: with no wait, all three retries land
-# inside the same hiccup. These two settings address the cause rather than
-# accepting 5xx as success, which would hide a genuinely dead host.
+# So these two settings do nothing for the recurring github.com 504, which was the
+# reason given for adding `retry_wait_time` in #1200. They are kept because they are
+# still correct for genuine transport flakes (connection reset, TLS hiccup), which do
+# occur from runner egress — but they are not the 504 mitigation.
+#
+# The 504 is handled where it can be: `--cache --cache-exclude-status` plus one retry
+# of the whole run, in `audit:links` and in the `Run lychee` workflow step. Successful
+# links are cached, transient failures are not, so the retry re-checks ONLY what
+# failed (verified: 2 OK URLs fetched once across two passes, the 504 URL fetched
+# twice). A genuinely dead link still fails both passes and the gate still goes red,
+# which accepting 5xx as success would not preserve.
+max_retries = 3
 retry_wait_time = 2
 # Per-HOST, not global: almost every link here is github.com, so the run was
 # opening far more simultaneous connections to one host than it needs to. This

@@ -83,9 +83,15 @@ jobs:
         # runner's egress get rate-limited to 500s (verified: CHANGELOG.md commit
         # permalinks fail intermittently); the API path is rate-limit-resistant and
         # still genuinely validates each link. Needs only `contents: read`.
+        #
+        # Runs the SAME script as `bun run audit:links`, so a local reproduction and
+        # CI cannot drift. It caches successes, keeps transient statuses out of the
+        # cache, and retries once — the retry re-checks only what failed, because
+        # lychee does not retry rejected status codes itself (it retries transport
+        # errors only; verified by request count against a local server).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: lychee --config lychee.toml --no-progress 'docs/**/*.md' '*.md'
+        run: bash scripts/check-links.sh
 
   # SEVEN jobs collapsed into one. Each of markdownlint / OG card / SVG audit /
   # README CLI tripwire / package READMEs / cast tripwire / Starlight build was
