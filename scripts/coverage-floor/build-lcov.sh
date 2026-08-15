@@ -63,6 +63,12 @@ run_pkg () {
 # exit-status). It was absent from this list while `sonar.sources=packages`
 # still scanned it, so Sonar reported its files at 0% coverage even though the
 # tests existed and passed — a measurement gap, not a testing gap.
+#
+# Adding it HERE only made its tests run. The gap stayed open until
+# `scripts/coverage/instrument-scope.ts` also claimed the package: running a
+# package's tests and instrumenting its source are separate switches, and only
+# this one was flipped. Sonar kept reporting 0% for both files afterwards. With
+# both in place the real numbers are exit-status 100% and resolve-binary 88%.
 for pkg in packages/gateway packages/cli packages/mcp-launcher; do
   run_pkg "${pkg}"
 done

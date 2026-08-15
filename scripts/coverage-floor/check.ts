@@ -144,6 +144,12 @@ export async function discoverSourceFiles(): Promise<string[]> {
     new Glob("packages/cli/src/**/*.ts"),
     new Glob("packages/cli/src/**/*.tsx"),
     new Glob("packages/mcp-connectors/*/src/**/*.ts"),
+    // Measured (instrument-scope.ts) and its tests run (build-lcov.sh), but it
+    // was in neither this list nor the instrumentation scope — so the floor
+    // could not see it even in principle. Both its files clear the floor today
+    // (exit-status 100/100, resolve-binary 88.0/92.9); the point is that a
+    // regression in them now fails rather than going unnoticed.
+    new Glob("packages/mcp-launcher/src/**/*.ts"),
   ];
   for (const glob of globs) {
     for await (const rawRel of glob.scan({ cwd: REPO_ROOT })) {
