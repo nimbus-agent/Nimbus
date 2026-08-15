@@ -60,7 +60,24 @@ Derive gate commands from `PREFLIGHT_GATES` rather than retyping them — severa
 
 ## Coverage gates (enforced in CI)
 
-Run all via `bun run test:ci`. Individual gates:
+**What actually enforces these floors is `bun run audit:coverage-scopes`** — it reads the merged
+`coverage/lcov.info` and asserts each scope's aggregate line coverage over its *non-exempt* files
+(same exemption registry as `audit:coverage-floor`). It runs on Linux in `_test-suite.yml`
+immediately after the floor gate, and costs no extra test run.
+
+The `test:coverage:*` scripts below run each scope's tests and **do not enforce a threshold**,
+despite their `--coverage-threshold-lines=N` argument. Two independent reasons, both verified on
+Bun 1.3.14:
+
+1. `--coverage-threshold-lines` is not a Bun flag (`bun test --help` lists only `--coverage`,
+   `--coverage-reporter`, `--coverage-dir`) and Bun ignores unknown flags silently.
+2. `bunfig.toml` sets `[test] coverage = false`, which suppresses collection outright — even an
+   explicit `--coverage --coverage-reporter=lcov --coverage-dir=X` writes no lcov under it.
+
+The percentages in the list below are therefore the floors `audit:coverage-scopes` enforces, not
+something the adjacent command checks. The commands remain useful for running a scope's tests, and
+their CI jobs still do real work the main suite does not (the Sandbox job builds the sandbox helper
+and runs `cppcheck --error-exitcode=1` on its C source; the Vault job installs libsecret + D-Bus).
 
 ```bash
 # Engine + agents

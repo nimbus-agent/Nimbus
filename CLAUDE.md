@@ -95,7 +95,7 @@ Several surfaces live in their own standalone repos and release independently of
 - **Vault tests** prove no secret value escapes through any interface.
 - **Integration tests** use real SQLite + real Bun subprocesses + fresh temp dirs — no mocks at the DB layer.
 - **E2E CLI tests** use a real Gateway subprocess + mock MCP servers — no real cloud calls.
-- **Coverage gates** in CI: Engine ≥85%, Vault ≥90%, Embedding ≥80%, plus scheduler/rate-limiter/people (see `_test-suite.yml` + `nimbus-commands` skill).
+- **Coverage gates** in CI: Engine ≥85%, Vault ≥90%, Embedding ≥80%, plus scheduler/rate-limiter/people — enforced by `audit:coverage-scopes` over the merged lcov, NOT by the `test:coverage:*` scripts (their `--coverage-threshold-lines` flag does not exist in Bun and is silently ignored; `bunfig.toml`'s `[test] coverage = false` suppresses collection anyway). Denominator is non-exempt files, matching `audit:coverage-floor`. See `scripts/coverage-floor/check-scopes.ts`.
 - Focus on the current phase; do not add Phase N+1 features in Phase N code.
 
 PRs gate on Ubuntu (`pr-quality`); pushes run the full Windows/macOS/Linux matrix.

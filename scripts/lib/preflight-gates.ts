@@ -120,6 +120,9 @@ const FULL: readonly Gate[] = [
     tier: "full",
   },
   { name: "audit:coverage-floor", cmd: ["bun", "run", "audit:coverage-floor"], tier: "full" },
+  // Same input as the floor gate above (coverage/lcov.info), so it belongs in
+  // the same tier — it needs build-lcov to have run.
+  { name: "audit:coverage-scopes", cmd: ["bun", "run", "audit:coverage-scopes"], tier: "full" },
 ];
 
 export const PREFLIGHT_GATES: readonly Gate[] = [...FAST, ...FULL];

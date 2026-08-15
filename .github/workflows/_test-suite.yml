@@ -357,6 +357,23 @@ jobs:
         shell: bash
         run: bun run audit:coverage-floor
 
+      - name: Coverage scopes — the per-area floors CLAUDE.md advertises
+        if: runner.os == 'Linux'
+        # The floors named in CLAUDE.md (Engine >=85%, Vault >=90%, Embedding
+        # >=80%, ...) used to be spelled as `--coverage-threshold-lines=N` in 25
+        # package.json scripts. That flag DOES NOT EXIST in Bun (`bun test
+        # --help` lists only --coverage/--coverage-reporter/--coverage-dir) and
+        # unknown flags are ignored silently; `bunfig.toml`'s `[test] coverage =
+        # false` additionally suppresses collection entirely, so no lcov was
+        # produced for a threshold to read even in principle. Every one of those
+        # gates passed unconditionally.
+        #
+        # This step enforces the same floors for real, against the merged lcov
+        # built a few steps above — so it adds no test run and no CI minutes.
+        # It is Linux-only for the same reason the floor gate above is.
+        shell: bash
+        run: bun run audit:coverage-scopes
+
       - name: Coverage floor — exclusion parity (sonar <-> registry)
         if: runner.os == 'Linux'
         shell: bash
