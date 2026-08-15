@@ -29,7 +29,14 @@ export function renderPolicyBanner(p: PolicyState): string {
     return `<div class="banner banner-warn">⚠ ungoverned — no valid org policy applied</div>`;
   }
   const restart = p.pendingRestart ? ' · <span class="warn">restart pending</span>' : "";
-  return `<div class="banner">policy <b>${esc(p.org ?? "")}</b> v${p.version ?? 0} ✓ signed${restart}</div>`;
+  // `p.version` is escaped for the same reason `p.org` beside it is: both come
+  // from the /v1/admin/status JSON, which `client.ts` shape-checks but does not
+  // validate per field — `version` is only TYPED number, never proven to be one.
+  // This string is assigned to `innerHTML` in main.ts, so an unescaped value
+  // here is a DOM-XSS sink. It was the one interpolation in this renderer that
+  // esc() did not cover; every other dynamic value goes through `card()`, which
+  // escapes. `restart` is a locally-built constant, deliberately raw HTML.
+  return `<div class="banner">policy <b>${esc(p.org ?? "")}</b> v${esc(String(p.version ?? 0))} ✓ signed${restart}</div>`;
 }
 
 export function renderOverview(s: GatewayStatus): string {
