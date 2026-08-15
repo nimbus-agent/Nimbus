@@ -9,15 +9,14 @@ import {
   printConnectorAuthPatOnlyHelp,
   SLACK_OAUTH_CLIENT_ID_HELP,
 } from "../lib/connector-oauth-env-help.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
 import {
   registerAutoApproveConsentHandler,
   registerConsentPromptHandler,
 } from "../lib/interactive-ipc-handlers.ts";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
-import { BATCH_RPC_TIMEOUT_MS, createIpcClient } from "../lib/rpc-timeouts.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 type SyncStatus = {
   serviceId: string;
@@ -74,31 +73,23 @@ type ConnectorFlags = {
 };
 
 /**
- * Connect to the Gateway, run `fn`, disconnect.
+ * Connect, run, disconnect — delegating to the shared `withGatewayIpc`.
  *
- * `onConnect` runs after `connect()` and before `fn`, and is the seam for registering
- * notification handlers on the freshly built client. Anything that calls a HITL-gated
- * method MUST use it to register a `consent.request` handler — the Gateway blocks on
- * `consent.respond` and a client that never answers just times out.
+ * Kept as a thin local wrapper only because this file has eleven call sites using the
+ * positional `(fn, onConnect, timeout)` shape; the lifecycle itself lives in one place
+ * now. Anything calling a HITL-gated method MUST pass `onConnect` to register a
+ * `consent.request` handler — the Gateway blocks on `consent.respond`, and a client that
+ * never answers just times out.
  */
 async function withIpc<T>(
   fn: (c: IPCClient) => Promise<T>,
   onConnect?: (c: IPCClient) => void,
   requestTimeoutMs?: number,
 ): Promise<T> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
-  const client = createIpcClient(state.socketPath, requestTimeoutMs);
-  await client.connect();
-  onConnect?.(client);
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
+  return withGatewayIpc(fn, undefined, {
+    ...(onConnect === undefined ? {} : { onConnect }),
+    ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
+  });
 }
 
 function relTime(ms: number | null): string {

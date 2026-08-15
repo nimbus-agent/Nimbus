@@ -1,6 +1,5 @@
-import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 type AuditRow = {
   id: number;
@@ -26,21 +25,6 @@ function parseAuditListLimit(args: string[]): number {
     return 50;
   }
   return limit;
-}
-
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
 }
 
 export async function runAuditList(
@@ -107,7 +91,7 @@ export async function runAudit(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   if (sub === "verify") {
     const full = rest.includes("--full");
-    await withIpc((c) => runAuditVerify(c, full));
+    await withGatewayIpc((c) => runAuditVerify(c, full));
     return;
   }
   if (sub === "export") {
@@ -116,12 +100,12 @@ export async function runAudit(args: string[]): Promise<void> {
     if (outPath === undefined || outPath === "") {
       throw new Error("Usage: nimbus audit export --output <path>");
     }
-    await withIpc((c) =>
+    await withGatewayIpc((c) =>
       runAuditExport(c, outPath, (p, data) => Bun.write(p, data) as Promise<unknown>),
     );
     return;
   }
   const limit = parseAuditListLimit(args);
   const json = args.includes("--json");
-  await withIpc((c) => runAuditList(c, limit, { json }));
+  await withGatewayIpc((c) => runAuditList(c, limit, { json }));
 }

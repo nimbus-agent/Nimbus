@@ -1,8 +1,7 @@
 import { confirm, isCancel } from "@clack/prompts";
 
-import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 export async function runVaultSet(client: IPCClient, key: string, value: string): Promise<void> {
   await client.call("vault.set", { key, value });
@@ -36,21 +35,6 @@ export async function runVaultList(client: IPCClient, prefix?: string): Promise<
   }
 }
 
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
-}
-
 export async function runVault(args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
@@ -60,7 +44,7 @@ export async function runVault(args: string[]): Promise<void> {
       if (key === undefined || value === undefined) {
         throw new Error("Usage: nimbus vault set <key> <value>");
       }
-      await withIpc((c) => runVaultSet(c, key, value));
+      await withGatewayIpc((c) => runVaultSet(c, key, value));
       return;
     }
     case "get": {
@@ -68,7 +52,7 @@ export async function runVault(args: string[]): Promise<void> {
       if (key === undefined) {
         throw new Error("Usage: nimbus vault get <key>");
       }
-      await withIpc((c) => runVaultGet(c, key));
+      await withGatewayIpc((c) => runVaultGet(c, key));
       return;
     }
     case "delete": {
@@ -76,12 +60,12 @@ export async function runVault(args: string[]): Promise<void> {
       if (key === undefined) {
         throw new Error("Usage: nimbus vault delete <key>");
       }
-      await withIpc((c) => runVaultDelete(c, key));
+      await withGatewayIpc((c) => runVaultDelete(c, key));
       return;
     }
     case "list": {
       const [prefix] = rest;
-      await withIpc((c) => runVaultList(c, prefix));
+      await withGatewayIpc((c) => runVaultList(c, prefix));
       return;
     }
     default:

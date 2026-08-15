@@ -1,9 +1,8 @@
 import type { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerConsentPromptHandler } from "../lib/interactive-ipc-handlers.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
-import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
 type EgressRow = { timestamp: number; destination: string; method: string; resultStatus: string };
@@ -101,20 +100,6 @@ export function formatProveResult(input: {
   return lines.join("\n");
 }
 
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>, requestTimeoutMs?: number): Promise<T> {
-  const state = await readGatewayState(getCliPlatformPaths());
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
-  const client = createIpcClient(state.socketPath, requestTimeoutMs);
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
-}
-
 /**
  * Like {@link withIpc} but registers the interactive consent prompt handler first, so an inline
  * `consent.request` (egress.prune's owner-HITL gate, or any HITL action triggered by a proved
@@ -124,14 +109,22 @@ async function withIpc<T>(fn: (c: IPCClient) => Promise<T>, requestTimeoutMs?: n
  * That prompt is awaited INSIDE the pending call, so the caller's `requestTimeoutMs` is also the
  * user's think time — pass a budget sized for a human, not for an RPC.
  */
+/**
+ * Like a plain `withGatewayIpc` call but registering the interactive consent prompt, so an
+ * inline `consent.request` (egress.prune's owner-HITL gate, or any HITL action a proved query
+ * triggers) reaches the user as a y/n prompt instead of dying on the request timeout.
+ *
+ * That prompt is awaited INSIDE the pending call, so `requestTimeoutMs` is also the user's
+ * think time — pass a budget sized for a human, not for an RPC.
+ */
 async function withConsentIpc<T>(
   fn: (c: IPCClient) => Promise<T>,
   requestTimeoutMs?: number,
 ): Promise<T> {
-  return withIpc(async (client) => {
-    registerConsentPromptHandler(client);
-    return fn(client);
-  }, requestTimeoutMs);
+  return withGatewayIpc(fn, undefined, {
+    onConnect: registerConsentPromptHandler,
+    ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
+  });
 }
 
 /**
@@ -301,7 +294,7 @@ export async function runProve(args: string[]): Promise<void> {
 export async function runEgress(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   if (sub === "verify") {
-    await withIpc((c) => runEgressVerify(c));
+    await withGatewayIpc((c) => runEgressVerify(c));
     return;
   }
   if (sub === "prune") {
@@ -324,5 +317,5 @@ export async function runEgress(args: string[]): Promise<void> {
   const since = parseSince(args, Date.now());
   const json = args.includes("--json");
   const signFlag = args.includes("--sign");
-  await withIpc((c) => runEgressReport(c, { since, json, sign: signFlag }));
+  await withGatewayIpc((c) => runEgressReport(c, { since, json, sign: signFlag }));
 }

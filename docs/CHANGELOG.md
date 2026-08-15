@@ -8,6 +8,44 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-15 — eleven copies of the gateway-connect lifecycle became one, and a guard
+  keeps it that way.** Every `nimbus` command that talks to the Gateway re-derived the
+  same five steps: read gateway state, throw the not-running message, construct a client,
+  connect, `try/finally` disconnect. Eleven local helpers did it — `withIpc` in `audit`,
+  `clip`, `people`, `share`, `vault`, `watch`, `connector`, `workflow` and `prove`, plus
+  `withConsentIpc` and `data`'s `withClient` — alongside the shared `withGatewayIpc` that
+  already existed. **Six were byte-identical to it.** The rest differed only in which of
+  `onConnect` / `requestTimeoutMs` they exposed, so both became options on the shared one.
+
+  The duplication was not cosmetic, and this is the argument for the change rather than
+  line count: each copy was its own opportunity to get the lifecycle subtly wrong, and two
+  of them did. `connector reindex --depth full` and `nimbus workflow run` both shipped
+  with no `consent.request` handler, so a HITL gate hung until the request timeout —
+  fixed a day earlier, in two places, because there were two places. There is now one.
+
+  The six identical helpers also threw a bare `Error` where the shared helper throws
+  `GatewayNotRunningError`. That is a strict upgrade: the message is unchanged so the
+  tests asserting on it still pass, and callers gain an `instanceof` they can branch on
+  instead of matching a string.
+
+  `onConnect` is tested for ORDERING, not merely for running: it must fire after
+  `connect()` and before `fn`, because a notification can arrive in the same socket chunk
+  as the response to `fn`'s first call — which is exactly how those two commands came to
+  hang. A third test pins that a throwing `onConnect` does not strand the connection.
+
+  **Two guards keep it consolidated**, both red-proved by reintroducing the duplication
+  into `watch.ts` and watching them name the file: a local helper must delegate to
+  `withGatewayIpc`, and a file declaring one must not also contain the raw
+  `"Gateway is not running"` throw. Thin wrappers are still allowed — `connector.ts` keeps
+  one because eleven call sites use its positional shape — what is forbidden is a wrapper
+  that does the work itself.
+
+  Net −97 lines of source. `bun test packages/cli/src`: 2291 pass, versus 2286 before, with
+  the same 3 pre-existing failures — `nimbus tui fallback behavior`, which fails only in
+  the combined run and passes in isolation on clean `main` (the `mock.module` contamination
+  CLAUDE.md documents). Verified identical before and after, so the refactor changed no
+  test outcome.
+
 - **2026-08-15 — two defects found by actually running Nimbus against a local Ollama,
   neither of which any test could have caught.** The whole point of the exercise: a fake
   gateway agrees with the code, and a real one does not.

@@ -1,9 +1,8 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import { assertDestructiveDeleteAllowed, parseScriptConsentSource } from "../lib/data-helpers.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
 import { selectConsentHandler } from "../lib/interactive-ipc-handlers.ts";
-import { BATCH_RPC_TIMEOUT_MS, createIpcClient } from "../lib/rpc-timeouts.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 export { assertDestructiveDeleteAllowed, parseScriptConsentSource } from "../lib/data-helpers.ts";
 
@@ -26,25 +25,21 @@ interface WithClientOptions {
   readonly scriptConsentSource?: string;
 }
 
+/**
+ * Every caller here issues a HITL-gated bundle export/import that the Gateway awaits end
+ * to end, and whose consent prompt is answered from inside the pending call — so the batch
+ * budget and the consent handler apply to the whole helper rather than per call site.
+ */
 async function withClient<T>(
   opts: WithClientOptions,
   fn: (c: IPCClient) => Promise<T>,
 ): Promise<T> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) throw new Error("Gateway is not running. Start with: nimbus start");
-  // Every `withClient` caller issues a HITL-gated bundle export/import that the
-  // Gateway awaits end to end, and whose consent prompt is answered from inside the
-  // pending call — so the batch budget applies to the whole helper rather than being
-  // opted into per call site.
-  const client = createIpcClient(state.socketPath, BATCH_RPC_TIMEOUT_MS);
-  await client.connect();
-  selectConsentHandler(client, opts);
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
+  return withGatewayIpc(fn, undefined, {
+    onConnect: (client) => {
+      selectConsentHandler(client, opts);
+    },
+    requestTimeoutMs: BATCH_RPC_TIMEOUT_MS,
+  });
 }
 
 async function runDataExportCli(args: string[]): Promise<void> {

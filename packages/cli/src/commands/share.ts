@@ -1,6 +1,4 @@
-import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 /**
  * Render the provenance attribution chip for a received/forwarded share (spec §9.3).
@@ -151,20 +149,6 @@ export function parseShareArgs(argv: readonly string[]): ShareCommand {
   }
 }
 
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
-  const state = await readGatewayState(getCliPlatformPaths());
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
-}
-
 interface ShareRecordRow {
   readonly contentHash: string;
   readonly kind: string;
@@ -270,7 +254,7 @@ export async function runShare(args: string[]): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  await withIpc((c) => runShareCommand(c, cmd));
+  await withGatewayIpc((c) => runShareCommand(c, cmd));
 }
 
 interface ReplayStepShape {
@@ -410,5 +394,5 @@ export async function runVerifyShareCommand(
 export async function runVerifyShare(args: string[]): Promise<void> {
   const req = await resolveVerifyShareRequest(args);
   if (req === null) return;
-  await withIpc((c) => runVerifyShareCommand(c, req));
+  await withGatewayIpc((c) => runVerifyShareCommand(c, req));
 }

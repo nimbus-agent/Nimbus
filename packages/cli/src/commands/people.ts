@@ -1,6 +1,4 @@
-import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 type PersonJson = {
   id: string;
@@ -15,21 +13,6 @@ type PersonJson = {
   linked: boolean;
   itemCount?: number;
 };
-
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
-}
 
 function printPerson(p: PersonJson): void {
   const handles = [
@@ -97,7 +80,9 @@ function parseLimitOnly(args: string[], startIndex: number, defaultLimit: number
 
 async function runPeopleList(args: string[]): Promise<void> {
   const { unlinkedOnly, limit } = parseListFlags(args);
-  const rows = await withIpc((c) => c.call<PersonJson[]>("people.list", { unlinkedOnly, limit }));
+  const rows = await withGatewayIpc((c) =>
+    c.call<PersonJson[]>("people.list", { unlinkedOnly, limit }),
+  );
   for (const p of rows) {
     printPerson(p);
   }
@@ -109,7 +94,9 @@ async function runPeopleSearch(args: string[]): Promise<void> {
     throw new Error("Usage: nimbus people search <query> [--limit N]");
   }
   const limit = parseLimitOnly(args, 2, 25);
-  const rows = await withIpc((c) => c.call<PersonJson[]>("people.search", { query: q, limit }));
+  const rows = await withGatewayIpc((c) =>
+    c.call<PersonJson[]>("people.search", { query: q, limit }),
+  );
   for (const p of rows) {
     printPerson(p);
   }
@@ -120,7 +107,7 @@ async function runPeopleGet(args: string[]): Promise<void> {
   if (id === undefined || id === "") {
     throw new Error("Usage: nimbus people get <id>");
   }
-  const p = await withIpc((c) => c.call<PersonJson | null>("people.get", { id }));
+  const p = await withGatewayIpc((c) => c.call<PersonJson | null>("people.get", { id }));
   if (p === null) {
     console.log("(not found)");
     return;
@@ -134,7 +121,7 @@ async function runPeopleItems(args: string[]): Promise<void> {
     throw new Error("Usage: nimbus people items <id> [--limit N]");
   }
   const limit = parseLimitOnly(args, 2, 50);
-  const items = await withIpc((c) =>
+  const items = await withGatewayIpc((c) =>
     c.call<Array<{ id: string; service: string; name: string }>>("people.items", {
       personId: id,
       limit,
@@ -151,7 +138,7 @@ async function runPeopleLink(args: string[]): Promise<void> {
   if (a === undefined || b === undefined || a === "" || b === "") {
     throw new Error("Usage: nimbus people link <id-a> <id-b>");
   }
-  const out = await withIpc((c) =>
+  const out = await withGatewayIpc((c) =>
     c.call<{ survivorId: string; person: PersonJson }>("people.merge", {
       personIdA: a,
       personIdB: b,

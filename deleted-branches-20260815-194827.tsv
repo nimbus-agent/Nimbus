@@ -1,0 +1,72 @@
+branch	reason	sha
+dev/asaf/winget-pat-workflow-scope	PR merged (squash)	978a49ed
+dev/asafgolombek/_phase_4_ws_3	no commits beyond merge-base	0b53f410
+dev/asafgolombek/add-jules-agent-context	PR closed; content superseded on main	18058588
+dev/asafgolombek/coverage-boost	no commits beyond merge-base	dad1336e
+dev/asafgolombek/coverage-floor-phase-8-2026-05-26	PR merged (squash)	6dcc014b
+dev/asafgolombek/d4-lazy-mesh-split	PR merged (squash)	9396c9a7
+dev/asafgolombek/fix-macos-transparent	no commits beyond merge-base	5692fe4e
+dev/asafgolombek/fix_ci_cd	no commits beyond merge-base	749ff92f
+dev/asafgolombek/fix_updates	no commits beyond merge-base	fd770eb5
+dev/asafgolombek/general_bugs	no commits beyond merge-base	2d30bd17
+dev/asafgolombek/general_code_review	no commits beyond merge-base	1dab20e2
+dev/asafgolombek/phase-5-t3-team-intelligence-spec	no commits beyond merge-base	cfbf2d61
+dev/asafgolombek/phase-5-t4-pr1-foundations	no commits beyond merge-base	c6f5d726
+dev/asafgolombek/phase-5-t4-pr3a-plan	PR merged (squash)	e14fb4bc
+dev/asafgolombek/phase4-s1-post-merge-status	no commits beyond merge-base	6068250a
+dev/asafgolombek/phase4-s2-watcher-graph	no commits beyond merge-base	16a19ff6
+dev/asafgolombek/phase6-slice3-identity	PR merged (squash)	f555f356
+dev/asafgolombek/phase_3	no commits beyond merge-base	69d562fc
+dev/asafgolombek/phase_3.5	no commits beyond merge-base	9544a723
+dev/asafgolombek/phase_3_part_2	no commits beyond merge-base	566baf6f
+dev/asafgolombek/phase_4_finals	no commits beyond merge-base	bcd2f90c
+dev/asafgolombek/phase_4_workstream_1	no commits beyond merge-base	34d387c6
+dev/asafgolombek/phase_4_ws5	no commits beyond merge-base	c1065ccc
+dev/asafgolombek/phase_4_ws_2	no commits beyond merge-base	de09f693
+dev/asafgolombek/phase_4_ws_4	no commits beyond merge-base	2b019744
+dev/asafgolombek/q2_2026	no commits beyond merge-base	d2d9e1db
+dev/asafgolombek/q2_implementation	no commits beyond merge-base	08711664
+dev/asafgolombek/q2_stage3	no commits beyond merge-base	083711e8
+dev/asafgolombek/readme-hero-redesign	PR merged (squash)	f466d216
+dev/asafgolombek/retire-ecosystem-roadmap	PR merged (squash)	d9819709
+dev/asafgolombek/stage_1	no commits beyond merge-base	39be2ed1
+dev/asafgolombek/stage_2	no commits beyond merge-base	87cabb40
+dev/asafgolombek/updating_ci_cd	no commits beyond merge-base	947cfa21
+dev/asafgolombek/v0.1.0-bug-005-followup	PR merged (squash)	260653bc
+dev/asafgolombek/ws5c-gateway-ipc	no commits beyond merge-base	2ff3e20d
+dev/asafgolombek/ws5c-ui	no commits beyond merge-base	4d6db22a
+dev/asafgolombek/ws7-vscode-extension	PR closed; content superseded on main	a5fc31c0
+dev/ws5a-app-shell	no commits beyond merge-base	6df0d871
+dev/ws5b-chrome-ipc	no commits beyond merge-base	b7a0c4b3
+dev/ws5b-dashboard	no commits beyond merge-base	a606d769
+dev/ws5b-hitl-popup	no commits beyond merge-base	281de77b
+dev/ws5b-tray	no commits beyond merge-base	2e75ef43
+docs/add-missing-onboarding-screenshots-5718784458079708897	PR closed; content superseded on main	10138663
+docs/ecosystem-roadmap	PR merged (squash)	1f5837d4
+elasticsearch-tools-coverage-17815153842100125662	PR closed; content superseded on main	2ff4f6bb
+fix-tar-command-injection-36633446076546566	PR closed; content superseded on main	aa81ef8b
+fix/add-onboarding-screenshot-7173622169554911907	PR closed; content superseded on main	c8c08855
+flagsmith-search-filter-tests-17405965126971658349	PR closed; content superseded on main	d86a0366
+improve-launchdarkly-search-filter-tests-626148145937093383	PR closed; content superseded on main	1f228035
+jules-13651494505630559978-dbb2e947	PR closed; content superseded on main	68941bac
+jules-add-gx-parse-test-4724834116050644690	PR closed; content superseded on main	fb8bd8a4
+jules-zotero-search-filter-tests-3400155881408885207	PR closed; content superseded on main	1cdbd740
+perf/elasticsearch-batching-11898970765446099501	PR closed; content superseded on main	23528939
+release-please--branches--main--components--client	PR closed; content superseded on main	4bf293ea
+release-please--branches--main--components--nimbus	PR closed; content superseded on main	67534aba
+release-please--branches--main--components--sdk	PR closed; content superseded on main	b8d03b3c
+tableau-server-tests-16900623180390857264	PR closed; content superseded on main	a48b5800
+test-cloudwatch-tools-18318089219704035428	PR closed; content superseded on main	3665925e
+test-cloudwatch-tools-9391533403909821714	PR closed; content superseded on main	2450de22
+test-elasticsearch-connector-5992379339276777868	PR closed; content superseded on main	61ecdbd3
+test-encode-zoom-meeting-path-15419051465715345510	PR closed; content superseded on main	31cbd270
+test-great-expectations-results-dir-15809628314147787657	PR closed; content superseded on main	93c0afe9
+test-jwt-testflight-coverage-18305652863028700841	PR closed; content superseded on main	26947598
+test-tableau-list-3517487519443803581	PR closed; content superseded on main	006958b8
+test/elasticsearch-tools-coverage-13918446501464469779	PR closed; content superseded on main	e1ca28e1
+test/great-expectations-gx-parse-10314459825398800165	PR closed; content superseded on main	2e7631c8
+test/great-expectations-gx-parse-tests-16669740199279622765	PR closed; content superseded on main	0c1a6703
+test/tableau-search-filter-coverage-9658946063906962304	PR closed; content superseded on main	8d06d591
+test/zendesk-search-filter-coverage-13000430814434538245	PR closed; content superseded on main	5f641c57
+test/zoom-recordings-window-edge-cases-3780916582915309764	PR closed; content superseded on main	21cb6a15
+zoom-connector-search-filter-tests-15503459438722850958	PR closed; content superseded on main	53b6454b

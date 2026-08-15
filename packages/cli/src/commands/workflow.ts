@@ -2,11 +2,10 @@ import { readFileSync } from "node:fs";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import { hasFlag, shiftFlag } from "../lib/flag-parsing.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
-import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { parseWorkflowFileContent } from "../lib/workflow-parse.ts";
-import { getCliPlatformPaths } from "../paths.ts";
 
 export async function runWorkflowList(client: IPCClient): Promise<void> {
   const out = await client.call<{ workflows: unknown }>("workflow.list", {});
@@ -102,35 +101,20 @@ export async function runWorkflowRun(client: IPCClient, rest: string[]): Promise
   console.log(`\n${JSON.stringify(out, undefined, 2)}`);
 }
 
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>, requestTimeoutMs?: number): Promise<T> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
-  const client = createIpcClient(state.socketPath, requestTimeoutMs);
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
-}
-
 export async function runWorkflowCli(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = args.slice(1);
 
   if (sub === "list" || sub === "") {
-    await withIpc((c) => runWorkflowList(c));
+    await withGatewayIpc((c) => runWorkflowList(c));
     return;
   }
   if (sub === "delete") {
-    await withIpc((c) => runWorkflowDelete(c, rest));
+    await withGatewayIpc((c) => runWorkflowDelete(c, rest));
     return;
   }
   if (sub === "save") {
-    await withIpc((c) => runWorkflowSave(c, rest));
+    await withGatewayIpc((c) => runWorkflowSave(c, rest));
     return;
   }
   if (sub === "run") {
@@ -139,7 +123,9 @@ export async function runWorkflowCli(args: string[]): Promise<void> {
     // 30s default, which is why this is opt-in per subcommand rather than set on the
     // helper — `requestTimeoutMs` is per-client, so raising it here would slacken the
     // bound for all four.
-    await withIpc((c) => runWorkflowRun(c, rest), INTERACTIVE_RPC_TIMEOUT_MS);
+    await withGatewayIpc((c) => runWorkflowRun(c, rest), undefined, {
+      requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS,
+    });
     return;
   }
 

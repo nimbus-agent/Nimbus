@@ -1,6 +1,5 @@
-import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 /** "1 clip" / "N clips" — singular-safe count label. */
 function clipCount(n: number): string {
@@ -48,21 +47,6 @@ export function parseScopesFlag(raw: string | undefined): string[] | undefined {
 /** The `briefs: ...` discoverability line — one command from where pairing is managed. */
 export function formatBriefsLine(briefsEnabled: boolean): string {
   return briefsEnabled ? "briefs: enabled" : "briefs: disabled (enable [briefs] in nimbus.toml)";
-}
-
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
 }
 
 export async function runClipPair(
@@ -310,34 +294,34 @@ export async function runClip(args: string[]): Promise<void> {
   switch (sub) {
     case "pair": {
       const { label, scopes } = parsePairArgs(rest);
-      await withIpc((c) => runClipPair(c, label, scopes));
+      await withGatewayIpc((c) => runClipPair(c, label, scopes));
       return;
     }
     case "scopes": {
       const { label, scopes } = parseScopesArgs(rest);
-      await withIpc((c) => runClipScopes(c, label, scopes));
+      await withGatewayIpc((c) => runClipScopes(c, label, scopes));
       return;
     }
     case "status":
-      await withIpc((c) => runClipStatus(c));
+      await withGatewayIpc((c) => runClipStatus(c));
       return;
     case "revoke": {
       const label = rest[0] === "--all" ? "*" : rest[0];
       if (label === undefined) {
         throw new Error("Usage: nimbus clip revoke <label|--all>");
       }
-      await withIpc((c) => runClipRevoke(c, label));
+      await withGatewayIpc((c) => runClipRevoke(c, label));
       return;
     }
     case "list": {
-      await withIpc((c) => runClipList(c, parseListArgs(rest)));
+      await withGatewayIpc((c) => runClipList(c, parseListArgs(rest)));
       return;
     }
     case "delete": {
       const all = rest.includes("--all");
       const yes = rest.includes("--yes");
       const target = rest.find((a) => !a.startsWith("--"));
-      await withIpc((c) => runClipDelete(c, target, { all, yes }));
+      await withGatewayIpc((c) => runClipDelete(c, target, { all, yes }));
       return;
     }
     default:
