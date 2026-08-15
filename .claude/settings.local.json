@@ -19,7 +19,11 @@
       "Bash(gh pr *)",
       "Bash(bun -e ' *)",
       "Skill(superpowers:using-git-worktrees)",
-      "PowerShell(bun run *)"
+      "PowerShell(bun run *)",
+      "Bash(cp packages/gateway/src/connectors/link-header.ts /tmp/lh.bak)",
+      "Bash(python -)",
+      "Bash(cp /tmp/lh.bak packages/gateway/src/connectors/link-header.ts)",
+      "Bash(rm /tmp/lh.bak)"
     ]
   },
   "hooks": {

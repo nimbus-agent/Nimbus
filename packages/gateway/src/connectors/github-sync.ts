@@ -247,12 +247,16 @@ function mergeForwardPrStats(
   const row = db.query("SELECT metadata FROM item WHERE id = ?").get(id) as {
     metadata: string | null;
   } | null;
-  if (row === null || row.metadata === null) {
+  // `?? null` rather than `row?.metadata == null`: the column is nullable AND the row
+  // may be absent, so the optional chain yields `undefined | string | null`. Folding
+  // the two empty cases into one `null` keeps the check strict-equality only.
+  const metadata = row?.metadata ?? null;
+  if (metadata === null) {
     return meta;
   }
   let existing: unknown;
   try {
-    existing = JSON.parse(row.metadata) as unknown;
+    existing = JSON.parse(metadata) as unknown;
   } catch {
     return meta;
   }

@@ -27,7 +27,7 @@ test("accepts exactly 254 chars (RFC 5321 ceiling)", () => {
   const domain = "a.example.com";
   const localPart = `${"a".repeat(64)}.${"a".repeat(63)}.${"a".repeat(63)}.${"a".repeat(47)}`;
   const addr = `${localPart}@${domain}`;
-  expect(addr.length).toBe(254);
+  expect(addr).toHaveLength(254);
   expect(usableActorEmail(addr)).toBe(addr);
 });
 
@@ -38,7 +38,7 @@ test("rejects exactly 255 chars (over RFC 5321 ceiling)", () => {
   const domain = "a.example.com";
   const localPart = `${"a".repeat(64)}.${"a".repeat(63)}.${"a".repeat(63)}.${"a".repeat(48)}`;
   const addr = `${localPart}@${domain}`;
-  expect(addr.length).toBe(255);
+  expect(addr).toHaveLength(255);
   expect(usableActorEmail(addr)).toBeNull();
 });
 
