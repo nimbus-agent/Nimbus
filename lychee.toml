@@ -41,3 +41,22 @@ accept = ["200", "202", "203", "204", "206", "301", "302", "304"]
 max_redirects = 5
 timeout = 30
 max_retries = 3
+# A 504 from github.com means the server timed out, not that the link is broken.
+# It has red-flagged this gate twice on URLs verified live at HTTP 200 seconds
+# later, so the failures cost a re-run each and teach people to ignore this job —
+# the worst outcome for a link checker.
+#
+# `max_retries` alone did not prevent it: with no wait, all three retries land
+# inside the same hiccup. These two settings address the cause rather than
+# accepting 5xx as success, which would hide a genuinely dead host.
+retry_wait_time = 2
+# Per-HOST, not global: almost every link here is github.com, so the run was
+# opening far more simultaneous connections to one host than it needs to. This
+# caps that without throttling other hosts.
+#
+# It is not free. Measured locally over the real link set (1,313 links, 845
+# unique), one run each: 111s before, 127s after — roughly +15%, some of which
+# is network variance. That is judged worth it against a gate that has produced
+# two false failures in a day, each costing a re-run and eroding trust in the
+# job. Raise this number if the run time starts to matter more than the flake.
+host_concurrency = 8
