@@ -158,6 +158,15 @@ export async function discoverSourceFiles(): Promise<string[]> {
       seen.add(rel);
       if (rel.endsWith(".test.ts")) continue;
       if (rel.endsWith(".test.tsx")) continue;
+      // `.spec` is a test marker to Bun exactly as `.test` is ("Tests need
+      // '.test', '_test_', '.spec' or '_spec_' in the filename"), and
+      // `shouldInstrument` already skips both — but this discovery pass only
+      // skipped `.test`. A `*.spec.ts` would therefore be discovered as SOURCE,
+      // never instrumented, and reported `missing_from_lcov` at 0%: a false
+      // failure on a file that is not source at all. None exists in the repo
+      // today, so this is closing the asymmetry before it can bite.
+      if (rel.endsWith(".spec.ts")) continue;
+      if (rel.endsWith(".spec.tsx")) continue;
       if (rel.endsWith(".d.ts")) continue;
       if (rel.includes("/__fixtures__/")) continue;
       if (rel.includes("/test/fixtures/")) continue;

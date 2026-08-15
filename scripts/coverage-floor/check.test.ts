@@ -192,6 +192,28 @@ describe("discoverSourceFiles — structural exemptions", () => {
     const files = await discoverSourceFiles();
     expect(files.some((f) => f.includes("/testing/"))).toBe(false);
   });
+
+  /**
+   * Discovery and instrumentation must agree on what a test file is.
+   * `shouldInstrument` skips both `.test.` and `.spec.`; this pass only skipped
+   * `.test.`, so a `*.spec.ts` would be discovered as SOURCE, never
+   * instrumented, and then reported `missing_from_lcov` at 0% — a false failure
+   * on a file that is not source. Bun treats `.spec` as a test marker exactly as
+   * it treats `.test`.
+   */
+  test("never yields a test file, by either naming convention", async () => {
+    const files = await discoverSourceFiles();
+    const offenders = files.filter((f) => /\.(test|spec)\.tsx?$/.test(f));
+    expect(offenders).toEqual([]);
+  });
+
+  test("does discover ordinary source, so the filters above are not vacuous", async () => {
+    const files = await discoverSourceFiles();
+    expect(files.length).toBeGreaterThan(100);
+    expect(files).toContain("packages/gateway/src/engine/executor.ts");
+    // The package this PR brought into scope.
+    expect(files).toContain("packages/mcp-launcher/src/resolve-binary.ts");
+  });
 });
 
 describe("computeUpdatedBaseline (dual-axis)", () => {
