@@ -50,7 +50,7 @@ copyFileSync(gatewaySrc, gwDest);
 copyFileSync(cliSrc, cliDest);
 
 // sqlite-vec loadable extension, beside the gateway binary because tryLoadFromSidecar() resolves
-// it from dirname(process.execPath). Optional: `bun run compile:gateway` produces it in dist/, but
+// it from dirname(process.execPath). Optional: `bun run --filter @nimbus/gateway build` produces it in dist/, but
 // a bundle assembled from pre-built binaries may not have one, and that only costs semantic memory.
 const vec0Name = vec0Filename(process.platform);
 const vec0Src = resolve(repoRoot, "dist", vec0Name);

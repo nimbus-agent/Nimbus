@@ -57,19 +57,16 @@ packages/ui/test/
 
 ## Coverage Gates
 
-| Subsystem | Minimum |
-|---|---|
-| Engine (`packages/gateway/src/engine/`) | ≥ 85% |
-| Vault (`packages/gateway/src/vault/`) | ≥ 90% |
-| Sync scheduler (`packages/gateway/src/sync/`) | ≥ 80% |
-| Rate limiter | ≥ 85% |
-| People graph | ≥ 80% |
-| LLM layer (`packages/gateway/src/llm/`) | ≥ 85% |
-| `engine.askStream` streaming path | ≥ 80% |
-| Data export/import + audit chain | ≥ 85% |
-| **New subsystems** | ≥ 85% (default target) |
+**The live list is `SCOPE_GATES` in [`scripts/coverage-floor/check-scopes.ts`](../../scripts/coverage-floor/check-scopes.ts) — read it, do not trust a copy.**
 
-Coverage is checked in CI on push to `main`. PRs that drop a gate fail the `pr-quality` job.
+This section used to hold a nine-row table. It had drifted badly: three of its rows named scopes that do not exist (`engine.askStream streaming path`, `Data export/import + audit chain`, `New subsystems`), and it omitted **nineteen** of the twenty-four scopes actually enforced. A hand-maintained duplicate of two dozen numbers is a drift generator, so it is deliberately not reproduced here.
+
+Two gates, run by `audit:coverage-scopes` over the merged lcov:
+
+- **Per-scope floors** — `SCOPE_GATES` maps a path glob to a minimum. A scope whose glob matches **zero** files FAILS rather than passing vacuously; that is the bug the gate was rebuilt to close.
+- **Per-file ratchet** — `audit:coverage-floor`, **≥ 85% line AND ≥ 80% branch** (two separate constants, `FLOOR_PCT` / `BRANCH_FLOOR_PCT`).
+
+Both denominators are non-exempt files only. Neither is enforced by the `test:coverage:*` scripts: their `--coverage-threshold-lines` flag **does not exist in Bun** and is silently ignored, and `bunfig.toml`'s `[test] coverage = false` suppresses collection anyway. `audit:coverage-floor` is **CI-Linux-authoritative** — a Windows run reports false violations.
 
 ---
 
@@ -196,7 +193,7 @@ afterEach(() => {
 The canonical pattern for verifying HITL cannot be bypassed:
 
 ```ts
-// packages/gateway/test/e2e/scenarios/multi-agent-hitl.e2e.test.ts
+// packages/gateway/test/e2e/scenarios/hitl-write-ops.test.ts
 it('parallel sub-agents cannot auto-approve HITL', async () => {
   const session = await gateway.runAsk('find my PRs and post summary to Slack');
   const plan = await gateway.ipc.call('agent.getSubTaskPlan', { sessionId: session.id });

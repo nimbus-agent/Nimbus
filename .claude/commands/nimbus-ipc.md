@@ -255,7 +255,7 @@ Available to LAN peers. Never mutates data.
 
 ### `agents.*` — Built-in read-only agents (Phase 5 T3 → Spine S1)
 
-**Twelve methods are registered**, not three — `packages/gateway/src/ipc/agents-rpc.ts` `dispatchAgentsRpc` is the authoritative list; re-read it before assuming an agent is missing. Each returns immediately and emits a `<agent>.briefReady { sessionId, brief }` notification with a Markdown brief (note the prefix is the **agent** name, not `agents.` — `expert.briefReady`, not `agents.expert.briefReady`). All are read-only and never fire HITL. `agents.whyPeek` is the one exception to the notification contract: it answers synchronously in the response.
+**Fifteen methods are registered**, not three — `packages/gateway/src/ipc/agents-rpc.ts` `dispatchAgentsRpc` is the authoritative list; re-read it before assuming an agent is missing. Each returns immediately and emits a `<agent>.briefReady { sessionId, brief }` notification with a Markdown brief (note the prefix is the **agent** name, not `agents.` — `expert.briefReady`, not `agents.expert.briefReady`). All are read-only and never fire HITL. `agents.whyPeek` is the one exception to the notification contract: it answers synchronously in the response.
 
 | Method | Type | Description |
 |---|---|---|

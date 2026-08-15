@@ -63,7 +63,7 @@ When adding new IPC methods accessible from the UI:
 
 - Add them to `ALLOWED_METHODS` **alphabetically**.
 - **Update the count assertion** in the test.
-- Never expose `vault.*`, `db.*` writes, `updater.*`, or `lan.*` pairing methods through this surface — these are RCE-class or pairing-class methods that must remain Gateway-only.
+- Never expose `vault.*`, raw `db.*` writes, `config.set`, `index.rebuild`/`index.querySql`, or `lan.*` pairing methods through this surface — these are RCE-class or pairing-class and must remain Gateway-only. NOTE `updater.*` is deliberately NOT in that set: four methods (`applyUpdate`, `checkNow`, `getStatus`, `rollback`) are renderer-exposed on purpose so the desktop app can drive its own update flow — see `nimbus-tauri-allowlist`.
 
 ## I15 — Sandbox Invariant
 

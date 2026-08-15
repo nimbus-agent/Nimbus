@@ -43,6 +43,13 @@ type RawRow = {
   prev_hash: string;
 };
 
+/**
+ * What `verifyEgressChain` actually needs: every field the row hash is computed over,
+ * plus the two chain hashes. Exactly {@link RawRow} minus `payload_summary`, which the
+ * hash deliberately excludes and the verify loop never reads.
+ */
+type VerifyRow = Omit<RawRow, "payload_summary">;
+
 function toRow(r: RawRow): EgressRow {
   return {
     id: r.id,
@@ -95,13 +102,23 @@ export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult 
     ).map((r) => r.source_id),
   );
 
+  // `payload_summary` is deliberately absent from this SELECT — and it is the widest
+  // column in the table (capped at 256 bytes by `redactAuditPayload`, against a handful
+  // of small integers and fixed-width hashes elsewhere). It is safe to omit because it
+  // is NOT part of the hash input: `egress-ledger.ts` records that it "is intentionally
+  // NOT hashed: it is redacted/lossy", and the `computeEgressRowHash` call below takes
+  // no payload field. Nothing in this loop reads it either.
+  //
+  // Its own type rather than the shared `RawRow`, because `listEgress` still selects
+  // the column and `toRow` still reads it — narrowing the shared type would break that
+  // caller at compile time.
   const rows = db
     .query(
-      `SELECT id, timestamp, source_type, source_id, destination, method, payload_summary,
+      `SELECT id, timestamp, source_type, source_id, destination, method,
               hitl_status, result_status, row_hash, prev_hash
        FROM egress_ledger WHERE id > ? ORDER BY id ASC`,
     )
-    .all(start) as RawRow[];
+    .all(start) as VerifyRow[];
 
   let prev =
     start > 0

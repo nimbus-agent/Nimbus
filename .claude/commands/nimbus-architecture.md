@@ -20,7 +20,7 @@ These are **load-bearing constraints**, not style preferences. Check every new f
 3. **No plaintext credentials** — Vault only. Never in logs, IPC responses, config files, or env vars persisted outside spawn context. The structured logger auto-redacts `*.token`, `*.secret`, `oauth.*`.
 4. **MCP as connector standard** — the Engine never calls cloud APIs directly. Every integration is an MCP server. Engine ↔ connector boundary is always MCP.
 5. **Platform equality** — Windows 10+, macOS 13+, Ubuntu 22.04+ are equally supported in every change.
-6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. **Phase 6 (Team)** is ✅ complete (2026-06-18 — all 9 slices: federation, team-vault/quorum, identity/SSO/SCIM, org policy, ChatOps, cross-colleague agents, data-warehouse/BI + lineage, Share & Virality, and the deferred-Phase-5 items); **Phase 7 (Engineering Excellence)** is the next phase. Phase 5 (The Extended Surface) is ✅ complete. See [docs/CHANGELOG.md](../../docs/CHANGELOG.md) for the dated delivery log.
+6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. **Phase 6 (Team)** is ✅ complete (2026-06-18 — all 9 slices: federation, team-vault/quorum, identity/SSO/SCIM, org policy, ChatOps, cross-colleague agents, data-warehouse/BI + lineage, Share & Virality, and the deferred-Phase-5 items); from Phase 7 onward the build order is the **Sequencing Spine overlay (S1 -> S5)**, not the phase numbers; the current build slot is **Spine S1 (Local Brain)**. Phase 5 (The Extended Surface) is ✅ complete. See [docs/CHANGELOG.md](../../docs/CHANGELOG.md) for the dated delivery log.
 
 ---
 
@@ -32,7 +32,7 @@ nimbus/
 │   ├── gateway/          ← Core headless process (Bun runtime)
 │   ├── cli/              ← nimbus CLI + TUI (Bun)
 │   ├── ui/               ← Tauri 2.0 desktop app (React 18 + Rust bridge)
-│   ├── admin-console/    ← Electron admin console (Phase 6 Slice 4)
+│   ├── admin-console/    ← dependency-free static admin console (Phase 6 Slice 4)
 │   ├── mcp-connectors/   ← First-party MCP servers (one dir per connector)
 │   ├── github-actions/   ← Composite GitHub Actions (DORA data layer)
 │   └── docs/             ← Astro Starlight documentation site
@@ -70,7 +70,7 @@ nimbus/
 
 ### `packages/cli/src/`
 
-- `commands/` — one file per CLI subcommand (54 top-level commands registered in `COMMAND_HANDLERS`, `packages/cli/src/index.ts` — verify the live map rather than this count): `start`, `stop`, `status`, `db`, `diag`, `query`, `telemetry`, `tui`, `update`, `doctor`, `config`, `profile`, `serve`, `test`, `ask`, `catchup`, `expert`, `impact`, `index`, `vault`, `audit`, `connector`, `data`, `deploy`, `extension`, `people`, `search`, `security`, `session`, `workflow`, `watch`, `repl`, `run`, `scaffold`, `lan`, `llm`, `metrics`, `team`, `identity`, `scim`, `policy`, `chatops`, `admin`, `mcp-server`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `tribal`, `share`, `verify-share`, `prove`, `egress`. (`bench` is dispatched in a separate branch; there is no `docs` command.)
+- `commands/` — one file per CLI subcommand (62 top-level commands registered in `COMMAND_HANDLERS`, `packages/cli/src/index.ts` — verify the live map rather than this count): `start`, `stop`, `status`, `db`, `diag`, `query`, `telemetry`, `tui`, `update`, `doctor`, `config`, `profile`, `serve`, `test`, `ask`, `catchup`, `expert`, `impact`, `index`, `vault`, `audit`, `connector`, `data`, `deploy`, `extension`, `people`, `search`, `security`, `session`, `workflow`, `watch`, `repl`, `run`, `scaffold`, `lan`, `llm`, `metrics`, `team`, `identity`, `scim`, `policy`, `chatops`, `admin`, `mcp-server`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `tribal`, `share`, `verify-share`, `prove`, `egress`. (`bench` is dispatched in a separate branch; there is no `docs` command.)
 - `tui/` — Ink-based TUI components (Phase 4): `App.tsx`, `QueryInput.tsx`, `ConnectorHealth.tsx`, `WatcherPane.tsx`, `SubTaskPane.tsx`
 
 ### `packages/ui/src/` (Tauri desktop — Phase 4)

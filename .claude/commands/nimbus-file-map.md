@@ -1,7 +1,4 @@
-| `packages/gateway/src/egress/agent-brief-egress.ts` | `recordAgentBriefEgress` — the agent-brief ledger append for BOTH external transports (I29 / D22 rule (c)); its ONLY caller is `ipc/agents-rpc.ts` `dispatchAgentsRpc` |
-| `packages/gateway/src/egress/egress-bearing-kinds.ts` | `EGRESS_BEARING_CLIENT_KINDS` — the TOTAL `ClientKind` → `source_type` map that decides whether a caller's brief is ledgered |
-| `packages/gateway/src/agent-runs/agent-run-store.ts` | `AgentRunController` — in-memory HTTP agent runs; reservation-based admission, lazy expiry, 410-vs-404 tombstones |
-| `packages/gateway/src/agent-runs/agent-http-invoke.ts` | `buildAgentHttpInvoker` — the HTTP entry point into `agents.*`; reaches them via `dispatchAgentsRpc`, never an emitter (D22 rule (d)) |---
+---
 name: nimbus-file-map
 description: >
   Pointer index from "where does X live?" to file path, for the Nimbus monorepo.
@@ -315,8 +312,11 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/share/share-gate.ts` | `createShare` — invariant `I27`/`D21` sole outbound-share chokepoint (see `nimbus-share-virality` skill) |
 | `packages/gateway/src/egress/egress-ledger.ts` | `appendEgressEntry` + `EgressSink` — invariant `I29`/`D22` egress-ledger append before `connectors.dispatch` (see `nimbus-egress` skill) |
 | `packages/gateway/src/egress/{egress-record,egress-verify,egress-prune,egress-sign}.ts` | Entry builder (`serviceOf` destination) / BLAKE3-chain verify (timing-safe, I10) / HITL-gated prune tombstone / Vault-reused receipt sign |
-| `packages/gateway/src/egress/{egress-coverage,egress-boot-marker,egress-source-type}.ts` | `THIS_BINARY_COVERAGE` (the machine-readable claim) / per-process boot marker hashed into `source_id` / the 9-member `source_type` union (frozen at 8 in #1038, reopened once for `mcp`) |
+| `packages/gateway/src/egress/{egress-coverage,egress-boot-marker,egress-source-type}.ts` | `THIS_BINARY_COVERAGE` (the machine-readable claim) / per-process boot marker hashed into `source_id` / the 10-member `source_type` union (frozen at 8 in #1038, reopened for `mcp` then `http`) |
 | `packages/gateway/src/egress/agent-brief-egress.ts` | `recordAgentBriefEgress` — the agent-brief ledger append for BOTH external transports, MCP-originated and verified-local-HTTP (I29 / D22 rules (c)+(d)); its ONLY caller is `ipc/agents-rpc.ts` `dispatchAgentsRpc` |
+| `packages/gateway/src/egress/egress-bearing-kinds.ts` | `EGRESS_BEARING_CLIENT_KINDS` — the TOTAL `ClientKind` → `source_type` map that decides whether a caller's brief is ledgered |
+| `packages/gateway/src/agent-runs/agent-run-store.ts` | `AgentRunController` — in-memory HTTP agent runs; reservation-based admission, lazy expiry, 410-vs-404 tombstones |
+| `packages/gateway/src/agent-runs/agent-http-invoke.ts` | `buildAgentHttpInvoker` — the HTTP entry point into `agents.*`; reaches them via `dispatchAgentsRpc`, never an emitter (D22 rule (d)) |
 | `packages/gateway/src/ipc/egress-rpc.ts` | `egress.{head,list,verify,proveWindow,prune}` — 4 renderer-exposed reads + CLI-only HITL-gated prune |
 | `packages/cli/src/commands/prove.ts` | `nimbus prove "<query>"` + `nimbus egress [verify\|prune]` CLI |
 | `packages/gateway/src/index/egress-ledger-v44-sql.ts` | V44 `egress_ledger` migration SQL |

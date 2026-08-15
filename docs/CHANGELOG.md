@@ -8,6 +8,75 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-15 — maintenance sweep: the skills the agent loads were drifting, and one
+  of them was structurally broken.** Batched deliberately into one PR rather than four,
+  since each carries CI cost and none is independently interesting.
+
+  **`nimbus-file-map.md` had no frontmatter at all.** Four markdown table rows had been
+  pasted ABOVE the YAML block, and the opening `---` fence was fused onto the end of the
+  fourth (`…(D22 rule (d)) |---`), so the file never opened with a fence. The loader was
+  reading an orphaned table row AS the skill's description — visible in the live skill
+  listing, which read ``nimbus-file-map: | `packages/gateway/src/egress/agent-brief-egress.ts` | …``.
+  Introduced by `4b4bedb4` (#1063, 2026-08-07) and unnoticed for a week, because a
+  malformed skill still loads — it just loads wrong. Fence restored; three of the four
+  orphan rows re-homed into the Phase 6 table (the fourth was a stale duplicate of a row
+  that already exists there in updated wording).
+
+  **Counts corrected against the code, each verified by reading the source, not the
+  claim:** `WRITE_ROUTE_ALLOWLIST` 12 → **14** (the tests assert 14), Tauri
+  `ALLOWED_METHODS` 101 → **106**, `NO_TIMEOUT_METHODS` 5 → **6** (`workflow.run`, added
+  this same day), schema V48 → **V53**, `EgressSourceType` 9 → **10** members (the skill
+  omitted `http` while contradicting its own coverage-class section two paragraphs
+  earlier), `agents.*` twelve → **fifteen** methods, CLI 54 → **62** commands,
+  `wrapToolOutput` "two production sites" → **seven files / nine call sites**.
+
+  **Claims that were simply false:** `nimbus-architecture.md` called `packages/admin-console`
+  an "Electron admin console" — it has no Electron dependency, and CLAUDE.md says the
+  opposite two files away. `nimbus-security-invariants.md` told contributors to never
+  expose `updater.*` to the renderer; four `updater.*` methods are deliberately on the
+  Tauri allowlist so the desktop app can drive its own update flow, and the allowlist
+  skill says so. `nimbus-testing.md` cited an e2e path that does not exist.
+  `nimbus-architecture.md` still said Phase 7 is next, where CLAUDE.md has the Spine
+  overlay and slot S1.
+
+  **The coverage-gates table is gone rather than corrected.** It listed nine scopes:
+  three did not exist, and it omitted nineteen of the twenty-four actually enforced by
+  `SCOPE_GATES`. A hand-maintained duplicate of two dozen numbers is a drift generator,
+  so the section now points at the live source and states the two real gates (per-scope
+  floors; the per-file ≥85% line / ≥80% branch ratchet) and the traps around them.
+
+  **Docs:** CLAUDE.md and GEMINI.md — which are required to mirror — both said
+  `bun-version: latest` appears in one workflow; it appears in two
+  (`org-drift-sweep.yml`, `release-channel-drift.yml`). Both omitted
+  `packages/mcp-launcher`, a real workspace member, from the Subsystems list. Fixed in
+  both, and the mirrored lines verified identical.
+
+  **Scripts:** six files deleted with no references from anywhere — five platform
+  wrappers (`scripts/windows/{build-debug,build-release,kill-gateway,run-tests}.ps1`,
+  `scripts/linux/run-tests.sh`) and `scripts/audit/generate-connector-readme.ts`, which
+  hardcoded a 29-connector list against 94 real connectors. Verified by exact-path grep
+  AND by a `join()`-built-path search, because the audit's own regex could not see the
+  latter and had already missed one reference elsewhere. A comment in
+  `package-headless-bundle.ts` pointing at `bun run compile:gateway` — a script in no
+  package.json — now names the real one.
+
+  **One performance fix, measured rather than asserted:** `verifyEgressChain` selected
+  `payload_summary` and never read it. It is the widest column in the table (256 bytes
+  against integers and fixed-width hashes) and is **deliberately excluded from the row
+  hash** — `egress-ledger.ts` records that it "is intentionally NOT hashed: it is
+  redacted/lossy" — so dropping it from the SELECT cannot change verification. Measured
+  in isolated processes over 200k rows: **90.3 MB → 58.0 MB** (36%). It needed its own
+  narrow row type: `RawRow` is shared with `listEgress`, whose `toRow` still reads the
+  column, so narrowing the shared type would have failed the build.
+
+  **Deliberately NOT taken from the same audit:** a `dbRun` prepared-statement cache
+  (its fix wired 1 of ~20 `Database` sites and would have re-created the #969
+  finalization hazard elsewhere, for ~0.2 s on a 100k-item sync), and a
+  `graph-populator` commit-lookup rewrite (the proposed regex has no capturing group
+  while `extractCommitShas` reads `m[1]`, so it would have silently destroyed every
+  commit-SHA edge). Both were caught by an adversarial verification pass over the audit,
+  not by review after the fact.
+
 - **2026-08-15 — OS notifications are documented as unimplemented instead of
   advertised as working, the drop is logged, and the TUI watcher pane renders again.**
   `NotificationService.show()` has exactly one implementation in the tree — an empty

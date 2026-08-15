@@ -13,7 +13,7 @@ description: >
 
 ## Why This Skill Exists
 
-The B1 internal security audit (Phase 4, 2026-04-25) found that `wrapToolOutput` had been **defined in code but had zero production callers** for a meaningful window. Documentation continued to claim prompt-injection defense was active. The defense is now wired at two production sites and protected by an enforcement test in [`packages/gateway/src/security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts), but the gap can be reintroduced silently every time a new agent surface is added.
+The B1 internal security audit (Phase 4, 2026-04-25) found that `wrapToolOutput` had been **defined in code but had zero production callers** for a meaningful window. Documentation continued to claim prompt-injection defense was active. The defense is now wired across seven production FILES (nine call sites — `agent.ts` and `mesh.ts` each call it twice, on the success and error arms) and protected by an enforcement test in [`packages/gateway/src/security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts), but the gap can be reintroduced silently every time a new agent surface is added.
 
 This skill is the rule a contributor consults **before** adding such a surface.
 
