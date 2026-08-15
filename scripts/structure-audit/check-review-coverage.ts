@@ -53,6 +53,10 @@ const GATED_REPOS = [
   "nimbus-client",
   "nimbus-vscode",
   "nimbus-web-clipper",
+  // Has a source tree and takes PRs, so a review pass is worth asserting. It
+  // already carries a `.coderabbit.yaml` with `auto_review.enabled: true`;
+  // adding it here is what makes that a gated fact rather than a coincidence.
+  "create-nimbus-connector",
 ];
 
 export const EXEMPT_REPOS: Readonly<Record<string, string>> = {

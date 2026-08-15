@@ -29,6 +29,7 @@ jobs:
           - nimbus-sdk
           - nimbus-vscode
           - nimbus-web-clipper
+          - create-nimbus-connector
           - .github
           - linux-repo
           - homebrew-tap
@@ -74,7 +75,7 @@ jobs:
           client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
-          repositories: Nimbus,nimbus-client,nimbus-sdk,nimbus-vscode,nimbus-web-clipper
+          repositories: Nimbus,nimbus-client,nimbus-sdk,nimbus-vscode,nimbus-web-clipper,create-nimbus-connector
           # Administration:read is what `GET /repos/{o}/{r}/rulesets` needs. Note it
           # is NOT sufficient to read `bypass_actors` for org-level actors
           # (OrganizationAdmin comes back empty) — proven live that even adding
@@ -161,7 +162,7 @@ jobs:
           client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
-          repositories: Nimbus,nimbus-sdk,nimbus-client,nimbus-vscode,nimbus-web-clipper,awesome-nimbus
+          repositories: Nimbus,nimbus-sdk,nimbus-client,nimbus-vscode,nimbus-web-clipper,awesome-nimbus,create-nimbus-connector
           # cla-coverage reads .github/workflows/cla.yml from each gated repo — contents:read.
           permission-contents: read
       - name: Audit CLA coverage
@@ -193,7 +194,7 @@ jobs:
           client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
-          repositories: Nimbus,nimbus-sdk,nimbus-client,nimbus-vscode,nimbus-web-clipper
+          repositories: Nimbus,nimbus-sdk,nimbus-client,nimbus-vscode,nimbus-web-clipper,create-nimbus-connector
           # review-coverage reads .coderabbit.yaml from each gated repo — contents:read.
           permission-contents: read
       - name: Audit review coverage

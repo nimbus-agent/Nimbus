@@ -27,6 +27,12 @@ const GATED_REPOS = [
   "nimbus-vscode",
   "nimbus-web-clipper",
   "awesome-nimbus",
+  // Publishes to npm and takes outside contributions like the rest, but was
+  // absent from every org-drift list — this one, review-coverage's, the
+  // ruleset baseline and the sha-pins matrix. Widening the workflow's App-token
+  // `repositories:` scope alone would NOT have gated it: this list is the one
+  // the audit actually iterates.
+  "create-nimbus-connector",
 ];
 
 /**
