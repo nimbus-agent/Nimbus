@@ -29,6 +29,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   Corrected: `user-guide/watchers.mdx` claimed "a tray notification pops" as step 2 of
   what happens when a watcher fires — deleted, and replaced with a note stating that a
   fire is recorded rather than announced and naming the surfaces that do show it. Its
+  opening paragraph made the same claim independently ("you receive a notification in
+  the system tray"), and its filter section called the first matching item "the
+  notification summary"; both now describe the `watcher_event` row that is actually
+  written. A sweep of the docs tree confirms these were the only false *notification*
+  claims — the several "system tray" references elsewhere are about the tray ICON,
+  which does exist (`ui/src-tauri/src/tray.rs`), gated only by the separately-recorded
+  fact that the desktop app ships no binary. Its
   history-drawer paragraph now says the drawer is code-complete but ships in no
   released binary. `roadmap.md`'s 401/403 row keeps its checkbox (the typed error,
   `transitionHealth` and every read surface genuinely shipped) with "+ notification UX"

@@ -6,9 +6,12 @@ description: Persistent rules that fire when something changes in your indexed d
 import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
 
 A **watcher** is a saved condition that Nimbus re-evaluates every time a
-connector sync completes. When the condition is satisfied, you receive a
-notification in the system tray and an audit-log entry is written. Optionally,
-a watcher can trigger a saved workflow automatically.
+connector sync completes. When the condition is satisfied, the fire is recorded
+to the local index and an audit-log entry is written. Optionally, a watcher can
+trigger a saved workflow automatically.
+
+Watchers are a **pull** surface, not a push one: nothing is delivered to you when
+one fires. See "What happens when it fires" below for how to read them.
 
 Because watchers evaluate against the **local SQLite index** — not by polling
 a cloud API — each check typically completes in under 10 ms. The evaluation
@@ -133,7 +136,8 @@ index columns. Supported filter keys:
 
 The engine queries for `item` rows of `type = 'alert'` where `modified_at`
 is newer than the last check timestamp, optionally filtered by `service`. Up
-to five matching items are returned; the first becomes the notification summary.
+to five matching items are returned; the first becomes the fire's summary line,
+stored on the `watcher_event` row.
 
 ### Graph predicates
 
