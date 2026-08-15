@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 
-import { IPCClient } from "../ipc-client/index.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import { hasFlag, shiftFlag } from "../lib/flag-parsing.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
-import { registerAgentChunkStdout } from "../lib/interactive-ipc-handlers.ts";
+import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
+import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { parseWorkflowFileContent } from "../lib/workflow-parse.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
@@ -66,7 +67,12 @@ export async function runWorkflowRun(client: IPCClient, rest: string[]): Promise
     agent = agentArg;
   }
 
-  registerAgentChunkStdout(client);
+  // Not just the chunk handler: a workflow step can trip a HITL gate, and the Gateway
+  // then blocks on `consent.respond`. With no `consent.request` handler registered
+  // here, `nimbus workflow run` hung to the client timeout without ever showing the
+  // user a prompt. This is the same helper `nimbus run <file>` uses, so both entry
+  // points now prompt identically and both honour NIMBUS_SCRIPT_CONSENT_SOURCE.
+  registerInteractiveCliIpcHandlers(client);
 
   if (noTtv && !dryRun) {
     const preview = await client.call("workflow.run", {
@@ -96,13 +102,13 @@ export async function runWorkflowRun(client: IPCClient, rest: string[]): Promise
   console.log(`\n${JSON.stringify(out, undefined, 2)}`);
 }
 
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
+async function withIpc<T>(fn: (c: IPCClient) => Promise<T>, requestTimeoutMs?: number): Promise<T> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new Error("Gateway is not running. Start with: nimbus start");
   }
-  const client = new IPCClient(state.socketPath);
+  const client = createIpcClient(state.socketPath, requestTimeoutMs);
   await client.connect();
   try {
     return await fn(client);
@@ -128,7 +134,12 @@ export async function runWorkflowCli(args: string[]): Promise<void> {
     return;
   }
   if (sub === "run") {
-    await withIpc((c) => runWorkflowRun(c, rest));
+    // Only `run` gets the long budget: the Gateway awaits the whole run, and a HITL
+    // step waits on the user. `list`/`delete`/`save` are fast RPCs and keep the tight
+    // 30s default, which is why this is opt-in per subcommand rather than set on the
+    // helper — `requestTimeoutMs` is per-client, so raising it here would slacken the
+    // bound for all four.
+    await withIpc((c) => runWorkflowRun(c, rest), INTERACTIVE_RPC_TIMEOUT_MS);
     return;
   }
 

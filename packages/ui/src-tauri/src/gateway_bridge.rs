@@ -169,12 +169,19 @@ pub fn is_method_allowed(method: &str) -> bool {
 
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Allowlisted methods whose Gateway handler awaits the whole operation, so the
+/// 30s default above would abort work that is progressing normally.
+///
+/// `workflow.run` belongs here for two reasons, not one: the handler resolves only
+/// when the run ends, AND a step can trip a HITL gate whose approval the user
+/// supplies mid-call — so the bound would double as the user's think time.
 pub const NO_TIMEOUT_METHODS: &[&str] = &[
     "data.export",
     "data.import",
     "identity.login",
     "llm.pullModel",
     "updater.applyUpdate",
+    "workflow.run",
 ];
 
 pub fn is_no_timeout_method(method: &str) -> bool {
@@ -612,19 +619,20 @@ mod tests {
     }
 
     #[test]
-    fn no_timeout_methods_contains_expected_five() {
+    fn no_timeout_methods_contains_expected_six() {
         assert!(is_no_timeout_method("data.export"));
         assert!(is_no_timeout_method("data.import"));
         assert!(is_no_timeout_method("identity.login"));
         assert!(is_no_timeout_method("llm.pullModel"));
         assert!(is_no_timeout_method("updater.applyUpdate"));
+        assert!(is_no_timeout_method("workflow.run"));
         assert!(!is_no_timeout_method("profile.list"));
         assert!(!is_no_timeout_method("audit.list"));
     }
 
     #[test]
     fn no_timeout_methods_exact_size() {
-        assert_eq!(NO_TIMEOUT_METHODS.len(), 5);
+        assert_eq!(NO_TIMEOUT_METHODS.len(), 6);
     }
 
     #[test]

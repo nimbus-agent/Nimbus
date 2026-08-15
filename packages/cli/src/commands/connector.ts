@@ -1,6 +1,6 @@
 import { confirm, isCancel } from "@clack/prompts";
 
-import { IPCClient } from "../ipc-client/index.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import {
   GOOGLE_OAUTH_CLIENT_ID_HELP,
   MICROSOFT_OAUTH_CLIENT_ID_HELP,
@@ -10,8 +10,12 @@ import {
   SLACK_OAUTH_CLIENT_ID_HELP,
 } from "../lib/connector-oauth-env-help.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
-import { registerAutoApproveConsentHandler } from "../lib/interactive-ipc-handlers.ts";
+import {
+  registerAutoApproveConsentHandler,
+  registerConsentPromptHandler,
+} from "../lib/interactive-ipc-handlers.ts";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
+import { BATCH_RPC_TIMEOUT_MS, createIpcClient } from "../lib/rpc-timeouts.ts";
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
@@ -80,13 +84,14 @@ type ConnectorFlags = {
 async function withIpc<T>(
   fn: (c: IPCClient) => Promise<T>,
   onConnect?: (c: IPCClient) => void,
+  requestTimeoutMs?: number,
 ): Promise<T> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new Error("Gateway is not running. Start with: nimbus start");
   }
-  const client = new IPCClient(state.socketPath);
+  const client = createIpcClient(state.socketPath, requestTimeoutMs);
   await client.connect();
   onConnect?.(client);
   try {
@@ -1093,7 +1098,10 @@ async function runConnectorSync(tail: string[]): Promise<void> {
   } else {
     syncParams = { serviceId: service };
   }
-  await withIpc((c) => c.call("connector.sync", syncParams));
+  // A sync run is awaited end-to-end by the Gateway (`forceSync` settles only when
+  // the job finishes, queue wait included), so this needs the batch budget — on the
+  // 30s default a first full sync reported failure for a sync that then completed.
+  await withIpc((c) => c.call("connector.sync", syncParams), undefined, BATCH_RPC_TIMEOUT_MS);
   const suffix = full === true ? " (full)" : "";
   console.log(`Sync requested: ${service}${suffix}`);
 }
@@ -1196,8 +1204,22 @@ async function runConnectorReindex(args: string[]): Promise<void> {
   }
   const depthIdx = args.indexOf("--depth");
   const depth = depthIdx >= 0 ? (args[depthIdx + 1] ?? "metadata_only") : "metadata_only";
-  const result = await withIpc((c) =>
-    c.call<{ itemsAffected: number; mode: string }>("connector.reindex", { service, depth }),
+  // `--depth full` is HITL-gated (`ipc/reindex-rpc.ts` gates on `connector.reindex`
+  // before doing any work), so this MUST register a `consent.request` handler: the
+  // Gateway blocks on `consent.respond`, and a client that never answers just times
+  // out. Without it `reindex --depth full` failed 100% of the time regardless of
+  // index size — same defect, and same fix, as `connector remove` (#1013).
+  //
+  // The prompt handler is the right one rather than auto-approve: unlike `remove`,
+  // reindex has no `--yes` flag, so no approval has been collected up front and the
+  // user must be the one to answer. The batch budget then covers both the human's
+  // think time at that prompt and the re-walk itself, which the Gateway awaits.
+  const result = await withIpc(
+    (c) => c.call<{ itemsAffected: number; mode: string }>("connector.reindex", { service, depth }),
+    (c) => {
+      registerConsentPromptHandler(c);
+    },
+    BATCH_RPC_TIMEOUT_MS,
   );
   console.log(
     `[ok] ${service} reindex ${result.mode} — ${String(result.itemsAffected)} items affected`,

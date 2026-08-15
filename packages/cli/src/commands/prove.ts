@@ -1,7 +1,8 @@
-import { IPCClient } from "../ipc-client/index.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerConsentPromptHandler } from "../lib/interactive-ipc-handlers.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
+import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
@@ -100,12 +101,12 @@ export function formatProveResult(input: {
   return lines.join("\n");
 }
 
-async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
+async function withIpc<T>(fn: (c: IPCClient) => Promise<T>, requestTimeoutMs?: number): Promise<T> {
   const state = await readGatewayState(getCliPlatformPaths());
   if (state === undefined) {
     throw new Error("Gateway is not running. Start with: nimbus start");
   }
-  const client = new IPCClient(state.socketPath);
+  const client = createIpcClient(state.socketPath, requestTimeoutMs);
   await client.connect();
   try {
     return await fn(client);
@@ -118,13 +119,19 @@ async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
  * Like {@link withIpc} but registers the interactive consent prompt handler first, so an inline
  * `consent.request` (egress.prune's owner-HITL gate, or any HITL action triggered by a proved
  * query) reaches the user as a y/n prompt instead of hanging. Without it the gateway's consent
- * gate would wait indefinitely for an answer the CLI never sends.
+ * gate never receives an answer and the call dies on the client's request timeout.
+ *
+ * That prompt is awaited INSIDE the pending call, so the caller's `requestTimeoutMs` is also the
+ * user's think time — pass a budget sized for a human, not for an RPC.
  */
-async function withConsentIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
+async function withConsentIpc<T>(
+  fn: (c: IPCClient) => Promise<T>,
+  requestTimeoutMs?: number,
+): Promise<T> {
   return withIpc(async (client) => {
     registerConsentPromptHandler(client);
     return fn(client);
-  });
+  }, requestTimeoutMs);
 }
 
 /**
@@ -239,6 +246,8 @@ export async function runEgressReport(
 export async function runProve(args: string[]): Promise<void> {
   const sign = args.includes("--receipt") || args.includes("--sign");
   const query = args.find((a) => !a.startsWith("--"));
+  // `agent.invoke` below is `stream: false`, so unlike `nimbus ask` there are no tokens
+  // already on stdout to salvage: a timeout here loses the whole answer AND the proof.
   await withConsentIpc(async (client) => {
     const since = Date.now();
     if (query !== undefined && query !== "") {
@@ -281,7 +290,7 @@ export async function runProve(args: string[]): Promise<void> {
       // different number over a different scope.
       await runEgressReport(client, { json: false, sign });
     }
-  });
+  }, INTERACTIVE_RPC_TIMEOUT_MS);
 }
 
 /**
@@ -309,7 +318,7 @@ export async function runEgress(args: string[]): Promise<void> {
           ? `[ok] pruned ${String(out.prunedCount)} egress rows (tombstone written)`
           : "[denied] prune not approved — nothing removed",
       );
-    });
+    }, INTERACTIVE_RPC_TIMEOUT_MS);
     return;
   }
   const since = parseSince(args, Date.now());

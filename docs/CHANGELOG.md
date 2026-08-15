@@ -8,6 +8,70 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-15 — blocking CLI commands no longer die on the client's 30s request
+  timeout, and two HITL-gated commands get the consent handler they never had.**
+  `IPCClient` bounds every `call()` with `requestTimeoutMs` (default 30 s), armed at
+  send time and cleared only by the matching response — no notification resets it.
+  That is the right default for the hundreds of RPCs that answer in milliseconds, and
+  the wrong one for two classes of call, **both of which were shipping broken**.
+
+  (1) *The handler awaits the whole operation.* `connector.sync` (the scheduler's
+  `forceSync` settles only when the run finishes, queue wait included),
+  `connector.reindex`, `index.regraph`, `agent.invoke` (`nimbus ask` / `prove` /
+  `repl`), `workflow.run` (both `nimbus run <file>` and `nimbus workflow run`),
+  `data.export`, `data.import` and `updater.applyUpdate`. Past 30 s the CLI printed
+  `IPC request timed out after 30000ms: <method>` and exited 1 **while the operation
+  ran to completion server-side** — so the command reported failure for work that
+  succeeded, and a user who re-ran it queued the work twice. Eleven call sites, none
+  of which passed an options object; `requestTimeoutMs` is a per-CLIENT constructor
+  option, so the budget is opted into per command rather than raised globally, and
+  fast RPCs keep the tight default. New `packages/cli/src/lib/rpc-timeouts.ts` owns
+  the two budgets and the single constructor that applies them.
+
+  (2) *The call blocks on a HUMAN.* The CLI answers the Gateway's `consent.request`
+  from a `@clack` `confirm()` that runs **inside** the still-pending call's window, so
+  the bound doubled as the user's think time — answer the y/n prompt slower than 30 s
+  and the call it belonged to was already dead. This bit regardless of data volume, a
+  one-item index included, and is the failure mode
+  `lib/interactive-ipc-handlers.ts` already documented.
+
+  Two hard bugs found alongside, each a total failure rather than a slow one:
+  **`nimbus connector reindex <svc> --depth full`** is HITL-gated in
+  `ipc/reindex-rpc.ts` but registered no `consent.request` handler at all, so the
+  Gateway's gate never received `consent.respond` and the command failed **100 % of
+  the time** independent of index size — the same defect, and the same fix, as
+  `connector remove` in #1013. **`nimbus workflow run`** registered only the
+  agent-chunk handler, so a HITL step hung to the timeout **without ever showing the
+  user a prompt**; it now uses the same combined helper as its sibling `nimbus run
+  <file>`, which also gives it `NIMBUS_SCRIPT_CONSENT_SOURCE` support. The existing
+  `reindex --depth full` test could not have caught this: its mock resolves `call`
+  immediately and never raises the notification, so it passed while the command was
+  broken.
+
+  A **dead** Gateway never depended on these timers — `IPCClient.failAll` rejects
+  every pending `call()` on socket close or error — so a long budget still fails fast
+  when the socket dies. The timers backstop only a Gateway that is alive and silent,
+  which is why the new budgets are long but **finite**: `requestTimeoutMs: 0` disables
+  the timer outright and restores the hang-forever behaviour the transport's own
+  docblock records it was added to prevent.
+
+  The Tauri bridge had the same gap from the other side: `workflow.run` was in
+  `ALLOWED_METHODS` but not in `NO_TIMEOUT_METHODS`, so the desktop UI aborted the
+  identical call at 30 s; it joins the list (now six, with the count-pinned I7 tests
+  updated).
+
+  **Not** fixed here, and deliberately: the structurally correct end state is to
+  convert these methods to the `LongRunningJobRegistry` `{ jobId }` + notification
+  shape the repo already uses for `index.reembed`/`index.rebody` (and which
+  `commands/glossary.ts` documents this exact 30 s bound as the reason for). That is
+  a larger change with real constraints — `index.regraph` is a clean candidate, but
+  `connector.reindex` is in the I2 HITL frozen set and moving its gate inside the job
+  would return `{ jobId }` before the owner consents, and migrating `ask` to the
+  already-correct `engine.askStream` would drop the `--agent` selector its params do
+  not carry. Until then a timed-out command still leaves non-gated server-side work
+  running with no way to cancel it; HITL-gated steps do fail closed on client
+  disconnect (`ipc/consent.ts`), and that rejection is audit-logged.
+
 - **2026-08-14 — the one-liner install is documented again, and #1167 is closed
   (docs only).** The 2026-08-13 entry below held the `curl | sh` / `irm | iex`
   one-liner back from user-facing docs for two stated reasons; both are now

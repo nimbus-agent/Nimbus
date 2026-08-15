@@ -1,7 +1,8 @@
-import { IPCClient } from "../ipc-client/index.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import { assertDestructiveDeleteAllowed, parseScriptConsentSource } from "../lib/data-helpers.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { selectConsentHandler } from "../lib/interactive-ipc-handlers.ts";
+import { BATCH_RPC_TIMEOUT_MS, createIpcClient } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 export { assertDestructiveDeleteAllowed, parseScriptConsentSource } from "../lib/data-helpers.ts";
@@ -32,7 +33,11 @@ async function withClient<T>(
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) throw new Error("Gateway is not running. Start with: nimbus start");
-  const client = new IPCClient(state.socketPath);
+  // Every `withClient` caller issues a HITL-gated bundle export/import that the
+  // Gateway awaits end to end, and whose consent prompt is answered from inside the
+  // pending call — so the batch budget applies to the whole helper rather than being
+  // opted into per call site.
+  const client = createIpcClient(state.socketPath, BATCH_RPC_TIMEOUT_MS);
   await client.connect();
   selectConsentHandler(client, opts);
   try {

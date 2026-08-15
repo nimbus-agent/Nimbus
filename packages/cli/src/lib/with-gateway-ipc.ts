@@ -1,7 +1,8 @@
-import { IPCClient } from "../ipc-client/index.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { readGatewayState } from "./gateway-process.ts";
+import { createIpcClient } from "./rpc-timeouts.ts";
 
 /**
  * Thrown by `withGatewayIpc` when no gateway is running. A distinct subclass
@@ -19,15 +20,26 @@ export class GatewayNotRunningError extends Error {
   }
 }
 
+export interface WithGatewayIpcOptions {
+  /**
+   * Overrides `IPCClient`'s 30s per-request bound for this client only. Supply one
+   * of the named budgets in `rpc-timeouts.ts` when the call being made is answered
+   * by a Gateway handler that awaits the whole operation, or can block on a HITL
+   * prompt; leave unset for ordinary fast RPCs, which want the tight default.
+   */
+  readonly requestTimeoutMs?: number;
+}
+
 export async function withGatewayIpc<T>(
   fn: (c: IPCClient) => Promise<T>,
   paths: CliPlatformPaths = getCliPlatformPaths(),
+  opts: WithGatewayIpcOptions = {},
 ): Promise<T> {
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new GatewayNotRunningError();
   }
-  const client = new IPCClient(state.socketPath);
+  const client = createIpcClient(state.socketPath, opts.requestTimeoutMs);
   await client.connect();
   try {
     return await fn(client);

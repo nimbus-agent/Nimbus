@@ -4,6 +4,7 @@ import {
   resolveDistributionChannel,
 } from "@nimbus-dev/sdk";
 import type { IPCClient } from "../ipc-client/index.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 export type UpdateArgs = { mode: "check" | "apply"; yes: boolean };
@@ -98,9 +99,16 @@ export async function runUpdate(argv: string[], opts: RunUpdateOptions = {}): Pr
     }
   }
 
-  await withGatewayIpc(async (c) => {
-    await runUpdateApply(c);
-  });
+  // `updater.applyUpdate` downloads, verifies the signature and installs before it
+  // returns — the Tauri bridge already exempts it from its own 30s bound via
+  // NO_TIMEOUT_METHODS; the CLI was still applying one.
+  await withGatewayIpc(
+    async (c) => {
+      await runUpdateApply(c);
+    },
+    undefined,
+    { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS },
+  );
 }
 
 async function readLine(): Promise<string> {

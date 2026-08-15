@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { IPCClient } from "../ipc-client/index.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 type ReembedSummary = {
@@ -507,7 +508,14 @@ type RegraphSummary = { scanned: number; graphed: number; skipped: number };
 
 async function runRegraph(args: string[]): Promise<void> {
   const json = args.includes("--json");
-  const result = await withGatewayIpc((c) => c.call<RegraphSummary>("index.regraph", null));
+  // Unlike `reembed`/`rebody` above, `index.regraph` is NOT job-registry backed: the
+  // handler awaits `regraphAllItems` over every indexed item, so the whole re-walk
+  // happens inside this one call and needs the batch budget.
+  const result = await withGatewayIpc(
+    (c) => c.call<RegraphSummary>("index.regraph", null),
+    undefined,
+    { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS },
+  );
   if (json) {
     console.log(JSON.stringify(result));
   } else {

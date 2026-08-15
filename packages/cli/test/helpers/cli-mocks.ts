@@ -20,6 +20,20 @@ export const FAKE_GATEWAY_STATE_PATH: string = join(FAKE_GATEWAY_ROOT, "fake-gat
  */
 export const fakePath = (name: string): string => join(FAKE_GATEWAY_ROOT, name);
 
+/**
+ * One `new IPCClient(socketPath, opts)` the code under test performed.
+ *
+ * `opts` is what distinguishes a command that opted into a long request budget from
+ * one that silently took the transport's 30s default, so a test asserting a blocking
+ * RPC is not bounded at 30s has to be able to see it. `undefined` means the site
+ * passed no options object at all — which is the pre-fix behaviour, not a synonym
+ * for "default": the two are only equivalent by the transport's own `?? DEFAULT`.
+ */
+export interface RecordedClientConstruction {
+  readonly socketPath: string;
+  readonly opts: { requestTimeoutMs?: number } | undefined;
+}
+
 export interface CliTestFixture {
   gatewayState?: { socketPath: string; pid?: number };
   processAlive?: boolean;
@@ -30,6 +44,12 @@ export interface CliTestFixture {
     disconnect: unknown;
     onNotification?: unknown;
   };
+  /**
+   * Populated by the fake client's constructor when present. Tests that care opt in
+   * by passing an empty array; leaving it unset keeps the fake allocation-free for
+   * the many tests that do not.
+   */
+  clientConstructions?: RecordedClientConstruction[];
 }
 
 declare global {
@@ -67,6 +87,9 @@ export function installCliMocks(): void {
 
   mock.module("../../src/ipc-client/index.ts", () => ({
     IPCClient: class FakeIPCClient {
+      constructor(socketPath: string, opts?: { requestTimeoutMs?: number }) {
+        globalThis.__nimbusCliFixture?.clientConstructions?.push({ socketPath, opts });
+      }
       async connect(): Promise<void> {
         const ipc = globalThis.__nimbusCliFixture?.ipcClient;
         const connectFn = ipc?.connect as (() => Promise<void>) | undefined;

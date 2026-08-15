@@ -1,6 +1,6 @@
-import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
+import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 function parseAskArgs(args: string[]): { rest: string[]; sessionId?: string; agent?: string } {
@@ -62,7 +62,9 @@ export async function runAsk(args: string[]): Promise<void> {
     throw new Error("Gateway is not running. Start with: nimbus start");
   }
 
-  const client = new IPCClient(state.socketPath);
+  // `agent.invoke` below is awaited by the Gateway for the whole run, and the HITL
+  // prompt this client registers is answered from inside that pending call.
+  const client = createIpcClient(state.socketPath, INTERACTIVE_RPC_TIMEOUT_MS);
   await client.connect();
   registerInteractiveCliIpcHandlers(client);
 
