@@ -218,6 +218,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
+          # Read explicitly rather than leaning on the runner's implicit GITHUB_SHA:
+          # this step runs under `set -u`, where an unset name is a hard error.
+          HEAD_SHA: ${{ github.sha }}
           RELEASES_CREATED: ${{ steps.release-please.outputs.releases_created }}
           PRS_CREATED: ${{ steps.release-please.outputs.prs_created }}
           RECONCILED: ${{ steps.reconcile.outputs.reconciled }}
@@ -234,6 +237,49 @@ jobs:
           if [ "${UNACCOUNTED:-0}" -gt 0 ]; then
             echo "::error::${UNACCOUNTED} merged release PR(s) left unaccounted for by the reconcile step above — read its warnings. A tag pointing at the wrong tree must be resolved by hand; tags are immutable (see CLAUDE.md), so the fix is to cut the next version, never to move the tag."
             exit 1
+          fi
+
+          # ANCHOR CHECK — the manifest version must exist as a tag.
+          #
+          # Checked here, ABOVE the commit comparison, because the comparison cannot see this
+          # failure: it baselines off the newest TAG, and the whole problem is that the manifest
+          # has moved on while the tag has not. On the run that started the #1183 -> #1184
+          # outage the merge commit was a `chore: release` — so `facing` was 0 and the guard
+          # exited "release-please correctly produced nothing" a few lines below, while the
+          # manifest had just advanced to a version that was never tagged.
+          #
+          # Why that is fatal rather than cosmetic: release-please finds its place by matching
+          # the manifest version to a tag. With no `v2.5.0` tag to anchor to, the next run
+          # re-walked all 915 commits, regenerated the entire changelog, picked up a months-old
+          # `Release-As:` trailer that only came back into range BECAUSE the anchor was lost,
+          # and wrote the manifest BACKWARDS to 1.12.0 — over a published 2.4.1. Every push
+          # after that failed, and no release could be cut at all.
+          #
+          # Skipped when this run cut or reconciled a release: the tag was created moments ago
+          # and a read issued seconds after a write can still miss it (the same race documented
+          # for `prs_created` below). Those two outputs come straight back from the action, so
+          # they cannot race with themselves.
+          if [ "${RELEASES_CREATED:-false}" != "true" ] && [ "${RECONCILED:-false}" != "true" ]; then
+            manifest_ver=$(gh api "repos/${REPO}/contents/.release-please-manifest.json?ref=${HEAD_SHA}" \
+                             --jq '.content' | tr -d '\n' | base64 -d | jq -r '."."')
+            if [ -z "$manifest_ver" ] || [ "$manifest_ver" = "null" ]; then
+              echo "::error::could not read the manifest version at ${HEAD_SHA}; refusing to guess."
+              exit 1
+            fi
+            set +e
+            tag_out=$(gh api "repos/${REPO}/git/ref/tags/v${manifest_ver}" 2>&1)
+            tag_rc=$?
+            set -e
+            if [ "$tag_rc" -ne 0 ]; then
+              if grep -qi 'not found' <<<"$tag_out"; then
+                echo "::error::the manifest declares ${manifest_ver} but tag v${manifest_ver} does not exist — a release was consumed without being cut. release-please has lost its anchor and the NEXT run will re-walk the whole history."
+                echo "::error::Do NOT create the tag by hand to silence this, and do NOT add a Release-As: trailer. Reconcile the manifest to the newest tag that IS published (see CLAUDE.md on immutable tags), then let the next user-facing commit cut the following version."
+              else
+                echo "::error::could not verify tag v${manifest_ver}, refusing to guess: ${tag_out}"
+              fi
+              exit 1
+            fi
+            echo "Anchor ok: manifest ${manifest_ver} has tag v${manifest_ver}."
           fi
 
           # Baseline off the newest `vX.Y.Z` TAG, not `releases/latest`. The tag is what marks
