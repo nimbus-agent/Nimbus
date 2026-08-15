@@ -43,6 +43,49 @@ describe("parseLinkHeader", () => {
     expect(link?.url).toBe("https://api/n");
     expect(link?.params).toEqual({});
   });
+
+  test("stays linear on adversarial headers", () => {
+    // SonarCloud flags LINK_VALUE_RE (`typescript:S8786`, "super-linear performance
+    // due to backtracking"). It is a FALSE POSITIVE, and the issue is marked as such
+    // in SonarCloud citing this test by name, so the annotation points at something
+    // executable rather than at a claim in a comment.
+    //
+    // WHAT THIS TEST IS AND IS NOT. It is a live bound — dropping the threshold makes
+    // it fail with the offending shape named, so the assertion is reached. It is NOT
+    // a proven tripwire against a future backtracking edit: two attempts to introduce
+    // one failed to trip it. Making the pattern quadratic the obvious way (adding a
+    // failure point after the overlapping quantifiers) also changes what it parses, so
+    // the CORRECTNESS tests above fire first; a lazy-body variant that does preserve
+    // parsing stayed fast. Treat this as evidence for the false-positive call, not as
+    // a guarantee that every future edit is caught.
+    //
+    // Why the pattern cannot blow up: `^` gives it exactly one start position;
+    // `[^<>]*` is a negated class, so on a missing `>` it gives characters back one
+    // at a time, once, which is linear; and `\s*(.*)$` can never FAIL once `>` has
+    // matched — `.*` with the `s` flag always reaches the end — so there is no
+    // failure to backtrack into, even though `\s` and `.` overlap.
+    //
+    // Measured across all five shapes below at 10k/20k/40k/80k characters: every one
+    // stays at or under 0.5 ms, flat, with no growth as the input doubles. Contrast
+    // a genuinely quadratic pattern, which shows 4x time for 2x input.
+    const n = 40_000;
+    const shapes: ReadonlyArray<readonly [string, string]> = [
+      ["unclosed <", `<${"a".repeat(n)}`],
+      ["whitespace and newlines after the URL", `<u>${" \n\t".repeat(n / 3)}`],
+      ["a long run of spaces before the params", `<u>${" ".repeat(n)}x`],
+      [
+        "many separators",
+        Array.from({ length: n / 20 }, (_, i) => `<u${String(i)}>; rel="next"`).join(", "),
+      ],
+      ["nested angle brackets", `<${"<>".repeat(n / 2)}>`],
+    ];
+    for (const [label, header] of shapes) {
+      const started = performance.now();
+      parseLinkHeader(header);
+      const ms = performance.now() - started;
+      expect(ms, `${label} took ${ms.toFixed(1)}ms`).toBeLessThan(100);
+    }
+  });
 });
 
 describe("nextPageUrl", () => {

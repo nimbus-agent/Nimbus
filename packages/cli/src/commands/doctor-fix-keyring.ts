@@ -92,7 +92,7 @@ function buildFixScript(): string {
     "# Newline-terminated (blank) password on stdin. A truly empty stdin was",
     "# tested and always fails: the directory is created but login.keyring is",
     "# never written, and the daemon falls through to prompting.",
-    'printf "\\n" | gnome-keyring-daemon --unlock --components=secrets >/dev/null 2>&1',
+    String.raw`printf "\n" | gnome-keyring-daemon --unlock --components=secrets >/dev/null 2>&1`,
     "",
     "# Load-bearing: poll ownership of org.freedesktop.secrets on the session",
     "# bus before touching Secret Service. Waiting on file existence instead",
@@ -280,8 +280,6 @@ export function fixKeyring(deps: FixKeyringDeps, opts: { dryRun: boolean }): Fix
 
   lines.push(
     "[ok] --fix-keyring: keyring created and unlocked; verified with a live secret-tool store+lookup round-trip.",
-  );
-  lines.push(
     "Note: every future `nimbus start` still needs to run inside its own D-Bus session/unlock " +
       "(e.g. dbus-run-session -- bash -c 'echo \"\" | gnome-keyring-daemon --unlock --components=secrets; nimbus start') " +
       "— this command only removed the from-scratch creation race, not the ongoing session requirement.",

@@ -219,7 +219,7 @@ describe("proveWindow — the count is not a page", () => {
 
     expect(out.completeness.outboundEgressEvents).toBe(total);
     // The page itself stays bounded — that is deliberate, it crosses IPC.
-    expect(out.rows.length).toBe(PAGE);
+    expect(out.rows).toHaveLength(PAGE);
     // ...but it must announce that it is a page, not the window.
     expect(out.rowsTruncated).toBe(true);
     expect(out.rowsTotal).toBe(total + 1); // + the boot marker row
