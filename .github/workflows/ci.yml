@@ -400,10 +400,20 @@ jobs:
       - name: Detect code duplication (jscpd)
         # Reads .jscpd.json (min-lines 5 / min-tokens 50 / shared ignore set) so
         # the local `audit:duplication` script and CI measure identically. The
-        # threshold there is a RATCHET pinned just above the current strict
-        # duplication (~4.41% after the Stage-A/B + big-PR extraction program) —
-        # it fails on regression and is lowered as further dedup lands; the
-        # standing target remains < 3%. See docs/superpowers/specs/2026-06-17-jscpd-big-dedup-design.md.
+        # threshold there is a RATCHET: it fails on regression and is lowered as
+        # further dedup lands; the standing target remains < 3%.
+        #
+        # Current numbers, measured — the previous note here said "~4.41%", which
+        # matched neither the threshold nor the duplication:
+        #   threshold  4%   (.jscpd.json)
+        #   actual     3.48% duplicated LINES (6,122 of 176k) across 600 clones
+        # so there is 0.52pp of slack, not "just above".
+        #
+        # The threshold gates the LINE percentage, NOT the token percentage —
+        # which matters, because the token figure (4.19%) is ABOVE the threshold
+        # and reading the wrong column suggests this job should be failing.
+        # Verified by bisecting the config: threshold 3.6 passes, 3.4 fails.
+        # See docs/superpowers/specs/2026-06-17-jscpd-big-dedup-design.md.
         run: bunx jscpd packages
 
   # Structure audit — D1/D2/D3 boundaries, D8 any-count ratchet, D10/D11
