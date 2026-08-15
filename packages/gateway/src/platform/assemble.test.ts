@@ -11,7 +11,12 @@ import { coverageForWindow } from "../egress/egress-verify.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { Syncable } from "../sync/types.ts";
-import { appendBootMarkerOrWarn, assemblePlatformServices, httpOriginFor } from "./assemble.ts";
+import {
+  appendBootMarkerOrWarn,
+  assemblePlatformServices,
+  createUnimplementedNotifications,
+  httpOriginFor,
+} from "./assemble.ts";
 import { processEnvSet } from "./env-access.ts";
 import type { PlatformPaths } from "./paths.ts";
 import type { PlatformServices } from "./types.ts";
@@ -91,6 +96,47 @@ describe("appendBootMarkerOrWarn", () => {
 // Task 11: the one `http:` exception source for `POST /v1/items/fetch`. Unit-tested directly
 // against a fake Vault — the property under test (return the parsed `.origin`, never the raw
 // secret; fail closed on anything but `http:`) is orthogonal to the full gateway boot above.
+describe("createUnimplementedNotifications", () => {
+  function capture(): {
+    infoCalls: unknown[][];
+    logger: Parameters<typeof createUnimplementedNotifications>[0];
+  } {
+    const infoCalls: unknown[][] = [];
+    const logger = {
+      info: (...args: unknown[]) => void infoCalls.push(args),
+    } as unknown as Parameters<typeof createUnimplementedNotifications>[0];
+    return { infoCalls, logger };
+  }
+
+  it("logs the dropped notification instead of silently discarding it", async () => {
+    const { infoCalls, logger } = capture();
+    await createUnimplementedNotifications(logger).show("Nimbus watcher", "pagerduty: db down");
+    expect(infoCalls).toHaveLength(1);
+    expect(infoCalls[0]?.[0]).toMatchObject({
+      event: "notification.dropped",
+      title: "Nimbus watcher",
+    });
+  });
+
+  it("never logs the BODY — watcher bodies carry indexed item titles", async () => {
+    // `fired.summary` interpolates `${service}: ${item title}` straight from the index,
+    // so logging the body would write indexed content into logDir. `gateway-log-redact`
+    // scrubs secrets, not arbitrary indexed text, and is no backstop here.
+    const { infoCalls, logger } = capture();
+    const body = "pagerduty: Customer PII export failed for acme-corp";
+    await createUnimplementedNotifications(logger).show("Nimbus watcher", body);
+    expect(JSON.stringify(infoCalls)).not.toContain("acme-corp");
+    expect(JSON.stringify(infoCalls)).not.toContain(body);
+  });
+
+  it("resolves rather than throwing, so a producer's `void notify(...)` cannot reject", async () => {
+    const { logger } = capture();
+    await expect(
+      createUnimplementedNotifications(logger).show("Nimbus sync failed", "github"),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe("httpOriginFor", () => {
   it("returns the LOWERCASED, no-trailing-slash origin for a self-hosted http: secret", async () => {
     const vault = makeInMemoryVault();

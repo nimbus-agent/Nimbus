@@ -81,10 +81,22 @@ The resulting watcher record stored in the index looks like this:
 
 1. The watcher engine detects a new `alert` item from PagerDuty whose
    `modified_at` is newer than `last_checked_at`.
-2. A tray notification pops: `"Nimbus watcher — pagerduty-critical: pagerduty: <alert title>"`.
-3. A row is inserted into `watcher_event` containing the condition snapshot
+2. A row is inserted into `watcher_event` containing the condition snapshot
    (the matching alert ids + the raw condition JSON) and the action result.
-4. `last_fired_at` is updated on the watcher row.
+3. `last_fired_at` is updated on the watcher row.
+
+:::caution[No notification is pushed to you]
+A fire is **recorded**, not **announced**. Nimbus has no OS-notification delivery on
+any platform — `NotificationService.show()` is an unimplemented no-op, so nothing pops
+up, and watcher alerts are not routed to Slack or Teams either. A fire reaches you only
+when you go looking for it: `nimbus watch list` (the `last_fired_at` field), the
+`watcher.listHistory` IPC method, or the desktop app's per-watcher history drawer — the
+last of which is code-complete but ships in no released binary today.
+
+The event data itself is never lost; it is committed to `watcher_event` before the
+notification would have been sent. See the "OS notification delivery" row in
+[`docs/ecosystem-roadmap.md`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/ecosystem-roadmap.md).
+:::
 
 ---
 
@@ -188,10 +200,11 @@ records:
 - `condition_snapshot` — JSON of the matching items and the condition
 - `action_result` — JSON result of the action (e.g. `{"ok":true}`)
 
-The Tauri Watchers panel shows a history drawer per watcher with the last N
-fires including the full payload. The `nimbus connector history` CLI command
-surfaces connector-level sync history; a dedicated `nimbus watch history`
-subcommand is forthcoming.
+The Tauri Watchers panel has a history drawer per watcher showing the last N fires
+including the full payload — code-complete, but the desktop app ships in no released
+binary yet, so today this table is reachable through the `watcher.listHistory` IPC
+method. The `nimbus connector history` CLI command surfaces connector-level sync
+history; a dedicated `nimbus watch history` subcommand is forthcoming.
 
 ---
 

@@ -8,6 +8,58 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-15 — OS notifications are documented as unimplemented instead of
+  advertised as working, the drop is logged, and the TUI watcher pane renders again.**
+  `NotificationService.show()` has exactly one implementation in the tree — an empty
+  async function — and `win32.ts`, `darwin.ts` and `linux.ts` all delegate to the same
+  assembler, so it is a no-op on **every** platform with no per-platform variant to
+  find. That was a known, sized deferral (`docs/ecosystem-roadmap.md`), but three
+  places asserted otherwise, and one real bug sat next to it.
+
+  What was **not** true, and is worth stating precisely because the opposite is easy to
+  assume: **no alert is lost.** All three producers — repeated sync failure, connector
+  auth loss, and a watcher fire — write durable state *before* they call `show()`. A
+  fire is persisted by `insertWatcherEvent` + `updateWatcherLastFired` one statement
+  ahead of the notify; auth loss by `transitionHealth` into `sync_state.health_state`,
+  `last_error` and a `connector_health_history` row. Both then surface through
+  `nimbus connector list`/`status`/`history`, `nimbus doctor`, the TUI, the Tauri tray
+  and agent `connectorHealthCaveat` strings. The gap is the unattended **push**
+  channel, not the data — a reachability defect, not a data-loss one.
+
+  Corrected: `user-guide/watchers.mdx` claimed "a tray notification pops" as step 2 of
+  what happens when a watcher fires — deleted, and replaced with a note stating that a
+  fire is recorded rather than announced and naming the surfaces that do show it. Its
+  history-drawer paragraph now says the drawer is code-complete but ships in no
+  released binary. `roadmap.md`'s 401/403 row keeps its checkbox (the typed error,
+  `transitionHealth` and every read surface genuinely shipped) with "+ notification UX"
+  and "one-shot CLI notification" struck, since that half is inert. `roadmap.md`'s
+  **"Notification routing"** row is **unchecked**: the `namespaceNotify` `ReplyTarget`
+  and its dispatcher branch exist, but `makeChatopsWatcherNotify` — the only producer
+  that would drive a watcher alert into them — has **zero production callers**, and its
+  docblock claimed it "composes with the existing IPC-notify callback at the wiring
+  site (both are called)", describing a wiring site that has never existed. That
+  comment now says so. It is deliberately **not** wired here: doing so makes a path
+  that emits nothing today start posting outbound, which is I23 (and plausibly I29)
+  territory and needs the triple-rule, not an incidental hookup.
+
+  The stub is renamed `createUnimplementedNotifications` and now logs
+  `notification.dropped` with the **title only** — never the body, because watcher
+  bodies interpolate `fired.summary` (`${service}: ${item title}`) straight from the
+  index, and `gateway-log-redact.ts` scrubs secrets rather than arbitrary indexed
+  content. A test pins that the body never reaches the log.
+
+  **Bug fixed alongside:** the TUI's `WatcherPane` declared rows as
+  `{ id, name, active, firing }` and unwrapped the response with `Array.isArray`.
+  Neither matched the Gateway — `watcher.list` returns `{ watchers: [...] }`, and
+  `listWatchers` selects the table's own `enabled` / `last_fired_at` columns;
+  `active`/`firing` have never existed on the wire. The guard therefore always
+  rejected and the pane rendered **"No watchers configured" no matter how many
+  watchers were running**. Its test could not catch this: it stubbed a bare array
+  carrying the invented fields, so the fake agreed with the component instead of with
+  the Gateway. Both are fixed, and "firing" is now an explicit, documented derivation —
+  fired within `WATCHER_RECENT_FIRE_WINDOW_MS` (15 min), chosen because
+  `last_fired_at` records a *completed* fire and a window equal to the 30 s poll
+  interval would surface one for at most a single refresh.
 - **2026-08-15 — blocking CLI commands no longer die on the client's 30s request
   timeout, and two HITL-gated commands get the consent handler they never had.**
   `IPCClient` bounds every `call()` with `requestTimeoutMs` (default 30 s), armed at

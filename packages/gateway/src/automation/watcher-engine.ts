@@ -251,9 +251,22 @@ export interface ChatopsWatcherNotifyDeps {
 }
 
 /**
- * Build a watcher `notify(title, body)` callback that also routes to a ChatOps notify channel
- * (Slice 5). Composes with the existing IPC-notify callback at the wiring site (both are called);
- * when no namespace maps, this is a no-op (local-only watcher).
+ * Build a watcher `notify(title, body)` callback that routes to a ChatOps notify channel
+ * (Slice 5). When no namespace maps, this is a no-op (local-only watcher).
+ *
+ * NOT WIRED. This function has no production caller — only its own unit test. Every
+ * watcher-notify callsite in `platform/assemble.ts` passes `notifications.show` alone,
+ * so watcher alerts do not reach Slack/Teams today. An earlier version of this comment
+ * claimed it "composes with the existing IPC-notify callback at the wiring site (both
+ * are called)", describing a wiring site that has never existed.
+ *
+ * Kept rather than deleted because it is the seam the feature lands on, but wiring it
+ * is NOT a one-liner: it would make a code path that emits nothing today start posting
+ * outbound to a channel, which puts it under I23 (ChatOps posts go only through
+ * `reply-dispatcher.ts` to a server-derived `ReplyTarget`) and plausibly I29 (egress
+ * ledger). That needs the invariant triple-rule — wiring + docs + enforcement test in
+ * one commit — not an incidental hookup. The corresponding `docs/roadmap.md`
+ * "Notification routing" row is unchecked to match.
  */
 export function makeChatopsWatcherNotify(
   deps: ChatopsWatcherNotifyDeps,

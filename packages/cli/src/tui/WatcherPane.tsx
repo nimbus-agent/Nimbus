@@ -1,15 +1,30 @@
 import { Box, Text } from "ink";
 import type React from "react";
 
-import { STATUS_POLL_INTERVAL_MS, WATCHER_PANE_NAME_LIMIT } from "./constants.ts";
+import {
+  STATUS_POLL_INTERVAL_MS,
+  WATCHER_PANE_NAME_LIMIT,
+  WATCHER_RECENT_FIRE_WINDOW_MS,
+} from "./constants.ts";
 import type { TuiMode } from "./state.ts";
 import { useIpcPoll } from "./useIpcPoll.ts";
 
+/**
+ * A row as `watcher.list` actually returns it.
+ *
+ * This pane previously declared `{ id, name, active: boolean, firing: boolean }` and
+ * unwrapped the response with `Array.isArray`. Neither matched the Gateway: the handler
+ * returns `{ watchers: [...] }`, not a bare array, and `listWatchers` selects the
+ * `watcher` table's own columns — `enabled` (0/1) and `last_fired_at` (epoch ms or
+ * null). `active`/`firing` are derived here; they have never existed on the wire. The
+ * result was that the guard always rejected and the pane always rendered "No watchers
+ * configured", however many watchers were running.
+ */
 interface WatcherRow {
   id: string;
   name: string;
-  active: boolean;
-  firing: boolean;
+  enabled: number;
+  last_fired_at: number | null;
 }
 
 function isWatcherRow(row: unknown): row is WatcherRow {
@@ -20,13 +35,28 @@ function isWatcherRow(row: unknown): row is WatcherRow {
   return (
     typeof r["id"] === "string" &&
     typeof r["name"] === "string" &&
-    typeof r["active"] === "boolean" &&
-    typeof r["firing"] === "boolean"
+    typeof r["enabled"] === "number" &&
+    (r["last_fired_at"] === null || typeof r["last_fired_at"] === "number")
   );
 }
 
-function isWatcherList(data: unknown): data is WatcherRow[] {
-  return Array.isArray(data) && data.every(isWatcherRow);
+/** Unwrap the `{ watchers: [...] }` envelope `watcher.list` returns. */
+function watcherRowsOf(data: unknown): WatcherRow[] {
+  if (typeof data !== "object" || data === null) {
+    return [];
+  }
+  const rows = (data as Record<string, unknown>)["watchers"];
+  return Array.isArray(rows) && rows.every(isWatcherRow) ? rows : [];
+}
+
+/**
+ * "Firing" is a derived, time-boxed view: a watcher that fired within
+ * {@link WATCHER_RECENT_FIRE_WINDOW_MS}. There is no `firing` flag on the wire and no
+ * notion of an in-progress fire to read — `last_fired_at` records a completed one — so
+ * the pane reports recency, which is what a status pane can honestly show.
+ */
+function isRecentlyFired(row: WatcherRow, now: number): boolean {
+  return row.last_fired_at !== null && now - row.last_fired_at <= WATCHER_RECENT_FIRE_WINDOW_MS;
 }
 
 interface WatcherPaneProps {
@@ -35,9 +65,10 @@ interface WatcherPaneProps {
 
 export function WatcherPane({ mode }: WatcherPaneProps): React.JSX.Element {
   const poll = useIpcPoll<unknown>("watcher.list", STATUS_POLL_INTERVAL_MS, mode);
-  const rows = isWatcherList(poll.data) ? poll.data : [];
-  const active = rows.filter((r) => r.active).length;
-  const firing = rows.filter((r) => r.firing);
+  const rows = watcherRowsOf(poll.data);
+  const now = Date.now();
+  const active = rows.filter((r) => r.enabled === 1).length;
+  const firing = rows.filter((r) => isRecentlyFired(r, now));
   const shown = firing.slice(0, WATCHER_PANE_NAME_LIMIT);
   const extra = firing.length - shown.length;
 

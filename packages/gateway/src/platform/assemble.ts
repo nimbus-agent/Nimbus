@@ -254,9 +254,37 @@ function createStubAutostart(): AutostartManager {
   };
 }
 
-function createStubNotifications(): NotificationService {
+/**
+ * The ONLY `NotificationService` implementation in the tree: OS notification delivery
+ * is **not implemented on any platform**. `win32.ts`, `darwin.ts` and `linux.ts` all
+ * delegate to `assemblePlatformServices`, so this no-op is what every install runs —
+ * there is no per-platform variant to find. Tracked in `docs/ecosystem-roadmap.md`
+ * ("OS notification delivery", effort S per platform).
+ *
+ * What this does NOT mean: no alert is lost. All three producers — repeated sync
+ * failure, connector auth loss, and a watcher fire — write durable state BEFORE they
+ * call `show()`. A fire is persisted by `insertWatcherEvent` + `updateWatcherLastFired`
+ * one statement ahead of the notify; auth loss is persisted by `transitionHealth` to
+ * `sync_state.health_state`, `last_error` and a `connector_health_history` row. Both
+ * then surface through `nimbus connector list`/`status`/`history`, `nimbus doctor`, the
+ * TUI, the Tauri tray, and agent `connectorHealthCaveat` strings. What is missing is
+ * the unattended PUSH channel, not the data.
+ *
+ * The log line makes the gap observable instead of silent. It logs the TITLE ONLY, and
+ * deliberately not the body: watcher bodies interpolate `fired.summary`
+ * (`${service}: ${item title}`) straight from the index, so logging them would write
+ * indexed item titles into `logDir`. `gateway-log-redact.ts` scrubs secrets, not
+ * arbitrary indexed content, so it is not a backstop here. The three titles are fixed
+ * strings and carry the full signal.
+ */
+export function createUnimplementedNotifications(logger: Logger): NotificationService {
   return {
-    async show(_title: string, _body: string): Promise<void> {},
+    async show(title: string, _body: string): Promise<void> {
+      logger.info(
+        { event: "notification.dropped", title },
+        "OS notification not delivered (no platform implementation); the underlying event is still persisted and readable",
+      );
+    },
   };
 }
 
@@ -2189,7 +2217,7 @@ export async function assemblePlatformServices(
   // so egress_ledger (V44) exists. Non-fatal on failure (see `appendBootMarkerOrWarn`) — a corrupted
   // or locked ledger degrades proofs to `indeterminate`, it does not stop the gateway from booting.
   appendBootMarkerOrWarn(db, THIS_BINARY_COVERAGE, Date.now(), syncLogger);
-  const notifications = createStubNotifications();
+  const notifications = createUnimplementedNotifications(syncLogger);
   const rateLimiter = new ProviderRateLimiter();
   const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
   const sessionToml = loadNimbusSessionFromPath(activeTomlPath);

@@ -16,4 +16,16 @@ export const PROGRESS_BAR_WIDTH = 5;
 
 export const WATCHER_PANE_NAME_LIMIT = 5;
 
+/**
+ * How recently a watcher must have fired to count as "firing" in the status pane.
+ *
+ * Deliberately much longer than {@link STATUS_POLL_INTERVAL_MS}: a fire is a discrete,
+ * infrequent event, and `watcher.list` exposes only `last_fired_at` (a completed fire),
+ * so a window equal to the poll interval would surface a fire for at most one refresh —
+ * often zero, depending on where it landed relative to the tick. Fifteen minutes makes
+ * "N firing" mean "N fired recently", which is both useful and what the pane can
+ * honestly derive.
+ */
+export const WATCHER_RECENT_FIRE_WINDOW_MS = 15 * 60_000;
+
 export const SUBTASK_PANE_ROW_LIMIT = 8;
