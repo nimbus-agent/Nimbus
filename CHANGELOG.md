@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.4.4](https://github.com/nimbus-agent/Nimbus/compare/v2.4.3...v2.4.4) (2026-08-15)
+
+
+### Bug Fixes
+
+* **sonar:** resolve the six minor findings and annotate the S8786 false positive ([#1206](https://github.com/nimbus-agent/Nimbus/issues/1206)) ([fa65d95](https://github.com/nimbus-agent/Nimbus/commit/fa65d957c46ff46354f8c17d9d37cf4d13957c19))
+* **tui:** render the watcher pane, and stop claiming OS notifications work ([#1204](https://github.com/nimbus-agent/Nimbus/issues/1204)) ([78cb49b](https://github.com/nimbus-agent/Nimbus/commit/78cb49b0b8242e8ce56245c4454cc6e49c507244))
+
 ## [2.4.3](https://github.com/nimbus-agent/Nimbus/compare/v2.4.2...v2.4.3) (2026-08-15)
 
 
