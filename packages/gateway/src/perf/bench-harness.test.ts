@@ -132,4 +132,12 @@ describe("poolTrimmedSamples", () => {
     expect(pooled).not.toContain(100_000);
     expect(pooled).toHaveLength(400);
   });
+
+  test("returns empty array when passed an empty array", () => {
+    expect(poolTrimmedSamples([])).toEqual([]);
+  });
+
+  test("returns empty array when passed only empty arrays", () => {
+    expect(poolTrimmedSamples([[], [], []])).toEqual([]);
+  });
 });
