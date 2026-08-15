@@ -18,6 +18,19 @@ export interface BuildReadOnlyMcpConnectorOptions {
   readonly createServer?: (info: { readonly name: string; readonly version: string }) => unknown;
 }
 
+/**
+ * `createTransport` mirrors the existing `createServer` seam. Without it the
+ * stdio transport was constructed inline, so `runReadOnlyMcpConnector` — the
+ * function every connector's entry point actually calls — could not be executed
+ * from a test at all: it would have opened a real stdio transport on the test
+ * process. That left the wiring between server and transport asserted nowhere.
+ *
+ * Production callers pass nothing and get the real `StdioServerTransport`.
+ */
+export interface RunReadOnlyMcpConnectorOptions extends BuildReadOnlyMcpConnectorOptions {
+  readonly createTransport?: () => unknown;
+}
+
 export function buildReadOnlyMcpConnector(
   serverName: string,
   register: (reg: ZodToolRegistrar) => void,
@@ -33,8 +46,9 @@ export function buildReadOnlyMcpConnector(
 export async function runReadOnlyMcpConnector(
   serverName: string,
   register: (reg: ZodToolRegistrar) => void,
+  options?: RunReadOnlyMcpConnectorOptions,
 ): Promise<void> {
-  const mcp = buildReadOnlyMcpConnector(serverName, register) as McpServer;
-  const transport = new StdioServerTransport();
-  await mcp.connect(transport);
+  const mcp = buildReadOnlyMcpConnector(serverName, register, options) as McpServer;
+  const makeTransport = options?.createTransport ?? ((): unknown => new StdioServerTransport());
+  await mcp.connect(makeTransport() as StdioServerTransport);
 }
