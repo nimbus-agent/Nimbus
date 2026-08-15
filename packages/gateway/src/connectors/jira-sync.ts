@@ -351,7 +351,7 @@ function jiraIssueDerivedFromFields(
 
 /**
  * The shared ticket-depth metadata contract (see
- * `docs/superpowers/specs/2026-08-07-ticket-depth-jira-linear-design.md`).
+ * `git show e4828bcd:docs/superpowers/specs/2026-08-07-ticket-depth-jira-linear-design.md`).
  * Linear's mapper writes the SAME key names, so no consumer branches on
  * service. A field the API did not supply omits its key entirely.
  */

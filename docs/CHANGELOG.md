@@ -913,9 +913,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
     `nimbus-egress` skill all now state that D22 confines the literal string `connectors.dispatch`
     to `executor.ts` and `appendEgressEntry` to `egress/*` — not that no wrapper/façade/raw-execute
     path can exist. No new invariant; I29/D22 unchanged in number and continue to enforce what they
-    always enforced. Spec: [`docs/superpowers/specs/2026-08-02-i29-d22-egress-completeness-design.md`](./superpowers/specs/2026-08-02-i29-d22-egress-completeness-design.md)
-    (security spec of record; Phases 2–5 remain unbuilt), plus the `fetch`-modality annex
-    [`docs/superpowers/specs/2026-08-03-i29-ledger-completeness-design.md`](./superpowers/specs/2026-08-03-i29-ledger-completeness-design.md).
+    always enforced. Spec (security spec of record; Phases 2–5 remain unbuilt):
+    `git show e4828bcd:docs/superpowers/specs/2026-08-02-i29-d22-egress-completeness-design.md`,
+    plus the `fetch`-modality annex
+    `git show e4828bcd:docs/superpowers/specs/2026-08-03-i29-ledger-completeness-design.md`.
   - **Fix wave, same day — five residual findings from the final whole-branch review:**
     - **`tier: "authorized-actions"` is back, additively, as a deprecated cross-repo compat shim.**
       Dropping it outright breaks the published `@nimbus-dev/client@0.15.0`'s

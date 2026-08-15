@@ -14,7 +14,7 @@ import type { DoctorVaultExec } from "./doctor-core.ts";
 // existence (which still raced 1/15) and not by hand-authoring keyring file
 // content (`gnome-keyring-daemon` writes `login.keyring` + `user.keystore`
 // itself, at 0600, with zero manual authoring needed). See
-// `docs/superpowers/plans/2026-08-13-installer-download-capability.md` Task 8
+// `git show e4828bcd:docs/superpowers/plans/2026-08-13-installer-download-capability.md` Task 8
 // for the full trial data this sequence is transcribed from — later changes
 // to the sequence below must stay consistent with that record.
 //

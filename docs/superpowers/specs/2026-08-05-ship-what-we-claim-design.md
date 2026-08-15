@@ -1,7 +1,13 @@
 # What We Ship Is What We Claim — Design
 
 **Date:** 2026-08-05
-**Status:** Approved, ready for planning
+**Status:** PARTIALLY DELIVERED — **PR 1 and PR 2 have shipped; PR 3 has not.**
+This document is retained for PR 3 (docs subtraction + the status-drift scanner), which is the only
+written spec for that work. Its PR 1 / PR 2 sections describe code that already exists — read them
+as a record, not as a plan. The implementation plans for PR 1 and PR 2 were deleted once delivered;
+recover them with
+`git show e4828bcd:docs/superpowers/plans/2026-08-05-ship-what-we-claim-pr1.md` and
+`git show e4828bcd:docs/superpowers/plans/2026-08-06-ship-what-we-claim-pr2.md`.
 **Cluster:** Ecosystem roadmap cluster 1 (`docs/ecosystem-roadmap.md` § The eleven clusters)
 **Branch:** `dev/asaf/ship-what-we-claim`
 

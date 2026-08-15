@@ -1,6 +1,10 @@
 # GitHub Contribution Depth — Design
 
 **Date:** 2026-08-11
+**Status:** PARTIALLY DELIVERED — **PR 1 has shipped (#1159); PR 2 (search backfill) has not.**
+This document is retained for PR 2, which is the only written spec for it. PR 1's sections describe
+code that already exists. PR 1's implementation plan was deleted once delivered; recover it with
+`git show e4828bcd:docs/superpowers/plans/2026-08-11-github-contribution-depth-pr1.md`.
 **Spine slot:** S1 (Local Brain)
 **Position:** sub-project A/B of the `nimbus negotiate` workstream — the first of five substrate
 pieces, ahead of the agent itself.
