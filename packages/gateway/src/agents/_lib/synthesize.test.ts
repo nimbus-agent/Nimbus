@@ -339,6 +339,17 @@ describe("no-LLM labelling", () => {
     expect(out).toContain("Rendered deterministically");
   });
 
+  test("the footer does not tell the user to configure an LLM", async () => {
+    // It used to, and that was unactionable: both production callers of
+    // `dispatchAgentsRpc` omit `llm`, so every built-in brief takes this path no matter
+    // what `[llm]` says. Confirmed live — with `local_model` + `prefer_local` set and
+    // Ollama running (a config `nimbus ask` used successfully), `nimbus why` still
+    // printed the old text.
+    const out = await synthesize(EXPERT_FIXTURE);
+    expect(out).not.toMatch(/configure an LLM/i);
+    expect(out).toContain("regardless of");
+  });
+
   test("an LLM-backed render carries no such footer", async () => {
     const out = await synthesize(EXPERT_FIXTURE, {
       llm: { generateMarkdown: mock(async () => "# polished") },

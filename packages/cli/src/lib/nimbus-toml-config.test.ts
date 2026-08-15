@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -250,5 +250,31 @@ describe("setTomlValueInFile", () => {
     expect(otherStart).toBeGreaterThan(llmStart);
     expect(newKey).toBeGreaterThan(llmStart);
     expect(newKey).toBeLessThan(otherStart);
+  });
+
+  test("creates the config directory when it does not exist yet (fresh machine)", () => {
+    // The install guide runs `nimbus config set llm.local_model …` BEFORE
+    // "Start the Gateway", so on a new machine nothing has created the config
+    // directory yet. Without the mkdir this threw
+    // `ENOENT: ... mkdtemp '<configDir>/.nimbus.toml.swap-XXXXXX'` — an error naming a
+    // swap file the user never asked for, from the very first documented setup command.
+    // Found by running that documented sequence against a real gateway, not by a test.
+    const freshDir = join(dir, "does", "not", "exist", "yet");
+    const freshPath = join(freshDir, "nimbus.toml");
+    expect(existsSync(freshDir)).toBe(false);
+
+    setTomlValueInFile(freshPath, "llm.local_model", "llama3.2");
+
+    expect(existsSync(freshPath)).toBe(true);
+    expect(readFileSync(freshPath, "utf8")).toContain(`local_model = "llama3.2"`);
+  });
+
+  test("leaves an existing config directory and its other files alone", () => {
+    // The mkdir is recursive and therefore idempotent; prove it does not disturb a
+    // directory that already holds unrelated state.
+    const sibling = join(dir, "unrelated.txt");
+    writeFileSync(sibling, "keep me");
+    setTomlValueInFile(tomlPath, "llm.remote_model", "sonnet");
+    expect(readFileSync(sibling, "utf8")).toBe("keep me");
   });
 });

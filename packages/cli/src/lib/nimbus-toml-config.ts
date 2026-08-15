@@ -1,4 +1,5 @@
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   renameSync,
@@ -63,6 +64,13 @@ function parseSectionKey(source: string, section: string, key: string): string |
 
 function writeUtf8FileAtomicReplace(path: string, content: string): void {
   const dir = dirname(path);
+  // The config directory may not exist yet, and `nimbus config set` is the FIRST command
+  // the install guide gives — it is documented before "Start the Gateway", which is what
+  // would otherwise have created it. Without this, a brand-new machine gets a raw
+  // `ENOENT: ... mkdtemp '<configDir>/.nimbus.toml.swap-XXXXXX'` from the line below,
+  // which names a swap file the user never asked for and does not mention the real
+  // problem. Recursive + idempotent, so the already-exists path is unchanged.
+  mkdirSync(dir, { recursive: true });
   const swap = mkdtempSync(join(dir, `.${basename(path)}.swap-`));
   const tmp = join(swap, "content");
   try {

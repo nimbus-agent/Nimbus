@@ -121,14 +121,28 @@ function toolNameFor(brief: SynthInput): string {
   return assertNeverBrief(brief);
 }
 
-const DETERMINISTIC_FOOTER = "_Rendered deterministically — configure an LLM for prose synthesis._";
+const DETERMINISTIC_FOOTER =
+  "_Rendered deterministically — built-in briefs do not use an LLM, regardless of `[llm]` settings._";
 
 /**
  * Label the no-LLM path so it reads as a supported mode rather than breakage.
  *
- * The fallback branches below (empty / throwing LLM) deliberately do NOT get
- * this footer: there the user HAS configured an LLM, and telling them to
- * configure one would send them to fix a setting that is already correct.
+ * WHY IT NO LONGER SAYS "configure an LLM": that was unactionable advice. Both production
+ * callers of `dispatchAgentsRpc` — `ipc/server/dispatchers.ts` and
+ * `agent-runs/agent-http-invoke.ts` — omit `llm`, the latter explicitly ("omitting `llm`,
+ * which that path also omits, so an HTTP brief and a socket brief are the same"), so
+ * `AgentsRpcContext.llm` is ALWAYS undefined in production and every built-in brief takes
+ * this path. `briefs/brief-llm-adapter.ts` says the same thing from the other side: it is
+ * "the first place an LLM is wired into a built-in gateway agent surface".
+ *
+ * Verified live rather than by reading: with `[llm].local_model = "llama3.2"` and
+ * `prefer_local = true` set and a running Ollama — a configuration `nimbus ask` used
+ * successfully in the same session — `nimbus why` still emitted this footer. So the old
+ * text sent a user who had done everything right to go and do it again.
+ *
+ * The fallback branches below (empty / throwing LLM) deliberately do NOT get this footer:
+ * there an LLM genuinely was supplied and simply did not produce usable output, so
+ * describing the render as LLM-free would be the inverse error.
  */
 function withDeterministicFooter(markdown: string): string {
   return `${markdown.trimEnd()}\n\n${DETERMINISTIC_FOOTER}\n`;

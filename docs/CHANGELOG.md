@@ -8,6 +8,46 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-15 — two defects found by actually running Nimbus against a local Ollama,
+  neither of which any test could have caught.** The whole point of the exercise: a fake
+  gateway agrees with the code, and a real one does not.
+
+  Setup was a fully isolated install — `APPDATA`/`LOCALAPPDATA`/`USERPROFILE`/`HOME` all
+  redirected to a temp root, not just `NIMBUS_CONFIG_DIR`, which moves the config dir only
+  and would have left a gateway writing to the REAL index. Verified afterwards that the
+  real config (untouched since 2026-08-10) and data dir were never written.
+
+  **`nimbus config set` fails on a fresh machine.** `writeUtf8FileAtomicReplace` calls
+  `mkdtempSync(join(dir, …))` without ensuring `dir` exists, so the very first command the
+  install guide gives — `nimbus config set llm.local_model llama3.2`, documented BEFORE
+  "Start the Gateway", which is what would otherwise create the directory — dies with
+  `ENOENT: no such file or directory, mkdtemp '<configDir>/.nimbus.toml.swap-XXXXXX'`.
+  An error naming a swap file the user never asked for, from step one of setup. One
+  `mkdirSync(dir, { recursive: true })`; red-proved (reverting fails the new test, and the
+  control confirms an existing directory and its other files are untouched).
+
+  **The deterministic-brief footer gave unactionable advice.** Every built-in brief ended
+  with `Rendered deterministically — configure an LLM for prose synthesis.` Configuring
+  one changes nothing: both production callers of `dispatchAgentsRpc`
+  (`ipc/server/dispatchers.ts`, `agent-runs/agent-http-invoke.ts`) omit `llm` — the latter
+  explicitly, in a comment — so `AgentsRpcContext.llm` is ALWAYS undefined in production,
+  and `briefs/brief-llm-adapter.ts` says the same from the other side, calling itself "the
+  first place an LLM is wired into a built-in gateway agent surface". Confirmed live: with
+  `local_model = "llama3.2"` and `prefer_local = true` and Ollama running — a configuration
+  `nimbus ask` used successfully in the same session — `nimbus why` still printed it. The
+  footer now states the mode instead of prescribing a fix: "built-in briefs do not use an
+  LLM, regardless of `[llm]` settings."
+
+  **What the run confirmed working**, worth recording because it is the local-first claim
+  end to end: `nimbus init` inside a git repo appended a `[[filesystem.roots]]` block,
+  detected the running gateway and told the user to restart (exit 0, no silent no-op),
+  indexed on the second run, and suggested a real command derived from the actual code
+  (`nimbus why src/resize.ts:1 # resizeToThumbnail`). `nimbus search` returned the indexed
+  `code_symbol`. `nimbus ask` routed to Ollama and answered from indexed context, citing
+  the repo's own commit message, in 24.7 s on a 3.2B model. `nimbus egress` reported
+  **0 outbound events** for the whole session with an honest scope label and its two boot
+  markers — the I29 zero-row claim, observed rather than asserted.
+
 - **2026-08-15 — maintenance sweep: the skills the agent loads were drifting, and one
   of them was structurally broken.** Batched deliberately into one PR rather than four,
   since each carries CI cost and none is independently interesting.
