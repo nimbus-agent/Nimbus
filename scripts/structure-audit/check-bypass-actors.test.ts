@@ -86,10 +86,15 @@ describe("validateDeclaredBypass", () => {
 });
 
 describe("loadDeclaredBypass", () => {
-  test("the checked-in config is valid and covers all five active repos", () => {
+  test("the checked-in config is valid and covers all six active repos", () => {
     const file = loadDeclaredBypass(process.cwd());
     expect(validateDeclaredBypass(file)).toEqual([]);
-    expect(file.repos.length).toBe(5);
+    // The count is deliberately exact rather than a floor: adding a repo to the
+    // managed set must be a reviewed decision, not something that rides along.
+    // create-nimbus-connector was the sixth — it publishes to npm and had been
+    // outside every drift gate.
+    expect(file.repos.length).toBe(6);
+    expect(file.repos).toContain("create-nimbus-connector");
     expect(Object.keys(file.bypass.by_repo).sort()).toEqual([...file.repos].sort());
   });
 });
