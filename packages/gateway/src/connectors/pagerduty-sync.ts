@@ -229,6 +229,46 @@ export type PagerdutySyncableOptions = {
   maxPagesPerSync?: number;
 };
 
+/**
+ * Merge a page's newly-discovered actor emails into the run-scoped map, first write
+ * wins. Lifted out of the sync loop: as an inline `for` with a nested `if` it was worth
+ * five points of cognitive complexity (Sonar `S3776`) for one line of intent.
+ *
+ * First write wins deliberately — `emailById` is run-scoped so a repeated actor is
+ * harvested once per SYNC, and a later page re-reporting the same id must not overwrite
+ * an email an explicit user lookup already resolved.
+ */
+function mergeNewEmails(into: Map<string, string>, page: ReadonlyMap<string, string>): void {
+  for (const [id, email] of page) {
+    if (!into.has(id)) into.set(id, email);
+  }
+}
+
+/**
+ * The result a run returns when a page cannot be read — an HTTP failure or an
+ * unparseable body. Identical in both cases: keep everything already upserted, park the
+ * cursor at the high-water mark so the next run resumes from there, and report
+ * `hasMore: false` so the scheduler does not immediately retry into the same wall.
+ *
+ * One helper rather than two byte-identical object literals, which is what the two early
+ * returns in the loop used to be.
+ */
+function partialSyncResult(
+  maxUpdated: string,
+  itemsUpserted: number,
+  bytesTransferred: number,
+  t0: number,
+): SyncResult {
+  return {
+    cursor: encodeCursor({ lastUpdated: maxUpdated }),
+    itemsUpserted,
+    itemsDeleted: 0,
+    hasMore: false,
+    durationMs: Math.round(performance.now() - t0),
+    bytesTransferred,
+  };
+}
+
 export function createPagerdutySyncable(options: PagerdutySyncableOptions): Syncable {
   const initialSyncDepthDays = 30;
   const maxPagesPerSync = Math.max(1, Math.min(100, options.maxPagesPerSync ?? 20));
@@ -296,28 +336,14 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
             { serviceId: SERVICE_ID, status: res.status, page: pagesFetched },
             "pagerduty sync: list failed",
           );
-          return {
-            cursor: encodeCursor({ lastUpdated: maxUpdated }),
-            itemsUpserted: totalUpserted,
-            itemsDeleted: 0,
-            hasMore: false,
-            durationMs: Math.round(performance.now() - t0),
-            bytesTransferred: totalBytesTransferred,
-          };
+          return partialSyncResult(maxUpdated, totalUpserted, totalBytesTransferred, t0);
         }
         const parsed = parsePagerdutyListResponse(text);
         if (parsed === null) {
-          return {
-            cursor: encodeCursor({ lastUpdated: maxUpdated }),
-            itemsUpserted: totalUpserted,
-            itemsDeleted: 0,
-            hasMore: false,
-            durationMs: Math.round(performance.now() - t0),
-            bytesTransferred: totalBytesTransferred,
-          };
+          return partialSyncResult(maxUpdated, totalUpserted, totalBytesTransferred, t0);
         }
         const pageEmails = pagerdutyEmailMapFromIncidents(parsed.incidents);
-        for (const [k, v] of pageEmails) if (!emailById.has(k)) emailById.set(k, v);
+        mergeNewEmails(emailById, pageEmails);
         totalBytesTransferred += await resolveMissingActorEmails(
           ctx,
           token,

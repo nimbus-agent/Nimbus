@@ -170,19 +170,29 @@ function laneFailureGap(laneName: string, r: SubTaskResult): GapNote {
  * the enrichment pass has run, hence `statsCoverage`: an aggregate over a partial subset
  * must disclose its own denominator rather than be printed as if it covered everything.
  */
-function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): NegotiateAuthoredPrs {
-  const cutoff = Date.now() - sinceMs;
-  const rows = db
-    .query(
-      `SELECT i.metadata AS metadata
-         FROM graph_relation r
-         JOIN graph_entity pe  ON pe.id = r.from_id AND pe.type = 'person'
-         JOIN graph_entity pre ON pre.id = r.to_id  AND pre.type = 'pr'
-         JOIN item i           ON i.id = pre.external_id
-        WHERE r.type = 'authored' AND pe.external_id = ? AND i.modified_at >= ?`,
-    )
-    .all(personId, cutoff) as Array<{ metadata: string }>;
-
+/**
+ * Fold one person's authored-PR metadata rows into the five counters
+ * {@link laneAuthoredPrs} reports. Lifted out of that function to bring it back under the
+ * cognitive-complexity gate (Sonar `S3776`) — the loop and its five guards were the whole
+ * of its score.
+ *
+ * Unparseable metadata contributes to neither the merged count nor stats coverage — but it
+ * DOES stay in `count`/`statsCoverage.total` at the call site, because the PR itself is real
+ * evidence and dropping it would understate the headline number. The consequence is
+ * asymmetric disclosure: the stats half is self-disclosing (`statsCoverage` renders
+ * `covered/total`, so an unparseable row visibly widens the gap), while the `merged` half is
+ * not — `merged` carries no denominator of its own, so a PR whose metadata will not parse is
+ * silently absent from it. Only a genuinely corrupt `item.metadata` reaches here (every
+ * writer goes through `JSON.stringify`), so this is a never-in-practice edge rather than a
+ * live undercount; a `mergedCoverage` companion field is the fix if it ever stops being one.
+ */
+function accumulateAuthoredPrStats(rows: ReadonlyArray<{ metadata: string }>): {
+  merged: number;
+  covered: number;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+} {
   let merged = 0;
   let covered = 0;
   let additions = 0;
@@ -196,16 +206,6 @@ function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): Negot
         meta = parsed as Record<string, unknown>;
       }
     } catch {
-      // Unparseable metadata contributes to neither the merged count nor stats coverage —
-      // but it DOES stay in `count`/`statsCoverage.total`, because the PR itself is real
-      // evidence and dropping it would understate the headline number. The consequence is
-      // asymmetric disclosure: the stats half is self-disclosing (`statsCoverage` renders
-      // `covered/total`, so an unparseable row visibly widens the gap), while the `merged`
-      // half is not — `merged` carries no denominator of its own, so a PR whose metadata
-      // will not parse is silently absent from it. Only a genuinely corrupt `item.metadata`
-      // reaches here (every writer goes through `JSON.stringify`), so this is a
-      // never-in-practice edge rather than a live undercount; a `mergedCoverage` companion
-      // field is the fix if it ever stops being one.
       continue;
     }
     if (meta["merged"] === true) merged += 1;
@@ -219,6 +219,24 @@ function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): Negot
       if (typeof c === "number") changedFiles += c;
     }
   }
+  return { merged, covered, additions, deletions, changedFiles };
+}
+
+function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): NegotiateAuthoredPrs {
+  const cutoff = Date.now() - sinceMs;
+  const rows = db
+    .query(
+      `SELECT i.metadata AS metadata
+         FROM graph_relation r
+         JOIN graph_entity pe  ON pe.id = r.from_id AND pe.type = 'person'
+         JOIN graph_entity pre ON pre.id = r.to_id  AND pre.type = 'pr'
+         JOIN item i           ON i.id = pre.external_id
+        WHERE r.type = 'authored' AND pe.external_id = ? AND i.modified_at >= ?`,
+    )
+    .all(personId, cutoff) as Array<{ metadata: string }>;
+
+  const { merged, covered, additions, deletions, changedFiles } = accumulateAuthoredPrStats(rows);
+
   const refs = evidenceRefsFor(
     db,
     `SELECT i.title AS title, COALESCE(i.canonical_url, i.url) AS url
@@ -890,6 +908,32 @@ function detectMissingIncidentPersonEdges(db: Database): GapNote | null {
  * run a command that reports "graphed N" and changes nothing. State the actual cause
  * instead.
  */
+/**
+ * Push at most ONE gap note for a connector-backed lane: the missing-connector note if the
+ * connector is absent, otherwise the missing-edges note if it is present but has emitted
+ * none.
+ *
+ * Ordered more fundamental cause first, and deliberately exclusive: a missing connector
+ * structurally implies missing edges, so firing both would emit two notes for one root
+ * cause. Written once here because the PagerDuty and Sentry blocks it replaces were the
+ * same eleven lines twice, and were most of the caller's cognitive-complexity score
+ * (Sonar `S3776`).
+ */
+function pushConnectorOrEdgeGap(
+  db: Database,
+  service: string,
+  detectMissingEdges: (db: Database) => GapNote | null,
+  gaps: GapNote[],
+): void {
+  const missingConnector = detectMissingConnector(db, service);
+  if (missingConnector !== null) {
+    gaps.push(missingConnector);
+    return;
+  }
+  const missingEdges = detectMissingEdges(db);
+  if (missingEdges !== null) gaps.push(missingEdges);
+}
+
 function detectMissingErrorIssuePersonEdges(db: Database): GapNote | null {
   const missingEmit = detectMissingRelationToEntityType(db, "assigned", "error_issue");
   if (missingEmit === null) return null;
@@ -952,30 +996,15 @@ export async function runNegotiate(
     // `missing_user_identity` gap and must not also emit connector noise. Ordered more
     // fundamental cause first: no connector before no edges, since a missing connector
     // implies missing edges too and naming both would be redundant.
-    const missingPagerdutyConnector = detectMissingConnector(ctx.db, "pagerduty");
-    if (missingPagerdutyConnector !== null) {
-      gaps.push(missingPagerdutyConnector);
-    } else {
-      // `detectMissingIncidentPersonEdges` builds an honest, scoped `GapNote` rather
-      // than falling back to `detectMissingRelationToEntityType`'s shared default
-      // detail, which says the edges are "not yet emitted by the graph populator" —
-      // false since `syncIncidentPersonEdges` shipped.
-      const missingIncidentEdges = detectMissingIncidentPersonEdges(ctx.db);
-      if (missingIncidentEdges !== null) gaps.push(missingIncidentEdges);
-    }
-    // Same shape as the PagerDuty block above, for the same reason: no Sentry
-    // connector structurally implies no `person --assigned--> error_issue`
-    // edges, so firing both would emit two notes for one root cause.
-    const missingSentryConnector = detectMissingConnector(ctx.db, "sentry");
-    if (missingSentryConnector !== null) {
-      gaps.push(missingSentryConnector);
-    } else {
-      // `detectMissingErrorIssuePersonEdges` builds an honest, scoped `GapNote` — an
-      // unassigned Sentry issue is the NORM, so the shared default detail's
-      // `nimbus index regraph` remediation would be a no-op in the common case.
-      const missingErrorIssueEdges = detectMissingErrorIssuePersonEdges(ctx.db);
-      if (missingErrorIssueEdges !== null) gaps.push(missingErrorIssueEdges);
-    }
+    // `detectMissingIncidentPersonEdges` builds an honest, scoped `GapNote` rather than
+    // falling back to `detectMissingRelationToEntityType`'s shared default detail, which
+    // says the edges are "not yet emitted by the graph populator" — false since
+    // `syncIncidentPersonEdges` shipped.
+    pushConnectorOrEdgeGap(ctx.db, "pagerduty", detectMissingIncidentPersonEdges, gaps);
+    // `detectMissingErrorIssuePersonEdges` is scoped for its own reason — an unassigned
+    // Sentry issue is the NORM, so the shared default's `nimbus index regraph` remediation
+    // would be a no-op in the common case.
+    pushConnectorOrEdgeGap(ctx.db, "sentry", detectMissingErrorIssuePersonEdges, gaps);
     laneNames.push(
       "authoredPrs",
       "reviewedPrs",

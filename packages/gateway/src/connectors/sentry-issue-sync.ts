@@ -102,6 +102,41 @@ function resolveNextUrl(
   return resolved.href;
 }
 
+/**
+ * Upsert one page of issues and return what it contributed: how many rows were written,
+ * and the running high-water mark after them.
+ *
+ * Lifted out of {@link syncSentryIssuePass}, which was more than 12 points over the
+ * cognitive-complexity gate (Sonar `S3776`); this loop and its four guards were most of
+ * it. Pure with respect to the walk — it reads no pagination state and decides nothing
+ * about whether to continue.
+ */
+function upsertSentryIssuePage(
+  input: SentryIssuePassInput,
+  list: readonly unknown[],
+  startingMaxMs: number | null,
+): { upserted: number; runningMaxMs: number | null } {
+  let upserted = 0;
+  let runningMaxMs = startingMaxMs;
+  for (const raw of list) {
+    const row = mapSentryIssueToItem(raw, { org: input.org, syncedAt: input.now });
+    if (row === null) continue;
+    // SKIP, not stop: newest-first pagination means one out-of-order row
+    // at/below the stored high-water mark does NOT mean everything after
+    // it is old too — a later row in the same page (or a later page) can
+    // still be newer and must still be reached.
+    if (input.cursorLastSeenMs !== null && row.modifiedAt <= input.cursorLastSeenMs) {
+      continue;
+    }
+    upsertIndexedItemForSync(input.ctx, row);
+    upserted += 1;
+    if (runningMaxMs === null || row.modifiedAt > runningMaxMs) {
+      runningMaxMs = row.modifiedAt;
+    }
+  }
+  return { upserted, runningMaxMs };
+}
+
 export async function syncSentryIssuePass(
   input: SentryIssuePassInput,
 ): Promise<SentryIssuePassResult> {
@@ -162,22 +197,9 @@ export async function syncSentryIssuePass(
     }
     const list = Array.isArray(root) ? root : [];
 
-    for (const raw of list) {
-      const row = mapSentryIssueToItem(raw, { org: input.org, syncedAt: input.now });
-      if (row === null) continue;
-      // SKIP, not stop: newest-first pagination means one out-of-order row
-      // at/below the stored high-water mark does NOT mean everything after
-      // it is old too — a later row in the same page (or a later page) can
-      // still be newer and must still be reached.
-      if (input.cursorLastSeenMs !== null && row.modifiedAt <= input.cursorLastSeenMs) {
-        continue;
-      }
-      upsertIndexedItemForSync(ctx, row);
-      upserted += 1;
-      if (runningMaxMs === null || row.modifiedAt > runningMaxMs) {
-        runningMaxMs = row.modifiedAt;
-      }
-    }
+    const page = upsertSentryIssuePage(input, list, runningMaxMs);
+    upserted += page.upserted;
+    runningMaxMs = page.runningMaxMs;
 
     pages += 1;
     url = resolveNextUrl(nextPageUrl(res.headers.get("Link")), requestUrl, input.apiRoot, ctx);

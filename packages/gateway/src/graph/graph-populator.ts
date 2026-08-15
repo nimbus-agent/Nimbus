@@ -954,6 +954,61 @@ function occurredAtForItem(db: Database, itemId: string): number {
   return row.modified_at;
 }
 
+/**
+ * Per-item-type graph writers, keyed by `item.type`.
+ *
+ * A table rather than the fifteen-arm `if` chain this replaces. That chain was over the
+ * cognitive-complexity gate (Sonar `S3776`) purely from the count of branches — every arm
+ * was the same shape, so there was nothing to understand fifteen times. A lookup also
+ * makes the set of handled types readable at a glance and makes adding one a single row.
+ *
+ * The two timeline types share `syncTimelineEventGraph`, differing only in the kind they
+ * record and in needing the item's occurrence time.
+ */
+const GRAPH_SYNC_BY_TYPE: Readonly<
+  Record<
+    string,
+    (
+      db: Database,
+      row: IndexedItemGraphInput,
+      now: number,
+      resolveServiceId?: ResolveServiceId,
+    ) => void
+  >
+> = Object.freeze({
+  pr: (db, row, now) => syncPrGraph(db, row, now),
+  review: (db, row, now) => syncReviewGraph(db, row, now),
+  issue: (db, row, now) => syncIssueGraph(db, row, now),
+  message: (db, row, now) => syncMessageGraph(db, row, now),
+  git_commit: (db, row, now) => syncGitCommitGraph(db, row, now),
+  dependency: (db, row, now) => syncDependencyGraph(db, row, now),
+  api_endpoint: (db, row, now) => syncApiEndpointGraph(db, row, now),
+  code_symbol: (db, row, now) => syncCodeSymbolGraph(db, row, now),
+  obsidian_note: (db, row, now) => syncObsidianNoteGraph(db, row, now),
+  data_model: (db, row, now) => syncDataModelGraph(db, row, now),
+  dashboard: (db, row, now) => syncDashboardGraph(db, row, now),
+  data_quality_test: (db, row, now) => syncDataQualityTestGraph(db, row, now),
+  error_issue: (db, row, now) => syncErrorIssueGraph(db, row, now),
+  incident: (db, row, now, resolveServiceId) =>
+    syncTimelineEventGraph(
+      db,
+      row,
+      "incident",
+      occurredAtForItem(db, row.id),
+      now,
+      resolveServiceId,
+    ),
+  deployment: (db, row, now, resolveServiceId) =>
+    syncTimelineEventGraph(
+      db,
+      row,
+      "deployment",
+      occurredAtForItem(db, row.id),
+      now,
+      resolveServiceId,
+    ),
+});
+
 export function syncGraphFromIndexedItem(
   db: Database,
   row: IndexedItemGraphInput,
@@ -965,80 +1020,10 @@ export function syncGraphFromIndexedItem(
   if (!isItemLinkedGraphType(row.type)) {
     return;
   }
-
-  const now = Date.now();
-
-  if (row.type === "pr") {
-    syncPrGraph(db, row, now);
+  // `Object.hasOwn`, not a bare index: `row.type` is a string off an indexed row, so a
+  // value like "constructor" would otherwise reach Object.prototype and be called.
+  if (!Object.hasOwn(GRAPH_SYNC_BY_TYPE, row.type)) {
     return;
   }
-  if (row.type === "review") {
-    syncReviewGraph(db, row, now);
-    return;
-  }
-  if (row.type === "issue") {
-    syncIssueGraph(db, row, now);
-    return;
-  }
-  if (row.type === "message") {
-    syncMessageGraph(db, row, now);
-    return;
-  }
-  if (row.type === "git_commit") {
-    syncGitCommitGraph(db, row, now);
-    return;
-  }
-  if (row.type === "dependency") {
-    syncDependencyGraph(db, row, now);
-    return;
-  }
-  if (row.type === "api_endpoint") {
-    syncApiEndpointGraph(db, row, now);
-    return;
-  }
-  if (row.type === "code_symbol") {
-    syncCodeSymbolGraph(db, row, now);
-    return;
-  }
-  if (row.type === "obsidian_note") {
-    syncObsidianNoteGraph(db, row, now);
-    return;
-  }
-  if (row.type === "data_model") {
-    syncDataModelGraph(db, row, now);
-    return;
-  }
-  if (row.type === "dashboard") {
-    syncDashboardGraph(db, row, now);
-    return;
-  }
-  if (row.type === "data_quality_test") {
-    syncDataQualityTestGraph(db, row, now);
-    return;
-  }
-  if (row.type === "error_issue") {
-    syncErrorIssueGraph(db, row, now);
-    return;
-  }
-  if (row.type === "incident") {
-    syncTimelineEventGraph(
-      db,
-      row,
-      "incident",
-      occurredAtForItem(db, row.id),
-      now,
-      resolveServiceId,
-    );
-    return;
-  }
-  if (row.type === "deployment") {
-    syncTimelineEventGraph(
-      db,
-      row,
-      "deployment",
-      occurredAtForItem(db, row.id),
-      now,
-      resolveServiceId,
-    );
-  }
+  GRAPH_SYNC_BY_TYPE[row.type]?.(db, row, Date.now(), resolveServiceId);
 }

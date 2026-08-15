@@ -67,6 +67,29 @@ export function shouldRefreshMergeableState(input: MergeableStateRefreshInput): 
   return refreshAge > MERGEABLE_STATE_REFRESH_FRESHNESS_MS;
 }
 
+/**
+ * The merged-only half of {@link extractPrMetadataForIndex}: fields that exist solely
+ * on a merged PR. Three levels of nesting on their own, which is most of why that
+ * function was over the cognitive-complexity gate (Sonar `S3776`).
+ *
+ * Both fields are written only when genuinely present and parseable — an unparseable
+ * `merged_at` writes nothing rather than `NaN`, since a NaN timestamp in the index reads
+ * as a real value everywhere downstream.
+ */
+function applyMergeFields(out: Record<string, unknown>, pr: Record<string, unknown>): void {
+  const mergedAtIso = stringField(pr, "merged_at");
+  if (mergedAtIso !== undefined) {
+    const ms = Date.parse(mergedAtIso);
+    if (Number.isFinite(ms)) {
+      out["merged_at"] = ms;
+    }
+  }
+  const sha = stringField(pr, "merge_commit_sha");
+  if (sha !== undefined && sha.length > 0) {
+    out["merge_commit_sha"] = sha;
+  }
+}
+
 export function extractPrMetadataForIndex(
   repoFull: string,
   pr: Record<string, unknown>,
@@ -100,17 +123,7 @@ export function extractPrMetadataForIndex(
     }
   }
   if (merged) {
-    const mergedAtIso = stringField(pr, "merged_at");
-    if (mergedAtIso !== undefined) {
-      const ms = Date.parse(mergedAtIso);
-      if (Number.isFinite(ms)) {
-        out["merged_at"] = ms;
-      }
-    }
-    const sha = stringField(pr, "merge_commit_sha");
-    if (sha !== undefined && sha.length > 0) {
-      out["merge_commit_sha"] = sha;
-    }
+    applyMergeFields(out, pr);
   }
   return out;
 }

@@ -139,6 +139,30 @@ export function extractPagerdutyActors(
  * a `/users/{id}` request on. Service actors are excluded so an auto-resolving
  * tenant never burns the lookup budget.
  */
+/**
+ * Add every actor id from ONE incident's candidate list that still needs an email
+ * lookup. Lifted out of {@link pagerdutyUnresolvedActorIds} — it was the inner of two
+ * nested loops with four guards inside it, which is most of that function's
+ * cognitive-complexity score (Sonar `S3776`).
+ *
+ * An actor is skipped when it is a service rather than a person, when it already carries
+ * a usable email, when it has no id, or when `emailById` already knows the id. Only what
+ * survives all four needs fetching.
+ */
+function addUnresolvedActorIds(
+  candidates: readonly Record<string, unknown>[],
+  emailById: ReadonlyMap<string, string>,
+  into: Set<string>,
+): void {
+  for (const actor of candidates) {
+    if (isServiceActor(actor)) continue;
+    if (usableActorEmail(actor["email"]) !== null) continue;
+    const id = stringField(actor, "id");
+    if (id === undefined || id === "" || emailById.has(id)) continue;
+    into.add(id);
+  }
+}
+
 export function pagerdutyUnresolvedActorIds(
   incidents: readonly unknown[],
   emailById: ReadonlyMap<string, string>,
@@ -150,13 +174,7 @@ export function pagerdutyUnresolvedActorIds(
     const candidates = [...actorsOnIncident(row)];
     const resolver = resolverRef(row);
     if (resolver !== undefined) candidates.push(resolver);
-    for (const actor of candidates) {
-      if (isServiceActor(actor)) continue;
-      if (usableActorEmail(actor["email"]) !== null) continue;
-      const id = stringField(actor, "id");
-      if (id === undefined || id === "" || emailById.has(id)) continue;
-      ids.add(id);
-    }
+    addUnresolvedActorIds(candidates, emailById, ids);
   }
   return [...ids];
 }

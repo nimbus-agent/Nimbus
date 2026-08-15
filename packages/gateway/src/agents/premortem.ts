@@ -575,6 +575,79 @@ function buildWatcherProposals(
   };
 }
 
+/**
+ * The brief returned when the ref names a tracker other than Jira.
+ *
+ * Every measured field is empty and the single gap says why — pre-mortem is JIRA-ONLY, and
+ * an empty brief with no explanation would read as "nothing to worry about" rather than
+ * "nothing was looked at". Split out of {@link runPremortem} so that function's happy path
+ * is not preceded by a 20-line literal (Sonar `S3776`).
+ */
+function nonJiraTrackerBrief(
+  epicRef: string,
+  trackerPrefix: string,
+  now: number,
+  start: number,
+  query: PremortemBrief["query"],
+): PremortemBrief {
+  const gaps: GapNote[] = [
+    {
+      category: "missing_relation_emit",
+      detail: nonJiraTrackerDetail(epicRef, trackerPrefix),
+      remediation: "Pass a Jira epic key, e.g. `PROJ-120` or `jira:PROJ-120`.",
+    },
+  ];
+  pushUnconditionalGaps(gaps);
+  return {
+    kind: "premortem",
+    agentVersion: 1,
+    generatedAt: now,
+    latencyMs: Math.round(performance.now() - start),
+    gaps,
+    query,
+    epic: null,
+    services: [],
+    cohort: emptyCohort(),
+    risks: [],
+    themes: [],
+    watchers: [],
+  };
+}
+
+/**
+ * Resolve an epic key to its indexed Jira row, or throw explaining exactly which check
+ * failed.
+ *
+ * The two failures are deliberately distinct. A missing row is "not found". A row of the
+ * wrong type is NOT — an item exists at this key, and saying "not found" would assert a
+ * cause that is not true. `jira-sync.ts` stores the raw Jira issue-type name verbatim
+ * (admins rename types, non-English instances localize them), so the message states what
+ * was checked rather than guessing why.
+ *
+ * Split out of {@link runPremortem} to bring it under the cognitive-complexity gate
+ * (Sonar `S3776`); it is also a coherent step on its own — resolve, or refuse with a
+ * reason.
+ */
+function requireIndexedJiraEpic(
+  db: PremortemContext["db"],
+  epicRef: string,
+  key: string,
+): NonNullable<ReturnType<typeof lookupJiraItem>> {
+  const rawRow = lookupJiraItem(db, key);
+  if (rawRow === null) {
+    throw new Error(`pre-mortem: '${epicRef}' was not found in the local Jira index`);
+  }
+  if (rawRow.issue_type !== "Epic") {
+    const typeDesc =
+      rawRow.issue_type === null ? "no recorded issue type" : `type \`${rawRow.issue_type}\``;
+    throw new Error(
+      `pre-mortem: '${epicRef}' is indexed with ${typeDesc}, not the literal Jira type ` +
+        "`Epic` pre-mortem requires (a renamed or localized type name is not recognized)",
+    );
+  }
+  return rawRow;
+}
+
 export async function runPremortem(
   input: PremortemInput,
   ctx: PremortemContext,
@@ -590,47 +663,10 @@ export async function runPremortem(
   const { trackerPrefix, key } = parseEpicRef(input.epicRef);
 
   if (trackerPrefix !== null && trackerPrefix.toLowerCase() !== "jira") {
-    const gaps: GapNote[] = [
-      {
-        category: "missing_relation_emit",
-        detail: nonJiraTrackerDetail(input.epicRef, trackerPrefix),
-        remediation: "Pass a Jira epic key, e.g. `PROJ-120` or `jira:PROJ-120`.",
-      },
-    ];
-    pushUnconditionalGaps(gaps);
-    return {
-      kind: "premortem",
-      agentVersion: 1,
-      generatedAt: now,
-      latencyMs: Math.round(performance.now() - start),
-      gaps,
-      query,
-      epic: null,
-      services: [],
-      cohort: emptyCohort(),
-      risks: [],
-      themes: [],
-      watchers: [],
-    };
+    return nonJiraTrackerBrief(input.epicRef, trackerPrefix, now, start, query);
   }
 
-  const rawRow = lookupJiraItem(ctx.db, key);
-  if (rawRow === null) {
-    throw new Error(`pre-mortem: '${input.epicRef}' was not found in the local Jira index`);
-  }
-  if (rawRow.issue_type !== "Epic") {
-    // NOT "not found" — an item exists at this key. `jira-sync.ts` stores the
-    // raw Jira issue-type name verbatim (admins rename types, non-English
-    // instances localize them), so this states exactly what was checked
-    // rather than asserting a cause ("not found") that isn't true.
-    const typeDesc =
-      rawRow.issue_type === null ? "no recorded issue type" : `type \`${rawRow.issue_type}\``;
-    throw new Error(
-      `pre-mortem: '${input.epicRef}' is indexed with ${typeDesc}, not the literal Jira type ` +
-        "`Epic` pre-mortem requires (a renamed or localized type name is not recognized)",
-    );
-  }
-  const epicRow = rawRow;
+  const epicRow = requireIndexedJiraEpic(ctx.db, input.epicRef, key);
   const epic: PremortemEpicView = {
     itemId: epicRow.id,
     key: epicRow.external_id,

@@ -509,6 +509,31 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   return exit;
 }
 
+/**
+ * Print diagnostic lines and return the exit code they imply: 2 when a `[fail]` is
+ * present, 1 when a `[warn]` is, 0 otherwise. The caller folds it in with `Math.max`, so
+ * severity only ever ratchets up.
+ *
+ * Lifted out of {@link runDoctor} — inline, the loop plus its if/else-if was worth about
+ * eight points of cognitive complexity (Sonar `S3776`) for one idea, and that idea is
+ * reusable by every future check emitting the same prefixed lines.
+ *
+ * (Prose in this file deliberately avoids the bare TypeScript escape-hatch keyword. The
+ * `audit:a-n-y` gate strips comments with a scanner that does not understand regex
+ * literals; the one near the top of this file defeats it, so comment prose below that
+ * point is counted as real usage. It over-counts only — a genuine occurrence appended
+ * here is still detected, verified — but it will fail the gate on a comment.)
+ */
+function printAndScoreLines(lines: readonly string[]): number {
+  let exit = 0;
+  for (const line of lines) {
+    console.log(line);
+    if (line.startsWith("[fail]")) exit = Math.max(exit, 2);
+    else if (line.startsWith("[warn]")) exit = Math.max(exit, 1);
+  }
+  return exit;
+}
+
 export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<void> {
   // Strictly opt-in: a plain `nimbus doctor` never touches `fixKeyringDeps` and
   // stays read-only. Only an explicit `--fix-keyring` runs the fixer, and it
@@ -537,11 +562,7 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
     which: (n) => Bun.which(n),
     platform: platform() as "win32" | "darwin" | "linux",
   });
-  for (const line of voiceLines) {
-    console.log(line);
-    if (line.startsWith("[fail]")) exit = Math.max(exit, 2);
-    else if (line.startsWith("[warn]")) exit = Math.max(exit, 1);
-  }
+  exit = Math.max(exit, printAndScoreLines(voiceLines));
 
   const state = await deps.readGatewayState(paths);
   if (state !== undefined && deps.isProcessAlive(state.pid)) {
