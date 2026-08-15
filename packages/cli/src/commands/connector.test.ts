@@ -17,6 +17,9 @@ import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 const connectorMod = await import("./connector.ts");
 const { runConnector } = connectorMod;
 
+/** Yield a macrotask so every pending microtask chain (connect → call → handler) settles. */
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 const out = captureOutput();
 
 afterAll(() => {
@@ -414,10 +417,20 @@ describe("runConnector reindex", () => {
     expect(handlers.has("consent.request")).toBe(true);
   });
 
-  it("answers the Gateway's consent.request with a consent.respond", async () => {
+  it("answers consent WHILE the gated reindex is still in flight", async () => {
+    // Ordering is the property under test, not just registration. The Gateway raises
+    // `consent.request` from INSIDE the pending `connector.reindex` call and blocks on
+    // `consent.respond`, so a handler registered after the call was issued would never
+    // be reached. Emitting the notification after the command had already returned —
+    // as an earlier version of this test did — cannot tell those apart.
     const handlers = new Map<string, (params: unknown) => void>();
-    // Two responses: the reindex itself, plus the consent.respond the handler sends.
-    const ipc = createMockIpcClient([{ itemsAffected: 3, mode: "full" }, { ok: true }], handlers);
+    let releaseReindex = (): void => {};
+    const reindexPending = new Promise<{ itemsAffected: number; mode: string }>((resolve) => {
+      releaseReindex = () => {
+        resolve({ itemsAffected: 3, mode: "full" });
+      };
+    });
+    const ipc = createMockIpcClient([reindexPending, { ok: true }], handlers);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       clackAnswer: true,
@@ -428,15 +441,52 @@ describe("runConnector reindex", () => {
         onNotification: ipc.client.onNotification,
       },
     });
+
+    const done = runConnector(["reindex", "github", "--depth", "full"]);
+    // Drain to the in-flight `connector.reindex`. A macrotask tick, not a microtask:
+    // `withIpc` awaits `readGatewayState` and `connect()` before issuing the call, so a
+    // single `Promise.resolve()` lands before the call has been made at all.
+    await flush();
+    expect(ipc.calls.map((c) => c.method)).toEqual(["connector.reindex"]);
+
+    const onConsent = handlers.get("consent.request");
+    expect(onConsent).toBeDefined();
+    onConsent?.({ requestId: "req-1", prompt: "Reindex github at full depth?" });
+    // The handler awaits the clack confirm before responding.
+    await flush();
+
+    // The approval reached the Gateway BEFORE the gated call resolved — the ordering
+    // the Gateway's gate actually requires.
+    const respond = ipc.calls.find((c) => c.method === "consent.respond");
+    expect(respond?.params).toEqual({ requestId: "req-1", approved: true });
+
+    releaseReindex();
+    await done;
+    expect(out.stdout).toContain("3 items affected");
+  });
+
+  it("relays a DENIED consent decision rather than approving by default", async () => {
+    // `clackAnswer: false` is the user answering "n". The CLI must forward that, not
+    // silently approve — the auto-approve handler is a different, opt-in code path.
+    const handlers = new Map<string, (params: unknown) => void>();
+    const ipc = createMockIpcClient([{ itemsAffected: 0, mode: "full" }, { ok: true }], handlers);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clackAnswer: false,
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+        onNotification: ipc.client.onNotification,
+      },
+    });
     await runConnector(["reindex", "github", "--depth", "full"]);
-    ipc.emit("consent.request", { requestId: "req-1", prompt: "Reindex github at full depth?" });
-    // The handler awaits the clack prompt before responding, so let its microtasks run.
+    handlers.get("consent.request")?.({ requestId: "req-2", prompt: "Reindex?" });
     await Promise.resolve();
     await Promise.resolve();
-    expect(ipc.calls.map((c) => c.method)).toContain("consent.respond");
     expect(ipc.calls.find((c) => c.method === "consent.respond")?.params).toEqual({
-      requestId: "req-1",
-      approved: true,
+      requestId: "req-2",
+      approved: false,
     });
   });
 

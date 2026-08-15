@@ -17,6 +17,9 @@ import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 const mod = await import("./workflow.ts");
 const { runWorkflowCli, runWorkflowList, runWorkflowDelete, runWorkflowSave, runWorkflowRun } = mod;
 
+/** Yield a macrotask so every pending microtask chain (connect → call → handler) settles. */
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 const out = captureOutput();
 
 afterAll(() => {
@@ -245,6 +248,46 @@ describe("runWorkflowCli (dispatcher)", () => {
     });
     await runWorkflowCli(["run", "deploy"]);
     expect(handlers.has("consent.request")).toBe(true);
+  });
+
+  it("answers consent WHILE workflow.run is still in flight", async () => {
+    // The ordering the Gateway's gate requires: a HITL step raises `consent.request`
+    // from inside the pending `workflow.run` and blocks on `consent.respond`, so the
+    // approval has to reach it before the call resolves — not merely at some point.
+    const handlers = new Map<string, (params: unknown) => void>();
+    let releaseRun = (): void => {};
+    const runPending = new Promise<{ ok: boolean }>((resolve) => {
+      releaseRun = () => {
+        resolve({ ok: true });
+      };
+    });
+    const ipc = createMockIpcClient([runPending, { ok: true }], handlers);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clackAnswer: true,
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+        onNotification: ipc.client.onNotification,
+      },
+    });
+
+    const done = runWorkflowCli(["run", "deploy"]);
+    await flush();
+    expect(ipc.calls.map((c) => c.method)).toEqual(["workflow.run"]);
+
+    handlers.get("consent.request")?.({ requestId: "req-1", prompt: "Deploy to prod?" });
+    await flush();
+
+    // Approved before the gated run resolved.
+    expect(ipc.calls.find((c) => c.method === "consent.respond")?.params).toEqual({
+      requestId: "req-1",
+      approved: true,
+    });
+
+    releaseRun();
+    await done;
   });
 
   it("still streams agent chunks for 'run'", async () => {
