@@ -4,11 +4,36 @@ import { join } from "node:path";
 import { CI_ONLY_GATES, PREFLIGHT_GATES } from "./lib/preflight-gates.ts";
 import { REPO_ROOT } from "./structure-audit/lib.ts";
 
+/**
+ * Drop whole-line comments before scanning.
+ *
+ * This is a raw-text scan over YAML, with no idea what is a `run:` step and what is
+ * prose — so a COMMENT that merely mentions a gate used to register as a gate CI
+ * runs. `docs-quality.yml` now carries the line
+ * `# Runs the SAME script as \`bun run audit:links\``, which reported a phantom
+ * `audit:links` gate and failed this guard, even though nothing in that workflow
+ * invokes it.
+ *
+ * Only lines whose first non-space character is `#` are dropped, which is the one
+ * shape that provably cannot execute anything — in YAML and in a `run: |` shell block
+ * alike. A trailing `#` is deliberately left alone: stripping to end-of-line would
+ * also eat a `#` inside a quoted string, and the failure mode there is a MISSED gate,
+ * which is far worse for a guard than a spurious one.
+ */
+function stripCommentLines(yaml: string): string {
+  return yaml
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+}
+
 export function extractWorkflowGates(yaml: string): string[] {
+  const source = stripCommentLines(yaml);
   const gates = new Set<string>();
-  for (const m of yaml.matchAll(/\bbun(?:\s+-\S+)*\s+run\s+([a-z][\w:-]+)/g))
+  for (const m of source.matchAll(/\bbun(?:\s+-\S+)*\s+run\s+([a-z][\w:-]+)/g))
     if (m[1]) gates.add(m[1]);
-  for (const m of yaml.matchAll(/\bbunx(?:\s+-\S+)*\s+([a-z][\w@/-]+)/g)) if (m[1]) gates.add(m[1]);
+  for (const m of source.matchAll(/\bbunx(?:\s+-\S+)*\s+([a-z][\w@/-]+)/g))
+    if (m[1]) gates.add(m[1]);
   return [...gates];
 }
 
@@ -37,6 +62,26 @@ describe("preflight drift guard", () => {
       "audit:any",
       "vitest",
     ]);
+  });
+
+  test("a comment that MENTIONS a gate is not a gate", () => {
+    // The regression this guard hit for real: a `#` line in docs-quality.yml
+    // documenting that the step "runs the same script as `bun run audit:links`"
+    // was scanned as an invocation, so the guard demanded a manifest entry for a
+    // gate the workflow does not run.
+    const y = [
+      "      # Runs the SAME script as `bun run audit:links`, so CI cannot drift.",
+      "        # bunx some-tool — described, not invoked",
+      "      - run: bun run audit:boundaries",
+    ].join("\n");
+    expect(extractWorkflowGates(y)).toEqual(["audit:boundaries"]);
+  });
+
+  test("a trailing comment is NOT stripped, so a real gate is never missed", () => {
+    // Deliberate asymmetry: under-reporting would let a genuine CI gate slip past
+    // this guard unnoticed, which is worse than reporting one that is only named.
+    const y = "      - run: bun run audit:any  # keep this gate\n";
+    expect(extractWorkflowGates(y)).toEqual(["audit:any"]);
   });
 
   test("every workflow bun run/bunx gate is in the manifest or CI_ONLY_GATES", () => {

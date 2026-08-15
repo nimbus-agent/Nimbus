@@ -51,12 +51,12 @@ timeout = 30
 # still correct for genuine transport flakes (connection reset, TLS hiccup), which do
 # occur from runner egress — but they are not the 504 mitigation.
 #
-# The 504 is handled where it can be: `--cache --cache-exclude-status` plus one retry
-# of the whole run, in `audit:links` and in the `Run lychee` workflow step. Successful
-# links are cached, transient failures are not, so the retry re-checks ONLY what
-# failed (verified: 2 OK URLs fetched once across two passes, the 504 URL fetched
-# twice). A genuinely dead link still fails both passes and the gate still goes red,
-# which accepting 5xx as success would not preserve.
+# The 504 is handled where it can be: `scripts/check-links.sh` (used by both
+# `audit:links` and the workflow step) caches successes with `--cache` and retries the
+# run once, so the retry re-checks ONLY what failed — verified: 2 OK URLs fetched once
+# across two passes, the 504 URL fetched twice. A genuinely dead link still fails both
+# passes and the gate still goes red, which accepting 5xx as success would not
+# preserve.
 max_retries = 3
 retry_wait_time = 2
 # Per-HOST, not global: almost every link here is github.com, so the run was
