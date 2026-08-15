@@ -177,7 +177,7 @@ Full walkthrough: `docs/contributors/extension-author-walkthrough.md`
 | New CLI subcommand | `packages/cli/src/commands/<name>.ts` |
 | New IPC method | `packages/gateway/src/ipc/<namespace>-rpc.ts` |
 | New connector | `packages/mcp-connectors/<service>/` |
-| New DB table / migration | `packages/gateway/src/db/migrations/` |
+| New DB table / migration | `packages/gateway/src/index/migrations/` |
 | New engine capability | `packages/gateway/src/engine/` |
 | New Vault backend | `packages/gateway/src/vault/<platform>.ts` |
 | New Tauri UI page | `packages/ui/src/pages/<Name>.tsx` |

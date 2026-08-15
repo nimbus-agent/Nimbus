@@ -94,7 +94,18 @@ const DOCS_FILES = [
   "docs/license-policy.md",
 ];
 
-const DOCS_GLOBS = [".claude/commands/*.md"];
+/**
+ * Globbed doc sources, in ADDITION to the explicit list above.
+ *
+ * These live under a dot-directory, and `Bun.Glob.scan` skips dot-directories
+ * unless `dot: true` is passed — so for as long as this glob has existed it
+ * matched ZERO files and every skill went unchecked. Measured:
+ * `new Glob(".claude/commands/*.md").scanSync({cwd})` yields 0, the same call
+ * with `{dot: true}` yields 21. The gate reported "all resolve" across 16 docs
+ * — the hardcoded list — while the 21 files it was added to cover were never
+ * opened. See `gatherDocs`, which now passes `dot: true`.
+ */
+export const DOCS_GLOBS = [".claude/commands/*.md", ".claude/agents/*.md"];
 
 function hasRejectChar(s: string): boolean {
   for (const ch of PATH_REJECT_CHARS) if (s.includes(ch)) return true;
@@ -134,9 +145,27 @@ function offsetToLine(text: string, offset: number): number {
   return line;
 }
 
-function* extractMarkdownLinks(text: string): Generator<{ raw: string; offset: number }> {
+/**
+ * Blank the CONTENTS of inline code spans, preserving length (and therefore
+ * every byte offset, which the line reporter depends on).
+ *
+ * A doc that documents link syntax writes it in backticks — this gate's own
+ * entry in `nimbus-file-map.md` describes itself as catching "broken
+ * `[text](path)` and backtick path refs". Read literally, that is a link to a
+ * file named `path`, and the gate reported it as broken. Quoted syntax is not
+ * a reference.
+ *
+ * Only the markdown-LINK pass masks: `extractBacktickPaths` deliberately reads
+ * inside backticks, since a backticked path IS a reference there.
+ */
+export function maskInlineCode(text: string): string {
+  return text.replace(/`([^`\n]*)`/g, (whole) => " ".repeat(whole.length));
+}
+
+export function* extractMarkdownLinks(text: string): Generator<{ raw: string; offset: number }> {
   const re = /\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-  for (const m of text.matchAll(re)) {
+  const masked = maskInlineCode(text);
+  for (const m of masked.matchAll(re)) {
     if (m[1] !== undefined && m.index !== undefined) {
       yield { raw: m[1], offset: m.index };
     }
@@ -268,7 +297,9 @@ async function gatherDocs(): Promise<string[]> {
     if (existsSync(join(REPO_ROOT, d))) docs.push(d);
   }
   for (const pattern of DOCS_GLOBS) {
-    for await (const rel of new Glob(pattern).scan({ cwd: REPO_ROOT })) {
+    // `dot: true` is load-bearing: every DOCS_GLOBS pattern is under `.claude/`,
+    // and without it Glob.scan silently matches nothing.
+    for await (const rel of new Glob(pattern).scan({ cwd: REPO_ROOT, dot: true })) {
       docs.push(rel.replaceAll("\\", "/"));
     }
   }
@@ -311,4 +342,8 @@ async function run(): Promise<void> {
   process.exit(1);
 }
 
-await run();
+// Guarded so the module can be imported by tests. Without it, `import` runs the
+// whole audit as a side effect — and `run()` calls `process.exit(1)` on a broken
+// reference, which would kill the importing test process. `bun run audit:doc-refs`
+// still executes it: `import.meta.main` is true when the file is the entry point.
+if (import.meta.main) await run();
