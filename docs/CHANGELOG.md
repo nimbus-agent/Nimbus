@@ -8,6 +8,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-16 — seven user-facing commits were missing from the generated changelog, going
+  back to April.** Recorded here because tags are immutable and the release notes cannot be
+  corrected after the fact.
+
+  Cause, in every case: release-please could not parse the squash commit, so it skipped it. The
+  squash body IS the PR body, and an unbalanced `(` in a code span is enough — see
+  `pr-body-breaks-release-please` in the release docs and `scripts/release/check-pr-message-parses.ts`.
+  The release still shipped each time; only the entry vanished, silently.
+
+  Established by running release-please's own parser (`@conventional-commits/parser`) over all
+  2,698 commits on `main`. 594 do not parse, but 587 of those are `chore`/`test`/`ci`/`docs` or
+  pre-Conventional subjects that were never changelog-eligible — no harm. **Seven are `feat`/`fix`
+  and absent from `CHANGELOG.md`:**
+
+  | commit | release it belonged to | subject |
+  | --- | --- | --- |
+  | `f409dec1` | 2026-04-19 (direct commit) | `fix(llm): restore globalThis.fetch correctly after each test` |
+  | `14c7ae4a` | `v0.5.0` | `feat: nimbus security scan v2` (#515) |
+  | `0d2d006f` | `v1.7.0` | `feat(audit): gate the workflow_run pwn-request premise` (#921) |
+  | `63c23afc` | `v1.9.0` | `fix(quality): clear all 171 SonarCloud issues from the 2026-07-29 profile bump` (#947) |
+  | `dd98484b` | `v1.21.0` | `feat(index): enforce connector depth and index real Gmail and Outlook bodies` (#1047) |
+  | `828090ca` | `v2.4.6` | `fix(security): widen D12 past its receiver-name blind spot and D22(d) past its flat-path one` (#1218) |
+  | `b59ccacf` | `v2.4.7` | `fix(release): make the drop-guard ask whether the release PR is complete` (#1224) |
+
+  Three of the seven are features, one of them security tooling, and none of the four older ones
+  appears in this file either — so until now the only record of them was the git log.
+
+  **All seven would be blocked today.** The PR-time parse gate (#1227) was run against each
+  reconstructed PR: every one exits 1, at `3:11`, `13:51`, `142:17`, `33:31`, `155:42`, `103:15`
+  and `17:15` respectively. The two 2026-08-16 entries were the ones that prompted the
+  investigation; the other five were found by it.
+
 - **2026-08-16 — an audit of I1–I30 found two live bugs, two defenses wired to nothing,
   and a class of guard that reports clean without enforcing anything.** Six PRs (#1216,
   #1217, #1218, #1219, #1220, #1221), shipped in `v2.4.6`.
