@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
+import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { readIndexedUserVersion, runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
@@ -15,16 +16,19 @@ function sendToMain(data: unknown): void {
 }
 
 function setupDb(dbPath: string): Database {
-  const d = new Database(dbPath);
-  applyWritablePragmas(d);
+  // Named `db`, not `d`: D12's receiver pattern keys on the `db` suffix this repo uses for a
+  // `Database` handle, so a one-letter binding is a handle the rule cannot see. Same shape as
+  // `index/local-index.ts:279`, which routes the identical PRAGMA through `dbRun`.
+  const db = new Database(dbPath);
+  applyWritablePragmas(db);
   const dir = dirname(dbPath);
-  runIndexedSchemaMigrations(d, LocalIndex.SCHEMA_VERSION, {
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION, {
     backupDir: join(dir, "backups"),
     dbPath,
   });
-  ensureSqliteVecForConnection(d, readIndexedUserVersion(d));
-  d.run("PRAGMA foreign_keys = ON");
-  return d;
+  ensureSqliteVecForConnection(db, readIndexedUserVersion(db));
+  dbRun(db, "PRAGMA foreign_keys = ON");
+  return db;
 }
 
 const core = new EmbeddingWorkerCore({

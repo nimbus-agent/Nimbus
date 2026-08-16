@@ -237,6 +237,86 @@ describe("D12 — direct db.run / db.exec outside allow-list", () => {
   test("DB_RUN_EXEC_ALLOW_LIST contains exactly the wrapper file", () => {
     expect([...DB_RUN_EXEC_ALLOW_LIST]).toEqual(["packages/gateway/src/db/write.ts"]);
   });
+
+  // The receiver name is the part that failed open. `\b` cannot match between the `w` and the `D`
+  // of `rawDb`, so the old pattern's `db.` was unreachable for every alias — and two DELETEs on
+  // the production `data.delete` path sat behind that gap, reported clean, for the life of the
+  // rule. Each spelling below is a real one from the tree, not an invented shape.
+  test.each([
+    [
+      "a dotted alias receiver",
+      "input.index.rawDb.run(`DELETE FROM item WHERE service = ?`, [s]);",
+    ],
+    ["a bare alias receiver", "rawDb.run('DELETE FROM item');"],
+    ["a capitalised suffix", "const n = myDB.exec('VACUUM');"],
+  ])("flags %s", (_label, contents) => {
+    expect(
+      findDirectDbRunExec([{ relPath: "packages/gateway/src/synthetic.ts", contents }]),
+    ).toHaveLength(1);
+  });
+
+  test("flags the prepared-statement form, including across a line break", () => {
+    // `docs/SECURITY-INVARIANTS.md` has named `stmt.run(` an anti-pattern since I14 was written,
+    // and `dbStmtRun` has existed to wrap it, but no rule ever looked for it. The line break is
+    // the case that matters: the SQL is what pushes `.run(` onto its own line.
+    const hits = findDirectDbRunExec([
+      {
+        relPath: "packages/gateway/src/synthetic.ts",
+        contents: [
+          "const rows = this.db",
+          "  .query(`UPDATE sync_state SET depth = ? WHERE connector_id = ?`)",
+          "  .run(depth, serviceId);",
+        ].join("\n"),
+      },
+    ]);
+    expect(hits).toHaveLength(1);
+    // Reported at the `.query(` line, which is where a reader has to edit.
+    expect(hits[0]?.line).toBe(2);
+  });
+
+  test("does NOT flag a read through the same statement shape", () => {
+    // `.query(...).get(...)` / `.all(...)` are the overwhelmingly common form in this tree; a rule
+    // that flagged them would be reverted within a day, which is its own kind of unenforced.
+    const hits = findDirectDbRunExec([
+      {
+        relPath: "packages/gateway/src/synthetic.ts",
+        contents:
+          "const r = this.db.query(`SELECT depth FROM sync_state`).get(id);\nconst a = db.query(`SELECT 1`).all();",
+      },
+    ]);
+    expect(hits).toHaveLength(0);
+  });
+
+  test("does NOT flag the receivers that dominate `.run(`/`.exec(` in this tree", () => {
+    // Surveyed before widening: of 71 `.run(`/`.exec(` sites in production source, the great
+    // majority are `RegExp.exec`, plus `AgentCoordinator.run` and `AsyncLocalStorage.run`. If the
+    // widened receiver pattern caught any of them the rule would be noise, so this pins the
+    // negative side explicitly rather than trusting that it stayed narrow.
+    const hits = findDirectDbRunExec([
+      {
+        relPath: "packages/gateway/src/synthetic.ts",
+        contents: [
+          "const m = GITHUB_PR_URL_RE.exec(url);",
+          "const results = await coordinator.run(tasks);",
+          "return await agentRequestContext.run(store, fn);",
+          "const outcome = await deps.run(s.tool, s.params);",
+          "const parsed = /^(\\d+)$/i.exec(s);",
+        ].join("\n"),
+      },
+    ]);
+    expect(hits).toHaveLength(0);
+  });
+
+  test("the widened receiver pattern is linear, not quadratic", () => {
+    // A correctness test cannot tell linear from catastrophic backtracking, and the widened
+    // pattern puts a quantified prefix in front of a required literal — the exact shape that
+    // goes quadratic on a long word-character run. This scans every line of every source file,
+    // so a pathological line would hang the gate rather than fail it.
+    const pathological = `${"a".repeat(40_000)} .run(`;
+    const started = performance.now();
+    findDirectDbRunExec([{ relPath: "packages/gateway/src/synthetic.ts", contents: pathological }]);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
 });
 
 describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", () => {
@@ -535,6 +615,41 @@ describe("D22(d) — agent emitter import confinement", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  // An emitter nested one directory deep. `[\w-]` cannot cross a `/`, so the earlier flat pattern
+  // matched `../agents/why.ts` and missed `../agents/briefs/summary.ts` — every emitter would
+  // leave this rule's sight the day someone grouped them into folders. All three resolution forms
+  // are covered, because two of them being fixed is how the next blind spot starts.
+  test.each([
+    ["static", 'import { emitSummaryBrief } from "../agents/briefs/summary.ts";\n'],
+    ["dynamic", 'const m = await import("../agents/briefs/summary.ts");\n'],
+    ["require", 'const m = require("../agents/briefs/summary.ts");\n'],
+  ])("flags a %s emitter import from a SUBDIRECTORY of agents/", (_form, contents) => {
+    expect(flagged([{ relPath: "packages/gateway/src/ipc/http-server.ts", contents }])).toBe(true);
+  });
+
+  test("a nested agents/_lib path is still allowed", () => {
+    // The `_lib/` lookahead sits immediately after `/agents/`, so nesting must not smuggle a
+    // shared helper back into scope — nor push one out of the exclusion.
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/federation/peer-fanout.ts",
+          contents: 'import { x } from "../agents/_lib/findings/shape.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("the subdirectory pattern is linear, not quadratic", () => {
+    // `[\w-]*(?:\/[\w-]+)*` is a quantifier next to a quantifier. It is safe because each
+    // iteration must consume a literal `/` that `[\w-]` cannot match, but "it is safe because"
+    // is an argument, and an argument is not a measurement.
+    const pathological = `import x from "../agents/${"a".repeat(20_000)}`;
+    const started = performance.now();
+    flagged([{ relPath: "packages/gateway/src/ipc/http-server.ts", contents: pathological }]);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   test("allows every emitter import in agents-rpc.ts — the one door", () => {

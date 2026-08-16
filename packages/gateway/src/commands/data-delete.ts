@@ -1,3 +1,4 @@
+import { dbRun } from "../db/write.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
@@ -66,8 +67,8 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
   if (input.dryRun) return { preflight, deleted: false };
 
   input.index.rawDb.transaction(() => {
-    input.index.rawDb.run(`DELETE FROM item WHERE service = ?`, [input.service]);
-    input.index.rawDb.run(`DELETE FROM sync_state WHERE connector_id LIKE ?`, [
+    dbRun(input.index.rawDb, `DELETE FROM item WHERE service = ?`, [input.service]);
+    dbRun(input.index.rawDb, `DELETE FROM sync_state WHERE connector_id LIKE ?`, [
       `${input.service}%`,
     ]);
   })();

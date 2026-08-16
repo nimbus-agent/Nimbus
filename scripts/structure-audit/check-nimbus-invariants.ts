@@ -138,7 +138,39 @@ export type DbRunHit = {
 
 export const DB_RUN_EXEC_ALLOW_LIST: readonly string[] = ["packages/gateway/src/db/write.ts"];
 
-const DB_RUN_EXEC_RE = /\b(?:this\.|ctx\.)?db\.(?:run|exec)\s*\(/;
+/**
+ * A raw SQLite write is only caught if the rule can SEE it, and this pattern used to pin the
+ * receiver to the literal name `db` (`/\b(?:this\.|ctx\.)?db\.(?:run|exec)\s*\(/`). `\b` cannot
+ * match between the `w` and the `D` of `rawDb`, so `input.index.rawDb.run(...)` was invisible —
+ * and `commands/data-delete.ts` has been executing two unwrapped DELETEs through exactly that
+ * spelling, on the production `data.delete` IPC path, with D12 exiting 0 the whole time.
+ *
+ * The receiver is now any identifier ENDING in `db`/`Db`/`DB`, which is what this repo actually
+ * names a `Database` handle: `db`, `this.db`, `ctx.db`, `rawDb`, `input.index.rawDb`. Surveyed
+ * against every `.run(`/`.exec(` in production source first — 71 sites, of which the only ones
+ * with a db-suffixed receiver are the real database handles, so the widening adds no false
+ * positives. (The rest are overwhelmingly `RegExp.exec`, plus `coordinator.run` and
+ * `AsyncLocalStorage.run`, none of which this can match.)
+ *
+ * Bounded quantifier, not `[\w$]*`: an unbounded prefix before a required literal backtracks
+ * quadratically on a long word-character run, and this scans every line of every source file.
+ *
+ * Known bound, stated rather than papered over: a `Database` bound to a name that does not end
+ * in `db` stays invisible — `embedding/embedding-worker.ts:26` binds one to `d`. A text scan
+ * cannot resolve types. What it can do is cover the naming convention and say where it stops.
+ */
+const DB_RUN_EXEC_RE = /\b[\w$]{0,64}[dD][bB]\s*\.\s*(?:run|exec)\s*\(/;
+
+/**
+ * The prepared-statement form: `db.query(sql).run(...)` / `db.prepare(sql).run(...)`.
+ *
+ * `docs/SECURITY-INVARIANTS.md` has named `stmt.run(` an I14 anti-pattern since the invariant was
+ * written, and `db/write.ts` exports `dbStmtRun` as its wrapper — but no rule ever looked for it,
+ * and `index/local-index.ts` has been running an `UPDATE sync_state` through `.query(...).run(...)`
+ * three lines above a compliant `dbRun` INSERT. Whole-file rather than per-line because the two
+ * halves routinely sit on different lines once the SQL is long enough to wrap.
+ */
+const DB_STMT_RUN_RE = /\.\s*(?:query|prepare)\s*\([\s\S]{0,400}?\)\s*\.\s*run\s*\(/g;
 const FN_DECL_RE = /(?:function|async\s+function)\s+([A-Za-z_$][\w$]{0,127})/;
 const FN_CALL_RE = /([A-Za-z_$][\w$]{0,127})\s{0,8}\([^)]{0,500}\)\s{0,8}[:{=]/;
 
@@ -160,7 +192,8 @@ export function findDirectDbRunExec(
   const out: DbRunHit[] = [];
   for (const f of files) {
     if (allowList.includes(f.relPath)) continue;
-    const strippedLines = stripComments(f.contents).split("\n");
+    const stripped = stripComments(f.contents);
+    const strippedLines = stripped.split("\n");
     const originalLines = f.contents.split("\n");
     for (let i = 0; i < strippedLines.length; i++) {
       const line = strippedLines[i] as string;
@@ -172,6 +205,31 @@ export function findDirectDbRunExec(
         snippet: (originalLines[i] as string).trim(),
       });
     }
+    for (const hit of findStatementRunHits(f, stripped, originalLines)) out.push(hit);
+  }
+  return out;
+}
+
+/** The `.query(sql).run(...)` / `.prepare(sql).run(...)` half of D12, which spans lines. */
+function findStatementRunHits(
+  f: FileEntry,
+  stripped: string,
+  originalLines: readonly string[],
+): DbRunHit[] {
+  const out: DbRunHit[] = [];
+  // Fresh lastIndex per file: the pattern is /g and module-level, so a shared one would skip
+  // matches in whichever file happened to be scanned next.
+  DB_STMT_RUN_RE.lastIndex = 0;
+  let m: RegExpExecArray | null = DB_STMT_RUN_RE.exec(stripped);
+  while (m !== null) {
+    const line = stripped.slice(0, m.index).split("\n").length;
+    out.push({
+      file: f.relPath,
+      line,
+      function: findEnclosingFunction(originalLines, line - 1),
+      snippet: (originalLines[line - 1] ?? "").trim(),
+    });
+    m = DB_STMT_RUN_RE.exec(stripped);
   }
   return out;
 }
@@ -640,14 +698,32 @@ const D22_AGENT_RECORD_DEFINITION = "packages/gateway/src/egress/agent-brief-egr
 // answer as the wrapper/façade limit above: address the capability, do not pretend the regex sees it.
 const D22_EMITTER_ALLOWED = "packages/gateway/src/ipc/agents-rpc.ts";
 const D22_EMITTER_DIR = "packages/gateway/src/agents/";
-/** `from ".../agents/<name>.ts"` — any quote style, excluding an `_lib/` segment. */
-const D22_EMITTER_STATIC_RE = /\bfrom\s+["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+// SUBDIRECTORIES. All three patterns below carry `(?:\/[\w-]+)*` after the first path segment,
+// because `[\w-]` cannot cross a `/`: the earlier `[A-Za-z][\w-]*\.ts` form matched
+// `../agents/why.ts` and missed `../agents/briefs/summary.ts` outright, so nesting emitters one
+// directory deep — an ordinary refactor once there are more than a handful — would have silently
+// taken every emitter back out of this rule's sight.
+//
+// This is the SAME defect #1216 fixed for D17/I23, in the sibling rule, one commit earlier. Two
+// rules written in the same style shared the same blind spot, which is the argument for the
+// subdirectory case being part of the pattern rather than something each rule remembers.
+//
+// The `_lib/` exclusion still holds under nesting: the lookahead sits immediately after
+// `/agents/`, so `agents/_lib/x/y.ts` is excluded by the same token as `agents/_lib/y.ts`.
+//
+// No catastrophic backtracking: each `(?:\/[\w-]+)` iteration must consume a literal `/`, which
+// `[\w-]` cannot, so the split between the segments is unambiguous. Pinned by a time-bounded test
+// rather than by argument — a correctness test cannot tell linear from quadratic.
+
+/** `from ".../agents/<name>.ts"` or `.../agents/<sub>/<name>.ts` — any quote style, not `_lib/`. */
+const D22_EMITTER_STATIC_RE =
+  /\bfrom\s+["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*(?:\/[\w-]+)*\.ts["'`]/;
 /** `import(".../agents/<name>.ts")` — the dynamic form. */
 const D22_EMITTER_DYNAMIC_RE =
-  /\bimport\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+  /\bimport\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*(?:\/[\w-]+)*\.ts["'`]/;
 /** `require(".../agents/<name>.ts")` — the CommonJS form, which Bun honours from a .ts module. */
 const D22_EMITTER_REQUIRE_RE =
-  /\brequire\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+  /\brequire\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*(?:\/[\w-]+)*\.ts["'`]/;
 
 export function checkAgentEmitterImportConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

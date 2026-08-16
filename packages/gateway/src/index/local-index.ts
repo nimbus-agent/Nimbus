@@ -432,9 +432,10 @@ export class LocalIndex {
   }
 
   setConnectorDepth(serviceId: string, depth: ReindexDepth): void {
-    const rows = this.db
-      .query(`UPDATE sync_state SET depth = ? WHERE connector_id = ?`)
-      .run(depth, serviceId);
+    const rows = dbRun(this.db, `UPDATE sync_state SET depth = ? WHERE connector_id = ?`, [
+      depth,
+      serviceId,
+    ]);
     if (rows.changes === 0) {
       dbRun(
         this.db,
