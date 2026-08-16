@@ -8,6 +8,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-16 — Egress class `model` rises from `none` to `per-call`** (agent-brief-synthesis
+  work, landing ahead of the synthesis wiring itself). `egress/synthesis-egress.ts`'s
+  `recordSynthesisEgress` is the sole appender: one row for a built-in agent brief synthesized by a
+  NON-LOCAL provider. Read it as narrowly as `mcp`/`http` — it is NOT "all inference": embeddings
+  still append nothing (`PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table with no appender), so
+  a zero `model` count in `nimbus prove`'s scope line is not a claim that no vector left the
+  machine. The local-vs-remote split is enforced INSIDE the appender via a required `remote`
+  argument — a `false` call appends nothing, not even a blocked row — mirroring
+  `recordSyncEgress`'s `LOCAL_ONLY_SYNC_SERVICES` check for the same reason: a caller-enforced rule
+  is one wiring mistake away from fabricating a `model` row for a local generation. The appender has
+  landed and is fully tested but has no production caller yet — that arrives with the synthesis
+  wiring (`agents/_lib/synthesis-llm.ts`, under `[agents] synthesis = "any"`) in a following change
+  in the same effort. `COVERAGE_CLASS_LABELS` in `cli/src/commands/prove.ts` gains a matching
+  `model` label ("remotely-synthesized agent briefs") so the scope line never falls through to a
+  bare, over-broad `model` key (`I29`).
 - **2026-08-16 — seven user-facing commits were missing from the generated changelog, going
   back to April.** Recorded here because tags are immutable and the release notes cannot be
   corrected after the fact.

@@ -16,8 +16,10 @@
  * (below) depends on the set of source types being known and closed — an unreviewed new member could
  * silently land outside `MARKER_SOURCE_TYPES` and get miscounted as outbound egress, or inside it and
  * get miscounted as bookkeeping. The union therefore lands COMPLETE, including members whose
- * appenders do not exist yet (`boot`, `degraded` arrive with the boot marker; `sync`, `model`, `peer`
- * arrive in later phases).
+ * appenders do not exist yet (`boot`, `degraded` arrive with the boot marker; `sync` and `model`
+ * have since landed their appenders — `egress/sync-egress.ts`, `egress/synthesis-egress.ts` — and
+ * their `THIS_BINARY_COVERAGE` entries are raised accordingly; `peer` and `session` remain pending,
+ * arriving in later phases).
  *
  * The union was frozen at eight members in #1038. `mcp` was added deliberately in the
  * agents-as-MCP-tools work as the ninth and, per `docs/ecosystem-roadmap.md` § "Cross-cutting
