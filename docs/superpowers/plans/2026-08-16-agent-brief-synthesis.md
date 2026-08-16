@@ -600,7 +600,7 @@ export type SynthesisAttempt =
   | { ok: true; markdown: string; model: string; remote: boolean }
   | {
       ok: false;
-      reason: "no_eligible_provider" | "timeout" | "egress_append_failed";
+      reason: "no_eligible_provider" | "timeout" | "egress_append_failed" | "provider_error";
       detail?: string;
     };
 
@@ -806,7 +806,11 @@ export type SynthesisProvenance =
   | { attempted: true; used: true; model: string; remote: boolean }
   | {
       attempted: true; used: false;
-      reason: "timeout" | "contract_violation" | "egress_append_failed";
+      reason:
+        | "timeout"
+        | "contract_violation"
+        | "egress_append_failed"
+        | "provider_error";
       missingPhrases?: string[];
       /**
        * Error text for `egress_append_failed`, so a transient SQLite busy/locked condition is
