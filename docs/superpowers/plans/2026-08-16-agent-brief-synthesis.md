@@ -945,6 +945,11 @@ git commit -m "feat(agents): supply the synthesis LLM at both production dispatc
 
 - [ ] **Step 1: Find every affected claim**
 
+**This task falsifies claims in TWO independent vocabularies, and one grep cannot find both.** Run
+both sweeps.
+
+Sweep A — the "briefs never use an LLM" claim:
+
 ```bash
 grep -rn "do not use an LLM\|does not use an LLM\|no LLM" --include=*.ts --include=*.md . | grep -v node_modules
 ```
@@ -952,6 +957,23 @@ grep -rn "do not use an LLM\|does not use an LLM\|no LLM" --include=*.ts --inclu
 Each hit is either still true (the deterministic path) or now false (an unconditional claim). Fix
 the false ones. `synthesize.ts`'s `DETERMINISTIC_FOOTER` text stays — it now describes one path
 rather than all of them, which is what Task 5 made true.
+
+Sweep B — the egress **coverage-class** claim, which Sweep A cannot match because it shares no
+wording with it:
+
+```bash
+grep -rn "non-\`none\`\|still \`none\`\|FOUR non\|session\`, \`model\`, \`peer\`" --include=*.md docs/
+grep -rn "model" --include=*.md docs/SECURITY-INVARIANTS.md docs/architecture.md | grep -i "none\|coverage"
+```
+
+> **Why this sweep exists.** The Task 3 review found `docs/SECURITY-INVARIANTS.md:610`
+> ("records exactly FOUR non-`none` classes … with `session`, `model` and `peer` still `none`") and
+> `docs/architecture.md:1663` ("every other class (`session`, `model`, `peer`) is `none`") both
+> asserting the opposite of what Task 3 shipped. **Sweep A matches neither.** Task 3's fix round
+> corrected those two lines, so verify they are right rather than assuming they are wrong — but run
+> the sweep anyway: it is the only thing standing between this PR and a shipped false claim about
+> what the ledger covers, and the count of non-`none` classes is asserted in prose in more than one
+> place. Any hit still describing four classes, or still listing `model` as `none`, is false.
 
 - [ ] **Step 2: Correct the four Wave 6 roadmap rows**
 
