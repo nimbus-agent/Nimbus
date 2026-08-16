@@ -184,7 +184,7 @@ When `nimbus lan enable` is on, the LAN server accepts length-framed TCP connect
 |---|---|
 | Network observer (passive) | Cannot decrypt sealed frames; sees only TCP framing and ciphertext sizes. |
 | Network attacker (active, mid-pairing) | Can intercept the pairing handshake and substitute their own pubkey if the pairing code is delivered through the same channel. Out-of-band code transmission is required. |
-| Paired peer without write grant | Read-side methods only (`engine.ask`, `connector.list`, `index.queryItems`, etc.). The forbidden namespaces — `vault.*`, `updater.*`, `lan.*`, `profile.*` — remain blocked regardless of grant. |
+| Paired peer without write grant | Read-side methods only (`engine.ask`, `connector.listStatus`, `index.queryItems`, etc.). The forbidden namespaces — `vault.*`, `updater.*`, `lan.*`, `profile.*` — remain blocked regardless of grant. |
 | Paired peer with write grant (`nimbus lan grant-write`) | Can additionally call HITL-gated write methods. The HITL gate still fires on the **host**, so the host user remains the consent authority. |
 | Host running behind NAT / proxy | The rate limiter sees the proxy IP, not the originating peer. A single misbehaving peer behind a shared egress can lock out other legitimate peers. |
 

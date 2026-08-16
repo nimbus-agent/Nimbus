@@ -43,7 +43,8 @@ describe("Onboarding → Connect", () => {
   it("Authenticate dispatches connector.startAuth for each selected", async () => {
     callMock.mockImplementation(async (method) => {
       if (method === "connector.startAuth") return null;
-      if (method === "connector.list") return [{ name: "GitHub", state: "healthy" }];
+      if (method === "connector.listStatus")
+        return [{ serviceId: "GitHub", healthState: "healthy" }];
       throw new Error(`unexpected ${method}`);
     });
     renderAt();
@@ -61,7 +62,7 @@ describe("Onboarding → Connect", () => {
         return new Promise<null>((r) => {
           resolveAuth = () => r(null);
         });
-      if (method === "connector.list") return [];
+      if (method === "connector.listStatus") return [];
       throw new Error(`unexpected ${method}`);
     });
     renderAt();
@@ -74,7 +75,7 @@ describe("Onboarding → Connect", () => {
   it("shows Failed — retry when connector.startAuth throws", async () => {
     callMock.mockImplementation(async (method) => {
       if (method === "connector.startAuth") throw new Error("auth error");
-      if (method === "connector.list") return [];
+      if (method === "connector.listStatus") return [];
       throw new Error(`unexpected ${method}`);
     });
     renderAt();
@@ -87,7 +88,8 @@ describe("Onboarding → Connect", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     callMock.mockImplementation(async (method) => {
       if (method === "connector.startAuth") return null;
-      if (method === "connector.list") return [{ name: "GitHub", state: "healthy" }];
+      if (method === "connector.listStatus")
+        return [{ serviceId: "GitHub", healthState: "healthy" }];
       throw new Error(`unexpected ${method}`);
     });
     renderAt();

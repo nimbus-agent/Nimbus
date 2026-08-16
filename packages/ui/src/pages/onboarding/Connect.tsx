@@ -1,8 +1,17 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { createIpcClient } from "../../ipc/client";
-import type { ConnectorSummary } from "../../ipc/types";
 import { useNimbusStore } from "../../store";
+
+/**
+ * The subset of the gateway's `SyncStatus` this page reads, named for what it is: the shape on the
+ * wire. `healthState` carries the same six-member `ConnectorHealthState` union the UI calls
+ * `ConnectorHealth`, and is optional because a connector with no health row yet has none.
+ */
+interface WireConnectorStatus {
+  readonly serviceId: string;
+  readonly healthState?: string;
+}
 
 const CONNECTORS = ["Google Drive", "GitHub", "Slack", "Linear", "Notion", "Gmail"] as const;
 
@@ -60,11 +69,27 @@ export function Connect() {
     }
     pollRef.current = setInterval(async () => {
       try {
-        const list = await client.call<ConnectorSummary[]>("connector.list");
+        // `connector.listStatus`, not `connector.list`. The latter sat on the Tauri allowlist with
+        // no gateway handler behind it, so this poll returned -32601 on every tick and the bare
+        // `catch` below classified a permanent structural error as transient — the navigate was
+        // unreachable. `listStatus` is what every other consumer calls.
+        //
+        // Typed against the WIRE shape (`SyncStatus` in gateway `sync/types.ts`), deliberately not
+        // against this package's `ConnectorStatus`, which declares `{ name, health }` and does not
+        // match what the gateway sends. That mismatch is real and pre-existing — `ConnectorGrid`
+        // and `ConnectorsPanel` read `.name`/`.health` off this same call and get `undefined` —
+        // but it is a separate defect in a surface that has never shipped, and inheriting the
+        // wrong type here to be consistent with it would just spread the bug.
+        const list = await client.call<WireConnectorStatus[]>("connector.listStatus");
         let anyConnected = false;
         for (const name of services) {
-          const summary = list.find((c) => c.name === name);
-          if (summary && summary.state !== "unauthenticated") {
+          const summary = list.find((c) => c.serviceId === name);
+          // Absent healthState means the connector has no health row yet — not yet authenticated.
+          if (
+            summary &&
+            summary.healthState !== undefined &&
+            summary.healthState !== "unauthenticated"
+          ) {
             setAuthStatus(name, "connected");
             anyConnected = true;
           }

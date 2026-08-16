@@ -750,7 +750,7 @@ describe("tryDispatchConnectorRpc", () => {
   });
   test("skips when localIndex missing", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchConnectorRpc(ctx, "connector.list", {}, "c1")).toBe(
+    expect(await tryDispatchConnectorRpc(ctx, "connector.listStatus", {}, "c1")).toBe(
       connectorRpcSkipped,
     );
   });
@@ -762,12 +762,18 @@ describe("tryDispatchConnectorRpc", () => {
       /Gateway is not configured for OAuth/,
     );
   });
-  test("connector.list dispatches when localIndex available", async () => {
+  test("connector.listStatus dispatches when localIndex available", async () => {
+    // Was `connector.list` + `expect(out).toBeDefined()`, and it asserted the OPPOSITE of its
+    // name: `dispatchConnectorRpc` had no case for that method, so the arm returned the
+    // `connectorRpcSkipped` SYMBOL — which is defined, so the assertion passed *because of* the
+    // miss. It was live cover for a dead allowlist entry. Now names a method that is really
+    // served, and asserts a dispatch rather than mere definedness.
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    const out = await tryDispatchConnectorRpc(ctx, "connector.list", {}, "c1");
-    expect(out).toBeDefined();
+    const out = await tryDispatchConnectorRpc(ctx, "connector.listStatus", {}, "c1");
+    expect(out).not.toBe(connectorRpcSkipped);
+    expect(Array.isArray(out)).toBe(true);
   });
   test("connector.auth with openUrl wired hits dispatcher inner branch", async () => {
     const db = trackedDb();

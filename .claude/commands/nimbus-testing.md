@@ -144,9 +144,9 @@ it('rejects vault.get from the frontend', async () => {
   expect(result.error.code).toBe(-32000); // ERR_METHOD_NOT_ALLOWED
 });
 
-it('allows connector.list', async () => {
-  mockGateway.connector.list.mockResolvedValue([]);
-  const result = await invoke('rpc_call', { method: 'connector.list', params: {} });
+it('allows connector.listStatus', async () => {
+  mockGateway.connector.listStatus.mockResolvedValue([]);
+  const result = await invoke('rpc_call', { method: 'connector.listStatus', params: {} });
   expect(result.error).toBeUndefined();
 });
 ```

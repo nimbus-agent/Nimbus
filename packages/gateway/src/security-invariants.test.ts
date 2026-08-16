@@ -840,7 +840,7 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
 
   test("allowlist_exact_size assertion is 106", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*106\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*105\s*\)/);
   });
 
   // The count above is NOT sufficient on its own — a one-for-one substitution (e.g.

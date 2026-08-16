@@ -36,7 +36,7 @@ namespace.methodName
 - **Notifications** follow the same pattern but are sent server→client with no `id` and no response expected
 
 ❌ Wrong: `getConnectorList`, `LLM_LIST_MODELS`, `nimbus/connector/list`
-✅ Right: `connector.list`, `llm.listModels`
+✅ Right: `connector.listStatus`, `llm.listModels`
 
 ---
 
@@ -123,7 +123,7 @@ interface HitlAction {
 
 | Method | Type | Description |
 |---|---|---|
-| `connector.list` | request | All connectors with current health state |
+| `connector.listStatus` | request | All connectors with current sync + health state |
 | `connector.history` | request | Last N health transitions for a connector |
 
 **Notifications (connector):**
@@ -566,5 +566,5 @@ const result = await client.engine.ask({ prompt: 'summarize my week' });
 // For testing — use MockClient, never a real socket
 import { MockClient } from '@nimbus-dev/client';
 const mock = new MockClient();
-mock.connector.list.mockResolvedValue([...]);
+mock.connector.listStatus.mockResolvedValue([...]);
 ```

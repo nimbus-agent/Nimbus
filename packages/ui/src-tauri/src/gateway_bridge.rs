@@ -76,7 +76,6 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "audit.list",
     "audit.verify",
     "chatops.status",
-    "connector.list",
     "connector.listStatus",
     "connector.setConfig",
     "connector.startAuth",
@@ -382,7 +381,6 @@ mod tests {
     #[test]
     fn allowlist_ws5a_methods() {
         assert!(is_method_allowed("diag.snapshot"));
-        assert!(is_method_allowed("connector.list"));
         assert!(is_method_allowed("connector.startAuth"));
         assert!(is_method_allowed("engine.askStream"));
         assert!(is_method_allowed("db.getMeta"));
@@ -593,7 +591,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 106);
+        assert_eq!(ALLOWED_METHODS.len(), 105);
     }
 
     #[test]

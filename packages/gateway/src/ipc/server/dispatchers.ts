@@ -193,7 +193,20 @@ export async function tryDispatchAuditRpc(
   method: string,
   params: unknown,
 ): Promise<unknown> {
-  if (method !== "audit.verify" && method !== "audit.exportAll") return phase4RpcSkipped;
+  // Namespace check, not a two-name list. This arm used to read
+  //   `if (method !== "audit.verify" && method !== "audit.exportAll") return phase4RpcSkipped;`
+  // while `dispatchAuditRpc`'s handler map served FIVE methods, so three were stranded: a call
+  // reached this guard, was skipped, fell through the rest of the chain and came back -32601 even
+  // though its handler existed and was registered. Two of them — `audit.export` and
+  // `audit.getSummary` — are on the Tauri renderer allowlist (I7), so the desktop audit panel's
+  // summary tile silently never populated and its export failed AFTER the user picked a save path.
+  //
+  // The immediate cause is a two-places-one-updated split: `handleAuditExport` was aliased to
+  // `audit.export` alongside `audit.exportAll` in the leaf map, and the guard was never mirrored.
+  // Letting the leaf map be the single source of truth for WHICH audit methods are served removes
+  // the second place. An unknown `audit.*` still returns a miss from `dispatchByMethod` and falls
+  // through to `phase4RpcSkipped` below, exactly as before.
+  if (!method.startsWith("audit.")) return phase4RpcSkipped;
   try {
     const out = await dispatchAuditRpc(method, params, { index: ctx.options.localIndex });
     if (out.kind === "hit") return out.value;

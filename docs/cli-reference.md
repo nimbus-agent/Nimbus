@@ -968,7 +968,7 @@ nimbus tui
 
 - **Query input** (top bar) — type a query; `Enter` submits.
 - **Result stream** (main area) — tokens render live; scrollback preserved via Ink `<Static>` so prior output never re-renders.
-- **Connector health** (right column) — polls `connector.list` every 30 s; renders `●` / `◐` / `○` glyphs for `ok` / `degraded` / `down`.
+- **Connector health** (right column) — polls `connector.listStatus` every 30 s; renders `●` / `◐` / `○` glyphs for `ok` / `degraded` / `down`.
 - **Watchers** (right column) — polls `watcher.list` every 30 s; shows N active, M firing, plus up to 5 firing watcher names (truncates beyond with `…N more`).
 - **Sub-tasks** (right column) — event-driven via `agent.subTaskProgress`; renders a progress bar + status glyph per sub-task, truncated beyond 8 rows with `…N more (M total)`. Clears when a new query is submitted.
 
