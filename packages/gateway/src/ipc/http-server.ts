@@ -566,7 +566,7 @@ async function handleClipRelated(
             // COALESCE is load-bearing: snippet() over a NULL body returns NULL,
             // and the browser client's isRelatedHit requires a string — a null
             // would drop the hit from the panel entirely rather than blank a line.
-            `SELECT i.id, i.title, i.service, i.url,
+            `SELECT i.id, i.title, i.service, i.type, i.url, i.modified_at,
                     COALESCE(snippet(item_fts, 1, '', '', '…', 24), '') AS snippet
              FROM item i
              INNER JOIN item_fts ON i.rowid = item_fts.rowid
@@ -578,15 +578,19 @@ async function handleClipRelated(
           id: string;
           title: string;
           service: string;
+          type: string;
           url: string | null;
+          modified_at: number;
           snippet: string;
         }>;
         return rows.map((r) => ({
           id: r.id,
           title: r.title,
           service: r.service,
+          type: r.type,
           snippet: r.snippet,
           url: r.url,
+          modified_at: r.modified_at,
         }));
       },
     },

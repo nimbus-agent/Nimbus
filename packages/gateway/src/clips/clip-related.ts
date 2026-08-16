@@ -9,8 +9,13 @@ export interface RelatedHit {
   readonly id: string;
   readonly title: string;
   readonly service: string;
+  /** The connector's item kind — `pr`, `issue`, `ci_run`, … An OPEN vocabulary:
+   *  every connector may add one, so consumers must not switch exhaustively. */
+  readonly type: string;
   readonly snippet: string;
   readonly url: string | null;
+  /** Epoch MILLISECONDS, matching `GET /v1/items/resolve`'s `item.modified_at`. */
+  readonly modified_at: number;
 }
 
 export interface ClipRelatedDeps {

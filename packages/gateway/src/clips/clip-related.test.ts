@@ -34,7 +34,17 @@ describe("runClipRelated", () => {
       {
         search: async (query, limit) => {
           calls.push({ query, limit });
-          return [{ id: "drive:1", title: "Hit", service: "drive", snippet: "s", url: "u" }];
+          return [
+            {
+              id: "drive:1",
+              title: "Hit",
+              service: "drive",
+              type: "page",
+              snippet: "s",
+              url: "u",
+              modified_at: 1,
+            },
+          ];
         },
       },
       { selection: "vector index", limit: 5 },
@@ -62,8 +72,24 @@ describe("runClipRelated", () => {
     const out = await runClipRelated(
       {
         search: async () => [
-          { id: "a", title: "self", service: "nimbus", snippet: "", url: "https://ex.com/self" },
-          { id: "b", title: "other", service: "drive", snippet: "", url: "https://other.com/x" },
+          {
+            id: "a",
+            title: "self",
+            service: "nimbus",
+            type: "page",
+            snippet: "",
+            url: "https://ex.com/self",
+            modified_at: 1,
+          },
+          {
+            id: "b",
+            title: "other",
+            service: "drive",
+            type: "page",
+            snippet: "",
+            url: "https://other.com/x",
+            modified_at: 2,
+          },
         ],
       },
       { title: "x", canonicalUrl: "https://ex.com/p" },

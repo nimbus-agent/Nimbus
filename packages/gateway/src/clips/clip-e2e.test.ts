@@ -314,4 +314,44 @@ describe("web clipper E2E", () => {
     expect(hit).toBeDefined();
     expect(hit?.snippet).toBe("");
   });
+
+  test("related hits carry type and modified_at (epoch ms)", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-new-fields", ["clip"]);
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    const before = Date.now();
+    await fetch(`${base}/v1/clips`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        url: "https://example.com/new-fields",
+        title: "Zzdeltatitleword",
+        mode: "article",
+        body: "Zzdeltabody prose here.",
+        capturedAt: Date.now(),
+      }),
+    });
+
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Zzdeltatitleword" }),
+    });
+    const rel = (await relRes.json()) as {
+      items: Array<{ type: string; modified_at: number }>;
+    };
+    expect(rel.items.length).toBeGreaterThan(0);
+    const hit = rel.items[0];
+    expect(typeof hit?.type).toBe("string");
+    expect(hit?.type.length).toBeGreaterThan(0);
+    // Milliseconds, not seconds: a seconds value would sit in 1970 in JS.
+    expect(hit?.modified_at).toBeGreaterThanOrEqual(before - 60_000);
+    expect(hit?.modified_at).toBeLessThan(before + 60 * 60_000);
+  });
 });
