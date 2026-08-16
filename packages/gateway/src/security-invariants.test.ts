@@ -979,9 +979,18 @@ describe("I23 — ChatOps operational posts are bounded to originating / policy-
     expect(src).toMatch(/notifyChannelsFor\(target\.namespace\)/);
   });
 
-  test("(b) no chatops module outside reply-dispatcher/transport references the connector post tools (D17)", async () => {
-    const dir = resolve(import.meta.dir, "chatops");
-    const offenders: string[] = [];
+  /**
+   * Production `.ts` under `dir`, RECURSIVELY, as repo-relative-ish paths.
+   *
+   * Recursive on purpose, and shared on purpose. (b) walked subdirectories and (c) did not,
+   * for no reason either invariant states — same regex, same tool ids, same D17 rule. `tribal/`
+   * happens to be flat today, so (c) was complete by accident rather than by construction: one
+   * `tribal/<anything>/foo.ts` and a `slack_chat_post` there would have walked straight past the
+   * guard. A scan whose correctness depends on a directory staying flat is a scan that stops
+   * working the day someone tidies up.
+   */
+  async function productionTsUnder(dir: string): Promise<{ rel: string; abs: string }[]> {
+    const out: { rel: string; abs: string }[] = [];
     async function walk(d: string, rel: string): Promise<void> {
       for (const ent of await readdir(d, { withFileTypes: true })) {
         const childRel = rel === "" ? ent.name : `${rel}/${ent.name}`;
@@ -990,24 +999,39 @@ describe("I23 — ChatOps operational posts are bounded to originating / policy-
           continue;
         }
         if (!ent.name.endsWith(".ts") || ent.name.endsWith(".test.ts")) continue;
-        if (childRel === "reply-dispatcher.ts" || childRel.startsWith("transport/")) continue;
-        const c = await readFile(resolve(d, ent.name), "utf8");
-        if (/\b(?:slack_chat_post|teams_chat_post)\b/.test(c)) offenders.push(childRel);
+        out.push({ rel: childRel, abs: resolve(d, ent.name) });
       }
     }
     await walk(dir, "");
+    return out;
+  }
+
+  /** The two connector post tools D17 confines. */
+  const POST_TOOLS = /\b(?:slack_chat_post|teams_chat_post)\b/;
+
+  test("(b) no chatops module outside reply-dispatcher/transport references the connector post tools (D17)", async () => {
+    const files = (await productionTsUnder(resolve(import.meta.dir, "chatops"))).filter(
+      ({ rel }) => rel !== "reply-dispatcher.ts" && !rel.startsWith("transport/"),
+    );
+    const offenders: string[] = [];
+    for (const { rel, abs } of files) {
+      if (POST_TOOLS.test(await readFile(abs, "utf8"))) offenders.push(rel);
+    }
     expect(offenders).toEqual([]);
+    // Guard the guard, as I17's `toContain("query-gate.ts")` and D22's `_lib` floor already do:
+    // every exclusion here is a filter, and a filter that swallowed the whole directory would
+    // leave `offenders` empty and this test green while checking nothing.
+    expect(files.length).toBeGreaterThan(5);
   });
 
   test("(c) no tribal module references the connector post tools — suggestions only via the injected I23 send seam (D17)", async () => {
-    const dir = resolve(import.meta.dir, "tribal");
+    const files = await productionTsUnder(resolve(import.meta.dir, "tribal"));
     const offenders: string[] = [];
-    for (const ent of await readdir(dir, { withFileTypes: true })) {
-      if (!ent.name.endsWith(".ts") || ent.name.endsWith(".test.ts")) continue;
-      const c = await readFile(resolve(dir, ent.name), "utf8");
-      if (/\b(?:slack_chat_post|teams_chat_post)\b/.test(c)) offenders.push(ent.name);
+    for (const { rel, abs } of files) {
+      if (POST_TOOLS.test(await readFile(abs, "utf8"))) offenders.push(rel);
     }
     expect(offenders).toEqual([]);
+    expect(files.length).toBeGreaterThan(5);
   });
 });
 
