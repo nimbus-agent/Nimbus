@@ -66,10 +66,12 @@ row before any non-local call, and discards any synthesis that drops a contractu
 ### Task 1: `[agents]` configuration
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` (follow the `[glossary]` pair at `:1589-1603`)
 - Test: `packages/gateway/src/config/nimbus-toml-agents.test.ts` (create)
 
 **Interfaces:**
+
 - Consumes: `forEachSectionEntry`, `parseIntDec`, `loadTomlSection` from the existing TOML
   primitives.
 - Produces: `type NimbusAgentsToml = { synthesis: "off" | "local" | "any"; synthesisTimeoutMs: number }`,
@@ -211,6 +213,7 @@ git commit -m "feat(config): add [agents] synthesis mode and timeout"
 ### Task 2: The contract guard
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/brief-kinds.ts` (see the extraction step below)
 - Create: `packages/gateway/src/agents/_lib/brief-contract.ts`
 - Modify: `packages/gateway/src/agents/_lib/synthesize.ts` (import the two moved symbols)
@@ -228,6 +231,7 @@ git commit -m "feat(config): add [agents] synthesis mode and timeout"
 > `bun run typecheck` before proceeding.
 
 **Interfaces:**
+
 - Consumes: `SynthInput`, `assertNeverBrief` — from `./brief-kinds.ts`, never from `./synthesize.ts`.
 - Produces:
   - `type RequiredPhrase = { readonly heading: string; readonly phrase: string }`
@@ -464,12 +468,14 @@ git commit -m "feat(agents): add normalized, section-scoped brief contract guard
 ### Task 3: `model` egress appender and coverage raise
 
 **Files:**
+
 - Create: `packages/gateway/src/egress/synthesis-egress.ts`
 - Test: `packages/gateway/src/egress/synthesis-egress.test.ts`
 - Modify: `packages/gateway/src/egress/egress-coverage.ts`
 - Modify: `packages/cli/src/commands/prove.ts`
 
 **Interfaces:**
+
 - Consumes: `appendEgressEntry` (`egress/egress-ledger.ts`), `redactEgressSummary`
   (`egress/egress-record.ts`) — both already imported this way by `sync-egress.ts`.
 - Produces: `recordSynthesisEgress(db: Database, args: { readonly briefKind: string;
@@ -541,7 +547,7 @@ export function recordSynthesisEgress(
 
 In `egress-coverage.ts`, set `model: "per-call"` and extend the `THIS_BINARY_COVERAGE` docstring:
 
-```
+```text
  * `model` is `per-call`, RAISED FROM `none`, and covers LESS than its name — read it as narrowly as
  * `mcp` and `http`. It is per-call over exactly one thing: a built-in agent brief synthesized by a
  * NON-LOCAL provider (`egress/synthesis-egress.ts`, called only from
@@ -578,10 +584,12 @@ git commit -m "feat(egress): land the model-class appender and raise its coverag
 ### Task 4: Provider resolution, egress ordering, and timeout
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/synthesis-llm.ts`
 - Test: `packages/gateway/src/agents/_lib/synthesis-llm.test.ts`
 
 **Interfaces:**
+
 - Consumes: `NimbusAgentsToml` (Task 1), `recordSynthesisEgress` (Task 3), `LlmRouter`
   (`llm/router.ts`).
 - Produces: `buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | undefined` —
@@ -782,11 +790,13 @@ git commit -m "feat(agents): resolve synthesis providers per call, ledger remote
 ### Task 5: Outcome plumbing, contract enforcement, footers
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/_lib/synthesize.ts:151-173`
 - Modify: `packages/gateway/src/agents/_lib/emit-brief.ts:35-71`
 - Test: `packages/gateway/src/agents/_lib/synthesize.test.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: `contractViolations` (Task 2).
 - Produces:
 
@@ -892,6 +902,7 @@ git commit -m "feat(agents): enforce the brief contract and report synthesis pro
 ### Task 6: Production wiring at both call sites
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts:133`
 - Modify: `packages/gateway/src/agent-runs/agent-http-invoke.ts:98`
 - Test: `packages/gateway/src/agent-runs/agent-http-invoke.test.ts` (extend)
@@ -900,6 +911,7 @@ This is the task that makes everything above execute. Until it lands, the work i
 the precise defect this sub-project exists to correct, so do not skip its test.
 
 **Interfaces:**
+
 - Consumes: `buildSynthesisRunner` (Task 4).
 - Produces: nothing new; both callers gain an `llm` field on the `dispatchAgentsRpc` context.
 
@@ -956,6 +968,7 @@ git commit -m "feat(agents): supply the synthesis LLM at both production dispatc
 ### Task 7: Correct the claims this work falsifies
 
 **Files:**
+
 - Modify: `docs/roadmap.md` (the four Wave 6 rows, per spec §1)
 - Modify: any file asserting briefs never use an LLM — find them, do not assume the list
 

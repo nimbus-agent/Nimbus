@@ -28,7 +28,7 @@ matching — strip `_`, `*`, `` ` ``, collapse whitespace, case-insensitive — 
 on normalized text." Substring-over-the-whole-document has a hole. Verified at
 `agents/_lib/render.ts:660,690,716,743,764,841,865`: each null `negotiate` lane renders as
 
-```
+```markdown
 ## PRs authored
 
 _could not be computed_
