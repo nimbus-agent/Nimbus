@@ -440,6 +440,33 @@ describe("LlmRouter.resolveForSynthesis", () => {
     const resolved = await router.resolveForSynthesis();
     expect(resolved?.providerId).toBe("remote");
   });
+
+  test("an explicit preferLocal argument overrides config.preferLocal for this call only", async () => {
+    // The whole point of the `preferLocal` parameter: with config.preferLocal = false, a bare
+    // resolveForSynthesis() call still reads that config (remote-first priority) and resolves the
+    // remote provider even though a healthy local one is registered — but a caller (agent brief
+    // synthesis) that passes `true` explicitly gets the local provider instead, regardless of the
+    // config default. Both providers are AVAILABLE here, so only priority order decides which one
+    // is picked.
+    const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
+    const router = new LlmRouter(config);
+    router.registerProvider(makeFakeProvider("ollama", true));
+    router.registerProvider(makeFakeProvider("remote", true));
+
+    const viaConfigDefault = await router.resolveForSynthesis();
+    expect(viaConfigDefault).toEqual({
+      providerId: "remote",
+      modelName: DEFAULT_CONFIG.remoteModel,
+      isLocal: false,
+    });
+
+    const viaExplicitTrue = await router.resolveForSynthesis(true);
+    expect(viaExplicitTrue).toEqual({
+      providerId: "ollama",
+      modelName: DEFAULT_CONFIG.localModel,
+      isLocal: true,
+    });
+  });
 });
 
 describe("LlmRouter.generateMarkdown", () => {

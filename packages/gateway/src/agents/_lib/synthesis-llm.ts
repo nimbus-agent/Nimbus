@@ -195,12 +195,13 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
 
       // Deliberately `generateMarkdown(prompt, resolved)` — the EXACT provider `resolveForSynthesis`
       // already resolved and classified above — never `LlmRouter.generate()`. `generate()` routes
-      // through `fitPromptOrFallback`, whose `tryRemoteFallback` (`llm/router.ts:198`) can reach a
-      // REMOTE provider on context overflow with NO egress row appended and NO `[agents] synthesis`
-      // mode check — exactly the two guarantees this function exists to enforce (the `remote` flag
-      // ledgered above, and `"local"` refusing a non-local `resolved` before this line is ever
-      // reached). Do not "unify" these two call paths — that would reopen an unledgered,
-      // mode-blind remote egress path this file was written to close.
+      // through `fitPromptOrFallback`, whose private `tryRemoteFallback` method (`llm/router.ts` —
+      // cited by name, not a line number, since this exact comment's own line-number citation
+      // already drifted once) can reach a REMOTE provider on context overflow with NO egress row
+      // appended and NO `[agents] synthesis` mode check — exactly the two guarantees this function
+      // exists to enforce (the `remote` flag ledgered above, and `"local"` refusing a non-local
+      // `resolved` before this line is ever reached). Do not "unify" these two call paths — that
+      // would reopen an unledgered, mode-blind remote egress path this file was written to close.
       const raced = await raceWithTimeout(
         deps.router.generateMarkdown(prompt, resolved),
         deps.config.synthesisTimeoutMs,

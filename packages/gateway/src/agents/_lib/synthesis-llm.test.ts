@@ -234,4 +234,29 @@ describe("buildSynthesisRunner", () => {
     expect(attempt).toMatchObject({ reason: "provider_error" });
     expect((attempt as { detail?: string }).detail).toBe(JSON.stringify("plain string failure"));
   });
+
+  test("calls resolveForSynthesis with preferLocal: true — independent of [llm].prefer_local", async () => {
+    // Closes the gap a bare `router.resolveForSynthesis()` call would leave invisible: every other
+    // test in this file uses `fakeRouter`, whose `resolveForSynthesis` ignores whatever argument it
+    // receives (same shape as `router.test.ts`'s fakes), so NONE of them would fail if the
+    // production call site silently dropped its `true` argument. This test observes the argument
+    // itself, not just the router's return value.
+    const receivedArgs: unknown[] = [];
+    const router: SynthesisRouter = {
+      resolveForSynthesis: async (preferLocal?: boolean) => {
+        receivedArgs.push(preferLocal);
+        return localProvider;
+      },
+      generateMarkdown: async () => "out",
+    };
+    const runner = buildSynthesisRunner({
+      config: { synthesis: "local", synthesisTimeoutMs: 20000 },
+      router,
+      db: fakeDb(),
+      briefKind: "why",
+      now: () => 1,
+    });
+    await runner?.run("p");
+    expect(receivedArgs).toEqual([true]);
+  });
 });
