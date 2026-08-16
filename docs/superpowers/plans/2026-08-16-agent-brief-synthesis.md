@@ -197,7 +197,7 @@ over it. That is what makes the "falls back, never widens to `any`" test pass.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/config/nimbus-toml-agents.test.ts`
-Expected: PASS (5 tests)
+Expected: PASS (6 tests)
 
 - [ ] **Step 5: Commit**
 
