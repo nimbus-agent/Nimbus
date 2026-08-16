@@ -9,7 +9,9 @@ configuration, behind a deterministic honesty guard, with the model egress it ca
 fourteen agents and neither production caller supplies it, so `SYNTHESIS_INSTRUCTIONS` never runs.
 This plan supplies it from one factory gated on `[agents].synthesis` (`off` / `local` / `allow-remote`),
 resolves the provider per invocation rather than trusting `prefersLocal()`, appends a `model` egress
-row before any non-local call, and discards any synthesis that drops a contractual disclaimer.
+row before any non-local call, and discards a synthesized rewrite that drops a required phrase —
+today that guard covers only `negotiate`'s null-lane disclaimers; every other brief kind returns an
+empty `requiredPhrases` set and is not yet protected.
 
 **Tech Stack:** Bun v1.2+, TypeScript strict (no `any`), `bun:test`, `bun:sqlite`, Biome.
 
