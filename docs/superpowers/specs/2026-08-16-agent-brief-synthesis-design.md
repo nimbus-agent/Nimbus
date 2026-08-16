@@ -130,10 +130,55 @@ the deterministic render is an already-supported, already-correct output rather 
 This is a deliberate divergence from the executor's abort-the-action behaviour, and it is safe only
 because a brief has a complete non-egressing fallback that a connector dispatch does not.
 
-`nimbus prove` gains a `synthesis` coverage class. Its scope label must state that `"off"` and
-`"local"` emit nothing *by construction* rather than *by observation* — a zero count under those
-modes is a structural guarantee, and the label should not let it read as a measurement that happened
-to come back empty.
+#### 2.3.1 The class is `model`, and it already exists
+
+**Correction to an earlier draft:** it said `nimbus prove` "gains a `synthesis` coverage class."
+Wrong on both counts. `"model"` is already a member of the **frozen** `EGRESS_SOURCE_TYPES` union
+(`egress/egress-source-type.ts`), commented *"inference + embeddings, local or remote"*, and that
+file states the union landed complete "including members whose appenders do not exist yet (`boot`,
+`degraded` arrive with the boot marker; `sync`, `model`, `peer` arrive in later phases)."
+`"model"` is likewise already a `COVERAGE_CLASSES` member sitting at `"none"`, and
+`THIS_BINARY_COVERAGE`'s docstring says *"Later phases raise `model`, `peer`, `session`."*
+
+**W6-A0 is that later phase for `model`.** So the work is not to add a vocabulary entry — adding one
+would break a deliberate freeze, and `COVERAGE_CLASSES` order *is* the wire format serialized into
+the boot marker's hashed `source_id`. The work is:
+
+- `recordSynthesisEgress` appends with `sourceType: "model"`.
+- `THIS_BINARY_COVERAGE.model` rises `"none"` → `"per-call"`.
+- `COVERAGE_CLASS_LABELS` in `packages/cli/src/commands/prove.ts` gains a `model` entry. That map is
+  a hand-maintained mirror — the CLI cannot import the gateway module — so it is a required, not
+  optional, second edit.
+
+#### 2.3.2 Raising `model` naively would overclaim, and embeddings are why
+
+`model` is defined as *"inference **and embeddings**, local or remote."* Embeddings already egress:
+`PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table when a key is set, and **that path appends
+nothing**. Raising `model` to `"per-call"` on the strength of a brief-synthesis appender alone would
+claim ledger coverage over embedding egress that is not ledgered — which is verbatim the defect
+`THIS_BINARY_COVERAGE`'s own docstring names: *"raising an entry without landing its appender is the
+exact defect this vector exists to prevent."*
+
+The established fix is precedent, not invention: **every** non-`none` class here covers less than its
+name and says so where the claim is made. `mcp` is briefs only, not the six read-only index tools on
+the same server. `http` is briefs only, not the HTTP read surface. `sync` is configured connectors
+only, and `per-run` rather than `per-call` because the weaker of its two appenders governs.
+
+`model` follows them: raised to `"per-call"`, narrowed **in the docstring** to brief synthesis, with
+embedding egress named explicitly as not covered. The `prove` label carries the same narrowing for a
+human reader — `"agent brief synthesis calls"`, never `"model calls"`.
+
+A reviewer may reasonably judge this narrowing thinner than its siblings', because embedding traffic
+is continuous and large while the six index tools are incidental. The alternative — leave `model` at
+`"none"` and append rows under a class disclaiming coverage — was already considered and rejected
+once for `mcp`: the source-type freeze notes that reusing `session` "would have recorded MCP briefs
+and disclaimed them in the same breath." **Open for review; not settled by precedent alone.**
+
+#### 2.3.3 Zero means different things per mode
+
+The label must state that `"off"` and `"local"` emit nothing *by construction* rather than *by
+observation*. A zero count under those modes is a structural guarantee, and the label must not let
+it read as a measurement that happened to come back empty.
 
 ### 2.4 Honesty enforcement is a guard, not a prompt promise
 
