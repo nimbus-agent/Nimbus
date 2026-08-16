@@ -84,7 +84,7 @@ Every built-in agent must be:
 - **Read-only** — no write tools in scope.
 - **Parallel where possible** — use `AgentCoordinator` with independent sub-agents.
 - **HITL-free** — if the coordinator encounters a HITL-required tool it skips it and notes the omission in output. Built-in agents never wait on consent.
-- **Notifying** — emits a `<agentName>.briefReady { sessionId, brief: string, findings }` IPC notification on completion.
+- **Notifying** — emits a `<agentName>.briefReady { sessionId, brief: string, findings, synthesis }` IPC notification on completion.
 
 ### The pre-mortem exception, and its exact bounds
 
@@ -125,14 +125,27 @@ Sub-agents are defined as functions passed via `SubTask.execute()`. Tool access 
 
 ## IPC Notification Contract
 
-Every agent emits a completion notification via the Gateway IPC server:
+Every agent emits a completion notification via the Gateway IPC server, through the shared
+`emitBriefWithSynthesis` helper (`packages/gateway/src/agents/_lib/emit-brief.ts`) rather than a
+direct `notify` call:
 
 ```typescript
-ipcServer.notify(`${agentName}.briefReady`, { sessionId, brief, findings });
+opts.notify(opts.briefReadyMethod, { sessionId, brief: markdown, findings: brief, synthesis: provenance });
 ```
 
-- `brief` is **always a Markdown string**.
+- `brief` is **always a Markdown string** — either the deterministic render, or an LLM-synthesized
+  rewrite of it (see below).
 - `findings` is **that agent's own typed brief object**, declared in `packages/gateway/src/agents/_lib/<agent>-types.ts` — `ExpertBrief`, `CatchupBrief`, `ImpactBrief`, `WhyBrief`, `GlossaryBrief`, `DecisionsBrief`, `OwnershipBrief`, `PremortemBrief`, and so on. This is deliberately not a closed union: adding an agent adds a type here, it does not change the contract. Clients can render it directly or transform the Markdown further. CLI-side narrowing guards (e.g. `PremortemBriefLike` in `packages/cli/src/commands/pre-mortem.ts`) are structural subsets used to validate an untyped IPC payload — they are not the gateway-side type this field carries.
+- `synthesis` is the `SynthesisProvenance` union (`packages/gateway/src/agents/_lib/synthesize.ts`):
+  `{attempted: false, reason: "disabled" | "no_eligible_provider"}` when `brief` is the
+  deterministic render because no LLM was ever called; `{attempted: true, used: true, model,
+  remote}` when `brief` is a synthesized rewrite; or `{attempted: true, used: false, reason, ...}`
+  when a rewrite was attempted and discarded (a dropped contractual disclaimer, a timeout, a
+  provider error, or an egress-append failure) — `brief` is the deterministic render in that last
+  case too, so `synthesis` is the only field that distinguishes "never asked" from "asked and
+  discarded." Gated by `[agents] synthesis` (`"off"` | `"local"` default | `"allow-remote"`); a
+  non-local generation appends an egress-ledger row (invariant I29, coverage class `model`) before
+  `synthesis.used` can read `true` with `remote: true`.
 - `sessionId` ties the notification to the originating `engine.askStream` call.
 - Notification name is always `<agentName>.briefReady` — the CLI subscribes to that exact name.
 

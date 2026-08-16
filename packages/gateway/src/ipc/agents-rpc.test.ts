@@ -23,13 +23,14 @@ function makeCtx(db: Database, extras?: { runner?: SynthesisRunner; configDir?: 
 
 /**
  * A SynthesisRunner whose effect is OBSERVABLE in the rendered brief. A runner that always reports
- * `no_eligible_provider` (the previous fixture here) will NOT do: that outcome is byte-identical
- * whether `ctx.runner` was threaded through to the agent or silently dropped by a deleted optional
- * spread — every brief kind but `negotiate` has an empty `requiredPhrases` set, so
- * `contractViolations` never rejects this markdown (see `brief-contract.ts`). A threaded runner
- * using this fake makes the brief carry `markdown` verbatim plus a "Synthesized by <model>"
- * footer — a dropped one renders the deterministic "does not use an LLM" text instead. That
- * difference is the proof.
+ * `no_eligible_provider` (the previous fixture here) makes a weaker proof: every brief kind but
+ * `negotiate` has an empty `requiredPhrases` set, so `contractViolations` never rejects this
+ * markdown (see `brief-contract.ts`), and — since `synthesize.ts` gives `no_eligible_provider` its
+ * own footer, distinct from the plain "does not use an LLM" one a dropped `ctx.runner` renders —
+ * asserting "was `ctx.runner` threaded through" would reduce to a footer-WORDING diff rather than
+ * a brief-CONTENT diff. A threaded runner using this fake makes the brief carry `markdown`
+ * verbatim plus a "Synthesized by <model>" footer — an unambiguous signal that `ctx.runner`
+ * genuinely reached `synthesize()`. That difference is the proof.
  */
 function okRunner(markdown = "OBSERVABLE-SYNTHESIS-MARKER"): SynthesisRunner {
   return {

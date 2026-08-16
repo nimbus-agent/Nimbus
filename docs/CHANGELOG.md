@@ -17,10 +17,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   machine. The local-vs-remote split is enforced INSIDE the appender via a required `remote`
   argument — a `false` call appends nothing, not even a blocked row — mirroring
   `recordSyncEgress`'s `LOCAL_ONLY_SYNC_SERVICES` check for the same reason: a caller-enforced rule
-  is one wiring mistake away from fabricating a `model` row for a local generation. The appender has
-  landed and is fully tested but has no production caller yet — that arrives with the synthesis
-  wiring (`agents/_lib/synthesis-llm.ts`, under `[agents] synthesis = "allow-remote"`) in a following change
-  in the same effort. `COVERAGE_CLASS_LABELS` in `cli/src/commands/prove.ts` gains a matching
+  is one wiring mistake away from fabricating a `model` row for a local generation. At the moment
+  the appender itself landed it had no production caller yet — that arrived the same day, in the
+  same effort, when the synthesis wiring (`agents/_lib/synthesis-llm.ts`) was supplied to both
+  production dispatchers (`ipc/server/dispatchers.ts`'s socket path and
+  `agent-runs/agent-http-invoke.ts`'s HTTP path), under `[agents] synthesis = "local"` (default) or
+  `"allow-remote"`. `COVERAGE_CLASS_LABELS` in `cli/src/commands/prove.ts` gains a matching
   `model` label ("remotely-synthesized agent briefs") so the scope line never falls through to a
   bare, over-broad `model` key (`I29`).
 - **2026-08-16 — seven user-facing commits were missing from the generated changelog, going

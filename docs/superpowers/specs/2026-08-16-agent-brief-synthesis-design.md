@@ -232,6 +232,17 @@ Every other place in the tree that asserts briefs do not use an LLM changes in t
 is the wiring + docs + test triple applied to a claim rather than an invariant, and the claim is
 load-bearing: users were told it unconditionally.
 
+**Superseded during implementation:** this section describes one second footer. What shipped is
+four footer forms, not two — `packages/gateway/src/agents/_lib/synthesize.ts`: `DETERMINISTIC_FOOTER`
+(no runner at all — `[agents].synthesis = "off"`, where "regardless of `[llm]` settings" stays
+true), a dedicated `no_eligible_provider` footer (a runner WAS invoked but nothing resolved —
+added by the Task 7 honesty pass, because the `DETERMINISTIC_FOOTER` clause it originally reused is
+false once `[llm]` settings are typically the reason nothing resolved), a discarded-synthesis
+footer naming why a called runner's output was thrown away, and the used-synthesis footer this
+section describes (`_Synthesized by <model> (local|remote)._`). See that file's
+`withDeterministicFooter` / `withNoEligibleProviderFooter` / `withDiscardedSynthesisFooter` /
+`withProvenanceFooter` for the shipped shape and the reasoning each one is true under.
+
 ### 2.6 Latency and timeout
 
 **Correction to an earlier draft of this spec:** it claimed an LLM call would "blow the latency
@@ -282,6 +293,14 @@ This is the same `{model, remote, disclosure?}` provenance shape §2.5 adopts fo
 to carry rejection. It reaches the CLI, the HTTP surface and the Tauri renderer through the existing
 notification, so "why is my brief still deterministic?" is answerable without a debug build — and
 `missingPhrases` names precisely which contract the model broke.
+
+**Superseded during implementation:** the field shipped as `violations`, not `missingPhrases` —
+`SynthesisProvenance` in `packages/gateway/src/agents/_lib/synthesize.ts`. The discard-reason union
+also grew two members past this draft's three: `provider_error` (a called provider that answered
+with a failure, kept distinct from `timeout` so the two are not conflated in the footer or the
+notification) and `empty_result` (a provider that returns `ok: true` with blank text — a
+well-formed `SynthesisAttempt` that still must not reach the reader as a brief). `violations` is
+populated only for `contract_violation`, same role `missingPhrases` was designed to play here.
 
 ---
 
