@@ -89,6 +89,8 @@ describe("synthesize(ExpertBrief)", () => {
     const runner = fixedRunner({ ok: false, reason: "timeout" });
     const out = await synthesize(EXPERT_FIXTURE, { runner });
     expect(out.markdown).toContain("# Expert: src/x.ts");
+    expect(out.markdown).toContain("a synthesis was attempted and discarded");
+    expect(out.markdown).toContain("the synthesis timed out");
     expect(out.provenance).toEqual({ attempted: true, used: false, reason: "timeout" });
   });
 
@@ -96,6 +98,8 @@ describe("synthesize(ExpertBrief)", () => {
     const runner = fixedRunner({ ok: false, reason: "provider_error", detail: "rate limited" });
     const out = await synthesize(EXPERT_FIXTURE, { runner });
     expect(out.markdown).toContain("# Expert: src/x.ts");
+    expect(out.markdown).toContain("a synthesis was attempted and discarded");
+    expect(out.markdown).toContain("the provider returned an error");
     expect(out.provenance).toEqual({
       attempted: true,
       used: false,
@@ -112,12 +116,35 @@ describe("synthesize(ExpertBrief)", () => {
     });
     const out = await synthesize(EXPERT_FIXTURE, { runner });
     expect(out.markdown).toContain("# Expert: src/x.ts");
+    expect(out.markdown).toContain("a synthesis was attempted and discarded");
+    expect(out.markdown).toContain("the egress ledger could not be updated");
     expect(out.provenance).toEqual({
       attempted: true,
       used: false,
       reason: "egress_append_failed",
       detail: "database is locked",
     });
+  });
+
+  test("on an empty runner result, falls back to deterministic render (C1)", async () => {
+    // { ok: true, markdown: "" } is a well-formed SynthesisAttempt — the runner did not error,
+    // it answered with nothing usable. Without an explicit guard this reaches
+    // contractViolations(brief, ""), which returns [] for a brief with no required phrases
+    // (13 of 14 agent kinds), and the empty string would be ACCEPTED as the used synthesis —
+    // replacing the entire deterministic finding set with just a footer.
+    const runner = fixedRunner(okAttempt(""));
+    const out = await synthesize(EXPERT_FIXTURE, { runner });
+    expect(out.markdown).toContain("# Expert: src/x.ts");
+    expect(out.markdown).toContain("a synthesis was attempted and discarded");
+    expect(out.markdown).toContain("the provider returned no usable text");
+    expect(out.provenance).toEqual({ attempted: true, used: false, reason: "empty_result" });
+  });
+
+  test("a whitespace-only runner result is treated the same as empty (C1)", async () => {
+    const runner = fixedRunner(okAttempt("   \n  \t \n"));
+    const out = await synthesize(EXPERT_FIXTURE, { runner });
+    expect(out.markdown).toContain("# Expert: src/x.ts");
+    expect(out.provenance).toEqual({ attempted: true, used: false, reason: "empty_result" });
   });
 });
 
@@ -384,13 +411,15 @@ describe("the contract guard discards a violating synthesis", () => {
     const runner = fixedRunner(okAttempt("## PRs authored\n\n- 4 PRs\n\n## PRs reviewed\n\n- 2"));
     const out = await synthesize(brief, { runner });
     expect(out.markdown).toContain("could not be computed");
+    expect(out.markdown).toContain("a synthesis was attempted and discarded");
+    expect(out.markdown).toContain("the rewrite dropped a required disclosure");
     expect(out.provenance).toMatchObject({
       attempted: true,
       used: false,
       reason: "contract_violation",
     });
     if (out.provenance.attempted && !out.provenance.used) {
-      expect(out.provenance.missingPhrases?.length).toBeGreaterThan(0);
+      expect(out.provenance.violations?.length).toBeGreaterThan(0);
     }
   });
 
@@ -408,26 +437,48 @@ describe("the contract guard discards a violating synthesis", () => {
   });
 });
 
-describe("every fallback path carries the deterministic footer", () => {
-  test("EVERY fallback path carries the deterministic footer", async () => {
-    // synthesize.ts previously returned unfootered markdown on a null/empty runner result and on
-    // a throw. Both are now impossible at the type level (SynthesisAttempt is always a
-    // well-formed ok/not-ok value), so the equivalent failure reasons are exercised directly:
-    // no eligible provider, timeout, provider_error, egress_append_failed, and contract_violation.
-    const attempts: SynthesisAttempt[] = [
-      { ok: false, reason: "no_eligible_provider" },
+describe("every fallback path carries a footer", () => {
+  test("EVERY fallback path carries a footer naming it was rendered deterministically", async () => {
+    // synthesize.ts previously returned UNFOOTERED markdown on a null runner result and on a
+    // throw — both of those are now impossible at the type level (SynthesisAttempt is always a
+    // well-formed ok/not-ok value: `run()` never throws and never resolves to null). That is
+    // TWO cases made impossible, not three: a THIRD case — `{ ok: true, markdown: "" }` — is a
+    // perfectly well-formed SynthesisAttempt and is NOT type-impossible, so it is guarded
+    // explicitly below rather than assumed away (C1 fix-round finding).
+    const discardedAttempts: SynthesisAttempt[] = [
       { ok: false, reason: "timeout" },
       { ok: false, reason: "provider_error", detail: "boom" },
       { ok: false, reason: "egress_append_failed", detail: "boom" },
     ];
-    for (const attempt of attempts) {
+    for (const attempt of discardedAttempts) {
       const out = await synthesize(twoNullLaneBrief(), { runner: fixedRunner(attempt) });
       expect(out.markdown).toContain("Rendered deterministically");
+      expect(out.markdown).toContain("a synthesis was attempted and discarded");
     }
+
+    const noProvider = await synthesize(twoNullLaneBrief(), {
+      runner: fixedRunner({ ok: false, reason: "no_eligible_provider" }),
+    });
+    expect(noProvider.markdown).toContain("Rendered deterministically");
+    // Unattempted paths keep the OLD wording — no runner was ever called, so "does not use an
+    // LLM" is still true here — never the "attempted and discarded" wording above (I2 fix).
+    expect(noProvider.markdown).not.toContain("a synthesis was attempted and discarded");
+
     const violating = await synthesize(twoNullLaneBrief(), {
       runner: fixedRunner(okAttempt("## PRs authored\n\n- 4 PRs")),
     });
     expect(violating.markdown).toContain("Rendered deterministically");
+    expect(violating.markdown).toContain("a synthesis was attempted and discarded");
+
+    const empty = await synthesize(twoNullLaneBrief(), { runner: fixedRunner(okAttempt("")) });
+    expect(empty.markdown).toContain("Rendered deterministically");
+    expect(empty.markdown).toContain("a synthesis was attempted and discarded");
+    expect(empty.provenance).toEqual({ attempted: true, used: false, reason: "empty_result" });
+
+    const whitespace = await synthesize(twoNullLaneBrief(), {
+      runner: fixedRunner(okAttempt("   \n\t  ")),
+    });
+    expect(whitespace.provenance).toEqual({ attempted: true, used: false, reason: "empty_result" });
   });
 });
 
@@ -469,6 +520,19 @@ describe("no-runner labelling", () => {
       used: false,
       reason: "provider_error",
     });
+  });
+
+  test("a called-but-discarded runner is NOT labelled 'briefs do not use an LLM' (I2)", async () => {
+    // A runner WAS invoked here (and, for a remote provider, its call already ledgered) —
+    // asserting "does not use an LLM" on this brief would contradict what `nimbus prove` shows
+    // for the same request. Only the fully-unattempted paths (no runner at all, or no eligible
+    // provider) may carry that claim.
+    const out = await synthesize(EXPERT_FIXTURE, {
+      runner: fixedRunner({ ok: false, reason: "provider_error", detail: "provider down" }),
+    });
+    expect(out.markdown).not.toContain("does not use an LLM");
+    expect(out.markdown).not.toContain("regardless of");
+    expect(out.markdown).toContain("a synthesis was attempted and discarded");
   });
 
   test("no eligible provider IS labelled as unconfigured (disabled-shaped)", async () => {

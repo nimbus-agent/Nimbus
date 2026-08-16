@@ -23,6 +23,14 @@ export type SynthesizeOpts = {
   runner?: SynthesisRunner;
 };
 
+/** Every reason a synthesis attempt can be discarded once a runner was actually invoked. */
+export type SynthesisDiscardReason =
+  | "timeout"
+  | "contract_violation"
+  | "egress_append_failed"
+  | "provider_error"
+  | "empty_result";
+
 /**
  * Why a synthesized rewrite was — or was not — used, reported on the `briefReady` notification
  * (spec §2.7) so "why is my brief still deterministic?" is answerable without a debug build.
@@ -30,7 +38,11 @@ export type SynthesizeOpts = {
  * `contract_violation` is a verdict `synthesize` reaches itself, AFTER the model's markdown
  * exists and has been checked against `contractViolations` (Task 2) — `SynthesisRunner.run`
  * (Task 4) never produces it, because the honesty contract is about what the MARKDOWN says, not
- * about whether the provider call itself succeeded.
+ * about whether the provider call itself succeeded. `empty_result` is likewise a `synthesize`
+ * verdict, not a `SynthesisAttempt` reason: a provider can return `ok: true` with empty text
+ * (`llm/ollama-provider.ts:142` deliberately returns `""` on an unexpected response body, and
+ * `LlmRouter.generateMarkdown` passes that through with no guard), which is a well-formed
+ * `SynthesisAttempt` that still must not reach the reader as a brief.
  */
 export type SynthesisProvenance =
   | { attempted: false; reason: "disabled" | "no_eligible_provider" }
@@ -38,8 +50,9 @@ export type SynthesisProvenance =
   | {
       attempted: true;
       used: false;
-      reason: "timeout" | "contract_violation" | "egress_append_failed" | "provider_error";
-      missingPhrases?: string[];
+      reason: SynthesisDiscardReason;
+      /** Sentences from `contractViolations` — set only when `reason` is `contract_violation`. */
+      violations?: string[];
       /**
        * Redacted (by `synthesis-llm.ts`'s `redactedErrorDetail`) before it ever reaches this
        * type — never populate this field from a raw, un-redacted error message.
@@ -89,29 +102,50 @@ const DETERMINISTIC_FOOTER =
   "_Rendered deterministically — built-in briefs do not use an LLM, regardless of `[llm]` settings._";
 
 /**
- * Label the no-synthesis path so it reads as a supported mode rather than breakage.
+ * Label the UNATTEMPTED path so it reads as a supported mode rather than breakage.
  *
- * Applies to EVERY path that ends up emitting the deterministic render: no runner configured
- * (`[agents].synthesis = "off"`), no eligible provider resolved, and every rejection reason a
- * used-but-unsuccessful synthesis attempt can report (`timeout`, `contract_violation`,
- * `egress_append_failed`, `provider_error`). Previously two of those fallback branches (a
- * null/empty result, a thrown error) returned the RAW deterministic render with no footer at
- * all — an inconsistency fixed here: every path that discards a synthesis, for whatever reason,
- * carries the same disclosure that no LLM output is being shown.
- *
- * A USED synthesis (`attempted: true, used: true`) gets a different footer instead — see
- * `withProvenanceFooter` — naming the model and whether it ran locally, because "built-in
- * briefs do not use an LLM" is false on that path.
+ * This footer is TRUE only when no runner was ever invoked: no runner configured
+ * (`[agents].synthesis = "off"`) or no eligible provider resolved (`SynthesisProvenance.attempted
+ * === false` in both cases). It must NEVER be emitted once a runner was actually called — see
+ * `withDiscardedSynthesisFooter` for that case. Conflating the two was a real defect caught in
+ * review (I2): a remote provider can be called, and its egress row appended to the ledger, on a
+ * request whose synthesis is later discarded (timeout, contract violation, ...) — labelling that
+ * brief "does not use an LLM" would contradict what `nimbus prove` shows for the same request.
  */
 function withDeterministicFooter(markdown: string): string {
   return `${markdown.trimEnd()}\n\n${DETERMINISTIC_FOOTER}\n`;
 }
 
 /**
- * Footer for a synthesis that was actually used (passed the contract guard). Reuses the
- * `{model, remote}` provenance shape §2.5 of the design doc calls out — the same shape the
- * research-briefs surface (`briefs/brief-synthesis.ts`) already established for its own
- * disclosure — rather than inventing a second vocabulary for the same fact.
+ * Plain-language reason a called-but-discarded synthesis was thrown away. Kept separate from
+ * `SynthesisProvenance.reason` (the machine-readable value) so the footer text can change
+ * independently of the wire contract.
+ */
+const DISCARD_REASON_LABELS: Record<SynthesisDiscardReason, string> = {
+  timeout: "the synthesis timed out",
+  provider_error: "the provider returned an error",
+  egress_append_failed: "the egress ledger could not be updated",
+  contract_violation: "the rewrite dropped a required disclosure",
+  empty_result: "the provider returned no usable text",
+};
+
+/**
+ * Footer for every path where a runner WAS invoked and its output was discarded: `timeout`,
+ * `provider_error`, `egress_append_failed`, `contract_violation`, `empty_result`. Unlike
+ * `DETERMINISTIC_FOOTER`, this does not claim "briefs do not use an LLM" — an LLM call may well
+ * have happened (and, for a remote provider, been ledgered) — it states that this brief is the
+ * deterministic rendering AND names why the attempted rewrite was not used.
+ */
+function withDiscardedSynthesisFooter(markdown: string, reason: SynthesisDiscardReason): string {
+  const label = DISCARD_REASON_LABELS[reason];
+  return `${markdown.trimEnd()}\n\n_Rendered deterministically — a synthesis was attempted and discarded (${label})._\n`;
+}
+
+/**
+ * Footer for a synthesis that was actually used (passed the empty-result and contract guards).
+ * Reuses the `{model, remote}` provenance shape §2.5 of the design doc calls out — the same
+ * shape the research-briefs surface (`briefs/brief-synthesis.ts`) already established for its
+ * own disclosure — rather than inventing a second vocabulary for the same fact.
  */
 function withProvenanceFooter(markdown: string, model: string, remote: boolean): string {
   const locality = remote ? "remote" : "local";
@@ -123,11 +157,10 @@ export async function synthesize(
   opts: SynthesizeOpts = {},
 ): Promise<SynthesisOutcome> {
   const deterministic = deterministicRender(brief);
-  const footeredDeterministic = withDeterministicFooter(deterministic);
 
   if (opts.runner === undefined) {
     return {
-      markdown: footeredDeterministic,
+      markdown: withDeterministicFooter(deterministic),
       provenance: { attempted: false, reason: "disabled" },
     };
   }
@@ -148,12 +181,12 @@ export async function synthesize(
   if (!attempt.ok) {
     if (attempt.reason === "no_eligible_provider") {
       return {
-        markdown: footeredDeterministic,
+        markdown: withDeterministicFooter(deterministic),
         provenance: { attempted: false, reason: "no_eligible_provider" },
       };
     }
     return {
-      markdown: footeredDeterministic,
+      markdown: withDiscardedSynthesisFooter(deterministic, attempt.reason),
       provenance: {
         attempted: true,
         used: false,
@@ -163,15 +196,29 @@ export async function synthesize(
     };
   }
 
+  // A provider can answer `ok: true` with nothing usable — `llm/ollama-provider.ts:142`
+  // deliberately returns `""` on an unexpected response body, and `LlmRouter.generateMarkdown`
+  // passes that through unguarded. Whitespace-only counts too: it renders as a blank brief just
+  // the same. Checked BEFORE the contract guard, because `contractViolations(brief, "")` returns
+  // `[]` for any brief with no required phrases (13 of 14 agent kinds, and `negotiate` whenever
+  // no lane is null) — an empty string would otherwise fall through as an "accepted" synthesis
+  // and replace the entire deterministic finding set with nothing but a footer.
+  if (attempt.markdown.trim().length === 0) {
+    return {
+      markdown: withDiscardedSynthesisFooter(deterministic, "empty_result"),
+      provenance: { attempted: true, used: false, reason: "empty_result" },
+    };
+  }
+
   const violations = contractViolations(brief, attempt.markdown);
   if (violations.length > 0) {
     return {
-      markdown: footeredDeterministic,
+      markdown: withDiscardedSynthesisFooter(deterministic, "contract_violation"),
       provenance: {
         attempted: true,
         used: false,
         reason: "contract_violation",
-        missingPhrases: violations,
+        violations,
       },
     };
   }
