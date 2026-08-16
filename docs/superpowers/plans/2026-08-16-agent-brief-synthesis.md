@@ -210,39 +210,78 @@ import { describe, expect, test } from "bun:test";
 import { contractViolations } from "./brief-contract.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 
-// Two null lanes: both must keep their disclaimer.
-function twoNullLaneBrief(): NegotiateBrief {
+// ALL SEVEN nullable lanes null. NegotiateBrief has seven (negotiate-types.ts:103-109),
+// each rendering its own "_could not be computed_" (render.ts:662,690,716,743,764,841,865).
+// A fixture covering only two would leave five lanes unguarded with every test green.
+function allNullLaneBrief(): NegotiateBrief {
   return {
     kind: "negotiate",
     authoredPrs: null,
     reviewedPrs: null,
+    incidents: null,
+    tickets: null,
+    ownership: null,
+    decisions: null,
+    writing: null,
   } as unknown as NegotiateBrief;
 }
 
+const ALL_SEVEN = [
+  "## PRs authored", "## PRs reviewed", "## Incidents", "## Tickets",
+  "## Ownership", "## Decisions", "## Writing",
+].map((h) => `${h}\n\n_could not be computed_`).join("\n\n");
+
+describe("requiredPhrases", () => {
+  // FIXTURE INTEGRITY. The fixture is a hand-written `as unknown as` cast, and this repo has
+  // shipped a fixture that ENCODED the bug it was meant to catch. If a field is renamed or a
+  // lane is missed, requiredPhrases silently returns fewer pairs, every "accepts" test below
+  // passes VACUOUSLY (no requirements = nothing to violate), and the guard protects nothing.
+  // This assertion is what makes that failure loud.
+  test("derives one requirement per null lane — all seven", () => {
+    expect(requiredPhrases(allNullLaneBrief()).length).toBe(7);
+  });
+});
+
 describe("contractViolations", () => {
   test("accepts markdown that preserves every disclaimer", () => {
-    const md = "## PRs authored\n\n_could not be computed_\n\n## PRs reviewed\n\n_could not be computed_";
-    expect(contractViolations(twoNullLaneBrief(), md)).toEqual([]);
+    expect(contractViolations(allNullLaneBrief(), ALL_SEVEN)).toEqual([]);
+  });
+
+  test("accepts a SUFFIXED heading", () => {
+    // render.ts:789 documents headings like "## Ownership — services: checkout". Exact
+    // heading equality would report a perfectly good section as missing and reject every
+    // negotiate synthesis that has one.
+    const md = ALL_SEVEN.replace("## Ownership", "## Ownership — services: checkout");
+    expect(contractViolations(allNullLaneBrief(), md)).toEqual([]);
   });
 
   test("accepts a REFORMATTED disclaimer — this is what keeps the guard usable", () => {
-    const md = "## PRs authored\n\n*could not be computed*\n\n## PRs reviewed\n\nCould Not Be Computed";
-    expect(contractViolations(twoNullLaneBrief(), md)).toEqual([]);
+    const md = ALL_SEVEN
+      .replace("_could not be computed_", "*could not be computed*")
+      .replace("_could not be computed_", "Could Not Be Computed");
+    expect(contractViolations(allNullLaneBrief(), md)).toEqual([]);
   });
 
-  test("rejects when ONE of two identical disclaimers is dropped", () => {
-    // The exact failure a document-wide substring check passes.
-    const md = "## PRs authored\n\n_could not be computed_\n\n## PRs reviewed\n\n- 12 review(s)";
-    const v = contractViolations(twoNullLaneBrief(), md);
+  test("rejects when ONE of seven identical disclaimers is dropped", () => {
+    // The exact failure a document-wide substring check passes: six survive, one does not.
+    const md = ALL_SEVEN.replace("## Tickets\n\n_could not be computed_", "## Tickets\n\n- 4 closed");
+    const v = contractViolations(allNullLaneBrief(), md);
     expect(v.length).toBe(1);
-    expect(v[0]).toContain("PRs reviewed");
+    expect(v[0]).toContain("Tickets");
   });
 
   test("rejects a dropped heading rather than skipping the section", () => {
-    const md = "## PRs authored\n\n_could not be computed_";
-    const v = contractViolations(twoNullLaneBrief(), md);
+    const md = ALL_SEVEN.replace("## Writing\n\n_could not be computed_", "");
+    const v = contractViolations(allNullLaneBrief(), md);
     expect(v.length).toBe(1);
-    expect(v[0]).toContain("PRs reviewed");
+    expect(v[0]).toContain("Writing");
+  });
+
+  test("a non-null lane requires nothing — 0 is a real measurement, not a gap", () => {
+    // The inverse defect: guarding a lane that legitimately reports zero would force the
+    // disclaimer onto a lane that DID run, which is the "null is not 0" rule backwards.
+    const brief = { ...allNullLaneBrief(), tickets: { opened: 0, closed: 0 } } as unknown as NegotiateBrief;
+    expect(requiredPhrases(brief).length).toBe(6);
   });
 });
 ```
@@ -276,11 +315,19 @@ function normalize(s: string): string {
     .toLowerCase();
 }
 
-/** Body text under `## <heading>`, up to the next heading of any level. */
+/**
+ * Body text under `## <heading>`, up to the next heading of any level.
+ *
+ * Heading match is a normalized PREFIX, not equality: `render.ts:789` documents headings
+ * rendered as `## Ownership — services: checkout`, and exact matching would report that
+ * section missing and reject an otherwise-correct synthesis.
+ */
 function sectionBody(markdown: string, heading: string): string | undefined {
   const lines = markdown.split("\n");
   const target = normalize(heading);
-  let i = lines.findIndex((l) => l.startsWith("#") && normalize(l.replace(/^#+/, "")) === target);
+  let i = lines.findIndex(
+    (l) => l.startsWith("#") && normalize(l.replace(/^#+/, "")).startsWith(target),
+  );
   if (i < 0) return undefined;
   const body: string[] = [];
   for (i += 1; i < lines.length; i++) {
@@ -291,11 +338,28 @@ function sectionBody(markdown: string, heading: string): string | undefined {
   return body.join("\n");
 }
 
+/**
+ * All SEVEN nullable negotiate lanes (`negotiate-types.ts:103-109`). `null` means the lane
+ * could not be computed and MUST say so; a non-null lane reporting zero is a real
+ * measurement and requires nothing — guarding it would invert the "null is not 0" rule the
+ * whole honesty contract rests on.
+ */
+const NEGOTIATE_LANES = [
+  ["authoredPrs", "PRs authored"],
+  ["reviewedPrs", "PRs reviewed"],
+  ["incidents", "Incidents"],
+  ["tickets", "Tickets"],
+  ["ownership", "Ownership"],
+  ["decisions", "Decisions"],
+  ["writing", "Writing"],
+] as const;
+
 export function requiredPhrases(brief: SynthInput): readonly RequiredPhrase[] {
   if (brief.kind === "negotiate") {
     const out: RequiredPhrase[] = [];
-    if (brief.authoredPrs === null) out.push({ heading: "PRs authored", phrase: NOT_COMPUTED });
-    if (brief.reviewedPrs === null) out.push({ heading: "PRs reviewed", phrase: NOT_COMPUTED });
+    for (const [field, heading] of NEGOTIATE_LANES) {
+      if (brief[field] === null) out.push({ heading, phrase: NOT_COMPUTED });
+    }
     return out;
   }
   // Every other brief kind returns [] until its contractual strings are added.
@@ -335,10 +399,22 @@ Expected: PASS (4 tests)
 
 - [ ] **Step 5: Red-prove the guard by reverting it**
 
-Temporarily change `sectionBody` to return the whole `markdown` instead of the scoped body. Re-run.
-Expected: the "rejects when ONE of two identical disclaimers is dropped" test FAILS. Restore the
-code. A guard that has never been observed failing is not known to work — this repo has shipped
-tests that could not fail.
+This is **in addition to** the negative test cases above, not a substitute for them, because it
+catches a different defect class. A negative test asserts the guard rejects bad markdown *given a
+working fixture*. Reverting asserts the **test itself is capable of failing** — the failure mode
+where a mis-cast fixture makes `requiredPhrases` return `[]`, every "accepts" assertion pass
+vacuously, and the suite go green over a guard that guards nothing. This repo has shipped six
+such tests in a single PR.
+
+Two reverts, each with a specific expected failure:
+
+1. Change `sectionBody` to return the whole `markdown` rather than the scoped body.
+   Expected: **"rejects when ONE of seven identical disclaimers is dropped"** FAILS (0 violations).
+2. Change `normalize` to a no-op returning its input.
+   Expected: **"accepts a REFORMATTED disclaimer"** FAILS — proving that test would have caught the
+   guard-rejects-everything failure mode rather than passing incidentally.
+
+Restore after each.
 
 - [ ] **Step 6: Commit**
 
@@ -584,10 +660,35 @@ Order inside `generateMarkdown` is load-bearing and must be exactly:
 
 Returning `null` is already the "no synthesis" signal `synthesize.ts:168` understands.
 
+**On the append and database locking:** use the plain `recordSynthesisEgress` call. Do **not** add a
+bespoke retry or wrap it in a transaction — it must behave exactly as the three existing appenders
+(`agent-brief-egress.ts`, `sync-egress.ts`, and the executor's) do under contention, and a
+divergent busy-handling policy in one appender is a worse outcome than the shared one. No
+transaction is open at this point: `buildBrief()` has already resolved before `synthesize` is
+called (`emit-brief.ts:58-59`), so the brief's own reads are complete. A `SQLITE_BUSY` from a
+concurrent writer therefore surfaces as `reason: "egress_append_failed"` with `detail`, which is
+the observable outcome the plan wants.
+
 Add a `resolveForSynthesis()` method to `LlmRouter` that returns the selected provider plus an
 `isLocal` flag derived from the existing `LOCAL_PROVIDER_IDS`, rather than duplicating the priority
 walk here. If an air-gap no-remote-fallback path already exists (`llm/router.ts:148`), reuse it
 instead of adding a parallel mechanism.
+
+**Known limitation, deliberately deferred — a timed-out generation is NOT cancelled.** Verified:
+`LlmGenerateOptions` (`llm/types.ts:14-22`) has no `signal` field. The only `AbortSignal` in the
+provider interface is on the optional `pullModel` (`:46`), not `generate` (`:43`). So the race here
+abandons the promise; the underlying request keeps running to completion — local Ollama CPU/GPU
+under `"local"`, and **billable tokens** under `"any"`.
+
+Deferred rather than fixed because closing it means widening a shared type consumed by every
+provider implementation and by the `nimbus ask` path, which is outside A0's blast radius and would
+make this task the largest in the plan. Record it as a follow-up. Two things bound the cost
+meanwhile: the default mode is `"local"`, where the waste is local compute only; and an abandoned
+remote call still has its egress row, appended before the call, so **the ledger stays honest either
+way** — the ledger's claim is that the request was authorized and sent, which remains true.
+
+Do **not** paper over this by shortening the timeout. A short timeout increases the number of
+abandoned-but-still-running generations rather than reducing it.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -622,6 +723,13 @@ export type SynthesisProvenance =
       attempted: true; used: false;
       reason: "timeout" | "contract_violation" | "egress_append_failed";
       missingPhrases?: string[];
+      /**
+       * Error text for `egress_append_failed`, so a transient SQLite busy/locked condition is
+       * distinguishable from a model failure without a debug build. The three `reason` values
+       * already separate ledger / model / contract failures; this adds the WHY for the ledger arm.
+       * Redact before populating — it is emitted on a notification.
+       */
+      detail?: string;
     };
 
 export type SynthesisOutcome = { markdown: string; provenance: SynthesisProvenance };
@@ -851,11 +959,14 @@ generated changelog, twice already in this repo.
 Task 2's red-prove step.
 
 **Known gap, deliberate:** `requiredPhrases` returns `[]` for thirteen of fourteen brief kinds in
-Task 2. Only `negotiate`'s lane disclaimers are enforced initially. The confidence ceilings and
+Task 2. All seven of `negotiate`'s lane disclaimers are enforced; the confidence ceilings and
 truncation counts named in spec §2.4 for `glossary` / `decisions` / `premortem` need their exact
 strings read out of `render.ts` before they can be pinned, and inventing them here would be the
 placeholder this plan format forbids. **Task 2 Step 3's `assertNeverBrief` arm makes this
 visible rather than silent**, and widening it is a follow-up commit, not a hidden omission.
+
+**Known limitation, deliberate:** a timed-out generation is abandoned, not cancelled —
+`LlmGenerateOptions` carries no `AbortSignal`. Recorded in full at Task 4 Step 3.
 
 **Type consistency:** `SynthesisProvenance` / `SynthesisOutcome` (Task 5) are consumed only by
 `emit-brief.ts` in the same task. `buildSynthesisLlm` (Task 4) returns `SynthesizerLlm | undefined`,
