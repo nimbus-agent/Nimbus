@@ -2003,6 +2003,64 @@ export function loadNimbusNegotiateFromConfigDir(configDir: string): NimbusNegot
 }
 
 // ---------------------------------------------------------------------------
+// [agents] — built-in agent brief synthesis (Spine S1, W6-A0)
+// ---------------------------------------------------------------------------
+
+export type SynthesisMode = "off" | "local" | "any";
+
+export type NimbusAgentsToml = {
+  /**
+   * Default "local", NOT "any". "any" is the first path by which indexed content
+   * can leave the machine without a connector being involved, so it is opt-in.
+   */
+  synthesis: SynthesisMode;
+  /**
+   * Deliberately generous. Briefs are fire-and-forget (emit-brief.ts:54 returns
+   * before the work), so this does not gate a caller — it exists so a hung
+   * provider yields a deterministic brief rather than a briefReady that never
+   * arrives. A 3-5s value would reject every synthesis on a cold Ollama.
+   */
+  synthesisTimeoutMs: number;
+};
+
+export const DEFAULT_NIMBUS_AGENTS_TOML: NimbusAgentsToml = {
+  synthesis: "local",
+  synthesisTimeoutMs: 20000,
+};
+
+const SYNTHESIS_MODES: ReadonlySet<string> = new Set(["off", "local", "any"]);
+
+function applyNimbusAgentsKey(out: NimbusAgentsToml, key: string, valRaw: string): void {
+  if (key === "synthesis") {
+    const v = valRaw.trim().replace(/^"|"$/g, "");
+    // Unknown values fall back to the default. Never widen to "any" on a typo.
+    if (SYNTHESIS_MODES.has(v)) out.synthesis = v as SynthesisMode;
+    return;
+  }
+  if (key === "synthesis_timeout_ms") {
+    const n = parseIntDec(valRaw);
+    if (n !== undefined && n > 0) out.synthesisTimeoutMs = n;
+  }
+}
+
+export function parseNimbusAgentsToml(
+  raw: string,
+  defaults: NimbusAgentsToml = DEFAULT_NIMBUS_AGENTS_TOML,
+): NimbusAgentsToml {
+  const out: NimbusAgentsToml = { ...defaults };
+  forEachSectionEntry(raw, "[agents]", (key, valRaw) => applyNimbusAgentsKey(out, key, valRaw));
+  return out;
+}
+
+export function loadNimbusAgentsFromConfigDir(configDir: string): NimbusAgentsToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_AGENTS_TOML,
+    parseNimbusAgentsToml,
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the
