@@ -147,6 +147,24 @@ export function newestReleaseTag(refs: readonly string[]): string | undefined {
     .pop();
 }
 
+/**
+ * Which pull request to check: the one named explicitly, else whatever carries the pending label.
+ *
+ * Two modes, because the label mode alone was not enough and v2.4.7 proved it. This guard caught
+ * #1224's omission and went red on `main` within minutes of the merge — but it is not one of the
+ * release PR's own checks, so that PR reported CLEAN and merged, and the release shipped without
+ * the entry. A finding that arrives somewhere nobody is looking at merge time does not stop
+ * anything, so the same check now also runs AS a check on the release PR, with `PR_NUMBER` naming
+ * it. An explicit number always wins: on that run the label search is the wrong question.
+ */
+export function resolveReleasePrNumbers(
+  explicit: string | undefined,
+  byLabel: readonly string[],
+): string[] {
+  const pinned = explicit?.trim();
+  return pinned !== undefined && pinned !== "" ? [pinned] : [...byLabel];
+}
+
 export interface CompletenessInput {
   /** Commit SUBJECTS (first lines) since the newest release tag. */
   readonly subjects: readonly string[];
@@ -243,7 +261,7 @@ async function main(): Promise<void> {
     .split("\n")
     .filter((s) => s.trim() !== "");
 
-  const prNumbers = (
+  const byLabel = (
     await gh([
       "pr",
       "list",
@@ -261,6 +279,7 @@ async function main(): Promise<void> {
   )
     .split("\n")
     .filter((s) => s.trim() !== "");
+  const prNumbers = resolveReleasePrNumbers(process.env["PR_NUMBER"], byLabel);
 
   let releasePrFiles: PrFile[] | undefined;
   if (prNumbers.length > 0) {

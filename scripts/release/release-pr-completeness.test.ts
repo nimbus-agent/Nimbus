@@ -6,6 +6,7 @@ import {
   droppedFromChangelog,
   flattenPrFilePages,
   newestReleaseTag,
+  resolveReleasePrNumbers,
   userFacingSubjects,
 } from "./release-pr-completeness.ts";
 
@@ -250,5 +251,26 @@ describe("checkCompleteness — the cases that must NOT fire", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.errors[0]).toContain("adds no CHANGELOG lines");
+  });
+});
+
+describe("resolveReleasePrNumbers", () => {
+  test("an explicit PR number wins over the label search", () => {
+    // The PR-time mode. On that run the label search is the wrong question: the release PR being
+    // checked is the one under review, not whichever one currently carries the label.
+    expect(resolveReleasePrNumbers("1226", ["1300"])).toEqual(["1226"]);
+    expect(resolveReleasePrNumbers("  1226  ", [])).toEqual(["1226"]);
+  });
+
+  test("falls back to the label search when unset or blank", () => {
+    // GitHub Actions passes an unset input as the empty string, not undefined, so blank has to
+    // mean "not pinned" or the push-to-main mode would silently check PR "".
+    expect(resolveReleasePrNumbers(undefined, ["1226"])).toEqual(["1226"]);
+    expect(resolveReleasePrNumbers("", ["1226"])).toEqual(["1226"]);
+    expect(resolveReleasePrNumbers("   ", ["1226"])).toEqual(["1226"]);
+  });
+
+  test("no pin and no labelled PR means nothing to check", () => {
+    expect(resolveReleasePrNumbers(undefined, [])).toEqual([]);
   });
 });

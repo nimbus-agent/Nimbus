@@ -426,6 +426,63 @@ jobs:
     permissions:
       contents: read
 
+  # ── Release safety, at PR time ─────────────────────────────────────────────
+  #
+  # Two checks that both protect the same thing: the squash commit this PR will
+  # become, which release-please parses to build the changelog.
+  #
+  # (1) The PR body IS that commit's body. `pr-title-lint.yml` already guards the
+  #     title for this reason; nothing guarded the body, and twice a code span
+  #     holding an unbalanced `(` made release-please throw and DROP the commit —
+  #     v2.4.6 lost #1218, v2.4.7 lost #1224 (the PR fixing the first). The
+  #     release still ships; only the entry vanishes, and the tag is immutable.
+  #
+  # (2) If this IS the release PR, its changelog must account for every
+  #     user-facing commit since the tag. That check already existed but ran only
+  #     on push-to-main, where it goes red AFTER the release PR exists and is not
+  #     one of that PR's checks — so v2.4.7 merged CLEAN with the guard already
+  #     red on main. Running it here is what makes the finding arrive in time.
+  #
+  # Cheap by construction: no build, no bun install beyond the lockfile, two
+  # short scripts. It is in `pr-quality-required`'s needs list, so it blocks.
+  pr-quality-release-safety:
+    name: PR quality — Release safety
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3'
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: The squash commit this PR will produce must parse
+        env:
+          # From the event payload, never from a checkout of PR code.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bun scripts/release/check-pr-message-parses.ts
+      - name: If this is the release PR, it must account for every user-facing commit
+        # release-please's branch. Any other PR skips: the completeness question is
+        # only meaningful about a release PR.
+        if: startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bun scripts/release/release-pr-completeness.ts
+
   # ── The single required PR gate ────────────────────────────────────────────
   #
   # Branch-protection rulesets match check names LITERALLY, and a job skipped by
@@ -460,6 +517,7 @@ jobs:
       - pr-quality-cross-platform
       - pr-quality-duplication
       - pr-quality-structure
+      - pr-quality-release-safety
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -484,7 +542,7 @@ jobs:
           # empty list would otherwise skip the loop entirely and report green —
           # turning the one job that exists to catch failures into a rubber
           # stamp. Keep EXPECTED in step with the `needs:` list above.
-          EXPECTED=6
+          EXPECTED=7
           count=$(printf '%s\n' ${RESULTS} | grep -c . || true)
           if [[ "${count}" -ne "${EXPECTED}" ]]; then
             echo "::error::expected ${EXPECTED} gate results, got ${count} (${RESULTS}) — the needs: list and this check have drifted"
