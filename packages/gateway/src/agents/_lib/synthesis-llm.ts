@@ -1,6 +1,7 @@
 // packages/gateway/src/agents/_lib/synthesis-llm.ts
 
 import type { Database } from "bun:sqlite";
+import { redactAuditPayload } from "../../audit/format-audit-payload.ts";
 import type { NimbusAgentsToml } from "../../config/nimbus-toml.ts";
 import { recordSynthesisEgress } from "../../egress/synthesis-egress.ts";
 import type { ResolvedSynthesisProvider } from "../../llm/router.ts";
@@ -9,20 +10,22 @@ export type SynthesisAttempt =
   | { ok: true; markdown: string; model: string; remote: boolean }
   | {
       ok: false;
-      reason: "no_eligible_provider" | "timeout" | "egress_append_failed";
+      reason: "no_eligible_provider" | "timeout" | "egress_append_failed" | "provider_error";
       detail?: string;
     };
 
 export type SynthesisRunner = { run: (prompt: string) => Promise<SynthesisAttempt> };
 
 /**
- * The minimal surface `buildSynthesisRunner` needs from `LlmRouter`. A dedicated interface —
- * not the concrete `LlmRouter` class — so a test can inject a plain object via DI rather than
+ * The minimal surface `buildSynthesisRunner` needs from `LlmRouter` — a STRUCTURAL SUBSET of it,
+ * extracted for DI, not a redundant duplicate: a test needs to inject a plain object rather than
  * `mock.module` (CLAUDE.md: the combined CLI/gateway run on CI Linux leaks `mock.module` state
- * between files). `LlmRouter` has private fields, so TypeScript requires a real instance to
- * satisfy that class type; a plain object can only ever satisfy a narrower interface. `LlmRouter`
- * implements both methods below and is passed as `SynthesisLlmDeps.router` in production —
- * assigning a concrete instance to this narrower type is always sound.
+ * between files), and `LlmRouter` has private fields, so TypeScript requires a REAL instance to
+ * satisfy that class type — a plain object can only ever satisfy a narrower interface like this
+ * one. `LlmRouter` implements both methods below and is passed as `SynthesisLlmDeps.router` in
+ * production; assigning a concrete instance to this narrower type is always sound (see the
+ * compile-time proof of that in `synthesis-llm.test.ts`). Do not delete this as "redundant with
+ * `LlmRouter`" — it is the only reason the tests in this file can avoid `mock.module` at all.
  */
 export interface SynthesisRouter {
   resolveForSynthesis(): Promise<ResolvedSynthesisProvider | undefined>;
@@ -37,8 +40,22 @@ export type SynthesisLlmDeps = {
   readonly now: () => number;
 };
 
-function errorDetail(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+/** Cap for a redacted error `detail` — generous for a diagnostic message, not a payload dump. */
+const DETAIL_MAX_BYTES = 500;
+
+/**
+ * Redacts a thrown error's message before it can reach `SynthesisAttempt.detail`. `detail` is
+ * NOT internal-only: Task 5's `SynthesisProvenance` carries it out on the `briefReady`
+ * notification, so a raw `err.message` — which can embed a provider's auth header, an API key
+ * echoed back in an error body, or similar — must never reach it unredacted. Reuses the shipped
+ * `redactAuditPayload` (strips gh*_/sk-/Bearer/JWT/AWS-shaped token families) rather than a
+ * bespoke scrubber, so this detail stays covered by the same property tests that already assert
+ * 1:1 token-family coverage (`audit/format-audit-payload.test.ts`). Used for BOTH failure
+ * branches below (`egress_append_failed`, `provider_error`) so their redaction never drifts.
+ */
+function redactedErrorDetail(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return redactAuditPayload(message, DETAIL_MAX_BYTES);
 }
 
 type RaceOutcome<T> =
@@ -100,7 +117,10 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<RaceOutcom
  *      internal guard inert and silently return enforcement to this call site, which is exactly
  *      the weakness Task 3's review closed. A throw here fails closed: `egress_append_failed`,
  *      and generation never happens.
- *   5. Race the provider call against `config.synthesisTimeoutMs`.
+ *   5. Race the provider call against `config.synthesisTimeoutMs`. The timer elapsing first is
+ *      `timeout`; the provider call REJECTING first (network failure, auth rejection, a
+ *      malformed response, ...) is the distinct `provider_error` — see the inline comment where
+ *      they are told apart for why they are never merged.
  *   6. Otherwise, `ok: true` with the markdown, model, and derived `remote` flag.
  */
 export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | undefined {
@@ -129,7 +149,7 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
             remote,
           });
         } catch (err) {
-          return { ok: false, reason: "egress_append_failed", detail: errorDetail(err) };
+          return { ok: false, reason: "egress_append_failed", detail: redactedErrorDetail(err) };
         }
       }
 
@@ -137,11 +157,18 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
         deps.router.generateMarkdown(prompt, resolved),
         deps.config.synthesisTimeoutMs,
       );
+      // `timeout` and `provider_error` are kept as SEPARATE reasons, not merged into one bucket,
+      // because `detail` travels to the user on `briefReady` (Task 5's `SynthesisProvenance`):
+      // "timeout" means, and only means, the race against `synthesisTimeoutMs` elapsed first —
+      // sending someone to look at their timeout setting for a provider auth failure or a
+      // malformed response would be a false diagnosis. `provider_error` means the provider call
+      // itself REJECTED (network failure, auth rejection, context-window overflow, ...); it did
+      // not time out. Do not fold these back into one reason.
       if (raced.kind === "timeout") {
         return { ok: false, reason: "timeout" };
       }
       if (raced.kind === "error") {
-        return { ok: false, reason: "timeout", detail: errorDetail(raced.error) };
+        return { ok: false, reason: "provider_error", detail: redactedErrorDetail(raced.error) };
       }
       return { ok: true, markdown: raced.value, model: resolved.modelName, remote };
     },

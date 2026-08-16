@@ -1,7 +1,21 @@
 // packages/gateway/src/agents/_lib/synthesis-llm.test.ts
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import type { LlmRouter } from "../../llm/router.ts";
 import { buildSynthesisRunner, type SynthesisRouter } from "./synthesis-llm.ts";
+
+/**
+ * Compile-time proof only — never invoked at runtime. `SynthesisRouter` exists so this file's
+ * tests can inject a plain object instead of `mock.module` (see the interface's doc comment), but
+ * that only stays safe if the REAL `LlmRouter` always satisfies it. If a future change to
+ * `LlmRouter`'s public shape ever drops or narrows `resolveForSynthesis`/`generateMarkdown`, this
+ * assignment fails to typecheck and `bun run typecheck` catches it HERE — instead of Task 6's
+ * production wiring silently breaking with no failing test anywhere in this file.
+ */
+function _assertLlmRouterSatisfiesSynthesisRouter(router: LlmRouter): SynthesisRouter {
+  return router;
+}
+void _assertLlmRouterSatisfiesSynthesisRouter;
 
 // Stand-ins; shape only. `resolve` reports what the router would pick.
 const localProvider = { providerId: "ollama", modelName: "llama3.2", isLocal: true } as const;
@@ -112,7 +126,16 @@ describe("buildSynthesisRunner", () => {
     expect(generated).toBe(false);
   });
 
-  test("a hung provider resolves null at the timeout instead of hanging", async () => {
+  // The next two tests pin that "timeout" and "provider_error" are genuinely distinguishable —
+  // a hung (never-settling) provider must yield ONE of them, a rejecting provider the OTHER,
+  // never the wrong label. The rejecting stub rejects SYNCHRONOUSLY (the returned promise is
+  // already rejected the instant `generateMarkdown` returns, not after any delay), so there is
+  // no timing dependence between the two outcomes: a promise rejection is always observed via a
+  // microtask, which always drains before the next `setTimeout` macrotask fires, however small
+  // `synthesisTimeoutMs` is. If a single stub could produce either verdict depending on
+  // scheduling, THAT would be the racy test, not this one.
+
+  test("a hung provider (never settles) resolves at the timeout — reason is timeout", async () => {
     const runner = buildSynthesisRunner({
       config: { synthesis: "local", synthesisTimeoutMs: 20 },
       router: fakeRouter(localProvider, () => new Promise<string>(() => {})),
@@ -120,6 +143,44 @@ describe("buildSynthesisRunner", () => {
       briefKind: "why",
       now: () => 1,
     });
-    expect((await runner?.run("p"))?.ok).toBe(false);
+    const attempt = await runner?.run("p");
+    expect(attempt?.ok).toBe(false);
+    expect(attempt).toMatchObject({ reason: "timeout" });
+  });
+
+  test("a provider that rejects synchronously yields provider_error, never timeout", async () => {
+    const runner = buildSynthesisRunner({
+      config: { synthesis: "local", synthesisTimeoutMs: 20000 },
+      router: fakeRouter(localProvider, () => Promise.reject(new Error("network down"))),
+      db: fakeDb(),
+      briefKind: "why",
+      now: () => 1,
+    });
+    const attempt = await runner?.run("p");
+    expect(attempt?.ok).toBe(false);
+    expect(attempt).toMatchObject({ reason: "provider_error" });
+    // `detail` passes through redactAuditPayload, which JSON-encodes a plain string — this
+    // message carries no secret-shaped substring, so it survives unredacted except for that
+    // quoting.
+    expect((attempt as { detail?: string }).detail).toBe(JSON.stringify("network down"));
+  });
+
+  test("a provider_error detail is redacted — a leaked bearer token never reaches it raw", async () => {
+    const runner = buildSynthesisRunner({
+      config: { synthesis: "local", synthesisTimeoutMs: 20000 },
+      router: fakeRouter(localProvider, () =>
+        Promise.reject(
+          new Error("upstream 401: Bearer sk-ant-abcdefghijklmnopqrstuvwxyz0123456789"),
+        ),
+      ),
+      db: fakeDb(),
+      briefKind: "why",
+      now: () => 1,
+    });
+    const attempt = await runner?.run("p");
+    expect(attempt).toMatchObject({ reason: "provider_error" });
+    const detail = (attempt as { detail?: string }).detail ?? "";
+    expect(detail).not.toContain("sk-ant-abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(detail).toContain("[REDACTED]");
   });
 });
