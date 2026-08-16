@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SynthesisRunner } from "../agents/_lib/synthesis-llm.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import {
   AgentsRpcError,
@@ -622,6 +623,70 @@ describe("dispatchAgentsRpc — ctx.runner threading proof for the remaining age
       attempted: true,
       used: true,
       model: "fake-model",
+    });
+  });
+
+  // Fix round 2: three more forwarding sites (handleDecisions, handleNegotiate,
+  // handlePremortem) had the SAME optional-spread shape and the SAME no-test gap.
+
+  test("agents.decisions with runner set actually synthesizes", async () => {
+    const ctx = makeCtx(freshDb(), { runner: okRunner() });
+    const out = await dispatchAgentsRpc("agents.decisions", {}, ctx);
+    expect(out.kind).toBe("hit");
+    const params = await waitForNotifyParams(ctx.notify, "decisions.briefReady");
+    expect(params?.["brief"]).toContain("OBSERVABLE-SYNTHESIS-MARKER");
+    expect(params?.["synthesis"]).toMatchObject({
+      attempted: true,
+      used: true,
+      model: "fake-model",
+    });
+  });
+
+  test("agents.premortem with runner set actually synthesizes", async () => {
+    const db = freshDb();
+    // Premortem throws "not found in the local Jira index" for an unresolvable epicRef before
+    // ever reaching synthesize() — a real target epic must be indexed for this test to exercise
+    // the runner-forwarding line at all, not just the earlier resolution failure.
+    const now = Date.now();
+    upsertIndexedItem(db, {
+      service: "jira",
+      type: "issue",
+      externalId: "PROJ-1",
+      title: "PROJ-1 title",
+      metadata: { issue_type: "Epic", status_category: "in_progress", created_at_ms: now },
+      modifiedAt: now,
+      syncedAt: now,
+    });
+    const ctx = makeCtx(db, { runner: okRunner() });
+    const out = await dispatchAgentsRpc("agents.premortem", { epicRef: "PROJ-1" }, ctx);
+    expect(out.kind).toBe("hit");
+    const params = await waitForNotifyParams(ctx.notify, "premortem.briefReady");
+    expect(params?.["brief"]).toContain("OBSERVABLE-SYNTHESIS-MARKER");
+    expect(params?.["synthesis"]).toMatchObject({
+      attempted: true,
+      used: true,
+      model: "fake-model",
+    });
+  });
+
+  test("agents.negotiate with runner set actually attempts synthesis (discarded by the contract guard, not dropped)", async () => {
+    // negotiate is the one brief kind with NON-EMPTY requiredPhrases (brief-contract.ts's
+    // NEGOTIATE_LANES): every null lane requires its own "could not be computed" disclaimer
+    // under its own heading. okRunner()'s bare marker string satisfies none of that, so
+    // contractViolations correctly discards it as a contract_violation — the guard working
+    // exactly as designed, not a reason to weaken it for this test. The point here is only to
+    // prove ctx.runner was threaded through, and `{attempted: true, used: false}` already does
+    // that on its own: a DROPPED runner (ctx.runner undefined) produces
+    // `{attempted: false, reason: "disabled"}` at synthesize()'s very first branch — a
+    // different, unambiguous value a discarded-but-attempted outcome can never be confused with.
+    const ctx = makeCtx(freshDb(), { runner: okRunner() });
+    const out = await dispatchAgentsRpc("agents.negotiate", {}, ctx);
+    expect(out.kind).toBe("hit");
+    const params = await waitForNotifyParams(ctx.notify, "negotiate.briefReady");
+    expect(params?.["synthesis"]).toMatchObject({
+      attempted: true,
+      used: false,
+      reason: "contract_violation",
     });
   });
 });
