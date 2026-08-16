@@ -193,6 +193,17 @@ agents were explicitly built around:
 - Per-brief truncation counts keyed on `body_complete = 0`.
 - Every `GapNote` and its `remediation` (`render.ts:39`).
 
+**Superseded during implementation, on two counts.** First, a factual error in this list rather
+than a scope narrowing: `glossary` has no 0.86 confidence-ceiling concept at all — only `decisions`
+and `premortem` (`THEME_CONFIDENCE_CEILING`, `premortem/theme-identity.ts`) do; `glossary`'s own
+honesty disclosure is per-brief truncation counts and definition provenance
+(`snippet`/`manual`/`llm`), not a confidence score. Second, this list reads as though
+`requiredPhrases` ends up protecting all four properties — it protects only the first. What
+shipped (`brief-contract.ts`) derives real phrases solely for `negotiate`'s null lanes; every other
+brief kind, including the confidence ceilings and truncation counts named above, returns an empty
+set and is not yet guarded — an LLM rewrite of those kinds could silently drop either disclosure
+today. See `docs/roadmap.md`'s A0 entry for the corrected, current accounting.
+
 So the design does not trust the instruction. A `requiredPhrases(brief)` function derives, per brief
 kind, the contractual strings the deterministic render produced. **If the synthesized markdown drops
 any of them, the synthesis is discarded and the deterministic render is emitted.** Written as what
