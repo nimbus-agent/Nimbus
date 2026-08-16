@@ -215,6 +215,36 @@ export interface ExecutorDelegationDep {
   readonly requestRemote: (actionType: string) => Promise<RemoteApprovalOutcome>;
 }
 
+/**
+ * I22 — the tighten-only HITL overlay from a signature-verified org policy.
+ *
+ * `PolicyGate` has always computed `EnforcedPolicy.hitlRequired` as a monotonic union (baseline ∪
+ * `[policy.hitl] require`), `docs/SECURITY-INVARIANTS.md` has always described enforcement as
+ * reading it, and until 2026-08-16 **nothing read it**: `isHitlRequiredByPolicy` had zero
+ * production callers, so an org admin could sign a policy, watch it verify, and get no gate. This
+ * is the consumer that makes the resolved field mean something.
+ *
+ * It can only ADD. `gate()` ORs this with `HITL_REQUIRED.has(action.type)`, so no policy — signed,
+ * unsigned, hostile or merely wrong — can take an action type OUT of the frozen set. That ordering
+ * is the whole reason this is compatible with I2's "cannot be bypassed or configured away": the
+ * frozen set is the floor, policy is a ratchet above it.
+ */
+export interface ExecutorPolicyDep {
+  readonly isHitlRequiredByPolicy: (actionType: string) => boolean;
+}
+
+/**
+ * The explicit "no org policy applies here" overlay.
+ *
+ * Named rather than `undefined` for the same reason `NULL_EGRESS_SINK` is (I29): every
+ * `new ToolExecutor(...)` site then states its choice, and a site that simply forgot is a missing
+ * argument rather than a silent default. An enforcement test pins that every production site
+ * passes one or the other.
+ */
+export const NO_POLICY_OVERLAY: ExecutorPolicyDep = Object.freeze({
+  isHitlRequiredByPolicy: () => false,
+});
+
 export class ToolExecutor {
   constructor(
     private readonly consent: ConsentChannel,
@@ -222,7 +252,23 @@ export class ToolExecutor {
     private readonly connectors: ConnectorDispatcher,
     private readonly delegation: ExecutorDelegationDep | undefined,
     private readonly egressSink: EgressSink,
+    private readonly policy: ExecutorPolicyDep = NO_POLICY_OVERLAY,
   ) {}
+
+  /**
+   * Whether an org policy requires HITL for this action type on top of the frozen set.
+   *
+   * Fails toward the frozen set: a throwing or absent overlay adds nothing rather than gating
+   * everything, because the alternative — an overlay fault turning every read into a consent
+   * prompt — is a self-inflicted denial of service, and the floor below it is still I2.
+   */
+  private requiredByPolicy(actionType: string): boolean {
+    try {
+      return this.policy.isHitlRequiredByPolicy(actionType);
+    } catch {
+      return false;
+    }
+  }
 
   /** I20/D10: when a HITL action has an active delegate, route the approval to them; honor only a
    *  live in-scope, identity-valid answerer; otherwise fall back to the local owner prompt. */
@@ -259,7 +305,11 @@ export class ToolExecutor {
   }
 
   async gate(action: PlannedAction): Promise<ActionResult | "proceed"> {
-    const requiresHITL = HITL_REQUIRED.has(action.type);
+    // I2 first, policy second, joined by OR — never by assignment, and never the other way round.
+    // The frozen set is the floor: `HITL_REQUIRED.has(...)` alone decides `true`, so an org policy
+    // is only ever consulted about action types the frozen set does NOT already cover. That is
+    // what makes I22's overlay tighten-only and keeps I2 non-configurable (see ExecutorPolicyDep).
+    const requiresHITL = HITL_REQUIRED.has(action.type) || this.requiredByPolicy(action.type);
 
     let hitlStatus: "approved" | "rejected" | "not_required";
     // Reason for the rejected path. Defaults to the user-declined message (the only other

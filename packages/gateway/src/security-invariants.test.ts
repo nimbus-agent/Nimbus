@@ -7,6 +7,7 @@ import {
   checkAgentEmitterImportConfinement,
   checkWrapServerSpecInvariant,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
+import { stripComments } from "../../../scripts/structure-audit/lib.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
 import { PairingWindowController } from "./clips/pairing-window.ts";
@@ -1025,6 +1026,25 @@ describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", ()
     expect(rpc).toMatch(/identity:\s*ctx\.identityGuard/);
   });
 
+  test("the OVER-THE-WIRE federation path is given an identity guard, not just local IPC", async () => {
+    // The gap this closes. `ctx.identity` reaches a federated gate from exactly two producers:
+    // `ipc/server/dispatchers.ts` (local IPC) and `federation/federation-server.ts` (the LAN wire,
+    // fed by `buildFederationLanServer`'s options in `platform/assemble.ts`). Only the first wired
+    // it. So `undefined?.enabled === true` was false on every peer-facing answer and the check
+    // never ran — a deprovisioned operator's gateway kept serving `federation.query`,
+    // `auditExport`, `invoke` and `preflight` instead of failing closed. The guard fired only for
+    // the owner querying their own machine, which is the one case it is not needed for.
+    const assemble = await read("packages/gateway/src/platform/assemble.ts");
+    // The LAN server's options object must carry it...
+    expect(assemble).toMatch(/identityGuard:\s*\{\s*\n\s*enabled:\s*true,/);
+    // ...and it must be LATE-BOUND. Identity boots after federation, so a captured store/issuer
+    // would be permanently undefined; the holder is what makes it resolvable at call time.
+    expect(assemble).toContain("identityBootRefHolder.current");
+
+    const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+    expect(dispatchers).toContain("identityGuard");
+  });
+
   test("the ONLY place an ID token is validated is identity/verifier.ts", async () => {
     // The other half of the test's own title, which previously asserted nothing at all: there is
     // no assertion about `verifier.ts`, `validateIdToken`, or the absence of a second validator
@@ -1415,6 +1435,66 @@ describe("I22 — org policy applied only from a signature-verified bundle, mono
     const gate = gateWith(tampered, sig, encodeBase64(kp.pubkey));
     expect(gate.status().signatureValid).toBe(false);
     expect(gate.enforced().retentionDays).toBe(7); // baseline, NOT 99
+  });
+
+  test("(c) every production ToolExecutor is handed a policy overlay — none defaults silently", async () => {
+    // I22's resolution has always been correct and, until 2026-08-16, entirely unread:
+    // `EnforcedPolicy.hitlRequired` was computed as a monotonic union and `isHitlRequiredByPolicy`
+    // existed to read it, with ZERO production callers. An admin could sign
+    // `[policy.hitl] require = [...]`, watch it verify, and get no gate — the B1
+    // "defined but never wired" shape, on a documented invariant.
+    //
+    // Now that `gate()` consults it, the risk moves to partial wiring: one executor built without
+    // the overlay is a hole that looks exactly like the rest of the system working. So this pins
+    // that EVERY production construction site states its choice — the real overlay, or the named
+    // `NO_POLICY_OVERLAY`. Same reason `NULL_EGRESS_SINK` is named rather than `undefined` (I29):
+    // a site that simply forgot should be visible, not defaulted.
+    const root = resolve(REPO_ROOT, "packages/gateway/src");
+    const sites: { file: string; args: string }[] = [];
+    for (const f of await readdir(root, { recursive: true })) {
+      const rel = `packages/gateway/src/${f.replaceAll("\\", "/")}`;
+      if (!rel.endsWith(".ts") || rel.endsWith(".test.ts")) continue;
+      // Comments stripped first. Without it the sweep matches `executor.ts`'s own doc comment,
+      // which SAYS `new ToolExecutor(...)` while explaining this very rule — a source-scanning
+      // guard reporting on prose about itself. (It did, on the first run.)
+      const src = stripComments(await readFile(resolve(REPO_ROOT, rel), "utf8"));
+      let at = src.indexOf("new ToolExecutor(");
+      while (at !== -1) {
+        // Balanced scan: the argument list routinely contains nested calls such as
+        // `makeEgressSink(index.getDatabase())`, which a non-nesting regex truncates.
+        let depth = 0;
+        let end = at + "new ToolExecutor".length;
+        for (; end < src.length; end++) {
+          const c = src[end];
+          if (c === "(") depth++;
+          else if (c === ")") {
+            depth--;
+            if (depth === 0) break;
+          }
+        }
+        sites.push({ file: rel, args: src.slice(at, end + 1) });
+        at = src.indexOf("new ToolExecutor(", end);
+      }
+    }
+
+    // Non-vacuity: an empty sweep satisfies the filter below just as well as full compliance.
+    expect(sites.length).toBeGreaterThanOrEqual(11);
+
+    const unwired = sites
+      .filter((s) => !/NO_POLICY_OVERLAY|policyHitl|isHitlRequiredByPolicy/.test(s.args))
+      .map((s) => s.file);
+    expect(unwired).toEqual([]);
+  });
+
+  test("(d) gate() ORs the overlay with the frozen set — it can add, never replace", async () => {
+    // The behavioural proof lives in engine/executor-policy-hitl.test.ts. This is the shape
+    // assertion that catches the refactor that would invert it: an `&&`, a ternary, or an
+    // assignment would each turn a tighten-only ratchet into something a policy can loosen, which
+    // is precisely what I2 says must be impossible.
+    const src = await read("packages/gateway/src/engine/executor.ts");
+    expect(src).toContain(
+      "const requiresHITL = HITL_REQUIRED.has(action.type) || this.requiredByPolicy(action.type);",
+    );
   });
 
   test("(b) a valid policy below baseline cannot weaken HITL/quorum/retention", () => {

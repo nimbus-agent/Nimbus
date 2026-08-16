@@ -2,7 +2,7 @@ import type { ChatopsBoot } from "../chatops/chatops-boot.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
-import type { ExecutorDelegationDep } from "../engine/executor.ts";
+import type { ExecutorDelegationDep, ExecutorPolicyDep } from "../engine/executor.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { IPCServer } from "../ipc/index.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
@@ -40,6 +40,10 @@ export interface PlatformServices {
   // Owner-side delegated HITL (Slice 2, I20). Present when federation is enabled: the executor gate
   // routes a HITL action's approval to an active in-scope delegate before the local owner prompt.
   executorDelegation?: ExecutorDelegationDep;
+  // I22 — the tighten-only HITL overlay resolved from the signature-verified org policy.
+  // Always present: a gateway with no org policy still gets an overlay that adds nothing,
+  // so a consumer never has to decide what `undefined` means.
+  policyHitl: ExecutorPolicyDep;
   // ChatOps (Slice 5). Present when [chatops].enabled: src/index.ts late-binds the engine read
   // path (bindAskEngine) once the engine agent exists.
   chatops?: ChatopsBoot;

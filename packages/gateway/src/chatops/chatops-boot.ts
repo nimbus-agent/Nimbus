@@ -7,6 +7,7 @@ import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
 import { resolveChannelBinding, resolveOwner } from "../policy/chatops-policy.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
+import { isHitlRequiredByPolicy } from "../policy/quorum-override.ts";
 import { ApprovalPresenter } from "./approval-presenter.ts";
 import {
   getChatopsApprovalContext,
@@ -252,6 +253,10 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
     // (see the doc comment on `ChatopsBootDeps.egressSink`) — production always wires a real sink
     // (assemble.ts); a caller that wants no ledger passes `NULL_EGRESS_SINK` explicitly.
     deps.egressSink,
+    // I22: chatops already holds the same `policyGate` it reads `chatops` config from, so the
+    // tighten-only HITL overlay comes straight off it. A signed `[policy.hitl] require` entry has
+    // to bind here too — a chat-triggered action is the same executor path as a local one.
+    { isHitlRequiredByPolicy: (t) => isHitlRequiredByPolicy(policyGate.enforced(), t) },
   );
   const knownActions = HITL_REQUIRED;
 

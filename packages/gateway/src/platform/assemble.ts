@@ -116,7 +116,12 @@ import type { EmbeddingRuntime as ConcreteEmbeddingRuntime } from "../embedding/
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
 import { DelegationStore } from "../engine/delegation-store.ts";
-import { type ExecutorDelegationDep, ToolExecutor } from "../engine/executor.ts";
+import {
+  type ExecutorDelegationDep,
+  type ExecutorPolicyDep,
+  NO_POLICY_OVERLAY,
+  ToolExecutor,
+} from "../engine/executor.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import type { ConnectorDispatcher } from "../engine/types.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
@@ -185,7 +190,7 @@ import { buildPolicyGate, type PolicyGate } from "../policy/policy-gate.ts";
 import { refreshPolicy } from "../policy/policy-runtime.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
 import { trustAnchorPubkey } from "../policy/policy-trust.ts";
-import { resolveQuorumRule } from "../policy/quorum-override.ts";
+import { isHitlRequiredByPolicy, resolveQuorumRule } from "../policy/quorum-override.ts";
 import { runPremortemPass } from "../premortem/premortem-pass.ts";
 import {
   createPremortemRefresher,
@@ -922,6 +927,12 @@ interface BootFederationOpts {
   ipcOpts: Parameters<typeof createIpcServer>[0];
   sidecarStops: Array<() => void>;
   policyGate: PolicyGate;
+  // I18 — operator validity for answers served OVER THE WIRE. `identityBoot` happens AFTER this
+  // function runs (bootFederationIntoIpcOpts at ~2434, bootIdentityIntoIpcOpts at ~2497), so the
+  // guard has to be late-bound through the holder rather than captured, exactly as
+  // `buildTeamCredentialContexts` already does for the team-credential contexts.
+  identityEnabled: boolean;
+  identityBootRefHolder: { current: ReturnType<typeof buildIdentityBoot> | undefined };
 }
 
 /** Boot the federation LAN server + discovery into ipcOpts when enabled. Returns true if booted
@@ -929,7 +940,18 @@ interface BootFederationOpts {
 async function bootFederationIntoIpcOpts(
   opts: BootFederationOpts,
 ): Promise<ExecutorDelegationDep | undefined> {
-  const { federationCfg, paths, vault, db, localIndex, ipcOpts, sidecarStops, policyGate } = opts;
+  const {
+    federationCfg,
+    paths,
+    vault,
+    db,
+    localIndex,
+    ipcOpts,
+    sidecarStops,
+    policyGate,
+    identityEnabled,
+    identityBootRefHolder,
+  } = opts;
   if (!federationCfg.enabled) return undefined;
   const identity = await loadOrCreateFederationIdentity(vault);
 
@@ -1081,6 +1103,34 @@ async function bootFederationIntoIpcOpts(
       maxFailedAttempts: lanCfg.maxFailedAttempts,
       lockoutSeconds: lanCfg.lockoutSeconds,
     },
+    // I18 — the operator-validity guard for answers served OVER THE WIRE.
+    //
+    // Every federated gate already reads it (`gate-commons.ts`, `invoke-gate.ts`,
+    // `preflight-gate.ts` all test `ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()`),
+    // and `ipc/server/dispatchers.ts` has always supplied it — but only on the LOCAL IPC path, i.e.
+    // the owner querying their own machine, the one case where it is not needed. This 14-key object
+    // literal did not include it, so `ctx.identity` was `undefined` for every peer-facing answer,
+    // `undefined?.enabled === true` was false, and the branch never executed: a gateway whose
+    // operator SSO session had been deprovisioned or expired past grace kept answering
+    // `federation.query` / `auditExport` / `invoke` / `preflight` instead of failing closed.
+    //
+    // Late-bound, not captured: identity boots AFTER federation (see BootFederationOpts), so the
+    // holder is read per call and fails closed until it is populated — the same shape
+    // `buildTeamCredentialContexts` uses for exactly this ordering problem.
+    ...(identityEnabled
+      ? {
+          identityGuard: {
+            enabled: true,
+            isOperatorValid: (): boolean => {
+              const ref = identityBootRefHolder.current;
+              const store = ref?.store;
+              const issuer = ref?.issuer;
+              if (store === undefined || issuer === undefined) return false; // unbooted → invalid
+              return isOperatorValid(store, issuer, Date.now(), ref?.graceSeconds ?? 0);
+            },
+          },
+        }
+      : {}),
     consentTimeoutMs: federationRuntime.consentTimeoutSeconds * 1000,
     notify: () => {},
     discovery: federationRuntime.discovery,
@@ -1585,6 +1635,9 @@ async function bootTribalKnowledge(deps: {
       undefined,
       // I29: in-chat tribal capture dispatches a real connector KB write — ledger it.
       makeEgressSink(localIndex.getDatabase()),
+      // I22: same org-policy overlay the IPC executors get. Read from `ipcOpts` rather than
+      // closed over, because this function is handed `ipcOpts` and nothing else policy-shaped.
+      ipcOpts.policyHitl ?? NO_POLICY_OVERLAY,
     );
     const submit: TribalSubmitAction = async (action) => {
       const res = await executor.execute({ type: action.type, payload: action.payload });
@@ -2305,6 +2358,14 @@ export async function assemblePlatformServices(
     auditCfg,
   );
 
+  // I22 — the tighten-only HITL overlay every ToolExecutor in this process consults, alongside
+  // I2's frozen set. Defined here, next to the gate it reads, so there is one instance rather than
+  // a closure rebuilt at each of the eleven executor construction sites.
+  const policyHitl: ExecutorPolicyDep = {
+    isHitlRequiredByPolicy: (actionType) =>
+      isHitlRequiredByPolicy(policyGate.enforced(), actionType),
+  };
+
   // Retention floor (Task 8): effective retention = max(local config, policy floor); policy can only
   // LENGTHEN retention. Started after the gate so it can read `enforced().retentionDays`.
   const toolCallLogRetention = startToolCallLogRetention(db, {
@@ -2373,6 +2434,12 @@ export async function assemblePlatformServices(
 
   rt?.startBackgroundJobs();
   const ipcOpts: Parameters<typeof createIpcServer>[0] = {
+    // I22 — the tighten-only HITL overlay, handed to every ToolExecutor this server builds.
+    // Set in the literal, not assigned later: `bootTribalKnowledge` receives `ipcOpts` and
+    // builds its own executor from it, so a post-hoc assignment would depend on that read
+    // staying lazy. Until 2026-08-16 nothing consumed the resolved policy at all — an admin
+    // could sign `[policy.hitl] require = [...]`, see it verify, and get no gate.
+    policyHitl,
     listenPath: paths.socketPath,
     vault,
     version: GATEWAY_VERSION,
@@ -2418,6 +2485,8 @@ export async function assemblePlatformServices(
     ipcOpts,
     sidecarStops,
     policyGate,
+    identityEnabled,
+    identityBootRefHolder,
   });
 
   // Web-clipper (Task 7): create the SINGLETON PairingWindowController once here and inject it into
@@ -2744,6 +2813,7 @@ export async function assemblePlatformServices(
     connectorWriteDeps,
     embeddingReadiness,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
+    policyHitl,
     ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
     ...(chatopsBoot === undefined ? {} : { chatops: chatopsBoot }),
     disposeSidecars(): void {

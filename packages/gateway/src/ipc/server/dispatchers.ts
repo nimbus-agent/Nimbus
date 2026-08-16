@@ -5,7 +5,7 @@ import {
 } from "../../config/nimbus-toml.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
-import { bindConsentChannel, ToolExecutor } from "../../engine/executor.ts";
+import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
@@ -323,6 +323,7 @@ export async function tryDispatchTeamVaultRpc(
       stubDispatcher,
       undefined,
       NULL_EGRESS_SINK,
+      ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
     const rec = asRecord(params);
     const entry = rec !== undefined && typeof rec["entry"] === "string" ? rec["entry"] : "";
@@ -519,6 +520,7 @@ export async function tryDispatchReindexRpc(
             stubDispatcher,
             undefined,
             NULL_EGRESS_SINK,
+            ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
           );
     const out = await dispatchReindexRpc(method, params, {
       index: ctx.options.localIndex,
@@ -718,6 +720,7 @@ export async function tryDispatchDataRpc(
             stubDispatcher,
             undefined,
             NULL_EGRESS_SINK,
+            ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
           );
     const out = await dispatchDataRpc(method, params, {
       index: ctx.options.localIndex,
@@ -909,6 +912,7 @@ export async function tryDispatchTribalRpc(
       dispatcher,
       undefined,
       makeEgressSink(index.getDatabase()),
+      ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
     return rpc.capture(clusterId, target, async (action) => {
       const result = await executor.execute({ type: action.type, payload: action.payload });
@@ -1087,6 +1091,7 @@ function makePruneApproval(
       stubDispatcher,
       undefined,
       NULL_EGRESS_SINK,
+      ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
     const gate = await executor.gate({ type: "egress.prune", payload: { beforeTs } });
     return gate === "proceed";
@@ -1292,6 +1297,7 @@ function buildAutoUpdateDeps(
     stubDispatcher,
     undefined,
     NULL_EGRESS_SINK,
+    ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
   );
   return {
     ...ctx.options.extensionsAutoUpdate,
@@ -1417,6 +1423,7 @@ export async function tryDispatchConnectorRpc(
       stubDispatcher,
       undefined,
       NULL_EGRESS_SINK,
+      ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
     const out = await dispatchConnectorRpc({
       method,

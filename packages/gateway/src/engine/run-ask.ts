@@ -10,7 +10,13 @@ import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
-import { bindConsentChannel, type ExecutorDelegationDep, ToolExecutor } from "./executor.ts";
+import {
+  bindConsentChannel,
+  type ExecutorDelegationDep,
+  type ExecutorPolicyDep,
+  NO_POLICY_OVERLAY,
+  ToolExecutor,
+} from "./executor.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
 import { type ClassifiedIntent, classifyIntent } from "./router.ts";
@@ -48,6 +54,10 @@ export type RunAskParams = {
   // Owner-side delegated HITL (Slice 2, I20). When present, the executor gate routes a HITL action's
   // approval to an active in-scope delegate over federation before falling back to the local prompt.
   delegation?: ExecutorDelegationDep;
+  // I22 — the tighten-only HITL overlay from a signature-verified org policy. Absent means
+  // "frozen set only". This is the path agent-PLANNED actions take, so it is the one an org's
+  // `[policy.hitl] require` list most needs to reach.
+  policyHitl?: ExecutorPolicyDep;
 };
 
 const EMPTY_INDEX_GUIDANCE = `No data indexed yet.
@@ -189,6 +199,7 @@ async function runActionsPlan(
     p.dispatcher,
     p.delegation,
     p.egressSink,
+    p.policyHitl ?? NO_POLICY_OVERLAY,
   );
   const summaries: string[] = [];
   const structured: unknown[] = [];

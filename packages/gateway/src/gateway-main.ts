@@ -110,6 +110,9 @@ export async function main(): Promise<void> {
       ...(platform.executorDelegation === undefined
         ? {}
         : { delegation: platform.executorDelegation }),
+      // I22: agent-planned actions are the path an org's `[policy.hitl] require` list most
+      // needs to reach, so the overlay rides along with the delegation dep.
+      policyHitl: platform.policyHitl,
     }),
   );
 
@@ -132,6 +135,7 @@ export async function main(): Promise<void> {
       ...(platform.sessionMemoryStore === undefined
         ? {}
         : { sessionMemoryStore: platform.sessionMemoryStore }),
+      policyHitl: platform.policyHitl,
     });
     return r.reply;
   });

@@ -7,6 +7,7 @@ import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { DecisionRefresher } from "../../decisions/decision-refresh.ts";
 import type { EmbeddingReadiness } from "../../embedding/embedding-readiness.ts";
+import type { ExecutorPolicyDep } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
@@ -114,6 +115,11 @@ export type CreateIpcServerOptions = {
   // Policy / admin / GDPR-purge (Phase 6 Slice 4). The dependency seam behind the policy.* + team.purge
   // IPC namespace (Lanes A–G). Present only when assembled at boot; the dispatcher skips cleanly when unset.
   policyRpcCtx?: PolicyRpcCtx;
+  // I22 — the tighten-only HITL overlay a signed org policy contributes, handed to every
+  // `ToolExecutor` this server builds. Absent (or `NO_POLICY_OVERLAY`) means "frozen set only",
+  // which is the pre-2026-08-16 behaviour and remains correct for a gateway with no org policy.
+  // It can never subtract from `HITL_REQUIRED` — see `ExecutorPolicyDep` in `engine/executor.ts`.
+  policyHitl?: ExecutorPolicyDep;
   // ChatOps (Phase 6 Slice 5). The dependency seam behind the chatops.* IPC namespace (status,
   // start, stop, test). Present only when [chatops].enabled at boot; the dispatcher skips when unset.
   chatopsRpcCtx?: ChatopsRpcCtx;

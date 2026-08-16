@@ -1,6 +1,6 @@
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
-import { bindConsentChannel, ToolExecutor } from "../../engine/executor.ts";
+import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { validateVaultKeyOrThrow } from "../../vault/key-format.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -100,6 +100,7 @@ export async function rpcVaultOrMethodNotFound(
           stubDispatcher,
           undefined,
           NULL_EGRESS_SINK,
+          ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
         );
   const vaultOutcome = await dispatchVaultGated(ctx.options.vault, toolExecutor, method, params);
   if (vaultOutcome.kind === "hit") {
