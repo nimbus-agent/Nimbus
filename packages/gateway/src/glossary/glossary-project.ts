@@ -18,7 +18,7 @@ export function glossaryItemExternalId(termKey: string): string {
 /**
  * Builds the indexed body.
  *
- * `item_fts` indexes only `title` and `body_preview` — metadata JSON is
+ * `item_fts` indexes only `title` and `body` — metadata JSON is
  * invisible to both FTS and the embedding pipeline. Synonyms therefore have to
  * live in the body text, or `ask "what does Change Data Record mean?"` finds
  * nothing while the acronym query succeeds — exactly backwards, since the
