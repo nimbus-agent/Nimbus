@@ -2,6 +2,10 @@ export interface RelatedInput {
   readonly title?: string;
   readonly canonicalUrl?: string;
   readonly selection?: string;
+  /** An indexed item id — the page the caller has already resolved. When it
+   *  names a real row, its title becomes the query and the item is dropped from
+   *  its own results. */
+  readonly itemId?: string;
   readonly limit?: number;
 }
 
@@ -21,6 +25,8 @@ export interface RelatedHit {
 export interface ClipRelatedDeps {
   /** Injected hybrid-search adapter (text query + limit → ranked hits). */
   readonly search: (query: string, limit: number) => Promise<RelatedHit[]>;
+  /** Injected metadata read for `itemId`. Null when the id names no row. */
+  readonly lookupItem: (id: string) => { title: string } | null;
 }
 
 const DEFAULT_LIMIT = 10;
@@ -40,26 +46,42 @@ function asStr(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
-export function buildRelatedQuery(input: RelatedInput): { query: string; excludeHost?: string } {
-  // `input` arrives from req.json() — fields may be any type; coerce defensively so a non-string
-  // title/selection can't throw (TypeError → 500) at `.trim()`.
+export function buildRelatedQuery(
+  input: RelatedInput,
+  lookupItem: (id: string) => { title: string } | null,
+): { query: string; excludeHost?: string; excludeId?: string } {
   const o = (input ?? {}) as RelatedInput;
-  const query = (asStr(o.selection) ?? asStr(o.title) ?? "").trim();
+  const itemId = asStr(o.itemId)?.trim();
+  // Looked up BEFORE precedence is applied: a selection wins the query text, but
+  // the item you are standing on is still the one answer that cannot tell you
+  // anything new, so the exclusion is keyed on the id existing — not on it having
+  // won. Keeping these two rules independent is the whole point.
+  const item = itemId === undefined || itemId === "" ? null : lookupItem(itemId);
+  // The item's TITLE, never its body: ftsMatchQuery AND-joins every token, so a
+  // 16 KiB body becomes thousands of required terms and matches nothing.
+  const query = (asStr(o.selection) ?? item?.title ?? asStr(o.title) ?? "").trim();
   const excludeHost = hostOf(asStr(o.canonicalUrl));
-  return excludeHost === undefined ? { query } : { query, excludeHost };
+  return {
+    query,
+    ...(excludeHost === undefined ? {} : { excludeHost }),
+    ...(item === null || itemId === undefined ? {} : { excludeId: itemId }),
+  };
 }
 
 export async function runClipRelated(
   deps: ClipRelatedDeps,
   input: RelatedInput,
 ): Promise<{ items: RelatedHit[] }> {
-  const { query, excludeHost } = buildRelatedQuery(input);
+  const { query, excludeHost, excludeId } = buildRelatedQuery(input, deps.lookupItem);
   if (query === "") return { items: [] };
   const rawLimit =
     typeof input?.limit === "number" && Number.isFinite(input.limit) ? input.limit : DEFAULT_LIMIT;
   const limit = Math.min(MAX_LIMIT, Math.max(1, rawLimit));
   const hits = await deps.search(query, limit);
-  const items =
-    excludeHost === undefined ? hits : hits.filter((h) => hostOf(h.url) !== excludeHost);
+  const items = hits.filter(
+    (h) =>
+      (excludeHost === undefined || hostOf(h.url) !== excludeHost) &&
+      (excludeId === undefined || h.id !== excludeId),
+  );
   return { items };
 }

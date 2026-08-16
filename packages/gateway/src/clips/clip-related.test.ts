@@ -6,24 +6,76 @@ import {
   runClipRelated,
 } from "./clip-related.ts";
 
+const NO_ITEMS = (): null => null;
+function hit(id: string, service = "github"): RelatedHit {
+  return {
+    id,
+    title: id,
+    service,
+    type: "pr",
+    snippet: "",
+    url: `https://ex.com/${id}`,
+    modified_at: 1,
+  };
+}
+
 describe("buildRelatedQuery", () => {
   test("selection present → selection is the query", () => {
-    expect(buildRelatedQuery({ title: "Docs", selection: "vector index" }).query).toBe(
+    expect(buildRelatedQuery({ title: "Docs", selection: "vector index" }, NO_ITEMS).query).toBe(
       "vector index",
     );
   });
   test("no selection → title is the query", () => {
-    expect(buildRelatedQuery({ title: "Vector indexes" }).query).toBe("Vector indexes");
+    expect(buildRelatedQuery({ title: "Vector indexes" }, NO_ITEMS).query).toBe("Vector indexes");
   });
   test("canonicalUrl host is parsed into excludeHost", () => {
-    expect(buildRelatedQuery({ title: "x", canonicalUrl: "https://ex.com/p" }).excludeHost).toBe(
-      "ex.com",
-    );
+    expect(
+      buildRelatedQuery({ title: "x", canonicalUrl: "https://ex.com/p" }, NO_ITEMS).excludeHost,
+    ).toBe("ex.com");
   });
   test("empty inputs → empty query, no host", () => {
-    const q = buildRelatedQuery({});
+    const q = buildRelatedQuery({}, NO_ITEMS);
     expect(q.query).toBe("");
     expect(q.excludeHost).toBeUndefined();
+  });
+});
+
+describe("buildRelatedQuery with itemId", () => {
+  const lookup = (id: string): { title: string } | null =>
+    id === "gh:1" ? { title: "Fix the flaky retry" } : null;
+
+  test("itemId supplies the query text when there is no selection", () => {
+    const q = buildRelatedQuery(
+      { title: "Fix … · Pull Request #482 · acme/web", itemId: "gh:1" },
+      lookup,
+    );
+    expect(q.query).toBe("Fix the flaky retry");
+  });
+
+  test("selection still beats itemId for the query text", () => {
+    const q = buildRelatedQuery({ selection: "vector index", itemId: "gh:1" }, lookup);
+    expect(q.query).toBe("vector index");
+  });
+
+  test("selection wins the query, and the item is STILL excluded", () => {
+    const q = buildRelatedQuery({ selection: "vector index", itemId: "gh:1" }, lookup);
+    expect(q.excludeId).toBe("gh:1");
+  });
+
+  test("an unknown itemId falls through to title rather than erroring", () => {
+    const q = buildRelatedQuery({ title: "Page title", itemId: "gh:missing" }, lookup);
+    expect(q.query).toBe("Page title");
+    expect(q.excludeId).toBeUndefined();
+  });
+
+  test("no itemId → no exclusion", () => {
+    expect(buildRelatedQuery({ title: "x" }, NO_ITEMS).excludeId).toBeUndefined();
+  });
+
+  test("a non-string itemId is coerced away, not thrown on", () => {
+    const q = buildRelatedQuery({ title: "x", itemId: 7 } as unknown as RelatedInput, NO_ITEMS);
+    expect(q.query).toBe("x");
+    expect(q.excludeId).toBeUndefined();
   });
 });
 
@@ -34,18 +86,9 @@ describe("runClipRelated", () => {
       {
         search: async (query, limit) => {
           calls.push({ query, limit });
-          return [
-            {
-              id: "drive:1",
-              title: "Hit",
-              service: "drive",
-              type: "page",
-              snippet: "s",
-              url: "u",
-              modified_at: 1,
-            },
-          ];
+          return [hit("drive:1", "drive")];
         },
+        lookupItem: NO_ITEMS,
       },
       { selection: "vector index", limit: 5 },
     );
@@ -61,6 +104,7 @@ describe("runClipRelated", () => {
           called = true;
           return [];
         },
+        lookupItem: NO_ITEMS,
       },
       {},
     );
@@ -91,6 +135,7 @@ describe("runClipRelated", () => {
             modified_at: 2,
           },
         ],
+        lookupItem: NO_ITEMS,
       },
       { title: "x", canonicalUrl: "https://ex.com/p" },
     );
@@ -103,7 +148,7 @@ describe("runClipRelated", () => {
       called = true;
       return [];
     };
-    const out = await runClipRelated({ search }, {
+    const out = await runClipRelated({ search, lookupItem: NO_ITEMS }, {
       title: 123,
       selection: { x: 1 },
     } as unknown as RelatedInput);
@@ -117,7 +162,7 @@ describe("runClipRelated", () => {
       seen.push(limit);
       return [];
     };
-    await runClipRelated({ search }, {
+    await runClipRelated({ search, lookupItem: NO_ITEMS }, {
       title: "hi",
       limit: "abc",
     } as unknown as RelatedInput);
@@ -125,7 +170,42 @@ describe("runClipRelated", () => {
   });
 
   test("null input → empty, no throw", async () => {
-    const out = await runClipRelated({ search: async () => [] }, null as unknown as RelatedInput);
+    const out = await runClipRelated(
+      { search: async () => [], lookupItem: NO_ITEMS },
+      null as unknown as RelatedInput,
+    );
     expect(out.items).toEqual([]);
+  });
+});
+
+describe("runClipRelated self-exclusion", () => {
+  test("the item excludes itself from its own related list", async () => {
+    const out = await runClipRelated(
+      {
+        search: async () => [hit("gh:1"), hit("gh:2")],
+        lookupItem: (id) => (id === "gh:1" ? { title: "Fix the flaky retry" } : null),
+      },
+      { itemId: "gh:1" },
+    );
+    expect(out.items.map((i) => i.id)).toEqual(["gh:2"]);
+  });
+
+  test("self-exclusion applies even when a selection drove the query", async () => {
+    const out = await runClipRelated(
+      {
+        search: async () => [hit("gh:1"), hit("gh:2")],
+        lookupItem: (id) => (id === "gh:1" ? { title: "Fix the flaky retry" } : null),
+      },
+      { selection: "flaky", itemId: "gh:1" },
+    );
+    expect(out.items.map((i) => i.id)).toEqual(["gh:2"]);
+  });
+
+  test("a selection on an unresolved page searches normally and excludes nothing", async () => {
+    const out = await runClipRelated(
+      { search: async () => [hit("gh:1"), hit("gh:2")], lookupItem: NO_ITEMS },
+      { selection: "flaky" },
+    );
+    expect(out.items.map((i) => i.id)).toEqual(["gh:1", "gh:2"]);
   });
 });

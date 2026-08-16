@@ -593,6 +593,14 @@ async function handleClipRelated(
           modified_at: r.modified_at,
         }));
       },
+      lookupItem: (id: string): { title: string } | null => {
+        // Inline single-row read, the house pattern — see decisions.ts:33 and
+        // decision-corroborate.ts:49. Metadata only; never a body.
+        const row = db.query("SELECT title FROM item WHERE id = ?").get(id) as {
+          title: string;
+        } | null;
+        return row === null ? null : { title: row.title };
+      },
     },
     body,
   );
