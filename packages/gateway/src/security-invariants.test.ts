@@ -838,9 +838,20 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 
-  test("allowlist_exact_size assertion is 106", async () => {
+  test("allowlist_exact_size assertion is 105", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*105\s*\)/);
+  });
+
+  test("connector.list stays absent; connector.listStatus is the served one", async () => {
+    // By NAME, because the count cannot protect a removal: swapping `connector.list` back in for
+    // any other entry keeps the length at 105 and sails through. It was allowlisted with no
+    // handler behind it from the day it was added, so the desktop got -32601 on every call; the
+    // live resolution test in ipc/allowlist-resolves.test.ts is what caught it, and this pins the
+    // specific regression that test would then have to re-catch.
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).not.toMatch(/^\s*"connector\.list",\s*$/m);
+    expect(rust).toMatch(/^\s*"connector\.listStatus",\s*$/m);
   });
 
   // The count above is NOT sufficient on its own — a one-for-one substitution (e.g.

@@ -13,6 +13,32 @@ interface WireConnectorStatus {
   readonly healthState?: string;
 }
 
+/**
+ * Validate the wire payload instead of asserting it.
+ *
+ * `client.call<T>()` only changes the TypeScript view of data that came from outside the process.
+ * If the gateway returned a non-array — an error object, a shape change, an older gateway — then
+ * `list.find` throws, the poll's bare `catch` calls it transient, and onboarding hangs forever
+ * with no error shown. That is precisely the failure this page just had with `connector.list`,
+ * reached by a different route, so the fix has to close it rather than move it.
+ */
+function asWireStatuses(raw: unknown): WireConnectorStatus[] {
+  if (!Array.isArray(raw)) return [];
+  const out: WireConnectorStatus[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const rec = entry as Record<string, unknown>;
+    if (typeof rec["serviceId"] !== "string") continue;
+    const health = rec["healthState"];
+    out.push(
+      typeof health === "string"
+        ? { serviceId: rec["serviceId"], healthState: health }
+        : { serviceId: rec["serviceId"] },
+    );
+  }
+  return out;
+}
+
 const CONNECTORS = ["Google Drive", "GitHub", "Slack", "Linear", "Notion", "Gmail"] as const;
 
 type AuthStatus = "authenticating" | "connected" | "failed" | "cancelled" | "pending";
@@ -80,7 +106,7 @@ export function Connect() {
         // and `ConnectorsPanel` read `.name`/`.health` off this same call and get `undefined` —
         // but it is a separate defect in a surface that has never shipped, and inheriting the
         // wrong type here to be consistent with it would just spread the bug.
-        const list = await client.call<WireConnectorStatus[]>("connector.listStatus");
+        const list = asWireStatuses(await client.call<unknown>("connector.listStatus"));
         let anyConnected = false;
         for (const name of services) {
           const summary = list.find((c) => c.serviceId === name);

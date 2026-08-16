@@ -104,4 +104,31 @@ describe("Onboarding → Connect", () => {
     expect(await screen.findByText("syncing")).toBeTruthy();
     vi.useRealTimers();
   });
+
+  it("does not treat a non-string healthState as authenticated", async () => {
+    // The real difference validation makes here, established by red-proving the alternative:
+    // a throw from `list.find` is already absorbed by the poll's bare `catch` and the interval
+    // survives, so "malformed payload wedges onboarding" is NOT the failure mode — a test built
+    // on that premise passes with or without the validator, which is how a test that cannot fail
+    // gets written.
+    //
+    // What validation actually prevents is a FALSE POSITIVE. The page treats any `healthState`
+    // that is neither `undefined` nor `"unauthenticated"` as connected, so an unvalidated
+    // non-string value (42, null, an object) satisfies both checks and navigates the user onward
+    // on garbage. `asWireStatuses` drops the bad field, leaving the entry correctly unauthenticated.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    callMock.mockImplementation(async (method) => {
+      if (method === "connector.startAuth") return null;
+      if (method === "connector.listStatus") return [{ serviceId: "GitHub", healthState: 42 }];
+      throw new Error(`unexpected ${method}`);
+    });
+    renderAt();
+    fireEvent.click(screen.getByText("GitHub"));
+    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4200);
+    });
+    expect(screen.queryByText("syncing")).toBeNull();
+    vi.useRealTimers();
+  });
 });

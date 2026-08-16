@@ -102,7 +102,17 @@ function call(method: string): Promise<{ code: number | null; message: string }>
   return new Promise((done) => {
     const sock = net.createConnection(listenPath);
     let buf = "";
+    let settled = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    // Idempotent, and it clears the deadline. Three paths can reach here — a response, a socket
+    // error, the timeout — and this runs 105 times per test: without the guard a late error after
+    // a response would resolve twice, and without the clear every completed probe would leave a
+    // live 10s timer behind, which is how a bun test suite ends up hanging after its last
+    // assertion has already passed.
     const finish = (v: { code: number | null; message: string }): void => {
+      if (settled) return;
+      settled = true;
+      if (deadline !== undefined) clearTimeout(deadline);
       sock.destroy();
       done(v);
     };
@@ -123,7 +133,7 @@ function call(method: string): Promise<{ code: number | null; message: string }>
       );
     });
     sock.on("error", (e) => finish({ code: -1, message: `socket: ${e.message}` }));
-    setTimeout(() => finish({ code: -2, message: "TIMEOUT" }), 10_000);
+    deadline = setTimeout(() => finish({ code: -2, message: "TIMEOUT" }), 10_000);
   });
 }
 
