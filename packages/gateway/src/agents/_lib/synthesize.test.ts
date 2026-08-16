@@ -460,8 +460,12 @@ describe("every fallback path carries a footer", () => {
       runner: fixedRunner({ ok: false, reason: "no_eligible_provider" }),
     });
     expect(noProvider.markdown).toContain("Rendered deterministically");
-    // Unattempted paths keep the OLD wording — no runner was ever called, so "does not use an
-    // LLM" is still true here — never the "attempted and discarded" wording above (I2 fix).
+    // Both unattempted paths (no runner at all, and a runner that resolved to no eligible
+    // provider) render a footer that is NOT the "attempted and discarded" wording above (I2 fix)
+    // — but they are not the SAME footer as each other. `no_eligible_provider` gets its own text
+    // (`withNoEligibleProviderFooter`, pinned by name in "no-runner labelling" below) precisely
+    // because a runner WAS invoked here; only the fully-disabled path (`opts.runner === undefined`)
+    // keeps the old "does not use an LLM, regardless of `[llm]` settings" wording.
     expect(noProvider.markdown).not.toContain("a synthesis was attempted and discarded");
 
     const violating = await synthesize(twoNullLaneBrief(), {
@@ -525,8 +529,9 @@ describe("no-runner labelling", () => {
   test("a called-but-discarded runner is NOT labelled 'briefs do not use an LLM' (I2)", async () => {
     // A runner WAS invoked here (and, for a remote provider, its call already ledgered) —
     // asserting "does not use an LLM" on this brief would contradict what `nimbus prove` shows
-    // for the same request. Only the fully-unattempted paths (no runner at all, or no eligible
-    // provider) may carry that claim.
+    // for the same request. Only the fully-disabled path (`opts.runner === undefined`) may carry
+    // that exact claim — `no_eligible_provider` also never generated anything, but it gets its
+    // own, different wording (see the two tests below), not this one.
     const out = await synthesize(EXPERT_FIXTURE, {
       runner: fixedRunner({ ok: false, reason: "provider_error", detail: "provider down" }),
     });
@@ -540,5 +545,27 @@ describe("no-runner labelling", () => {
       runner: fixedRunner({ ok: false, reason: "no_eligible_provider" }),
     });
     expect(out.provenance).toEqual({ attempted: false, reason: "no_eligible_provider" });
+  });
+
+  test("no eligible provider gets its OWN footer, distinct from the fully-disabled one", async () => {
+    // Both paths report `{attempted: false}`, but they must not render the same markdown: a
+    // runner WAS invoked here (unlike the fully-disabled case), and under "local"/"allow-remote"
+    // the reason nothing resolved is typically the `[llm]` settings themselves — so this footer
+    // must not say synthesis is unavailable "regardless of `[llm]` settings", which the
+    // fully-disabled footer correctly does say. Red-proved: reverting the `no_eligible_provider`
+    // arm in `synthesize.ts` back to `withDeterministicFooter(deterministic)` makes this test
+    // fail (both assertions below), while every other test in this file — including the
+    // `toContain("Rendered deterministically")` assertions above — stays green, which is exactly
+    // why those weaker assertions could not have caught the regression this pins.
+    const noProvider = await synthesize(EXPERT_FIXTURE, {
+      runner: fixedRunner({ ok: false, reason: "no_eligible_provider" }),
+    });
+    expect(noProvider.markdown).toContain("no eligible LLM provider was available");
+    expect(noProvider.markdown).not.toContain("regardless of");
+    expect(noProvider.markdown).not.toContain("does not use an LLM");
+
+    const disabled = await synthesize(EXPERT_FIXTURE);
+    expect(disabled.markdown).toContain("do not use an LLM, regardless of");
+    expect(disabled.markdown).not.toContain("no eligible LLM provider was available");
   });
 });

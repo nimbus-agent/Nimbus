@@ -141,9 +141,10 @@ opts.notify(opts.briefReadyMethod, { sessionId, brief: markdown, findings: brief
   deterministic render because no LLM was ever called; `{attempted: true, used: true, model,
   remote}` when `brief` is a synthesized rewrite; or `{attempted: true, used: false, reason, ...}`
   when a rewrite was attempted and discarded (a dropped contractual disclaimer, a timeout, a
-  provider error, or an egress-append failure) — `brief` is the deterministic render in that last
-  case too, so `synthesis` is the only field that distinguishes "never asked" from "asked and
-  discarded." Gated by `[agents] synthesis` (`"off"` | `"local"` default | `"allow-remote"`); a
+  provider error, an egress-append failure, or the provider returning no usable text) — `brief` is
+  the deterministic render in that last case too, so `synthesis` is the only field that
+  distinguishes "never asked" from "asked and discarded." Gated by `[agents] synthesis`
+  (`"off"` | `"local"` default | `"allow-remote"`); a
   non-local generation appends an egress-ledger row (invariant I29, coverage class `model`) before
   `synthesis.used` can read `true` with `remote: true`.
 - `sessionId` ties the notification to the originating `engine.askStream` call.

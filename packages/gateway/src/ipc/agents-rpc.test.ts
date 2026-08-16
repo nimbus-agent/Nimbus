@@ -472,12 +472,15 @@ describe("dispatchAgentsRpc — agents.catchup sinceMs+service validation", () =
 });
 
 describe("dispatchAgentsRpc — runner-present branches", () => {
-  // Each test below uses okRunner() — NOT fakeRunner() — because fakeRunner()'s
-  // `no_eligible_provider` outcome is byte-identical whether ctx.runner was threaded through to
-  // the agent or silently dropped by a deleted optional-spread line: both produce the exact same
-  // "does not use an LLM" deterministic footer. okRunner() returns `{ok: true, markdown}`, which
-  // only reaches the emitted brief when ctx.runner genuinely made it into `synthesize()` — that
-  // is the observable difference these tests assert on.
+  // Each test below uses okRunner() — not a runner that always reports `no_eligible_provider` —
+  // because that outcome makes a weaker proof: every brief kind but `negotiate` has an empty
+  // `requiredPhrases` set, so `contractViolations` never rejects the markdown, and — since
+  // `synthesize.ts` gives `no_eligible_provider` its own footer, distinct from the plain
+  // "does not use an LLM" one a dropped `ctx.runner` renders — asserting "was `ctx.runner`
+  // threaded through" would reduce to a footer-WORDING diff rather than a brief-CONTENT diff.
+  // okRunner() returns `{ok: true, markdown}`, which only reaches the emitted brief when
+  // ctx.runner genuinely made it into `synthesize()` — that is the observable difference these
+  // tests assert on.
   test("agents.expert with runner set actually synthesizes (marker + provenance observable)", async () => {
     const ctx = makeCtx(freshDb(), { runner: okRunner() });
     const out = await dispatchAgentsRpc("agents.expert", { topicOrFile: "src/x.ts" }, ctx);
