@@ -70,22 +70,37 @@ describe("positionOf / excerpt", () => {
 });
 
 describe("the two historical incidents", () => {
-  // Both reproduced end to end: compose the message, parse it, and confirm the parser reports the
-  // same position CI did. These are the only two commits this guard exists for.
-  test("#1218 fails at 103:15 when its real body is composed", () => {
-    // A body whose 103rd line is the poison line; the parser counts lines of the whole message.
-    const filler = Array.from({ length: 99 }, (_, i) => `line ${String(i)}`).join("\n");
-    const failure = parseFailure(
-      squashMessage("fix(security): widen D12", `${filler}\n${POISON}`, 1218),
-    );
-    expect(failure).toBeDefined();
-    expect(positionOf(failure as string)?.col).toBe(15);
+  /**
+   * A message whose COMPOSED line `target` is the poison line.
+   *
+   * `squashMessage` produces `subject\n\n<body>`, so body line N lands at composed line N+2 and
+   * the filler count is `target - 3`. Spelled out because getting it wrong is silent: the first
+   * version of these tests used 99 filler lines, which puts the poison at 102, and asserted only
+   * the COLUMN — so it passed while reproducing neither historical position.
+   */
+  function poisonAtComposedLine(subject: string, target: number, pr: number): string {
+    const fillerCount = target - 3;
+    const filler = Array.from({ length: fillerCount }, (_, i) => `filler ${String(i)}`);
+    return squashMessage(subject, [...filler, POISON].join("\n"), pr);
+  }
+
+  test("the fixture helper really places the line where it claims", () => {
+    // The helper is the load-bearing part of both assertions below, so it is checked directly
+    // rather than trusted. Without this, an off-by-one moves both tests together and neither
+    // notices.
+    const msg = poisonAtComposedLine("fix: x", 103, 1);
+    expect(msg.split("\n")[102]).toBe(POISON);
+    expect(poisonAtComposedLine("fix: x", 17, 1).split("\n")[16]).toBe(POISON);
   });
 
-  test("#1224 fails at column 15 too — same fragment, different line", () => {
-    const failure = parseFailure(
-      squashMessage("fix(release): drop-guard", `intro\n\n${POISON}`, 1224),
-    );
-    expect(positionOf(failure as string)?.col).toBe(15);
+  test.each([
+    ["#1218", "fix(security): widen D12 past its receiver-name blind spot", 103, 1218],
+    ["#1224", "fix(release): make the drop-guard ask whether the release PR is complete", 17, 1224],
+  ])("%s reproduces its CI failure at %#", (_label, subject, line, pr) => {
+    // Both LINE and column, against the positions CI actually reported (103:15 and 17:15).
+    // Column alone cannot tell whether the parser's line accounting still matches production.
+    const failure = parseFailure(poisonAtComposedLine(subject, line, pr));
+    expect(failure).toBeDefined();
+    expect(positionOf(failure as string)).toEqual({ line, col: 15 });
   });
 });
