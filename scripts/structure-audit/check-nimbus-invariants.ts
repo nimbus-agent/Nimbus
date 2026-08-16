@@ -751,9 +751,60 @@ async function loadFiles(): Promise<FileEntry[]> {
   return out;
 }
 
+/**
+ * The production site each static rule below confines something TO.
+ *
+ * Every check in `run()` has the same shape — scan `files`, report what is out of place — so
+ * every one of them reports "clean" when `files` is empty or has lost the package it polices.
+ * There is no floor anywhere in this file, which means a single upstream breakage (a moved
+ * package, a widened exclusion in `iterateGlob`, a glob that stops matching after a layout
+ * change) would silently turn D10 through D22 into fourteen no-ops that exit 0 — and this
+ * auditor runs BEFORE the test suite specifically so it fails first.
+ *
+ * A raw file count would catch the empty case but not the interesting one: a scan that still
+ * finds a thousand files while the gateway subtree it is policing has dropped out. So the floor
+ * is the anchors themselves. If the file a rule confines `connectors.dispatch` to is not in the
+ * scanned set, that rule is not enforcing anything, whatever it reports.
+ */
+export const RULE_ANCHORS: readonly string[] = [
+  "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
+  "packages/gateway/src/ipc/agents-rpc.ts", // D22(d) — agent emitter confinement
+  "packages/gateway/src/db/write.ts", // D12 — bound-param SQL writes
+  "packages/gateway/src/federation/query-gate.ts", // D13
+  "packages/gateway/src/federation/invoke-gate.ts", // D15, D20
+  "packages/gateway/src/federation/preflight-gate.ts", // D18
+  "packages/gateway/src/identity/verifier.ts", // D14
+  "packages/gateway/src/policy/policy-gate.ts", // D16
+  "packages/gateway/src/chatops/reply-dispatcher.ts", // D17
+  "packages/gateway/src/tribal/tribal-write-gate.ts", // D19
+  "packages/gateway/src/connectors/connector-write-registry.ts", // D20
+  "packages/gateway/src/share/share-gate.ts", // D21
+  "packages/gateway/src/share/share-forward.ts", // D21 second emit path
+];
+
+/** Fail loudly when the scanned set cannot support the rules about to run. */
+export function assertScanIsMeaningful(files: readonly FileEntry[]): string[] {
+  const present = new Set(files.map((f) => f.relPath));
+  return RULE_ANCHORS.filter((a) => !present.has(a));
+}
+
 async function run(): Promise<void> {
   const mode = parseArgs(Bun.argv);
   const files = await loadFiles();
+
+  // Before any rule runs, not after: a rule that examined nothing must not get the chance to
+  // report clean. Exits 2 rather than 1 so "this auditor is broken" stays distinguishable from
+  // "this auditor found a violation" — the same split `--db-run`'s exit codes already make.
+  const missing = assertScanIsMeaningful(files);
+  if (missing.length > 0) {
+    console.error(
+      `::error::structure audit scanned ${String(files.length)} file(s) but ${String(missing.length)} rule anchor(s) are absent, so D10-D22 would report clean without enforcing anything: ${missing.join(", ")}`,
+    );
+    console.error(
+      "::error::Either a policed file moved (update RULE_ANCHORS in the same commit) or iterateSourceFiles() stopped reaching it (fix the glob/exclusions in scripts/structure-audit/lib.ts).",
+    );
+    process.exit(2);
+  }
 
   let exit = 0;
 

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import {
+  assertScanIsMeaningful,
   checkAgentEmitterImportConfinement,
   checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
@@ -13,8 +15,10 @@ import {
   DB_RUN_EXEC_ALLOW_LIST,
   type FileEntry,
   findDirectDbRunExec,
+  RULE_ANCHORS,
   VAULT_KEY_ALLOW_LIST,
 } from "./check-nimbus-invariants.ts";
+import { REPO_ROOT, stripComments } from "./lib.ts";
 
 describe("D10 — checkSpawnInvariant (under connectors/)", () => {
   test("flags `Bun.spawn` not via extensionProcessEnv", () => {
@@ -594,5 +598,81 @@ describe("D22(d) — agent emitter import confinement", () => {
         },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("the scan floor (every rule below it reports clean on an empty scan)", () => {
+  // Every check in this file has the same shape: scan `files`, report what is out of place.
+  // That shape reports "clean" when `files` is empty or has lost the subtree it polices, and
+  // this auditor runs BEFORE the test suite precisely so it fails first. Proven, not assumed:
+  // pointing `iterateSourceFiles`'s package glob at a directory that does not exist left 179
+  // files scanned (the mcp-connectors glob still matched) and the pre-fix auditor exited 0
+  // with zero errors, all fourteen D-rules silently no-op.
+  const entry = (relPath: string): FileEntry => ({ relPath, contents: "" });
+
+  test("passes when every policed file is in the scanned set", () => {
+    expect(assertScanIsMeaningful(RULE_ANCHORS.map(entry))).toEqual([]);
+  });
+
+  test("reports every anchor when the scan is empty", () => {
+    expect(assertScanIsMeaningful([])).toEqual([...RULE_ANCHORS]);
+  });
+
+  test("a large scan that lost the gateway subtree still fails", () => {
+    // The case a raw `files.length > 0` floor cannot catch, and the reason the floor is the
+    // anchors rather than a count: 500 real files, none of them the ones the rules confine.
+    const connectorsOnly = Array.from({ length: 500 }, (_, i) =>
+      entry(`packages/mcp-connectors/c${String(i)}/src/index.ts`),
+    );
+    expect(assertScanIsMeaningful(connectorsOnly)).toEqual([...RULE_ANCHORS]);
+  });
+
+  test("names exactly the anchor that went missing, not all of them", () => {
+    const allButExecutor = RULE_ANCHORS.filter(
+      (a) => a !== "packages/gateway/src/engine/executor.ts",
+    ).map(entry);
+    expect(assertScanIsMeaningful(allButExecutor)).toEqual([
+      "packages/gateway/src/engine/executor.ts",
+    ]);
+  });
+
+  test("every anchor is a file that actually exists", async () => {
+    // The floor is only as honest as its list: an anchor naming a file that was deleted or
+    // renamed would fail the audit forever and get "fixed" by deleting the anchor, which is
+    // how a floor quietly becomes shorter than the rule set it protects.
+    const missing: string[] = [];
+    for (const anchor of RULE_ANCHORS) {
+      if (!(await Bun.file(resolve(REPO_ROOT, anchor)).exists())) missing.push(anchor);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  test("run() consults the floor, and exits, before the first rule block", async () => {
+    // The five assertions above prove the function; this one proves it is WIRED. Without it,
+    // deleting the call from `run()` leaves all of them green — the auditor would go back to
+    // exiting 0 on a scan that enforces nothing, which is the exact defect this floor exists
+    // to prevent, so the test for it must not be the kind that cannot fail.
+    const src = stripComments(
+      await Bun.file(
+        resolve(REPO_ROOT, "scripts/structure-audit/check-nimbus-invariants.ts"),
+      ).text(),
+    );
+    // Slice from `run()` so the export declaration of the same name, which sits above it,
+    // cannot satisfy the call-site match.
+    const runAt = src.indexOf("async function run(");
+    expect(runAt).toBeGreaterThan(-1);
+    const runBody = src.slice(runAt);
+
+    const floorAt = runBody.indexOf("assertScanIsMeaningful(files)");
+    const bailAt = runBody.indexOf("process.exit(2)");
+    // Every rule block in `run()` opens with this mode test; the first one is where enforcement
+    // begins, so the floor and its bail-out both have to land ahead of it.
+    const firstRuleAt = runBody.indexOf("if (mode ===");
+
+    expect(floorAt).toBeGreaterThan(-1);
+    expect(bailAt).toBeGreaterThan(-1);
+    expect(firstRuleAt).toBeGreaterThan(-1);
+    expect(floorAt).toBeLessThan(bailAt);
+    expect(bailAt).toBeLessThan(firstRuleAt);
   });
 });
