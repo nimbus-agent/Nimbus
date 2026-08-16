@@ -4,6 +4,8 @@ import {
   checkCompleteness,
   descriptionOf,
   droppedFromChangelog,
+  flattenPrFilePages,
+  newestReleaseTag,
   userFacingSubjects,
 } from "./release-pr-completeness.ts";
 
@@ -89,6 +91,79 @@ describe("addedChangelogLines", () => {
 
   test("returns empty when the PR touches no changelog", () => {
     expect(addedChangelogLines([{ filename: "package.json", patch: "@@\n+x" }])).toBe("");
+  });
+});
+
+describe("newestReleaseTag", () => {
+  test("orders numerically, not lexically", () => {
+    // The classic: lexical ordering puts v2.10.0 before v2.9.0, which would baseline the whole
+    // guard against a tag that is not the newest and quietly shrink the range it checks.
+    expect(newestReleaseTag(["refs/tags/v2.9.0", "refs/tags/v2.10.0", "refs/tags/v2.4.6"])).toBe(
+      "v2.10.0",
+    );
+    expect(newestReleaseTag(["refs/tags/v1.9.0", "refs/tags/v1.20.0"])).toBe("v1.20.0");
+  });
+
+  test("ignores the other release lines the prefix match drags in", () => {
+    // `matching-refs/tags/v` is a PREFIX match, so it also returns the satellite release lines.
+    expect(
+      newestReleaseTag([
+        "refs/tags/v2.4.6",
+        "refs/tags/vscode-v9.9.9",
+        "refs/tags/client-v9.9.9",
+        "refs/tags/v2.4.5",
+      ]),
+    ).toBe("v2.4.6");
+  });
+
+  test("rejects prerelease and malformed tags, and reports nothing when there are none", () => {
+    expect(newestReleaseTag(["refs/tags/v2.5.0-rc.1", "refs/tags/v2.4.6"])).toBe("v2.4.6");
+    expect(newestReleaseTag([])).toBeUndefined();
+    expect(newestReleaseTag(["refs/tags/nightly"])).toBeUndefined();
+  });
+});
+
+describe("flattenPrFilePages", () => {
+  test("flattens the array-of-pages shape --slurp produces", () => {
+    const pages = [
+      [{ filename: "CHANGELOG.md", patch: "@@\n+a" }, { filename: "package.json" }],
+      [{ filename: "docs/CHANGELOG.md", patch: "@@\n+b" }],
+    ];
+    expect(flattenPrFilePages(pages).map((f) => f.filename)).toEqual([
+      "CHANGELOG.md",
+      "package.json",
+      "docs/CHANGELOG.md",
+    ]);
+  });
+
+  test("still handles a flat single-page array", () => {
+    // gh only nests when --slurp is in play; accepting both means a behaviour change upstream
+    // cannot silently empty this list.
+    expect(flattenPrFilePages([{ filename: "CHANGELOG.md", patch: "@@\n+a" }])).toHaveLength(1);
+  });
+
+  test("drops entries with no usable filename instead of trusting them", () => {
+    // The caller filters on `filename`; an undefined one would quietly shrink the changelog it
+    // reads, which is the failure this whole guard is about.
+    const got = flattenPrFilePages([
+      [{ patch: "@@\n+x" }, { filename: "" }, null, 42, { filename: "CHANGELOG.md" }],
+    ]);
+    expect(got).toEqual([{ filename: "CHANGELOG.md" }]);
+  });
+
+  test("returns empty for a non-array payload rather than throwing", () => {
+    expect(flattenPrFilePages(null)).toEqual([]);
+    expect(flattenPrFilePages({ message: "Not Found" })).toEqual([]);
+  });
+
+  test("a page beyond the first still reaches the changelog scan", () => {
+    // The bug this replaces: `--paginate` without `--slurp` emits one JSON array per page, so
+    // `JSON.parse` threw at the start of page 2 and the guard crashed instead of checking.
+    const paged = [
+      [{ filename: "package.json", patch: "@@\n+v" }],
+      [{ filename: "CHANGELOG.md", patch: "@@\n+* fix ([#1218](x/issues/1218))" }],
+    ];
+    expect(addedChangelogLines(flattenPrFilePages(paged))).toContain("#1218");
   });
 });
 

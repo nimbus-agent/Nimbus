@@ -84,6 +84,40 @@ export function droppedFromChangelog(
   });
 }
 
+/** One entry of the GitHub pull-request files listing. */
+export interface PrFile {
+  readonly filename: string;
+  readonly patch?: string;
+}
+
+/**
+ * Flatten `gh api --paginate --slurp` output into a single file list, validating as it goes.
+ *
+ * `--slurp` yields an array of PAGES, each itself an array of file objects, so the shape is
+ * nested and comes from outside the process — `unknown` in, validated out, never asserted. An
+ * entry without a usable `filename` is dropped rather than trusted: the caller filters on that
+ * field, and a silently-undefined filename would quietly shrink the changelog it reads.
+ */
+export function flattenPrFilePages(pages: unknown): PrFile[] {
+  const out: PrFile[] = [];
+  const visit = (entry: unknown): void => {
+    if (entry === null || typeof entry !== "object") return;
+    const rec = entry as Record<string, unknown>;
+    const filename = rec["filename"];
+    if (typeof filename !== "string" || filename === "") return;
+    const patch = rec["patch"];
+    out.push(typeof patch === "string" ? { filename, patch } : { filename });
+  };
+  if (!Array.isArray(pages)) return out;
+  for (const page of pages) {
+    // Tolerates both shapes: `--slurp` gives array-of-pages, a single un-slurped response gives
+    // a flat array. Accepting either means this cannot break on a gh behaviour change.
+    if (Array.isArray(page)) for (const entry of page) visit(entry);
+    else visit(page);
+  }
+  return out;
+}
+
 /** Added lines of every CHANGELOG patch in a PR's file list — what the release PR would land. */
 export function addedChangelogLines(
   files: readonly { readonly filename: string; readonly patch?: string }[],
@@ -95,6 +129,22 @@ export function addedChangelogLines(
     .split("\n")
     .filter((l) => l.startsWith("+"))
     .join("\n");
+}
+
+/**
+ * The newest `vX.Y.Z` tag from a list of refs — the baseline the whole check compares against.
+ *
+ * Two things it must get right, both of which have bitten this repo's release tooling before:
+ * `matching-refs/tags/v` is a PREFIX match, so it also returns `vscode-v*` and `client-v*`, which
+ * are separate release lines; and ordering must be NUMERIC, or `v2.9.0` sorts after `v2.10.0` and
+ * the guard baselines against a tag that is not the newest.
+ */
+export function newestReleaseTag(refs: readonly string[]): string | undefined {
+  return refs
+    .map((r) => r.replace(/^refs\/tags\//, "").trim())
+    .filter((r) => /^v\d+\.\d+\.\d+$/.test(r))
+    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }))
+    .pop();
 }
 
 export interface CompletenessInput {
@@ -170,21 +220,22 @@ async function main(): Promise<void> {
     "--jq",
     ".[].ref",
   ]);
-  const tag = refs
-    .split("\n")
-    .map((r) => r.replace(/^refs\/tags\//, "").trim())
-    .filter((r) => /^v\d+\.\d+\.\d+$/.test(r))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-    .pop();
+  const tag = newestReleaseTag(refs.split("\n"));
   if (tag === undefined) {
     console.log("release-pr-completeness: no release tag yet — nothing to compare against.");
     return;
   }
 
+  // `--paginate`, because `compare` returns at most 250 commits per page. Without it a release
+  // range longer than that silently loses its OLDEST commits — and this guard exists precisely so
+  // a dropped commit is not silent, so under-reading the range would reproduce the defect it is
+  // meant to catch, one layer down. Safe to combine with `--jq`: gh applies the filter per page
+  // and emits raw lines, so there is no JSON to concatenate (unlike the files call below).
   const subjects = (
     await gh([
       "api",
-      `repos/${repo}/compare/${tag}...main`,
+      `repos/${repo}/compare/${tag}...main?per_page=100`,
+      "--paginate",
       "--jq",
       '.commits[].commit.message | split("\\n")[0]',
     ])
@@ -211,11 +262,22 @@ async function main(): Promise<void> {
     .split("\n")
     .filter((s) => s.trim() !== "");
 
-  let releasePrFiles: { filename: string; patch?: string }[] | undefined;
+  let releasePrFiles: PrFile[] | undefined;
   if (prNumbers.length > 0) {
-    releasePrFiles = JSON.parse(
-      await gh(["api", `repos/${repo}/pulls/${prNumbers[0]}/files`, "--paginate"]),
-    ) as { filename: string; patch?: string }[];
+    // `--slurp` with `--paginate`. Without it gh emits one JSON array PER PAGE, back to back, and
+    // `JSON.parse` throws at the start of the second — so a release PR touching more than a page
+    // of files would crash this guard rather than check it. `--slurp` wraps the pages in a single
+    // array, which is then flattened and validated rather than asserted.
+    releasePrFiles = flattenPrFilePages(
+      JSON.parse(
+        await gh([
+          "api",
+          `repos/${repo}/pulls/${prNumbers[0]}/files?per_page=100`,
+          "--paginate",
+          "--slurp",
+        ]),
+      ),
+    );
   }
 
   const result = checkCompleteness({

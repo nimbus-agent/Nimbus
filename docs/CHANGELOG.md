@@ -14,7 +14,7 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
   **Two defects were already in production.** `commands/data-delete.ts` ran two unwrapped
   `DELETE`s through `input.index.rawDb.run(...)` on the live `data.delete` IPC path: D12's
-  regex pinned the receiver to the literal name `db`, and `` cannot match between the `w`
+  regex pinned the receiver to the literal name `db`, and `\b` cannot match between the `w`
   and the `D` of `rawDb`, so the rule exited 0 for its entire life. `connectors/reindex.ts`
   wrote `hitlStatus: "approved"` on a path where the gate is structurally never entered
   (`reindex-rpc.ts` gates `depth === "full"` alone, and that branch returns
