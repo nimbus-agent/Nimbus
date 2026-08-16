@@ -243,7 +243,7 @@ leans on, so it must be testable as a plain function.
 ```ts
 // packages/gateway/src/agents/_lib/brief-contract.test.ts
 import { describe, expect, test } from "bun:test";
-import { contractViolations } from "./brief-contract.ts";
+import { contractViolations, requiredPhrases } from "./brief-contract.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 
 // ALL SEVEN nullable lanes null. NegotiateBrief has seven (negotiate-types.ts:103-109),
@@ -431,7 +431,7 @@ export function contractViolations(brief: SynthInput, markdown: string): string[
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/agents/_lib/brief-contract.test.ts`
-Expected: PASS (4 tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: Red-prove the guard by reverting it**
 
