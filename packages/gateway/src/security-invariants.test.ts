@@ -64,13 +64,28 @@ async function read(relPathFromRepoRoot: string): Promise<string> {
  * floor could be met by fixtures asserting that the production code is wrong.
  */
 async function readDirConcat(relDirFromRepoRoot: string): Promise<string> {
+  return (await readDirFiles(relDirFromRepoRoot)).map((f) => f.contents).join("\n");
+}
+
+/**
+ * The same walk, but keeping each file separate.
+ *
+ * A concatenated blob forces any per-file exemption to be expressed as a per-SHAPE exemption, and
+ * a shape exemption applies to every file in the scan. That is not hypothetical: exempting
+ * `wrap-server-spec.ts`'s own env literal by its `{` shape also exempted every multi-line `env: {`
+ * anywhere under lazy-mesh, including one spreading `process.env`.
+ */
+async function readDirFiles(
+  relDirFromRepoRoot: string,
+): Promise<{ rel: string; contents: string }[]> {
   const dir = resolve(REPO_ROOT, relDirFromRepoRoot);
   const entries = await readdir(dir, { recursive: true });
   const tsFiles = entries
     .map((f) => f.replaceAll("\\", "/"))
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
-  const contents = await Promise.all(tsFiles.map((f) => readFile(resolve(dir, f), "utf8")));
-  return contents.join("\n");
+  return Promise.all(
+    tsFiles.map(async (rel) => ({ rel, contents: await readFile(resolve(dir, rel), "utf8") })),
+  );
 }
 
 describe("I1 — extensionProcessEnv is the only env source for spawned MCP children", () => {
@@ -94,27 +109,41 @@ describe("I1 — extensionProcessEnv is the only env source for spawned MCP chil
     // The real property is not "enough calls exist", it is "no env: resolves to anything else", so
     // this enumerates every `env:` and classifies it. Written as what CANNOT pass: an unrecognised
     // shape fails and is named, rather than an expected shape being counted.
-    const src = await readDirConcat("packages/gateway/src/connectors/lazy-mesh");
-    const locals = new Set(
-      [...src.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*extensionProcessEnv\s*\(/g)].map(
-        (m) => m[1] as string,
-      ),
-    );
-    const unexplained = [...src.matchAll(/\benv\s*:\s*([^\n,]{1,60})/g)]
-      .map((m) => (m[1] as string).trim())
-      .filter((v) => !v.startsWith("extensionProcessEnv("))
-      // `env: Record<string, string>` is a type annotation or a local builder whose result is
-      // handed to extensionProcessEnv; it is never itself a spec's env.
-      .filter((v) => !v.startsWith("Record<"))
-      // `env: outlookEnv` / `env: gitlabServerEnv` — a local bound to an extensionProcessEnv call
-      // a few lines above. Resolved, not exempted: the binding must be in this same source.
-      .filter((v) => !locals.has(v.replace(/,$/, "")))
-      // wrapServerSpec builds the wrapper's own env; it is the sandbox hop, not a connector spec.
-      .filter((v) => v !== "{");
+    // Per FILE, not one concatenated blob. `wrap-server-spec.ts` builds the sandbox hop's own env
+    // as a multi-line object literal, and the only way to exempt that from a concatenated scan is
+    // to exempt the SHAPE — a capture of exactly `{`. That exemption would then apply everywhere,
+    // and since the capture stops at the first comma or newline, ANY multi-line env literal in ANY
+    // file would match it, including `env: {\n  ...process.env,\n  EXTRA: x,\n}`. Exempting by file
+    // keeps the wrapper out of the connector-spec classification without reopening the hole.
+    const files = await readDirFiles("packages/gateway/src/connectors/lazy-mesh");
+    const WRAPPER = "wrap-server-spec.ts";
+    const unexplained: string[] = [];
+    let wiredSites = 0;
+    for (const f of files) {
+      if (f.rel === WRAPPER) continue;
+      wiredSites += (f.contents.match(/env\s*:\s*extensionProcessEnv\(/g) ?? []).length;
+      const locals = new Set(
+        [...f.contents.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*extensionProcessEnv\s*\(/g)].map(
+          (m) => m[1] as string,
+        ),
+      );
+      for (const m of f.contents.matchAll(/\benv\s*:\s*([^\n,]{1,60})/g)) {
+        const v = (m[1] as string).trim();
+        if (v.startsWith("extensionProcessEnv(")) continue;
+        // `env: Record<string, string>` is a type annotation or a local builder whose result is
+        // handed to extensionProcessEnv; it is never itself a spec's env.
+        if (v.startsWith("Record<")) continue;
+        // `env: outlookEnv` / `env: gitlabServerEnv` — a local bound to an extensionProcessEnv call
+        // a few lines above. Resolved, not exempted: the binding must be in this same file.
+        if (locals.has(v.replace(/,$/, ""))) continue;
+        unexplained.push(`${f.rel}: env: ${v}`);
+      }
+    }
     expect(unexplained).toEqual([]);
 
     // Non-vacuity: the classifier above is satisfied by a scan that found no `env:` at all.
-    expect((src.match(/env\s*:\s*extensionProcessEnv\(/g) ?? []).length).toBeGreaterThanOrEqual(70);
+    expect(files.length).toBeGreaterThanOrEqual(13);
+    expect(wiredSites).toBeGreaterThanOrEqual(70);
   });
 
   test("extensionProcessEnv uses an allowlist (BASELINE_KEYS) — denylist would let new secrets leak by default", async () => {
@@ -196,7 +225,15 @@ describe("I4 — hitlStatus is consent-output-only in production paths", () => {
       const root = resolve(REPO_ROOT, "packages", pkg, "src");
       for (const f of await readdir(root, { recursive: true })) {
         const rel = `packages/${pkg}/src/${f.replaceAll("\\", "/")}`;
-        if (!rel.endsWith(".ts") || rel.endsWith(".test.ts") || rel.endsWith(".d.ts")) continue;
+        // `.tsx` too. A `.ts`-only filter skipped 60 production files — 53 under `packages/ui/src`
+        // and 7 under `packages/cli/src` — which is where an IPC-shaped audit row is most likely
+        // to be hand-built in the first place.
+        const isProdSource =
+          (rel.endsWith(".ts") || rel.endsWith(".tsx")) &&
+          !rel.endsWith(".test.ts") &&
+          !rel.endsWith(".test.tsx") &&
+          !rel.endsWith(".d.ts");
+        if (!isProdSource) continue;
         if (APPROVED_ROW_IS_EARNED.has(rel)) continue;
         const src = await readFile(resolve(REPO_ROOT, rel), "utf8");
         // The union TYPE (`hitlStatus: "approved" | "rejected" | "not_required"`) is a declaration,
@@ -993,8 +1030,15 @@ describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", ()
     // no assertion about `verifier.ts`, `validateIdToken`, or the absence of a second validator
     // anywhere in the block. A title that promises a property the body does not check is worse
     // than a missing test — it reads, in a review, as covered.
+    // Anchor on what the implementation ACTUALLY uses. The first version of this scan looked for
+    // `jwtVerify(`, `verifyIdToken(` and `createRemoteJWKSet(` — jose's API, which this codebase
+    // does not use. All three have zero production hits, so the scan could not fail: an inert
+    // guard, added in the very change meant to remove inert guards. `verifier.ts` verifies RS256
+    // through Bun WebCrypto, so `crypto.subtle.verify(` is the primitive that matters.
     const verifier = await read("packages/gateway/src/identity/verifier.ts");
     expect(verifier).toMatch(/export function isOperatorValid\b/);
+    expect(verifier).toContain("validateIdToken(");
+    expect(verifier).toContain("crypto.subtle.verify(");
 
     const offenders: string[] = [];
     const root = resolve(REPO_ROOT, "packages/gateway/src");
@@ -1003,9 +1047,15 @@ describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", ()
       if (!rel.endsWith(".ts") || rel.endsWith(".test.ts")) continue;
       if (rel.startsWith("packages/gateway/src/identity/")) continue;
       const src = await readFile(resolve(REPO_ROOT, rel), "utf8");
-      // Verifying a JWT signature outside identity/ is the regression: a second validator with
-      // its own idea of issuer, audience and clock skew is how one of them ends up laxer.
-      if (/\bjwtVerify\s*\(|\bverifyIdToken\s*\(|createRemoteJWKSet\s*\(/.test(src)) {
+      // Verifying a token signature outside identity/ is the regression: a second validator with
+      // its own idea of issuer, audience and clock skew is how one of them ends up laxer. The
+      // WebCrypto primitive is listed first because it is the one in use; the jose spellings are
+      // kept so adopting that library later cannot quietly open a second path.
+      if (
+        /crypto\.subtle\.verify\s*\(|\bjwtVerify\s*\(|\bverifyIdToken\s*\(|createRemoteJWKSet\s*\(/.test(
+          src,
+        )
+      ) {
         offenders.push(rel);
       }
     }
@@ -1504,11 +1554,19 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     //
     // Same wiring shape as the scan-floor assertion in the audit script's own suite: prove the
     // function is CALLED, not merely that it exists.
-    const runBody = audit.slice(audit.indexOf("async function run("));
-    expect(runBody).not.toBe("");
+    // Assert the INDEX, not the slice. `indexOf` returning -1 makes `slice(-1)` the last character
+    // of the file — non-empty, so `expect(runBody).not.toBe("")` passes and the failure that
+    // follows reads as "the invocation is missing" when the real cause is that `run` was renamed
+    // or removed.
+    const runAt = audit.indexOf("async function run(");
+    expect(runAt).toBeGreaterThan(-1);
+    const runBody = audit.slice(runAt);
     for (const invocation of [
       "checkEgressChokepointConfinement(files)",
       "checkAgentEmitterImportConfinement(files)",
+      // D10-wrap-spec is per-SITE as of #1219, which makes its invocation worth pinning too:
+      // it is the only thing standing between a dropped `wrap(` and an unsandboxed MCP child.
+      "checkWrapServerSpecInvariant(files)",
     ]) {
       expect(runBody).toContain(invocation);
     }

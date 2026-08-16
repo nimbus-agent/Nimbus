@@ -67,8 +67,22 @@ export const I15_EXEMPT: readonly string[] = [
  * the marker a PER-SITE rule can key on.
  */
 const I15_SPEC_LITERAL_RE = /\.\.\.\s*connectorSpawn\s*\(/g;
-/** The two spellings that route a spec into the sandbox: the wrapper, or a file-local helper. */
-const I15_WRAPPING_CALLEES = new Set(["wrapServerSpec", "wrap"]);
+/** The wrapper itself — always accepted, wherever it appears. */
+const I15_WRAPPER_CALLEE = "wrapServerSpec";
+/**
+ * The file-local alias, accepted ONLY in a file that defines it as a delegation to the wrapper.
+ *
+ * `connector-spawns.ts` and `phase3-config.ts` each declare
+ * `function wrap(spec, serviceId, ctx) { return wrapServerSpec(spec, …); }` and route their specs
+ * through it, so the alias has to be accepted or the rule is unusable. But accepting the NAME
+ * alone means a new file declaring `function wrap(s: ServerSpec) { return s; }` makes every site
+ * in that file compliant — the guard would be checking that a call is spelled `wrap`, not that the
+ * spec reaches the sandbox. So the alias is bound to the reason it exists: the delegation must be
+ * present in the same file.
+ */
+const I15_ALIAS_CALLEE = "wrap";
+const I15_ALIAS_DELEGATES_RE =
+  /function\s+wrap\s*\([^)]{0,200}\)\s*:?[^{]{0,80}\{\s*return\s+wrapServerSpec\s*\(/;
 
 /**
  * Which call, if any, lexically encloses the offset — the callee name of the nearest `(` that is
@@ -103,11 +117,14 @@ export function checkWrapServerSpecInvariant(files: readonly FileEntry[]): Viola
     if (I15_EXEMPT.includes(f.relPath)) continue;
     const stripped = stripComments(f.contents);
     const lines = stripped.split("\n");
+    // Earned per file, not granted by name: see I15_ALIAS_DELEGATES_RE.
+    const aliasIsReal = I15_ALIAS_DELEGATES_RE.test(stripped);
     I15_SPEC_LITERAL_RE.lastIndex = 0;
     let m: RegExpExecArray | null = I15_SPEC_LITERAL_RE.exec(stripped);
     while (m !== null) {
       const callee = enclosingCallee(stripped, m.index);
-      if (callee === undefined || !I15_WRAPPING_CALLEES.has(callee)) {
+      const wrapped = callee === I15_WRAPPER_CALLEE || (callee === I15_ALIAS_CALLEE && aliasIsReal);
+      if (!wrapped) {
         const line = stripped.slice(0, m.index).split("\n").length;
         out.push({
           rule: "D10-wrap-spec",

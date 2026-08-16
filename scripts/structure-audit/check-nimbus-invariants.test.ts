@@ -25,12 +25,45 @@ describe("D10-wrap-spec — every ServerSpec literal reaches the sandbox (per SI
   const LM = "packages/gateway/src/connectors/lazy-mesh";
   const spec = '{ ...connectorSpawn("slack"), env: extensionProcessEnv({ TOKEN: t }) }';
 
+  /** The real shape of the file-local alias: a one-line delegation to the wrapper. */
+  const DELEGATION =
+    "function wrap(s: ServerSpec, id: string, ctx: MeshSpawnContext): ServerSpec {\n" +
+    "  return wrapServerSpec(s, manifestForFirstParty(id), ctx.sandboxCwd);\n" +
+    "}\n";
+
   test("accepts a spec wrapped by the file-local `wrap` helper", () => {
     expect(
       checkWrapServerSpecInvariant([
-        { relPath: `${LM}/connector-spawns.ts`, contents: `slack: wrap(${spec}, "slack", ctx),` },
+        {
+          relPath: `${LM}/connector-spawns.ts`,
+          contents: `${DELEGATION}const a = { slack: wrap(${spec}, "slack", ctx) };`,
+        },
       ]),
     ).toHaveLength(0);
+  });
+
+  test("REJECTS a `wrap` that does not delegate to wrapServerSpec", () => {
+    // The alias is earned, not granted by name. Accepting the identifier `wrap` anywhere under
+    // lazy-mesh would mean the rule checks how a call is SPELLED, not that the spec reaches the
+    // sandbox — so `function wrap(s: ServerSpec) { return s; }` in a new file would make every
+    // site in it compliant, past both this rule and the runtime test that delegates to it.
+    expect(
+      checkWrapServerSpecInvariant([
+        {
+          relPath: `${LM}/connector-spawns.ts`,
+          contents: `function wrap(s: ServerSpec): ServerSpec {\n  return s;\n}\nconst a = { slack: wrap(${spec}, "slack", ctx) };`,
+        },
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("REJECTS the alias in a file that never defines it", () => {
+    // An imported or globally-available `wrap` is not the file-local delegation this exempts.
+    expect(
+      checkWrapServerSpecInvariant([
+        { relPath: `${LM}/connector-spawns.ts`, contents: `const a = { slack: wrap(${spec}) };` },
+      ]),
+    ).toHaveLength(1);
   });
 
   test("accepts a spec wrapped by wrapServerSpec directly", () => {
@@ -55,13 +88,7 @@ describe("D10-wrap-spec — every ServerSpec literal reaches the sandbox (per SI
     const violations = checkWrapServerSpecInvariant([
       {
         relPath: `${LM}/connector-spawns.ts`,
-        contents: [
-          `function wrap(s: ServerSpec, id: string, ctx: MeshSpawnContext): ServerSpec {`,
-          `  return wrapServerSpec(s, manifestForFirstParty(id), ctx.sandboxCwd);`,
-          `}`,
-          `const a = { github: wrap(${spec}, "github", ctx) };`,
-          `const b = { slack: ${spec} };`,
-        ].join("\n"),
+        contents: `${DELEGATION}const a = { github: wrap(${spec}, "github", ctx) };\nconst b = { slack: ${spec} };`,
       },
     ]);
     expect(violations).toHaveLength(1);
