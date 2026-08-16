@@ -7,7 +7,7 @@ Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that main
 **Runtime:** Bun v1.2+ / TypeScript 7.x strict · **Linter:** Biome · **License:** AGPL-3.0 (GNU Affero GPL; gateway/cli/mcp-connectors) + MIT (sdk)
 **Status:** Phase 6 (Team) ✅ complete (2026-06-18) — all 9 slices: 1 & 3 (2026-06-05), 2 & 4 (2026-06-07), 5 (2026-06-09), 6a (2026-06-11), 6b + 6c (2026-06-12), 7 Waves 7a–7c (2026-06-13/14), 8 Waves 8a–8d (2026-06-15 → 2026-06-18), and 9 — the deferred-from-Phase-5 backlog — across 2026-06-14 → 2026-07-19 (Mendeley; Workday; Apple Mail/iCloud Calendar; ArgoCD/Flux/MLflow writes; the web clipper: gateway surface + the Chrome/Firefox MV3 extension in the `nimbus-web-clipper` satellite repo). **Current build slot: Spine S1 (Local Brain)** — from here the build order is the Phase 7+ Sequencing Spine overlay (S1 → S5), not the phase numbers; S1's egress-ledger + `nimbus prove` primitive shipped 2026-06-20, and its research-briefs HTTP surface (`briefs/`, default-off `[briefs]`) shipped 2026-07-22. Phases 1–5 ✅ (Phase 5: 2026-06-04). Invariants through I30 (I28 reserved); schema V53. Dated log (canonical): [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
-**Latest release:** `v2.4.5` <!-- x-release-please-version -->
+**Latest release:** `v2.4.6` <!-- x-release-please-version -->
 
 The version above is rewritten by release-please on every release (it is an
 `extra-files` entry in `.release-please-config.json`, the same mechanism that

@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.4.6](https://github.com/nimbus-agent/Nimbus/compare/v2.4.5...v2.4.6) (2026-08-16)
+
+
+### Bug Fixes
+
+* **docs:** derive four drifted invariant claims instead of hand-maintaining them ([#1221](https://github.com/nimbus-agent/Nimbus/issues/1221)) ([6fc59e5](https://github.com/nimbus-agent/Nimbus/commit/6fc59e518c1f269701e57f4b5d5af7bb0b1166db))
+* **security:** wire the two I22/I18 defenses that were resolved but never read ([#1220](https://github.com/nimbus-agent/Nimbus/issues/1220)) ([84d3e62](https://github.com/nimbus-agent/Nimbus/commit/84d3e6294a0cf537824410044b93dbe8325a4c13))
+
 ## [2.4.5](https://github.com/nimbus-agent/Nimbus/compare/v2.4.4...v2.4.5) (2026-08-15)
 
 
