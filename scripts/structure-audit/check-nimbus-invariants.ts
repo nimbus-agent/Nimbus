@@ -61,8 +61,40 @@ export const I15_EXEMPT: readonly string[] = [
   `${LAZY_MESH_DIR}/first-party-manifests.ts`,
 ];
 
-const I15_CONSTRUCTS_RE = /\bnew\s+MCPClient\s*\(|Record\s*<\s*string\s*,\s*ServerSpec\s*>/;
-const I15_WRAP_RE = /\bwrapServerSpec\s*\(/;
+/**
+ * A `ServerSpec` literal. Every spawn site under lazy-mesh opens with this spread — 78 of them
+ * across `connector-spawns.ts`, `phase3-config.ts` and `chatops-bot-spawn.ts` — which makes it
+ * the marker a PER-SITE rule can key on.
+ */
+const I15_SPEC_LITERAL_RE = /\.\.\.\s*connectorSpawn\s*\(/g;
+/** The two spellings that route a spec into the sandbox: the wrapper, or a file-local helper. */
+const I15_WRAPPING_CALLEES = new Set(["wrapServerSpec", "wrap"]);
+
+/**
+ * Which call, if any, lexically encloses the offset — the callee name of the nearest `(` that is
+ * still open at that point. `wrap({ ...connectorSpawn("slack"), env: … }, "slack", ctx)` answers
+ * `wrap`; the same literal sitting bare inside `new MCPClient({ servers: { slack: {…} } })`
+ * answers `MCPClient`, which is exactly the difference the rule needs to see.
+ */
+function enclosingCallee(stripped: string, offset: number): string | undefined {
+  let depth = 0;
+  for (let i = offset - 1; i >= 0; i--) {
+    const c = stripped[i];
+    if (c === ")" || c === "]" || c === "}") depth++;
+    else if (c === "[" || c === "{") {
+      if (depth === 0) continue; // an object/array literal is not a call boundary
+      depth--;
+    } else if (c === "(") {
+      if (depth > 0) {
+        depth--;
+        continue;
+      }
+      const before = stripped.slice(Math.max(0, i - 96), i);
+      return /([A-Za-z_$][\w$]{0,64})\s*$/.exec(before)?.[1];
+    }
+  }
+  return undefined;
+}
 
 export function checkWrapServerSpecInvariant(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -70,22 +102,22 @@ export function checkWrapServerSpecInvariant(files: readonly FileEntry[]): Viola
     if (!f.relPath.startsWith(`${LAZY_MESH_DIR}/`)) continue;
     if (I15_EXEMPT.includes(f.relPath)) continue;
     const stripped = stripComments(f.contents);
-    if (!I15_CONSTRUCTS_RE.test(stripped)) continue;
-    if (I15_WRAP_RE.test(stripped)) continue;
     const lines = stripped.split("\n");
-    let hitLine = 1;
-    for (let i = 0; i < lines.length; i++) {
-      if (I15_CONSTRUCTS_RE.test(lines[i] as string)) {
-        hitLine = i + 1;
-        break;
+    I15_SPEC_LITERAL_RE.lastIndex = 0;
+    let m: RegExpExecArray | null = I15_SPEC_LITERAL_RE.exec(stripped);
+    while (m !== null) {
+      const callee = enclosingCallee(stripped, m.index);
+      if (callee === undefined || !I15_WRAPPING_CALLEES.has(callee)) {
+        const line = stripped.slice(0, m.index).split("\n").length;
+        out.push({
+          rule: "D10-wrap-spec",
+          file: f.relPath,
+          line,
+          snippet: (lines[line - 1] ?? "").trim(),
+        });
       }
+      m = I15_SPEC_LITERAL_RE.exec(stripped);
     }
-    out.push({
-      rule: "D10-wrap-spec",
-      file: f.relPath,
-      line: hitLine,
-      snippet: (lines[hitLine - 1] as string).trim(),
-    });
   }
   return out;
 }

@@ -11,6 +11,7 @@ import {
   checkSharePublishConfinement,
   checkSpawnInvariant,
   checkVaultKeyAllowList,
+  checkWrapServerSpecInvariant,
   collectDbRunCensus,
   DB_RUN_EXEC_ALLOW_LIST,
   type FileEntry,
@@ -19,6 +20,78 @@ import {
   VAULT_KEY_ALLOW_LIST,
 } from "./check-nimbus-invariants.ts";
 import { REPO_ROOT, stripComments } from "./lib.ts";
+
+describe("D10-wrap-spec — every ServerSpec literal reaches the sandbox (per SITE, not per file)", () => {
+  const LM = "packages/gateway/src/connectors/lazy-mesh";
+  const spec = '{ ...connectorSpawn("slack"), env: extensionProcessEnv({ TOKEN: t }) }';
+
+  test("accepts a spec wrapped by the file-local `wrap` helper", () => {
+    expect(
+      checkWrapServerSpecInvariant([
+        { relPath: `${LM}/connector-spawns.ts`, contents: `slack: wrap(${spec}, "slack", ctx),` },
+      ]),
+    ).toHaveLength(0);
+  });
+
+  test("accepts a spec wrapped by wrapServerSpec directly", () => {
+    expect(
+      checkWrapServerSpecInvariant([
+        {
+          relPath: `${LM}/mesh.ts`,
+          contents: `filesystem: wrapServerSpec(${spec}, manifest, cwd),`,
+        },
+      ]),
+    ).toHaveLength(0);
+  });
+
+  test("flags ONE unwrapped site in a file whose other sites are wrapped", () => {
+    // The defect this replaces. The rule used to short-circuit on `wrapServerSpec(` appearing
+    // ANYWHERE in the file, so a single site could drop the wrapper and stay green — and
+    // `connector-spawns.ts` funnels 26 MCPClient spawns through one `wrap` helper, so its
+    // `wrapServerSpec(` token survives any per-site removal. Reproduced against the real file:
+    // unwrapping one site left 6 `wrapServerSpec(` tokens and the old rule reported clean.
+    // Consequence of a miss is not cosmetic: that child runs with a live OAuth token in its env
+    // and no landlock/seccomp/seatbelt profile.
+    const violations = checkWrapServerSpecInvariant([
+      {
+        relPath: `${LM}/connector-spawns.ts`,
+        contents: [
+          `function wrap(s: ServerSpec, id: string, ctx: MeshSpawnContext): ServerSpec {`,
+          `  return wrapServerSpec(s, manifestForFirstParty(id), ctx.sandboxCwd);`,
+          `}`,
+          `const a = { github: wrap(${spec}, "github", ctx) };`,
+          `const b = { slack: ${spec} };`,
+        ].join("\n"),
+      },
+    ]);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.line).toBe(5);
+  });
+
+  test("flags a bare spec nested inside `new MCPClient({ servers: { … } })`", () => {
+    // The enclosing call is `MCPClient`, not `wrap` — which is precisely the distinction the
+    // rule reads. An object literal is not a call boundary, so the walk has to pass through
+    // `{ servers: { slack: … } }` to find it.
+    expect(
+      checkWrapServerSpecInvariant([
+        {
+          relPath: `${LM}/connector-spawns.ts`,
+          contents: `new MCPClient({ id, servers: { slack: ${spec} } });`,
+        },
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("ignores files outside lazy-mesh and the declared exemptions", () => {
+    expect(
+      checkWrapServerSpecInvariant([
+        { relPath: "packages/gateway/src/voice/service.ts", contents: `x: ${spec}` },
+        { relPath: `${LM}/wrap-server-spec.ts`, contents: `x: ${spec}` },
+        { relPath: `${LM}/slot.ts`, contents: `x: ${spec}` },
+      ]),
+    ).toHaveLength(0);
+  });
+});
 
 describe("D10 — checkSpawnInvariant (under connectors/)", () => {
   test("flags `Bun.spawn` not via extensionProcessEnv", () => {

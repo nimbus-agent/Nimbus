@@ -3,7 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
-import { checkAgentEmitterImportConfinement } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
+import {
+  checkAgentEmitterImportConfinement,
+  checkWrapServerSpecInvariant,
+} from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
 import { PairingWindowController } from "./clips/pairing-window.ts";
@@ -52,24 +55,66 @@ async function read(relPathFromRepoRoot: string): Promise<string> {
   return readFile(resolve(REPO_ROOT, relPathFromRepoRoot), "utf8");
 }
 
+/**
+ * Concatenate the PRODUCTION TypeScript under a directory, recursively.
+ *
+ * Both qualifiers are load-bearing and both were missing. `readdir` without `recursive` cannot
+ * see a subdirectory, so nesting a spawn file one level down removed it from every check built on
+ * this helper; and including `*.test.ts` let test files count toward a production floor, so the
+ * floor could be met by fixtures asserting that the production code is wrong.
+ */
 async function readDirConcat(relDirFromRepoRoot: string): Promise<string> {
   const dir = resolve(REPO_ROOT, relDirFromRepoRoot);
-  const entries = await readdir(dir);
-  const tsFiles = entries.filter((f) => f.endsWith(".ts"));
+  const entries = await readdir(dir, { recursive: true });
+  const tsFiles = entries
+    .map((f) => f.replaceAll("\\", "/"))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
   const contents = await Promise.all(tsFiles.map((f) => readFile(resolve(dir, f), "utf8")));
   return contents.join("\n");
 }
 
 describe("I1 — extensionProcessEnv is the only env source for spawned MCP children", () => {
-  test("lazy-mesh/ contains no raw `{ ...process.env }` spread", async () => {
+  test("lazy-mesh/ contains no `{ ...process.env` spread", async () => {
+    // No closing brace in the pattern. `docs/SECURITY-INVARIANTS.md` writes the anti-pattern as
+    // `spawn(..., { env: { ...process.env, EXTRA: ... } })` — and the previous regex,
+    // /\{\s*\.\.\.process\.env\s*\}/, required `}` IMMEDIATELY after the spread, so it matched the
+    // bare `{ ...process.env }` and missed the exact form the docs name. The leaking form is the
+    // one with the comma: that is what a real regression looks like, because the site being
+    // rewritten needs to add a variable or two alongside the inherited environment.
     const src = await readDirConcat("packages/gateway/src/connectors/lazy-mesh");
-    expect(src).not.toMatch(/\{\s*\.\.\.process\.env\s*\}/);
+    expect(src).not.toMatch(/\{\s*\.\.\.process\.env\b/);
   });
 
-  test("lazy-mesh/ uses extensionProcessEnv() at every spawn site", async () => {
+  test("every env: in a lazy-mesh spawn spec comes from extensionProcessEnv", async () => {
+    // Derived, not a hand-picked floor. This was `expect(callers.length).toBeGreaterThanOrEqual(20)`
+    // against 80 actual call sites, so 60 of them could regress to a raw spread and the assertion
+    // would still pass — and because the old readDirConcat swept in `*.test.ts`, fixtures counted
+    // toward that floor too.
+    //
+    // The real property is not "enough calls exist", it is "no env: resolves to anything else", so
+    // this enumerates every `env:` and classifies it. Written as what CANNOT pass: an unrecognised
+    // shape fails and is named, rather than an expected shape being counted.
     const src = await readDirConcat("packages/gateway/src/connectors/lazy-mesh");
-    const callers = src.match(/extensionProcessEnv\(/g) ?? [];
-    expect(callers.length).toBeGreaterThanOrEqual(20);
+    const locals = new Set(
+      [...src.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*extensionProcessEnv\s*\(/g)].map(
+        (m) => m[1] as string,
+      ),
+    );
+    const unexplained = [...src.matchAll(/\benv\s*:\s*([^\n,]{1,60})/g)]
+      .map((m) => (m[1] as string).trim())
+      .filter((v) => !v.startsWith("extensionProcessEnv("))
+      // `env: Record<string, string>` is a type annotation or a local builder whose result is
+      // handed to extensionProcessEnv; it is never itself a spec's env.
+      .filter((v) => !v.startsWith("Record<"))
+      // `env: outlookEnv` / `env: gitlabServerEnv` — a local bound to an extensionProcessEnv call
+      // a few lines above. Resolved, not exempted: the binding must be in this same source.
+      .filter((v) => !locals.has(v.replace(/,$/, "")))
+      // wrapServerSpec builds the wrapper's own env; it is the sandbox hop, not a connector spec.
+      .filter((v) => v !== "{");
+    expect(unexplained).toEqual([]);
+
+    // Non-vacuity: the classifier above is satisfied by a scan that found no `env:` at all.
+    expect((src.match(/env\s*:\s*extensionProcessEnv\(/g) ?? []).length).toBeGreaterThanOrEqual(70);
   });
 
   test("extensionProcessEnv uses an allowlist (BASELINE_KEYS) — denylist would let new secrets leak by default", async () => {
@@ -114,9 +159,64 @@ describe("I3 — HITL gate consults action.type (not payload.mcpToolId)", () => 
 });
 
 describe("I4 — hitlStatus is consent-output-only in production paths", () => {
-  test("data-delete.ts does not hardcode hitlStatus", async () => {
-    const src = await read("packages/gateway/src/commands/data-delete.ts");
-    expect(src).not.toMatch(/hitlStatus:\s*"approved"/);
+  /**
+   * Files permitted to write `hitlStatus: "approved"` inline, each because the row RECORDS a
+   * consent decision that a gate has already made on that exact path. Every entry was checked
+   * against its gate, not assumed — an allowlist whose members were never verified is how a guard
+   * becomes a laundering mechanism for the thing it polices.
+   *
+   * This is deliberately NOT the list of files that currently contain the string. `reindex.ts`
+   * was on that list and is not here: its row sat on a path where the gate is structurally never
+   * entered, so it was recording an approval that never happened. It now writes `not_required`.
+   */
+  const APPROVED_ROW_IS_EARNED: ReadonlyMap<string, string> = new Map([
+    ["packages/gateway/src/egress/egress-prune.ts", "egress.prune ∈ HITL_REQUIRED (I2 frozen set)"],
+    [
+      "packages/gateway/src/extensions/install-from-local.ts",
+      "extension.install_complete records the outcome of the install gate",
+    ],
+    [
+      "packages/gateway/src/ipc/federation-rpc.ts",
+      "federation.purge records the consent-broker HITL decision in the same handler",
+    ],
+    ["packages/gateway/src/share/share-gate.ts", "share.publish ∈ HITL_REQUIRED (I27 origin)"],
+    [
+      "packages/gateway/src/share/share-forward.ts",
+      "share.publish ∈ HITL_REQUIRED (I27 re-forward)",
+    ],
+  ]);
+
+  test('no production file outside the earned set hardcodes hitlStatus: "approved"', async () => {
+    // The entire enforcement of I4 used to be one `read()` of `commands/data-delete.ts` and one
+    // `not.toMatch`. Adding the string to ANY other file was invisible to CI — and one had:
+    // `connectors/reindex.ts` forged an `approved` row on the ungated metadata_only path. There is
+    // no static D-rule for I4 either, so that single grep was the whole of it.
+    const offenders: string[] = [];
+    for (const pkg of ["gateway", "cli", "ui"]) {
+      const root = resolve(REPO_ROOT, "packages", pkg, "src");
+      for (const f of await readdir(root, { recursive: true })) {
+        const rel = `packages/${pkg}/src/${f.replaceAll("\\", "/")}`;
+        if (!rel.endsWith(".ts") || rel.endsWith(".test.ts") || rel.endsWith(".d.ts")) continue;
+        if (APPROVED_ROW_IS_EARNED.has(rel)) continue;
+        const src = await readFile(resolve(REPO_ROOT, rel), "utf8");
+        // The union TYPE (`hitlStatus: "approved" | "rejected" | "not_required"`) is a declaration,
+        // not an assignment, and appears in executor.ts / types.ts / local-index.ts by design.
+        if (/hitlStatus:\s*"approved"(?!\s*\|)/.test(src)) offenders.push(rel);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("every earned entry still contains the row it is exempted for", async () => {
+    // The other direction. An exemption for a file that no longer writes the row is dead weight
+    // that quietly re-permits the string if the file is later reused for something else — the
+    // same way a stale allowlist entry outlives the reason it was added.
+    const stale: string[] = [];
+    for (const [rel] of APPROVED_ROW_IS_EARNED) {
+      const src = await readFile(resolve(REPO_ROOT, rel), "utf8");
+      if (!/hitlStatus:\s*"approved"/.test(src)) stale.push(rel);
+    }
+    expect(stale).toEqual([]);
   });
 });
 
@@ -521,17 +621,45 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
     expect(code).not.toMatch(/sandbox-wrapper\.ts/);
   });
 
-  for (const file of [
-    "packages/gateway/src/connectors/lazy-mesh/mesh.ts",
-    "packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts",
-    "packages/gateway/src/connectors/lazy-mesh/phase3-config.ts",
-    "packages/gateway/src/connectors/lazy-mesh/user-mcp.ts",
-  ]) {
-    test(`${file} routes every ServerSpec through wrapServerSpec`, async () => {
-      const src = await read(file);
-      expect(src).toMatch(/wrapServerSpec\s*\(/);
-    });
-  }
+  test("every ServerSpec literal under lazy-mesh is enclosed by a wrapping call", async () => {
+    // This used to be a four-file loop asserting `expect(src).toMatch(/wrapServerSpec\s*\(/)` —
+    // one TOKEN, anywhere in the file. Two things were wrong with it.
+    //
+    // Granularity: `connector-spawns.ts` funnels 26 MCPClient spawns through a single `wrap`
+    // helper, so its `wrapServerSpec(` token survives ANY per-site removal. Dropping the wrapper
+    // from one connector left the file matching, the static D10 rule matching (it short-circuited
+    // per file too), and that connector's spawner test green — none of the 15 affected spawner
+    // describes assert `.command`. The child would run with a live OAuth token in its env and no
+    // landlock/seccomp/seatbelt profile, past three green gates.
+    //
+    // Coverage: the hardcoded four omitted `chatops-bot-spawn.ts`, which has two real spawn sites.
+    // A hand-maintained file list is a second thing to keep in sync, and it had already drifted.
+    //
+    // So this now derives the sites and delegates to the same per-site checker the static rule
+    // uses, over every production file in the directory — including any added later.
+    const dir = resolve(REPO_ROOT, "packages/gateway/src/connectors/lazy-mesh");
+    const files = (await readdir(dir, { recursive: true })).filter(
+      (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
+    );
+    const entries = await Promise.all(
+      files.map(async (f) => ({
+        relPath: `packages/gateway/src/connectors/lazy-mesh/${f.replaceAll("\\", "/")}`,
+        contents: await readFile(resolve(dir, f), "utf8"),
+      })),
+    );
+
+    // Non-vacuity first: an empty or mis-globbed scan satisfies `toHaveLength(0)` just as well as
+    // a compliant tree, and the whole point of this block is that a silently-empty check reads
+    // identical to a passing one.
+    const specSites = entries.reduce(
+      (n, e) => n + (e.contents.match(/\.\.\.\s*connectorSpawn\s*\(/g) ?? []).length,
+      0,
+    );
+    expect(entries.length).toBeGreaterThanOrEqual(13);
+    expect(specSites).toBeGreaterThanOrEqual(70);
+
+    expect(checkWrapServerSpecInvariant(entries)).toEqual([]);
+  });
 });
 
 describe("I16 — Verified-publisher invariant", () => {
@@ -840,9 +968,48 @@ describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", ()
     expect(rust).not.toContain('"scim.setToken"');
     expect(rust).not.toContain('"identity.bind"');
   });
-  test("only the identity verifier validates an ID token; query-gate consults it", async () => {
-    const gate = await read("packages/gateway/src/federation/query-gate.ts");
-    expect(gate).toContain("isOperatorValid");
+  test("the federated gate CALLS isOperatorValid, and the RPC layer supplies it", async () => {
+    // This was `read("federation/query-gate.ts")` + `expect(gate).toContain("isOperatorValid")`,
+    // and the only occurrence of that string in `query-gate.ts` is its ctx TYPE field:
+    //
+    //   readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
+    //
+    // A type declaration, not a call. The assertion therefore held while the consult and its
+    // wiring both lived in files the test never opened, and deleting the one line that supplies
+    // `ctx.identity` left it green — query-gate.ts would be byte-identical.
+    //
+    // So: assert the CALL where it actually is, and the WIRING that feeds it.
+    const commons = await read("packages/gateway/src/federation/_lib/gate-commons.ts");
+    expect(commons).toMatch(
+      /ctx\.identity\?\.enabled === true && !ctx\.identity\.isOperatorValid\(\)/,
+    );
+
+    const rpc = await read("packages/gateway/src/ipc/federation-rpc.ts");
+    expect(rpc).toMatch(/identity:\s*ctx\.identityGuard/);
+  });
+
+  test("the ONLY place an ID token is validated is identity/verifier.ts", async () => {
+    // The other half of the test's own title, which previously asserted nothing at all: there is
+    // no assertion about `verifier.ts`, `validateIdToken`, or the absence of a second validator
+    // anywhere in the block. A title that promises a property the body does not check is worse
+    // than a missing test — it reads, in a review, as covered.
+    const verifier = await read("packages/gateway/src/identity/verifier.ts");
+    expect(verifier).toMatch(/export function isOperatorValid\b/);
+
+    const offenders: string[] = [];
+    const root = resolve(REPO_ROOT, "packages/gateway/src");
+    for (const f of await readdir(root, { recursive: true })) {
+      const rel = `packages/gateway/src/${f.replaceAll("\\", "/")}`;
+      if (!rel.endsWith(".ts") || rel.endsWith(".test.ts")) continue;
+      if (rel.startsWith("packages/gateway/src/identity/")) continue;
+      const src = await readFile(resolve(REPO_ROOT, rel), "utf8");
+      // Verifying a JWT signature outside identity/ is the regression: a second validator with
+      // its own idea of issuer, audience and clock skew is how one of them ends up laxer.
+      if (/\bjwtVerify\s*\(|\bverifyIdToken\s*\(|createRemoteJWKSet\s*\(/.test(src)) {
+        offenders.push(rel);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -1325,6 +1492,26 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(audit).toContain("D22-egress-append");
     expect(audit).toContain("D22-agent-brief-egress");
     expect(audit).toContain("D22-agent-emitter-import");
+
+    // The four assertions above are string-presence checks, and all four of those strings are
+    // `rule:` literals INSIDE the check functions — so they scan for a token that lives in the
+    // definition being scanned for. Deleting the `run()` block that INVOKES the checks leaves
+    // every one of them green while `audit:invariants` stops executing D22 entirely.
+    //
+    // Rules (b) and (c) survive that by luck: each has an independent tree-scan further down this
+    // file. Rule (a), the `connectors.dispatch` confinement, has none — so its only enforcement is
+    // the invocation, and its only assertion was the presence of its own name.
+    //
+    // Same wiring shape as the scan-floor assertion in the audit script's own suite: prove the
+    // function is CALLED, not merely that it exists.
+    const runBody = audit.slice(audit.indexOf("async function run("));
+    expect(runBody).not.toBe("");
+    for (const invocation of [
+      "checkEgressChokepointConfinement(files)",
+      "checkAgentEmitterImportConfinement(files)",
+    ]) {
+      expect(runBody).toContain(invocation);
+    }
   });
 
   test("D22(d): the emitter-import rule flags ALL THREE module-resolution forms", async () => {

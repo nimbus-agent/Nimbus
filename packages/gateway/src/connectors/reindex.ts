@@ -117,9 +117,19 @@ export async function reindexConnector(input: ReindexInput): Promise<ReindexResu
       }
     })();
     if (items.length > 0) {
+      // I4: `hitlStatus` is consent-gate output only. This row was written as `"approved"`, but
+      // it can ONLY be emitted on a path where the gate was never entered: `ipc/reindex-rpc.ts`
+      // calls `toolExecutor.gate()` for `depth === "full"` alone, and the `full` branch returns
+      // `mode: "deepen"` with `itemsAffected: 0`, so the `items.length > 0` arm above belongs
+      // exclusively to `metadata_only` / `summary`. The row therefore recorded a consent decision
+      // that never happened, inside the verified audit chain — the S1-F5 / chain C6 shape.
+      //
+      // `not_required` is the accurate value, following `ipc/federation-rpc.ts:543-546`: the
+      // operation is owner-initiated and administrative, so no consent was sought and none was
+      // given. If this path is ever gated, the value must come from `gate()`, not from here.
       input.index.recordAudit({
         actionType: "data.minimization.prune",
-        hitlStatus: "approved",
+        hitlStatus: "not_required",
         actionJson: JSON.stringify({
           connector: input.service,
           items_affected: items.length,
