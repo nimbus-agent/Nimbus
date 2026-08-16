@@ -8,12 +8,12 @@ describe("[agents]", () => {
   });
 
   test("parses all three modes", () => {
-    for (const mode of ["off", "local", "any"] as const) {
+    for (const mode of ["off", "local", "allow-remote"] as const) {
       expect(parseNimbusAgentsToml(`[agents]\nsynthesis = "${mode}"\n`).synthesis).toBe(mode);
     }
   });
 
-  test("an unrecognised mode falls back to the safe default, never to any", () => {
+  test("an unrecognised mode falls back to the safe default, never widening to allow-remote", () => {
     expect(parseNimbusAgentsToml(`[agents]\nsynthesis = "remote"\n`).synthesis).toBe("local");
   });
 

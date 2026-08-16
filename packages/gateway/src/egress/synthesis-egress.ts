@@ -9,9 +9,10 @@ import { redactEgressSummary } from "./egress-record.ts";
  * member reserved for exactly this ("inference + embeddings, local or remote");
  * W6-A0 is the "later phase" its docstring anticipated. Do not add a source type.
  *
- * The appender lands here; its only caller arrives with the synthesis wiring
- * (`agents/_lib/synthesis-llm.ts`, `[agents] synthesis = "any"`) — until then this
- * class has no production call site.
+ * The appender's only caller is the synthesis wiring (`agents/_lib/synthesis-llm.ts`,
+ * `[agents] synthesis = "local"` or `"allow-remote"`), reached in production from
+ * `ipc/server/dispatchers.ts` and `agent-runs/agent-http-invoke.ts` (Task 6's
+ * `buildAgentSynthesisRunner`).
  *
  * `remote` is a REQUIRED argument, and a `false` call appends nothing. A local
  * generate makes no outbound request, so ledgering it would over-claim egress the

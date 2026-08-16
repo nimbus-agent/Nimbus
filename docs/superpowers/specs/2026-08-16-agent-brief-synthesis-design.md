@@ -74,7 +74,7 @@ on new configuration. Everything else follows from that.
 
 ```toml
 [agents]
-synthesis = "local"   # "off" | "local" | "any"   (default: "local")
+synthesis = "local"   # "off" | "local" | "allow-remote"   (default: "local")
 ```
 
 Tri-state rather than two booleans, so "keep briefs deterministic forever" stays expressible for a
@@ -84,9 +84,9 @@ user who wants today's behaviour pinned.
 | --- | --- | --- |
 | `"off"` | `ctx.llm` stays `undefined`. Today's behaviour exactly. | none, by construction |
 | `"local"` (default) | Synthesis runs **only** if the resolved provider runs on this machine. No local provider → deterministic render. | none, by construction |
-| `"any"` | Synthesis may use a remote provider. | one ledger row per remote call |
+| `"allow-remote"` | Synthesis may use a remote provider. | one ledger row per remote call |
 
-The default is `"local"` and not `"any"` because `"any"` is the first path by which indexed content
+The default is `"local"` and not `"allow-remote"` because `"allow-remote"` is the first path by which indexed content
 can leave the machine without a connector being involved. That is opt-in or it is a surprise.
 
 ### 2.2 Provider resolution must not use the plain router
@@ -105,7 +105,7 @@ New module `agents/_lib/synthesis-llm.ts`:
    where Ollama starts and stops under a long-lived Gateway.
 2. Under `"local"`, a non-local resolution is refused outright — return `undefined` so the caller
    renders deterministically. Refusal is the normal path on a machine without Ollama, not an error.
-3. Under `"any"`, a non-local resolution appends its egress row (§2.3) and only then generates.
+3. Under `"allow-remote"`, a non-local resolution appends its egress row (§2.3) and only then generates.
 
 `LlmGenerateResult` already carries `providerId` (`llm/router.ts:23`) and an optional `fallback`
 (`:29`), so "did this go remote" is answerable — but only *after* the call. That is too late for a
@@ -121,7 +121,7 @@ New `egress/synthesis-egress.ts` exporting `recordSynthesisEgress`, joining `rec
 appender inside `egress/` satisfies D22 rule (b), which confines `appendEgressEntry` to that
 directory; no new static rule is required.
 
-Under `synthesis = "any"`, when the resolved provider is non-local, **one row is appended before the
+Under `synthesis = "allow-remote"`, when the resolved provider is non-local, **one row is appended before the
 generate call**, matching I29's append-before-egress ordering everywhere else.
 
 **On append failure, the brief falls back to the deterministic render rather than failing.** This is
@@ -307,7 +307,7 @@ notification, so "why is my brief still deterministic?" is answerable without a 
 | Timeout yields a brief | A stub that never resolves must still produce a `briefReady` with the deterministic render, never a hang and never only `briefError`. |
 | Rejection is visible | Each rejection reason (`timeout`, `contract_violation`, `egress_append_failed`) appears on the notification's `synthesis` field, with `missingPhrases` populated for the contract case. |
 | `"local"` never egresses | Router with only a remote provider registered, `synthesis = "local"` → no synthesis **and** zero ledger rows. |
-| `"any"` appends before calling | Remote provider resolved → exactly one row, ordered before the generate call. |
+| `"allow-remote"` appends before calling | Remote provider resolved → exactly one row, ordered before the generate call. |
 | Append failure is fail-closed | Forced append failure → zero synthesis, deterministic render, no egress. |
 | HTTP ≡ socket | The same brief requested over both transports returns identical payloads, preserving what `agent-http-invoke.ts:75` asserts by comment today. |
 | `why-peek` exemption | Stays structural — assert it never reaches the synthesis path under any `[agents].synthesis` value. |
@@ -324,7 +324,7 @@ asserts anything about what a live model writes.
 - **This changes what every built-in brief is.** Fourteen surfaces that have only ever emitted
   deterministic text may now emit rewritten text. The contract guard (§2.4) bounds the damage but
   does not eliminate the change in character.
-- **`synthesis = "any"` is a genuinely new egress path.** It is off by default, ledger-covered when
+- **`synthesis = "allow-remote"` is a genuinely new egress path.** It is off by default, ledger-covered when
   on, and named as such in `nimbus prove`'s scope label — but it is new, and the roadmap's claim
   that built-in agents "append nothing to the egress ledger" becomes conditional rather than
   absolute.

@@ -19,7 +19,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `recordSyncEgress`'s `LOCAL_ONLY_SYNC_SERVICES` check for the same reason: a caller-enforced rule
   is one wiring mistake away from fabricating a `model` row for a local generation. The appender has
   landed and is fully tested but has no production caller yet — that arrives with the synthesis
-  wiring (`agents/_lib/synthesis-llm.ts`, under `[agents] synthesis = "any"`) in a following change
+  wiring (`agents/_lib/synthesis-llm.ts`, under `[agents] synthesis = "allow-remote"`) in a following change
   in the same effort. `COVERAGE_CLASS_LABELS` in `cli/src/commands/prove.ts` gains a matching
   `model` label ("remotely-synthesized agent briefs") so the scope line never falls through to a
   bare, over-broad `model` key (`I29`).

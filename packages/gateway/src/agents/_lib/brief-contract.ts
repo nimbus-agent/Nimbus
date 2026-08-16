@@ -16,7 +16,7 @@ function normalize(s: string): string {
 
 /**
  * Body text under `## <heading>`, up to the next heading of the SAME OR HIGHER level
- * (same or fewer `#` characters) — not the next heading of any level.
+ * (same or fewer `#` characters) — not a heading at a deeper level.
  *
  * Heading match is a normalized PREFIX, not equality: `render.ts:789` documents headings
  * rendered as `## Ownership — services: checkout`, and exact matching would report that
@@ -24,7 +24,7 @@ function normalize(s: string): string {
  *
  * The level check matters for the same reason: `SYNTHESIS_INSTRUCTIONS` says "keep all
  * section headings" but does not forbid a rewrite from ADDING sub-structure — a `### Note`
- * inside `## Tickets` is realistic model output. Breaking on any `#` line would truncate
+ * inside `## Tickets` is realistic model output. Breaking on every `#` line would truncate
  * the section at that sub-heading, discard the disclaimer sitting below it, and report a
  * false "dropped required phrase" for a synthesis that never touched the disclaimer at
  * all. A deeper heading belongs to the section body; only a heading at the same level (a

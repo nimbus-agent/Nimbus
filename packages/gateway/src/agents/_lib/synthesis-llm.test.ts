@@ -70,7 +70,7 @@ describe("buildSynthesisRunner", () => {
   test("no provider resolved at all yields no_eligible_provider", async () => {
     const rows = fakeDb();
     const runner = buildSynthesisRunner({
-      config: { synthesis: "any", synthesisTimeoutMs: 20000 },
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
       router: fakeRouter(undefined),
       db: rows,
       briefKind: "why",
@@ -94,11 +94,11 @@ describe("buildSynthesisRunner", () => {
     expect(rows.count()).toBe(0); // refused, and nothing ledgered
   });
 
-  test("any appends exactly one model row BEFORE generating", async () => {
+  test("allow-remote appends exactly one model row BEFORE generating", async () => {
     const order: string[] = [];
     const rows = fakeDb(() => order.push("append"));
     const runner = buildSynthesisRunner({
-      config: { synthesis: "any", synthesisTimeoutMs: 20000 },
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
       router: fakeRouter(remoteProvider, async () => {
         order.push("generate");
         return "out";
@@ -112,20 +112,21 @@ describe("buildSynthesisRunner", () => {
     expect(rows.count()).toBe(1);
   });
 
-  test("a LOCAL provider under any appends nothing, and the runner still succeeds", async () => {
+  test("a LOCAL provider under allow-remote appends nothing, and the runner still succeeds", async () => {
     const rows = fakeDb();
     // Observing `rows.count()` alone cannot catch a regression that moves the append call INTO
     // `if (remote)`: `recordSynthesisEgress` already no-ops on `remote: false`, so a call that
     // never happens and a call that happens-and-no-ops are byte-identical by row count. This spy
     // observes the CALL itself (and its `remote` argument), which the row count cannot. See the
-    // "an append failure" test above for the complementary case (mode "any", REMOTE provider).
+    // "an append failure" test above for the complementary case (mode "allow-remote", REMOTE
+    // provider).
     const recordCalls: Array<{ readonly remote: boolean }> = [];
     const recordEgress: SynthesisEgressRecorder = (db, args) => {
       recordCalls.push({ remote: args.remote });
       recordSynthesisEgress(db, args); // delegate to the real appender against the fake db
     };
     const runner = buildSynthesisRunner({
-      config: { synthesis: "any", synthesisTimeoutMs: 20000 },
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
       router: fakeRouter(localProvider),
       db: rows,
       briefKind: "why",
@@ -147,7 +148,7 @@ describe("buildSynthesisRunner", () => {
       throw new Error("ledger down");
     });
     const runner = buildSynthesisRunner({
-      config: { synthesis: "any", synthesisTimeoutMs: 20000 },
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
       router: fakeRouter(remoteProvider, async () => {
         generated = true;
         return "out";

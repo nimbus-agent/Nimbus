@@ -7,7 +7,7 @@ configuration, behind a deterministic honesty guard, with the model egress it ca
 
 **Architecture:** The plumbing already exists end-to-end; `AgentsRpcContext.llm` threads to all
 fourteen agents and neither production caller supplies it, so `SYNTHESIS_INSTRUCTIONS` never runs.
-This plan supplies it from one factory gated on `[agents].synthesis` (`off` / `local` / `any`),
+This plan supplies it from one factory gated on `[agents].synthesis` (`off` / `local` / `allow-remote`),
 resolves the provider per invocation rather than trusting `prefersLocal()`, appends a `model` egress
 row before any non-local call, and discards any synthesis that drops a contractual disclaimer.
 
@@ -27,7 +27,7 @@ row before any non-local call, and discards any synthesis that drops a contractu
   `source_id`) — do not reorder or insert.
 - **D22(b):** the identifier `appendEgressEntry` may only appear in `packages/gateway/src/egress/*`.
   New callers import a named recorder from that directory instead.
-- **Default is `synthesis = "local"`.** `"any"` is the only value that may reach a remote provider.
+- **Default is `synthesis = "local"`.** `"allow-remote"` is the only value that may reach a remote provider.
 - **Timeout default 20000 ms**, configurable. Not 3–5 s — that rejects every synthesis on a cold
   Ollama, which reproduces the inert-feature failure this work exists to fix.
 - **Every fallback path emits the deterministic render *with* its footer.** See Task 5 — today
@@ -74,7 +74,7 @@ row before any non-local call, and discards any synthesis that drops a contractu
 
 - Consumes: `forEachSectionEntry`, `parseIntDec`, `loadTomlSection` from the existing TOML
   primitives.
-- Produces: `type NimbusAgentsToml = { synthesis: "off" | "local" | "any"; synthesisTimeoutMs: number }`,
+- Produces: `type NimbusAgentsToml = { synthesis: "off" | "local" | "allow-remote"; synthesisTimeoutMs: number }`,
   `DEFAULT_NIMBUS_AGENTS_TOML`, `parseNimbusAgentsToml(raw, defaults)`,
   `loadNimbusAgentsFromConfigDir(configDir)`.
 
@@ -96,12 +96,12 @@ describe("[agents]", () => {
   });
 
   test("parses all three modes", () => {
-    for (const mode of ["off", "local", "any"] as const) {
+    for (const mode of ["off", "local", "allow-remote"] as const) {
       expect(parseNimbusAgentsToml(`[agents]\nsynthesis = "${mode}"\n`).synthesis).toBe(mode);
     }
   });
 
-  test("an unrecognised mode falls back to the safe default, never to any", () => {
+  test("an unrecognised mode falls back to the safe default, never widening to allow-remote", () => {
     expect(parseNimbusAgentsToml(`[agents]\nsynthesis = "remote"\n`).synthesis).toBe("local");
   });
 
@@ -132,11 +132,11 @@ Add to `nimbus-toml.ts`, mirroring the `[glossary]` block's structure:
 // [agents] — built-in agent brief synthesis (Spine S1, W6-A0)
 // ---------------------------------------------------------------------------
 
-export type SynthesisMode = "off" | "local" | "any";
+export type SynthesisMode = "off" | "local" | "allow-remote";
 
 export type NimbusAgentsToml = {
   /**
-   * Default "local", NOT "any". "any" is the first path by which indexed content
+   * Default "local", NOT "allow-remote". "allow-remote" is the first path by which indexed content
    * can leave the machine without a connector being involved, so it is opt-in.
    */
   synthesis: SynthesisMode;
@@ -154,12 +154,12 @@ export const DEFAULT_NIMBUS_AGENTS_TOML: NimbusAgentsToml = {
   synthesisTimeoutMs: 20000,
 };
 
-const SYNTHESIS_MODES: ReadonlySet<string> = new Set(["off", "local", "any"]);
+const SYNTHESIS_MODES: ReadonlySet<string> = new Set(["off", "local", "allow-remote"]);
 
 function applyNimbusAgentsKey(out: NimbusAgentsToml, key: string, valRaw: string): void {
   if (key === "synthesis") {
     const v = valRaw.trim().replace(/^"|"$/g, "");
-    // Unknown values fall back to the default. Never widen to "any" on a typo.
+    // Unknown values fall back to the default. Never widen to "allow-remote" on a typo.
     if (SYNTHESIS_MODES.has(v)) out.synthesis = v as SynthesisMode;
     return;
   }
@@ -194,7 +194,7 @@ export function loadNimbusAgentsFromConfigDir(configDir: string): NimbusAgentsTo
 
 Note `applyNimbusAgentsKey` mutates a full `NimbusAgentsToml` seeded from defaults, not a
 `Partial<>` — so an unrecognised value leaves the default in place rather than writing `undefined`
-over it. That is what makes the "falls back, never widens to `any`" test pass.
+over it. That is what makes the "falls back, never widens to `allow-remote`" test pass.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -551,7 +551,7 @@ In `egress-coverage.ts`, set `model: "per-call"` and extend the `THIS_BINARY_COV
  * `model` is `per-call`, RAISED FROM `none`, and covers LESS than its name — read it as narrowly as
  * `mcp` and `http`. It is per-call over exactly one thing: a built-in agent brief synthesized by a
  * NON-LOCAL provider (`egress/synthesis-egress.ts`, called only from
- * `agents/_lib/synthesis-llm.ts` under `[agents] synthesis = "any"`). It is NOT "all inference".
+ * `agents/_lib/synthesis-llm.ts` under `[agents] synthesis = "allow-remote"`). It is NOT "all inference".
  * EMBEDDINGS APPEND NOTHING: `PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table when a key is
  * set, and that path has no appender — so a zero `model` count does NOT mean no vector left the
  * machine. Under `synthesis = "off"` or `"local"` this class emits nothing BY CONSTRUCTION, not by
@@ -665,11 +665,11 @@ describe("buildSynthesisRunner", () => {
     expect(rows.count()).toBe(0); // refused, and nothing ledgered
   });
 
-  test("any appends exactly one model row BEFORE generating", async () => {
+  test("allow-remote appends exactly one model row BEFORE generating", async () => {
     const order: string[] = [];
     const rows = fakeDb(() => order.push("append"));
     const runner = buildSynthesisRunner({
-      config: { synthesis: "any", synthesisTimeoutMs: 20000 },
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
       router: fakeRouter(remoteProvider, async () => { order.push("generate"); return "out"; }),
       db: rows, briefKind: "why", now: () => 1,
     });
@@ -678,10 +678,10 @@ describe("buildSynthesisRunner", () => {
     expect(rows.count()).toBe(1);
   });
 
-  test("a LOCAL provider under any appends nothing", async () => {
+  test("a LOCAL provider under allow-remote appends nothing", async () => {
     const rows = fakeDb();
     const runner = buildSynthesisRunner({
-      config: { synthesis: "any", synthesisTimeoutMs: 20000 },
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
       router: fakeRouter(localProvider), db: rows, briefKind: "why", now: () => 1,
     });
     await runner?.run("p");
@@ -692,7 +692,7 @@ describe("buildSynthesisRunner", () => {
     let generated = false;
     const rows = fakeDb(() => { throw new Error("ledger down"); });
     const runner = buildSynthesisRunner({
-      config: { synthesis: "any", synthesisTimeoutMs: 20000 },
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
       router: fakeRouter(remoteProvider, async () => { generated = true; return "out"; }),
       db: rows, briefKind: "why", now: () => 1,
     });
@@ -728,7 +728,7 @@ Order inside `run(prompt)` is load-bearing and must be exactly:
 2. No provider → `{ ok: false, reason: "no_eligible_provider" }`.
 3. `remote === true` **and** mode is `"local"` → `{ ok: false, reason: "no_eligible_provider" }`.
    A refusal, not an error: this is the normal path on a machine with no local model.
-4. Mode is `"any"` → **call `recordSynthesisEgress` UNCONDITIONALLY**, passing the derived
+4. Mode is `"allow-remote"` → **call `recordSynthesisEgress` UNCONDITIONALLY**, passing the derived
    `remote`. If it throws → `{ ok: false, reason: "egress_append_failed", detail }` **without
    generating** — fail-closed.
 5. Race the provider call against `synthesisTimeoutMs`; on timeout →
@@ -740,7 +740,7 @@ Order inside `run(prompt)` is load-bearing and must be exactly:
 > `remote` is `false` (Task 3). Calling it only inside a non-local branch, or passing a literal
 > `remote: true`, makes that internal guard **inert** and silently returns enforcement to the call
 > site — which is exactly the weakness Task 3's review closed. Pass the derived value and let the
-> appender decide. A test must pin this: under `"any"` with a LOCAL provider resolved, the runner
+> appender decide. A test must pin this: under `"allow-remote"` with a LOCAL provider resolved, the runner
 > still succeeds and the ledger still gains zero rows.
 
 **On the append and database locking:** use the plain `recordSynthesisEgress` call. Do **not** add a
@@ -761,7 +761,7 @@ instead of adding a parallel mechanism.
 `LlmGenerateOptions` (`llm/types.ts:14-22`) has no `signal` field. The only `AbortSignal` in the
 provider interface is on the optional `pullModel` (`:46`), not `generate` (`:43`). So the race here
 abandons the promise; the underlying request keeps running to completion — local Ollama CPU/GPU
-under `"local"`, and **billable tokens** under `"any"`.
+under `"local"`, and **billable tokens** under `"allow-remote"`.
 
 Deferred rather than fixed because closing it means widening a shared type consumed by every
 provider implementation and by the `nimbus ask` path, which is outside A0's blast radius and would
@@ -923,7 +923,7 @@ the precise defect this sub-project exists to correct, so do not skip its test.
 
 ```ts
 test("HTTP and socket briefs remain identical under every synthesis mode", async () => {
-  for (const mode of ["off", "local", "any"] as const) {
+  for (const mode of ["off", "local", "allow-remote"] as const) {
     const viaHttp = await briefViaHttp("agents.why", { ref: "x" }, mode);
     const viaSocket = await briefViaSocket("agents.why", { ref: "x" }, mode);
     expect(viaHttp).toEqual(viaSocket);

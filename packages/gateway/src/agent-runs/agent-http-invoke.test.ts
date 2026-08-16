@@ -27,7 +27,7 @@ function countLedger(db: Database): number {
 }
 
 /** A tmpdir `nimbus.toml` pinning `[agents].synthesis` to `mode`. */
-function makeAgentsConfigDir(mode: "off" | "local" | "any"): string {
+function makeAgentsConfigDir(mode: "off" | "local" | "allow-remote"): string {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-agent-http-cfg-"));
   writeFileSync(join(dir, "nimbus.toml"), `[agents]\nsynthesis = "${mode}"\n`, "utf8");
   return dir;
@@ -301,7 +301,7 @@ describe("buildAgentHttpInvoker", () => {
 
 describe("buildAgentHttpInvoker — the synthesis runner (Task 6: production wiring)", () => {
   test("HTTP and socket briefs remain identical under every synthesis mode", async () => {
-    for (const mode of ["off", "local", "any"] as const) {
+    for (const mode of ["off", "local", "allow-remote"] as const) {
       const configDir = makeAgentsConfigDir(mode);
       const db = freshDb();
       const router = fakeLocalRouter("SAME-MARKDOWN-MARKER");

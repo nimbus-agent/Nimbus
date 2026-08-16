@@ -1867,9 +1867,10 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // `recordSyncEgress`. `per-run`, not `per-call`, because the scheduler side appends ONE row per
     // paginated run (many upstream calls), the weaker of the two shapes this class actually backs.
     // `model` is now the FIFTH non-`none` class: its ONE appender (`egress/synthesis-egress.ts`'s
-    // `recordSynthesisEgress`) lands in the same commit as this raise. The appender lands here; its
-    // only caller arrives with the synthesis wiring (`agents/_lib/synthesis-llm.ts`, under
-    // `[agents] synthesis = "any"`) — until then this class has no production call site. The
+    // `recordSynthesisEgress`) lands in the same commit as this raise. Its only caller is the
+    // synthesis wiring (`agents/_lib/synthesis-llm.ts`, under `[agents] synthesis = "local"` or
+    // `"allow-remote"`), reached in production from `ipc/server/dispatchers.ts` and
+    // `agent-runs/agent-http-invoke.ts` (Task 6's `buildAgentSynthesisRunner`). The
     // local-vs-remote split is enforced INSIDE the appender (a required `remote: boolean` argument;
     // `false` appends nothing), not left to that future caller, so a wiring mistake there cannot
     // fabricate a `model` row for a local generation. It is `per-call` over exactly that, and NOT

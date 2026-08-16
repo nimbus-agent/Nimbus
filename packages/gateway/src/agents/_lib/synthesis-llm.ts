@@ -137,8 +137,8 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<RaceOutcom
  *      provider answers"), so the provider actually resolved must be inspected, never inferred
  *      from that preference.
  *   4. Call `recordSynthesisEgress` (or the injected `recordEgress` test double) UNCONDITIONALLY
- *      for EVERY mode that reaches this point — `"local"` and `"any"` alike, `"off"` already
- *      excluded at build time — passing the DERIVED `remote` flag (never a literal `true`).
+ *      for EVERY mode that reaches this point — `"local"` and `"allow-remote"` alike, `"off"`
+ *      already excluded at build time — passing the DERIVED `remote` flag (never a literal `true`).
  *      `recordSynthesisEgress` enforces the local/remote rule internally (Task 3) and appends
  *      nothing when `remote` is `false` — calling it only from a non-local branch, or passing a
  *      literal `true`, would make that internal guard inert and silently return enforcement to
@@ -172,9 +172,10 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
         return { ok: false, reason: "no_eligible_provider" };
       }
 
-      // Called for EVERY mode reaching this point ("local" and "any" alike — "off" already
-      // returned undefined above), not only "any": the appender decides what gets ledgered, this
-      // call site never re-implements that rule. See Step 4 in the doc comment above.
+      // Called for EVERY mode reaching this point ("local" and "allow-remote" alike — "off"
+      // already returned undefined above), not only "allow-remote": the appender decides what
+      // gets ledgered, this call site never re-implements that rule. See Step 4 in the doc
+      // comment above.
       try {
         recordEgress(deps.db, {
           briefKind: deps.briefKind,

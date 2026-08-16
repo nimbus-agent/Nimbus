@@ -2006,12 +2006,12 @@ export function loadNimbusNegotiateFromConfigDir(configDir: string): NimbusNegot
 // [agents] — built-in agent brief synthesis (Spine S1, W6-A0)
 // ---------------------------------------------------------------------------
 
-export type SynthesisMode = "off" | "local" | "any";
+export type SynthesisMode = "off" | "local" | "allow-remote";
 
 export type NimbusAgentsToml = {
   /**
-   * Default "local", NOT "any". "any" is the first path by which indexed content
-   * can leave the machine without a connector being involved, so it is opt-in.
+   * Default "local", NOT "allow-remote". "allow-remote" is the first path by which indexed
+   * content can leave the machine without a connector being involved, so it is opt-in.
    */
   synthesis: SynthesisMode;
   /**
@@ -2028,12 +2028,12 @@ export const DEFAULT_NIMBUS_AGENTS_TOML: NimbusAgentsToml = {
   synthesisTimeoutMs: 20000,
 };
 
-const SYNTHESIS_MODES: ReadonlySet<string> = new Set(["off", "local", "any"]);
+const SYNTHESIS_MODES: ReadonlySet<string> = new Set(["off", "local", "allow-remote"]);
 
 function applyNimbusAgentsKey(out: NimbusAgentsToml, key: string, valRaw: string): void {
   if (key === "synthesis") {
     const v = valRaw.trim().replace(/^"|"$/g, "");
-    // Unknown values fall back to the default. Never widen to "any" on a typo.
+    // Unknown values fall back to the default. Never widen to "allow-remote" on a typo.
     if (SYNTHESIS_MODES.has(v)) out.synthesis = v as SynthesisMode;
     return;
   }

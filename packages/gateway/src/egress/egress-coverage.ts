@@ -80,9 +80,10 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  *
  * `model` is `per-call`, RAISED FROM `none`, and covers LESS than its name — read it as narrowly as
  * `mcp` and `http`. It is per-call over exactly one thing: a built-in agent brief synthesized by a
- * NON-LOCAL provider (`egress/synthesis-egress.ts`'s `recordSynthesisEgress`). The appender lands
- * here; its only caller arrives with the synthesis wiring (`agents/_lib/synthesis-llm.ts`, under
- * `[agents] synthesis = "any"`) — until then this class has no production call site. The
+ * NON-LOCAL provider (`egress/synthesis-egress.ts`'s `recordSynthesisEgress`). Its only caller is
+ * the synthesis wiring (`agents/_lib/synthesis-llm.ts`, under `[agents] synthesis = "local"` or
+ * `"allow-remote"`), reached in production from `ipc/server/dispatchers.ts` and
+ * `agent-runs/agent-http-invoke.ts` (Task 6's `buildAgentSynthesisRunner`). The
  * local-vs-remote distinction is enforced INSIDE the appender via a required `remote` argument
  * (a `false` call appends nothing), the same choice `sync-egress.ts`'s `recordSyncEgress` makes for
  * `LOCAL_ONLY_SYNC_SERVICES` and for the same reason: a caller-enforced rule is one wiring mistake
