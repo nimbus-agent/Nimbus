@@ -99,7 +99,10 @@ whenever Ollama happened to be down — the exact failure this mode exists to pr
 
 New module `agents/_lib/synthesis-llm.ts`:
 
-1. Resolves the provider **before** generating.
+1. Resolves the provider **before** generating, **per invocation — never cached**. The router
+   already probes availability on every `selectProvider` call (`llm/router.ts:103`), so this is its
+   natural shape rather than an added cost, and caching would be wrong on a local-first machine
+   where Ollama starts and stops under a long-lived Gateway.
 2. Under `"local"`, a non-local resolution is refused outright — return `undefined` so the caller
    renders deterministically. Refusal is the normal path on a machine without Ollama, not an error.
 3. Under `"any"`, a non-local resolution appends its egress row (§2.3) and only then generates.
@@ -151,6 +154,22 @@ any of them, the synthesis is discarded and the deterministic render is emitted.
 cannot pass rather than what should hold, so a model that softens a disclaimer fails closed and a
 model that merely rephrases prose does not.
 
+**Matching is normalized, and scoped to the section that owns the phrase.** Both halves matter:
+
+- *Normalized* — strip markdown emphasis (`_`, `*`, `` ` ``), collapse whitespace, compare
+  case-insensitively. Without this, a model that renders `_could not be computed_` as
+  `*could not be computed*` fails the guard, every synthesis is rejected, and the feature is
+  silently inert for the second time in its life.
+- *Section-scoped* — a bare substring check over the whole document cannot tell **which** lane lost
+  its disclaimer. `render.ts:660` emits each null negotiate lane as `## PRs authored` / blank /
+  `_could not be computed_`, so a brief with six null lanes and one surviving phrase would pass a
+  document-wide check while five lanes silently read as measured. `SYNTHESIS_INSTRUCTIONS` already
+  requires "Keep all section headings", so the heading is available as the scope key. Each required
+  phrase is therefore checked against the content under its own heading.
+
+A missing heading is itself a rejection — otherwise dropping the whole section would pass a check
+that only looks inside sections that exist.
+
 `requiredPhrases` dispatches over the same `SynthInput` union `deterministicRender` does and reuses
 the `assertNeverBrief` exhaustiveness guard (`synthesize.ts`), so a fifteenth brief kind is a
 compile error rather than an unguarded brief.
@@ -168,11 +187,56 @@ Every other place in the tree that asserts briefs do not use an LLM changes in t
 is the wiring + docs + test triple applied to a claim rather than an invariant, and the claim is
 load-bearing: users were told it unconditionally.
 
-### 2.6 Latency
+### 2.6 Latency and timeout
 
-An LLM call per brief would otherwise blow the latency budget the `nimbus-agent-patterns` skill
-sets. Synthesis is timeout-bounded; on timeout, the deterministic render is emitted. `why-peek` is
-unaffected — it never enters this path (§1.1).
+**Correction to an earlier draft of this spec:** it claimed an LLM call would "blow the latency
+budget the `nimbus-agent-patterns` skill sets." Checked — that skill pins exactly one number, and it
+is `why-peek`'s sub-300ms; there is no per-brief numeric budget to inherit. The pressure is also
+lower than that framing implied, because briefs are **fire-and-forget**:
+`emit-brief.ts:54` returns `{ sessionId }` immediately and delivers the brief later by
+`briefReady` notification. Nobody is blocked on a synchronous response.
+
+So the timeout does not exist to protect a budget. It exists so a hung or unreachable provider
+produces a brief rather than none at all — under a fire-and-forget shape, no timeout means the
+`briefReady` notification simply never arrives and the surface hangs with no error.
+
+```toml
+[agents]
+synthesis_timeout_ms = 20000   # default
+```
+
+The default is deliberately generous rather than the 3–5s a synchronous path would want: a cold
+Ollama's first-token latency on low-end hardware routinely exceeds that, and a default that
+silently rejects every synthesis on slow machines reproduces exactly the inert-feature failure
+this whole sub-project exists to correct. It is configurable so a user who would rather have a fast
+deterministic brief than a slow synthesized one can say so.
+
+On timeout the deterministic render is emitted, with the timeout disclosed as a rejection reason
+(§2.7). `why-peek` is unaffected — it never enters this path (§1.1).
+
+### 2.7 Rejection must be visible
+
+A deterministic fallback is indistinguishable from today's output, so a fully broken synthesis path
+would present as "nothing changed" — the risk §5 names. There is no logger in this path to warn
+into: `emit-brief.ts` and the agent modules do no logging at all, and adding a logging dependency to
+a fire-and-forget notification path to carry a fact the caller should already receive is the wrong
+shape.
+
+The `briefReady` notification carries the fact instead. `emit-brief.ts:59` already emits
+`{ sessionId, brief, findings }`; this adds a fourth field:
+
+```ts
+synthesis:
+  | { attempted: false; reason: "disabled" | "no_eligible_provider" }
+  | { attempted: true; used: true;  model: string; remote: boolean }
+  | { attempted: true; used: false; reason: "timeout" | "contract_violation" | "egress_append_failed";
+      missingPhrases?: string[] }
+```
+
+This is the same `{model, remote, disclosure?}` provenance shape §2.5 adopts for the footer, widened
+to carry rejection. It reaches the CLI, the HTTP surface and the Tauri renderer through the existing
+notification, so "why is my brief still deterministic?" is answerable without a debug build — and
+`missingPhrases` names precisely which contract the model broke.
 
 ---
 
@@ -192,6 +256,11 @@ unaffected — it never enters this path (§1.1).
 | Property | Test |
 | --- | --- |
 | Contract survival | For all fourteen brief kinds, a stub LLM returning disclaimer-stripped markdown must produce the deterministic render, not the stripped one. Red-proved by reverting the guard. |
+| Reformatting is **not** a violation | A stub returning `*could not be computed*` for `_could not be computed_` must be **accepted**. This test is what keeps the guard from rejecting every real synthesis. |
+| Section scoping | A negotiate brief with two null lanes, where the stub drops the disclaimer from one and keeps it in the other, must be **rejected** — the failure a document-wide substring check would pass. |
+| Dropped heading | A stub that omits a whole required section is rejected, not passed by a check that only inspects sections present. |
+| Timeout yields a brief | A stub that never resolves must still produce a `briefReady` with the deterministic render, never a hang and never only `briefError`. |
+| Rejection is visible | Each rejection reason (`timeout`, `contract_violation`, `egress_append_failed`) appears on the notification's `synthesis` field, with `missingPhrases` populated for the contract case. |
 | `"local"` never egresses | Router with only a remote provider registered, `synthesis = "local"` → no synthesis **and** zero ledger rows. |
 | `"any"` appends before calling | Remote provider resolved → exactly one row, ordered before the generate call. |
 | Append failure is fail-closed | Forced append failure → zero synthesis, deterministic render, no egress. |
@@ -215,5 +284,8 @@ asserts anything about what a live model writes.
   that built-in agents "append nothing to the egress ledger" becomes conditional rather than
   absolute.
 - **The deterministic fallback can mask a broken synthesis.** If the contract guard rejects every
-  synthesis, briefs silently look exactly as they do today. The plan must surface rejection rate
-  somewhere observable rather than letting a fully-broken synthesis path present as "unchanged".
+  synthesis, briefs look exactly as they do today. §2.7 addresses this — every rejection is carried
+  on the `briefReady` notification with its reason — so the failure is now reportable rather than
+  silent. It is not fully retired: a user who never inspects the notification still sees only an
+  unchanged brief, and the two tests that bound it (reformatting-is-not-a-violation, and
+  timeout-still-yields-a-brief) are the ones most worth red-proving.
