@@ -94,10 +94,6 @@ export class LlmRouter {
     return this.firstAvailable(task, (p) => this.probeAvailable(p), opts?.preferLocal);
   }
 
-  // Walks the task's provider priority order (respecting air-gap and the capability floor) and
-  // returns the first provider whose availability check resolves true. The check is injected so
-  // callers can share a memoized probe across many tasks (see getStatus). `preferLocal`, when
-  // provided, overrides `config.preferLocal` for this call only.
   /**
    * Resolve the provider a `[agents]` brief synthesis attempt would use, right now, for the
    * `"reasoning"` task — plus an `isLocal` flag derived from `LOCAL_PROVIDER_IDS` rather than
@@ -132,6 +128,10 @@ export class LlmRouter {
     return result.text;
   }
 
+  // Walks the task's provider priority order (respecting air-gap and the capability floor) and
+  // returns the first provider whose availability check resolves true. The check is injected so
+  // callers can share a memoized probe across many tasks (see getStatus). `preferLocal`, when
+  // provided, overrides `config.preferLocal` for this call only.
   private async firstAvailable(
     task: LlmTaskType,
     isAvailable: (provider: LlmProvider) => Promise<boolean>,

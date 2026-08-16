@@ -1,8 +1,13 @@
 // packages/gateway/src/agents/_lib/synthesis-llm.test.ts
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { recordSynthesisEgress } from "../../egress/synthesis-egress.ts";
 import type { LlmRouter } from "../../llm/router.ts";
-import { buildSynthesisRunner, type SynthesisRouter } from "./synthesis-llm.ts";
+import {
+  buildSynthesisRunner,
+  type SynthesisEgressRecorder,
+  type SynthesisRouter,
+} from "./synthesis-llm.ts";
 
 /**
  * Compile-time proof only — never invoked at runtime. `SynthesisRouter` exists so this file's
@@ -62,6 +67,20 @@ describe("buildSynthesisRunner", () => {
     expect(runner).toBeUndefined();
   });
 
+  test("no provider resolved at all yields no_eligible_provider", async () => {
+    const rows = fakeDb();
+    const runner = buildSynthesisRunner({
+      config: { synthesis: "any", synthesisTimeoutMs: 20000 },
+      router: fakeRouter(undefined),
+      db: rows,
+      briefKind: "why",
+      now: () => 1,
+    });
+    const attempt = await runner?.run("p");
+    expect(attempt).toMatchObject({ ok: false, reason: "no_eligible_provider" });
+    expect(rows.count()).toBe(0);
+  });
+
   test("local REFUSES a remote provider — prefersLocal() is only a preference", async () => {
     const rows = fakeDb();
     const runner = buildSynthesisRunner({
@@ -93,16 +112,32 @@ describe("buildSynthesisRunner", () => {
     expect(rows.count()).toBe(1);
   });
 
-  test("a LOCAL provider under any appends nothing", async () => {
+  test("a LOCAL provider under any appends nothing, and the runner still succeeds", async () => {
     const rows = fakeDb();
+    // Observing `rows.count()` alone cannot catch a regression that moves the append call INTO
+    // `if (remote)`: `recordSynthesisEgress` already no-ops on `remote: false`, so a call that
+    // never happens and a call that happens-and-no-ops are byte-identical by row count. This spy
+    // observes the CALL itself (and its `remote` argument), which the row count cannot. See the
+    // "an append failure" test above for the complementary case (mode "any", REMOTE provider).
+    const recordCalls: Array<{ readonly remote: boolean }> = [];
+    const recordEgress: SynthesisEgressRecorder = (db, args) => {
+      recordCalls.push({ remote: args.remote });
+      recordSynthesisEgress(db, args); // delegate to the real appender against the fake db
+    };
     const runner = buildSynthesisRunner({
       config: { synthesis: "any", synthesisTimeoutMs: 20000 },
       router: fakeRouter(localProvider),
       db: rows,
       briefKind: "why",
       now: () => 1,
+      recordEgress,
     });
-    await runner?.run("p");
+    const attempt = await runner?.run("p");
+    // The brief text says "the runner still succeeds AND the ledger gains zero rows" — the first
+    // half was missing from the original test, so a regression that early-returned `ok: false`
+    // on this exact path would have passed silently.
+    expect(attempt?.ok).toBe(true);
+    expect(recordCalls).toEqual([{ remote: false }]);
     expect(rows.count()).toBe(0);
   });
 
@@ -182,5 +217,20 @@ describe("buildSynthesisRunner", () => {
     const detail = (attempt as { detail?: string }).detail ?? "";
     expect(detail).not.toContain("sk-ant-abcdefghijklmnopqrstuvwxyz0123456789");
     expect(detail).toContain("[REDACTED]");
+  });
+
+  test("a non-Error rejection still yields a stringified provider_error detail", async () => {
+    const runner = buildSynthesisRunner({
+      config: { synthesis: "local", synthesisTimeoutMs: 20000 },
+      // Exercises the non-`Error` `String(err)` arm of `redactedErrorDetail` — a real provider is
+      // not guaranteed to reject with an `Error` instance.
+      router: fakeRouter(localProvider, () => Promise.reject("plain string failure")),
+      db: fakeDb(),
+      briefKind: "why",
+      now: () => 1,
+    });
+    const attempt = await runner?.run("p");
+    expect(attempt).toMatchObject({ reason: "provider_error" });
+    expect((attempt as { detail?: string }).detail).toBe(JSON.stringify("plain string failure"));
   });
 });

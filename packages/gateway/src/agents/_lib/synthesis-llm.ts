@@ -32,12 +32,38 @@ export interface SynthesisRouter {
   generateMarkdown(prompt: string, provider: ResolvedSynthesisProvider): Promise<string>;
 }
 
+/**
+ * The exact call shape of `recordSynthesisEgress`. Extracted as a named type — rather than
+ * `typeof recordSynthesisEgress` inline at every use — purely so `SynthesisLlmDeps.recordEgress`
+ * reads self-documenting.
+ */
+export type SynthesisEgressRecorder = (
+  db: Database,
+  args: {
+    readonly briefKind: string;
+    readonly model: string;
+    readonly now: number;
+    readonly remote: boolean;
+  },
+) => void;
+
 export type SynthesisLlmDeps = {
   readonly config: NimbusAgentsToml;
   readonly router: SynthesisRouter;
   readonly db: Database;
   readonly briefKind: string;
   readonly now: () => number;
+  /**
+   * Injectable seam over `recordSynthesisEgress`, defaulting to the real one. Test-visibility
+   * only — production callers never set this, the appender is still the same chokepoint, and D22
+   * (b) is unaffected: this file still never names `appendEgressEntry`. It exists so a test can
+   * assert the recorder was actually CALLED (with which `remote` value) rather than only
+   * inferring that from row counts on a fake db — a call moved into `if (remote)` and a call made
+   * unconditionally are BYTE-IDENTICAL by row count alone when `remote` is `false`, since the
+   * real appender already no-ops on `remote: false`; observing the call itself is the only way to
+   * catch that regression.
+   */
+  readonly recordEgress?: SynthesisEgressRecorder;
 };
 
 /** Cap for a redacted error `detail` — generous for a diagnostic message, not a payload dump. */
@@ -110,13 +136,18 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<RaceOutcom
  *      is only a preference (its own doc comment: "falls through to `remote` when no local
  *      provider answers"), so the provider actually resolved must be inspected, never inferred
  *      from that preference.
- *   4. Under `"any"` mode ONLY: call `recordSynthesisEgress` UNCONDITIONALLY, passing the
- *      DERIVED `remote` flag (never a literal `true`). `recordSynthesisEgress` enforces the
- *      local/remote rule internally (Task 3) and appends nothing when `remote` is `false` —
- *      calling it only from a non-local branch, or passing a literal `true`, would make that
- *      internal guard inert and silently return enforcement to this call site, which is exactly
- *      the weakness Task 3's review closed. A throw here fails closed: `egress_append_failed`,
- *      and generation never happens.
+ *   4. Call `recordSynthesisEgress` (or the injected `recordEgress` test double) UNCONDITIONALLY
+ *      for EVERY mode that reaches this point — `"local"` and `"any"` alike, `"off"` already
+ *      excluded at build time — passing the DERIVED `remote` flag (never a literal `true`).
+ *      `recordSynthesisEgress` enforces the local/remote rule internally (Task 3) and appends
+ *      nothing when `remote` is `false` — calling it only from a non-local branch, or passing a
+ *      literal `true`, would make that internal guard inert and silently return enforcement to
+ *      this call site, which is exactly the weakness Task 3's review closed. Calling it under
+ *      `"local"` too (where `remote` is always `false` here, since a `true` would already have
+ *      been refused above) is deliberate, not redundant: it means a future third `SynthesisMode`
+ *      cannot silently bypass the appender by failing to be spelled out in a mode check — the
+ *      appender, not this call site, decides what gets ledgered. A throw here fails closed:
+ *      `egress_append_failed`, and generation never happens.
  *   5. Race the provider call against `config.synthesisTimeoutMs`. The timer elapsing first is
  *      `timeout`; the provider call REJECTING first (network failure, auth rejection, a
  *      malformed response, ...) is the distinct `provider_error` — see the inline comment where
@@ -127,6 +158,7 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
   if (deps.config.synthesis === "off") {
     return undefined;
   }
+  const recordEgress = deps.recordEgress ?? recordSynthesisEgress;
 
   return {
     async run(prompt: string): Promise<SynthesisAttempt> {
@@ -140,17 +172,18 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
         return { ok: false, reason: "no_eligible_provider" };
       }
 
-      if (deps.config.synthesis === "any") {
-        try {
-          recordSynthesisEgress(deps.db, {
-            briefKind: deps.briefKind,
-            model: resolved.modelName,
-            now: deps.now(),
-            remote,
-          });
-        } catch (err) {
-          return { ok: false, reason: "egress_append_failed", detail: redactedErrorDetail(err) };
-        }
+      // Called for EVERY mode reaching this point ("local" and "any" alike — "off" already
+      // returned undefined above), not only "any": the appender decides what gets ledgered, this
+      // call site never re-implements that rule. See Step 4 in the doc comment above.
+      try {
+        recordEgress(deps.db, {
+          briefKind: deps.briefKind,
+          model: resolved.modelName,
+          now: deps.now(),
+          remote,
+        });
+      } catch (err) {
+        return { ok: false, reason: "egress_append_failed", detail: redactedErrorDetail(err) };
       }
 
       const raced = await raceWithTimeout(

@@ -390,3 +390,88 @@ describe("isLocalProviderKind", () => {
     expect(isLocalProviderKind("remote")).toBe(false);
   });
 });
+
+describe("LlmRouter.resolveForSynthesis", () => {
+  test("a LOCAL provider kind resolves isLocal: true — via the REAL LOCAL_PROVIDER_IDS membership, not a stub", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", true));
+    const resolved = await router.resolveForSynthesis();
+    // This is the security-relevant assertion: `isLocal` comes from `isLocalProviderKind`
+    // classifying the REAL resolved `providerId` ("ollama"), never from a caller-supplied flag —
+    // a caller deciding `[agents].synthesis = "local"` vs egress-ledgering trusts THIS value.
+    expect(resolved).toEqual({
+      providerId: "ollama",
+      modelName: DEFAULT_CONFIG.localModel,
+      isLocal: true,
+    });
+  });
+
+  test("a REMOTE provider kind resolves isLocal: false", async () => {
+    const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
+    const router = new LlmRouter(config);
+    router.registerProvider(makeFakeProvider("remote", true));
+    const resolved = await router.resolveForSynthesis();
+    expect(resolved).toEqual({
+      providerId: "remote",
+      modelName: DEFAULT_CONFIG.remoteModel,
+      isLocal: false,
+    });
+  });
+
+  test("llamacpp (the second local provider kind) also resolves isLocal: true", async () => {
+    const config: LlmRouterConfig = { ...DEFAULT_CONFIG, enforceAirGap: true };
+    const router = new LlmRouter(config);
+    router.registerProvider(makeFakeProvider("llamacpp", true));
+    const resolved = await router.resolveForSynthesis();
+    expect(resolved?.isLocal).toBe(true);
+  });
+
+  test("returns undefined when no provider is available, exactly like selectProvider", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", false));
+    const resolved = await router.resolveForSynthesis();
+    expect(resolved).toBeUndefined();
+  });
+
+  test("honors the reasoning capability floor, same as selectProvider('reasoning')", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", true), { parameterCount: 1 });
+    router.registerProvider(makeFakeProvider("remote", true));
+    const resolved = await router.resolveForSynthesis();
+    expect(resolved?.providerId).toBe("remote");
+  });
+});
+
+describe("LlmRouter.generateMarkdown", () => {
+  test("invokes the EXACT resolved provider and returns its generated text", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", true));
+    const resolved = await router.resolveForSynthesis();
+    if (resolved === undefined) throw new Error("expected a resolved provider");
+    const markdown = await router.generateMarkdown("write a brief", resolved);
+    expect(markdown).toBe("response from ollama");
+  });
+
+  test("throws when the resolved provider is no longer registered", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", true));
+    const resolved = await router.resolveForSynthesis();
+    if (resolved === undefined) throw new Error("expected a resolved provider");
+    // The provider that answered resolveForSynthesis() is no longer registered by the time
+    // generateMarkdown() is called (e.g. hot-unregistered between the two calls).
+    const router2 = new LlmRouter(DEFAULT_CONFIG);
+    await expect(router2.generateMarkdown("prompt", resolved)).rejects.toThrow(
+      'LLM provider "ollama" is no longer registered',
+    );
+  });
+
+  test("passes the prompt through to the underlying provider's generate() call", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    const captured = { prompt: "" };
+    router.registerProvider(makeCaptureProvider("ollama", true, captured));
+    const resolved = await router.resolveForSynthesis();
+    if (resolved === undefined) throw new Error("expected a resolved provider");
+    await router.generateMarkdown("the exact prompt text", resolved);
+    expect(captured.prompt).toBe("the exact prompt text");
+  });
+});
