@@ -12,6 +12,8 @@ import { PeerPairing } from "../../federation/peer-pairing.ts";
 import { upsertIndexedItem } from "../../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION, LocalIndex } from "../../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
+import { LlmRegistry } from "../../llm/registry.ts";
+import type { LlmProvider } from "../../llm/types.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
@@ -181,6 +183,68 @@ function trackedDb(): Database {
   return db;
 }
 
+const FAKE_LLM_ROUTER_CONFIG = {
+  preferLocal: true,
+  remoteModel: "remote-model",
+  localModel: "local-model",
+  minReasoningParams: 0,
+  enforceAirGap: false,
+};
+
+/** A local (ollama) LlmProvider that returns `markdown` verbatim — no real Ollama call. */
+function fakeLocalOllamaProvider(markdown: string): LlmProvider {
+  return {
+    providerId: "ollama",
+    isAvailable: async () => true,
+    listModels: async () => [],
+    generate: async () => ({
+      text: markdown,
+      tokensIn: 0,
+      tokensOut: 0,
+      modelUsed: "fake-model",
+      isLocal: true,
+      provider: "ollama",
+    }),
+  };
+}
+
+/** A remote-only LlmProvider — used to prove the default `[agents].synthesis = "local"` refuses it. */
+function fakeRemoteProvider(): LlmProvider {
+  return {
+    providerId: "remote",
+    isAvailable: async () => true,
+    listModels: async () => [],
+    generate: async () => ({
+      text: "SHOULD-NEVER-BE-USED",
+      tokensIn: 0,
+      tokensOut: 0,
+      modelUsed: "remote-model",
+      isLocal: false,
+      provider: "remote",
+    }),
+  };
+}
+
+function makeLlmRegistry(provider: LlmProvider): LlmRegistry {
+  const registry = new LlmRegistry({ config: FAKE_LLM_ROUTER_CONFIG });
+  registry.addProvider(provider);
+  return registry;
+}
+
+async function waitForNotification(
+  notifications: Array<{ method: string; params: Record<string, unknown> }>,
+  method: string,
+  timeoutMs = 5_000,
+): Promise<Record<string, unknown> | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = notifications.find((n) => n.method === method);
+    if (found !== undefined) return found.params;
+    await Bun.sleep(10);
+  }
+  return undefined;
+}
+
 describe("tryDispatchLlmRpc", () => {
   test("skips non-llm methods", async () => {
     const { ctx } = makeCtx();
@@ -241,6 +305,58 @@ describe("tryDispatchAgentsRpc", () => {
     expect(rows[0]?.source_type).toBe("mcp");
     expect(rows[0]?.source_id).toBe("client-abc");
     expect(rows[0]?.method).toBe("agents.expert");
+  });
+
+  test("builds AgentsRpcContext.runner from ctx.options.llmRegistry — a synthesis-eligible context is actually supplied, not omitted as before (Task 6)", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const llmRegistry = makeLlmRegistry(fakeLocalOllamaProvider("SOCKET-SYNTHESIS-MARKER"));
+    const { ctx, notifications } = makeCtx({ localIndex, llmRegistry });
+
+    await tryDispatchAgentsRpc(ctx, "agents.expert", { topicOrFile: "x" }, "test-client");
+
+    const params = await waitForNotification(notifications, "expert.briefReady");
+    expect(params?.["brief"]).toContain("SOCKET-SYNTHESIS-MARKER");
+    // The model name reported comes from LlmRouterConfig.localModel, not the provider's own
+    // `modelUsed` — see LlmRouter.modelNameFor.
+    expect(params?.["synthesis"]).toMatchObject({
+      attempted: true,
+      used: true,
+      model: "local-model",
+    });
+  });
+
+  test("without an llmRegistry, no runner is built — the pre-Task-6 deterministic behavior is unchanged", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx, notifications } = makeCtx({ localIndex });
+
+    await tryDispatchAgentsRpc(ctx, "agents.expert", { topicOrFile: "x" }, "test-client");
+
+    const params = await waitForNotification(notifications, "expert.briefReady");
+    expect(params?.["synthesis"]).toMatchObject({ attempted: false, reason: "disabled" });
+  });
+
+  test('wiring the socket runner causes NO remote egress on a default install ([agents].synthesis defaults to "local"; a REMOTE-only registry is refused)', async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const llmRegistry = makeLlmRegistry(fakeRemoteProvider());
+    // No configDir on this ctx → DEFAULT_NIMBUS_AGENTS_TOML (`synthesis: "local"`) — the exact
+    // config a fresh `nimbus init` install has, before anyone touches nimbus.toml.
+    const { ctx, notifications } = makeCtx({ localIndex, llmRegistry });
+
+    await tryDispatchAgentsRpc(ctx, "agents.expert", { topicOrFile: "x" }, "test-client");
+
+    const params = await waitForNotification(notifications, "expert.briefReady");
+    // "local" refuses a resolved REMOTE provider — no_eligible_provider, never "used".
+    expect(params?.["synthesis"]).toMatchObject({
+      attempted: false,
+      reason: "no_eligible_provider",
+    });
+    const synthesisRows = db
+      .query(`SELECT method FROM egress_ledger WHERE method LIKE '%.synthesis'`)
+      .all();
+    expect(synthesisRows).toEqual([]);
   });
 });
 

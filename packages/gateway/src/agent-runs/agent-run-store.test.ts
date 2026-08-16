@@ -40,6 +40,64 @@ describe("AgentRunController", () => {
     expect(run?.error).toBeNull();
   });
 
+  test("a briefReady notification threads the synthesis provenance through (Task 6)", () => {
+    // AgentRun previously read only brief/findings/error and DROPPED `synthesis` — the exact
+    // field a GET /v1/agents/runs/{id} consumer needs to learn why a rewrite was, or was not, used.
+    const c = makeController();
+    c.admit();
+    c.open("expert_1_aaaa");
+    c.observe("expert.briefReady", {
+      sessionId: "expert_1_aaaa",
+      brief: "# Expert\n",
+      findings: { gaps: [] },
+      synthesis: { attempted: true, used: true, model: "fake-model", remote: false },
+    });
+    const run = c.get("expert_1_aaaa");
+    expect(run?.synthesis).toEqual({
+      attempted: true,
+      used: true,
+      model: "fake-model",
+      remote: false,
+    });
+  });
+
+  test("a briefReady with a discarded-synthesis provenance is threaded through too", () => {
+    const c = makeController();
+    c.admit();
+    c.open("expert_1_ffff");
+    c.observe("expert.briefReady", {
+      sessionId: "expert_1_ffff",
+      brief: "# Expert\n",
+      findings: { gaps: [] },
+      synthesis: { attempted: true, used: false, reason: "timeout" },
+    });
+    expect(c.get("expert_1_ffff")?.synthesis).toEqual({
+      attempted: true,
+      used: false,
+      reason: "timeout",
+    });
+  });
+
+  test("a briefReady with a malformed synthesis value stores null rather than the garbage", () => {
+    const c = makeController();
+    c.admit();
+    c.open("expert_1_gggg");
+    c.observe("expert.briefReady", {
+      sessionId: "expert_1_gggg",
+      brief: "# Expert\n",
+      findings: null,
+      synthesis: "not-a-provenance-object",
+    });
+    expect(c.get("expert_1_gggg")?.synthesis).toBeNull();
+  });
+
+  test("before any notification, synthesis starts null", () => {
+    const c = makeController();
+    c.admit();
+    c.open("expert_1_hhhh");
+    expect(c.get("expert_1_hhhh")?.synthesis).toBeNull();
+  });
+
   test("a briefError notification fails the run and carries no brief", () => {
     const c = makeController();
     c.admit();
@@ -49,6 +107,8 @@ describe("AgentRunController", () => {
     expect(run?.status).toBe("failed");
     expect(run?.error).toBe("index unavailable");
     expect(run?.brief).toBeNull();
+    // A briefError notification carries no synthesis field at all — the run's synthesis stays null.
+    expect(run?.synthesis).toBeNull();
   });
 
   test("a brief that completes BEFORE open is adopted, not lost", () => {

@@ -1,4 +1,5 @@
 import pino from "pino";
+import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-runner.ts";
 import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
@@ -130,8 +131,18 @@ export async function tryDispatchAgentsRpc(
     return phase4RpcSkipped;
   }
   try {
+    const db = ctx.options.localIndex.getDatabase();
+    // The SAME factory `agent-runs/agent-http-invoke.ts` calls for the HTTP path — see its doc
+    // comment for why that makes a socket brief and an HTTP brief the same answer to the same
+    // question, under every `[agents].synthesis` mode.
+    const runner = buildAgentSynthesisRunner({
+      configDir: ctx.options.configDir,
+      db,
+      router: ctx.options.llmRegistry?.llmRouter,
+      method,
+    });
     const out = await dispatchAgentsRpc(method, params, {
-      db: ctx.options.localIndex.getDatabase(),
+      db,
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
       index: ctx.options.localIndex,
@@ -139,6 +150,7 @@ export async function tryDispatchAgentsRpc(
         ? {}
         : { selfIdentity: ctx.options.federationIdentity }),
       caller: { clientId, kind: ctx.getClientKind(clientId) },
+      ...(runner === undefined ? {} : { runner }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

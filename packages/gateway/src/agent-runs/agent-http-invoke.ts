@@ -1,6 +1,8 @@
 // packages/gateway/src/agent-runs/agent-http-invoke.ts
 
 import type { Database } from "bun:sqlite";
+import { buildAgentSynthesisRunner } from "../agents/_lib/agent-synthesis-runner.ts";
+import type { SynthesisRouter } from "../agents/_lib/synthesis-llm.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RpcMissOrHit } from "../ipc/_lib/dispatch-by-method.ts";
 import { AgentsRpcError, dispatchAgentsRpc, resolveHttpAgentMethod } from "../ipc/agents-rpc.ts";
@@ -24,6 +26,12 @@ export type AgentHttpInvokerDeps = {
   readonly index?: LocalIndex;
   readonly configDir?: string;
   readonly selfIdentity?: BoxKeypair;
+  /**
+   * Structurally satisfied by `LlmRegistry.llmRouter` in production (`platform/assemble.ts`'s
+   * `bootAgentsIntoHttpSidecar`). Absent → `buildAgentSynthesisRunner` skips the runner entirely,
+   * same as `[agents].synthesis = "off"`.
+   */
+  readonly router?: SynthesisRouter;
 };
 
 /**
@@ -71,9 +79,12 @@ export function requireRunId(agent: string, out: RpcMissOrHit): string {
  * statically. The params go through VERBATIM to the gateway's own validator: unlike the MCP
  * adapter this builds no params and mirrors no schema, so there is no second contract to drift.
  *
- * The context deliberately mirrors `ipc/server/dispatchers.ts` `tryDispatchAgentsRpc` — including
- * omitting `llm`, which that path also omits, so an HTTP brief and a socket brief are the same
- * answer to the same question. `notify` writes ONLY into the run controller: broadcasting an HTTP
+ * The context deliberately mirrors `ipc/server/dispatchers.ts` `tryDispatchAgentsRpc` — same db,
+ * index, configDir and federation identity. The `runner` field is built by the SAME
+ * `buildAgentSynthesisRunner` factory that path calls, from the same `configDir` and a
+ * structurally-equivalent router, so an HTTP brief and a socket brief are the same answer to the
+ * same question UNDER EVERY `[agents].synthesis` MODE — by construction, not by both callers
+ * happening to omit the field. `notify` writes ONLY into the run controller: broadcasting an HTTP
  * caller's brief onto the socket would hand it to every other local client.
  */
 export function buildAgentHttpInvoker(deps: AgentHttpInvokerDeps): AgentHttpInvoker {
@@ -93,6 +104,16 @@ export function buildAgentHttpInvoker(deps: AgentHttpInvokerDeps): AgentHttpInvo
       };
     }
 
+    // The SAME factory `ipc/server/dispatchers.ts` calls for the socket path — see the doc comment
+    // above for why that makes an HTTP brief and a socket brief the same answer to the same
+    // question, under every `[agents].synthesis` mode.
+    const runner = buildAgentSynthesisRunner({
+      configDir: deps.configDir,
+      db: deps.db,
+      router: deps.router,
+      method,
+    });
+
     let out: Awaited<ReturnType<typeof dispatchAgentsRpc>>;
     try {
       out = await dispatchAgentsRpc(method, params, {
@@ -103,6 +124,7 @@ export function buildAgentHttpInvoker(deps: AgentHttpInvokerDeps): AgentHttpInvo
         ...(deps.configDir === undefined ? {} : { configDir: deps.configDir }),
         ...(deps.index === undefined ? {} : { index: deps.index }),
         ...(deps.selfIdentity === undefined ? {} : { selfIdentity: deps.selfIdentity }),
+        ...(runner === undefined ? {} : { runner }),
         // Server-derived on BOTH fields. There is no connection to hand-shake here, so `kind` is a
         // literal the gateway sets after verifying the token, and `clientId` is that token's
         // verified label — stronger attribution than stdio's self-declared kind, not weaker.

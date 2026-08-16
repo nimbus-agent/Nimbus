@@ -6,6 +6,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import type { Logger } from "pino";
 import { type AgentHttpInvoker, buildAgentHttpInvoker } from "../agent-runs/agent-http-invoke.ts";
 import { AgentRunController } from "../agent-runs/agent-run-store.ts";
+import type { SynthesisRouter } from "../agents/_lib/synthesis-llm.ts";
 import { startAuditShipper } from "../audit/audit-shipper.ts";
 import {
   evaluateWatchersAfterSync,
@@ -2045,8 +2046,10 @@ function bootBriefsIntoHttpSidecar(deps: {
  * invoker, then assign both onto the caller's `httpSidecarOpts` so wiring order is unchanged.
  *
  * The context handed to the invoker mirrors `ipc/server/dispatchers.ts` `tryDispatchAgentsRpc` —
- * same db, index, configDir and federation identity, and the same ABSENCE of `llm`. Diverging here
- * would make an HTTP brief and a socket brief different answers to the same question.
+ * same db, index, configDir and federation identity. `router` is `llmRegistry.llmRouter`, the SAME
+ * instance `ipc/server/dispatchers.ts` reads off `ServerCtx.options.llmRegistry` — both paths hand
+ * it to the SAME `buildAgentSynthesisRunner` factory, so an HTTP brief and a socket brief stay the
+ * same answer to the same question, under every `[agents].synthesis` mode, by construction.
  *
  * Unlike briefs there is no `[agents].enabled` gate: the agents namespace is already served on the
  * socket unconditionally, and the HTTP surface adds no capability a paired client does not have to
@@ -2058,6 +2061,7 @@ function bootAgentsIntoHttpSidecar(deps: {
   localIndex: LocalIndex;
   configDir: string;
   selfIdentity: Parameters<typeof createIpcServer>[0]["federationIdentity"];
+  llmRouter: SynthesisRouter;
   httpSidecarOpts: HttpSidecarOpts;
 }): void {
   const agentRuns = new AgentRunController({ nowMs: () => Date.now() });
@@ -2067,6 +2071,7 @@ function bootAgentsIntoHttpSidecar(deps: {
     runs: agentRuns,
     index: deps.localIndex,
     configDir: deps.configDir,
+    router: deps.llmRouter,
     ...(deps.selfIdentity === undefined ? {} : { selfIdentity: deps.selfIdentity }),
   });
 }
@@ -2530,6 +2535,7 @@ export async function assemblePlatformServices(
     localIndex,
     configDir: paths.configDir,
     selfIdentity: ipcOpts.federationIdentity,
+    llmRouter: llmRegistry.llmRouter,
     httpSidecarOpts,
   });
 

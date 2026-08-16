@@ -65,6 +65,29 @@ describe("agents over HTTP — end to end", () => {
     }
   });
 
+  test("the poll body carries the synthesis provenance once the run is done", async () => {
+    // Task 6 fix: GET /v1/agents/runs/{id} previously never surfaced `synthesis` at all, so a
+    // caller could never learn why a rewrite was, or was not, used. This harness wires no LLM
+    // router, so provenance is the "no runner" shape — still a REAL object, not absent.
+    const s = await startAgentTestServer();
+    try {
+      const res = await invoke(s.port, "expert", s.token);
+      const { runId } = (await res.json()) as { runId: string };
+      type RunBody = { status: string; synthesis?: { attempted: boolean; reason?: string } };
+      let body: RunBody = { status: "running" };
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline && body.status === "running") {
+        const poll = await pollRun(s.port, s.token, runId);
+        body = (await poll.json()) as RunBody;
+        if (body.status === "running") await Bun.sleep(20);
+      }
+      expect(body.status).toBe("done");
+      expect(body.synthesis).toEqual({ attempted: false, reason: "disabled" });
+    } finally {
+      s.stop();
+    }
+  });
+
   test("the invocation appended exactly one source_type='http' egress row", async () => {
     const s = await startAgentTestServer();
     try {

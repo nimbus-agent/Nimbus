@@ -13,6 +13,8 @@
  * and the client's response to both is to re-issue, never to keep waiting.
  */
 
+import type { SynthesisProvenance } from "../agents/_lib/synthesize.ts";
+
 /** Run lifetime from creation. NOT refreshed on access — a polling client must not pin memory. */
 export const AGENT_RUN_TTL_MS = 10 * 60_000;
 /**
@@ -52,6 +54,12 @@ export type AgentRun = {
   /** The typed brief from the same notification. `unknown`: the shape is per-agent. */
   findings: unknown;
   error: string | null;
+  /**
+   * The synthesis provenance from the same `<agent>.briefReady` notification (`emit-brief.ts`'s
+   * `synthesis` field) — why a rewrite was, or was not, used. `null` until a `briefReady` lands
+   * (including on a `briefError` run, which never carries one).
+   */
+  synthesis: SynthesisProvenance | null;
 };
 
 export type AgentRunControllerDeps = {
@@ -80,6 +88,20 @@ function readSessionId(params: unknown): string | null {
   if (params === null || typeof params !== "object") return null;
   const p = params as { sessionId?: unknown };
   return typeof p.sessionId === "string" && p.sessionId !== "" ? p.sessionId : null;
+}
+
+/**
+ * A minimal structural check, not a full validator: `emit-brief.ts` is the only producer of this
+ * notification field, so this exists to guard against a malformed/absent `synthesis` value rather
+ * than to police an untrusted external boundary — every `SynthesisProvenance` variant carries a
+ * boolean `attempted` discriminant.
+ */
+function isSynthesisProvenance(v: unknown): v is SynthesisProvenance {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    typeof (v as { attempted?: unknown }).attempted === "boolean"
+  );
 }
 
 export class AgentRunController {
@@ -205,6 +227,7 @@ export class AgentRunController {
       brief: null,
       findings: null,
       error: null,
+      synthesis: null,
     };
     this.runs.set(runId, run);
     return run;
@@ -223,7 +246,12 @@ export class AgentRunController {
     const runId = readSessionId(params);
     if (runId === null) return;
     const run = this.ensure(runId);
-    const p = params as { brief?: unknown; findings?: unknown; error?: unknown };
+    const p = params as {
+      brief?: unknown;
+      findings?: unknown;
+      error?: unknown;
+      synthesis?: unknown;
+    };
     if (isError) {
       run.status = "failed";
       run.error = typeof p.error === "string" ? p.error : "internal_error";
@@ -231,6 +259,7 @@ export class AgentRunController {
       run.status = "done";
       run.brief = typeof p.brief === "string" ? p.brief : null;
       run.findings = p.findings ?? null;
+      run.synthesis = isSynthesisProvenance(p.synthesis) ? p.synthesis : null;
     }
     this.trimTerminal();
   }

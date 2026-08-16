@@ -717,6 +717,9 @@ async function handleAgentRunGet(
       ...(run.brief === null ? {} : { brief: run.brief }),
       ...(run.findings === null ? {} : { findings: run.findings }),
       ...(run.error === null ? {} : { failureReason: run.error }),
+      // Why a synthesized rewrite was, or was not, used — the answer `SynthesisProvenance` exists
+      // to carry. Absent for a `briefError` run (no `briefReady` ever landed) and while `running`.
+      ...(run.synthesis === null ? {} : { synthesis: run.synthesis }),
     },
     200,
   );
