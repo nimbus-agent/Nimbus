@@ -315,6 +315,43 @@ describe("web clipper E2E", () => {
     expect(hit?.snippet).toBe("");
   });
 
+  // Every unit test in clip-related.test.ts injects a FAKE lookupItem, so the
+  // production adapter (http-server.ts's inline single-row read, including its
+  // no-row branch) was exercised by nothing. This pins it end to end: an
+  // itemId naming no row must fall through to the title query rather than
+  // erroring, through the REAL lookupItem wired into the real HTTP server.
+  test("related with an itemId that names no row falls through to the title query", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-unknown-itemid", ["clip"]);
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    await fetch(`${base}/v1/clips`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        url: "https://example.com/unknown-itemid",
+        title: "Zzepsilontitleword",
+        mode: "article",
+        body: "Zzepsilonbody prose here.",
+        capturedAt: Date.now(),
+      }),
+    });
+
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Zzepsilontitleword", itemId: "does:not:exist" }),
+    });
+    expect(relRes.status).toBe(200);
+    const rel = (await relRes.json()) as { items: Array<{ title: string }> };
+    expect(rel.items.some((i) => i.title === "Zzepsilontitleword")).toBe(true);
+  });
+
   test("related hits carry type and modified_at (epoch ms)", async () => {
     const base = `http://127.0.0.1:${handle.port}`;
     const { code } = pairing.open("e2e-new-fields", ["clip"]);

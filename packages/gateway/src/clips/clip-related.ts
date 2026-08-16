@@ -59,7 +59,14 @@ export function buildRelatedQuery(
   const item = itemId === undefined || itemId === "" ? null : lookupItem(itemId);
   // The item's TITLE, never its body: ftsMatchQuery AND-joins every token, so a
   // 16 KiB body becomes thousands of required terms and matches nothing.
-  const query = (asStr(o.selection) ?? item?.title ?? asStr(o.title) ?? "").trim();
+  //
+  // `item?.title || undefined`, not a bare `item?.title`: a resolved item whose
+  // title is the empty string is non-nullish, so plain `??` chaining would lock
+  // the query to `""` and short-circuit to zero results instead of falling
+  // through to `o.title` like a genuinely missing/unresolved item does. The `||`
+  // here (not `??`) is what turns that empty string back into a nullish value so
+  // the `??` chain below can fall through it.
+  const query = (asStr(o.selection) ?? (item?.title || undefined) ?? asStr(o.title) ?? "").trim();
   const excludeHost = hostOf(asStr(o.canonicalUrl));
   return {
     query,
