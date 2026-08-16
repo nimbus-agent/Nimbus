@@ -153,6 +153,7 @@
     "audit:structure": "bun scripts/structure-audit/audit-structure.ts",
     "audit:boundaries": "bunx dependency-cruiser --config .dependency-cruiser.cjs --no-progress packages",
     "audit:coverage-floor": "bun scripts/coverage-floor/check.ts",
+    "test:sandbox": "bun scripts/run-sandbox-contract.ts",
     "audit:coverage-scopes": "bun scripts/coverage-floor/check-scopes.ts",
     "mutation": "stryker run",
     "mutation:diff": "bun scripts/mutation/run-mutation.ts --diff",

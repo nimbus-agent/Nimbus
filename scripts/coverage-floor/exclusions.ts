@@ -304,6 +304,23 @@ const NEVER_EXEMPT_PATHS: readonly string[] = [
   // Four runtime declarations / 20 executable lines: `retryAfterDateFromHeader` (Retry-After
   // header parsing), `RateLimitError`, `UnauthenticatedError`, `syncNoopResult`.
   "packages/gateway/src/sync/types.ts",
+  // The four below were found by auditing the name-matched set rather than by a failure: each
+  // was inheriting the `-types.ts` exemption while carrying runtime declarations, which is the
+  // case the comment on that regex says must be listed here. All four measure 100/100 today, so
+  // adding them buys no debt — it buys the regression guard they were silently outside of.
+  //
+  // `<service>:<type>` source-type SSoT + a filter that BUILDS SQL (`{ sql, params }`), so an
+  // untested edit here reaches the query layer. Two runtime declarations each.
+  "packages/gateway/src/decisions/decision-source-types.ts",
+  "packages/gateway/src/glossary/glossary-source-types.ts",
+  // `ACTION_TYPE_AUTO_UPDATE` / `ACTION_TYPE_DOWNGRADE` — the action-type constants
+  // `extensions/auto-update-rpc.ts` puts on the action it sends to the executor's consent gate.
+  // Action-type strings are what I2/I3 match on, so they are not declaration-only in any sense
+  // that matters.
+  "packages/gateway/src/extensions/auto-update-types.ts",
+  // `S8_LENGTHS` / `S8_BATCHES` — runtime arrays the perf harness iterates to derive its surface
+  // ids; a typo here silently changes which benchmarks exist.
+  "packages/gateway/src/perf/types.ts",
 ];
 
 /**

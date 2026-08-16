@@ -346,7 +346,7 @@ jobs:
             sed -i 's|^SF:src/|SF:packages/ui/src/|' packages/ui/coverage/lcov.info
           fi
 
-      - name: Coverage floor — per-file 80% gate
+      - name: Coverage floor — per-file 85% line / 80% branch gate
         if: runner.os == 'Linux'
         # The PR gate is Ubuntu-only (matches the pre-existing pr-quality
         # pattern). The 3-OS push matrix still runs `bun test --coverage`

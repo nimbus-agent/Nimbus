@@ -45,7 +45,20 @@ cd packages/ui && bunx vitest run                     # UI components (Vitest, s
 cd packages/ui && bunx vitest run --coverage          # UI with coverage
 
 bun run test:ci                           # the TEST SUITE only — same sequence as .github/workflows/_test-suite.yml
+
+bun run test:sandbox                      # per-connector sandbox contract suite — OPT-IN, real network
+bun run test:sandbox packages/mcp-connectors/github/test/sandbox.test.ts   # scoped to one connector
 ```
+
+**`test:sandbox` is the only way those 79 tests run.** Each connector's
+`test/sandbox.test.ts` is gated on `describe.skipIf(!process.env["NIMBUS_TEST_HARNESS"])`,
+and nothing in the repo set that variable until this script existed — so a plain `bun test`
+reports them as skipped and always did. They are **not** part of any CI gate and should not
+be: `runSandboxContractTests` forks a probe that opens a **real** connection to the
+connector's first declared `permissions.network` host (plus, off Windows, one to an unlisted
+host that must be refused). A host that does not resolve on your network fails as an exit
+code, which is an environment result and not a manifest defect — check the host resolves
+before filing anything.
 
 ## Pre-flight (what to actually run before pushing)
 
