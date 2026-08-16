@@ -1866,15 +1866,19 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // `targetedFetch`'s deps — both closures around ONE appender, `egress/sync-egress.ts`'s
     // `recordSyncEgress`. `per-run`, not `per-call`, because the scheduler side appends ONE row per
     // paginated run (many upstream calls), the weaker of the two shapes this class actually backs.
-    // `model`/`peer`/`session` stay `none` until THEIR appenders land — raising an entry without a
-    // landed appender behind it is the defect this vector exists to catch, so widening this
-    // expected list further is a review moment, not a test to re-bank. Whoever lands the FIFTH
-    // non-`none` class and edits this assertion must ALSO read (and either settle or re-defer) the
-    // `EgressCompleteness.tier` #1057 note in `egress/egress-verify.ts` — this assertion is the
-    // exact file that raise is forced to touch, so the pointer belongs here, not merely in that
-    // file's own comment, where a fifth-class author might never look.
+    // `model` is now the FIFTH non-`none` class: its ONE appender (`egress/synthesis-egress.ts`'s
+    // `recordSynthesisEgress`) lands in the same commit as this raise, called only from a
+    // non-local-provider agent brief synthesis (`agents/_lib/synthesis-llm.ts` under
+    // `[agents] synthesis = "any"`). It is `per-call` over exactly that, and NOT "all inference":
+    // embeddings still append nothing (`PROSE_HEAVY_TYPES` routes to OpenAI with no appender), so
+    // widening this list further for embeddings would repeat the exact defect this vector exists to
+    // catch. `peer`/`session` stay `none` until THEIR appenders land — raising an entry without a
+    // landed appender behind it is a review moment, not a test to re-bank. (An earlier version of
+    // this comment pointed to an `EgressCompleteness.tier` #1057 note in `egress/egress-verify.ts`
+    // for whoever landed the fifth class to read; no such note exists in that file as of this raise
+    // — `EgressCompleteness` has no `tier` field — so there was nothing there to settle or re-defer.)
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual(["http", "mcp", "sync", "task"]);
+    expect([...claimed].sort()).toEqual(["http", "mcp", "model", "sync", "task"]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {

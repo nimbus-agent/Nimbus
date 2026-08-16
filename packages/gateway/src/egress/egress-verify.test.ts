@@ -139,7 +139,7 @@ describe("proveWindow", () => {
     const out = proveWindow(db, {});
     expect(out.completeness.indeterminate).toBe(false);
     expect(out.completeness.coverage.task).toBe("per-call");
-    expect(out.completeness.coverage.model).toBe("none");
+    expect(out.completeness.coverage.model).toBe("per-call");
     expect(out.completeness.outboundEgressEvents).toBe(0); // the marker itself is not counted
     // Whole-shape pin: a field added to (or dropped from) `completeness` shows up here as a visible
     // diff instead of silently passing the single-field probes above.

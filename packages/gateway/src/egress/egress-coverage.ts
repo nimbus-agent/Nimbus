@@ -30,14 +30,15 @@ export type CoverageClass = (typeof COVERAGE_CLASSES)[number];
 export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 
 /**
- * What THIS binary is built to observe. FOUR classes are non-`none`: `task` (the executor's
+ * What THIS binary is built to observe. FIVE classes are non-`none`: `task` (the executor's
  * gated-action append, `engine/executor.ts`); `mcp` and `http` — the two external transports an
  * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
- * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); and `sync` (a connector sync run
- * OR a targeted fetch-on-miss call, both landing through `egress/sync-egress.ts`'s
- * `recordSyncEgress` — see the `sync` paragraph below). Later phases raise `model`, `peer`,
- * `session`; raising an entry without landing its appender is the exact defect this vector exists
- * to prevent.
+ * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run OR a
+ * targeted fetch-on-miss call, both landing through `egress/sync-egress.ts`'s `recordSyncEgress` —
+ * see the `sync` paragraph below); and `model` (a non-local-provider agent brief synthesis,
+ * `egress/synthesis-egress.ts` — see the `model` paragraph below, which reads narrower than the
+ * name). Later phases raise `peer`, `session`; raising an entry without landing its appender is the
+ * exact defect this vector exists to prevent.
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
@@ -76,6 +77,15 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * vector reports the weaker of the two shapes it actually backs, exactly as `weakestCoverage` merges
  * markers from different binaries — asserting `per-call` here would overstate what the scheduled-
  * sync half of this class observes.
+ *
+ * `model` is `per-call`, RAISED FROM `none`, and covers LESS than its name — read it as narrowly as
+ * `mcp` and `http`. It is per-call over exactly one thing: a built-in agent brief synthesized by a
+ * NON-LOCAL provider (`egress/synthesis-egress.ts`, called only from
+ * `agents/_lib/synthesis-llm.ts` under `[agents] synthesis = "any"`). It is NOT "all inference".
+ * EMBEDDINGS APPEND NOTHING: `PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table when a key is
+ * set, and that path has no appender — so a zero `model` count does NOT mean no vector left the
+ * machine. Under `synthesis = "off"` or `"local"` this class emits nothing BY CONSTRUCTION, not by
+ * observation. Raising this entry further requires landing the embedding appender first.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",
@@ -83,7 +93,7 @@ export const THIS_BINARY_COVERAGE: CoverageVector = {
   http: "per-call",
   session: "none",
   sync: "per-run",
-  model: "none",
+  model: "per-call",
   peer: "none",
 };
 
