@@ -560,8 +560,14 @@ async function handleClipRelated(
         if (fts === "") return [];
         const rows = db
           .query(
+            // Column 1 is `body`. V48 re-pointed item_fts from (title, body_preview)
+            // to (title, body); index 0 is the TITLE, which this asked for until
+            // 2026-08 and which made every snippet an echo of the line above it.
+            // COALESCE is load-bearing: snippet() over a NULL body returns NULL,
+            // and the browser client's isRelatedHit requires a string — a null
+            // would drop the hit from the panel entirely rather than blank a line.
             `SELECT i.id, i.title, i.service, i.url,
-                    snippet(item_fts, 0, '', '', '…', 10) AS snippet
+                    COALESCE(snippet(item_fts, 1, '', '', '…', 24), '') AS snippet
              FROM item i
              INNER JOIN item_fts ON i.rowid = item_fts.rowid
              WHERE item_fts MATCH ?

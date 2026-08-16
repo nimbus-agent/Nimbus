@@ -246,4 +246,72 @@ describe("web clipper E2E", () => {
       expect(r.status).toBe(400);
     }
   });
+
+  test("related snippet is an extract of the BODY, not an echo of the title", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-snippet-column", ["clip"]);
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    // Title and body share NO tokens, so the snippet's source column is provable.
+    await fetch(`${base}/v1/clips`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        url: "https://example.com/snippet-column",
+        title: "Zzalphatitleword",
+        mode: "article",
+        body: "Zzbetabodyword one two three four five six seven eight nine ten.",
+        capturedAt: Date.now(),
+      }),
+    });
+
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Zzalphatitleword" }),
+    });
+    expect(relRes.status).toBe(200);
+    const rel = (await relRes.json()) as { items: Array<{ snippet: string }> };
+    const hit = rel.items.find((i) => i.snippet.includes("Zzbetabodyword"));
+    expect(hit).toBeDefined();
+    // The defect this pins: the snippet must not be the title read back.
+    expect(hit?.snippet).not.toContain("Zzalphatitleword");
+  });
+
+  test("an item with no body yields an empty-string snippet, never null", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-null-body", ["clip"]);
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    // Write a title-only row directly: the clip route always supplies a body.
+    const writeDb = new Database(dbPath, { create: false, readwrite: true });
+    try {
+      writeDb.run(
+        `INSERT INTO item (id, service, type, external_id, title, url, modified_at, synced_at)
+         VALUES ('t:nullbody', 'test', 'page', 'nullbody', 'Zzgammatitleword', NULL, 1, 1)`,
+      );
+    } finally {
+      writeDb.close();
+    }
+
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Zzgammatitleword" }),
+    });
+    const rel = (await relRes.json()) as { items: Array<{ id: string; snippet: unknown }> };
+    const hit = rel.items.find((i) => i.id === "t:nullbody");
+    expect(hit).toBeDefined();
+    expect(hit?.snippet).toBe("");
+  });
 });
