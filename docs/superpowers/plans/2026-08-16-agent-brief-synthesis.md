@@ -45,20 +45,20 @@ row before any non-local call, and discards any synthesis that drops a contractu
 | `packages/gateway/src/agents/_lib/brief-contract.test.ts` | Tests for the above. |
 | `packages/gateway/src/egress/synthesis-egress.ts` | `recordSynthesisEgress` — the `model`-class appender. |
 | `packages/gateway/src/egress/synthesis-egress.test.ts` | Tests for the above. |
-| `packages/gateway/src/agents/_lib/synthesis-llm.ts` | Builds a `SynthesizerLlm` from config + `LlmRouter`. Owns provider resolution, the egress append, and the timeout. |
+| `packages/gateway/src/agents/_lib/synthesis-llm.ts` | Builds a `SynthesisRunner` from config + `LlmRouter`. Owns provider resolution, the egress append, and the timeout. |
 | `packages/gateway/src/agents/_lib/synthesis-llm.test.ts` | Tests for the above. |
 
 **Modify**
 
 | File | Change |
 | --- | --- |
-| `packages/gateway/src/config/nimbus-toml.ts` | New `[agents]` section, mirroring `[ownership]` at `:1710`. |
+| `packages/gateway/src/config/nimbus-toml.ts` | New `[agents]` section + parser/loader pair, mirroring `[glossary]` at `:1589-1603`. |
 | `packages/gateway/src/agents/_lib/synthesize.ts` | Return a `SynthesisOutcome` instead of a bare string; apply the contract guard; footer every fallback. |
 | `packages/gateway/src/agents/_lib/emit-brief.ts` | Carry `synthesis` provenance on the `briefReady` notification. |
 | `packages/gateway/src/egress/egress-coverage.ts` | `model: "none"` → `"per-call"`, with the narrowing recorded in the docstring. |
 | `packages/cli/src/commands/prove.ts` | `COVERAGE_CLASS_LABELS` gains `model`. Hand-maintained mirror — required, not optional. |
-| `packages/gateway/src/ipc/server/dispatchers.ts:133` | Pass `llm` from the shared factory. |
-| `packages/gateway/src/agent-runs/agent-http-invoke.ts:98` | Pass `llm` from the same factory. |
+| `packages/gateway/src/ipc/server/dispatchers.ts:133` | Pass `runner` from the shared factory. |
+| `packages/gateway/src/agent-runs/agent-http-invoke.ts:98` | Pass `runner` from the same factory. |
 | `docs/roadmap.md` | Correct the four Wave 6 rows. |
 
 ---
@@ -66,20 +66,26 @@ row before any non-local call, and discards any synthesis that drops a contractu
 ### Task 1: `[agents]` configuration
 
 **Files:**
-- Modify: `packages/gateway/src/config/nimbus-toml.ts` (follow the `[ownership]` block at `:1710`)
+- Modify: `packages/gateway/src/config/nimbus-toml.ts` (follow the `[glossary]` pair at `:1589-1603`)
 - Test: `packages/gateway/src/config/nimbus-toml-agents.test.ts` (create)
 
 **Interfaces:**
-- Consumes: `forEachSectionEntry`, `parseIntDec` from the existing TOML primitives.
+- Consumes: `forEachSectionEntry`, `parseIntDec`, `loadTomlSection` from the existing TOML
+  primitives.
 - Produces: `type NimbusAgentsToml = { synthesis: "off" | "local" | "any"; synthesisTimeoutMs: number }`,
-  `DEFAULT_NIMBUS_AGENTS_TOML`, and an `agents` field on the parsed config object.
+  `DEFAULT_NIMBUS_AGENTS_TOML`, `parseNimbusAgentsToml(raw, defaults)`,
+  `loadNimbusAgentsFromConfigDir(configDir)`.
+
+> **There is no aggregate `parseNimbusToml`.** Every section owns a parser + loader pair. Mirror
+> `[glossary]` at `nimbus-toml.ts:1589-1603` exactly — it is the closest sibling in both shape and
+> vintage.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 // packages/gateway/src/config/nimbus-toml-agents.test.ts
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_NIMBUS_AGENTS_TOML, parseNimbusToml } from "./nimbus-toml.ts";
+import { DEFAULT_NIMBUS_AGENTS_TOML, parseNimbusAgentsToml } from "./nimbus-toml.ts";
 
 describe("[agents]", () => {
   test("defaults to local synthesis with a 20s timeout", () => {
@@ -89,24 +95,24 @@ describe("[agents]", () => {
 
   test("parses all three modes", () => {
     for (const mode of ["off", "local", "any"] as const) {
-      const cfg = parseNimbusToml(`[agents]\nsynthesis = "${mode}"\n`);
-      expect(cfg.agents.synthesis).toBe(mode);
+      expect(parseNimbusAgentsToml(`[agents]\nsynthesis = "${mode}"\n`).synthesis).toBe(mode);
     }
   });
 
   test("an unrecognised mode falls back to the safe default, never to any", () => {
-    const cfg = parseNimbusToml(`[agents]\nsynthesis = "remote"\n`);
-    expect(cfg.agents.synthesis).toBe("local");
+    expect(parseNimbusAgentsToml(`[agents]\nsynthesis = "remote"\n`).synthesis).toBe("local");
+  });
+
+  test("an absent section yields the defaults", () => {
+    expect(parseNimbusAgentsToml("").synthesis).toBe("local");
   });
 
   test("parses synthesis_timeout_ms", () => {
-    const cfg = parseNimbusToml(`[agents]\nsynthesis_timeout_ms = 4500\n`);
-    expect(cfg.agents.synthesisTimeoutMs).toBe(4500);
+    expect(parseNimbusAgentsToml(`[agents]\nsynthesis_timeout_ms = 4500\n`).synthesisTimeoutMs).toBe(4500);
   });
 
   test("a non-numeric timeout falls back to the default rather than 0", () => {
-    const cfg = parseNimbusToml(`[agents]\nsynthesis_timeout_ms = "soon"\n`);
-    expect(cfg.agents.synthesisTimeoutMs).toBe(20000);
+    expect(parseNimbusAgentsToml(`[agents]\nsynthesis_timeout_ms = "soon"\n`).synthesisTimeoutMs).toBe(20000);
   });
 });
 ```
@@ -118,7 +124,7 @@ Expected: FAIL — `DEFAULT_NIMBUS_AGENTS_TOML` is not exported.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Add to `nimbus-toml.ts`, mirroring the `[ownership]` block's structure:
+Add to `nimbus-toml.ts`, mirroring the `[glossary]` block's structure:
 
 ```ts
 // [agents] — built-in agent brief synthesis (Spine S1, W6-A0)
@@ -162,13 +168,31 @@ function applyNimbusAgentsKey(out: NimbusAgentsToml, key: string, valRaw: string
 }
 ```
 
-Register it alongside the other sections:
+Then the parser + loader pair, mirroring `parseNimbusGlossaryToml` / `loadNimbusGlossaryFromConfigDir`
+(`nimbus-toml.ts:1589-1603`) exactly:
 
 ```ts
-forEachSectionEntry(raw, "[agents]", (key, valRaw) => applyNimbusAgentsKey(out.agents, key, valRaw));
+export function parseNimbusAgentsToml(
+  raw: string,
+  defaults: NimbusAgentsToml = DEFAULT_NIMBUS_AGENTS_TOML,
+): NimbusAgentsToml {
+  const out: NimbusAgentsToml = { ...defaults };
+  forEachSectionEntry(raw, "[agents]", (key, valRaw) => applyNimbusAgentsKey(out, key, valRaw));
+  return out;
+}
+
+export function loadNimbusAgentsFromConfigDir(configDir: string): NimbusAgentsToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_AGENTS_TOML,
+    parseNimbusAgentsToml,
+  );
+}
 ```
 
-and add `agents: { ...DEFAULT_NIMBUS_AGENTS_TOML }` to the parsed-config initializer.
+Note `applyNimbusAgentsKey` mutates a full `NimbusAgentsToml` seeded from defaults, not a
+`Partial<>` — so an unrecognised value leaves the default in place rather than writing `undefined`
+over it. That is what makes the "falls back, never widens to `any`" test pass.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -187,12 +211,24 @@ git commit -m "feat(config): add [agents] synthesis mode and timeout"
 ### Task 2: The contract guard
 
 **Files:**
+- Create: `packages/gateway/src/agents/_lib/brief-kinds.ts` (see the extraction step below)
 - Create: `packages/gateway/src/agents/_lib/brief-contract.ts`
+- Modify: `packages/gateway/src/agents/_lib/synthesize.ts` (import the two moved symbols)
 - Test: `packages/gateway/src/agents/_lib/brief-contract.test.ts`
 
+> **Step 0 — break the cycle before writing anything else.** `SynthInput` (`synthesize.ts:54`) and
+> `assertNeverBrief` (`:83`) are both module-**private** today. Importing them from `synthesize.ts`
+> into `brief-contract.ts` would work — until Task 5 makes `synthesize.ts` import
+> `contractViolations` back. `assertNeverBrief` is a RUNTIME function, so that is a real runtime
+> cycle, not a type-only one, and CLAUDE.md forbids circular dependencies outright.
+>
+> So: **move** the `SynthInput` union and `assertNeverBrief` (with its docstring, which records why
+> the guard exists) into a new `agents/_lib/brief-kinds.ts`, exported. `synthesize.ts` imports them
+> from there; `brief-contract.ts` imports them from there. Neither imports the other. Verify with
+> `bun run typecheck` before proceeding.
+
 **Interfaces:**
-- Consumes: the `SynthInput` union and `assertNeverBrief` from `synthesize.ts` (export
-  `assertNeverBrief` if it is currently module-private).
+- Consumes: `SynthInput`, `assertNeverBrief` — from `./brief-kinds.ts`, never from `./synthesize.ts`.
 - Produces:
   - `type RequiredPhrase = { readonly heading: string; readonly phrase: string }`
   - `requiredPhrases(brief: SynthInput): readonly RequiredPhrase[]`
@@ -295,8 +331,8 @@ Expected: FAIL — module `./brief-contract.ts` not found.
 
 ```ts
 // packages/gateway/src/agents/_lib/brief-contract.ts
-import type { SynthInput } from "./synthesize.ts";
-import { assertNeverBrief } from "./synthesize.ts";
+import type { SynthInput } from "./brief-kinds.ts";
+import { assertNeverBrief } from "./brief-kinds.ts";
 
 export type RequiredPhrase = { readonly heading: string; readonly phrase: string };
 
@@ -541,9 +577,32 @@ git commit -m "feat(egress): land the model-class appender and raise its coverag
 
 **Interfaces:**
 - Consumes: `NimbusAgentsToml` (Task 1), `recordSynthesisEgress` (Task 3), `LlmRouter`
-  (`llm/router.ts`), `SynthesizerLlm` (`synthesize.ts`).
-- Produces: `buildSynthesisLlm(deps: SynthesisLlmDeps): SynthesizerLlm | undefined` — `undefined`
-  means "render deterministically", which is a normal outcome, not an error.
+  (`llm/router.ts`).
+- Produces: `buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | undefined` —
+  `undefined` means "render deterministically", a normal outcome, not an error.
+
+```ts
+export type SynthesisAttempt =
+  | { ok: true; markdown: string; model: string; remote: boolean }
+  | {
+      ok: false;
+      reason: "no_eligible_provider" | "timeout" | "egress_append_failed";
+      detail?: string;
+    };
+
+export type SynthesisRunner = { run: (prompt: string) => Promise<SynthesisAttempt> };
+```
+
+> **Why not the existing `SynthesizerLlm`** (`generateMarkdown: (p) => Promise<string | null>`):
+> Task 5's `SynthesisProvenance` must distinguish `no_eligible_provider` from `timeout` from
+> `egress_append_failed`, and a bare `null` provably cannot carry which. `contract_violation` is
+> **not** in this union — that verdict belongs to Task 5, after the markdown exists.
+>
+> This renames `AgentsRpcContext.llm` → `AgentsRpcContext.runner` and
+> `EmitBriefWithSynthesisOpts.llm` → `.runner`, a mechanical change across the ~10 forwarding sites
+> in `agents-rpc.ts` (`:294,305,315,330,449,490,559,639,699,842`). It is safe precisely because that
+> field is `undefined` at every production call site today — there is no live behaviour to regress.
+> Do the rename in Task 5's commit, where the consumer changes too.
 
 ```ts
 export type SynthesisLlmDeps = {
@@ -563,7 +622,7 @@ Dependency injection, not `mock.module` — the combined CLI/gateway runs on CI 
 ```ts
 // packages/gateway/src/agents/_lib/synthesis-llm.test.ts
 import { describe, expect, test } from "bun:test";
-import { buildSynthesisLlm } from "./synthesis-llm.ts";
+import { buildSynthesisRunner } from "./synthesis-llm.ts";
 
 // Stand-ins; shape only. `resolve` reports what the router would pick.
 const localProvider = { providerId: "ollama", modelName: "llama3.2", isLocal: true };
@@ -573,67 +632,67 @@ function fakeRouter(p: typeof localProvider | undefined, gen = async () => "out"
   return { resolveForSynthesis: async () => p, generateMarkdown: gen };
 }
 
-describe("buildSynthesisLlm", () => {
+describe("buildSynthesisRunner", () => {
   test("off yields undefined regardless of provider", () => {
-    const llm = buildSynthesisLlm({
+    const runner = buildSynthesisRunner({
       config: { synthesis: "off", synthesisTimeoutMs: 20000 },
       router: fakeRouter(localProvider), db: fakeDb(), briefKind: "why", now: () => 1,
     });
-    expect(llm).toBeUndefined();
+    expect(runner).toBeUndefined();
   });
 
   test("local REFUSES a remote provider — prefersLocal() is only a preference", async () => {
     const rows = fakeDb();
-    const llm = buildSynthesisLlm({
+    const runner = buildSynthesisRunner({
       config: { synthesis: "local", synthesisTimeoutMs: 20000 },
       router: fakeRouter(remoteProvider), db: rows, briefKind: "why", now: () => 1,
     });
-    expect(await llm?.generateMarkdown("p")).toBeNull();
+    expect((await runner?.run("p"))?.ok).toBe(false);
     expect(rows.count()).toBe(0); // refused, and nothing ledgered
   });
 
   test("any appends exactly one model row BEFORE generating", async () => {
     const order: string[] = [];
     const rows = fakeDb(() => order.push("append"));
-    const llm = buildSynthesisLlm({
+    const runner = buildSynthesisRunner({
       config: { synthesis: "any", synthesisTimeoutMs: 20000 },
       router: fakeRouter(remoteProvider, async () => { order.push("generate"); return "out"; }),
       db: rows, briefKind: "why", now: () => 1,
     });
-    await llm?.generateMarkdown("p");
+    await runner?.run("p");
     expect(order).toEqual(["append", "generate"]);
     expect(rows.count()).toBe(1);
   });
 
   test("a LOCAL provider under any appends nothing", async () => {
     const rows = fakeDb();
-    const llm = buildSynthesisLlm({
+    const runner = buildSynthesisRunner({
       config: { synthesis: "any", synthesisTimeoutMs: 20000 },
       router: fakeRouter(localProvider), db: rows, briefKind: "why", now: () => 1,
     });
-    await llm?.generateMarkdown("p");
+    await runner?.run("p");
     expect(rows.count()).toBe(0);
   });
 
   test("an append failure prevents the generate call entirely", async () => {
     let generated = false;
     const rows = fakeDb(() => { throw new Error("ledger down"); });
-    const llm = buildSynthesisLlm({
+    const runner = buildSynthesisRunner({
       config: { synthesis: "any", synthesisTimeoutMs: 20000 },
       router: fakeRouter(remoteProvider, async () => { generated = true; return "out"; }),
       db: rows, briefKind: "why", now: () => 1,
     });
-    expect(await llm?.generateMarkdown("p")).toBeNull();
+    expect((await runner?.run("p"))?.ok).toBe(false);
     expect(generated).toBe(false);
   });
 
   test("a hung provider resolves null at the timeout instead of hanging", async () => {
-    const llm = buildSynthesisLlm({
+    const runner = buildSynthesisRunner({
       config: { synthesis: "local", synthesisTimeoutMs: 20 },
       router: fakeRouter(localProvider, () => new Promise<string>(() => {})),
       db: fakeDb(), briefKind: "why", now: () => 1,
     });
-    expect(await llm?.generateMarkdown("p")).toBeNull();
+    expect((await runner?.run("p"))?.ok).toBe(false);
   });
 });
 ```
@@ -825,7 +884,7 @@ This is the task that makes everything above execute. Until it lands, the work i
 the precise defect this sub-project exists to correct, so do not skip its test.
 
 **Interfaces:**
-- Consumes: `buildSynthesisLlm` (Task 4).
+- Consumes: `buildSynthesisRunner` (Task 4).
 - Produces: nothing new; both callers gain an `llm` field on the `dispatchAgentsRpc` context.
 
 - [ ] **Step 1: Write the failing test**
@@ -856,7 +915,7 @@ Both sites build the context field from the **same** factory so the documented H
 equivalence holds by construction rather than by comment:
 
 ```ts
-...(buildSynthesisLlm({
+...(buildSynthesisRunner({
   config: cfg.agents, router, db, briefKind: briefKindFor(method), now: () => Date.now(),
 }) is undefined ? {} : { llm: <that value> }),
 ```
@@ -969,6 +1028,6 @@ visible rather than silent**, and widening it is a follow-up commit, not a hidde
 `LlmGenerateOptions` carries no `AbortSignal`. Recorded in full at Task 4 Step 3.
 
 **Type consistency:** `SynthesisProvenance` / `SynthesisOutcome` (Task 5) are consumed only by
-`emit-brief.ts` in the same task. `buildSynthesisLlm` (Task 4) returns `SynthesizerLlm | undefined`,
-matching `EmitBriefWithSynthesisOpts.llm?` at `emit-brief.ts:40`. `recordSynthesisEgress` (Task 3) is
+`emit-brief.ts` in the same task. `buildSynthesisRunner` (Task 4) returns `SynthesisRunner | undefined`,
+matching the renamed `EmitBriefWithSynthesisOpts.runner?` (Task 4's rename note). `recordSynthesisEgress` (Task 3) is
 called only from Task 4. `contractViolations` (Task 2) is called only from Task 5.
