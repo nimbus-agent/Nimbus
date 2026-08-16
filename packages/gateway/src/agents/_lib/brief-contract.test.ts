@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { contractViolations, requiredPhrases } from "./brief-contract.ts";
+import type { SynthInput } from "./brief-kinds.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 
 // ALL SEVEN nullable lanes null. NegotiateBrief has seven (negotiate-types.ts:103-109),
@@ -131,4 +132,32 @@ describe("contractViolations", () => {
     expect(v.length).toBe(1);
     expect(v[0]).toContain("Ownership");
   });
+});
+
+describe("requiredPhrases — non-negotiate kinds", () => {
+  // Every kind besides `negotiate` deliberately returns `[]` today — see brief-contract.ts's
+  // comment on the if-chain. Table-driven so each of the 13 explicit arms is taken by name
+  // once, rather than relying on `negotiate` coverage to imply the rest of the chain works.
+  const OTHER_KINDS = [
+    "expert",
+    "impact",
+    "catchup",
+    "ghost",
+    "conflict",
+    "janitor",
+    "preflight",
+    "why",
+    "glossary",
+    "decisions",
+    "ownership",
+    "huddle",
+    "premortem",
+  ] as const;
+
+  for (const kind of OTHER_KINDS) {
+    test(`returns [] for kind "${kind}"`, () => {
+      const brief = { kind } as unknown as SynthInput;
+      expect(requiredPhrases(brief)).toEqual([]);
+    });
+  }
 });
