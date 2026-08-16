@@ -78,8 +78,16 @@ const FORBIDDEN_OVER_LAN = new Set([
   // THIS machine's index). A paired peer has no use for it, so it is local/CLI-only
   // rather than riding the `index.*` default-allow for reads (I5 defense-in-depth).
   "index.demoSymbol",
-  // Federation: management methods are local/Tauri-only. Only federation.query /
-  // federation.expertise are answerable over the wire (I17 + I5).
+  // Federation: management methods and local asker entrypoints are local/Tauri-only.
+  //
+  // This is a DENYLIST, so the admitted set is "every served handler minus what is listed here"
+  // and it GROWS whenever a handler is added to federation-rpc.ts. Until 2026-08-16 this comment
+  // named only the first two answering methods — true when written, wrong by eleven by the time
+  // anyone read it again. The real admitted set is thirteen, including invoke, preflight, purge
+  // and shareReceive, each with its own gate
+  // (see the notes further down). `audit:status-drift` now derives the set and fails if this
+  // comment or the I17 section claims a smaller one, because prose was the only place it was
+  // written down.
   "federation.discover",
   "federation.pair",
   "federation.peers",

@@ -852,7 +852,7 @@ nimbus deploy annotate \
 | `--job-id <id>` | CI job identifier within the run |
 | `--json` | Machine-readable JSON output |
 
-**HTTP write surface:** internally this routes through `POST /v1/deployments` on the local HTTP API — one of the twelve routes on the compile-time `WRITE_ROUTE_ALLOWLIST` (invariant `I13`: allowlist + bearer auth + per-token rate limit + audit-on-rejection). Any write to a non-allowlisted route is rejected. For this route an 8 KiB body cap applies, and every rejection is recorded as a `deployment.annotation_rejected` audit row.
+**HTTP write surface:** internally this routes through `POST /v1/deployments` on the local HTTP API — one of the fourteen routes on the compile-time `WRITE_ROUTE_ALLOWLIST` (invariant `I13`: allowlist + bearer auth + per-token rate limit + audit-on-rejection). Any write to a non-allowlisted route is rejected. For this route an 8 KiB body cap applies, and every rejection is recorded as a `deployment.annotation_rejected` audit row.
 
 **Required vault key:**
 
@@ -2191,6 +2191,8 @@ nimbus serve --port 7474        # Default port: 7474
 | `POST /v1/messaging/teams/events` | ChatOps Teams inbound (Bot Framework JWT validated in-route) |
 | `POST /v1/clips`, `POST /v1/clips/pair/confirm` | Web-clipper ingest and pairing confirm (invariant `I30`) |
 | `POST /v1/briefs`, `POST /v1/briefs/{id}/sources`, `POST /v1/briefs/{id}/run`, `POST /v1/briefs/{id}/save` | Research-brief create / feed source / synthesize / save (labeled clipper token) |
+| `POST /v1/agents/{agent}` | Run a built-in agent and return its brief (labeled clipper token, `agents` scope) |
+| `POST /v1/items/fetch` | Targeted single-item fetch from a configured connector (labeled clipper token, `fetch` scope) |
 
 All read endpoints are `localhost`-only and use `SQLITE_OPEN_READONLY`. Every write route carries bearer (or in-route) authentication, a per-route body cap, per-token rate limiting (60 req/min by default; `POST /v1/clips` tightens to 20), and audit-on-rejection. There is no authentication required for read endpoints because the socket is owner-only at the OS level.
 
