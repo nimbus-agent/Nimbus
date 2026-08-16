@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { join } from "node:path";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import {
   assertScanIsMeaningful,
@@ -642,7 +642,11 @@ describe("the scan floor (every rule below it reports clean on an empty scan)", 
     // how a floor quietly becomes shorter than the rule set it protects.
     const missing: string[] = [];
     for (const anchor of RULE_ANCHORS) {
-      if (!(await Bun.file(resolve(REPO_ROOT, anchor)).exists())) missing.push(anchor);
+      // Split before joining: the `/` in an anchor is not a path separator choice, it is the
+      // scan-key format — `iterateSourceFiles` normalizes every relPath to `/` so the floor
+      // can compare against it by string. This is the one place that key becomes a real
+      // filesystem path, so it is the place to hand the components to `join`.
+      if (!(await Bun.file(join(REPO_ROOT, ...anchor.split("/"))).exists())) missing.push(anchor);
     }
     expect(missing).toEqual([]);
   });
@@ -654,7 +658,7 @@ describe("the scan floor (every rule below it reports clean on an empty scan)", 
     // to prevent, so the test for it must not be the kind that cannot fail.
     const src = stripComments(
       await Bun.file(
-        resolve(REPO_ROOT, "scripts/structure-audit/check-nimbus-invariants.ts"),
+        join(REPO_ROOT, "scripts", "structure-audit", "check-nimbus-invariants.ts"),
       ).text(),
     );
     // Slice from `run()` so the export declaration of the same name, which sits above it,
