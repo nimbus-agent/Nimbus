@@ -1,19 +1,5 @@
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
-import type { DecisionsBrief } from "./decisions-types.ts";
-import type {
-  CatchupBrief,
-  ConflictBrief,
-  ExpertBrief,
-  GhostBrief,
-  HuddleBrief,
-  ImpactBrief,
-  JanitorBrief,
-  PreflightBrief,
-} from "./findings.ts";
-import type { GlossaryBrief } from "./glossary-types.ts";
-import type { NegotiateBrief } from "./negotiate-types.ts";
-import type { OwnershipBrief } from "./ownership-types.ts";
-import type { PremortemBrief } from "./premortem-types.ts";
+import { assertNeverBrief, type SynthInput } from "./brief-kinds.ts";
 import {
   renderCatchup,
   renderConflict,
@@ -30,7 +16,6 @@ import {
   renderPremortem,
   renderWhy,
 } from "./render.ts";
-import type { WhyBrief } from "./why-types.ts";
 
 export type SynthesizerLlm = {
   generateMarkdown: (prompt: string) => Promise<string | null>;
@@ -50,40 +35,6 @@ const SYNTHESIS_INSTRUCTIONS = [
   "- If the JSON contains zero ranked findings, say so plainly; do not pad.",
   "- Output Markdown only — no preamble, no code fences around the whole answer.",
 ].join("\n");
-
-type SynthInput =
-  | ExpertBrief
-  | ImpactBrief
-  | CatchupBrief
-  | GhostBrief
-  | ConflictBrief
-  | HuddleBrief
-  | JanitorBrief
-  | PreflightBrief
-  | WhyBrief
-  | GlossaryBrief
-  | DecisionsBrief
-  | OwnershipBrief
-  | PremortemBrief
-  | NegotiateBrief;
-
-/**
- * Turns a missing dispatch arm into a COMPILE error.
- *
- * Both dispatches below previously ended in a bare `return renderHuddle(brief)` /
- * `return "agents.huddle"`. Extending `SynthInput` without extending them therefore
- * compiled, ran, and rendered the new brief as a huddle — reporting itself to the model
- * as `agents.huddle` into the bargain. Nothing failed. Every member of the union carries
- * a distinct `kind` literal, so this guard is a genuine exhaustiveness check.
- *
- * The runtime throw is unreachable while the union and the arms agree, and is safe if it
- * ever is not: `synthesize` is awaited inside `emitBriefWithSynthesis`'s async IIFE, whose
- * `.catch` emits `<agent>.briefError`. A named error beats a plausible wrong answer.
- */
-function assertNeverBrief(x: never): never {
-  const kind = (x as { kind?: unknown }).kind;
-  throw new Error(`synthesize: unhandled brief kind ${String(kind)}`);
-}
 
 function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "expert") return renderExpert(brief);
