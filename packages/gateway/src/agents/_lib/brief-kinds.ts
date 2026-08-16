@@ -34,7 +34,7 @@ export type SynthInput =
 /**
  * Turns a missing dispatch arm into a COMPILE error.
  *
- * Both dispatches below previously ended in a bare `return renderHuddle(brief)` /
+ * Both dispatches in `synthesize.ts` previously ended in a bare `return renderHuddle(brief)` /
  * `return "agents.huddle"`. Extending `SynthInput` without extending them therefore
  * compiled, ran, and rendered the new brief as a huddle — reporting itself to the model
  * as `agents.huddle` into the bargain. Nothing failed. Every member of the union carries

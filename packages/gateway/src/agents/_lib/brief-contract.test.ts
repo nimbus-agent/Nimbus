@@ -89,4 +89,46 @@ describe("contractViolations", () => {
     } as unknown as NegotiateBrief;
     expect(requiredPhrases(brief).length).toBe(6);
   });
+
+  test("accepts a nested sub-heading before the disclaimer", () => {
+    // `SYNTHESIS_INSTRUCTIONS` says "keep all section headings" but does not forbid a
+    // rewrite from ADDING sub-structure — a `### Note` inside `## Tickets` is realistic
+    // model output. A section ends at the next heading of the SAME OR HIGHER level, not
+    // at any heading, so this sub-heading must not truncate the section and discard the
+    // (still-present) disclaimer below it.
+    const md = ALL_SEVEN.replace(
+      "## Tickets\n\n_could not be computed_",
+      "## Tickets\n\n### Note\n\n_could not be computed_",
+    );
+    expect(contractViolations(allNullLaneBrief(), md)).toEqual([]);
+  });
+
+  test("still rejects when the disclaimer genuinely moved into the following same-level section", () => {
+    // The false-reject fix must not become permissive: a disclaimer that migrated out of
+    // its own section and into the next `##` section is a real drop, not sub-structure,
+    // and must still be caught per-section rather than satisfied by text living elsewhere
+    // in the document.
+    const md = ALL_SEVEN.replace(
+      "## Tickets\n\n_could not be computed_\n\n## Ownership\n\n_could not be computed_",
+      "## Tickets\n\n## Ownership\n\n_could not be computed_\n\n_could not be computed_",
+    );
+    const v = contractViolations(allNullLaneBrief(), md);
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain("Tickets");
+  });
+
+  test("a sub-heading in one section does not bleed into the next section's body", () => {
+    // Tickets keeps its disclaimer under an added `### Note` sub-heading (must be
+    // accepted), while the immediately following Ownership section has its disclaimer
+    // dropped (must still be independently caught) — proving the level-based boundary
+    // neither lets Tickets' sub-structure swallow Ownership's content nor lets residual
+    // text from Tickets satisfy Ownership's own requirement.
+    const md = ALL_SEVEN.replace(
+      "## Tickets\n\n_could not be computed_",
+      "## Tickets\n\n### Note\n\n_could not be computed_",
+    ).replace("## Ownership\n\n_could not be computed_", "## Ownership\n\n- 3 services");
+    const v = contractViolations(allNullLaneBrief(), md);
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain("Ownership");
+  });
 });
