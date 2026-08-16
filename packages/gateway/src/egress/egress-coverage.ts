@@ -80,12 +80,17 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  *
  * `model` is `per-call`, RAISED FROM `none`, and covers LESS than its name — read it as narrowly as
  * `mcp` and `http`. It is per-call over exactly one thing: a built-in agent brief synthesized by a
- * NON-LOCAL provider (`egress/synthesis-egress.ts`, called only from
- * `agents/_lib/synthesis-llm.ts` under `[agents] synthesis = "any"`). It is NOT "all inference".
- * EMBEDDINGS APPEND NOTHING: `PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table when a key is
- * set, and that path has no appender — so a zero `model` count does NOT mean no vector left the
- * machine. Under `synthesis = "off"` or `"local"` this class emits nothing BY CONSTRUCTION, not by
- * observation. Raising this entry further requires landing the embedding appender first.
+ * NON-LOCAL provider (`egress/synthesis-egress.ts`'s `recordSynthesisEgress`). The appender lands
+ * here; its only caller arrives with the synthesis wiring (`agents/_lib/synthesis-llm.ts`, under
+ * `[agents] synthesis = "any"`) — until then this class has no production call site. The
+ * local-vs-remote distinction is enforced INSIDE the appender via a required `remote` argument
+ * (a `false` call appends nothing), the same choice `sync-egress.ts`'s `recordSyncEgress` makes for
+ * `LOCAL_ONLY_SYNC_SERVICES` and for the same reason: a caller-enforced rule is one wiring mistake
+ * away from fabricating egress rows for a local generation. It is NOT "all inference". EMBEDDINGS
+ * APPEND NOTHING: `PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table when a key is set, and that
+ * path has no appender — so a zero `model` count does NOT mean no vector left the machine. Under
+ * `synthesis = "off"` or `"local"` this class emits nothing BY CONSTRUCTION, not by observation.
+ * Raising this entry further requires landing the embedding appender first.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",

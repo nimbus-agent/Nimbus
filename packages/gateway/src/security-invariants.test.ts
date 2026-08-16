@@ -1867,16 +1867,21 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // `recordSyncEgress`. `per-run`, not `per-call`, because the scheduler side appends ONE row per
     // paginated run (many upstream calls), the weaker of the two shapes this class actually backs.
     // `model` is now the FIFTH non-`none` class: its ONE appender (`egress/synthesis-egress.ts`'s
-    // `recordSynthesisEgress`) lands in the same commit as this raise, called only from a
-    // non-local-provider agent brief synthesis (`agents/_lib/synthesis-llm.ts` under
-    // `[agents] synthesis = "any"`). It is `per-call` over exactly that, and NOT "all inference":
-    // embeddings still append nothing (`PROSE_HEAVY_TYPES` routes to OpenAI with no appender), so
-    // widening this list further for embeddings would repeat the exact defect this vector exists to
-    // catch. `peer`/`session` stay `none` until THEIR appenders land — raising an entry without a
-    // landed appender behind it is a review moment, not a test to re-bank. (An earlier version of
-    // this comment pointed to an `EgressCompleteness.tier` #1057 note in `egress/egress-verify.ts`
-    // for whoever landed the fifth class to read; no such note exists in that file as of this raise
-    // — `EgressCompleteness` has no `tier` field — so there was nothing there to settle or re-defer.)
+    // `recordSynthesisEgress`) lands in the same commit as this raise. The appender lands here; its
+    // only caller arrives with the synthesis wiring (`agents/_lib/synthesis-llm.ts`, under
+    // `[agents] synthesis = "any"`) — until then this class has no production call site. The
+    // local-vs-remote split is enforced INSIDE the appender (a required `remote: boolean` argument;
+    // `false` appends nothing), not left to that future caller, so a wiring mistake there cannot
+    // fabricate a `model` row for a local generation. It is `per-call` over exactly that, and NOT
+    // "all inference": embeddings still append nothing (`PROSE_HEAVY_TYPES` routes to OpenAI with no
+    // appender), so widening this list further for embeddings would repeat the exact defect this
+    // vector exists to catch. `peer`/`session` stay `none` until THEIR appenders land — raising an
+    // entry without a landed appender behind it is a review moment, not a test to re-bank. (An
+    // earlier version of this comment pointed to an `EgressCompleteness.tier` #1057 note in
+    // `egress/egress-verify.ts` for whoever landed the fifth class to read; that field existed and
+    // was removed in #1057 per `docs/CHANGELOG.md`'s 2026-08-11 entry — "`EgressCompleteness.tier`
+    // is gone; the coverage vector is the only claim" — so the pointer was stale, not fictional, and
+    // there was nothing left in that file to settle or re-defer.)
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
     expect([...claimed].sort()).toEqual(["http", "mcp", "model", "sync", "task"]);
   });

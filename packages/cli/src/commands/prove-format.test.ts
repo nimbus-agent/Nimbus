@@ -162,4 +162,38 @@ describe("formatProveResult", () => {
     // occurrence above (which contains the substring "sync" too, inside "targeted fetch-on-miss").
     expect(out).not.toMatch(/scope:.*(?:^|, )sync(?:,|\))/);
   });
+
+  // Task 3 fix round 1: `model` was raised `none` -> `per-call` (the fifth non-none class).
+  // Following the `sync` test immediately above's precedent and stated reasoning: without this
+  // test, deleting the `model` entry from `COVERAGE_CLASS_LABELS` (prove.ts) would leave the whole
+  // suite green while `formatProveResult` fell through to the bare-key fallback and printed a raw
+  // `model` — the widest possible over-claim on the one surface whose entire job is not
+  // over-claiming, since a bare `model` reads as "all inference" rather than "remote-provider brief
+  // synthesis only". A fresh, ACCURATE fixture here, deliberately not folded into `COVERED` above,
+  // for the same reason the `sync` test isn't: `COVERED` is shared by five other tests whose
+  // exact-string assertions would all need rewriting for an unrelated reason if it changed.
+  test("the model class renders its OWN label ('remotely-synthesized agent briefs'), never falls through to a bare key", () => {
+    const out = formatProveResult({
+      delta: 0,
+      completeness: {
+        coverage: {
+          task: "per-call",
+          mcp: "per-call",
+          http: "per-call",
+          sync: "per-run",
+          model: "per-call",
+          session: "none",
+          peer: "none",
+        },
+        outboundEgressEvents: 0,
+        indeterminate: false,
+      },
+      chainOk: true,
+      label: "during this query",
+    });
+    expect(out).toContain("remotely-synthesized agent briefs");
+    // The bare fallback never fires: a lone "model" (unlabelled) would appear as its own
+    // comma-delimited scope-clause token.
+    expect(out).not.toMatch(/scope:.*(?:^|, )model(?:,|\))/);
+  });
 });

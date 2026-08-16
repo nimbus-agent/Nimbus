@@ -9,14 +9,33 @@ import { redactEgressSummary } from "./egress-record.ts";
  * member reserved for exactly this ("inference + embeddings, local or remote");
  * W6-A0 is the "later phase" its docstring anticipated. Do not add a source type.
  *
- * Called ONLY for a non-local provider. A local generate makes no outbound
- * request, so ledgering it would over-claim egress the same way an unfiltered
- * `LOCAL_ONLY_SYNC_SERVICES` did before it was excluded.
+ * The appender lands here; its only caller arrives with the synthesis wiring
+ * (`agents/_lib/synthesis-llm.ts`, `[agents] synthesis = "any"`) — until then this
+ * class has no production call site.
+ *
+ * `remote` is a REQUIRED argument, and a `false` call appends nothing. A local
+ * generate makes no outbound request, so ledgering it would over-claim egress the
+ * same way an unfiltered `LOCAL_ONLY_SYNC_SERVICES` did before it was excluded.
+ * The check is enforced HERE, inside the appender, rather than left to the caller
+ * — `sync-egress.ts`'s `recordSyncEgress` makes the same choice for the same
+ * reason (its doc comment: "checked HERE rather than at either call site, so BOTH
+ * appenders ... enforce the rule identically instead of each needing its own copy
+ * of the exclusion list"). A caller-enforced rule is one wiring mistake away from
+ * fabricating `model` rows for local synthesis; an appender-enforced one cannot be
+ * bypassed by a future second caller forgetting the guard.
  */
 export function recordSynthesisEgress(
   db: Database,
-  args: { readonly briefKind: string; readonly model: string; readonly now: number },
+  args: {
+    readonly briefKind: string;
+    readonly model: string;
+    readonly now: number;
+    readonly remote: boolean;
+  },
 ): void {
+  if (!args.remote) {
+    return;
+  }
   appendEgressEntry(db, {
     timestamp: args.now,
     sourceType: "model",
