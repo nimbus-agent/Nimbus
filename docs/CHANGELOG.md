@@ -8,6 +8,52 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-16 — an audit of I1–I30 found two live bugs, two defenses wired to nothing,
+  and a class of guard that reports clean without enforcing anything.** Six PRs (#1216,
+  #1217, #1218, #1219, #1220, #1221), shipped in `v2.4.6`.
+
+  **Two defects were already in production.** `commands/data-delete.ts` ran two unwrapped
+  `DELETE`s through `input.index.rawDb.run(...)` on the live `data.delete` IPC path: D12's
+  regex pinned the receiver to the literal name `db`, and `` cannot match between the `w`
+  and the `D` of `rawDb`, so the rule exited 0 for its entire life. `connectors/reindex.ts`
+  wrote `hitlStatus: "approved"` on a path where the gate is structurally never entered
+  (`reindex-rpc.ts` gates `depth === "full"` alone, and that branch returns
+  `itemsAffected: 0`), putting a consent decision that never happened inside the verified
+  hash chain — the S1-F5 / chain C6 shape.
+
+  **Two defenses were resolved and read by nothing.** `EnforcedPolicy.hitlRequired` was
+  computed as a monotonic union and `isHitlRequiredByPolicy` existed to read it, with zero
+  production callers: an org admin could sign `[policy.hitl] require`, watch it verify, and
+  get no gate. And the federation identity guard was wired for local IPC but absent from
+  `buildFederationLanServer`'s options, so `ctx.identity` was `undefined` for every
+  peer-facing answer and a deprovisioned operator kept answering `federation.query` /
+  `auditExport` / `invoke` / `preflight` instead of failing closed.
+
+  **The structural finding: a guard that short-circuits per FILE cannot see a per-SITE
+  regression.** I15 and D10 both passed on one `wrapServerSpec(` token anywhere in the
+  file, and `connector-spawns.ts` funnels 26 MCPClient spawns through a single `wrap`
+  helper — so dropping the sandbox wrapper from one connector left the token in place and
+  three gates green while that child ran with a live OAuth token and no landlock/seccomp/
+  seatbelt profile. Both are per-site now. The same shape recurred across rules written in
+  the same style: the subdirectory blind spot fixed for D17/I23 in #1216 was still live in
+  D22(d) one commit later.
+
+  Also: the static auditor gained a non-vacuity floor (#1217) after a broken glob was shown
+  to leave 179 files scanned, all fourteen D-rules silently no-op, and `exit 0`; five
+  enforcement tests that could not fail were made capable of failing (#1219); and four
+  drifted doc claims are now derived by `audit:status-drift` rather than hand-maintained
+  (#1221) — the write-route allowlist said twelve against a real fourteen, and I17 named two
+  LAN-admitted federation methods against a real thirteen.
+
+  **Not in the `v2.4.6` release notes:** #1218. release-please could not parse its squash
+  commit (`unexpected token '(' at 103:15` — the PR body contained `` `.run(` ``/`` `.exec(` ``,
+  code spans holding unbalanced parentheses, and the squash body IS the commit message), so
+  it was dropped from the generated changelog. Recorded here because the tag is immutable.
+  The drop-guard failed the runs on #1218 and #1219 exactly as designed, then went green
+  once a partial release PR existed — it asked whether a release PR appeared, not whether
+  that PR accounted for every user-facing commit. `scripts/release/release-pr-completeness.ts`
+  now asks the second question.
+
 - **2026-08-15 — eleven copies of the gateway-connect lifecycle became one, and a guard
   keeps it that way.** Every `nimbus` command that talks to the Gateway re-derived the
   same five steps: read gateway state, throw the not-running message, construct a client,
