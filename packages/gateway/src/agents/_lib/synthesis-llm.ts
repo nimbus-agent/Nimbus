@@ -28,7 +28,7 @@ export type SynthesisRunner = { run: (prompt: string) => Promise<SynthesisAttemp
  * `LlmRouter`" — it is the only reason the tests in this file can avoid `mock.module` at all.
  */
 export interface SynthesisRouter {
-  resolveForSynthesis(): Promise<ResolvedSynthesisProvider | undefined>;
+  resolveForSynthesis(preferLocal?: boolean): Promise<ResolvedSynthesisProvider | undefined>;
   generateMarkdown(prompt: string, provider: ResolvedSynthesisProvider): Promise<string>;
 }
 
@@ -162,7 +162,13 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
 
   return {
     async run(prompt: string): Promise<SynthesisAttempt> {
-      const resolved = await deps.router.resolveForSynthesis();
+      // preferLocal: true — independent of `[llm].prefer_local`, same precedent as
+      // `briefs/brief-llm-adapter.ts`'s `createBriefLlm(router, preferLocal)`. Without this, a
+      // stock `[llm] prefer_local = false` install with a remote provider registered would make
+      // `resolveForSynthesis()` resolve remote-first even with a healthy local provider, and
+      // `"local"` mode would then refuse the whole attempt as `no_eligible_provider` — not because
+      // no local provider answered, but because a remote one was picked ahead of it.
+      const resolved = await deps.router.resolveForSynthesis(true);
       if (resolved === undefined) {
         return { ok: false, reason: "no_eligible_provider" };
       }
@@ -187,6 +193,14 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
         return { ok: false, reason: "egress_append_failed", detail: redactedErrorDetail(err) };
       }
 
+      // Deliberately `generateMarkdown(prompt, resolved)` — the EXACT provider `resolveForSynthesis`
+      // already resolved and classified above — never `LlmRouter.generate()`. `generate()` routes
+      // through `fitPromptOrFallback`, whose `tryRemoteFallback` (`llm/router.ts:198`) can reach a
+      // REMOTE provider on context overflow with NO egress row appended and NO `[agents] synthesis`
+      // mode check — exactly the two guarantees this function exists to enforce (the `remote` flag
+      // ledgered above, and `"local"` refusing a non-local `resolved` before this line is ever
+      // reached). Do not "unify" these two call paths — that would reopen an unledgered,
+      // mode-blind remote egress path this file was written to close.
       const raced = await raceWithTimeout(
         deps.router.generateMarkdown(prompt, resolved),
         deps.config.synthesisTimeoutMs,

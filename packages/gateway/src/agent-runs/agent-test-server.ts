@@ -83,7 +83,9 @@ export async function startAgentTestServer(opts?: {
       ? {
           clipsVault: vault,
           agentRuns: runs,
-          agentInvoke: buildAgentHttpInvoker({ db, runs }),
+          // No LLM registry in this harness — explicit `undefined` (router is now required, not
+          // optional) so a future HTTP boot path can't leave it out silently.
+          agentInvoke: buildAgentHttpInvoker({ db, runs, router: undefined }),
         }
       : // Opens the I13 write surface for an UNRELATED reason (no deployment token check is
         // exercised) so POST /v1/agents/{agent} still reaches dispatchWriteRoute's per-route

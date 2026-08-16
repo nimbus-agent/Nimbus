@@ -152,6 +152,7 @@ describe("buildAgentHttpInvoker", () => {
       index: new LocalIndex(db),
       configDir: mkdtempSync(join(tmpdir(), "nimbus-agent-cfg-")),
       selfIdentity: { publicKey: new Uint8Array(32), secretKey: new Uint8Array(32) },
+      router: undefined,
     })("expert", { topicOrFile: "auth.ts" }, "chrome");
     expect(out.ok).toBe(true);
     if (!out.ok) throw new Error("unreachable");
@@ -163,7 +164,7 @@ describe("buildAgentHttpInvoker", () => {
   test("an unknown agent is refused before any admission is spent", async () => {
     const db = freshDb();
     const runs = makeRuns();
-    const out = await buildAgentHttpInvoker({ db, runs })("nope", {}, "chrome");
+    const out = await buildAgentHttpInvoker({ db, runs, router: undefined })("nope", {}, "chrome");
     expect(out).toEqual({ ok: false, reason: "unknown_agent" });
     // No reservation leaked: the cap is still fully available.
     for (let i = 0; i < MAX_CONCURRENT_AGENT_RUNS; i++) expect(runs.admit().ok).toBe(true);
@@ -172,7 +173,7 @@ describe("buildAgentHttpInvoker", () => {
   test("preflight is refused as unknown, and appends nothing", async () => {
     // I24. Refused at the resolver, so it never reaches the dispatcher and never ledgers.
     const db = freshDb();
-    const out = await buildAgentHttpInvoker({ db, runs: makeRuns() })(
+    const out = await buildAgentHttpInvoker({ db, runs: makeRuns(), router: undefined })(
       "preflight",
       { ref: "HEAD", namespace: "n" },
       "chrome",
@@ -183,7 +184,7 @@ describe("buildAgentHttpInvoker", () => {
 
   test("whyPeek is refused as unknown too", async () => {
     const db = freshDb();
-    const out = await buildAgentHttpInvoker({ db, runs: makeRuns() })(
+    const out = await buildAgentHttpInvoker({ db, runs: makeRuns(), router: undefined })(
       "whyPeek",
       { ref: "src/a.ts:1" },
       "chrome",
@@ -195,7 +196,7 @@ describe("buildAgentHttpInvoker", () => {
   test("a successful invocation returns the gateway sessionId as the runId", async () => {
     const db = freshDb();
     const runs = makeRuns();
-    const out = await buildAgentHttpInvoker({ db, runs })(
+    const out = await buildAgentHttpInvoker({ db, runs, router: undefined })(
       "expert",
       { topicOrFile: "auth.ts" },
       "chrome",
@@ -210,7 +211,7 @@ describe("buildAgentHttpInvoker", () => {
 
   test("the invocation appends exactly one source_type='http' row, attributed to the label", async () => {
     const db = freshDb();
-    await buildAgentHttpInvoker({ db, runs: makeRuns() })(
+    await buildAgentHttpInvoker({ db, runs: makeRuns(), router: undefined })(
       "expert",
       { topicOrFile: "auth.ts" },
       "chrome-work",
@@ -226,7 +227,11 @@ describe("buildAgentHttpInvoker", () => {
   test("invalid params are a typed refusal, not a thrown error", async () => {
     const db = freshDb();
     const runs = makeRuns();
-    const out = await buildAgentHttpInvoker({ db, runs })("expert", { topicOrFile: "" }, "chrome");
+    const out = await buildAgentHttpInvoker({ db, runs, router: undefined })(
+      "expert",
+      { topicOrFile: "" },
+      "chrome",
+    );
     expect(out.ok).toBe(false);
     if (out.ok) throw new Error("unreachable");
     expect(out.reason).toBe("invalid_params");
@@ -239,7 +244,11 @@ describe("buildAgentHttpInvoker", () => {
     // per-agent validator runs inside the handler. So a rejected call IS ledgered. That matches the
     // MCP path exactly and is the honest reading of "append before any agent work".
     const db = freshDb();
-    await buildAgentHttpInvoker({ db, runs: makeRuns() })("expert", { topicOrFile: "" }, "chrome");
+    await buildAgentHttpInvoker({ db, runs: makeRuns(), router: undefined })(
+      "expert",
+      { topicOrFile: "" },
+      "chrome",
+    );
     expect(countLedger(db)).toBe(1);
   });
 
@@ -253,7 +262,11 @@ describe("buildAgentHttpInvoker", () => {
     for (let i = 0; i < MAX_CONCURRENT_AGENT_RUNS; i++) expect(runs.admit().ok).toBe(true);
 
     expect(
-      await buildAgentHttpInvoker({ db, runs })("expert", { topicOrFile: "x" }, "chrome"),
+      await buildAgentHttpInvoker({ db, runs, router: undefined })(
+        "expert",
+        { topicOrFile: "x" },
+        "chrome",
+      ),
     ).toEqual({
       ok: false,
       reason: "busy",
@@ -272,7 +285,11 @@ describe("buildAgentHttpInvoker", () => {
     db.exec(`DROP TABLE egress_ledger`);
     const runs = makeRuns();
     await expect(
-      buildAgentHttpInvoker({ db, runs })("expert", { topicOrFile: "x" }, "chrome"),
+      buildAgentHttpInvoker({ db, runs, router: undefined })(
+        "expert",
+        { topicOrFile: "x" },
+        "chrome",
+      ),
     ).rejects.toThrow();
     expect(runs.activeCount()).toBe(0);
     // ...and the reservation was released, so a transient failure cannot leak capacity.
@@ -285,7 +302,7 @@ describe("buildAgentHttpInvoker", () => {
     // brief to every other local client.
     const db = freshDb();
     const runs = makeRuns();
-    const out = await buildAgentHttpInvoker({ db, runs })(
+    const out = await buildAgentHttpInvoker({ db, runs, router: undefined })(
       "expert",
       { topicOrFile: "auth.ts" },
       "chrome",
@@ -300,7 +317,11 @@ describe("buildAgentHttpInvoker", () => {
 });
 
 describe("buildAgentHttpInvoker — the synthesis runner (Task 6: production wiring)", () => {
-  test("HTTP and socket briefs remain identical under every synthesis mode", async () => {
+  // "Socket" here means "constructed the same way ipc/server/dispatchers.ts's tryDispatchAgentsRpc
+  // does" (briefViaSocket calls dispatchAgentsRpc in-process) — this proves buildAgentSynthesisRunner
+  // factory-level identity between the two production call sites, not equivalence over a real
+  // socket transport; neither path opens an actual IPC socket.
+  test("HTTP invocation and the socket-path construction remain identical under every synthesis mode (factory-level identity, not a real socket transport)", async () => {
     for (const mode of ["off", "local", "allow-remote"] as const) {
       const configDir = makeAgentsConfigDir(mode);
       const db = freshDb();
@@ -340,7 +361,11 @@ describe("buildAgentHttpInvoker — the synthesis runner (Task 6: production wir
   test("with no router supplied, the runner is skipped — same deterministic brief as before Task 6", async () => {
     const db = freshDb();
     const runs = makeRuns();
-    const out = await buildAgentHttpInvoker({ db, runs })("why", { ref: "x" }, "chrome");
+    const out = await buildAgentHttpInvoker({ db, runs, router: undefined })(
+      "why",
+      { ref: "x" },
+      "chrome",
+    );
     if (!out.ok) throw new Error("unreachable");
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline && runs.get(out.runId)?.status === "running") {

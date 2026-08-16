@@ -28,10 +28,12 @@ export type AgentHttpInvokerDeps = {
   readonly selfIdentity?: BoxKeypair;
   /**
    * Structurally satisfied by `LlmRegistry.llmRouter` in production (`platform/assemble.ts`'s
-   * `bootAgentsIntoHttpSidecar`). Absent → `buildAgentSynthesisRunner` skips the runner entirely,
-   * same as `[agents].synthesis = "off"`.
+   * `bootAgentsIntoHttpSidecar`, which always supplies it). Required — not optional — so a future
+   * HTTP boot path cannot omit it and go silently inert; pass `undefined` explicitly (e.g. in a
+   * test harness with no LLM registry) to fall back to `buildAgentSynthesisRunner` skipping the
+   * runner entirely, same as `[agents].synthesis = "off"`.
    */
-  readonly router?: SynthesisRouter;
+  readonly router: SynthesisRouter | undefined;
 };
 
 /**

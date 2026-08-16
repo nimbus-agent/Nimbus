@@ -535,7 +535,7 @@ describe("no-runner labelling", () => {
     const out = await synthesize(EXPERT_FIXTURE, {
       runner: fixedRunner({ ok: false, reason: "provider_error", detail: "provider down" }),
     });
-    expect(out.markdown).not.toContain("does not use an LLM");
+    expect(out.markdown).not.toContain("do not use an LLM");
     expect(out.markdown).not.toContain("regardless of");
     expect(out.markdown).toContain("a synthesis was attempted and discarded");
   });

@@ -25,6 +25,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `"allow-remote"`. `COVERAGE_CLASS_LABELS` in `cli/src/commands/prove.ts` gains a matching
   `model` label ("remotely-synthesized agent briefs") so the scope line never falls through to a
   bare, over-broad `model` key (`I29`).
+  **User-visible: this is a default-on behaviour change.** New `[agents] synthesis` config
+  (`"off" | "local" | "allow-remote"`, default `"local"`) — with Ollama (or llama.cpp) running, the
+  prose of all fourteen built-in briefs (catchup, conflicts, expert, ghost, huddle, impact,
+  janitor, preflight, why, glossary, decisions, ownership, premortem, negotiate) is now
+  model-rewritten by default instead of deterministically rendered; set `synthesis = "off"` to
+  return to the pre-this-work behaviour. A `requiredPhrases` honesty guard
+  (`agents/_lib/brief-contract.ts`) discards a synthesized rewrite that drops a section's
+  contractually-required disclaimer text — covering `negotiate`'s seven null-lane disclaimers
+  today, with every other brief kind returning an empty `requiredPhrases` set pending a follow-up
+  widening. Every brief's `SynthesisProvenance` (`.synthesis.attempted` / `.synthesis.used` /
+  `.synthesis.reason`) rides the `briefReady` notification and the HTTP
+  `GET /v1/agents/runs/{id}` response, so "why is this brief still deterministic?" is answerable
+  without a debug build. A rendered brief also carries a plain-language footer naming its own
+  provenance — deterministic-by-design (`"off"`, or no runner wired), deterministic-with-a-
+  discarded-attempt (e.g. on a machine where Ollama answers but the configured `[llm] local_model`
+  is not pulled), or synthesized — so the same fact is legible in the rendered markdown, not only
+  in the machine-readable field.
 - **2026-08-16 — seven user-facing commits were missing from the generated changelog, going
   back to April.** Recorded here because tags are immutable and the release notes cannot be
   corrected after the fact.

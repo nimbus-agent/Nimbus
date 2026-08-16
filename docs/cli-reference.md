@@ -271,6 +271,15 @@ Scripts with only read-only steps run without a TTY (safe for CI). Scripts with 
 
 Built-in agents that answer team-level questions from the local relationship graph and indexed metadata. Each agent is read-only, never triggers HITL, and streams a Markdown brief to stdout.
 
+**Brief synthesis.** Every built-in agent's Markdown brief can be rewritten by a local LLM (Ollama or llama.cpp) into more natural prose before it reaches you, instead of the deterministic template render. With Ollama running, this happens **by default** — set `synthesis = "off"` below to keep the deterministic-only behaviour. A `requiredPhrases` honesty guard discards any rewrite that drops a section's contractually-required disclaimer text (today this guards `nimbus negotiate`'s seven null-lane disclaimers only; every other brief kind is not yet covered). A rendered brief always carries a plain-language footer stating its own provenance — deterministic by design, deterministic after a discarded attempt (with the reason), or synthesized (with the model name and whether it was local or remote) — and the same fact rides the `briefReady` notification and `GET /v1/agents/runs/{id}` as a machine-readable `synthesis` field.
+
+**Configuration — `[agents]` in `nimbus.toml`:**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `synthesis` | `"local"` | `"off"` never attempts a rewrite — every brief is the deterministic render, regardless of `[llm]` settings. `"local"` attempts a rewrite only when the resolved provider is local (Ollama or llama.cpp); a resolved remote provider is refused outright, so nothing egresses by construction. `"allow-remote"` additionally permits a non-local provider, appending a `model`-class `egress_ledger` row (I29) before that call. An unrecognised value falls back to `"local"`, never widening to `"allow-remote"` on a typo. |
+| `synthesis_timeout_ms` | `20000` | How long a synthesis attempt is raced against before it is abandoned as `timeout` and the deterministic render is used instead. Deliberately generous: briefs are fire-and-forget, so this does not gate a caller — it exists so a hung provider still yields a brief. The underlying provider call is not cancelled at timeout (no `AbortSignal` support), only abandoned. |
+
 ### `nimbus expert`
 
 Answer "who on my team has the most context on this?" — returns a ranked list of people drawn from indexed PR authorship, review participation, Slack thread activity, and Linear/Jira ticket assignments. Each ranking comes with a confidence score and the underlying evidence.

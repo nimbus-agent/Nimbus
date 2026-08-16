@@ -101,9 +101,20 @@ export class LlmRouter {
    * reasoning capability floor are honored the same way they are for every other caller. Callers
    * that must not trust a bare `remote: true`/`false` re-derive it from `providerId` here, not
    * from `config.preferLocal`.
+   *
+   * `preferLocal` defaults to `config.preferLocal` — an omitted argument behaves exactly as
+   * before this parameter existed. A caller with its own local-preference precedent (mirroring
+   * `briefs/brief-llm-adapter.ts`'s `createBriefLlm(router, preferLocal)`) passes its own value
+   * instead of inheriting `[llm].prefer_local`: without this, `[llm] prefer_local = false` with a
+   * remote provider registered makes priority remote-first, so `resolveForSynthesis()` resolves
+   * the remote provider even with a healthy local one — and `[agents] synthesis = "local"` then
+   * refuses the whole attempt as `no_eligible_provider`, not because no local provider answered,
+   * but because a remote one was picked first.
    */
-  async resolveForSynthesis(): Promise<ResolvedSynthesisProvider | undefined> {
-    const provider = await this.selectProvider("reasoning");
+  async resolveForSynthesis(
+    preferLocal: boolean = this.config.preferLocal,
+  ): Promise<ResolvedSynthesisProvider | undefined> {
+    const provider = await this.selectProvider("reasoning", { preferLocal });
     if (provider === undefined) {
       return undefined;
     }
