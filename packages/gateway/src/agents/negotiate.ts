@@ -29,7 +29,7 @@ import {
   type GitRunner,
   resolveSelfPerson,
 } from "./_lib/self-person.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 const DEFAULT_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
 /**
@@ -43,7 +43,7 @@ export const MAX_SINCE_MS = 365 * 24 * 60 * 60 * 1000;
 
 export type NegotiateContext = {
   db: Database;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
   /**
@@ -1149,7 +1149,7 @@ export function emitNegotiateBrief(
     briefReadyMethod: "negotiate.briefReady",
     briefErrorMethod: "negotiate.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runNegotiate(input, ctx),
   });
 }

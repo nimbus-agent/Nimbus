@@ -532,20 +532,24 @@ describe("runImpact", () => {
     expect(serviceFindings[0]?.pathSummary).toContain("in_repo");
   });
 
-  test("emitImpactBrief passes through the llm option to emitBriefWithSynthesis", async () => {
-    // Provide a llm stub — the ctx.llm branch in emitImpactBrief spreads it into opts.
+  test("emitImpactBrief passes through the runner option to emitBriefWithSynthesis", async () => {
+    // Provide a runner stub — the ctx.runner branch in emitImpactBrief spreads it into opts.
     const db = freshDb();
     const received: Array<{ method: string; params: unknown }> = [];
-    const llmStub = {
-      generateMarkdown: async (prompt: string): Promise<string | null> =>
-        `## Impact: stub\n${prompt.slice(0, 10)}`,
+    const runnerStub = {
+      run: async (prompt: string) => ({
+        ok: true as const,
+        markdown: `## Impact: stub\n${prompt.slice(0, 10)}`,
+        model: "test-model",
+        remote: false,
+      }),
     };
     const handle = await emitImpactBrief(
       { fileOrPrUrl: "src/stub.ts" },
       {
         db,
         sessionId: "t-llm",
-        llm: llmStub,
+        runner: runnerStub,
         notify: (method, params) => {
           received.push({ method, params });
         },

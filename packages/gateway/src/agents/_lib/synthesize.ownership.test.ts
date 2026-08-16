@@ -38,11 +38,11 @@ const BRIEF: OwnershipBrief = {
 describe("ownership brief synthesis", () => {
   test("renders through renderOwnership, never renderHuddle", async () => {
     const out = await synthesize(BRIEF);
-    expect(out).toContain("Ownership");
-    expect(out).toContain("src/a.ts");
-    expect(out).toContain("Ann");
+    expect(out.markdown).toContain("Ownership");
+    expect(out.markdown).toContain("src/a.ts");
+    expect(out.markdown).toContain("Ann");
     // The fall-through trap: an unhandled kind silently renders as a huddle.
-    expect(out).not.toContain("Huddle");
+    expect(out.markdown).not.toContain("Huddle");
   });
 
   test("renderOwnership states the floor separately from the cap", () => {

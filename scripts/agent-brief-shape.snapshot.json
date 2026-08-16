@@ -15,7 +15,9 @@
     ".findings.query.sinceMs:number",
     ".findings.sections[]:empty",
     ".findings.selfPersonId:null",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ],
   "conflicts": [
     ".brief:string",
@@ -28,7 +30,9 @@
     ".findings.latencyMs:number",
     ".findings.query.file:string",
     ".findings.startEntityId:null",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ],
   "expert": [
     ".brief:string",
@@ -41,7 +45,9 @@
     ".findings.latencyMs:number",
     ".findings.query.topicOrFile:string",
     ".findings.ranked[]:empty",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ],
   "ghost": [
     ".brief:string",
@@ -54,7 +60,9 @@
     ".findings.latencyMs:number",
     ".findings.query.file:string",
     ".findings.startEntityId:null",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ],
   "huddle": [
     ".brief:string",
@@ -66,7 +74,9 @@
     ".findings.kind:string",
     ".findings.latencyMs:number",
     ".findings.query.sinceMs:number",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ],
   "impact": [
     ".brief:string",
@@ -80,7 +90,9 @@
     ".findings.latencyMs:number",
     ".findings.query.fileOrPrUrl:string",
     ".findings.startEntityId:null",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ],
   "janitor": [
     ".brief:string",
@@ -97,7 +109,9 @@
     ".findings.proposalSuppressed:boolean",
     ".findings.query.idleDays:number",
     ".findings.query.resourceRef:string",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ],
   "preflight": [
     ".brief:string",
@@ -112,7 +126,9 @@
     ".findings.latencyMs:number",
     ".findings.query.namespace:string",
     ".findings.query.ref:string",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ],
   "why": [
     ".brief:string",
@@ -127,6 +143,8 @@
     ".findings.query.line:number",
     ".findings.query.ref:string",
     ".findings.subject:null",
-    ".sessionId:string"
+    ".sessionId:string",
+    ".synthesis.attempted:boolean",
+    ".synthesis.reason:string"
   ]
 }

@@ -12,7 +12,7 @@ import type {
   HuddleBrief,
   HuddleContribution,
 } from "./_lib/findings.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 const HUDDLE_TYPES = ["pr", "issue", "incident"] as const;
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -25,7 +25,7 @@ export type HuddleContext = {
   selfIdentity: BoxKeypair;
   store: KnownNamespaceStore;
   sendOverWire?: typeof sendFederatedOverWire;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
   /** Injectable clock for deterministic window tests; production omits it (defaults Date.now). */
@@ -132,7 +132,7 @@ export function emitHuddleBrief(
     briefReadyMethod: "huddle.briefReady",
     briefErrorMethod: "huddle.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runHuddle(input, ctx),
   });
 }

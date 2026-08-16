@@ -846,27 +846,32 @@ describe("emitExpertBrief", () => {
     expect(notifications.some((n) => n.method === "expert.briefReady")).toBe(true);
   });
 
-  test("uses llm synthesizer when ctx.llm is provided (non-undefined llm branch)", async () => {
+  test("uses configured runner when ctx.runner is provided (non-undefined runner branch)", async () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const notifications: Array<{ method: string; params: unknown }> = [];
-    let llmCalled = false;
+    let runnerCalled = false;
     const ctx = {
       db,
       notify: (method: string, params: unknown) => {
         notifications.push({ method, params });
       },
       sessionId: "emit-s2",
-      llm: {
-        generateMarkdown: async (_prompt: string): Promise<string | null> => {
-          llmCalled = true;
-          return "# Expert Summary\nLLM output";
+      runner: {
+        run: async (_prompt: string) => {
+          runnerCalled = true;
+          return {
+            ok: true as const,
+            markdown: "# Expert Summary\nLLM output",
+            model: "test-model",
+            remote: false,
+          };
         },
       },
     };
     await emitExpertBrief({ topicOrFile: "anything" }, ctx);
     await new Promise<void>((resolve) => setTimeout(resolve, 300));
-    expect(llmCalled).toBe(true);
+    expect(runnerCalled).toBe(true);
     expect(notifications.some((n) => n.method === "expert.briefReady")).toBe(true);
   });
 

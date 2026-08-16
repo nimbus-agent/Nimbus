@@ -9,7 +9,7 @@ import {
   detectMissingEntityType,
 } from "./_lib/gap-notes.ts";
 import { reverseDependsOn } from "./_lib/graph-traversals.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 export type ImpactInput = {
   fileOrPrUrl: string;
@@ -19,7 +19,7 @@ export type ImpactInput = {
 
 export type ImpactContext = {
   db: Database;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
 };
@@ -122,7 +122,7 @@ export function emitImpactBrief(
     briefReadyMethod: "impact.briefReady",
     briefErrorMethod: "impact.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runImpact(input, ctx),
   });
 }

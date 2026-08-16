@@ -22,13 +22,13 @@ import type {
   GlossaryMatchedVia,
 } from "./_lib/glossary-types.ts";
 import { decode, subAgent } from "./_lib/sub-agent.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 export type GlossaryContext = {
   db: Database;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
 };
 
 const DEFAULT_LIMIT = 50;
@@ -278,7 +278,7 @@ export function emitGlossaryBrief(
     briefReadyMethod: "glossary.briefReady",
     briefErrorMethod: "glossary.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runGlossary(input, ctx),
   });
 }

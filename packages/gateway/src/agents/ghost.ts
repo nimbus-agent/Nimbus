@@ -13,7 +13,7 @@ import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import { buildFanoutDeps, pushFederationReachGaps } from "./_lib/fanout-deps.ts";
 import type { GapNote, GhostBrief, GhostFinding } from "./_lib/findings.ts";
 import { resolveMatchToken, symbolExistsLocally } from "./_lib/match-token.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 const GHOST_TYPES = ["pr", "issue", "incident", "commit"] as const;
 
@@ -25,7 +25,7 @@ export type GhostContext = {
   selfIdentity: BoxKeypair;
   store: KnownNamespaceStore;
   sendOverWire?: typeof sendFederatedOverWire;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
 };
@@ -122,7 +122,7 @@ export function emitGhostBrief(
     briefReadyMethod: "ghost.briefReady",
     briefErrorMethod: "ghost.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runGhost(input, ctx),
   });
 }

@@ -22,7 +22,7 @@ import type {
   OwnershipTargetView,
 } from "./_lib/ownership-types.ts";
 import { decode, subAgent } from "./_lib/sub-agent.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 export type OwnershipContext = {
   db: Database;
@@ -30,7 +30,7 @@ export type OwnershipContext = {
   roots: readonly string[];
   notify: (method: string, params: unknown) => void;
   sessionId: string;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
 };
 
 function toView(
@@ -296,7 +296,7 @@ export function emitOwnershipBrief(
     briefReadyMethod: "ownership.briefReady",
     briefErrorMethod: "ownership.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runOwnership(input, ctx),
   });
 }

@@ -394,11 +394,11 @@ describe("runGhost", () => {
     db.close();
   });
 
-  it("emitGhostBrief threads an injected LLM synthesizer into the brief pipeline", async () => {
+  it("emitGhostBrief threads an injected synthesis runner into the brief pipeline", async () => {
     const db = freshDb();
     const index = new LocalIndex(db);
     const events: Array<{ method: string; params: unknown }> = [];
-    let llmCalls = 0;
+    let runnerCalls = 0;
     const res = await emitGhostBrief(
       { file: "x.ts", namespaces: [] },
       {
@@ -409,10 +409,15 @@ describe("runGhost", () => {
         store: new KnownNamespaceStore(db),
         sessionId: "s-llm",
         notify: (method, params) => events.push({ method, params }),
-        llm: {
-          generateMarkdown: async () => {
-            llmCalls += 1;
-            return "synthesized";
+        runner: {
+          run: async () => {
+            runnerCalls += 1;
+            return {
+              ok: true as const,
+              markdown: "synthesized",
+              model: "test-model",
+              remote: false,
+            };
           },
         },
       },
@@ -420,9 +425,9 @@ describe("runGhost", () => {
     expect(res.sessionId).toBe("s-llm");
     await waitForNotify(() => events.some((e) => e.method === "ghost.briefReady"));
     expect(events.some((e) => e.method === "ghost.briefReady")).toBe(true);
-    // synthesize() calls opts.llm.generateMarkdown whenever opts.llm is defined (regardless of
-    // findings count) — verify the LLM was actually invoked via the injected synthesizer.
-    expect(llmCalls).toBeGreaterThanOrEqual(1);
+    // synthesize() calls opts.runner.run whenever opts.runner is defined (regardless of
+    // findings count) — verify the runner was actually invoked via the injected synthesizer.
+    expect(runnerCalls).toBeGreaterThanOrEqual(1);
     db.close();
   });
 

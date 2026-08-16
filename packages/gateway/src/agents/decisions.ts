@@ -10,13 +10,13 @@ import type { DecisionsBrief, DecisionsEntry, DecisionsInput } from "./_lib/deci
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import { decode, subAgent } from "./_lib/sub-agent.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 export type DecisionsContext = {
   db: Database;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   /**
    * `[decisions].min_confidence` from `nimbus.toml`, resolved by the caller
    * (`ipc/agents-rpc.ts`) so this module keeps no config-file dependency. Used
@@ -266,7 +266,7 @@ export function emitDecisionsBrief(
     briefReadyMethod: "decisions.briefReady",
     briefErrorMethod: "decisions.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runDecisions(input, ctx),
   });
 }

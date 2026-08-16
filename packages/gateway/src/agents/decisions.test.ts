@@ -11,7 +11,7 @@ import {
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 import { emitDecisionsBrief, runDecisions } from "./decisions.ts";
 
 let db: Database;
@@ -73,7 +73,9 @@ const PASS_STATE = {
 };
 
 /** Drives `emitDecisionsBrief` to its first notification and returns it. */
-async function collectBrief(llm?: SynthesizerLlm): Promise<{ method: string; params: unknown }> {
+async function collectBrief(
+  runner?: SynthesisRunner,
+): Promise<{ method: string; params: unknown }> {
   const seen: Array<{ method: string; params: unknown }> = [];
   let settle: () => void = () => undefined;
   const emitted = new Promise<void>((res) => {
@@ -88,7 +90,7 @@ async function collectBrief(llm?: SynthesizerLlm): Promise<{ method: string; par
         seen.push({ method, params });
         settle();
       },
-      ...(llm === undefined ? {} : { llm }),
+      ...(runner === undefined ? {} : { runner }),
     },
   );
   await emitted;
@@ -448,9 +450,14 @@ test("emitDecisionsBrief renders deterministically alone and defers to a configu
   expect((plain.params as { brief: string }).brief).toContain("Rendered deterministically");
 
   const synth = await collectBrief({
-    generateMarkdown: async () => "# Synthesized decisions",
+    run: async () => ({
+      ok: true,
+      markdown: "# Synthesized decisions",
+      model: "test-model",
+      remote: false,
+    }),
   });
-  expect((synth.params as { brief: string }).brief).toBe("# Synthesized decisions");
+  expect((synth.params as { brief: string }).brief).toContain("# Synthesized decisions");
   // The typed brief travels alongside the prose, so a client never has to
   // re-parse the Markdown.
   expect((synth.params as { findings: { kind: string } }).findings.kind).toBe("decisions");

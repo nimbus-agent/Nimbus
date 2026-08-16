@@ -1323,12 +1323,17 @@ describe("runPremortem", () => {
     });
   });
 
-  test("emitPremortemBrief routes through the configured LLM for markdown synthesis", async () => {
+  test("emitPremortemBrief routes through the configured runner for markdown synthesis", async () => {
     const db = makeDb();
     seedChildlessEpic(db, "PROJ-780", NOW - 2 * DAY_MS);
     const notifications: Array<{ method: string; params: unknown }> = [];
-    const fakeLlm = {
-      generateMarkdown: async (): Promise<string | null> => "# LLM-authored brief",
+    const fakeRunner = {
+      run: async () => ({
+        ok: true as const,
+        markdown: "# LLM-authored brief",
+        model: "test-model",
+        remote: false,
+      }),
     };
 
     await emitPremortemBrief(
@@ -1337,14 +1342,14 @@ describe("runPremortem", () => {
         db,
         notify: (method, params) => notifications.push({ method, params }),
         sessionId: "s3",
-        llm: fakeLlm,
+        runner: fakeRunner,
       },
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(notifications).toHaveLength(1);
     const params = notifications[0]?.params as { brief: string };
-    expect(params.brief).toBe("# LLM-authored brief");
+    expect(params.brief).toContain("# LLM-authored brief");
   });
 
   test("emitPremortemBrief notifies premortem.briefReady with markdown and typed findings", async () => {

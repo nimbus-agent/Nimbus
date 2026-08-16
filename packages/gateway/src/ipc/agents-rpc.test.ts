@@ -3,7 +3,7 @@ import { describe, expect, it, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
+import type { SynthesisRunner } from "../agents/_lib/synthesis-llm.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import {
   AgentsRpcError,
@@ -12,7 +12,7 @@ import {
   resolveHttpAgentMethod,
 } from "./agents-rpc.ts";
 
-function makeCtx(db: Database, extras?: { llm?: SynthesizerLlm; configDir?: string }) {
+function makeCtx(db: Database, extras?: { runner?: SynthesisRunner; configDir?: string }) {
   return {
     db,
     notify: mock(() => {}),
@@ -20,10 +20,10 @@ function makeCtx(db: Database, extras?: { llm?: SynthesizerLlm; configDir?: stri
   };
 }
 
-/** Returns a fake SynthesizerLlm that immediately resolves to null (no synthesis). */
-function fakeLlm(): SynthesizerLlm {
+/** Returns a fake SynthesisRunner that immediately reports no eligible provider. */
+function fakeRunner(): SynthesisRunner {
   return {
-    generateMarkdown: (_prompt: string) => Promise.resolve(null),
+    run: (_prompt: string) => Promise.resolve({ ok: false, reason: "no_eligible_provider" }),
   };
 }
 
@@ -438,24 +438,24 @@ describe("dispatchAgentsRpc — agents.catchup sinceMs+service validation", () =
   });
 });
 
-describe("dispatchAgentsRpc — llm-present branches", () => {
-  test("agents.expert with llm set takes the llm-present context arm", async () => {
-    const ctx = makeCtx(freshDb(), { llm: fakeLlm() });
+describe("dispatchAgentsRpc — runner-present branches", () => {
+  test("agents.expert with runner set takes the runner-present context arm", async () => {
+    const ctx = makeCtx(freshDb(), { runner: fakeRunner() });
     const out = await dispatchAgentsRpc("agents.expert", { topicOrFile: "src/x.ts" }, ctx);
     expect(out.kind).toBe("hit");
-    // briefReady is emitted; the llm-present arm was taken (no error = correct branch)
+    // briefReady is emitted; the runner-present arm was taken (no error = correct branch)
     expect(await waitForNotify(ctx.notify, "expert.briefReady")).toBe(true);
   });
 
-  test("agents.impact with llm set takes the llm-present context arm", async () => {
-    const ctx = makeCtx(freshDb(), { llm: fakeLlm() });
+  test("agents.impact with runner set takes the runner-present context arm", async () => {
+    const ctx = makeCtx(freshDb(), { runner: fakeRunner() });
     const out = await dispatchAgentsRpc("agents.impact", { fileOrPrUrl: "src/x.ts" }, ctx);
     expect(out.kind).toBe("hit");
     expect(await waitForNotify(ctx.notify, "impact.briefReady")).toBe(true);
   });
 
-  test("agents.catchup with llm set takes the llm-present context arm", async () => {
-    const ctx = makeCtx(freshDb(), { llm: fakeLlm() });
+  test("agents.catchup with runner set takes the runner-present context arm", async () => {
+    const ctx = makeCtx(freshDb(), { runner: fakeRunner() });
     const out = await dispatchAgentsRpc("agents.catchup", {}, ctx);
     expect(out.kind).toBe("hit");
     const deadline = Date.now() + 5_000;

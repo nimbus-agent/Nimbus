@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { emitBriefWithSynthesis } from "./emit-brief.ts";
 import type { ExpertBrief } from "./findings.ts";
+import type { SynthesisAttempt, SynthesisRunner } from "./synthesis-llm.ts";
 
 function fakeBrief(): ExpertBrief {
   return {
@@ -40,6 +41,22 @@ describe("emitBriefWithSynthesis", () => {
     expect(p.brief.length).toBeGreaterThan(0);
   });
 
+  test("briefReady carries the synthesis provenance", async () => {
+    const notified: Array<{ method: string; params: unknown }> = [];
+    await emitBriefWithSynthesis({
+      sessionId: "sess-prov",
+      briefReadyMethod: "expert.briefReady",
+      briefErrorMethod: "expert.briefError",
+      notify: (method, params) => notified.push({ method, params }),
+      buildBrief: async () => fakeBrief(),
+    });
+    await waitMacrotask();
+    const ready = notified.find((n) => n.method === "expert.briefReady");
+    const p = ready?.params as { synthesis?: unknown };
+    expect(p.synthesis).toBeDefined();
+    expect(p.synthesis).toEqual({ attempted: false, reason: "disabled" });
+  });
+
   test("emits briefErrorMethod when buildBrief throws", async () => {
     const notified: Array<{ method: string; params: unknown }> = [];
     await emitBriefWithSynthesis({
@@ -60,22 +77,35 @@ describe("emitBriefWithSynthesis", () => {
     expect(notified.some((n) => n.method === "expert.briefReady")).toBe(false);
   });
 
-  test("passes llm option through to synthesize", async () => {
-    const generateMarkdown = mock(async (_prompt: string) => "## llm-rendered");
+  test("passes runner option through to synthesize", async () => {
+    const attempt: SynthesisAttempt = {
+      ok: true,
+      markdown: "## llm-rendered",
+      model: "test-model",
+      remote: false,
+    };
+    const run = mock(async (_prompt: string) => attempt);
+    const runner: SynthesisRunner = { run };
     const notified: Array<{ method: string; params: unknown }> = [];
     await emitBriefWithSynthesis({
       sessionId: "sess-llm",
       briefReadyMethod: "impact.briefReady",
       briefErrorMethod: "impact.briefError",
       notify: (method, params) => notified.push({ method, params }),
-      llm: { generateMarkdown },
+      runner,
       buildBrief: async () => fakeBrief(),
     });
     await waitMacrotask();
-    expect(generateMarkdown).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
     const ready = notified.find((n) => n.method === "impact.briefReady");
-    const p = ready?.params as { brief: string };
-    expect(p.brief).toBe("## llm-rendered");
+    const p = ready?.params as { brief: string; synthesis: unknown };
+    expect(p.brief).toContain("## llm-rendered");
+    expect(p.synthesis).toEqual({
+      attempted: true,
+      used: true,
+      model: "test-model",
+      remote: false,
+    });
   });
 
   test("emits briefErrorMethod with String(err) when buildBrief throws a non-Error value", async () => {

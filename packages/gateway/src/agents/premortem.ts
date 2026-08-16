@@ -15,13 +15,13 @@ import {
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import type { PremortemBrief, PremortemEpicView, PremortemInput } from "./_lib/premortem-types.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 export type PremortemContext = {
   db: Database;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   /**
    * Resolved by the caller from `[metrics.dora.<id>]` / `[ci.service.<id>]`
    * (`buildServiceIdentityResolver(loadServiceConfigsOrDegrade(...))`,
@@ -837,7 +837,7 @@ export function emitPremortemBrief(
     briefReadyMethod: "premortem.briefReady",
     briefErrorMethod: "premortem.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runPremortem(input, ctx),
   });
 }

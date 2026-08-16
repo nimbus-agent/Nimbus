@@ -3,7 +3,7 @@ import type { DecisionsInput } from "../agents/_lib/decisions-types.ts";
 import type { GlossaryInput } from "../agents/_lib/glossary-types.ts";
 import type { OwnershipInput } from "../agents/_lib/ownership-types.ts";
 import type { PremortemInput } from "../agents/_lib/premortem-types.ts";
-import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
+import type { SynthesisRunner } from "../agents/_lib/synthesis-llm.ts";
 import type { WhyInput, WhyPeek } from "../agents/_lib/why-types.ts";
 import { emitCatchupBrief } from "../agents/catchup.ts";
 import { emitConflictsBrief } from "../agents/conflicts.ts";
@@ -54,7 +54,7 @@ export class AgentsRpcError extends Error {
 
 export type AgentsRpcContext = {
   db: Database;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   notify: (method: string, params: unknown) => void;
   configDir?: string;
   index?: LocalIndex;
@@ -291,7 +291,7 @@ function federatedAgentBase(ctx: AgentsRpcContext, sessionId: string) {
   const base = { db: ctx.db, index, selfIdentity, store, notify: ctx.notify, sessionId };
   return {
     ...base,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     // sendOverWire is a test-only DI seam; when omitted, peer-fanout falls back to the real
     // sendFederatedOverWire, so production agents fan out over the wire with no extra wiring.
     ...(ctx.sendOverWire === undefined ? {} : { sendOverWire: ctx.sendOverWire }),
@@ -302,9 +302,9 @@ async function handleExpert(params: unknown, ctx: AgentsRpcContext): Promise<unk
   const input = requireExpertParams(params);
   const sessionId = newSessionId("expert");
   const expertCtx =
-    ctx.llm === undefined
+    ctx.runner === undefined
       ? { db: ctx.db, notify: ctx.notify, sessionId }
-      : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
+      : { db: ctx.db, runner: ctx.runner, notify: ctx.notify, sessionId };
   return await emitExpertBrief(input, expertCtx);
 }
 
@@ -312,9 +312,9 @@ async function handleImpact(params: unknown, ctx: AgentsRpcContext): Promise<unk
   const input = requireImpactParams(params);
   const sessionId = newSessionId("impact");
   const impactCtx =
-    ctx.llm === undefined
+    ctx.runner === undefined
       ? { db: ctx.db, notify: ctx.notify, sessionId }
-      : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
+      : { db: ctx.db, runner: ctx.runner, notify: ctx.notify, sessionId };
   return await emitImpactBrief(input, impactCtx);
 }
 
@@ -327,9 +327,9 @@ async function handleCatchup(params: unknown, ctx: AgentsRpcContext): Promise<un
       ? input
       : { ...input, mePersonIdOverride: userToml.mePersonId };
   const catchupCtx =
-    ctx.llm === undefined
+    ctx.runner === undefined
       ? { db: ctx.db, notify: ctx.notify, sessionId }
-      : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
+      : { db: ctx.db, runner: ctx.runner, notify: ctx.notify, sessionId };
   return await emitCatchupBrief(catchupInput, catchupCtx);
 }
 
@@ -446,7 +446,7 @@ async function handleWhy(params: unknown, ctx: AgentsRpcContext): Promise<{ sess
     roots: whyRoots(ctx),
     notify: ctx.notify,
     sessionId,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
   });
 }
 
@@ -487,7 +487,7 @@ async function handleGlossary(
     db: ctx.db,
     notify: ctx.notify,
     sessionId: newSessionId("glossary"),
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
   });
 }
 
@@ -556,7 +556,7 @@ async function handleDecisions(
     db: ctx.db,
     notify: ctx.notify,
     sessionId: newSessionId("decisions"),
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     ...(defaultMinConfidence === undefined ? {} : { defaultMinConfidence }),
   });
 }
@@ -636,7 +636,7 @@ async function handleNegotiate(
     notify: ctx.notify,
     sessionId: newSessionId("negotiate"),
     personalSources: negotiatePersonalSources(ctx),
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
   });
 }
 
@@ -696,7 +696,7 @@ async function handleOwnership(
     roots: ctx.configDir === undefined ? [] : ownershipRoots(ctx.configDir),
     notify: ctx.notify,
     sessionId: newSessionId("ownership"),
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
   });
 }
 
@@ -839,7 +839,7 @@ async function handlePremortem(
     db: ctx.db,
     notify: ctx.notify,
     sessionId: newSessionId("premortem"),
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     ...(resolveServiceId === undefined ? {} : { resolveServiceId }),
   });
 }

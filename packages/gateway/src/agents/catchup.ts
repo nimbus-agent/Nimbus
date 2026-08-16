@@ -5,7 +5,7 @@ import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { CatchupBrief, CatchupItem, CatchupSection, GapNote } from "./_lib/findings.ts";
 import { detectEmptyIndex } from "./_lib/gap-notes.ts";
 import { type GitRunner, resolveSelfPerson } from "./_lib/self-person.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 const DEFAULT_SINCE_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -21,7 +21,7 @@ export type CatchupInput = {
 
 export type CatchupContext = {
   db: Database;
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
 };
@@ -179,7 +179,7 @@ export function emitCatchupBrief(
     briefReadyMethod: "catchup.briefReady",
     briefErrorMethod: "catchup.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runCatchup(input, ctx),
   });
 }

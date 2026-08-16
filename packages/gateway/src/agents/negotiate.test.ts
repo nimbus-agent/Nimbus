@@ -334,14 +334,21 @@ test("emitNegotiateBrief routes through a configured LLM", async () => {
       db,
       sessionId: "s2",
       personalSources: [],
-      llm: { generateMarkdown: async () => "# LLM-authored negotiate brief" },
+      runner: {
+        run: async () => ({
+          ok: true,
+          markdown: "# LLM-authored negotiate brief",
+          model: "test-model",
+          remote: false,
+        }),
+      },
       notify: (method, params) => {
         if (method === "negotiate.briefReady") captured = params as { brief: string };
       },
     },
   );
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(captured?.brief).toBe("# LLM-authored negotiate brief");
+  expect(captured?.brief).toContain("# LLM-authored negotiate brief");
   db.close();
 });
 

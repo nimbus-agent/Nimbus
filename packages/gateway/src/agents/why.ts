@@ -14,14 +14,14 @@ import {
   detectMissingRelationToEntityType,
 } from "./_lib/gap-notes.ts";
 import { reverseDependsOn } from "./_lib/graph-traversals.ts";
-import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 import { parseRef, resolveWhySubject } from "./_lib/why-subject.ts";
 import type { WhyBrief, WhyFinding, WhyInput, WhySubject } from "./_lib/why-types.ts";
 
 export type WhyContext = {
   db: Database;
   roots: readonly NimbusFilesystemRootToml[];
-  llm?: SynthesizerLlm;
+  runner?: SynthesisRunner;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
   spawn?: BlameSpawn;
@@ -135,7 +135,7 @@ export function emitWhyBrief(input: WhyInput, ctx: WhyContext): Promise<{ sessio
     briefReadyMethod: "why.briefReady",
     briefErrorMethod: "why.briefError",
     notify: ctx.notify,
-    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     buildBrief: () => runWhy(input, ctx),
   });
 }
