@@ -19,6 +19,19 @@ export type ProviderMeta = {
   contextWindow?: number;
 };
 
+/**
+ * The provider `resolveForSynthesis()` selected for an `[agents]` brief synthesis attempt, plus
+ * whether it runs on this machine. `isLocal` is derived from `LOCAL_PROVIDER_IDS` — never from
+ * `prefersLocal()`/`config.preferLocal`, which express only a preference (see `isLocalProviderKind`
+ * doc comment) — so a caller enforcing `[agents].synthesis = "local"` can refuse a resolved
+ * remote provider rather than trust config intent.
+ */
+export type ResolvedSynthesisProvider = {
+  readonly providerId: LlmProviderKind;
+  readonly modelName: string;
+  readonly isLocal: boolean;
+};
+
 export type LlmTaskStatus = {
   providerId: LlmProviderKind;
   modelName: string;
@@ -85,6 +98,40 @@ export class LlmRouter {
   // returns the first provider whose availability check resolves true. The check is injected so
   // callers can share a memoized probe across many tasks (see getStatus). `preferLocal`, when
   // provided, overrides `config.preferLocal` for this call only.
+  /**
+   * Resolve the provider a `[agents]` brief synthesis attempt would use, right now, for the
+   * `"reasoning"` task — plus an `isLocal` flag derived from `LOCAL_PROVIDER_IDS` rather than
+   * duplicating the priority walk at the call site. Reuses `selectProvider`, so air-gap and the
+   * reasoning capability floor are honored the same way they are for every other caller. Callers
+   * that must not trust a bare `remote: true`/`false` re-derive it from `providerId` here, not
+   * from `config.preferLocal`.
+   */
+  async resolveForSynthesis(): Promise<ResolvedSynthesisProvider | undefined> {
+    const provider = await this.selectProvider("reasoning");
+    if (provider === undefined) {
+      return undefined;
+    }
+    return {
+      providerId: provider.providerId,
+      modelName: this.modelNameFor(provider.providerId),
+      isLocal: isLocalProviderKind(provider.providerId),
+    };
+  }
+
+  /**
+   * Generates markdown from the EXACT provider `resolveForSynthesis()` resolved — never
+   * re-selects — so the provider actually invoked always matches the one a caller classified as
+   * local/remote and (if applicable) ledgered.
+   */
+  async generateMarkdown(prompt: string, resolved: ResolvedSynthesisProvider): Promise<string> {
+    const provider = this.providers.get(resolved.providerId);
+    if (provider === undefined) {
+      throw new Error(`LLM provider "${resolved.providerId}" is no longer registered`);
+    }
+    const result = await provider.generate({ task: "reasoning", prompt });
+    return result.text;
+  }
+
   private async firstAvailable(
     task: LlmTaskType,
     isAvailable: (provider: LlmProvider) => Promise<boolean>,
