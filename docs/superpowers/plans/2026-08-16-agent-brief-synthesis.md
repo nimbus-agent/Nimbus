@@ -473,7 +473,13 @@ git commit -m "feat(agents): add normalized, section-scoped brief contract guard
 - Consumes: `appendEgressEntry` (`egress/egress-ledger.ts`), `redactEgressSummary`
   (`egress/egress-record.ts`) — both already imported this way by `sync-egress.ts`.
 - Produces: `recordSynthesisEgress(db: Database, args: { readonly briefKind: string;
-  readonly model: string; readonly now: number }): void`
+  readonly model: string; readonly remote: boolean; readonly now: number }): void`
+
+> `remote` is REQUIRED and the local/remote rule is enforced **inside** the appender — a
+> `remote: false` call appends nothing. This follows `sync-egress.ts:51`, which puts its
+> `LOCAL_ONLY_SYNC_SERVICES` check inside the appender "so BOTH appenders enforce the rule
+> identically instead of each needing its own copy." Task 4 must pass a value **derived from the
+> resolved provider**, never a literal — see Task 4's ordering block.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -707,17 +713,27 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Order inside `generateMarkdown` is load-bearing and must be exactly:
+Order inside `run(prompt)` is load-bearing and must be exactly:
 
 1. Resolve the provider (**per call — never cache**; the router already probes availability every
-   `selectProvider`, `llm/router.ts:103`).
-2. No provider → return `null`.
-3. Provider is non-local **and** mode is `"local"` → return `null`. Refusal, not an error.
-4. Provider is non-local and mode is `"any"` → `recordSynthesisEgress(...)`. **If it throws, return
-   `null` without generating** — fail-closed.
-5. Race `generateMarkdown` against `synthesisTimeoutMs`; on timeout return `null`.
+   `selectProvider`, `llm/router.ts:103`). Derive `remote` from the resolved provider here.
+2. No provider → `{ ok: false, reason: "no_eligible_provider" }`.
+3. `remote === true` **and** mode is `"local"` → `{ ok: false, reason: "no_eligible_provider" }`.
+   A refusal, not an error: this is the normal path on a machine with no local model.
+4. Mode is `"any"` → **call `recordSynthesisEgress` UNCONDITIONALLY**, passing the derived
+   `remote`. If it throws → `{ ok: false, reason: "egress_append_failed", detail }` **without
+   generating** — fail-closed.
+5. Race the provider call against `synthesisTimeoutMs`; on timeout →
+   `{ ok: false, reason: "timeout" }`.
+6. Otherwise → `{ ok: true, markdown, model, remote }`.
 
-Returning `null` is already the "no synthesis" signal `synthesize.ts:168` understands.
+> **Step 4 says UNCONDITIONALLY for a reason — do not "optimise" it into the non-local branch.**
+> `recordSynthesisEgress` enforces the local/remote rule internally and appends nothing when
+> `remote` is `false` (Task 3). Calling it only inside a non-local branch, or passing a literal
+> `remote: true`, makes that internal guard **inert** and silently returns enforcement to the call
+> site — which is exactly the weakness Task 3's review closed. Pass the derived value and let the
+> appender decide. A test must pin this: under `"any"` with a LOCAL provider resolved, the runner
+> still succeeds and the ledger still gains zero rows.
 
 **On the append and database locking:** use the plain `recordSynthesisEgress` call. Do **not** add a
 bespoke retry or wrap it in a transaction — it must behave exactly as the three existing appenders
@@ -957,6 +973,19 @@ grep -rn "do not use an LLM\|does not use an LLM\|no LLM" --include=*.ts --inclu
 Each hit is either still true (the deterministic path) or now false (an unconditional claim). Fix
 the false ones. `synthesize.ts`'s `DETERMINISTIC_FOOTER` text stays — it now describes one path
 rather than all of them, which is what Task 5 made true.
+
+Known stale sites already identified by the Task 3 reviews — verify each was corrected, and treat
+this list as a floor rather than the whole set:
+
+- `docs/SECURITY-INVARIANTS.md` — the I29 section, **the whole section**, not just the lines named.
+  Two separate review rounds each found one stale enumeration in it.
+- `docs/architecture.md:1663` · `packages/gateway/src/egress/egress-source-type.ts:19`
+  ("`sync`, `model`, `peer` arrive in later phases" — false for two of the three)
+- `.claude/commands/nimbus-egress.md:37` (three raises out of date)
+- `CLAUDE.md`'s I29 entry — enumerates `sync` in detail but never the full vector; incomplete
+  rather than contradictory, so match the precedent set for `sync` instead of rewriting it.
+- `docs/CHANGELOG.md` — needs an entry; the raise changes `nimbus prove`'s printed scope line,
+  which is user-visible.
 
 Sweep B — the egress **coverage-class** claim, which Sweep A cannot match because it shares no
 wording with it:
