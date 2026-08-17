@@ -17,7 +17,11 @@ import {
   renderPremortem,
   renderWhy,
 } from "./render.ts";
-import type { SynthesisAttempt, SynthesisRunner } from "./synthesis-llm.ts";
+import {
+  redactedErrorDetail,
+  type SynthesisAttempt,
+  type SynthesisRunner,
+} from "./synthesis-llm.ts";
 
 export type SynthesizeOpts = {
   runner?: SynthesisRunner;
@@ -194,7 +198,31 @@ export async function synthesize(
     deterministic,
   ].join("\n");
 
-  const attempt: SynthesisAttempt = await opts.runner.run(prompt);
+  // A REJECTING runner degrades to the deterministic brief, exactly like a runner that returns
+  // `ok: false`. Without this catch the rejection propagates out of `synthesize()` and
+  // `emitBriefWithSynthesis` emits `briefError` — the reader gets NO brief at all because an
+  // optional rewrite failed, inverting the rule that synthesis is best-effort and the
+  // deterministic render is the floor. The production runner does not catch every path:
+  // `buildSynthesisRunner` awaits `router.resolveForSynthesis(true)` outside its own try, so a
+  // provider-registry or network fault during RESOLUTION rejects here (generation failures
+  // already come back as the `provider_error` reason rather than a rejection). Classified as
+  // `provider_error` because that is what it is — the provider side failed, and it is not the
+  // `timeout` race. `redactedErrorDetail` — the SAME scrubber the runner's own failure branches
+  // use — keeps a raw error message out of `detail`, which travels to the reader on `briefReady`.
+  let attempt: SynthesisAttempt;
+  try {
+    attempt = await opts.runner.run(prompt);
+  } catch (err) {
+    return {
+      markdown: withDiscardedSynthesisFooter(deterministic, "provider_error"),
+      provenance: {
+        attempted: true,
+        used: false,
+        reason: "provider_error",
+        detail: redactedErrorDetail(err),
+      },
+    };
+  }
 
   if (!attempt.ok) {
     if (attempt.reason === "no_eligible_provider") {

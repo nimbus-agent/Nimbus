@@ -108,6 +108,49 @@ describe("synthesize(ExpertBrief)", () => {
     });
   });
 
+  // A REJECTING runner, as opposed to one that returns `ok: false`. The production runner does
+  // not catch every path — `buildSynthesisRunner` awaits `router.resolveForSynthesis(true)`
+  // outside its own try — so a provider-registry or network fault during RESOLUTION arrives here
+  // as a rejection. Before this was handled, the rejection escaped `synthesize()` and
+  // `emitBriefWithSynthesis` emitted `briefError`: the reader got NO brief because an OPTIONAL
+  // rewrite failed. Delete the try/catch around `opts.runner.run` and this test fails by throwing.
+  test("a REJECTING runner degrades to the deterministic render, it does not propagate", async () => {
+    const runner: SynthesisRunner = {
+      run: () => Promise.reject(new Error("provider registry unreachable")),
+    };
+    const out = await synthesize(EXPERT_FIXTURE, { runner });
+    expect(out.markdown).toContain("# Expert: src/x.ts");
+    expect(out.markdown).toContain("a synthesis was attempted and discarded");
+    expect(out.markdown).toContain("the provider returned an error");
+    expect(out.provenance).toEqual({
+      attempted: true,
+      used: false,
+      reason: "provider_error",
+      // Quoted because `redactedErrorDetail` routes through `redactAuditPayload`, which
+      // JSON-encodes its input. Pinned as-is rather than trimmed, so this stays byte-identical
+      // to what the runner's OWN failure branches put in `detail` — the point of sharing the
+      // scrubber is that both paths render a failure the same way.
+      detail: '"provider registry unreachable"',
+    });
+  });
+
+  test("a rejecting runner's detail is REDACTED, not passed through raw", async () => {
+    // `detail` travels to the reader on `briefReady`, so a provider error echoing a credential
+    // must not reach it. Shares `redactedErrorDetail` with the runner's own failure branches
+    // rather than re-scrubbing here, so the two can never drift apart.
+    const runner: SynthesisRunner = {
+      run: () => Promise.reject(new Error("401 from provider, key sk-abcdefghijklmnopqrstuvwx")),
+    };
+    const out = await synthesize(EXPERT_FIXTURE, { runner });
+    expect(out.provenance).toMatchObject({
+      attempted: true,
+      used: false,
+      reason: "provider_error",
+    });
+    const detail = (out.provenance as { detail?: string }).detail ?? "";
+    expect(detail).not.toContain("sk-abcdefghijklmnopqrstuvwx");
+  });
+
   test("on egress_append_failed, falls back to deterministic render and carries detail", async () => {
     const runner = fixedRunner({
       ok: false,

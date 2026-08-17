@@ -41,9 +41,8 @@ export type SynthesisEgressRecorder = (
   db: Database,
   args: {
     readonly briefKind: string;
-    readonly model: string;
+    readonly provider: { readonly modelName: string; readonly isLocal: boolean };
     readonly now: number;
-    readonly remote: boolean;
   },
 ) => void;
 
@@ -78,8 +77,12 @@ const DETAIL_MAX_BYTES = 500;
  * bespoke scrubber, so this detail stays covered by the same property tests that already assert
  * 1:1 token-family coverage (`audit/format-audit-payload.test.ts`). Used for BOTH failure
  * branches below (`egress_append_failed`, `provider_error`) so their redaction never drifts.
+ *
+ * Exported for `synthesize.ts`, which catches a REJECTING runner and needs the identical
+ * redaction on the `detail` it reports. Sharing this function is the point: a second scrubber
+ * there would be one more thing to keep in step with the token families this one already covers.
  */
-function redactedErrorDetail(err: unknown): string {
+export function redactedErrorDetail(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return redactAuditPayload(message, DETAIL_MAX_BYTES);
 }
@@ -138,16 +141,18 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<RaceOutcom
  *      from that preference.
  *   4. Call `recordSynthesisEgress` (or the injected `recordEgress` test double) UNCONDITIONALLY
  *      for EVERY mode that reaches this point — `"local"` and `"allow-remote"` alike, `"off"`
- *      already excluded at build time — passing the DERIVED `remote` flag (never a literal `true`).
- *      `recordSynthesisEgress` enforces the local/remote rule internally (Task 3) and appends
- *      nothing when `remote` is `false` — calling it only from a non-local branch, or passing a
- *      literal `true`, would make that internal guard inert and silently return enforcement to
+ *      already excluded at build time — handing over the RESOLVED PROVIDER, never a `remote`
+ *      boolean computed here. `recordSynthesisEgress` re-derives locality from `provider.isLocal`
+ *      and appends nothing for a local one; because it decides from the provider rather than from
+ *      a verdict this site supplies, no call site can suppress a row (a false zero in the ledger
+ *      `nimbus prove` reports on) or fabricate one for a local generate. Calling it only from a
+ *      non-local branch would make that internal guard inert and silently return enforcement to
  *      this call site, which is exactly the weakness Task 3's review closed. Calling it under
- *      `"local"` too (where `remote` is always `false` here, since a `true` would already have
- *      been refused above) is deliberate, not redundant: it means a future third `SynthesisMode`
- *      cannot silently bypass the appender by failing to be spelled out in a mode check — the
- *      appender, not this call site, decides what gets ledgered. A throw here fails closed:
- *      `egress_append_failed`, and generation never happens.
+ *      `"local"` too (where a remote provider would already have been refused above) is
+ *      deliberate, not redundant: it means a future third `SynthesisMode` cannot silently bypass
+ *      the appender by failing to be spelled out in a mode check — the appender, not this call
+ *      site, decides what gets ledgered. A throw here fails closed: `egress_append_failed`, and
+ *      generation never happens.
  *   5. Race the provider call against `config.synthesisTimeoutMs`. The timer elapsing first is
  *      `timeout`; the provider call REJECTING first (network failure, auth rejection, a
  *      malformed response, ...) is the distinct `provider_error` — see the inline comment where
@@ -181,13 +186,14 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
       // Called for EVERY mode reaching this point ("local" and "allow-remote" alike — "off"
       // already returned undefined above), not only "allow-remote": the appender decides what
       // gets ledgered, this call site never re-implements that rule. See Step 4 in the doc
-      // comment above.
+      // comment above. `resolved` is handed over WHOLE rather than as a `remote` boolean this
+      // site derived — the appender re-derives locality from `provider.isLocal` so a caller
+      // cannot suppress or fabricate a `model` row by miscomputing it.
       try {
         recordEgress(deps.db, {
           briefKind: deps.briefKind,
-          model: resolved.modelName,
+          provider: resolved,
           now: deps.now(),
-          remote,
         });
       } catch (err) {
         return { ok: false, reason: "egress_append_failed", detail: redactedErrorDetail(err) };

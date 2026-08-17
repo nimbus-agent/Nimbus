@@ -21,9 +21,12 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+/** A resolved REMOTE provider, in the `ResolvedSynthesisProvider` shape the appender reads. */
+const REMOTE = { modelName: "gpt-5", isLocal: false } as const;
+
 describe("recordSynthesisEgress", () => {
   test("appends one authorized `model` row for a remote-provider brief synthesis", () => {
-    recordSynthesisEgress(db, { briefKind: "catchup", model: "gpt-5", now: 1_000, remote: true });
+    recordSynthesisEgress(db, { briefKind: "catchup", provider: REMOTE, now: 1_000 });
     const rows = listEgress(db, {});
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -42,23 +45,21 @@ describe("recordSynthesisEgress", () => {
     );
   });
 
-  test("a local-provider synthesis (`remote: false`) appends NOTHING — not even a blocked row", () => {
+  test("a local-provider synthesis (`isLocal: true`) appends NOTHING — not even a blocked row", () => {
     recordSynthesisEgress(db, {
       briefKind: "catchup",
-      model: "local-test-model:latest",
+      provider: { modelName: "local-test-model:latest", isLocal: true },
       now: 1_000,
-      remote: false,
     });
     expect(listEgress(db, {})).toHaveLength(0);
   });
 
   test("two remote appends chain correctly (BLAKE3, I10-verifiable)", () => {
-    recordSynthesisEgress(db, { briefKind: "catchup", model: "gpt-5", now: 1_000, remote: true });
+    recordSynthesisEgress(db, { briefKind: "catchup", provider: REMOTE, now: 1_000 });
     recordSynthesisEgress(db, {
       briefKind: "expert",
-      model: "claude-opus",
+      provider: { modelName: "claude-opus", isLocal: false },
       now: 2_000,
-      remote: true,
     });
     const result = verifyEgressChain(db);
     expect(result.ok).toBe(true);
@@ -68,7 +69,7 @@ describe("recordSynthesisEgress", () => {
   test("a throwing appendEgressEntry (e.g. a closed db) propagates rather than swallowing", () => {
     db.close();
     expect(() =>
-      recordSynthesisEgress(db, { briefKind: "catchup", model: "gpt-5", now: 1, remote: true }),
+      recordSynthesisEgress(db, { briefKind: "catchup", provider: REMOTE, now: 1 }),
     ).toThrow();
   });
 });

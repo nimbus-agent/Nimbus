@@ -1,7 +1,12 @@
 # Agent Brief Synthesis (W6-A0) — Design
 
 **Date:** 2026-08-16
-**Status:** DESIGN — not implemented.
+**Status:** IMPLEMENTED — shipped in #1234. This document is the design as agreed; where the
+shipped code has since moved past it, `packages/gateway/src/agents/_lib/` is authoritative. Two
+known divergences: the honesty guard (`requiredPhrases`) enforces contract survival only for
+`negotiate`'s seven nullable lanes today, not for all fourteen brief kinds as the test table
+below implies — the rest return an empty requirement set and are follow-up work; and
+`recordSynthesisEgress` takes the resolved provider rather than a `remote` boolean.
 **Spine slot:** S1 (Local Brain) — the last remaining S1 row, *Answer-quality surfaces*.
 **Position:** sub-project **A0** of Phase 7 Wave 6, and a prerequisite for **A1** (`--devil`) and
 **A2** (agent personas). A0 ships on its own merits — briefs become readable — independently of

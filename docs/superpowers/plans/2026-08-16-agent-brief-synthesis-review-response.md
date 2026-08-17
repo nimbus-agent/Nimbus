@@ -64,7 +64,7 @@ rule backwards, which is the property `negotiate` was built around.
 **no** `signal` field. The only `AbortSignal` in the provider interface is on the optional
 `pullModel` (`:46`), never on `generate` (`:43`). So the timeout abandons the promise and the
 underlying request runs to completion — local CPU/GPU under `"local"`, **billable tokens** under
-`"any"`. The review is right that this is a resource leak, and the recommendation's conditional
+`"allow-remote"`. The review is right that this is a resource leak, and the recommendation's conditional
 ("if the router supports an `AbortSignal`") resolves to *it does not*.
 
 **Deferred, not fixed.** Closing it means widening a shared type consumed by every provider

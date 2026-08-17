@@ -22,20 +22,28 @@ function normalize(s: string): string {
  * rendered as `## Ownership — services: checkout`, and exact matching would report that
  * section missing and reject an otherwise-correct synthesis.
  *
- * The level check matters for the same reason: `SYNTHESIS_INSTRUCTIONS` says "keep all
- * section headings" but does not forbid a rewrite from ADDING sub-structure — a `### Note`
- * inside `## Tickets` is realistic model output. Breaking on every `#` line would truncate
- * the section at that sub-heading, discard the disclaimer sitting below it, and report a
- * false "dropped required phrase" for a synthesis that never touched the disclaimer at
- * all. A deeper heading belongs to the section body; only a heading at the same level (a
- * sibling section) or shallower (a parent) ends it.
+ * OPENING a section requires EXACTLY `##`, the level `render.ts` emits. These are two
+ * separate rules and it is worth keeping them apart, because conflating them is what left a
+ * hole here: the level check in the LOOP below exists so a rewrite that adds sub-structure
+ * (a `### Note` inside `## Tickets` — realistic model output, since `SYNTHESIS_INSTRUCTIONS`
+ * says "keep all section headings" without forbidding new ones) does not truncate the body
+ * at that sub-heading and report a false "dropped required phrase". That argument is about
+ * where a section ENDS. It says nothing about what may START one, and matching every `#`-run
+ * let a rewrite satisfy a required `## Tickets` with a `### Tickets` demoted under a
+ * different section — or, worse, match an unrelated `### Tickets` sub-note appearing EARLIER
+ * in the document (`findIndex` takes the first hit) and read the disclaimer out of the wrong
+ * body entirely. Requiring `##` here costs only synthesis attempts that restructured the
+ * brief, and those fall back to the deterministic render; accepting a demoted heading costs
+ * the honesty guarantee itself, which is the asymmetry an honesty guard should resolve this
+ * way.
  */
 function sectionBody(markdown: string, heading: string): string | undefined {
   const lines = markdown.split("\n");
   const target = normalize(heading);
-  const i = lines.findIndex(
-    (l) => l.startsWith("#") && normalize(l.replace(/^#+/, "")).startsWith(target),
-  );
+  const i = lines.findIndex((l) => {
+    const m = /^(#+)\s+(.+)$/.exec(l);
+    return m !== null && m[1]?.length === 2 && normalize(m[2] ?? "").startsWith(target);
+  });
   if (i < 0) return undefined;
   const openingLevel = (lines[i] ?? "").match(/^#+/)?.[0].length ?? 0;
   const body: string[] = [];

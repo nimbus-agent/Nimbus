@@ -330,6 +330,12 @@ describe("buildAgentHttpInvoker — the synthesis runner (Task 6: production wir
       const viaSocket = await briefViaSocket(configDir, router, db, { ref: "x" });
       const viaHttp = await briefViaHttp(configDir, router, db, { ref: "x" });
 
+      // `briefViaSocket` returns undefined when its 5 s deadline expires, and
+      // `stripLatencyFooter(undefined)` returns null. Without this assertion a socket-path
+      // TIMEOUT makes both sides of the comparison below null and the parity check passes
+      // vacuously — this test exists to prove factory-level identity, so an absent socket
+      // brief must fail it rather than match an absent HTTP one.
+      expect(viaSocket).toBeDefined();
       expect(stripLatencyFooter(viaHttp.brief as string | null)).toEqual(
         stripLatencyFooter(viaSocket?.brief as string | null),
       );

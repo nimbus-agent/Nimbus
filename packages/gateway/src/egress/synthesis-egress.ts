@@ -14,36 +14,42 @@ import { redactEgressSummary } from "./egress-record.ts";
  * `ipc/server/dispatchers.ts` and `agent-runs/agent-http-invoke.ts` (Task 6's
  * `buildAgentSynthesisRunner`).
  *
- * `remote` is a REQUIRED argument, and a `false` call appends nothing. A local
+ * The caller passes the RESOLVED PROVIDER, not a pre-computed `remote` boolean, and
+ * the local-vs-remote decision is derived HERE from `provider.isLocal`. A local
  * generate makes no outbound request, so ledgering it would over-claim egress the
  * same way an unfiltered `LOCAL_ONLY_SYNC_SERVICES` did before it was excluded.
- * The check is enforced HERE, inside the appender, rather than left to the caller
- * — `sync-egress.ts`'s `recordSyncEgress` makes the same choice for the same
- * reason (its doc comment: "checked HERE rather than at either call site, so BOTH
+ * `sync-egress.ts`'s `recordSyncEgress` makes the same choice for the same reason
+ * (its doc comment: "checked HERE rather than at either call site, so BOTH
  * appenders ... enforce the rule identically instead of each needing its own copy
- * of the exclusion list"). A caller-enforced rule is one wiring mistake away from
- * fabricating `model` rows for local synthesis; an appender-enforced one cannot be
- * bypassed by a future second caller forgetting the guard.
+ * of the exclusion list") — and, like that one, it decides from data it can check
+ * itself rather than from a verdict handed in by the caller.
+ *
+ * That distinction is the whole point, and it is why this signature does NOT take a
+ * boolean. A caller-supplied `remote` is unverifiable here: passing `false` for a
+ * remote provider suppresses the row and puts a FALSE ZERO in the ledger `nimbus
+ * prove` reports on, and passing `true` for a local one fabricates `model` rows.
+ * Deriving from `isLocal` makes both unrepresentable, so the guarantee holds for a
+ * future second caller that never read this comment.
  */
 export function recordSynthesisEgress(
   db: Database,
   args: {
     readonly briefKind: string;
-    readonly model: string;
+    readonly provider: { readonly modelName: string; readonly isLocal: boolean };
     readonly now: number;
-    readonly remote: boolean;
   },
 ): void {
-  if (!args.remote) {
+  if (args.provider.isLocal) {
     return;
   }
+  const model = args.provider.modelName;
   appendEgressEntry(db, {
     timestamp: args.now,
     sourceType: "model",
-    sourceId: args.model,
+    sourceId: model,
     destination: "model",
     method: `agents.${args.briefKind}.synthesis`,
-    payloadSummary: redactEgressSummary({ briefKind: args.briefKind, model: args.model }),
+    payloadSummary: redactEgressSummary({ briefKind: args.briefKind, model }),
     hitlStatus: "not_required",
     resultStatus: "authorized",
   });

@@ -1,5 +1,17 @@
 # Agent Brief Synthesis (W6-A0) Implementation Plan
 
+**Status: EXECUTED — shipped in #1234. This is the plan as written, kept as the record of what was
+agreed, not a description of the shipped code.** Where the two disagree, the code wins. The
+divergences worth knowing before reading a snippet here literally:
+
+- The context/option field the plan calls `llm` shipped as **`runner`** (`AgentsRpcContext.runner`,
+  `EmitBriefWithSynthesisOpts.runner`). Task 5 and Task 6 snippets below still say `llm`.
+- `recordSynthesisEgress` shipped taking the **resolved provider**, deriving locality from
+  `provider.isLocal` inside the appender, rather than the `remote` boolean the plan's Task 3
+  interface and implementation snippets disagree with each other about.
+- The honesty guard covers `negotiate`'s seven nullable lanes only; the other thirteen brief kinds
+  return an empty requirement set and are follow-up work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the built-in agents' synthesis path executable in production — under an opt-in

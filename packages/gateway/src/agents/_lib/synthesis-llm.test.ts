@@ -114,15 +114,15 @@ describe("buildSynthesisRunner", () => {
 
   test("a LOCAL provider under allow-remote appends nothing, and the runner still succeeds", async () => {
     const rows = fakeDb();
-    // Observing `rows.count()` alone cannot catch a regression that moves the append call INTO
-    // `if (remote)`: `recordSynthesisEgress` already no-ops on `remote: false`, so a call that
+    // Observing `rows.count()` alone cannot catch a regression that moves the append call INTO a
+    // non-local branch: `recordSynthesisEgress` already no-ops on a local provider, so a call that
     // never happens and a call that happens-and-no-ops are byte-identical by row count. This spy
-    // observes the CALL itself (and its `remote` argument), which the row count cannot. See the
-    // "an append failure" test above for the complementary case (mode "allow-remote", REMOTE
+    // observes the CALL itself (and the provider handed to it), which the row count cannot. See
+    // the "an append failure" test above for the complementary case (mode "allow-remote", REMOTE
     // provider).
-    const recordCalls: Array<{ readonly remote: boolean }> = [];
+    const recordCalls: Array<{ readonly isLocal: boolean }> = [];
     const recordEgress: SynthesisEgressRecorder = (db, args) => {
-      recordCalls.push({ remote: args.remote });
+      recordCalls.push({ isLocal: args.provider.isLocal });
       recordSynthesisEgress(db, args); // delegate to the real appender against the fake db
     };
     const runner = buildSynthesisRunner({
@@ -138,7 +138,7 @@ describe("buildSynthesisRunner", () => {
     // half was missing from the original test, so a regression that early-returned `ok: false`
     // on this exact path would have passed silently.
     expect(attempt?.ok).toBe(true);
-    expect(recordCalls).toEqual([{ remote: false }]);
+    expect(recordCalls).toEqual([{ isLocal: true }]);
     expect(rows.count()).toBe(0);
   });
 

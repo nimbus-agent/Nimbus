@@ -134,6 +134,54 @@ describe("contractViolations", () => {
   });
 });
 
+describe("a required section must be opened by a level-TWO heading", () => {
+  // The renderer emits `## <heading>`. Before this was pinned, `sectionBody` opened a section on
+  // any `#`-run, so a rewrite could demote `## Tickets` to `### Tickets` — parking a required
+  // null-lane section inside a DIFFERENT section — and still satisfy the guard as long as the
+  // disclaimer travelled with it. Reverting the `m[1]?.length === 2` check turns this green.
+  test("`### Tickets` carrying the disclaimer does NOT satisfy the required `## Tickets`", () => {
+    const md = ALL_SEVEN.replace("## Tickets", "### Tickets");
+    const v = contractViolations(allNullLaneBrief(), md);
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain("Tickets");
+    expect(v[0]).toContain("missing required section");
+  });
+
+  // The first-match half of the same hole: `findIndex` takes the FIRST heading whose text
+  // matches, so an unrelated `### Tickets` sub-note appearing EARLIER used to win over the real
+  // `## Tickets` section and the guard read the disclaimer out of the wrong body. Here the
+  // decoy carries the phrase and the real section has LOST it — the guard must still report the
+  // real section, not be satisfied by the decoy.
+  test("an earlier `### Tickets` sub-note cannot stand in for the real section", () => {
+    // Order matters, and not for style: `### Tickets` CONTAINS `## Tickets` as a substring, so
+    // inserting the decoy first would make the second `replace` rewrite the decoy instead of the
+    // real section and quietly build a fixture that proves nothing. Strip the real section's
+    // phrase FIRST, then plant the decoy.
+    const md = ALL_SEVEN.replace(
+      "## Tickets\n\n_could not be computed_",
+      "## Tickets\n\n- 4 closed",
+    ).replace(
+      "## PRs authored\n\n_could not be computed_",
+      "## PRs authored\n\n_could not be computed_\n\n### Tickets\n\n_could not be computed_",
+    );
+    const v = contractViolations(allNullLaneBrief(), md);
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain("Tickets");
+    expect(v[0]).toContain("dropped required phrase");
+  });
+
+  // The complement, so the fix is not "reject everything with a deeper heading": sub-structure
+  // ADDED INSIDE a correctly-levelled section is still fine, which is the behaviour the original
+  // level-based body boundary exists to protect.
+  test("a `### Note` nested inside a correct `## Tickets` is still accepted", () => {
+    const md = ALL_SEVEN.replace(
+      "## Tickets\n\n_could not be computed_",
+      "## Tickets\n\n### Note\n\n_could not be computed_",
+    );
+    expect(contractViolations(allNullLaneBrief(), md)).toEqual([]);
+  });
+});
+
 describe("requiredPhrases — non-negotiate kinds", () => {
   // Every kind besides `negotiate` deliberately returns `[]` today — see brief-contract.ts's
   // comment on the if-chain. Table-driven so each of the 13 explicit arms is taken by name

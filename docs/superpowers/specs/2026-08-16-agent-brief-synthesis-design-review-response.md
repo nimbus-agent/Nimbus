@@ -95,6 +95,11 @@ synthesis:
       missingPhrases?: string[] }
 ```
 
+> **Superseded by the shipped type.** This snippet records the shape agreed at review time. The
+> shipped `SynthesisProvenance` (`agents/_lib/synthesize.ts`) renamed `missingPhrases` to
+> `violations` and added two discard reasons the review had not yet surfaced — `provider_error`
+> and `empty_result` — plus a redacted `detail`. Read the type, not this block.
+
 `missingPhrases` gives the review's diagnostic goal directly — it names which contract the model
 broke. Reusing the notification means the fact reaches the CLI, the HTTP surface and the Tauri
 renderer with no new infrastructure, and it is the same `{model, remote, disclosure?}` shape §2.5
