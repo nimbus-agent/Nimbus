@@ -320,7 +320,7 @@ Give every renderer the ability to omit its reserved sections, and export the bl
   - every existing `renderX(brief)` gains an optional second parameter: `renderX(brief: XBrief, opts?: RenderOpts): string`
   - `export function renderGaps(gaps: GapNote[]): string` (was module-private)
   - `export function renderNegotiateSources(sources: NegotiateBrief["sources"]): string` (was module-private)
-  - `export function renderNegotiateEvidenceSection(brief: NegotiateBrief): string` (new; extracted from the inline array in `renderNegotiate`)
+  - `export function renderNegotiateEvidenceSection(unavailableEvidence: readonly string[]): string` (new; extracted from the inline array in `renderNegotiate`)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -376,9 +376,7 @@ describe("exported block builders", () => {
   });
 
   test("renderNegotiateEvidenceSection renders the unavailable-evidence list", () => {
-    const section = renderNegotiateEvidenceSection({
-      unavailableEvidence: ["on-call shifts"],
-    } as Parameters<typeof renderNegotiateEvidenceSection>[0]);
+    const section = renderNegotiateEvidenceSection(["on-call shifts"]);
     expect(section).toContain("## Evidence not available from the index");
     expect(section).toContain("- on-call shifts");
   });
@@ -450,13 +448,15 @@ In `render.ts`, change `renderNegotiateSources` (line 882) from `function` to `e
  * Extracted from `renderNegotiate`'s inline array so `reserved-sections.ts` can build the
  * identical block from the identical input — the two halves of a split brief must be the
  * same function on the same data, never two renderings that could drift.
+ *
+ * Takes the field rather than the whole brief, matching `renderNegotiateSources(brief.sources)`
+ * beside it: a whole-brief parameter would force every caller and test to construct (or cast)
+ * a full `NegotiateBrief` to exercise one list.
  */
-export function renderNegotiateEvidenceSection(brief: NegotiateBrief): string {
-  return [
-    "## Evidence not available from the index",
-    "",
-    ...brief.unavailableEvidence.map((e) => `- ${e}`),
-  ].join("\n");
+export function renderNegotiateEvidenceSection(unavailableEvidence: readonly string[]): string {
+  return ["## Evidence not available from the index", "", ...unavailableEvidence.map((e) => `- ${e}`)].join(
+    "\n",
+  );
 }
 ```
 
@@ -464,7 +464,7 @@ Then in `renderNegotiate` (line 946), change the signature to `export function r
 
 ```typescript
   const sources = reserved(renderNegotiateSources(brief.sources), opts);
-  const evidence = reserved(renderNegotiateEvidenceSection(brief), opts);
+  const evidence = reserved(renderNegotiateEvidenceSection(brief.unavailableEvidence), opts);
   const gaps = reserved(renderGaps(brief.gaps), opts);
 ```
 
@@ -949,10 +949,11 @@ A registry that names a heading no renderer emits is a guard that cannot fire. T
 
 **Files:**
 - Create: `packages/gateway/src/agents/_lib/reserved-sections.coverage.test.ts`
+- Modify: `packages/gateway/src/agents/_lib/synthesize.ts` (add the `deterministicRenderForTest` export in Step 2)
 
 **Interfaces:**
 - Consumes: everything from Tasks 2-4.
-- Produces: nothing.
+- Produces: `export const deterministicRenderForTest` (test-facing alias of the private `deterministicRender`).
 
 - [ ] **Step 1: Write the test**
 
@@ -1248,8 +1249,8 @@ Add a `docs/CHANGELOG.md` entry under the current unreleased heading describing 
 
 - [ ] **Step 7: Verify the mirrored files did not drift**
 
-Run: `bun run audit:docs` (or the doc-drift gate named in `scripts/lib/preflight-gates.ts` — check the manifest for the exact script name before running).
-Expected: PASS. `CLAUDE.md` and `GEMINI.md` must not disagree.
+Run: `bun run audit:status-drift && bun run audit:doc-refs && bun run audit:invariants`
+Expected: PASS on all three. `audit:status-drift` is the gate that holds `CLAUDE.md` and `GEMINI.md` in agreement; `audit:doc-refs` checks the file paths cited in the new I31 prose actually exist; `audit:invariants` is the static structure auditor that runs ahead of the test suite.
 
 - [ ] **Step 8: Commit**
 
