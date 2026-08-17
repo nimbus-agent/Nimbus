@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ExpertBrief, GapNote } from "./findings.ts";
+import type { NegotiateBrief } from "./negotiate-types.ts";
 import {
   joinReserved,
   RESERVED_HEADINGS_BY_KIND,
@@ -64,6 +65,51 @@ describe("reservedBlocksFor", () => {
 
   test("returns nothing for a brief with no gap notes", () => {
     expect(reservedBlocksFor({ ...EXPERT, gaps: [] })).toEqual([]);
+  });
+
+  test("builds all three blocks for a negotiate brief, in order with populated content", () => {
+    const negotiate: NegotiateBrief = {
+      kind: "negotiate",
+      agentVersion: 1,
+      generatedAt: 0,
+      latencyMs: 0,
+      gaps: [GAP],
+      query: { sinceMs: 1000 },
+      subject: {
+        personId: "person:test",
+        source: "explicit",
+        displayName: "Test Person",
+        isOther: false,
+      },
+      sources: {
+        personalDocsConfigured: true,
+        personalDocsRecognised: ["obsidian"],
+        personalDocsUnrecognised: [],
+        personalDocsConfigKey: "[negotiate] personal_sources",
+      },
+      unavailableEvidence: ["on-call shifts", "deploys triggered"],
+      authoredPrs: null,
+      reviewedPrs: null,
+      incidents: null,
+      tickets: null,
+      ownership: null,
+      decisions: { authored: 0, unattributable: 0, evidence: { refs: [], total: 0 } },
+      writing: null,
+    };
+
+    const blocks = reservedBlocksFor(negotiate);
+
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]?.heading).toBe("## Sources");
+    expect(blocks[1]?.heading).toBe("## Evidence not available from the index");
+    expect(blocks[2]?.heading).toBe("## Gaps");
+
+    // Verify content is populated
+    expect(blocks[0]?.markdown).toBeTruthy();
+    expect(blocks[0]?.markdown).toContain("## Sources");
+    expect(blocks[1]?.markdown).toBeTruthy();
+    expect(blocks[1]?.markdown).toContain("## Evidence not available from the index");
+    expect(blocks[2]?.markdown).toContain("No items in the local index yet.");
   });
 });
 

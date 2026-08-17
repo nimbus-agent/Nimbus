@@ -1,5 +1,4 @@
 import type { SynthInput } from "./brief-kinds.ts";
-import type { NegotiateBrief } from "./negotiate-types.ts";
 import { renderGaps, renderNegotiateEvidenceSection, renderNegotiateSources } from "./render.ts";
 
 /** A disclosure-only section held back from the model and re-attached verbatim (I31). */
@@ -57,14 +56,13 @@ export function reservedHeadingsFor(brief: SynthInput): readonly string[] {
 export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
   const blocks: ReservedBlock[] = [];
   if (brief.kind === "negotiate") {
-    const negotiate: NegotiateBrief = brief;
     blocks.push({
       heading: NEGOTIATE_SOURCES_HEADING,
-      markdown: renderNegotiateSources(negotiate.sources).trim(),
+      markdown: renderNegotiateSources(brief.sources).trim(),
     });
     blocks.push({
       heading: NEGOTIATE_EVIDENCE_HEADING,
-      markdown: renderNegotiateEvidenceSection(negotiate.unavailableEvidence).trim(),
+      markdown: renderNegotiateEvidenceSection(brief.unavailableEvidence).trim(),
     });
   }
   const gaps = renderGaps(brief.gaps).trim();
