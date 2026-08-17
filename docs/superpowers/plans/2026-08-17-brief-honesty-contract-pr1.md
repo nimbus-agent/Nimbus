@@ -1071,6 +1071,25 @@ describe("untrusted brief content cannot break extraction", () => {
     expect(full).toContain("GAP-DETAIL-SENTINEL");
     expect(full).toContain("injected by the source document");
   });
+
+  /**
+   * THE assertion that makes this fixture hostile rather than decorative.
+   *
+   * The two tests above pass identically for a benign definition: the runner returns canned
+   * markdown regardless of the brief, so the injected heading never reaches `stripSections`,
+   * and the full render never has anything stripped from it. Only the SPLIT discriminates —
+   * the body handed to the model must keep the quoted definition's fake `## Gaps` prose
+   * (it is content, not a reserved section) while dropping the genuine trailing block.
+   *
+   * A scan-the-rendered-markdown implementation — the design this whole change rejects —
+   * fails exactly here: a first-match scan for `## Gaps` finds the injected line first and
+   * extracts from the wrong offset.
+   */
+  test("the body/reserved split cuts at the real block, not at injected prose", () => {
+    const body = deterministicRenderForTest(HOSTILE_GLOSSARY, { omitReserved: true });
+    expect(body).toContain("injected by the source document");
+    expect(body).not.toContain("GAP-DETAIL-SENTINEL");
+  });
 });
 ```
 
@@ -1255,7 +1274,7 @@ Add a `## I31 — Disclosure integrity` section after the I30 section, containin
 
 In `docs/SECURITY-INVARIANTS.md`:
 
-1. In the I29 section, delete the sentence describing the `requiredPhrases` honesty guard and its negotiate-only coverage. Replace it with a one-line cross-reference: the honesty guard is invariant I31.
+1. In the I29 section (lines 549-638), **add** a one-line cross-reference stating that the brief honesty guard is invariant I31. Do **not** go looking for a `requiredPhrases` sentence to delete there — verified against the tree, that file's I29 section never described the guard (zero occurrences of `requiredPhrases` in the whole file). The negotiate-only coverage claim lives **only** in the mirrored `CLAUDE.md` / `GEMINI.md` I29 bullets, which Step 5 handles. An earlier draft of this step told you to delete a sentence that does not exist.
 2. At line 677, the worked example "how to add an invariant" uses `I31` as its illustrative next-free number for a hypothetical sub-agent-scope defense. Change every `I31` in that example to `I32`, and update its parenthetical to read "the next free number after the current ceiling `I31`; note `I28` is reserved, not free". A how-to that names a number already in use is exactly the drift this file exists to prevent.
 
 - [ ] **Step 5: Mirror the bullets into `CLAUDE.md` and `GEMINI.md`**
