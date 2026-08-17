@@ -100,15 +100,15 @@ describe("untrusted brief content cannot break extraction", () => {
   });
 
   /**
-   * The two tests above do not actually exercise the hostile input: `fixedRunner` returns
-   * canned markdown independent of the brief, so `HOSTILE_GLOSSARY`'s injected `## Gaps` line
-   * never reaches `stripSections`, and the extraction-failure guard (`body === deterministic`)
-   * would behave identically for a benign definition — the genuine trailing block being omitted
-   * already guarantees `body !== deterministic` regardless of what the definition text says.
-   * Swap the injected prose for `"A service level objective."` and every assertion in both
-   * tests above still passes. This test is the one that discriminates: it inspects the actual
-   * body/reserved split (`deterministicRenderForTest(..., { omitReserved: true })`) rather than
-   * a synthesis outcome shaped by a fake runner. A first-match scan for `## Gaps` — the
+   * The two tests above do not actually exercise the hostile input. Test 1 ("does not suppress
+   * synthesis") passes identically for a benign definition: `fixedRunner` returns canned
+   * markdown independent of the brief, so nothing about the injected heading reaches its
+   * assertions. Test 2 ("deterministic render is untouched") only echoes the fixture's own
+   * content back at itself — it proves the full render contains what the fixture put there,
+   * which is true for any definition text and says nothing about the split. This test is the
+   * one that discriminates: it inspects the actual body/reserved split
+   * (`deterministicRenderForTest(..., { omitReserved: true })`) rather than a synthesis outcome
+   * shaped by a fake runner or the untouched full render. A first-match scan for `## Gaps` — the
    * scan-the-rendered-markdown design this construct-from-brief-data approach rejects — would
    * find the INJECTED line first and cut the body there, either truncating the quoted
    * definition's tail or extracting from the wrong offset entirely. The real split does
