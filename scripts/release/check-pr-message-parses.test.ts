@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { excerpt, parseFailure, positionOf, squashMessage } from "./check-pr-message-parses.ts";
+import {
+  excerpt,
+  githubSquashMessage,
+  parseFailure,
+  positionOf,
+  squashMessage,
+  WRAP_COLUMNS,
+  wrapBody,
+} from "./check-pr-message-parses.ts";
+import CORPUS from "./fixtures/squash-parse-corpus.json" with { type: "json" };
 
 /**
  * The exact body fragment that broke release-please twice. Reproduced rather than invented,
@@ -102,5 +111,91 @@ describe("the two historical incidents", () => {
     const failure = parseFailure(poisonAtComposedLine(subject, line, pr));
     expect(failure).toBeDefined();
     expect(positionOf(failure as string)).toEqual({ line, col: 15 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitHub's 72-column body wrap — the correction that made this gate real (#1234)
+// ---------------------------------------------------------------------------
+
+describe("wrapBody", () => {
+  test("breaks on spaces at the column limit, never inside a word", () => {
+    const long = `${"a".repeat(80)} tail`;
+    expect(wrapBody(long)).toBe(`${"a".repeat(80)}\ntail`);
+    expect(wrapBody("one two three", 7)).toBe("one two\nthree");
+  });
+
+  test("leaves lines already within the limit untouched, so an already-wrapped body is a fixed point", () => {
+    const already = "short line\nanother short one\n\n- a bullet";
+    expect(wrapBody(already)).toBe(already);
+    const once = wrapBody(CORPUS[0]?.body ?? "");
+    expect(wrapBody(once)).toBe(once);
+  });
+
+  test("no output line exceeds the limit unless it is a single over-long word", () => {
+    for (const entry of CORPUS) {
+      for (const line of wrapBody(entry.body).split("\n")) {
+        if (line.length > WRAP_COLUMNS) expect(line).not.toContain(" ");
+      }
+    }
+  });
+});
+
+describe("githubSquashMessage", () => {
+  test("wraps the BODY but leaves the SUBJECT alone", () => {
+    // Getting this backwards is not cosmetic: wrapping the subject too shifts every body line by
+    // one, which reported #1218 at 104:15 instead of its real 103:15 while still 'failing'.
+    const subject = `feat: ${"x".repeat(90)}`;
+    const composed = githubSquashMessage(subject, `${"word ".repeat(30)}end`, 42);
+    const lines = composed.split("\n");
+    expect(lines[0]).toBe(`${subject} (#42)`);
+    expect(lines[0]?.length).toBeGreaterThan(WRAP_COLUMNS);
+    expect(lines.slice(2).every((l) => l.length <= WRAP_COLUMNS)).toBe(true);
+  });
+
+  test("normalises CRLF before wrapping, so a Windows-authored body wraps as the server stores it", () => {
+    expect(githubSquashMessage("fix: a", "one\r\ntwo", 1)).toBe("fix: a (#1)\n\none\ntwo");
+  });
+});
+
+describe("the real-PR corpus — bodies as the workflow feeds them, not as they landed", () => {
+  const failing = CORPUS.filter((c) => c.expectFailureAt !== null);
+  const passing = CORPUS.filter((c) => c.expectFailureAt === null);
+
+  test("the corpus holds both kinds, so neither assertion below is vacuous", () => {
+    expect(failing.length).toBeGreaterThanOrEqual(3);
+    expect(passing.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test.each(failing.map((c) => [c.number, c] as const))(
+    "#%s fails at the position CI actually reported",
+    (_number, entry) => {
+      const failure = parseFailure(githubSquashMessage(entry.title, entry.body, entry.number));
+      expect(failure).toBeDefined();
+      expect(positionOf(failure as string)).toEqual(entry.expectFailureAt);
+    },
+  );
+
+  test.each(passing.map((c) => [c.number, c] as const))(
+    "#%s still parses — the wrap adds no false positive",
+    (_number, entry) => {
+      expect(
+        parseFailure(githubSquashMessage(entry.title, entry.body, entry.number)),
+      ).toBeUndefined();
+    },
+  );
+
+  /**
+   * The regression proper. Without the wrap, the gate reported OK on all three of these bodies but
+   * #1219 — including #1218, the incident it was built for, and #1234, which is how a `feat`
+   * reached `main` with no release. A test that only asserted "the wrapped form fails" would pass
+   * against a `wrapBody` that did nothing useful, so this asserts the OLD path's specific
+   * blindness too: these are exactly the cases the un-wrapped composition cannot see.
+   */
+  test("the un-wrapped composition — the pre-fix gate — misses #1218 and #1234", () => {
+    const missed = failing
+      .filter((c) => parseFailure(squashMessage(c.title, c.body, c.number)) === undefined)
+      .map((c) => c.number);
+    expect(missed).toEqual(expect.arrayContaining([1218, 1234]));
   });
 });

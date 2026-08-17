@@ -8,6 +8,46 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-17 — the PR-time parse gate was judging a message GitHub never creates, and #1234
+  was dropped because of it.** `feat(agents): make built-in brief synthesis executable` (#1234)
+  merged with a green `PR quality — Release safety` check, then release-please failed to parse
+  its squash commit (`unexpected token '\n' at 105:24`), counted `commits: 0`, and opened no
+  release PR — so the drop-guard on `main` went red with one unreleased user-facing commit.
+
+  **Cause: GitHub hard-wraps a squash commit BODY at 72 columns and leaves the SUBJECT alone.**
+  `check-pr-message-parses.ts` composed `subject\n\n<PR body verbatim>` and parsed that, so the
+  message it judged was not the message that landed. The difference is exactly the kind that
+  flips a parse — wrapping inserts a newline mid-line, and this grammar will not accept a newline
+  inside a `(`-group. #1234's body carried
+  `` `createBriefLlm(router, briefsToml.preferLocal)` ``; wrapped, the `(` ended its line and the
+  `)` fell to the next.
+
+  **The gate was mostly inert, not merely wrong at the margin.** Measured over the 120 most
+  recently merged PRs against their real squash commits: four genuinely fail to parse (#1218,
+  #1219, #1224, #1234) and the un-wrapped composition caught **one** — #1224. It missed #1218,
+  the incident the gate was built for.
+
+  **This corrects a claim in the entry below.** "All seven would be blocked today" was verified
+  by reconstructing each PR body from its already-wrapped COMMIT, which is a fixed point of the
+  wrap and therefore parses the same either way. Fed the un-wrapped PR bodies the workflow
+  actually supplies (`github.event.pull_request.body`), the gate as it then stood did not block
+  #1218 or #1219. It does now; the seven reported positions in that entry stand, because they
+  were computed on wrapped input, which is what the gate finally uses.
+
+  **The fix:** `wrapBody()` reproduces #1234's landed commit body byte-for-byte (222 of 222
+  lines — GitHub's appended `Co-authored-by:` trailer is not modelled and need not be, since a
+  trailer after the body cannot change a parse failure earlier in it), 72 columns being the only
+  width of 70/72/75/76/80 that does so. All three reproducible incidents now land on their exact
+  CI-reported positions (103:15, 20:72, 105:24), and across the 120-PR corpus the model agrees
+  with the real commit on every one — zero false positives. A checked-in fixture
+  (`scripts/release/fixtures/squash-parse-corpus.json`) holds five real bodies, three failing and
+  two passing, and one test asserts the OLD path's specific blindness so the corpus cannot rot
+  into a set of cases that would pass without the wrap.
+
+  **Not in the release notes:** #1234, for the same immutable-tag reason as #1218 before it. Its
+  substance is recorded in the `model`-egress entry immediately below, which was written the same
+  day and covers the same work.
+
 - **2026-08-16 — Egress class `model` rises from `none` to `per-call`** (agent-brief-synthesis
   work, landing ahead of the synthesis wiring itself). `egress/synthesis-egress.ts`'s
   `recordSynthesisEgress` is the sole appender: one row for a built-in agent brief synthesized by a
@@ -73,6 +113,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   reconstructed PR: every one exits 1, at `3:11`, `13:51`, `142:17`, `33:31`, `155:42`, `103:15`
   and `17:15` respectively. The two 2026-08-16 entries were the ones that prompted the
   investigation; the other five were found by it.
+
+  **Corrected 2026-08-17 — this was true of the input tested, not of the gate as wired.** Each
+  PR body was reconstructed from its already-wrapped commit, which the gate parses identically
+  either way; fed the un-wrapped bodies the workflow really supplies, the gate then missed #1218
+  and #1219. It blocks all seven now — see the 2026-08-17 entry at the top of this file. The
+  positions above stand.
 
 - **2026-08-16 — an audit of I1–I30 found two live bugs, two defenses wired to nothing,
   and a class of guard that reports clean without enforcing anything.** Six PRs (#1216,
