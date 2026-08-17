@@ -246,4 +246,149 @@ describe("web clipper E2E", () => {
       expect(r.status).toBe(400);
     }
   });
+
+  test("related snippet is an extract of the BODY, not an echo of the title", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-snippet-column", ["clip"]);
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    // Title and body share NO tokens, so the snippet's source column is provable.
+    await fetch(`${base}/v1/clips`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        url: "https://example.com/snippet-column",
+        title: "Zzalphatitleword",
+        mode: "article",
+        body: "Zzbetabodyword one two three four five six seven eight nine ten.",
+        capturedAt: Date.now(),
+      }),
+    });
+
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Zzalphatitleword" }),
+    });
+    expect(relRes.status).toBe(200);
+    const rel = (await relRes.json()) as { items: Array<{ snippet: string }> };
+    const hit = rel.items.find((i) => i.snippet.includes("Zzbetabodyword"));
+    expect(hit).toBeDefined();
+    // The defect this pins: the snippet must not be the title read back.
+    expect(hit?.snippet).not.toContain("Zzalphatitleword");
+  });
+
+  test("an item with no body yields an empty-string snippet, never null", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-null-body", ["clip"]);
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    // Write a title-only row directly: the clip route always supplies a body.
+    const writeDb = new Database(dbPath, { create: false, readwrite: true });
+    try {
+      writeDb.run(
+        `INSERT INTO item (id, service, type, external_id, title, url, modified_at, synced_at)
+         VALUES ('t:nullbody', 'test', 'page', 'nullbody', 'Zzgammatitleword', NULL, 1, 1)`,
+      );
+    } finally {
+      writeDb.close();
+    }
+
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Zzgammatitleword" }),
+    });
+    const rel = (await relRes.json()) as { items: Array<{ id: string; snippet: unknown }> };
+    const hit = rel.items.find((i) => i.id === "t:nullbody");
+    expect(hit).toBeDefined();
+    expect(hit?.snippet).toBe("");
+  });
+
+  // Every unit test in clip-related.test.ts injects a FAKE lookupItem, so the
+  // production adapter (http-server.ts's inline single-row read, including its
+  // no-row branch) was exercised by nothing. This pins it end to end: an
+  // itemId naming no row must fall through to the title query rather than
+  // erroring, through the REAL lookupItem wired into the real HTTP server.
+  test("related with an itemId that names no row falls through to the title query", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-unknown-itemid", ["clip"]);
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    await fetch(`${base}/v1/clips`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        url: "https://example.com/unknown-itemid",
+        title: "Zzepsilontitleword",
+        mode: "article",
+        body: "Zzepsilonbody prose here.",
+        capturedAt: Date.now(),
+      }),
+    });
+
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Zzepsilontitleword", itemId: "does:not:exist" }),
+    });
+    expect(relRes.status).toBe(200);
+    const rel = (await relRes.json()) as { items: Array<{ title: string }> };
+    expect(rel.items.some((i) => i.title === "Zzepsilontitleword")).toBe(true);
+  });
+
+  test("related hits carry type and modified_at (epoch ms)", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-new-fields", ["clip"]);
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    const before = Date.now();
+    await fetch(`${base}/v1/clips`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        url: "https://example.com/new-fields",
+        title: "Zzdeltatitleword",
+        mode: "article",
+        body: "Zzdeltabody prose here.",
+        capturedAt: Date.now(),
+      }),
+    });
+
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Zzdeltatitleword" }),
+    });
+    const rel = (await relRes.json()) as {
+      items: Array<{ type: string; modified_at: number }>;
+    };
+    expect(rel.items.length).toBeGreaterThan(0);
+    const hit = rel.items[0];
+    expect(typeof hit?.type).toBe("string");
+    expect(hit?.type.length).toBeGreaterThan(0);
+    // Milliseconds, not seconds: a seconds value would sit in 1970 in JS.
+    expect(hit?.modified_at).toBeGreaterThanOrEqual(before - 60_000);
+    expect(hit?.modified_at).toBeLessThan(before + 60 * 60_000);
+  });
 });
