@@ -122,17 +122,33 @@ The renderers already know which text is a reserved block — `renderGaps()`
 recovering it by scanning for `## Gaps` throws away information we held a moment
 earlier, and re-deriving it by parsing is strictly weaker than keeping it.
 
-So `deterministicRender` returns a pair rather than a string:
+So the two halves are produced by two constructors, neither of which parses:
 
 ```ts
-type RenderedBrief = { readonly body: string; readonly reserved: readonly ReservedBlock[] };
+type RenderOpts = { readonly omitReserved?: boolean };
 type ReservedBlock = { readonly heading: string; readonly markdown: string };
+
+renderExpert(brief)                          // unchanged — full deterministic brief
+renderExpert(brief, { omitReserved: true })  // the synthesizable body
+reservedBlocksFor(brief)                     // the reserved blocks, from brief data
 ```
 
 Each of the fourteen `render*` functions already computes `const gaps =
-renderGaps(brief.gaps)` and concatenates it; they instead return it in
-`reserved`. `renderNegotiate` returns its `## Sources` and `## Evidence not
-available from the index` blocks the same way.
+renderGaps(brief.gaps)` and concatenates it; under `omitReserved` it computes
+`""` instead. `renderNegotiate` treats its `## Sources` and `## Evidence not
+available from the index` blocks the same way. `reservedBlocksFor` calls the
+same block builders (`renderGaps`, `renderNegotiateSources`,
+`renderNegotiateEvidenceSection`) on the same brief, so the two halves cannot
+disagree about content — they are the same functions on the same input.
+
+**Why an optional parameter rather than a `{ body, reserved }` return type.**
+Changing the return type of all fourteen renderers would churn seven test files
+(`render.test.ts`, `render.why.test.ts`, `render.premortem.test.ts`,
+`render.decisions.test.ts`, `synthesize.ownership.test.ts`, `negotiate.test.ts`,
+`test/e2e/scenarios/why.e2e.test.ts`) for no behavioural gain. With an optional
+parameter the default call is untouched, every existing test keeps passing
+unmodified, and the deterministic brief stays byte-identical — which also means
+`scripts/agent-brief-shape.snapshot.json` is unaffected.
 
 **Why this and not a heading scan of the rendered markdown.** Brief content is
 not trusted markdown. `renderGlossaryEntry` (`render.ts:327`) interpolates
@@ -175,12 +191,12 @@ Sources` section of its own is not silently gagged.
 
 `_lib/synthesize.ts:177`. New order:
 
-1. `{ body, reserved } = deterministicRender(brief)` — now a pair.
-2. If `opts.runner === undefined`, return `body + reserved` — the deterministic
-   path, unchanged in output.
-3. Verify the reserved set against the kind's registry (below). On failure,
-   return the deterministic render with the new provenance variant and its own
-   footer. **No model call is made.**
+1. `deterministic = deterministicRender(brief)` — unchanged.
+2. If `opts.runner === undefined`, return the deterministic path — unchanged.
+3. `body = deterministicRender(brief, { omitReserved: true })` and
+   `reserved = reservedBlocksFor(brief)`, then the assertion below. On failure,
+   return `deterministic` with the new provenance variant and its own footer.
+   **No model call is made.**
 4. Build the prompt from `body`, not from the full deterministic render.
    `SYNTHESIS_INSTRUCTIONS` (`synthesize.ts:278`) gains a rule: do not emit a
    Gaps / Sources / Evidence-not-available section; they are appended for you.
@@ -224,22 +240,27 @@ layout appending already produces.
 
 ### Fail-closed check
 
-Reserved blocks are constructed rather than parsed, so the extraction cannot
-silently find nothing. What can still go wrong is a renderer that forgets to
-route a block through `reserved` — a fifteenth kind, or a new disclosure section
-added to an existing one. The guarantee therefore rests on an assertion, not on
-trust:
+Reserved blocks are constructed rather than parsed, so extraction cannot silently
+find nothing. What can still go wrong is a renderer that ignores `omitReserved` —
+a fifteenth kind whose author missed the flag, or a new disclosure section added
+to an existing renderer without routing it through the flag. The guarantee
+therefore rests on an assertion, not on trust:
 
-> Before the model is called: every heading in the kind's reserved registry must
-> be present exactly once in `reserved` or absent from the brief entirely (a
-> brief with no gap notes has no `## Gaps` block), and `body` must contain no
-> heading matching the registry.
+> Before the model is called: if `reservedBlocksFor(brief)` is non-empty, then
+> `deterministicRender(brief, { omitReserved: true })` must differ from
+> `deterministicRender(brief)`.
 
-The second half is the one that catches a renderer regression: if a new
-disclosure section is concatenated into `body` instead of returned in
-`reserved`, it would otherwise be handed to the model unguarded while everything
-looked healthy. If the assertion does not hold, synthesis is not attempted and
-the deterministic brief is returned.
+If a renderer ignores the flag the two are identical, the assertion fires, and
+the reserved content is never handed to the model. If the assertion does not
+hold, synthesis is not attempted and the deterministic brief is returned.
+
+**This assertion deliberately does not scan `body` for reserved headings.** That
+was the earlier formulation, and it would re-import the untrusted-content problem
+this design exists to remove: a glossary definition quoting a source that
+contains a `## Gaps` line would trip the check and switch synthesis off for that
+brief. Comparing two renders of the same brief is a structural check on our own
+code with no dependence on what the content happens to say. A heading scan *is*
+used in tests, over controlled fixtures, where that objection does not apply.
 
 ### Stripping a hallucinated reserved section
 
@@ -257,12 +278,22 @@ is recognised as a reserved heading and stripped. An end-anchored
 near-miss section standing next to the canonical one, which is the outcome the
 strip step exists to prevent.
 
+**Known bound, stated rather than discovered later.** The strip step runs on the
+model's output and cannot distinguish a hallucinated `## Gaps` from one the model
+faithfully echoed out of quoted brief content — a glossary definition quoted
+verbatim from a source that itself contains a Markdown heading. So a synthesized
+brief may drop a fragment of such a quoted definition. The loss is bounded to
+quoted body text, never a disclosure (the canonical block is re-attached
+regardless), and the deterministic brief is unaffected. Accepted rather than
+solved: distinguishing the two would require trusting the model to mark which
+headings it authored.
+
 ### New provenance variant
 
 `SynthesisProvenance` (`synthesize.ts:51`) gains one `attempted: false` case:
 
 ```ts
-{ attempted: false; reason: "disabled" | "no_eligible_provider" | "reserved_split_failed" }
+{ attempted: false; reason: "disabled" | "no_eligible_provider" | "reserved_extraction_failed" }
 ```
 
 with its own footer, following the existing rule in that file that each path
@@ -341,7 +372,7 @@ Layer 1:
   scan-the-rendered-markdown splitter.
 - A renderer that concatenates a reserved section into `body` instead of
   returning it in `reserved` → no model call, deterministic output,
-  `reserved_split_failed` provenance.
+  `reserved_extraction_failed` provenance.
 - Empty model output → `empty_result`, not a document consisting only of gaps.
 
 Layer 2:
@@ -365,7 +396,12 @@ Anti-inertness, for both layers:
 
 Also:
 
-- `scripts/agent-brief-shape.snapshot.json` regenerates (it moved in #1234).
+- `scripts/agent-brief-shape.snapshot.json` is expected **not** to change. It
+  records `path:type` pairs with values discarded (`scripts/agent-brief-shape.ts`),
+  the default deterministic render is byte-identical under this design, and a new
+  `reason` string value does not alter the signature. Run the snapshot test to
+  confirm rather than regenerating it reflexively — a regenerated snapshot that
+  did not need regenerating hides the shape change it exists to catch.
 - New files meet the coverage floor (≥85% line, ≥80% branch). That gate is
   CI-Linux-authoritative, so it is verified via `verify:docker`, not locally.
 
@@ -454,20 +490,19 @@ commit as the code that changes it:
 
 ## Delivery
 
-**PR 1 — structural layer.** `deterministicRender` and the fourteen `render*`
-functions return `{ body, reserved }`; reserved registry; shared parser
-extraction for the strip step; strip / reassemble; the fail-closed assertion;
-new provenance variant; anti-inertness tests; docs. Regenerates
-`scripts/agent-brief-shape.snapshot.json`. Closes both 0.86 ceilings, every
-truncation count, and the `ownership` accountability disclaimer across all
-fourteen kinds. Carries invariant **I31** — its `docs/SECURITY-INVARIANTS.md`
-section, its `security-invariants.test.ts` row, the mirrored `CLAUDE.md` /
-`GEMINI.md` bullets and roster-line bump, and the renumbering of the worked
-example at `SECURITY-INVARIANTS.md:677`.
+**PR 1 — structural layer.** The `omitReserved` render option across the
+fourteen `render*` functions; `reservedBlocksFor` and the reserved registry;
+shared parser extraction for the strip step; strip / reassemble; the fail-closed
+assertion; new provenance variant; anti-inertness tests; docs. Closes both 0.86
+ceilings, every truncation count, and the `ownership` accountability disclaimer
+across all fourteen kinds. Carries invariant **I31** — its
+`docs/SECURITY-INVARIANTS.md` section, its `security-invariants.test.ts` row, the
+mirrored `CLAUDE.md` / `GEMINI.md` bullets and roster-line bump, and the
+renumbering of the worked example at `SECURITY-INVARIANTS.md:677`.
 
-The renderer signature change is the largest single piece of PR 1 and touches
-every `render*` function, but it is mechanical: each already computes its gaps
-block separately and concatenates it at the end.
+Threading `omitReserved` through every `render*` function is the largest single
+piece of PR 1, but it is mechanical: each already computes its gaps block
+separately and concatenates it at the end. No existing call site or test changes.
 
 **PR 2 — phrase layer.** `brief-disclosures.ts`, derived requirements for the
 seven interleaved sites, red-proved per constant, docs.
