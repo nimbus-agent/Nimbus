@@ -934,12 +934,29 @@ Expected: PASS, including every pre-existing test unmodified.
 
 - [ ] **Step 9: Red-prove the guard by reverting it**
 
-Temporarily change step 5's prompt line back from `body` to `deterministic`, then run:
+There are **two independent guards** here, and each is red-proved against the tests it
+actually protects. Confusing them is easy: an earlier draft of this step asserted that
+reverting the prompt line would fail the Gaps-survival test, which is wrong — the test
+runner returns fixed markdown regardless of the prompt, so the prompt line cannot affect
+that test's outcome. Do both reverts separately.
+
+**Revert A — the prompt.** Temporarily change Step 5's prompt line back from `body` to
+`deterministic`.
 
 Run: `bun test packages/gateway/src/agents/_lib/synthesize.test.ts`
-Expected: FAIL on "a rewrite that omits the Gaps section still ships it verbatim" — proving the test detects the unguarded state rather than passing regardless.
+Expected: FAIL on **"the reserved sections are not in the prompt"**, and on that test only.
+Restore, re-run, confirm PASS.
 
-Restore the line, re-run, confirm PASS. A guard whose test passes with the guard removed proves nothing; this step is the proof, not the green run.
+**Revert B — the reassembly.** Temporarily change Step 6's final return to use
+`attempt.markdown` in place of `reassembled` (in both `contractViolations` and
+`withProvenanceFooter`).
+
+Run: `bun test packages/gateway/src/agents/_lib/synthesize.test.ts`
+Expected: FAIL on **"a rewrite that omits the Gaps section still ships it verbatim"**, and
+on the fabricated-section and near-miss tests with it. Restore, re-run, confirm PASS.
+
+A guard whose test passes with the guard removed proves nothing; these two reverts are the
+proof, not the green run. Record both outputs in your report.
 
 - [ ] **Step 10: Commit**
 
