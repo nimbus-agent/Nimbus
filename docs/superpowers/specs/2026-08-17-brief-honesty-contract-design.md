@@ -8,7 +8,7 @@
 
 ## Problem
 
-#1234 turned LLM synthesis on by default (`[agents] synthesis = "local"`), so a
+PR #1234 turned LLM synthesis on by default (`[agents] synthesis = "local"`), so a
 model now rewrites every built-in brief before the reader sees it. The honesty
 guard that was supposed to stop a rewrite from dropping a disclosure covers one
 of fourteen brief kinds.
@@ -319,8 +319,11 @@ with its own footer, following the existing rule in that file that each path
 gets a distinct footer — `synthesize.ts:108` records that conflating them was a
 real defect caught in review. Proposed text:
 
-> _Rendered deterministically — the brief's reserved disclosure sections could
-> not be isolated, so no rewrite was attempted._
+> `_Rendered deterministically — the brief's reserved disclosure sections could not be isolated, so no rewrite was attempted._`
+
+The surrounding underscores are part of the literal string — every other footer
+in `synthesize.ts` is italicised the same way — which is why it is quoted here as
+code rather than as emphasis.
 
 This is a `briefReady` wire addition. It is worth the addition: a silent
 regression here is the exact failure this work exists to prevent, so it must be

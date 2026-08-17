@@ -27,11 +27,13 @@
 `brief-contract.ts` owns the only `##`-section scanner in the agents tree. The strip step needs the same parse. Extract it so there is exactly one, then add `stripSections` beside it.
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/markdown-sections.ts`
 - Create: `packages/gateway/src/agents/_lib/markdown-sections.test.ts`
 - Modify: `packages/gateway/src/agents/_lib/brief-contract.ts:1-57` (delete `normalize` + `sectionBody`, import them instead)
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks.
 - Produces:
   - `normalizeSectionText(s: string): string`
@@ -310,10 +312,12 @@ git commit -m "extract the shared markdown section parser"
 Give every renderer the ability to omit its reserved sections, and export the block builders so Task 3 can call the same functions. The default call path must stay byte-identical.
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/_lib/render.ts` (all fourteen `render*` exports, plus `renderGaps` and the negotiate section builders)
 - Create: `packages/gateway/src/agents/_lib/render.reserved.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from Task 1.
 - Produces:
   - `export type RenderOpts = { readonly omitReserved?: boolean }`
@@ -487,10 +491,12 @@ git commit -m "let every renderer omit its reserved disclosure sections"
 ### Task 3: The reserved registry and block builder
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/reserved-sections.ts`
 - Create: `packages/gateway/src/agents/_lib/reserved-sections.test.ts`
 
 **Interfaces:**
+
 - Consumes: `renderGaps`, `renderNegotiateSources`, `renderNegotiateEvidenceSection`, `RenderOpts` (Task 2).
 - Produces:
   - `export type ReservedBlock = { readonly heading: string; readonly markdown: string }`
@@ -712,10 +718,12 @@ git commit -m "add the reserved-section registry and block builder"
 ### Task 4: Wire the reserved path into `synthesize()`
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/_lib/synthesize.ts` (`deterministicRender`, `synthesize`, `SynthesisProvenance`, `SYNTHESIS_INSTRUCTIONS`, new footer)
 - Modify: `packages/gateway/src/agents/_lib/synthesize.test.ts` (append new tests; change nothing existing)
 
 **Interfaces:**
+
 - Consumes: `RenderOpts` (Task 2); `reservedBlocksFor`, `reservedHeadingsFor`, `joinReserved` (Task 3); `stripSections` (Task 1).
 - Produces: `SynthesisProvenance` gains `{ attempted: false; reason: "reserved_extraction_failed" }`.
 
@@ -948,10 +956,12 @@ git commit -m "hold reserved disclosure sections out of synthesis and re-attach 
 A registry that names a heading no renderer emits is a guard that cannot fire. These tests prove the mechanism is wired to live text, and pin the behaviour that motivated building it by construction.
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/reserved-sections.coverage.test.ts`
 - Modify: `packages/gateway/src/agents/_lib/synthesize.ts` (add the `deterministicRenderForTest` export in Step 2)
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 2-4.
 - Produces: `export const deterministicRenderForTest` (test-facing alias of the private `deterministicRender`).
 
@@ -1143,6 +1153,7 @@ git commit -m "prove every renderer honours omitReserved and hostile content is 
 ### Task 6: Record invariant I31
 
 **Files:**
+
 - Modify: `docs/SECURITY-INVARIANTS.md` (new I31 section; trim the I29 honesty clause; renumber the worked example at line 677)
 - Modify: `packages/gateway/src/security-invariants.test.ts` (new I31 describe block)
 - Modify: `CLAUDE.md` (I31 bullet; roster line; I29 bullet trim)
@@ -1151,6 +1162,7 @@ git commit -m "prove every renderer honours omitReserved and hostile content is 
 - Modify: `docs/CHANGELOG.md`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 2-4.
 - Produces: nothing.
 
