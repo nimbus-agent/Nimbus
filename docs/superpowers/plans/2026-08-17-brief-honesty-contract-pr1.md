@@ -512,7 +512,6 @@ Create `packages/gateway/src/agents/_lib/reserved-sections.test.ts`:
 ```typescript
 import { describe, expect, test } from "bun:test";
 import type { ExpertBrief, GapNote } from "./findings.ts";
-import type { NegotiateBrief } from "./negotiate-types.ts";
 import {
   joinReserved,
   RESERVED_HEADINGS_BY_KIND,
@@ -686,7 +685,7 @@ export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
     });
     blocks.push({
       heading: NEGOTIATE_EVIDENCE_HEADING,
-      markdown: renderNegotiateEvidenceSection(negotiate).trim(),
+      markdown: renderNegotiateEvidenceSection(negotiate.unavailableEvidence).trim(),
     });
   }
   const gaps = renderGaps(brief.gaps).trim();

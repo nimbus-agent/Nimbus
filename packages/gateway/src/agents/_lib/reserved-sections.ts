@@ -64,7 +64,7 @@ export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
     });
     blocks.push({
       heading: NEGOTIATE_EVIDENCE_HEADING,
-      markdown: renderNegotiateEvidenceSection(negotiate).trim(),
+      markdown: renderNegotiateEvidenceSection(negotiate.unavailableEvidence).trim(),
     });
   }
   const gaps = renderGaps(brief.gaps).trim();

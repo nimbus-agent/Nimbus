@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { ExpertBrief, GapNote } from "./findings.ts";
-import type { NegotiateBrief } from "./negotiate-types.ts";
 import {
   joinReserved,
   RESERVED_HEADINGS_BY_KIND,
