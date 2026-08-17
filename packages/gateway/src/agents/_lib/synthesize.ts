@@ -87,6 +87,10 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
   return assertNeverBrief(brief);
 }
 
+/** Test-only re-export: the all-kinds `omitReserved` table test in
+ *  `reserved-sections.coverage.test.ts` must exercise the real dispatch, not a copy of it. */
+export const deterministicRenderForTest = deterministicRender;
+
 function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "expert") return "agents.expert";
   if (brief.kind === "impact") return "agents.impact";
