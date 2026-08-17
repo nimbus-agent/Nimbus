@@ -612,3 +612,63 @@ describe("no-runner labelling", () => {
     expect(disabled.markdown).not.toContain("no eligible LLM provider was available");
   });
 });
+
+const EXPERT_WITH_GAPS: ExpertBrief = {
+  ...EXPERT_FIXTURE,
+  gaps: [
+    {
+      category: "empty_index",
+      detail: "No items in the local index yet.",
+      remediation: "Run `nimbus connector sync <service>`.",
+    },
+  ],
+};
+
+describe("synthesize — reserved disclosure sections (I31)", () => {
+  test("a rewrite that omits the Gaps section still ships it verbatim", async () => {
+    const runner = fixedRunner(okAttempt("# Expert\n\nA readable rewrite with no gaps section."));
+    const out = await synthesize(EXPERT_WITH_GAPS, { runner });
+    expect(out.markdown).toContain("## Gaps");
+    expect(out.markdown).toContain("No items in the local index yet.");
+    expect(out.provenance).toMatchObject({ attempted: true, used: true });
+  });
+
+  test("a fabricated Gaps section is stripped and the canonical one appears exactly once", async () => {
+    const runner = fixedRunner(
+      okAttempt("# Expert\n\nbody\n\n## Gaps\n\n- nothing is wrong at all\n"),
+    );
+    const out = await synthesize(EXPERT_WITH_GAPS, { runner });
+    expect(out.markdown).not.toContain("nothing is wrong at all");
+    expect(out.markdown).toContain("No items in the local index yet.");
+    expect(out.markdown.match(/^## Gaps/gm)).toHaveLength(1);
+  });
+
+  test("a near-miss heading is stripped too", async () => {
+    const runner = fixedRunner(
+      okAttempt("# Expert\n\nbody\n\n## Gaps and caveats\n\n- invented\n"),
+    );
+    const out = await synthesize(EXPERT_WITH_GAPS, { runner });
+    expect(out.markdown).not.toContain("invented");
+    expect(out.markdown).toContain("No items in the local index yet.");
+  });
+
+  test("the reserved sections are not in the prompt", async () => {
+    const seen: string[] = [];
+    const runner = capturingRunner(okAttempt("# rewritten"), seen);
+    await synthesize(EXPERT_WITH_GAPS, { runner });
+    expect(seen[0]).not.toContain("## Gaps");
+  });
+
+  test("an empty rewrite is discarded, not padded out by the reserved blocks", async () => {
+    const runner = fixedRunner(okAttempt("   "));
+    const out = await synthesize(EXPERT_WITH_GAPS, { runner });
+    expect(out.provenance).toEqual({ attempted: true, used: false, reason: "empty_result" });
+    expect(out.markdown).toContain("_no people matched_");
+  });
+
+  test("a brief with no gap notes is byte-identical to before", async () => {
+    const runner = fixedRunner(okAttempt("# LLM-rewritten Markdown"));
+    const out = await synthesize(EXPERT_FIXTURE, { runner });
+    expect(out.markdown).toBe("# LLM-rewritten Markdown\n\n_Synthesized by test-model (local)._\n");
+  });
+});
