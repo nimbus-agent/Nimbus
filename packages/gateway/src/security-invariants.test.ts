@@ -8,6 +8,7 @@ import {
   checkWrapServerSpecInvariant,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments } from "../../../scripts/structure-audit/lib.ts";
+import type { ExpertBrief } from "./agents/_lib/findings.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
 import { PairingWindowController } from "./clips/pairing-window.ts";
@@ -2034,12 +2035,12 @@ describe("I30 — web-clipper token minting is fail-closed behind an owner-opene
 describe("I31 — disclosure integrity: a synthesized brief never says less than the deterministic one", () => {
   test("I31: a rewrite that drops every reserved section still ships them", async () => {
     const { synthesize } = await import("./agents/_lib/synthesize.ts");
-    const brief = {
-      kind: "expert" as const,
+    const brief: ExpertBrief = {
+      kind: "expert",
       agentVersion: 1,
       generatedAt: 0,
       latencyMs: 0,
-      gaps: [{ category: "empty_index" as const, detail: "I31-DISCLOSURE-SENTINEL" }],
+      gaps: [{ category: "empty_index", detail: "I31-DISCLOSURE-SENTINEL" }],
       query: { topicOrFile: "src/x.ts" },
       ranked: [],
     };
@@ -2061,7 +2062,9 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     // synthesize dispatch handles.
     const { RESERVED_HEADINGS_BY_KIND } = await import("./agents/_lib/reserved-sections.ts");
     const src = await read("packages/gateway/src/agents/_lib/synthesize.ts");
-    const dispatched = [...src.matchAll(/brief\.kind === "([a-z]+)"/g)].map((m) => m[1]);
+    const dispatched = [...src.matchAll(/brief\.kind === "([a-z]+)"/g)]
+      .map((m) => m[1])
+      .filter((kind): kind is string => kind !== undefined);
     const kinds = new Set(dispatched);
     expect(Object.keys(RESERVED_HEADINGS_BY_KIND).sort()).toEqual([...kinds].sort());
   });
