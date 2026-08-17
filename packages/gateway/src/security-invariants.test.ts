@@ -2030,3 +2030,47 @@ describe("I30 — web-clipper token minting is fail-closed behind an owner-opene
     expect(verified?.scopes).toEqual(LEGACY_SCOPES);
   });
 });
+
+describe("I31 — disclosure integrity: a synthesized brief never says less than the deterministic one", () => {
+  test("I31: a rewrite that drops every reserved section still ships them", async () => {
+    const { synthesize } = await import("./agents/_lib/synthesize.ts");
+    const brief = {
+      kind: "expert" as const,
+      agentVersion: 1,
+      generatedAt: 0,
+      latencyMs: 0,
+      gaps: [{ category: "empty_index" as const, detail: "I31-DISCLOSURE-SENTINEL" }],
+      query: { topicOrFile: "src/x.ts" },
+      ranked: [],
+    };
+    const runner = {
+      run: async (_prompt: string) => ({
+        ok: true as const,
+        markdown: "# Expert\n\nEverything is fine and nothing is missing.",
+        model: "test-model",
+        remote: false,
+      }),
+    };
+    const out = await synthesize(brief, { runner });
+    expect(out.markdown).toContain("I31-DISCLOSURE-SENTINEL");
+  });
+
+  test("I31: the reserved registry is total over the brief union", async () => {
+    // A fifteenth brief kind must be a compile error in `reserved-sections.ts`, not a silent
+    // empty list. The runtime half of that claim: the registry has one entry per kind the
+    // synthesize dispatch handles.
+    const { RESERVED_HEADINGS_BY_KIND } = await import("./agents/_lib/reserved-sections.ts");
+    const src = await read("packages/gateway/src/agents/_lib/synthesize.ts");
+    const dispatched = [...src.matchAll(/brief\.kind === "([a-z]+)"/g)].map((m) => m[1]);
+    const kinds = new Set(dispatched);
+    expect(Object.keys(RESERVED_HEADINGS_BY_KIND).sort()).toEqual([...kinds].sort());
+  });
+
+  test("I31: reserved blocks are constructed, never recovered by parsing the render", async () => {
+    // The anti-pattern this invariant forbids. `reserved-sections.ts` must not scan rendered
+    // markdown for its own headings — that is what makes untrusted brief content harmless.
+    const src = await read("packages/gateway/src/agents/_lib/reserved-sections.ts");
+    expect(src).not.toContain("sectionBody");
+    expect(src).not.toContain("stripSections");
+  });
+});
