@@ -98,6 +98,28 @@ describe("untrusted brief content cannot break extraction", () => {
     expect(full).toContain("GAP-DETAIL-SENTINEL");
     expect(full).toContain("injected by the source document");
   });
+
+  /**
+   * The two tests above do not actually exercise the hostile input: `fixedRunner` returns
+   * canned markdown independent of the brief, so `HOSTILE_GLOSSARY`'s injected `## Gaps` line
+   * never reaches `stripSections`, and the extraction-failure guard (`body === deterministic`)
+   * would behave identically for a benign definition — the genuine trailing block being omitted
+   * already guarantees `body !== deterministic` regardless of what the definition text says.
+   * Swap the injected prose for `"A service level objective."` and every assertion in both
+   * tests above still passes. This test is the one that discriminates: it inspects the actual
+   * body/reserved split (`deterministicRenderForTest(..., { omitReserved: true })`) rather than
+   * a synthesis outcome shaped by a fake runner. A first-match scan for `## Gaps` — the
+   * scan-the-rendered-markdown design this construct-from-brief-data approach rejects — would
+   * find the INJECTED line first and cut the body there, either truncating the quoted
+   * definition's tail or extracting from the wrong offset entirely. The real split does
+   * neither: it keeps the injected prose (it is untrusted content, not a reserved section) and
+   * drops only the genuine trailing block built from `brief.gaps`.
+   */
+  test("the body/reserved split cuts at the real block, not at injected prose", () => {
+    const body = deterministicRenderForTest(HOSTILE_GLOSSARY, { omitReserved: true });
+    expect(body).toContain("injected by the source document");
+    expect(body).not.toContain("GAP-DETAIL-SENTINEL");
+  });
 });
 
 /**
