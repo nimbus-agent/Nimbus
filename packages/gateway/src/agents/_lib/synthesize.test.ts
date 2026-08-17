@@ -8,10 +8,11 @@ import type {
   JanitorBrief,
   PreflightBrief,
 } from "./findings.ts";
+import type { GlossaryBrief } from "./glossary-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 import type { OwnershipBrief } from "./ownership-types.ts";
 import type { SynthesisAttempt, SynthesisRunner } from "./synthesis-llm.ts";
-import { synthesize } from "./synthesize.ts";
+import { reservedExtractionFailed, synthesize } from "./synthesize.ts";
 
 /** A `SynthesisRunner` whose `run()` always resolves to `attempt`, regardless of the prompt. */
 function fixedRunner(attempt: SynthesisAttempt): SynthesisRunner {
@@ -670,5 +671,87 @@ describe("synthesize — reserved disclosure sections (I31)", () => {
     const runner = fixedRunner(okAttempt("# LLM-rewritten Markdown"));
     const out = await synthesize(EXPERT_FIXTURE, { runner });
     expect(out.markdown).toBe("# LLM-rewritten Markdown\n\n_Synthesized by test-model (local)._\n");
+  });
+});
+
+const GLOSSARY_FIXTURE: GlossaryBrief = {
+  kind: "glossary",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [],
+  query: { term: null, limit: 10 },
+  mode: "list",
+  entries: [],
+  matchedVia: null,
+  suggestions: [],
+  stats: { total: 0, pending: 0, vetoed: 0, manual: 0, lastPassAt: null, truncatedSources: 0 },
+};
+
+describe("the reserved-section instruction is derived per kind, not global (I31 fix-round)", () => {
+  // `glossary` renders its own `### Sources` citation rows (`render.ts`'s `renderGlossarySources`)
+  // and does not reserve a `## Sources` section — only `negotiate` does. A global instruction
+  // telling every kind to withhold `Sources` told the model to gag a section glossary legitimately
+  // owns, and nothing re-attaches it, so the citations silently disappeared from a synthesized
+  // glossary brief. Red-proved by reverting `synthesisInstructionsFor` to the old constant: this
+  // test then fails because the prompt contains "Sources".
+  test("a glossary prompt names only Gaps, never Sources", async () => {
+    const seenPrompt: string[] = [];
+    const runner = capturingRunner(okAttempt("# Glossary\n\nnothing yet."), seenPrompt);
+    await synthesize(GLOSSARY_FIXTURE, { runner });
+    // Pin the exact instruction line rather than a bare `toContain("Sources")` — the brief's own
+    // JSON legitimately contains "Sources" as a substring (`stats.truncatedSources`), so a loose
+    // substring check on the whole prompt would false-positive on that field name.
+    const instructionLine = seenPrompt[0]?.split("\n").find((l) => l.startsWith("- Do not write"));
+    expect(instructionLine).toBe(
+      "- Do not write a `Gaps` section: it is appended verbatim after your rewrite. The JSON still lists it so your prose does not contradict it.",
+    );
+  });
+
+  test("a negotiate prompt names all three reserved sections", async () => {
+    const seenPrompt: string[] = [];
+    const runner = capturingRunner(okAttempt(ALL_SEVEN_COMPLIANT), seenPrompt);
+    await synthesize(twoNullLaneBrief(), { runner });
+    expect(seenPrompt[0]).toContain(
+      "Do not write a `Sources`, `Evidence not available from the index`, or `Gaps` section",
+    );
+  });
+});
+
+describe("reservedExtractionFailed — the I31 fail-closed guard, unit-tested directly", () => {
+  // Previously only reachable by getting a real renderer to ignore `omitReserved`, which no real
+  // renderer does — so the guard was asserted in docs but never exercised by a test. Extracted to
+  // a pure function specifically so both arms are directly testable without DI into render.ts.
+  const someBlocks = [{ heading: "## Gaps", markdown: "## Gaps\n\n- x" }];
+
+  test("true: reserved blocks exist and the two renders are identical (renderer ignored the flag)", () => {
+    expect(reservedExtractionFailed("same render", "same render", someBlocks)).toBe(true);
+  });
+
+  test("false: reserved blocks exist but the two renders differ (the healthy case)", () => {
+    expect(
+      reservedExtractionFailed("full render with gaps", "body render without gaps", someBlocks),
+    ).toBe(false);
+  });
+
+  test("false: no reserved blocks at all, even if the two renders happen to be identical", () => {
+    expect(reservedExtractionFailed("same render", "same render", [])).toBe(false);
+  });
+});
+
+describe("a rewrite that strips to empty is discarded, not shipped as pure disclosures (I31 fix-round)", () => {
+  // The raw-markdown empty check (`attempt.markdown.trim().length === 0`) runs BEFORE stripping,
+  // so it is correct but incomplete: a model returning ONLY a fabricated `## Gaps` section is
+  // non-empty raw and passes that check, then strips down to nothing. Without a second check on
+  // the stripped body, `joinReserved("", reservedBlocks)` would ship a "brief" consisting of
+  // nothing but the canonical disclosures plus a footer — the exact pure-disclosure artifact the
+  // design's reassembly ordering exists to prevent.
+  test("a rewrite consisting only of a fabricated Gaps section falls back to the deterministic brief", async () => {
+    const runner = fixedRunner(okAttempt("## Gaps\n\n- fabricated own gap\n"));
+    const out = await synthesize(EXPERT_WITH_GAPS, { runner });
+    expect(out.provenance).toEqual({ attempted: true, used: false, reason: "empty_result" });
+    expect(out.markdown).toContain("_no people matched_");
+    expect(out.markdown).toContain("No items in the local index yet.");
+    expect(out.markdown).not.toContain("fabricated own gap");
   });
 });

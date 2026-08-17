@@ -19,7 +19,12 @@ import {
   renderPremortem,
   renderWhy,
 } from "./render.ts";
-import { joinReserved, reservedBlocksFor, reservedHeadingsFor } from "./reserved-sections.ts";
+import {
+  joinReserved,
+  type ReservedBlock,
+  reservedBlocksFor,
+  reservedHeadingsFor,
+} from "./reserved-sections.ts";
 import {
   redactedErrorDetail,
   type SynthesisAttempt,
@@ -195,6 +200,23 @@ function withReservedExtractionFailedFooter(markdown: string): string {
   return `${markdown.trimEnd()}\n\n${RESERVED_EXTRACTION_FAILED_FOOTER}\n`;
 }
 
+/**
+ * The I31 fail-closed assertion, extracted to a pure function so it can be unit-tested
+ * directly instead of only through a renderer that (correctly) never trips it. `full` and
+ * `body` are two renders of the SAME brief — the canonical one and the `omitReserved: true`
+ * one — never anything recovered by parsing either. If `reserved` is non-empty, the two MUST
+ * differ: identical output means the renderer ignored `omitReserved`, so the reserved content
+ * would have gone to the model unguarded. See `synthesize()`'s call site for why this is
+ * deliberately NOT a heading scan of `body` — brief content is untrusted markdown.
+ */
+export function reservedExtractionFailed(
+  full: string,
+  body: string,
+  reserved: readonly ReservedBlock[],
+): boolean {
+  return reserved.length > 0 && body === full;
+}
+
 export async function synthesize(
   brief: SynthInput,
   opts: SynthesizeOpts = {},
@@ -219,7 +241,7 @@ export async function synthesize(
   // untrusted markdown (a quoted glossary definition can contain a `## Gaps` line), and a
   // scan would switch synthesis off on the strength of what a source document happens to say.
   // Comparing two renders of the same brief tests our code and nothing else.
-  if (reservedBlocks.length > 0 && body === deterministic) {
+  if (reservedExtractionFailed(deterministic, body, reservedBlocks)) {
     return {
       markdown: withReservedExtractionFailedFooter(deterministic),
       provenance: { attempted: false, reason: "reserved_extraction_failed" },
@@ -228,7 +250,7 @@ export async function synthesize(
 
   const wrapped = wrapToolOutput({ service: "nimbus", tool: toolNameFor(brief) }, brief);
   const prompt = [
-    SYNTHESIS_INSTRUCTIONS,
+    synthesisInstructionsFor(brief),
     "",
     "Findings:",
     wrapped,
@@ -299,10 +321,23 @@ export async function synthesize(
   // The strip runs on the MODEL's markdown — untrusted, hence the shared parser — while the
   // blocks come from the brief. The contract guard then inspects the artifact the reader
   // actually receives, not an intermediate.
-  const reassembled = joinReserved(
-    stripSections(attempt.markdown, reservedHeadingsFor(brief)),
-    reservedBlocks,
-  );
+  const strippedBody = stripSections(attempt.markdown, reservedHeadingsFor(brief));
+
+  // Re-check emptiness AFTER stripping, not just on the raw markdown above. A model that
+  // returns ONLY a fabricated reserved section (e.g. its own invented `## Gaps`) is non-empty
+  // raw — the check above lets it through — but strips down to nothing here. Without this,
+  // `joinReserved("", reservedBlocks)` would produce a "brief" consisting of nothing but the
+  // canonical disclosures plus a footer, which is exactly the pure-disclosure artifact the
+  // design's reassembly ordering exists to prevent. Falls through to the SAME `empty_result`
+  // path as the raw-empty case above, so the reader gets the full deterministic brief.
+  if (strippedBody.trim().length === 0) {
+    return {
+      markdown: withDiscardedSynthesisFooter(deterministic, "empty_result"),
+      provenance: { attempted: true, used: false, reason: "empty_result" },
+    };
+  }
+
+  const reassembled = joinReserved(strippedBody, reservedBlocks);
 
   const violations = contractViolations(brief, reassembled);
   if (violations.length > 0) {
@@ -323,13 +358,43 @@ export async function synthesize(
   };
 }
 
-const SYNTHESIS_INSTRUCTIONS = [
-  "You are presenting structured findings from a Nimbus built-in agent.",
-  "Rewrite the deterministic Markdown into a more readable brief.",
-  "Rules:",
-  "- Never invent evidence rows; only paraphrase or reorder what is already in the JSON.",
-  "- Keep all section headings.",
-  "- Do not write a `Gaps`, `Sources`, or `Evidence not available from the index` section: they are appended verbatim after your rewrite. The JSON still lists them so your prose does not contradict them.",
-  "- If the JSON contains zero ranked findings, say so plainly; do not pad.",
-  "- Output Markdown only — no preamble, no code fences around the whole answer.",
-].join("\n");
+/** Strip the leading `#`s off a reserved heading literal (`"## Gaps"` → `"Gaps"`) for prose. */
+function bareHeading(heading: string): string {
+  return heading.replace(/^#+\s*/, "");
+}
+
+/**
+ * Join heading names into "`A`, `B`, or `C`" (Oxford-comma-free, matching this file's existing
+ * prose style) — or just "`A`" for the common one-heading case (thirteen of fourteen kinds).
+ */
+function formatHeadingList(names: readonly string[]): string {
+  const quoted = names.map((n) => `\`${n}\``);
+  if (quoted.length <= 1) return quoted.join("");
+  const last = quoted.at(-1) ?? "";
+  return `${quoted.slice(0, -1).join(", ")}, or ${last}`;
+}
+
+/**
+ * The reserved-section instruction, derived from `reservedHeadingsFor(brief)` rather than a
+ * single hardcoded sentence. Global text naming `Sources`/`Evidence not available from the
+ * index` for every kind was a real regression (I31 fix-round): only `negotiate` reserves those
+ * two — `RESERVED_HEADINGS_BY_KIND` is per-kind precisely so a kind that legitimately renders
+ * its own `## Sources` (glossary's term-mode citation rows, `render.ts`) is not gagged by a
+ * blanket instruction meant for a section it does not own. For every other kind this reduces
+ * to exactly "Gaps".
+ */
+function synthesisInstructionsFor(brief: SynthInput): string {
+  const names = reservedHeadingsFor(brief).map(bareHeading);
+  const list = formatHeadingList(names);
+  const pronoun = names.length === 1 ? "it" : "them";
+  return [
+    "You are presenting structured findings from a Nimbus built-in agent.",
+    "Rewrite the deterministic Markdown into a more readable brief.",
+    "Rules:",
+    "- Never invent evidence rows; only paraphrase or reorder what is already in the JSON.",
+    "- Keep all section headings.",
+    `- Do not write a ${list} section: ${names.length === 1 ? "it is" : "they are"} appended verbatim after your rewrite. The JSON still lists ${pronoun} so your prose does not contradict ${pronoun}.`,
+    "- If the JSON contains zero ranked findings, say so plainly; do not pad.",
+    "- Output Markdown only — no preamble, no code fences around the whole answer.",
+  ].join("\n");
+}

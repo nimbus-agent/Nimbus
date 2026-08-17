@@ -22,10 +22,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `stripSections`) and the canonical block is re-attached verbatim regardless, so a rewrite
   cannot drop a disclosure by construction rather than by check. If a renderer's `omitReserved`
   render comes back identical to its canonical one — meaning the flag was not honoured — no
-  rewrite is attempted at all (fail-closed). Interleaved disclosures that cannot be held back as
-  a whole section (`decisions`'s and `premortem`'s 0.86 confidence ceiling, the `body_complete =
-  0` truncation counts) stay on the narrower `requiredPhrases` anchor-phrase check in
-  `agents/_lib/brief-contract.ts`, widening it beyond `negotiate` is a follow-up PR's scope.
+  rewrite is attempted at all (fail-closed). That coverage is broader than "Gaps" suggests:
+  `decisions`'s and `premortem`'s 0.86 confidence ceiling and every `glossary`/`decisions`/
+  `premortem` `body_complete = 0` truncation count are each emitted as a gap note, so they ride
+  the same `## Gaps` section as everything else and are fully protected by this fix, not an
+  exception to it. What remains genuinely interleaved — inside prose the model is meant to
+  rewrite, so it cannot be held back as a whole section — is narrower: `negotiate`'s ownership
+  list-truncation clause, its last-modified-not-created window clause, its two `unattributable`
+  lines, and `glossary`'s two definition-provenance lines. That set stays on the narrower
+  `requiredPhrases` anchor-phrase check in `agents/_lib/brief-contract.ts`, which today covers
+  only `negotiate`'s seven null-lane sentinels; widening it to the rest, and deriving its anchors
+  from constants shared with the render sites instead of the two independent copies that exist
+  today, is a follow-up PR's scope.
   Recorded as **invariant I31** (`docs/SECURITY-INVARIANTS.md`) with no static `D`-rule —
   deliberate, since there is exactly one production path that produces a brief's final markdown
   today, so a source-scanning confinement rule would guard a risk that does not exist. Stated
