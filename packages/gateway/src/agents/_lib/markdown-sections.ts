@@ -24,8 +24,8 @@ const FENCE_RE = /^\s*(?:```|~~~)/;
 function headingOf(line: string): { level: number; text: string } | undefined {
   const m = HEADING_RE.exec(line);
   if (m === null) return undefined;
-  const hashes = m[1];
-  if (hashes === undefined) return undefined;
+  // `(#+)` is a mandatory capturing group, so m[1] is always defined once m is non-null.
+  const hashes = m[1] ?? "";
   return { level: hashes.length, text: normalizeSectionText(m[2] ?? "") };
 }
 
@@ -85,6 +85,18 @@ function headingLines(lines: readonly string[]): { index: number; level: number;
  * `### Tickets` demoted under a different section — or match an unrelated earlier
  * `### Tickets` sub-note (`findIndex` takes the first hit) and read the disclaimer out of
  * the wrong body entirely.
+ *
+ * DIVERGENCE FROM THE PRE-EXTRACTION IMPLEMENTATION: the original `brief-contract.ts` scanner
+ * found a section's end with a loose `/^#+/` match — no space required after the hashes — so a
+ * body line like `##nospace` used to terminate a section. This version routes both the start
+ * and end scan through `headingOf`, whose `HEADING_RE` requires the space, so `##nospace` is no
+ * longer treated as a heading and no longer ends a section. This is deliberate, not a bug:
+ * CommonMark requires a space after the `#` run for an ATX heading, so `##nospace` is a
+ * paragraph line, and every renderer that displays these briefs treats it as one — the old
+ * behaviour terminated a section at a boundary no reader ever sees. A real `## Heading` still
+ * terminates a section under both versions, so there is no cross-section leakage; only
+ * unspaced-hash body lines differ, and they now correctly stay inside the section they're
+ * written in. Pinned by the "an unspaced `##nospace` body line" test below.
  */
 export function sectionBody(markdown: string, heading: string): string | undefined {
   const lines = markdown.split("\n");

@@ -22,6 +22,20 @@ describe("sectionBody", () => {
   test("a demoted heading does not open a section", () => {
     expect(sectionBody("### Tickets\n\nbody", "Tickets")).toBeUndefined();
   });
+
+  test("accepts a heading argument already prefixed with '## '", () => {
+    const md = "## Tickets\n\nrow one\n\n## Ownership\n\nother";
+    expect(sectionBody(md, "## Tickets")).toContain("row one");
+    expect(sectionBody(md, "## Tickets")).not.toContain("other");
+  });
+
+  test("an unspaced '##nospace' body line does not end the section (deliberately diverges from the pre-extraction scanner, which used a loose /^#+/ end match; CommonMark requires the space, so this is not a heading)", () => {
+    const md = "## Tickets\n\nrow one\n##nospace still in body\n\n## Ownership\n\nother";
+    const body = sectionBody(md, "Tickets");
+    expect(body).toContain("row one");
+    expect(body).toContain("##nospace still in body");
+    expect(body).not.toContain("other");
+  });
 });
 
 describe("stripSections", () => {
@@ -58,6 +72,13 @@ describe("stripSections", () => {
 
   test("does NOT strip a demoted heading — only level 2 opens a section", () => {
     expect(stripSections("body\n\n### Gaps\n\n- x", ["## Gaps"])).toContain("- x");
+  });
+
+  test("accepts a bare-text heading argument (no '## ' prefix)", () => {
+    const md = "body\n\n## Gaps\n\n- invented\n\n## Keep\n\nkept";
+    const out = stripSections(md, ["Gaps"]);
+    expect(out).not.toContain("invented");
+    expect(out).toContain("kept");
   });
 });
 
