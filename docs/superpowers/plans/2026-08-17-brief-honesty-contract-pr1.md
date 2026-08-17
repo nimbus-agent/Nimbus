@@ -95,6 +95,35 @@ describe("stripSections", () => {
     expect(stripSections("## Other\n\nbody", ["## Gaps"])).toContain("body");
     expect(stripSections("## Gaps\n\nbody", [])).toContain("body");
   });
+
+  test("strips a heading carrying trailing punctuation or an extra clause", () => {
+    expect(stripSections("body\n\n## Gaps:\n\n- x", ["## Gaps"])).not.toContain("- x");
+    expect(stripSections("body\n\n## Gaps & Caveats\n\n- x", ["## Gaps"])).not.toContain("- x");
+  });
+
+  test("does NOT strip a demoted heading — only level 2 opens a section", () => {
+    expect(stripSections("body\n\n### Gaps\n\n- x", ["## Gaps"])).toContain("- x");
+  });
+});
+
+describe("fenced code blocks", () => {
+  test("a heading inside a fence does not open a section", () => {
+    const md = "## Real\n\n```md\n## Tickets\nnot a heading\n```\n\nstill under Real";
+    expect(sectionBody(md, "Real")).toContain("still under Real");
+    expect(sectionBody(md, "Tickets")).toBeUndefined();
+  });
+
+  test("a heading inside a fence is not stripped", () => {
+    const md = "body\n\n```md\n## Gaps\n```\n\ntail";
+    const out = stripSections(md, ["## Gaps"]);
+    expect(out).toContain("## Gaps");
+    expect(out).toContain("tail");
+  });
+
+  test("a tilde fence counts too", () => {
+    const md = "body\n\n~~~\n## Gaps\n~~~\n\ntail";
+    expect(stripSections(md, ["## Gaps"])).toContain("tail");
+  });
 });
 ```
 
@@ -128,6 +157,7 @@ export function normalizeSectionText(s: string): string {
 }
 
 const HEADING_RE = /^(#+)\s+(.+)$/;
+const FENCE_RE = /^\s*(?:```|~~~)/;
 
 /** The `#` run and normalized text of a heading line, or `undefined` if it is not one. */
 function headingOf(line: string): { level: number; text: string } | undefined {
@@ -138,11 +168,43 @@ function headingOf(line: string): { level: number; text: string } | undefined {
   return { level: hashes.length, text: normalizeSectionText(m[2] ?? "") };
 }
 
-/** True when `line` opens a level-2 section whose text starts with one of `targets`. */
-function opensTarget(line: string, targets: readonly string[]): boolean {
-  const h = headingOf(line);
-  if (h === undefined || h.level !== 2) return false;
-  return targets.some((t) => h.text.startsWith(t));
+/**
+ * Normalized comparison text for a caller-supplied heading, accepting either form.
+ *
+ * `brief-contract.ts` passes bare text (`"Tickets"`); the reserved registry stores the
+ * literal a renderer emits (`"## Gaps"`). Both must compare equal to a heading LINE's text,
+ * which `headingOf` has already stripped of its `#` run — without this, a registry entry
+ * would compare `"## gaps"` against `"gaps"` and never match, leaving the strip step
+ * silently inert.
+ */
+function headingTextOf(heading: string): string {
+  return normalizeSectionText(heading.replace(/^#+\s*/, ""));
+}
+
+/**
+ * Every heading line OUTSIDE a fenced code block, with its index and level.
+ *
+ * Fence tracking matters because the markdown being scanned is the model's output, and a
+ * rewrite can legitimately contain a fenced example that includes a `##` line — echoed, for
+ * instance, out of a glossary definition quoted verbatim from a source document. Treating
+ * that as a section boundary would strip real content from the brief. It narrows, but does
+ * not eliminate, the bound recorded on `stripSections`: an UNfenced echoed heading is still
+ * indistinguishable from one the model authored.
+ */
+function headingLines(lines: readonly string[]): { index: number; level: number; text: string }[] {
+  const out: { index: number; level: number; text: string }[] = [];
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (FENCE_RE.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const h = headingOf(line);
+    if (h !== undefined) out.push({ index: i, level: h.level, text: h.text });
+  }
+  return out;
 }
 
 /**
@@ -165,18 +227,12 @@ function opensTarget(line: string, targets: readonly string[]): boolean {
  */
 export function sectionBody(markdown: string, heading: string): string | undefined {
   const lines = markdown.split("\n");
-  const target = normalizeSectionText(heading);
-  const i = lines.findIndex((l) => opensTarget(l, [target]));
-  if (i < 0) return undefined;
-  const openingLevel = headingOf(lines[i] ?? "")?.level ?? 0;
-  const body: string[] = [];
-  for (let j = i + 1; j < lines.length; j++) {
-    const line = lines[j] ?? "";
-    const level = headingOf(line)?.level;
-    if (level !== undefined && level <= openingLevel) break;
-    body.push(line);
-  }
-  return body.join("\n");
+  const target = headingTextOf(heading);
+  const heads = headingLines(lines);
+  const start = heads.find((h) => h.level === 2 && h.text.startsWith(target));
+  if (start === undefined) return undefined;
+  const end = heads.find((h) => h.index > start.index && h.level <= start.level);
+  return lines.slice(start.index + 1, end?.index ?? lines.length).join("\n");
 }
 
 /**
@@ -186,34 +242,44 @@ export function sectionBody(markdown: string, heading: string): string | undefin
  *
  * Used on the MODEL's output, which is untrusted markdown: a rewrite that invents a
  * `## Gaps` section must not end up beside the canonical one. Matching is the same
- * normalized prefix `sectionBody` uses, so `## Gaps and caveats` is caught too — an
- * end-anchored equality would leave that near-miss standing.
+ * normalized prefix `sectionBody` uses, so `## Gaps:` and `## Gaps & Caveats` are caught
+ * too — an end-anchored equality would leave those near-misses standing.
+ *
+ * DEMOTED headings are deliberately NOT stripped. Only `##` opens a section here, matching
+ * the rule `sectionBody` enforces for the contract guard, and for the same asymmetry: a
+ * `### Gaps` the model nested under some other section is fabrication of the general kind
+ * (which the synthesis instructions address), whereas widening the strip to deeper levels
+ * would start deleting the sub-structure the end-of-section rule exists to permit.
+ *
+ * BOUND: this cannot distinguish a heading the model invented from one it faithfully echoed
+ * out of quoted brief content. Fence tracking in `headingLines` removes the fenced case; an
+ * unfenced echo is still stripped, so a synthesized brief may lose a fragment of a quoted
+ * definition. It can never lose a disclosure — the canonical block is re-attached either way.
  */
 export function stripSections(markdown: string, headings: readonly string[]): string {
   if (headings.length === 0) return markdown;
-  const targets = headings.map(normalizeSectionText);
-  const out: string[] = [];
-  let skipping = false;
-  for (const line of markdown.split("\n")) {
-    if (skipping) {
-      const level = headingOf(line)?.level;
-      if (level === undefined || level > 2) continue;
-      skipping = false;
-    }
-    if (opensTarget(line, targets)) {
-      skipping = true;
-      continue;
-    }
-    out.push(line);
+  const targets = headings.map(headingTextOf);
+  const lines = markdown.split("\n");
+  const heads = headingLines(lines);
+  const drop = new Set<number>();
+  for (const h of heads) {
+    if (h.level !== 2) continue;
+    if (!targets.some((t) => h.text.startsWith(t))) continue;
+    const end = heads.find((x) => x.index > h.index && x.level <= 2);
+    for (let i = h.index; i < (end?.index ?? lines.length); i++) drop.add(i);
   }
-  return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+  return lines
+    .filter((_, i) => !drop.has(i))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
 }
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bun test packages/gateway/src/agents/_lib/markdown-sections.test.ts`
-Expected: PASS, 8 tests.
+Expected: PASS, every test in the file.
 
 - [ ] **Step 5: Re-point `brief-contract.ts` at the shared parser**
 
@@ -979,16 +1045,96 @@ describe("untrusted brief content cannot break extraction", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test**
+- [ ] **Step 2: Add the all-fourteen-kinds table test**
+
+One `expert` fixture proves the wiring for `expert`. The risk this task exists to close is a
+renderer that accepts `RenderOpts` and ignores it — which compiles, and which the runtime
+assertion only catches once someone runs that agent. Cover every kind at test time instead.
+
+Append to the same file:
+
+```typescript
+import type { SynthInput } from "./brief-kinds.ts";
+import { deterministicRenderForTest } from "./synthesize.ts";
+
+/**
+ * One minimal brief per kind, each carrying the SAME sentinel gap note.
+ *
+ * Build each from its type — `findings.ts` for expert / impact / catchup / ghost / conflict /
+ * huddle / janitor / preflight, and `{why,glossary,decisions,ownership,premortem,negotiate}-types.ts`
+ * for the rest. `render.test.ts`, `render.why.test.ts`, `render.premortem.test.ts` and
+ * `render.decisions.test.ts` already contain valid fixtures for most kinds — copy from those
+ * rather than inventing field values, and add the sentinel gap note to each. Do NOT reach for
+ * a cast to satisfy the compiler: a fixture that is not a real brief proves nothing about a
+ * real one.
+ */
+const ALL_KINDS: readonly SynthInput[] = [
+  /* expert, impact, catchup, ghost, conflict, huddle, janitor, preflight,
+     why, glossary, decisions, ownership, premortem, negotiate */
+];
+
+describe("every renderer honours omitReserved", () => {
+  test("the table covers all fourteen kinds exactly once", () => {
+    expect(ALL_KINDS).toHaveLength(14);
+    expect(new Set(ALL_KINDS.map((b) => b.kind)).size).toBe(14);
+  });
+
+  for (const brief of ALL_KINDS) {
+    test(`${brief.kind}: the full render carries the Gaps section and the body does not`, () => {
+      const full = deterministicRenderForTest(brief);
+      const body = deterministicRenderForTest(brief, { omitReserved: true });
+      expect(full).toContain("## Gaps");
+      expect(full).toContain("GAP-DETAIL-SENTINEL");
+      expect(body).not.toContain("## Gaps");
+      expect(body).not.toContain("GAP-DETAIL-SENTINEL");
+      expect(body).not.toBe(full);
+    });
+  }
+
+  test("negotiate also withholds its two other reserved sections", () => {
+    const negotiate = ALL_KINDS.find((b) => b.kind === "negotiate");
+    if (negotiate === undefined) throw new Error("negotiate fixture missing from ALL_KINDS");
+    const body = deterministicRenderForTest(negotiate, { omitReserved: true });
+    expect(body).not.toContain("## Sources");
+    expect(body).not.toContain("## Evidence not available from the index");
+    expect(deterministicRenderForTest(negotiate)).toContain("## Sources");
+  });
+});
+```
+
+This needs `deterministicRender` to be reachable from a test. In
+`packages/gateway/src/agents/_lib/synthesize.ts`, export it under a test-facing alias beside
+the existing definition rather than making the private helper public:
+
+```typescript
+/** Test-only re-export: the all-kinds `omitReserved` table test in
+ *  `reserved-sections.coverage.test.ts` must exercise the real dispatch, not a copy of it. */
+export const deterministicRenderForTest = deterministicRender;
+```
+
+- [ ] **Step 3: Run the tests**
 
 Run: `bun test packages/gateway/src/agents/_lib/reserved-sections.coverage.test.ts`
-Expected: PASS. If `GlossaryBrief` or `GlossaryEntry` requires fields not listed above, add them from `glossary-types.ts` rather than casting — a cast here would weaken the fixture into something that does not represent a real brief.
+Expected: PASS, 14 per-kind tests plus the four others. If `GlossaryBrief` or `GlossaryEntry`
+requires fields not listed in the hostile fixture, add them from `glossary-types.ts` rather
+than casting.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Red-prove the table**
+
+Pick any one renderer — `renderPremortem` is a good choice, being the most recently added —
+and temporarily revert its gaps line from `reserved(renderGaps(brief.gaps), opts)` back to
+`renderGaps(brief.gaps)`.
+
+Run: `bun test packages/gateway/src/agents/_lib/reserved-sections.coverage.test.ts`
+Expected: FAIL on `premortem: the full render carries the Gaps section and the body does not`,
+and on nothing else. That single-kind failure is the proof the table has per-kind resolution
+rather than passing on one representative. Restore the line and re-run.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add packages/gateway/src/agents/_lib/reserved-sections.coverage.test.ts
-git commit -m "prove the reserved registry is wired to live text and survives hostile content"
+git add packages/gateway/src/agents/_lib/reserved-sections.coverage.test.ts packages/gateway/src/agents/_lib/synthesize.ts
+git commit -m "prove every renderer honours omitReserved and hostile content is harmless"
 ```
 
 ---
@@ -1157,6 +1303,8 @@ The PR title is the commit message — put the conventional-commit type there, a
 
 **Spec coverage.** Layer 1 of the spec maps to Tasks 1-5; the invariant section maps to Task 6; the documentation section maps to Task 6 Steps 3-6; the testing section maps to Tasks 1-5 plus Task 7. The spec's Layer 2 (`brief-disclosures.ts`, the seven interleaved disclosures, the anchor table) is explicitly out of scope here and stated as such in Global Constraints — it needs its own plan after this lands.
 
-**Deferred items carried forward to PR 2's plan:** the anchor table, the "anchors are not satisfiable by ordinary prose" test, the incidents/decisions independence test, and the glossary list-mode `— authored` suffix (deferred in the spec with its mechanical reason).
+**Deferred items carried forward to PR 2's plan:** the anchor table; the "anchors are not satisfiable by ordinary prose" test; the incidents/decisions independence test; an accepted-paraphrase test proving a rewrite that *keeps* an anchor passes (so the guard is not merely rejecting everything); and the glossary list-mode `— authored` suffix (deferred in the spec with its mechanical reason).
+
+**Considered and deliberately not planned:** a static `D`-rule in `scripts/structure-audit/check-nimbus-invariants.ts` asserting registry completeness and `RenderOpts` on every renderer. Half of it is already stronger at compile time — `RESERVED_HEADINGS_BY_KIND` is a total `Record` over `SynthInput["kind"]`, so a fifteenth kind fails to compile, which no source scan can beat. The other half (a renderer that accepts `RenderOpts` and ignores it) is not expressible as a signature scan at all, and is covered directly by Task 5's per-kind table plus the runtime fail-closed assertion.
 
 **Type consistency.** `RenderOpts` is defined in Task 2 and consumed in Task 4. `ReservedBlock`, `RESERVED_HEADINGS_BY_KIND`, `reservedBlocksFor`, `reservedHeadingsFor` and `joinReserved` are defined in Task 3 and consumed in Task 4. `normalizeSectionText`, `sectionBody` and `stripSections` are defined in Task 1 and consumed in Tasks 1 and 4. `reserved_extraction_failed` is introduced once, in Task 4 Step 3, and used once, in Task 4 Step 5.

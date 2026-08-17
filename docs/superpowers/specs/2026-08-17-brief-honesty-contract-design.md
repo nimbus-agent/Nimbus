@@ -254,6 +254,12 @@ If a renderer ignores the flag the two are identical, the assertion fires, and
 the reserved content is never handed to the model. If the assertion does not
 hold, synthesis is not attempted and the deterministic brief is returned.
 
+Rendering twice costs nothing worth accounting for: all fourteen `render*`
+functions are synchronous, pure string builders over an already-materialised
+brief object — no database access, no I/O, no async — verified by reading them,
+and the second render happens only when synthesis is enabled, immediately before
+a network round-trip to a language model.
+
 **This assertion deliberately does not scan `body` for reserved headings.** That
 was the earlier formulation, and it would re-import the untrusted-content problem
 this design exists to remove: a glossary definition quoting a source that
@@ -278,15 +284,28 @@ is recognised as a reserved heading and stripped. An end-anchored
 near-miss section standing next to the canonical one, which is the outcome the
 strip step exists to prevent.
 
-**Known bound, stated rather than discovered later.** The strip step runs on the
-model's output and cannot distinguish a hallucinated `## Gaps` from one the model
-faithfully echoed out of quoted brief content — a glossary definition quoted
-verbatim from a source that itself contains a Markdown heading. So a synthesized
-brief may drop a fragment of such a quoted definition. The loss is bounded to
-quoted body text, never a disclosure (the canonical block is re-attached
-regardless), and the deterministic brief is unaffected. Accepted rather than
-solved: distinguishing the two would require trusting the model to mark which
-headings it authored.
+The parser tracks fenced code blocks (``` and `~~~`) and ignores headings inside
+them. That matters here and not in the constructor: a rewrite can legitimately
+carry a fenced example containing a `##` line — echoed, for instance, out of a
+glossary definition quoted from a source document — and treating it as a section
+boundary would strip real content out of the brief.
+
+**Known bound, stated rather than discovered later.** Fence tracking narrows this
+but does not close it. The strip step still cannot distinguish an *unfenced*
+`## Gaps` the model invented from one it faithfully echoed out of quoted brief
+content, so a synthesized brief may drop a fragment of such a quoted definition.
+The loss is bounded to quoted body text, never a disclosure — the canonical block
+is re-attached either way — and the deterministic brief is unaffected. Accepted
+rather than solved: distinguishing the two would require trusting the model to
+mark which headings it authored, which is the kind of cooperation this design
+declines to depend on everywhere else.
+
+**Demoted headings are deliberately not stripped.** Only `##` opens a section,
+matching the rule the contract guard enforces, and for the same asymmetry: a
+`### Gaps` the model nested under another section is fabrication of the general
+kind, which the synthesis instructions address, whereas widening the strip to
+deeper levels would start deleting the sub-structure the end-of-section rule
+exists to permit.
 
 ### New provenance variant
 
