@@ -369,31 +369,63 @@ Also:
 - New files meet the coverage floor (≥85% line, ≥80% branch). That gate is
   CI-Linux-authoritative, so it is verified via `verify:docker`, not locally.
 
+## Invariant I31 — disclosure integrity
+
+**Statement.** A brief that reaches a reader never says less than the
+deterministic render promised. Reserved disclosure sections are constructed by
+the renderer and re-attached verbatim, never passed through the model; the
+interleaved disclosures are checked by anchor before the rewrite is accepted; a
+rewrite that drops one is discarded in favour of the deterministic brief; and if
+the reserved set cannot be verified against the registry, no rewrite is
+attempted at all.
+
+Per the triple rule, three things land in the same commit:
+
+1. **Wiring** — `agents/_lib/synthesize.ts` `synthesize()`, the sole chokepoint
+   where a brief's final markdown is produced.
+2. **Docs** — a `## I31 — Disclosure integrity` section in
+   `docs/SECURITY-INVARIANTS.md` naming the wiring site, the anti-patterns
+   (rendering a reserved section into `body`; adding a brief kind without a
+   registry entry; an anchor that ordinary prose can satisfy), and the compliance
+   recipe.
+3. **Test** — a row in `packages/gateway/src/security-invariants.test.ts`.
+
+No static `D`-rule (see open question 1).
+
+**One caretaking item this creates.** `docs/SECURITY-INVARIANTS.md:677` is a
+worked example of *how to add an invariant*, and it uses `I31` as its
+illustrative next-free number for a hypothetical sub-agent-scope defense. Taking
+I31 makes that example wrong. It is renumbered to the next free value in the same
+commit — a how-to that names a number already in use is precisely the doc drift
+this file exists to prevent.
+
 ## Documentation
 
 The narrow coverage is stated in four places, all of which move in the same
 commit as the code that changes it:
 
-- `docs/SECURITY-INVARIANTS.md` — the I29 honesty-guard paragraph
-- `CLAUDE.md` and `GEMINI.md` — the mirrored I29 bullets, which must stay identical
+- `docs/SECURITY-INVARIANTS.md` — the I29 honesty-guard paragraph loses the
+  guard clause (it now belongs to I31) and keeps only the egress claim
+- `CLAUDE.md` and `GEMINI.md` — the mirrored I29 bullets, which must stay
+  identical, plus a new I31 bullet in each; the roster line "Invariants through
+  I30 (I28 reserved)" becomes I31
 - `docs/roadmap.md:918` — the A0 delivered entry
 - `docs/CHANGELOG.md` — dated entry
 
 ## Open questions for review
 
-1. **Invariant placement — recommended: a new invariant, pending the owner's
-   call.** The honesty guard currently lives as a clause inside I29, the *egress*
-   invariant. It is not about egress; it is about what a brief may stop saying,
-   and it has the shape an invariant wants — a single chokepoint (`synthesize()`),
-   a fail-closed posture, and an enforcement test that can fail. Review
-   recommended splitting it out, and this design agrees. It is left as a question
-   rather than claimed here because the roster is deliberate: `CLAUDE.md` records
-   invariants "through I30 (I28 reserved)", and I28's reservation note says the
-   numbering is reconciled against the I30 ceiling when that work lands, so
-   claiming I31 unilaterally is not mine to do. Resolving it moves work into
-   PR 1: a `docs/SECURITY-INVARIANTS.md` section, a row in
-   `security-invariants.test.ts`, mirrored `CLAUDE.md` / `GEMINI.md` bullets, and
-   a decision on whether a static `D`-rule confines the chokepoint.
+1. **Invariant placement — resolved: `I31`, runtime enforcement test, no static
+   `D`-rule.** The honesty guard was a clause inside I29, the *egress* invariant.
+   It is not about egress; it is about what a brief may stop saying, and it has
+   the shape an invariant wants — a single chokepoint (`synthesize()`), a
+   fail-closed posture, and an enforcement test that can fail. It becomes its own
+   invariant. See *Invariant I31* below for what that entails.
+
+   A static `D`-rule confining the reserved registry and contract check to the
+   synthesis chokepoint was considered and deliberately not taken: there is one
+   brief-emitting path today, so the rule would guard a risk that does not exist
+   yet, and this repo's `D`-rules are source scans whose blind spots have needed
+   widening more than once. Add one if a second emitter ever appears.
 2. **Glossary list-mode `— authored` suffix** (`render.ts:345`) — **deferred, and
    recorded as a known bound rather than dropped.** Review recommended treating
    it as a Layer 2 disclosure. It is a provenance label of the same family as the
@@ -428,9 +460,10 @@ extraction for the strip step; strip / reassemble; the fail-closed assertion;
 new provenance variant; anti-inertness tests; docs. Regenerates
 `scripts/agent-brief-shape.snapshot.json`. Closes both 0.86 ceilings, every
 truncation count, and the `ownership` accountability disclaimer across all
-fourteen kinds. If open question 1 is answered "new invariant", its
-`docs/SECURITY-INVARIANTS.md` section and `security-invariants.test.ts` row land
-here too.
+fourteen kinds. Carries invariant **I31** — its `docs/SECURITY-INVARIANTS.md`
+section, its `security-invariants.test.ts` row, the mirrored `CLAUDE.md` /
+`GEMINI.md` bullets and roster-line bump, and the renumbering of the worked
+example at `SECURITY-INVARIANTS.md:677`.
 
 The renderer signature change is the largest single piece of PR 1 and touches
 every `render*` function, but it is mechanical: each already computes its gaps
