@@ -1011,7 +1011,9 @@ const HOSTILE_GLOSSARY: GlossaryBrief = {
   latencyMs: 0,
   gaps: [GAP],
   mode: "term",
-  matchedVia: "term",
+  // `GlossaryMatchedVia` is `"exact" | "synonym" | null` (`glossary-types.ts:10`) — there is
+  // no `"term"` member, despite `mode: "term"` above. The two fields are unrelated.
+  matchedVia: null,
   suggestions: [],
   query: { term: "SLO" },
   entries: [
