@@ -115,21 +115,49 @@ is not rendered and editing the sentence updates both sides at once.
 
 ## Components
 
-### `splitReserved` and the shared heading parser
+### Reserved blocks are built at render time, never parsed back out
 
-`brief-contract.ts:40` `sectionBody()` already parses `##` sections with a rule
-that took a review round to settle: a section opens only at exactly `##`, and
-ends at the next heading of the same or higher level. The splitter needs that
-same parse. It is extracted into one shared module and consumed by both the
-splitter and the phrase guard.
+The renderers already know which text is a reserved block — `renderGaps()`
+*constructs* the `## Gaps` section. Rendering that to one flat string and then
+recovering it by scanning for `## Gaps` throws away information we held a moment
+earlier, and re-deriving it by parsing is strictly weaker than keeping it.
 
-Writing a second parser is specifically what is being avoided here — sibling
-guards built on separate copies of the same scan share the blind spot and get
-fixed in only one of them.
+So `deterministicRender` returns a pair rather than a string:
 
-The `##`-exactly rule also resolves a real collision for free: `glossary`
-renders a `### Sources` sub-heading (`render.ts:317`) inside a term entry, which
-must not be confused with `negotiate`'s reserved `## Sources` section.
+```ts
+type RenderedBrief = { readonly body: string; readonly reserved: readonly ReservedBlock[] };
+type ReservedBlock = { readonly heading: string; readonly markdown: string };
+```
+
+Each of the fourteen `render*` functions already computes `const gaps =
+renderGaps(brief.gaps)` and concatenates it; they instead return it in
+`reserved`. `renderNegotiate` returns its `## Sources` and `## Evidence not
+available from the index` blocks the same way.
+
+**Why this and not a heading scan of the rendered markdown.** Brief content is
+not trusted markdown. `renderGlossaryEntry` (`render.ts:327`) interpolates
+`e.definition` at the start of a line, unindented, and in `snippet` mode that
+definition is quoted verbatim from an indexed source — a Slack message, a Notion
+page. A definition containing a line `## Gaps` would make a first-match scan
+extract the wrong region, and the fail-closed check would then refuse synthesis
+for that brief. The disclosure would still be safe (that is what fail-closed
+buys), but a user's own indexed content could silently switch synthesis off.
+Constructing the blocks at render time removes the class outright rather than
+hardening a scan against it — no code-fence tracking, no injected-heading case,
+nothing to harden.
+
+A parser is still needed for the two places that genuinely receive untrusted
+markdown: stripping hallucinated reserved sections out of the **model's** output,
+and the Layer 2 phrase check. Both use the one shared parser extracted from
+`brief-contract.ts:40` `sectionBody()`, whose rule took a review round to settle
+— a section opens only at exactly `##` and ends at the next heading of the same
+or higher level. Writing a second parser is what is being avoided: sibling guards
+built on separate copies of the same scan share a blind spot and get fixed in
+only one of them.
+
+The `##`-exactly rule also resolves a collision for free: `glossary` renders a
+`### Sources` sub-heading (`render.ts:317`) inside a term entry, which must not
+be confused with `negotiate`'s reserved `## Sources` section.
 
 ### The reserved registry
 
@@ -147,12 +175,13 @@ Sources` section of its own is not silently gagged.
 
 `_lib/synthesize.ts:177`. New order:
 
-1. `deterministic = deterministicRender(brief)` — unchanged.
-2. If `opts.runner === undefined`, return the deterministic path — unchanged.
-3. `split = splitReserved(deterministic, reservedFor(brief.kind))`. On failure
-   (below), return the deterministic render with the new provenance variant and
-   its own footer. **No model call is made.**
-4. Build the prompt from `split.body`, not from the full deterministic render.
+1. `{ body, reserved } = deterministicRender(brief)` — now a pair.
+2. If `opts.runner === undefined`, return `body + reserved` — the deterministic
+   path, unchanged in output.
+3. Verify the reserved set against the kind's registry (below). On failure,
+   return the deterministic render with the new provenance variant and its own
+   footer. **No model call is made.**
+4. Build the prompt from `body`, not from the full deterministic render.
    `SYNTHESIS_INSTRUCTIONS` (`synthesize.ts:278`) gains a rule: do not emit a
    Gaps / Sources / Evidence-not-available section; they are appended for you.
 5. Run the attempt; existing `!ok` handling unchanged.
@@ -175,23 +204,58 @@ get to render them.
 ### Placement of reserved blocks
 
 Appended at the end of the model's markdown, before the provenance footer, in
-their original relative order. In the deterministic render `## Sources` sits
-mid-document; after synthesis it moves to the end. This is a deliberate and, I
-would argue, better outcome: disclosures land in the same place on every brief
-regardless of whether it was synthesized.
+their original relative order.
+
+**This preserves the deterministic layout; it does not change it.** An earlier
+draft of this spec claimed `## Sources` sits mid-document and that synthesis
+would move it. That was wrong — `renderNegotiate` (`render.ts:995-999`) emits
+`sources`, `evidence`, `gaps`, `footer` as the last four elements, and every
+other renderer ends `[..., gaps, footer]`. Reserved blocks are already the tail
+of every deterministic brief, so appending them at the tail after synthesis
+reproduces the same order.
+
+A placeholder-token scheme (emitting `<!-- nimbus-reserved:gaps -->` into the
+prompt and substituting it back) was considered to pin exact position, and
+rejected. It would make the guarantee depend on a model preserving an opaque
+token verbatim, with "append at the end" as the fallback when it does not — so
+it buys nothing over appending directly, while adding a failure mode where a
+partially-mangled token matches loosely. The layout it would protect is the
+layout appending already produces.
 
 ### Fail-closed check
 
-A partition-by-heading-scan cannot throw, but it can silently find nothing —
-which would hand the gaps to the model unguarded while looking healthy. The
-guarantee therefore rests on an assertion, not on trust:
+Reserved blocks are constructed rather than parsed, so the extraction cannot
+silently find nothing. What can still go wrong is a renderer that forgets to
+route a block through `reserved` — a fifteenth kind, or a new disclosure section
+added to an existing one. The guarantee therefore rests on an assertion, not on
+trust:
 
-> After a successful split, `split.body` must contain no reserved heading for
-> this kind, and every reserved heading present in `deterministic` must have
-> produced exactly one block.
+> Before the model is called: every heading in the kind's reserved registry must
+> be present exactly once in `reserved` or absent from the brief entirely (a
+> brief with no gap notes has no `## Gaps` block), and `body` must contain no
+> heading matching the registry.
 
-If that does not hold, synthesis is not attempted and the deterministic brief is
-returned.
+The second half is the one that catches a renderer regression: if a new
+disclosure section is concatenated into `body` instead of returned in
+`reserved`, it would otherwise be handed to the model unguarded while everything
+looked healthy. If the assertion does not hold, synthesis is not attempted and
+the deterministic brief is returned.
+
+### Stripping a hallucinated reserved section
+
+The model's output *is* untrusted markdown, so removing a reserved section it
+emitted anyway needs the parser. It uses the shared matcher, not a purpose-built
+regex.
+
+That matters because the shared matcher is already stricter in the two ways a
+fresh regex would try to cover, and looser in the one way that counts.
+`normalize()` (`brief-contract.ts:13`) lowercases and collapses whitespace
+before comparison, so casing and spacing tolerance come for free. And matching
+is a normalized **prefix**, not a full-line equality — so `## Gaps and caveats`
+is recognised as a reserved heading and stripped. An end-anchored
+`^##\s+Gaps\s*$` regex would miss exactly that, leaving a model-authored
+near-miss section standing next to the canonical one, which is the outcome the
+strip step exists to prevent.
 
 ### New provenance variant
 
@@ -224,17 +288,31 @@ full rendered text plus a short **anchor** — the fragment the guard matches:
 | negotiate null lane (existing) | `could not be computed` |
 | negotiate ownership disclaimer | `authorship-derived` |
 | negotiate window clause | `last-modified, not created` |
-| negotiate unattributable incidents | `not necessarily inactivity` |
-| negotiate unattributable decisions | `not necessarily` |
+| negotiate unattributable incidents | `no indexed assignee or resolver` |
+| negotiate unattributable decisions | `no indexed author` |
 | glossary snippet provenance | `no LLM configured` |
 | glossary manual provenance | `not derived from indexed sources` |
 
 Anchors rather than whole sentences because requiring the full text verbatim
 would reject legitimate paraphrase and discard the rewrite.
 
-Short anchors are safe because `contractViolations` scopes each match to a
-section heading — `not necessarily` under `## Incidents` and under `##
-Decisions` are two independent requirements, not one ambiguous string. The
+**An anchor must be a phrase that cannot occur unless the disclosure is
+present.** An earlier draft used `not necessarily` for the decisions line; that
+is ordinary prose, and a rewrite saying "this is not necessarily a problem"
+inside `## Decisions` would satisfy the guard while dropping the disclosure —
+a false negative in an honesty guard, which is the worst direction to fail. The
+two anchors above are drawn from the factual clause of each sentence, which is
+also the half that cannot be dropped without losing the meaning.
+
+The anchors deliberately stop short of each sentence's tail, because that tail
+is variable: `renderNegotiateDecisions` threads the subject voice through
+(`render.ts:849` renders "not necessarily yours" or "not necessarily theirs"
+depending on whether `--person` named someone else), so any anchor including it
+would be inert for half the briefs.
+
+Heading scoping is a second layer of specificity, not the primary one:
+`contractViolations` matches each phrase only within its section, so an
+`## Incidents` requirement cannot be satisfied by text under `## Decisions`. The
 glossary entry heading is the term itself (`render.ts:322` renders `## <term>`),
 which the existing `{ heading, phrase }` shape already accommodates since
 `heading` is a computed string.
@@ -253,17 +331,29 @@ Layer 1:
 - A rewrite omitting `## Gaps` → the final output carries it verbatim.
 - A rewrite that *invents* a Gaps section → the fabricated one is stripped and
   the canonical one appears exactly once.
+- A rewrite emitting a near-miss heading (`## Gaps and caveats`) → also stripped,
+  proving the prefix matcher rather than an end-anchored equality.
 - A brief with zero gap notes → no `## Gaps` heading and no empty section.
-- A split that leaves a reserved heading in `body` → no model call, deterministic
-  output, `reserved_split_failed` provenance.
+- **Untrusted content cannot break extraction:** a glossary brief whose
+  `definition` contains a literal `## Gaps` line synthesizes normally, and the
+  canonical Gaps block appears exactly once. This is the regression test for the
+  class that render-time construction removes; it would fail under a
+  scan-the-rendered-markdown splitter.
+- A renderer that concatenates a reserved section into `body` instead of
+  returning it in `reserved` → no model call, deterministic output,
+  `reserved_split_failed` provenance.
 - Empty model output → `empty_result`, not a document consisting only of gaps.
 
 Layer 2:
 
 - Per constant: a rewrite with the anchor deleted → `contract_violation` naming
   that violation; a genuine paraphrase retaining the anchor → accepted.
-- The two `not necessarily` requirements are proved independent: dropping it
-  from `## Incidents` while retaining it under `## Decisions` must fail.
+- **Anchors are not satisfiable by ordinary prose.** A rewrite that drops the
+  decisions disclosure but contains "this is not necessarily a problem" under
+  `## Decisions` must still fail. This test exists because an earlier draft chose
+  `not necessarily` as that anchor, which this input would have satisfied.
+- The incidents and decisions requirements are proved independent: satisfying one
+  section while dropping the other must fail.
 
 Anti-inertness, for both layers:
 
@@ -291,19 +381,36 @@ commit as the code that changes it:
 
 ## Open questions for review
 
-1. **Invariant placement.** The honesty guard currently lives as a clause inside
-   I29, the *egress* invariant. It is not about egress — it is about what a brief
-   may stop saying. It may deserve its own invariant number. Flagged rather than
-   claimed unilaterally; resolving it changes which docs move and whether a new
-   enforcement test row is added to `security-invariants.test.ts`.
-2. **Glossary list-mode `— authored` suffix** (`render.ts:345`). Excluded here as
-   a label rather than a limit claim, unlike the term-mode provenance lines.
-   Worth a second opinion.
-3. **Reserved-block placement at the end.** Argued above as an improvement.
-   If any surface depends on `## Sources` preceding `## Evidence not available
-   from the index` in document order, that ordering is preserved among the
-   reserved blocks themselves, but their position relative to analytic sections
-   changes.
+1. **Invariant placement — recommended: a new invariant, pending the owner's
+   call.** The honesty guard currently lives as a clause inside I29, the *egress*
+   invariant. It is not about egress; it is about what a brief may stop saying,
+   and it has the shape an invariant wants — a single chokepoint (`synthesize()`),
+   a fail-closed posture, and an enforcement test that can fail. Review
+   recommended splitting it out, and this design agrees. It is left as a question
+   rather than claimed here because the roster is deliberate: `CLAUDE.md` records
+   invariants "through I30 (I28 reserved)", and I28's reservation note says the
+   numbering is reconciled against the I30 ceiling when that work lands, so
+   claiming I31 unilaterally is not mine to do. Resolving it moves work into
+   PR 1: a `docs/SECURITY-INVARIANTS.md` section, a row in
+   `security-invariants.test.ts`, mirrored `CLAUDE.md` / `GEMINI.md` bullets, and
+   a decision on whether a static `D`-rule confines the chokepoint.
+2. **Glossary list-mode `— authored` suffix** (`render.ts:345`) — **deferred, and
+   recorded as a known bound rather than dropped.** Review recommended treating
+   it as a Layer 2 disclosure. It is a provenance label of the same family as the
+   term-mode lines, so the argument is sound in kind. What makes it a poor fit
+   for this pass is mechanical: in `list` mode the enclosing heading is
+   `# Glossary` (`render.ts:360`), a level-1 heading, and every scoping mechanism
+   in this design keys on a `##` section — the `##`-exactly rule that keeps
+   `### Sources` from colliding with `## Sources`. Guarding a list-mode row would
+   need either a document-scoped requirement (no heading at all, weakening the
+   specificity Layer 2 rests on) or a parser change that nothing else in the
+   design needs. Weighed against a per-row label whose loss degrades a brief far
+   less than a dropped confidence ceiling, it is not worth widening the parser
+   for. Revisit in PR 2 if the parser grows level-1 support for another reason.
+3. **Reserved-block placement — resolved, no longer open.** The premise was
+   wrong: reserved sections are already the tail of every deterministic brief
+   (`render.ts:995-999`), so appending them reproduces the existing order rather
+   than changing it. See *Placement of reserved blocks*.
 
 ## Non-goals
 
@@ -315,11 +422,19 @@ commit as the code that changes it:
 
 ## Delivery
 
-**PR 1 — structural layer.** Shared heading parser extraction, reserved
-registry, splice / strip / reassemble, fail-closed round-trip check, new
-provenance variant, anti-inertness tests, docs. Closes both 0.86 ceilings, every
+**PR 1 — structural layer.** `deterministicRender` and the fourteen `render*`
+functions return `{ body, reserved }`; reserved registry; shared parser
+extraction for the strip step; strip / reassemble; the fail-closed assertion;
+new provenance variant; anti-inertness tests; docs. Regenerates
+`scripts/agent-brief-shape.snapshot.json`. Closes both 0.86 ceilings, every
 truncation count, and the `ownership` accountability disclaimer across all
-fourteen kinds.
+fourteen kinds. If open question 1 is answered "new invariant", its
+`docs/SECURITY-INVARIANTS.md` section and `security-invariants.test.ts` row land
+here too.
+
+The renderer signature change is the largest single piece of PR 1 and touches
+every `render*` function, but it is mechanical: each already computes its gaps
+block separately and concatenates it at the end.
 
 **PR 2 — phrase layer.** `brief-disclosures.ts`, derived requirements for the
 seven interleaved sites, red-proved per constant, docs.
