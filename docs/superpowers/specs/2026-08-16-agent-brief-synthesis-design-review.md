@@ -1,6 +1,6 @@
 # Design Review: Agent Brief Synthesis (W6-A0)
 
-This document collects feedback, suggestions, and open questions on the [Agent Brief Synthesis Design](file:///C:/gitrep/Nimbus/.claude/worktrees/dev+asafgolombek+agent-brief-synthesis/docs/superpowers/specs/2026-08-16-agent-brief-synthesis-design.md).
+This document collects feedback, suggestions, and open questions on the [Agent Brief Synthesis Design](./2026-08-16-agent-brief-synthesis-design.md).
 
 ---
 

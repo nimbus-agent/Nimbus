@@ -1,6 +1,6 @@
 # Implementation Plan Review: Agent Brief Synthesis (W6-A0)
 
-This document collects feedback, suggestions, and open questions on the [Agent Brief Synthesis Implementation Plan](file:///C:/gitrep/Nimbus/.claude/worktrees/dev+asafgolombek+agent-brief-synthesis/docs/superpowers/plans/2026-08-16-agent-brief-synthesis.md).
+This document collects feedback, suggestions, and open questions on the [Agent Brief Synthesis Implementation Plan](./2026-08-16-agent-brief-synthesis.md).
 
 ---
 

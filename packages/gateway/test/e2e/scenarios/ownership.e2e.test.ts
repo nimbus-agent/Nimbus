@@ -167,5 +167,14 @@ describe("I29 — agents.ownership over HTTP", () => {
     } finally {
       s.stop();
     }
-  });
+    // Explicit timeout, not the 5 s default. This is the only test in the gateway e2e suite that
+    // boots a REAL HTTP server on a REAL file-backed DB — `startAgentTestServer` mkdtemps a temp
+    // dir, migrates a fresh `nimbus.db` through the full V1..V53 set, then opens `Bun.serve`. That
+    // setup is disk-bound, and on a loaded windows-2025 runner it blew the default: run
+    // 31959513759 (main @ 8a64e4f8) reported 8461 ms for this test against 351 ms for the whole
+    // file locally, while the next-slowest e2e test with no explicit timeout sat at 2056 ms — an
+    // outlier in setup cost, not a hang. Sized like the sibling real-I/O e2e tests
+    // (`deploy-annotate` / `extension-auto-update` are also 30 s); a genuine hang in the invoker
+    // still fails here rather than burning the 30-minute job ceiling.
+  }, 30_000);
 });
