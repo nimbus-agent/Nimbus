@@ -399,8 +399,11 @@ describe("persona (A2) reaches BOTH execution paths and composes with --devil", 
       stream: false,
       sendChunk: () => undefined,
     });
+    expect(withNeutral.mock.calls.length).toBe(1);
+    expect(withNone.mock.calls.length).toBe(1);
     const a = (withNeutral.mock.calls[0]?.[0] as { prompt: string } | undefined)?.prompt;
     const b = (withNone.mock.calls[0]?.[0] as { prompt: string } | undefined)?.prompt;
+    expect(typeof a).toBe("string");
     expect(a).toBe(b);
   });
 
