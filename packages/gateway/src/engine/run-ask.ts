@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
+import { resolvePersona } from "../config/persona.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
@@ -170,6 +171,10 @@ async function answerConversationally(
     ...(p.llmRouter === undefined ? {} : { llmRouter: p.llmRouter }),
     ...(localContext === undefined ? {} : { localContext }),
     ...(p.devil === true ? { devil: true } : {}),
+    // Resolved here rather than at gateway boot so an edit to the active profile's toml is
+    // picked up with no restart (D3). No logger: the boot-time resolution (Task 4) owns the
+    // warning — warning on every turn would be noise.
+    persona: resolvePersona(p.paths.configDir),
   });
 
   await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);

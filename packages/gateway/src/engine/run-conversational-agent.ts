@@ -1,11 +1,12 @@
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
-
+import type { NimbusPersonaToml } from "../config/persona.ts";
 import { Config } from "../config.ts";
 import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
 import { applyDevilAdvocate } from "./devil-advocate.ts";
 import { agentErrorFromCaughtError } from "./gateway-agent-error.ts";
+import { applyPersona } from "./persona.ts";
 import { sanitizeExternalError } from "./sanitize-external-error.ts";
 
 const conversationalLog = pino({
@@ -26,6 +27,12 @@ export type RunConversationalAgentParams = {
    * paths share — see `devil-advocate.ts` for why it is not in either system-prompt surface.
    */
   devil?: boolean;
+  /**
+   * Agent persona (A2). Resolved per-invocation by `runAsk` from the PROFILE-resolved toml —
+   * config, not a per-call flag, which is why it is not on `AgentInvokeContext` the way
+   * `devil` is. Undefined and neutral both mean "no directive"; see `engine/persona.ts`.
+   */
+  persona?: NimbusPersonaToml;
 };
 
 function isTextDeltaChunk(chunk: unknown): chunk is {
@@ -173,8 +180,16 @@ export async function runConversationalAgent(
 
   // Injected HERE, above the router-vs-agent fork below, so both paths carry it. Neither
   // `runViaLocalRouter`'s `systemPrompt` nor the Mastra agents' baked `instructions` mention
-  // this mode — see `devil-advocate.ts`.
-  const promptWithContext = applyDevilAdvocate(buildPromptText(trimmed, p.localContext), p.devil);
+  // these modes — see `devil-advocate.ts` and `persona.ts`.
+  //
+  // ORDER IS DELIBERATE (design § 5.4): persona outermost, devil innermost. The devil
+  // directive is the one that must not be diluted, and proximity to the question is the
+  // cheapest emphasis available. Both are identity functions when inactive, so a default
+  // gateway's prompt is unchanged.
+  const promptWithContext = applyPersona(
+    applyDevilAdvocate(buildPromptText(trimmed, p.localContext), p.devil),
+    p.persona,
+  );
   const promptArg = buildPromptArg(promptWithContext, p.priorTurns ?? []);
 
   try {

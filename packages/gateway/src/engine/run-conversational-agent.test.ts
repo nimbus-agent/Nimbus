@@ -4,6 +4,7 @@ import type { Agent } from "@mastra/core/agent";
 import type { LlmRouter } from "../llm/router.ts";
 import { DEVIL_ADVOCATE_DIRECTIVE } from "./devil-advocate.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
+import { TONE_DIRECTIVES, VOICE_DIRECTIVES } from "./persona.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 
 async function* mockAgentTextDeltaStream() {
@@ -335,5 +336,91 @@ describe("devil's-advocate mode reaches BOTH execution paths", () => {
     expect(last?.content).toContain(DEVIL_ADVOCATE_DIRECTIVE);
     expect(last?.content).toContain("Indexed Nimbus context");
     expect(last?.content).toContain("roll it out now");
+  });
+});
+
+describe("persona (A2) reaches BOTH execution paths and composes with --devil", () => {
+  // The router fake MIRRORS the one the devil tests above already use, and must:
+  // `llmRouter.generate` takes an OPTIONS OBJECT (`{ task, prompt, systemPrompt, ... }`),
+  // not a bare prompt string, and its result is read as `result.text` and returned as
+  // `modelMeta`. A fake taking a string would capture the wrong thing.
+  function routerMock() {
+    return mock(async (_opts: { prompt: string }) => ({
+      text: "local answer",
+      modelUsed: "m",
+      isLocal: true,
+      provider: "ollama" as const,
+    }));
+  }
+
+  test("router path carries the persona directive", async () => {
+    const generate = routerMock();
+    const router = { generate, prefersLocal: () => true } as unknown as LlmRouter;
+    await runConversationalAgent({
+      llmRouter: router,
+      input: "what shipped?",
+      stream: false,
+      sendChunk: () => undefined,
+      persona: { tone: "terse", voice: "neutral" },
+    });
+    const opts = generate.mock.calls[0]?.[0] as { prompt: string } | undefined;
+    expect(opts?.prompt).toContain(TONE_DIRECTIVES.terse);
+    expect(opts?.prompt).toContain("what shipped?");
+  });
+
+  test("agent path carries the persona directive", async () => {
+    const generate = mock(async (_prompt: unknown) => ({ text: "ok" }));
+    const agent = { generate } as unknown as Agent;
+    await runConversationalAgent({
+      agent,
+      input: "what shipped?",
+      stream: false,
+      sendChunk: () => undefined,
+      persona: { tone: "verbose", voice: "collective" },
+    });
+    const promptArg = generate.mock.calls[0]?.[0] as string | undefined;
+    expect(promptArg).toContain(TONE_DIRECTIVES.verbose);
+    expect(promptArg).toContain(VOICE_DIRECTIVES.collective);
+  });
+
+  test("neutral persona leaves the prompt byte-identical to no persona at all", async () => {
+    const withNeutral = routerMock();
+    const withNone = routerMock();
+    await runConversationalAgent({
+      llmRouter: { generate: withNeutral, prefersLocal: () => true } as unknown as LlmRouter,
+      input: "what shipped?",
+      stream: false,
+      sendChunk: () => undefined,
+      persona: { tone: "neutral", voice: "neutral" },
+    });
+    await runConversationalAgent({
+      llmRouter: { generate: withNone, prefersLocal: () => true } as unknown as LlmRouter,
+      input: "what shipped?",
+      stream: false,
+      sendChunk: () => undefined,
+    });
+    const a = (withNeutral.mock.calls[0]?.[0] as { prompt: string } | undefined)?.prompt;
+    const b = (withNone.mock.calls[0]?.[0] as { prompt: string } | undefined)?.prompt;
+    expect(a).toBe(b);
+  });
+
+  // Design § 5.4: persona outermost, devil directly above the question.
+  test("with --devil both directives appear, persona first", async () => {
+    const generate = routerMock();
+    const router = { generate, prefersLocal: () => true } as unknown as LlmRouter;
+    await runConversationalAgent({
+      llmRouter: router,
+      input: "ship the migration tonight",
+      stream: false,
+      sendChunk: () => undefined,
+      devil: true,
+      persona: { tone: "terse", voice: "neutral" },
+    });
+    const prompt = (generate.mock.calls[0]?.[0] as { prompt: string } | undefined)?.prompt ?? "";
+    const personaAt = prompt.indexOf(TONE_DIRECTIVES.terse);
+    const devilAt = prompt.indexOf(DEVIL_ADVOCATE_DIRECTIVE);
+    expect(personaAt).toBeGreaterThanOrEqual(0);
+    expect(devilAt).toBeGreaterThanOrEqual(0);
+    expect(personaAt).toBeLessThan(devilAt);
   });
 });
