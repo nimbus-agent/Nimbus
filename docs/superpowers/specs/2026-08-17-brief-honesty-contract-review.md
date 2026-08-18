@@ -1,6 +1,6 @@
 # Review: Brief Honesty Contract Design Spec
 
-Below is a detailed review of the proposed design in [2026-08-17-brief-honesty-contract-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/brief-honesty-contract/docs/superpowers/specs/2026-08-17-brief-honesty-contract-design.md), along with actionable improvements, suggestions, and responses to the open questions.
+Below is a detailed review of the proposed design in [2026-08-17-brief-honesty-contract-design.md](./2026-08-17-brief-honesty-contract-design.md), along with actionable improvements, suggestions, and responses to the open questions.
 
 ---
 
