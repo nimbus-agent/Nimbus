@@ -296,6 +296,19 @@ Built-in agents that answer team-level questions from the local relationship gra
 | `synthesis` | `"local"` | `"off"` never attempts a rewrite — every brief is the deterministic render, regardless of `[llm]` settings. `"local"` attempts a rewrite only when the resolved provider is local (Ollama or llama.cpp); a resolved remote provider is refused outright, so nothing egresses by construction. `"allow-remote"` additionally permits a non-local provider, appending a `model`-class `egress_ledger` row (I29) before that call. An unrecognised value falls back to `"local"`, never widening to `"allow-remote"` on a typo. |
 | `synthesis_timeout_ms` | `20000` | How long a synthesis attempt is raced against before it is abandoned as `timeout` and the deterministic render is used instead. Deliberately generous: briefs are fire-and-forget, so this does not gate a caller — it exists so a hung provider still yields a brief. The underlying provider call is not cancelled at timeout (no `AbortSignal` support), only abandoned. |
 
+**Configuration — `[persona]` in `nimbus.toml`:**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `tone` | `"neutral"` | `"neutral"` — a strict no-op, contributes nothing to the prompt. `"terse"` — short sentences, no preamble; says everything it would otherwise say, in fewer words. `"formal"` — complete sentences, precise wording, no contractions. `"casual"` — contractions fine, plain words over jargon. `"verbose"` — spells out reasoning and the connections between findings. An unrecognised value keeps `"neutral"` and logs a one-time warning naming the key, the rejected value, and the fallback. |
+| `voice` | `"neutral"` | `"neutral"` — a strict no-op. `"opinionated"` — states a recommendation where the evidence supports one, rather than laying out options neutrally. `"collective"` — first-person plural ("we should…") rather than an outside observer's voice. Same unrecognised-value fallback as `tone`. |
+
+`[persona]` is read from the **active profile's** TOML (`nimbus.<profile>.toml`, not the base `nimbus.toml`) and resolved fresh on every query — editing it changes the very next response, no restart required. Switching *which* profile is active (`nimbus profile switch`) still requires a Gateway restart, same as every other profile-scoped setting, because the active profile is fixed for the life of the Gateway process.
+
+Applies to `nimbus ask` and to every built-in agent brief, composing with `--devil` (persona directive outermost, `--devil`'s directive innermost, closest to the question). Every `tone` and `voice` value governs register and stance, never what gets said — no persona directive may tell the model to omit content. A `terse` persona can still raise the rate at which a brief falls back to its deterministic rendering, because the honesty contract that protects every brief discards a rewrite that drops a required disclosure rather than risk losing it — that is the contract working, not a bug, and the resolved persona rides the `briefReady` notification's `synthesis` field alongside the discard reason, so a `contract_violation` under `tone = "terse"` is self-explanatory.
+
+**Not supported:** `tool_caution` (HITL escalation levels) and `confidence_threshold` (how often the agent admits uncertainty) are not configuration keys. Both were rejected, not deferred — a knob that loosens what triggers the HITL consent gate, or one that lets the agent suppress an uncertainty admission, is prohibited on the same grounds as the consent gate itself.
+
 ### `nimbus expert`
 
 Answer "who on my team has the most context on this?" — returns a ranked list of people drawn from indexed PR authorship, review participation, Slack thread activity, and Linear/Jira ticket assignments. Each ranking comes with a confidence score and the underlying evidence.

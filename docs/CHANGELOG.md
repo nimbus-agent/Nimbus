@@ -8,6 +8,83 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-18 — agent personas (A2): `tone` and `voice` ship; `tool_caution` and
+  `confidence_threshold` are rejected, not deferred.** A new `[persona]` section in
+  `nimbus.toml` — `tone` (`neutral` default / `terse` / `formal` / `casual` / `verbose`) and
+  `voice` (`neutral` default / `opinionated` / `collective`) — shapes how `nimbus ask` and
+  every built-in agent brief are phrased. Third and last of the three Wave 6 answer-quality
+  surfaces, after A0 (2026-08-16) and A1 (below, 2026-08-18).
+
+  **`tool_caution` and `confidence_threshold` do not ship, and are recorded here so they are
+  not relitigated.** `tool_caution` was already prohibited on 2026-08-16: Non-Negotiable #2
+  and I2's frozen `HITL_REQUIRED_BACKING` set forbid a config knob that changes what triggers
+  a consent prompt. `confidence_threshold` is rejected on the same reasoning one layer up —
+  turned down, it is a supported way to make Nimbus sound more certain than it is, against
+  every S1 honesty surface built this month: I31's disclosure integrity, the 0.86 confidence
+  ceilings on `decisions` and `pre-mortem`, `negotiate`'s "could not be computed" instead of
+  `0`. A user-tunable dial that suppresses uncertainty admissions is the same category of
+  mistake as a dial that loosens HITL, and neither ships.
+
+  **One definition, two application sites — the same discipline A1 established.**
+  `engine/persona.ts`'s `TONE_DIRECTIVES` / `VOICE_DIRECTIVES` are the persona vocabulary's
+  only definition. It is applied at `engine/run-ask.ts`'s single site above the
+  router-vs-agent fork — the same site A1 uses — composing outward around `--devil`: persona
+  outermost, the devil directive innermost, closest to the question, so it is never diluted.
+  It is applied a second time at `agents/_lib/synthesize.ts`'s `synthesisInstructionsFor`,
+  threaded in from `buildAgentSynthesisRunner` — the one factory both production brief paths
+  already share (`ipc/server/dispatchers.ts`'s socket path and
+  `agent-runs/agent-http-invoke.ts`'s HTTP path) — so a socket brief and an HTTP brief stay
+  byte-identical under every persona, exactly as they already do under every synthesis mode.
+
+  **D6 — every directive governs *how*, never *whether*.** No `tone` or `voice` string may
+  instruct the model to omit, drop, skip, or limit content; `terse` means "say it in fewer
+  words," never "leave things out." A test asserts this against an omission-verb pattern over
+  the directive constants. D6 is what keeps a persona coherent alongside `--devil` — "argue
+  against the plan, in few words" is a coherent instruction, "...and omit some objections" is
+  not — and what keeps a terse persona from pushing against I31's disclosure contract.
+
+  **I31 needed no new guard.** Reserved sections (`## Gaps` for all fourteen brief kinds, plus
+  `negotiate`'s `## Sources` and `## Evidence not available from the index`) are constructed
+  by the renderer and re-attached verbatim after synthesis, never shown to the model — no
+  persona can drop one, because no persona can reach one. Interleaved disclosures are
+  anchor-checked, and a rewrite that drops one is discarded whole. So the cost a terse persona
+  actually introduces is a **higher discard rate** — more briefs falling back to the
+  deterministic render, not a lost disclosure — and it is now observable in production rather
+  than only inferred: the resolved persona rides the synthesis provenance on the `briefReady`
+  notification alongside the existing rejection reason (`timeout` / `contract_violation` /
+  `provider_error` / `egress_append_failed` / `empty_result`), so a `contract_violation` under
+  `tone = "terse"` is self-describing.
+
+  **Two adjacent bugs fixed in the same branch.** `[agents] synthesis` was profile-blind —
+  `loadNimbusAgentsFromConfigDir` hardcodes `nimbus.toml`, so a user with `synthesis` set in a
+  profile TOML was silently ignored. `buildAgentSynthesisRunner` now reads it from the
+  profile-resolved path, the same path `[persona]` uses; this is a real behaviour change,
+  stated here rather than riding along silently under the persona work. Separately,
+  `ProfileManager` had never been constructed in production: `ipc/server/options.ts` declared
+  `profileManager?`, but nothing set it outside tests, so the desktop app's routed Profiles
+  settings page (`packages/ui/src/pages/settings/ProfilesPanel.tsx`) and all four
+  already-allowlisted `profile.*` IPC methods threw on every call. `platform/assemble.ts` now
+  constructs it. **Switching a profile still requires a Gateway restart** — `NIMBUS_PROFILE`
+  is read at process spawn — and the panel now says so, matching what the CLI already printed.
+
+  **Acceptance criterion replaced, not met, the same way A1's was.** The Wave 6 row asked for
+  an integration test that "toggles persona mid-session and asserts the response shape
+  changes" — asking for something impossible (`NIMBUS_PROFILE` is fixed at spawn, so
+  mid-session profile switching cannot happen) and something untestable (grading model prose
+  needs a live LLM the suite does not have, and would be flaky where one exists). What is
+  asserted instead: editing `[persona]` in the active profile's TOML changes the next response
+  with no restart; the persona directive reaches the prompt on both execution paths
+  (`runViaLocalRouter`, `runViaAgent`) and across both IPC dispatchers (`agent.invoke`,
+  `engine.askStream`); the default persona is byte-identical to today; persona composes with
+  `--devil` in the documented order; a brief synthesized under `tone = "terse"` still carries
+  every required anchor and reserved section; `[agents] synthesis` set in a profile TOML is
+  honoured; `profile.list` succeeds against an assembled gateway rather than throwing.
+  **Recorded gap:** nothing asserts that a terse persona's prose is actually terser — that
+  grades model output, the same limitation A1 carries.
+
+  No schema migration, no new IPC method, no new HTTP route, no new security invariant, and no
+  Tauri allowlist change — `ALLOWED_METHODS` stays at 105.
+
 - **2026-08-18 — `nimbus ask --devil`: devil's-advocate mode (A1), with the roadmap's stated
   hazard avoided rather than satisfied.** The agent argues AGAINST the plan or assumption in the
   question — the risks it runs, the edge cases it ignores, the alternative reading of the evidence
