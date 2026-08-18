@@ -83,7 +83,7 @@ and document for a knob nobody turns.)
 
 So A2 ships exactly **`tone` and `voice`**.
 
-**D2 — persona applies to `ask` and briefs, not to every model call.** See § 5.2.
+**D2 — persona applies to `ask` (including the ChatOps replies that share its pipeline) and to briefs, not to every model call.** See § 5.2.
 
 **D3 — persona resolves per-invocation, never cached.** A0's precedent
 (`agents/_lib/synthesis-llm.ts` resolves its provider per invocation because Ollama can
@@ -173,15 +173,22 @@ silently not per-profile — the entire point of A2.
 To avoid shipping that trap next door, **the same PR moves `[agents]` onto the
 profile-resolved path**: `buildAgentSynthesisRunner`'s `configDir` handling switches from
 `loadNimbusAgentsFromConfigDir(configDir)` to loading from
-`resolveNimbusTomlForProfile(configDir)`. This is a behaviour change — a user with
-`synthesis` set in a profile TOML starts getting it honoured — and it is the correct one.
-It gets its own test and its own line in the changelog rather than riding along silently.
+`resolveNimbusTomlForProfile(configDir)`, and DELETES the now-callerless config-dir loader
+rather than leaving a profile-blind function exported beside its profile-aware sibling.
+This is a behaviour change and it is **bidirectional**: a user with `synthesis` set in a
+profile TOML starts getting it honoured, and a user with it set only in the base
+`nimbus.toml` stops getting it under a profile whose file has no `[agents]` section. That
+second direction is whole-file profile semantics, the same as `[llm]` and `[session]`, and
+is the correct one. Both directions get their own line in the changelog and in
+`docs/cli-reference.md` rather than riding along silently.
 
-### 5.2 Two application sites, one definition
+### 5.2 Two application sites, one definition — and a third surface that follows
 
 The persona *sentence* has exactly one definition. It is *applied* at two places, because
 there are two genuinely different prompt surfaces with different rules: a brief carries
-reserved-section instructions and an `ask` turn does not.
+reserved-section instructions and an `ask` turn does not. A THIRD user-visible surface
+— ChatOps replies — is not a third application site: it reuses Site 1's pipeline
+verbatim. It is called out below because its audience differs, not because its code does.
 
 This is the A1 discipline. A1's `devil-advocate.ts` doc comment is explicit that the risk
 being managed is **two definitions drifting apart**, not two call sites existing. One
@@ -213,11 +220,23 @@ factory both production brief paths already share
 path). Because both go through that one factory, a socket brief and an HTTP brief stay
 byte-identical under every persona, exactly as they already do under every synthesis mode.
 
-**Nowhere else.** Persona must not reach the intent classifier, glossary consolidation,
-decision extraction, or any embedding call. Those are structured-extraction calls whose
-output is parsed, not read; a "verbose, opinionated" instruction corrupts them. This is
-why persona is not applied in the `LlmRouter` or provider layer, which would have been
-fewer sites and wrong.
+**Site 3 — ChatOps replies, which follow from Site 1 rather than being added.**
+`gateway-main.ts`'s `bindAskEngine` routes a `@nimbus <question>` mention through the SAME
+`runAsk` pipeline as `engine.ask`, so the owner's persona is in force there too. This was
+not noticed until the whole-branch review; it is DOCUMENTED rather than scoped out. It
+carries no new content and no new egress — only tone — and it is the owner's own
+configured voice on the owner's own ChatOps integration. Carving it out would need a
+persona-suppressing flag on one `runAsk` call site and would make ChatOps the one surface
+that ignores the persona every other surface honours. The one thing it does change is
+AUDIENCE: an `opinionated` or `collective` voice is visible to everyone in that channel,
+not just to the person who set the config, so `docs/cli-reference.md` and the changelog
+entry say so plainly.
+
+**Nowhere else.** Beyond those three, persona must not reach the intent classifier,
+glossary consolidation, decision extraction, or any embedding call. Those are
+structured-extraction calls whose output is parsed, not read; a "verbose, opinionated"
+instruction corrupts them. This is why persona is not applied in the `LlmRouter` or
+provider layer, which would have been fewer sites and wrong.
 
 ### 5.3 The I31 interaction — no new guard needed
 
@@ -352,8 +371,10 @@ same reason A1's was: it asserts something untestable and something impossible.
 2. Switching profiles requires a restart, as every other setting does; the CLI and the
    desktop panel both say so.
 3. The persona directive reaches the prompt on **both** execution paths
-   (`runViaLocalRouter`, `runViaAgent`) and across **both** dispatchers (`agent.invoke`,
-   `engine.askStream`); breaking either leg fails only its own test.
+   (`runViaLocalRouter`, `runViaAgent`); breaking either leg fails only its own test. Both
+   dispatchers (`agent.invoke`, `engine.askStream`) inherit it structurally rather than by
+   separate assertion — they share the single `platform.ipc.setAgentInvokeHandler` → `runAsk`
+   seam in `gateway-main.ts`, which is also where `runAsk` resolves the persona (criterion 1).
 4. The default persona is the identity function: a gateway with no `[persona]` section
    produces a byte-identical prompt to today.
 5. Persona composes with `--devil` — both directives present, neither displacing the other,
@@ -361,7 +382,9 @@ same reason A1's was: it asserts something untestable and something impossible.
 6. Persona reaches brief synthesis through `buildAgentSynthesisRunner`, so the socket and
    HTTP paths agree.
 7. A brief synthesized under `tone = "terse"` still carries every `requiredPhrases` anchor
-   and every reserved section (§ 5.3).
+   and every reserved section (§ 5.3). The anchor half MUST be asserted on a `negotiate`
+   brief with null lanes: `brief-contract.ts` gives `requiredPhrases` to `negotiate` only, so
+   any other kind has zero anchors and the assertion cannot fail.
 8. `[agents] synthesis` set in a profile TOML is honoured (§ 5.1 — the F2 fix).
 9. `profile.list` succeeds against an assembled gateway rather than throwing (§ 7).
 10. No `PERSONA_DIRECTIVES` string contains an omission instruction (D6) — asserted against

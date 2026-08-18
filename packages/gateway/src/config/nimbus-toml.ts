@@ -2052,14 +2052,6 @@ export function parseNimbusAgentsToml(
   return out;
 }
 
-export function loadNimbusAgentsFromConfigDir(configDir: string): NimbusAgentsToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
-    DEFAULT_NIMBUS_AGENTS_TOML,
-    parseNimbusAgentsToml,
-  );
-}
-
 // ---------------------------------------------------------------------------
 // [persona] — agent persona (Spine S1, W6-A2)
 //
@@ -2135,9 +2127,13 @@ export function loadNimbusPersonaFromPath(
 }
 
 /**
- * Profile-aware sibling of `loadNimbusAgentsFromConfigDir`, which hardcodes `nimbus.toml` and
- * is therefore profile-BLIND. A2 moves the production caller onto this one — see the design
- * spec § 5.1. The ConfigDir variant stays for callers that genuinely want the base file.
+ * The ONE `[agents]` loader. It takes a path, not a config dir, because the path a caller
+ * wants is the PROFILE-RESOLVED one (`resolveNimbusTomlForProfile`) — the former
+ * `loadNimbusAgentsFromConfigDir` hardcoded `nimbus.toml` and was therefore profile-BLIND,
+ * which silently discarded `[agents] synthesis` set in a profile TOML. A2 moved the sole
+ * production caller (`agents/_lib/agent-synthesis-runner.ts`) onto this function and DELETED
+ * the config-dir variant rather than leaving a profile-blind loader exported beside the
+ * profile-aware one for someone to reach for by accident. See the design spec § 5.1.
  */
 export function loadNimbusAgentsFromPath(tomlPath: string): NimbusAgentsToml {
   return loadTomlSection(tomlPath, DEFAULT_NIMBUS_AGENTS_TOML, parseNimbusAgentsToml);

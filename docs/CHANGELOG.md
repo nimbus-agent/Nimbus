@@ -11,9 +11,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 - **2026-08-18 — agent personas (A2): `tone` and `voice` ship; `tool_caution` and
   `confidence_threshold` are rejected, not deferred.** A new `[persona]` section in
   `nimbus.toml` — `tone` (`neutral` default / `terse` / `formal` / `casual` / `verbose`) and
-  `voice` (`neutral` default / `opinionated` / `collective`) — shapes how `nimbus ask` and
-  every built-in agent brief are phrased. Third and last of the three Wave 6 answer-quality
-  surfaces, after A0 (2026-08-16) and A1 (below, 2026-08-18).
+  `voice` (`neutral` default / `opinionated` / `collective`) — shapes how `nimbus ask`, every
+  built-in agent brief, and the ChatOps replies that share `nimbus ask`'s pipeline are
+  phrased. Third and last of the three Wave 6 answer-quality surfaces, after A0 (2026-08-16)
+  and A1 (below, 2026-08-18).
 
   **`tool_caution` and `confidence_threshold` do not ship, and are recorded here so they are
   not relitigated.** `tool_caution` was already prohibited on 2026-08-16: Non-Negotiable #2
@@ -36,6 +37,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `agent-runs/agent-http-invoke.ts`'s HTTP path) — so a socket brief and an HTTP brief stay
   byte-identical under every persona, exactly as they already do under every synthesis mode.
 
+  **A third surface follows from the first, and is named here rather than discovered later:
+  ChatOps replies.** `gateway-main.ts` routes a `@nimbus <question>` mention through the same
+  `runAsk` pipeline as `engine.ask`, so the owner's persona now also speaks in whatever
+  Slack/Teams channel the bot answers in. Stated plainly because it is the one surface where
+  the audience is not the person who set the config: an `opinionated` or `collective` voice
+  will be visible to everyone in that channel. It is documented rather than scoped out — it
+  carries no new content and no new egress, only tone, and it is the owner's own configured
+  voice on the owner's own ChatOps integration; carving it out would make ChatOps the single
+  surface that ignores the persona every other surface honours.
+
   **D6 — every directive governs *how*, never *whether*.** No `tone` or `voice` string may
   instruct the model to omit, drop, skip, or limit content; `terse` means "say it in fewer
   words," never "leave things out." A test asserts this against an omission-verb pattern over
@@ -56,16 +67,29 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `tone = "terse"` is self-describing.
 
   **Two adjacent bugs fixed in the same branch.** `[agents] synthesis` was profile-blind —
-  `loadNimbusAgentsFromConfigDir` hardcodes `nimbus.toml`, so a user with `synthesis` set in a
+  `loadNimbusAgentsFromConfigDir` hardcoded `nimbus.toml`, so a user with `synthesis` set in a
   profile TOML was silently ignored. `buildAgentSynthesisRunner` now reads it from the
   profile-resolved path, the same path `[persona]` uses; this is a real behaviour change,
-  stated here rather than riding along silently under the persona work. Separately,
+  stated here rather than riding along silently under the persona work. **It cuts both ways,
+  and the second direction is the one a user can be surprised by:** `[agents]` now follows
+  whole-file profile semantics, the same as `[llm]` and `[session]`, so a key set ONLY in the
+  base `nimbus.toml` no longer applies while a profile whose file has no `[agents]` section is
+  active. Concretely — `synthesis = "off"` in `nimbus.toml` plus an `[agents]`-less
+  `nimbus.work.toml` means the `work` profile now gets the `"local"` default, discarding an
+  explicit opt-out that used to be honoured. That is the correct semantics for a whole-file
+  profile model and it is not being reverted, but it is a behaviour change, so it is recorded
+  in both directions here and in [`docs/cli-reference.md`](./cli-reference.md). The
+  now-callerless `loadNimbusAgentsFromConfigDir` was deleted rather than left exported beside
+  its profile-aware sibling. Separately,
   `ProfileManager` had never been constructed in production: `ipc/server/options.ts` declared
   `profileManager?`, but nothing set it outside tests, so the desktop app's routed Profiles
   settings page (`packages/ui/src/pages/settings/ProfilesPanel.tsx`) and all four
   already-allowlisted `profile.*` IPC methods threw on every call. `platform/assemble.ts` now
   constructs it. **Switching a profile still requires a Gateway restart** — `NIMBUS_PROFILE`
   is read at process spawn — and the panel now says so, matching what the CLI already printed.
+  The panel also now refetches after a switch, so the `active` marker moves to the row the
+  success notice is talking about instead of staying on the old one — a pre-existing bug that
+  only became reachable once the page stopped throwing.
 
   **Acceptance criterion replaced, not met, the same way A1's was.** The Wave 6 row asked for
   an integration test that "toggles persona mid-session and asserts the response shape
@@ -73,12 +97,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   mid-session profile switching cannot happen) and something untestable (grading model prose
   needs a live LLM the suite does not have, and would be flaky where one exists). What is
   asserted instead: editing `[persona]` in the active profile's TOML changes the next response
-  with no restart; the persona directive reaches the prompt on both execution paths
-  (`runViaLocalRouter`, `runViaAgent`) and across both IPC dispatchers (`agent.invoke`,
-  `engine.askStream`); the default persona is byte-identical to today; persona composes with
-  `--devil` in the documented order; a brief synthesized under `tone = "terse"` still carries
-  every required anchor and reserved section; `[agents] synthesis` set in a profile TOML is
-  honoured; `profile.list` succeeds against an assembled gateway rather than throwing.
+  with no restart (`engine/run-ask.test.ts`, through `runAsk` itself with a real `[persona]`
+  file on disk — not by injecting a persona downstream of the resolution being claimed); the
+  persona directive reaches the prompt on both execution paths (`runViaLocalRouter`,
+  `runViaAgent`), which both dispatchers (`agent.invoke`, `engine.askStream`) reach through
+  the one `setAgentInvokeHandler` → `runAsk` seam; the default persona is byte-identical to
+  today; persona composes with `--devil` in the documented order; a brief synthesized under
+  `tone = "terse"` still carries every reserved section AND every `requiredPhrases` anchor —
+  asserted on a `negotiate` brief with all seven lanes null, the only fixture that HAS anchors,
+  in both directions (a compliant rewrite is used; one that drops an anchor is discarded as
+  `contract_violation`); `[agents] synthesis` set in a profile TOML is honoured; and, both
+  proven against a real in-process assembly in `platform/assemble.test.ts` rather than an
+  injected fake, `profile.list` succeeds over the assembled gateway's own IPC socket and an
+  unrecognised `[persona]` value warns once through the boot logger's daily log.
   **Recorded gap:** nothing asserts that a terse persona's prose is actually terser — that
   grades model output, the same limitation A1 carries.
 

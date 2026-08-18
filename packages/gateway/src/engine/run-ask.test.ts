@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "@mastra/core/agent";
@@ -12,6 +13,7 @@ import type { SessionChunk, SessionMemoryStore } from "../memory/session-memory-
 import type { PlatformPaths } from "../platform/paths.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
+import { TONE_DIRECTIVES, VOICE_DIRECTIVES } from "./persona.ts";
 import { runAsk } from "./run-ask.ts";
 import type { ConnectorDispatcher } from "./types.ts";
 
@@ -1588,5 +1590,113 @@ describe("devil's-advocate mode routing", () => {
     });
     expect(classifierCalls).toBe(1);
     localIndex.close();
+  });
+});
+
+// C1 (whole-branch review): `run-ask.ts`'s `persona: resolvePersona(p.paths.configDir)` is the
+// ONLY thing that gives `nimbus ask` a persona at all — every other persona test injects
+// `persona` directly into `runConversationalAgent`, so deleting that line left the whole suite
+// green while the feature silently died. These tests go through `runAsk` with a REAL `[persona]`
+// file on disk under a REAL `paths.configDir`, so the resolution itself is what is pinned.
+describe("persona (A2) is resolved from disk by runAsk itself", () => {
+  function withPersonaConfigDir(): { paths: PlatformPaths; dir: string } {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-run-ask-persona-"));
+    return {
+      dir,
+      paths: {
+        configDir: dir,
+        dataDir: join(dir, "data"),
+        logDir: join(dir, "logs"),
+        socketPath: join(dir, "gateway.sock"),
+        extensionsDir: join(dir, "ext"),
+        tempDir: join(dir, "tmp"),
+      },
+    };
+  }
+
+  function nonEmptyIndex(): LocalIndex {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    // runAsk short-circuits to onboarding guidance on an empty index, before any LLM path.
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    return new LocalIndex(db);
+  }
+
+  async function askCapturingPrompt(paths: PlatformPaths): Promise<string> {
+    const localIndex = nonEmptyIndex();
+    const prompts: string[] = [];
+    try {
+      await runAsk({
+        input: "what shipped yesterday?",
+        stream: false,
+        clientId: "test-client",
+        paths,
+        consentCoordinator: stubConsent,
+        localIndex,
+        dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
+        sendChunk: () => {},
+        llmRouter: fakeLocalRouter(prompts, "answer", true),
+        classify: async () => ({
+          intent: "unknown",
+          entities: {},
+          requiresHITL: false,
+          confidence: 0,
+        }),
+      });
+    } finally {
+      localIndex.close();
+    }
+    const first = prompts[0];
+    if (first === undefined) throw new Error("the router was never called — no prompt to assert");
+    return first;
+  }
+
+  test("a [persona] on disk reaches the prompt through runAsk", async () => {
+    const { paths, dir } = withPersonaConfigDir();
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), '[persona]\ntone = "terse"\nvoice = "collective"\n');
+      const prompt = await askCapturingPrompt(paths);
+      expect(prompt).toContain(TONE_DIRECTIVES.terse);
+      expect(prompt).toContain(VOICE_DIRECTIVES.collective);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("no [persona] section leaves the prompt byte-identical to a neutral one", async () => {
+    const absent = withPersonaConfigDir();
+    const neutral = withPersonaConfigDir();
+    try {
+      writeFileSync(join(absent.dir, "nimbus.toml"), "[llm]\nprefer_local = true\n");
+      writeFileSync(
+        join(neutral.dir, "nimbus.toml"),
+        '[llm]\nprefer_local = true\n\n[persona]\ntone = "neutral"\nvoice = "neutral"\n',
+      );
+      expect(await askCapturingPrompt(neutral.paths)).toBe(await askCapturingPrompt(absent.paths));
+    } finally {
+      rmSync(absent.dir, { recursive: true, force: true });
+      rmSync(neutral.dir, { recursive: true, force: true });
+    }
+  });
+
+  // D3: the persona is resolved PER INVOCATION, so editing the file changes the very next
+  // answer with no gateway restart. A cached read would pass the first test above and fail this.
+  test("editing [persona] between two asks changes the next prompt, with no restart", async () => {
+    const { paths, dir } = withPersonaConfigDir();
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), '[persona]\ntone = "terse"\n');
+      const before = await askCapturingPrompt(paths);
+      expect(before).toContain(TONE_DIRECTIVES.terse);
+
+      writeFileSync(join(dir, "nimbus.toml"), '[persona]\ntone = "formal"\n');
+      const after = await askCapturingPrompt(paths);
+      expect(after).toContain(TONE_DIRECTIVES.formal);
+      expect(after).not.toContain(TONE_DIRECTIVES.terse);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

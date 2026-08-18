@@ -57,6 +57,11 @@ export function ProfilesPanel() {
       setSwitchNotice(null);
       try {
         await createIpcClient().profileSwitch(name);
+        // Re-read the list, exactly as onCreate/onDelete do. Without this the `active` marker
+        // stays on the OLD row while the notice below says the switch succeeded — two
+        // contradictory statements on screen at once. The server is the source of truth for
+        // which profile is active, so this refetches rather than setting it optimistically.
+        await refresh();
         // Switching a profile only updates the on-disk marker: NIMBUS_PROFILE is read at spawn
         // (cli/src/lib/spawn-gateway.ts), so the switch takes effect on the next Gateway start,
         // not this one. The CLI already prints this (cli/src/commands/profile.ts); mirror it here.
@@ -67,7 +72,7 @@ export function ProfilesPanel() {
         setProfileActionInFlight(false);
       }
     },
-    [active, setProfileActionInFlight],
+    [active, refresh, setProfileActionInFlight],
   );
 
   const onDelete = useCallback(

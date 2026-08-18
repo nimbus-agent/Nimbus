@@ -1,9 +1,19 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import net from "node:net";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
+import { resetPersonaWarningsForTest } from "../config/persona.ts";
 import { writeConnectorSecret } from "../connectors/connector-vault.ts";
 import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { appendEgressEntry } from "../egress/egress-ledger.ts";
@@ -18,6 +28,7 @@ import {
   httpOriginFor,
 } from "./assemble.ts";
 import { processEnvSet } from "./env-access.ts";
+import { gatewayDailyLogPath } from "./gateway-log-file.ts";
 import type { PlatformPaths } from "./paths.ts";
 import type { PlatformServices } from "./types.ts";
 
@@ -613,5 +624,150 @@ describe("assemblePlatformServices — in-process assembly", () => {
       )
       .get() as { n: number };
     expect(count.n).toBe(0);
+  }, 30000);
+
+  // ---------------------------------------------------------------------------
+  // C2 + C3 (whole-branch review). Both are single lines in `assemblePlatformServices`
+  // whose only observable effect is at the boundary of a REAL assembly, which is why they
+  // are asserted here rather than against an injected fake: every other `profile.*` test
+  // injects its own ProfileManager, and every other persona test passes its own logger, so
+  // both lines could be deleted with the rest of the suite still green.
+  // ---------------------------------------------------------------------------
+
+  /** One NDJSON JSON-RPC request line. Mirrors `ipc/ipc.test.ts`'s helper of the same shape. */
+  function jsonRpcNdjsonLine(method: string, id: number, params?: unknown): string {
+    const body: Record<string, unknown> = { jsonrpc: "2.0", id, method };
+    if (params !== undefined) body["params"] = params;
+    return `${JSON.stringify(body)}\n`;
+  }
+
+  /**
+   * Send one request over the assembled gateway's real IPC socket and resolve its first
+   * response line. Win32 takes the named-pipe path through `node:net`, POSIX takes the unix
+   * socket through `Bun.connect` — the same split `ipc/ipc.test.ts` already uses.
+   */
+  async function rpcOverSocket(listenPath: string, method: string): Promise<string> {
+    const lineToWrite = jsonRpcNdjsonLine(method, 1, {});
+    const takeFirst = (buffer: string, chunk: string): { next: string; line?: string } => {
+      const combined = buffer + chunk;
+      const nl = combined.indexOf("\n");
+      if (nl < 0) return { next: combined };
+      return { next: combined.slice(nl + 1), line: combined.slice(0, nl) };
+    };
+    if (platform() === "win32") {
+      return await new Promise<string>((resolve, reject) => {
+        let buf = "";
+        const sock = net.createConnection(listenPath);
+        sock.on("connect", () => sock.write(lineToWrite));
+        sock.on("data", (b: Buffer) => {
+          const { next, line } = takeFirst(buf, b.toString("utf8"));
+          buf = next;
+          if (line !== undefined) {
+            resolve(line);
+            sock.end();
+          }
+        });
+        sock.on("error", reject);
+      });
+    }
+    return await new Promise<string>((resolve, reject) => {
+      let buf = "";
+      Bun.connect({
+        unix: listenPath,
+        socket: {
+          open(socket) {
+            socket.write(lineToWrite);
+          },
+          data(socket, chunk: Uint8Array) {
+            const { next, line } = takeFirst(buf, new TextDecoder().decode(chunk));
+            buf = next;
+            if (line !== undefined) {
+              resolve(line);
+              socket.end();
+            }
+          },
+          error() {
+            reject(new Error("socket error"));
+          },
+        },
+      }).catch(reject);
+    });
+  }
+
+  // C2: `ipcOpts.profileManager = new ProfileManager(...)` is the ONE production construction.
+  // Before A2 it did not exist and every `profile.*` call threw "Profile manager is not
+  // available on this gateway" — the exact "declared, dispatched, never constructed" defect
+  // this branch set out to fix. Asserted end-to-end over the assembled gateway's real socket,
+  // and on the RETURNED CONTENT (a profile file this test wrote into this gateway's configDir),
+  // not merely on "did not throw": a manager pointed at some other directory would satisfy the
+  // weaker assertion.
+  it("C2: profile.list succeeds over the assembled gateway's IPC and reads ITS config dir", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(join(paths.configDir, "nimbus.work.toml"), "schema_version = 1\n");
+
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    await services.ipc.start();
+
+    const raw = await rpcOverSocket(services.ipc.listenPath, "profile.list");
+    const res = JSON.parse(raw) as { result?: unknown; error?: { message?: string } };
+    expect(res.error).toBeUndefined();
+    expect(res.result).toEqual({ profiles: [{ name: "work", active: false }], active: null });
+  }, 30000);
+
+  // C3: `resolvePersona(paths.configDir, syncLogger)` is the SOLE site that passes a logger.
+  // Deleting it makes `config/persona.ts`'s warn path dead code and a user with `tone = "tree"`
+  // silently gets neutral behaviour. The boot logger writes to `logDir`'s daily file, so that
+  // file is where the warning is observable without changing production to accept an injected
+  // logger.
+  it("C3: an unrecognised [persona] value warns through the boot logger's daily log", async () => {
+    resetPersonaWarningsForTest();
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(join(paths.configDir, "nimbus.toml"), '[persona]\ntone = "tree"\n');
+
+    // `createGatewayPinoLogger` resolves its level from NIMBUS_LOG_LEVEL at construction and
+    // defaults to "warn"; pin it so a machine or CI job running with `error`/`silent` does not
+    // turn this into a false failure (nor, worse, a vacuous pass in the red-prove direction).
+    const originalLevel = process.env["NIMBUS_LOG_LEVEL"];
+    processEnvSet("NIMBUS_LOG_LEVEL", "warn");
+    try {
+      services = await assemblePlatformServices(paths, makeInMemoryVault());
+    } finally {
+      processEnvSet("NIMBUS_LOG_LEVEL", originalLevel);
+    }
+
+    // pino's file destination is async (`sync: false`), so poll briefly rather than assuming
+    // the flush has already landed by the time assembly returns.
+    const logPath = gatewayDailyLogPath(paths.logDir);
+    const personaWarning = async (): Promise<{ msg?: unknown; key?: unknown; value?: unknown }> => {
+      for (let i = 0; i < 60; i += 1) {
+        const raw = existsSync(logPath) ? readFileSync(logPath, "utf8") : "";
+        for (const line of raw.split("\n")) {
+          if (line.trim() === "") continue;
+          let parsed: { msg?: unknown; key?: unknown; value?: unknown };
+          try {
+            parsed = JSON.parse(line) as { msg?: unknown; key?: unknown; value?: unknown };
+          } catch {
+            continue;
+          }
+          if (typeof parsed.msg === "string" && parsed.msg.startsWith("[persona]")) return parsed;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return {};
+    };
+
+    // Parsed as NDJSON rather than substring-matched over the raw file: pino JSON-escapes the
+    // message, so the on-disk bytes are `tone = \\"tree\\"`, and a naive `toContain` of the
+    // human-readable sentence would fail for a reason unrelated to the wiring under test.
+    const warning = await personaWarning();
+    expect(warning.msg).toBe(
+      '[persona] tone = "tree" is not a recognised value — falling back to "neutral"',
+    );
+    expect(warning.key).toBe("tone");
+    expect(warning.value).toBe("tree");
   }, 30000);
 });

@@ -59,16 +59,19 @@ export function buildAgentSynthesisRunner(
   deps: AgentSynthesisRunnerDeps,
 ): SynthesisRunner | undefined {
   if (deps.router === undefined) return undefined;
-  // A2: BOTH reads move onto the profile-resolved toml. `loadNimbusAgentsFromConfigDir`
-  // hardcodes `nimbus.toml`, which meant `[agents] synthesis` set in a profile file was
-  // silently ignored — a pre-existing bug, fixed here rather than shipped alongside a
-  // profile-AWARE persona, which would have been incoherent. See design § 5.1.
+  // A2: BOTH reads move onto the profile-resolved toml. The former
+  // `loadNimbusAgentsFromConfigDir` hardcoded `nimbus.toml`, which meant `[agents] synthesis`
+  // set in a profile file was silently ignored — a pre-existing bug, fixed here rather than
+  // shipped alongside a profile-AWARE persona, which would have been incoherent. It also
+  // means the move is BIDIRECTIONAL: `[agents]` now follows whole-file profile semantics, so
+  // a key set only in the BASE `nimbus.toml` no longer applies while a profile file that
+  // lacks an `[agents]` section is active. That matches `[llm]`/`[session]`. See design § 5.1.
   const tomlPath =
     deps.configDir === undefined ? undefined : resolveNimbusTomlForProfile(deps.configDir);
   const config =
     tomlPath === undefined ? DEFAULT_NIMBUS_AGENTS_TOML : loadNimbusAgentsFromPath(tomlPath);
   // No logger: this runs per brief, and warning on every brief would be noise. The single
-  // warning site is the boot-time resolution in `platform/assemble.ts` (Task 5).
+  // warning site is the boot-time resolution in `platform/assemble.ts`.
   const persona = deps.configDir === undefined ? undefined : resolvePersona(deps.configDir);
   // recordEgress is deliberately NOT overridden here: buildSynthesisRunner's default is the real
   // recordSynthesisEgress appender, and this factory must never substitute a fake one on any

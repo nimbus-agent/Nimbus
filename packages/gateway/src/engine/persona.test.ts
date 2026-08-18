@@ -87,7 +87,7 @@ describe("D6: no directive may instruct the model to omit content", () => {
 
   // The other half of the guard, and the one that keeps it USABLE: a register instruction
   // must still pass. Without this test, someone "hardening" the pattern with `avoid`/`without`
-  // would break legitimate directives and only find out by breaking Task 2's other tests.
+  // would break legitimate directives and only find out by breaking this file's other tests.
   test("register instructions are permitted — the distinction D6 actually draws", () => {
     expect("Use short sentences and plain words.").not.toMatch(OMISSION_PATTERN);
     expect("Avoid jargon; prefer plain words.").not.toMatch(OMISSION_PATTERN);

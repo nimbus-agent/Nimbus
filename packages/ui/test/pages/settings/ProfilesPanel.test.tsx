@@ -69,10 +69,15 @@ describe("ProfilesPanel", () => {
   });
 
   it("switch flow calls profileSwitch with the chosen name", async () => {
-    profileListMock.mockResolvedValueOnce({
-      profiles: [{ name: "default" }, { name: "work" }],
-      active: "default",
-    });
+    profileListMock
+      .mockResolvedValueOnce({
+        profiles: [{ name: "default" }, { name: "work" }],
+        active: "default",
+      })
+      .mockResolvedValueOnce({
+        profiles: [{ name: "default" }, { name: "work" }],
+        active: "work",
+      });
     profileSwitchMock.mockResolvedValueOnce({ active: "work" });
     renderPanel();
     await screen.findByText("work");
@@ -82,10 +87,15 @@ describe("ProfilesPanel", () => {
   });
 
   it("switch flow shows the restart notice after a successful switch", async () => {
-    profileListMock.mockResolvedValueOnce({
-      profiles: [{ name: "default" }, { name: "work" }],
-      active: "default",
-    });
+    profileListMock
+      .mockResolvedValueOnce({
+        profiles: [{ name: "default" }, { name: "work" }],
+        active: "default",
+      })
+      .mockResolvedValueOnce({
+        profiles: [{ name: "default" }, { name: "work" }],
+        active: "work",
+      });
     profileSwitchMock.mockResolvedValueOnce({ active: "work" });
     renderPanel();
     await screen.findByText("work");
@@ -95,6 +105,41 @@ describe("ProfilesPanel", () => {
     expect(
       await screen.findByText(/Restart the Gateway.*nimbus stop && nimbus start/),
     ).toBeInTheDocument();
+  });
+
+  // I4: onCreate and onDelete both refetch; onSwitch did not, so the "active" marker stayed on
+  // the OLD row while the notice claimed the switch had succeeded. Asserted on the marker's
+  // POSITION (the row it sits in), not merely on profileList being called twice — a refetch
+  // whose result the panel then ignored would pass a call-count assertion.
+  it("switch flow refetches so the active marker moves to the newly-active row", async () => {
+    profileListMock
+      .mockResolvedValueOnce({
+        profiles: [{ name: "default" }, { name: "work" }],
+        active: "default",
+      })
+      .mockResolvedValueOnce({
+        profiles: [{ name: "default" }, { name: "work" }],
+        active: "work",
+      });
+    profileSwitchMock.mockResolvedValueOnce({ active: "work" });
+    renderPanel();
+    await screen.findByText("work");
+
+    const rowFor = (name: string): HTMLElement => {
+      const row = screen
+        .getAllByTestId("profile-row")
+        .find((el) => el.textContent?.startsWith(name));
+      if (row === undefined) throw new Error(`no profile row for ${name}`);
+      return row;
+    };
+    expect(rowFor("default").textContent).toContain("active");
+    expect(rowFor("work").textContent).not.toContain("active");
+
+    await userEvent.click(screen.getByRole("button", { name: "Switch to work" }));
+
+    await waitFor(() => expect(rowFor("work").textContent).toContain("active"));
+    expect(rowFor("default").textContent).not.toContain("active");
+    expect(profileListMock).toHaveBeenCalledTimes(2);
   });
 
   it("delete requires typed-name confirmation", async () => {

@@ -172,8 +172,8 @@ async function answerConversationally(
     ...(localContext === undefined ? {} : { localContext }),
     ...(p.devil === true ? { devil: true } : {}),
     // Resolved here rather than at gateway boot so an edit to the active profile's toml is
-    // picked up with no restart (D3). No logger: the boot-time resolution (Task 4) owns the
-    // warning — warning on every turn would be noise.
+    // picked up with no restart (D3). No logger: the boot-time resolution in
+    // `platform/assemble.ts` owns the warning — warning on every turn would be noise.
     persona: resolvePersona(p.paths.configDir),
   });
 
