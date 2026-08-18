@@ -3,8 +3,10 @@
 import type { Database } from "bun:sqlite";
 import {
   DEFAULT_NIMBUS_AGENTS_TOML,
-  loadNimbusAgentsFromConfigDir,
+  loadNimbusAgentsFromPath,
+  resolveNimbusTomlForProfile,
 } from "../../config/nimbus-toml.ts";
+import { resolvePersona } from "../../config/persona.ts";
 import {
   buildSynthesisRunner,
   type SynthesisRouter,
@@ -57,18 +59,33 @@ export function buildAgentSynthesisRunner(
   deps: AgentSynthesisRunnerDeps,
 ): SynthesisRunner | undefined {
   if (deps.router === undefined) return undefined;
+  // A2: BOTH reads move onto the profile-resolved toml. `loadNimbusAgentsFromConfigDir`
+  // hardcodes `nimbus.toml`, which meant `[agents] synthesis` set in a profile file was
+  // silently ignored — a pre-existing bug, fixed here rather than shipped alongside a
+  // profile-AWARE persona, which would have been incoherent. See design § 5.1.
+  const tomlPath =
+    deps.configDir === undefined ? undefined : resolveNimbusTomlForProfile(deps.configDir);
   const config =
-    deps.configDir === undefined
-      ? DEFAULT_NIMBUS_AGENTS_TOML
-      : loadNimbusAgentsFromConfigDir(deps.configDir);
+    tomlPath === undefined ? DEFAULT_NIMBUS_AGENTS_TOML : loadNimbusAgentsFromPath(tomlPath);
+  // No logger: this runs per brief, and warning on every brief would be noise. The single
+  // warning site is the boot-time resolution in `platform/assemble.ts` (Task 5).
+  const persona = deps.configDir === undefined ? undefined : resolvePersona(deps.configDir);
   // recordEgress is deliberately NOT overridden here: buildSynthesisRunner's default is the real
   // recordSynthesisEgress appender, and this factory must never substitute a fake one on any
   // production path (I29).
-  return buildSynthesisRunner({
+  const inner = buildSynthesisRunner({
     config,
     router: deps.router,
     db: deps.db,
     briefKind: briefKindForMethod(deps.method),
     now: deps.now ?? (() => Date.now()),
   });
+  // `exactOptionalPropertyTypes` forbids assigning `persona: undefined` to an optional
+  // property — it must be OMITTED, not set to `undefined`, to satisfy `SynthesisRunner`. The
+  // conditional spread achieves that; the resulting runner is behaviourally identical to
+  // `{ run, persona: undefined }` since every reader (`opts.runner?.persona`) treats a missing
+  // property and an `undefined` one the same.
+  return inner === undefined
+    ? undefined
+    : { run: inner.run, ...(persona === undefined ? {} : { persona }) };
 }

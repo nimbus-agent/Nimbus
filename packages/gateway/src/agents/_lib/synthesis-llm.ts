@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { redactAuditPayload } from "../../audit/format-audit-payload.ts";
 import type { NimbusAgentsToml } from "../../config/nimbus-toml.ts";
+import type { NimbusPersonaToml } from "../../config/persona.ts";
 import { recordSynthesisEgress } from "../../egress/synthesis-egress.ts";
 import type { ResolvedSynthesisProvider } from "../../llm/router.ts";
 
@@ -14,7 +15,16 @@ export type SynthesisAttempt =
       detail?: string;
     };
 
-export type SynthesisRunner = { run: (prompt: string) => Promise<SynthesisAttempt> };
+export type SynthesisRunner = {
+  run: (prompt: string) => Promise<SynthesisAttempt>;
+  /**
+   * Resolved persona (A2). Rides the RUNNER rather than `SynthesizeOpts` because
+   * `buildAgentSynthesisRunner` is already the single factory both production brief paths
+   * share — so a socket brief and an HTTP brief get the same persona by construction, and
+   * `emit-brief.ts` plus every agent call site stay untouched.
+   */
+  readonly persona?: NimbusPersonaToml;
+};
 
 /**
  * The minimal surface `buildSynthesisRunner` needs from `LlmRouter` — a STRUCTURAL SUBSET of it,

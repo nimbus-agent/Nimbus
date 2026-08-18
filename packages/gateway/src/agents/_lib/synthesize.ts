@@ -1,3 +1,5 @@
+import type { NimbusPersonaToml } from "../../config/persona.ts";
+import { personaDirective } from "../../engine/persona.ts";
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { contractViolations } from "./brief-contract.ts";
 import { assertNeverBrief, type SynthInput } from "./brief-kinds.ts";
@@ -58,7 +60,7 @@ export type SynthesisDiscardReason =
  */
 export type SynthesisProvenance =
   | { attempted: false; reason: "disabled" | "no_eligible_provider" | "reserved_extraction_failed" }
-  | { attempted: true; used: true; model: string; remote: boolean }
+  | { attempted: true; used: true; model: string; remote: boolean; persona?: NimbusPersonaToml }
   | {
       attempted: true;
       used: false;
@@ -70,6 +72,13 @@ export type SynthesisProvenance =
        * type — never populate this field from a raw, un-redacted error message.
        */
       detail?: string;
+      /**
+       * A2/S2: the persona in force when this rewrite was discarded. A terse persona is
+       * predicted to raise the `contract_violation` rate (design § 5.3); carrying it here
+       * makes that measurable on the `briefReady` notification a user already sees, rather
+       * than only in a debug build.
+       */
+      persona?: NimbusPersonaToml;
     };
 
 export type SynthesisOutcome = { markdown: string; provenance: SynthesisProvenance };
@@ -217,7 +226,32 @@ export function reservedExtractionFailed(
   return reserved.length > 0 && body === full;
 }
 
+/**
+ * A2/S2: attach the resolved persona to the provenance at ONE site.
+ *
+ * `synthesizeInner` returns a provenance from nine different places. Setting `persona` on each
+ * would work today and rot on the first new return arm — and a missed arm is SILENT: the brief
+ * still renders, only the correlation between a discard and the persona that provoked it goes
+ * missing, which is the one thing this field exists to provide. Attaching it here covers every
+ * current and future arm by construction.
+ *
+ * `attempted: false` arms are left alone deliberately: `disabled` / `no_eligible_provider` /
+ * `reserved_extraction_failed` are all reached BEFORE the model is prompted, so no persona was
+ * in force and reporting one would be a claim that nothing happened under it.
+ */
 export async function synthesize(
+  brief: SynthInput,
+  opts: SynthesizeOpts = {},
+): Promise<SynthesisOutcome> {
+  const outcome = await synthesizeInner(brief, opts);
+  const persona = opts.runner?.persona;
+  if (persona === undefined || !outcome.provenance.attempted) {
+    return outcome;
+  }
+  return { ...outcome, provenance: { ...outcome.provenance, persona } };
+}
+
+async function synthesizeInner(
   brief: SynthInput,
   opts: SynthesizeOpts = {},
 ): Promise<SynthesisOutcome> {
@@ -250,7 +284,7 @@ export async function synthesize(
 
   const wrapped = wrapToolOutput({ service: "nimbus", tool: toolNameFor(brief) }, brief);
   const prompt = [
-    synthesisInstructionsFor(brief),
+    synthesisInstructionsFor(brief, opts.runner?.persona),
     "",
     "Findings:",
     wrapped,
@@ -383,11 +417,11 @@ function formatHeadingList(names: readonly string[]): string {
  * blanket instruction meant for a section it does not own. For every other kind this reduces
  * to exactly "Gaps".
  */
-function synthesisInstructionsFor(brief: SynthInput): string {
+function synthesisInstructionsFor(brief: SynthInput, persona?: NimbusPersonaToml): string {
   const names = reservedHeadingsFor(brief).map(bareHeading);
   const list = formatHeadingList(names);
   const pronoun = names.length === 1 ? "it" : "them";
-  return [
+  const lines = [
     "You are presenting structured findings from a Nimbus built-in agent.",
     "Rewrite the deterministic Markdown into a more readable brief.",
     "Rules:",
@@ -396,5 +430,11 @@ function synthesisInstructionsFor(brief: SynthInput): string {
     `- Do not write a ${list} section: ${names.length === 1 ? "it is" : "they are"} appended verbatim after your rewrite. The JSON still lists ${pronoun} so your prose does not contradict ${pronoun}.`,
     "- If the JSON contains zero ranked findings, say so plainly; do not pad.",
     "- Output Markdown only — no preamble, no code fences around the whole answer.",
-  ].join("\n");
+  ];
+  // Persona LAST, so a style directive can never be read as overriding a content rule above
+  // it. D6 guarantees no persona directive tells the model to omit anything, so this cannot
+  // weaken the reserved-heading rule regardless of position — the ordering is belt and braces.
+  const directive = personaDirective(persona);
+  if (directive !== "") lines.push("", `Style: ${directive}`);
+  return lines.join("\n");
 }

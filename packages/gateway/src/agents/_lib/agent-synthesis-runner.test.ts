@@ -80,4 +80,23 @@ describe("buildAgentSynthesisRunner over a REAL nimbus.toml (loadNimbusAgentsFro
     });
     expect(runner).toBeUndefined();
   });
+
+  test("[agents] synthesis is read from the PROFILE toml, not nimbus.toml", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-agents-profile-"));
+    writeFileSync(join(dir, "nimbus.toml"), `[agents]\nsynthesis = "off"\n`, "utf8");
+    writeFileSync(join(dir, "nimbus.work.toml"), `[agents]\nsynthesis = "local"\n`, "utf8");
+    process.env["NIMBUS_PROFILE"] = "work";
+    try {
+      const runner = buildAgentSynthesisRunner({
+        configDir: dir,
+        db: new Database(":memory:"),
+        router: fakeRouter,
+        method: "agents.why",
+      });
+      // "off" would yield undefined; "local" from the profile file yields a runner.
+      expect(runner).not.toBeUndefined();
+    } finally {
+      delete process.env["NIMBUS_PROFILE"];
+    }
+  });
 });
