@@ -31,6 +31,13 @@ describe("parseNimbusPersonaToml", () => {
     expect(issues).toEqual([{ key: "tone", value: "tree" }]);
   });
 
+  test("unrecognised voice keeps the default AND is reported as an issue", () => {
+    const issues: PersonaIssue[] = [];
+    const out = parseNimbusPersonaToml(`[persona]\nvoice = "sarcastic"\n`, undefined, issues);
+    expect(out.voice).toBe("neutral");
+    expect(issues).toEqual([{ key: "voice", value: "sarcastic" }]);
+  });
+
   test("keys in another section are ignored", () => {
     const raw = `[agents]\ntone = "terse"\n`;
     expect(parseNimbusPersonaToml(raw)).toEqual(DEFAULT_NIMBUS_PERSONA_TOML);

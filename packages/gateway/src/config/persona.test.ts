@@ -71,4 +71,34 @@ describe("resolvePersona", () => {
     expect(warnings[0]).toContain("tree");
     expect(warnings[0]).toContain("neutral");
   });
+
+  test("warns again on a DIFFERENT bad value for the same key — memo is keyed on key=value, not a boolean-per-key", () => {
+    const dir = tmpConfigDir();
+    const path = join(dir, "nimbus.toml");
+    delete process.env["NIMBUS_PROFILE"];
+    const warnings: string[] = [];
+    const logger = {
+      warn: (_o: unknown, msg: string) => {
+        warnings.push(msg);
+      },
+    };
+
+    writeFileSync(path, `[persona]\ntone = "tree"\n`, "utf8");
+    resolvePersona(dir, logger);
+    expect(warnings.length).toBe(1);
+
+    // A boolean-per-key (or single-boolean) memo would stay silent here, because "tone" was
+    // already warned once. The key=value memo warns again, because "tone=bark" is a distinct
+    // memo entry from "tone=tree".
+    writeFileSync(path, `[persona]\ntone = "bark"\n`, "utf8");
+    resolvePersona(dir, logger);
+    expect(warnings.length).toBe(2);
+    expect(warnings[1]).toContain("tone");
+    expect(warnings[1]).toContain("bark");
+    expect(warnings[1]).toContain("neutral");
+
+    // Resolving again with the same (now-seen) bad value must not warn a third time.
+    resolvePersona(dir, logger);
+    expect(warnings.length).toBe(2);
+  });
 });
