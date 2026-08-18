@@ -217,15 +217,24 @@ Expected: PASS (6 tests).
 Create `packages/gateway/src/config/persona.test.ts`:
 
 ```ts
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolvePersona } from "./persona.ts";
+import { resetPersonaWarningsForTest, resolvePersona } from "./persona.ts";
 
 function tmpConfigDir(): string {
   return mkdtempSync(join(tmpdir(), "nimbus-persona-"));
 }
+
+// `warnedIssues` is module-scoped and survives between tests in this file. Without this reset
+// the warn-once test passes only while it is the FIRST test to use `tone = "tree"` — a second
+// test using the same bad value later would see zero warnings and fail confusingly, and a
+// reordering would break it silently. Clearing per test makes the count assertion mean what
+// it says.
+beforeEach(() => {
+  resetPersonaWarningsForTest();
+});
 
 describe("resolvePersona", () => {
   test("reads nimbus.toml when no profile is active", () => {
@@ -441,8 +450,18 @@ describe("personaDirective", () => {
 // D6 (design spec § 4). This is the guard that keeps `terse` from fighting `--devil` AND from
 // pushing against I31. It is written as what CANNOT pass, not as what does.
 describe("D6: no directive may instruct the model to omit content", () => {
+  // A DENYLIST, and denylists are incomplete by nature. This is a tripwire on future edits to
+  // a closed, reviewed set of eight strings — NOT a proof that no omission instruction can
+  // ever be expressed. The real guarantee is that the set is small and reviewed; this catches
+  // the careless edit.
+  //
+  // Note what is deliberately NOT here: `avoid`, `without` and `cut`. Those are register
+  // words, not omission words — "avoid jargon" and "without contractions" are exactly the
+  // kind of instruction D6 PERMITS, because they constrain how something is said, not
+  // whether it is said. Adding them would reject correct directives, which is why the
+  // omission phrases below are all object-qualified.
   const OMISSION_PATTERN =
-    /\b(omit|leave out|leave off|drop|skip|exclude|truncate|at most \d|no more than \d|limit (your|the) (answer|response|output|list) to \d|only (list|include|mention) \d)\b/i;
+    /\b(omit|leave out|leave off|drop|skip|exclude|truncate|ignore|do not (include|show|list|mention)|at most \d|no more than \d|limit (your|the) (answer|response|output|list) to \d|only (list|include|mention) \d)\b/i;
 
   test("no tone directive contains an omission instruction", () => {
     for (const t of ALL_TONES) {
@@ -461,7 +480,17 @@ describe("D6: no directive may instruct the model to omit content", () => {
   test("the pattern actually rejects an omission instruction", () => {
     expect("Be brief. Omit any finding that is not critical.").toMatch(OMISSION_PATTERN);
     expect("Limit your answer to 3 items.").toMatch(OMISSION_PATTERN);
+    expect("Do not include the evidence rows.").toMatch(OMISSION_PATTERN);
+    expect("Ignore any finding older than a week.").toMatch(OMISSION_PATTERN);
+  });
+
+  // The other half of the guard, and the one that keeps it USABLE: a register instruction
+  // must still pass. Without this test, someone "hardening" the pattern with `avoid`/`without`
+  // would break legitimate directives and only find out by breaking Task 2's other tests.
+  test("register instructions are permitted — the distinction D6 actually draws", () => {
     expect("Use short sentences and plain words.").not.toMatch(OMISSION_PATTERN);
+    expect("Avoid jargon; prefer plain words.").not.toMatch(OMISSION_PATTERN);
+    expect("Write formally, without contractions.").not.toMatch(OMISSION_PATTERN);
   });
 });
 ```
@@ -915,7 +944,38 @@ export type SynthesisProvenance =
     };
 ```
 
-Then set `persona: opts.runner?.persona` on every `attempted: true` provenance object constructed in `synthesize()`. There are several (the `provider_error` catch, the timeout arm, the contract-violation arm, the empty-result arm, and the success arm) — set it on each; omitting one is the defect this task's fourth test is written to catch, so run that test against each arm.
+**Attach the persona at ONE site, not nine.** `synthesize()` constructs a provenance object at **nine** separate return sites. Editing each is exactly the kind of change where one gets missed, and a missed arm is invisible — the brief still renders, only the observability is silently absent for that path.
+
+Do **not** restructure `synthesize()` to a single exit: it is I31-load-bearing, and a control-flow refactor for an observability field is a bad trade. Instead rename the existing function to `synthesizeInner` (unexported) and add a thin exported wrapper that attaches the persona to whatever comes back:
+
+```ts
+/**
+ * A2/S2: attach the resolved persona to the provenance at ONE site.
+ *
+ * `synthesizeInner` returns a provenance from nine different places. Setting `persona` on each
+ * would work today and rot on the first new return arm — and a missed arm is SILENT: the brief
+ * still renders, only the correlation between a discard and the persona that provoked it goes
+ * missing, which is the one thing this field exists to provide. Attaching it here covers every
+ * current and future arm by construction.
+ *
+ * `attempted: false` arms are left alone deliberately: `disabled` / `no_eligible_provider` /
+ * `reserved_extraction_failed` are all reached BEFORE the model is prompted, so no persona was
+ * in force and reporting one would be a claim that nothing happened under it.
+ */
+export async function synthesize(
+  brief: SynthInput,
+  opts: SynthesizeOpts = {},
+): Promise<SynthesisOutcome> {
+  const outcome = await synthesizeInner(brief, opts);
+  const persona = opts.runner?.persona;
+  if (persona === undefined || !outcome.provenance.attempted) {
+    return outcome;
+  }
+  return { ...outcome, provenance: { ...outcome.provenance, persona } };
+}
+```
+
+Rename the existing `export async function synthesize(` to `async function synthesizeInner(` — dropping the `export`, since the wrapper above now owns that name. No other call site changes: the signature is identical.
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -948,6 +1008,8 @@ In `buildAgentSynthesisRunner`, resolve both from the profile-resolved path and 
     deps.configDir === undefined ? undefined : resolveNimbusTomlForProfile(deps.configDir);
   const config =
     tomlPath === undefined ? DEFAULT_NIMBUS_AGENTS_TOML : loadNimbusAgentsFromPath(tomlPath);
+  // No logger: this runs per brief, and warning on every brief would be noise. The single
+  // warning site is the boot-time resolution in `platform/assemble.ts` (Task 5).
   const persona = deps.configDir === undefined ? undefined : resolvePersona(deps.configDir);
 ```
 
@@ -1019,15 +1081,18 @@ git commit -m "feat(agents): apply persona to brief synthesis; read [agents] fro
 
 ---
 
-## Task 5: Wire `ProfileManager` so the desktop Profiles panel works
+## Task 5: Wire `ProfileManager` and the persona boot warning
 
 **Files:**
 - Modify: `packages/gateway/src/platform/assemble.ts` (near the `activeTomlPath` block, ~line 2280)
+- Modify: `packages/ui/src/pages/settings/ProfilesPanel.tsx`
 - Test: `packages/gateway/src/config/profiles-cli-parity.test.ts` (new)
 
 **Interfaces:**
-- Consumes: `ProfileManager` from `config/profiles.ts` (exists, previously unused in production); `ipcOpts` (`Parameters<typeof createIpcServer>[0]`).
-- Produces: nothing new — this makes four already-declared IPC methods reachable.
+- Consumes: `ProfileManager` from `config/profiles.ts` (exists, previously unused in production); `resolvePersona` (Task 1); `ipcOpts` (`Parameters<typeof createIpcServer>[0]`).
+- Produces: nothing new — this makes four already-declared IPC methods reachable and makes the Task 1 warning path live.
+
+**Two wirings, one theme:** both are code that was written and never connected. `ProfileManager` was declared and dispatched but never constructed; the persona warn-once path is created in Task 1 but reached by nothing until this task passes it a logger. Landing them together keeps the "declared but never wired" class of defect from surviving this branch.
 
 **Context for the implementer:** `ipc/server/options.ts` declares `profileManager?: ProfileManager` and `ipc/server/dispatchers.ts:705` throws `"Profile manager is not available on this gateway"` when it is undefined. Nothing has ever set it outside tests, so the desktop app's routed Settings page (`packages/ui/src/pages/settings/ProfilesPanel.tsx`, wired at `App.tsx:58`) has never worked. All four `profile.*` methods are already on the Tauri allowlist — **do not change `ALLOWED_METHODS` or `allowlist_exact_size`.**
 
@@ -1069,12 +1134,15 @@ describe("gateway/CLI profile format parity", () => {
 Run: `bun test packages/gateway/src/config/profiles-cli-parity.test.ts`
 Expected: PASS. This one is a drift guard, not a red-green cycle — it documents an agreement that already holds. Red-prove it by temporarily changing `PROFILE_PREFIX` in `config/profiles.ts` to `"nimbus_"`, confirming the test fails, then reverting.
 
-- [ ] **Step 3: Construct the ProfileManager in assembly**
+- [ ] **Step 3: Construct the ProfileManager AND wire the persona boot warning**
 
-In `packages/gateway/src/platform/assemble.ts`, add the import:
+Two wirings in the same file, in the same commit. The second one is what makes the design's `OrWarn` decision real rather than decorative — see the note after the code.
+
+In `packages/gateway/src/platform/assemble.ts`, add the imports:
 
 ```ts
 import { ProfileManager } from "../config/profiles.ts";
+import { resolvePersona } from "../config/persona.ts";
 ```
 
 Where `ipcOpts` is assembled, add:
@@ -1091,6 +1159,23 @@ Where `ipcOpts` is assembled, add:
   // already prints that, and ProfilesPanel must say it too.
   ipcOpts.profileManager = new ProfileManager(paths.configDir);
 ```
+
+Then, near the existing `activeTomlPath` resolution, add the boot-time persona read whose **only** purpose is the warning:
+
+```ts
+  // A2: resolve the persona ONCE at boot, discarding the result, purely so an unrecognised
+  // `[persona]` value is reported. This is the ONLY site that passes a logger.
+  //
+  // Why it has to exist: `run-ask.ts` and `agent-synthesis-runner.ts` both resolve the persona
+  // per invocation and both deliberately pass NO logger, because warning on every turn and
+  // every brief would be noise. Without this line the warn-once path in `config/persona.ts`
+  // is never reached in production — the loader would be `OrWarn` in name only, and a user
+  // with `tone = "tree"` would get silent neutral behaviour, which is the exact failure the
+  // design review raised (Q2).
+  resolvePersona(paths.configDir, syncLogger);
+```
+
+Use whichever logger is in scope at that point in `assemble` (`syncLogger` is the one `loadServiceConfigsOrDegrade` uses a few hundred lines below); do not construct a new pino instance.
 
 - [ ] **Step 4: Verify `profile.list` no longer throws against an assembled gateway**
 
@@ -1167,7 +1252,9 @@ git commit -m "docs: [persona] reference, A2 changelog entry, roadmap update"
 
 **Spec coverage.** § 4 config surface → Task 1. D6 → Task 2. § 5.1 profile-aware loading + `OrWarn` → Tasks 1 and 4. § 5.2 site 1 → Task 3; site 2 → Task 4. § 5.3 I31 + discard observability → Task 4 (steps 4 and 8). § 5.4 precedence → Task 3 step 1, test 4. § 7 ProfileManager → Task 5. § 8 criteria 1–12 → criterion 1 (Task 1 step 5, test 4), 2 (Task 5 step 5), 3 (Task 3), 4 (Tasks 3 and 4), 5 (Task 3), 6 (Task 4 step 6), 7 (Task 4 step 8), 8 (Task 4 step 7), 9 (Task 5 step 4), 10 (Task 2), 11 (Task 3), 12 (Task 1 step 5). § 11 deferrals → no task, correctly.
 
-**Placeholders.** Task 4 step 4 says "set it on each" of several provenance arms without listing every line — deliberate, because the arms are identified by name and their exact line numbers will have shifted; test 4 of that file is the check. Task 6 steps 1–3 describe documentation content rather than supplying final prose, which is appropriate for prose that must match surrounding voice. No `TBD`/`TODO` anywhere.
+**Placeholders.** Task 6 steps 1–3 describe documentation content rather than supplying final prose, which is appropriate for prose that must match surrounding voice. No `TBD`/`TODO` anywhere. (An earlier revision asked Task 4 to set `persona` on each provenance arm by hand; the plan review correctly flagged that as omission-prone, and it is now a single wrapper — see Task 4 step 4.)
+
+**Wiring completeness.** Every new module has a production caller: `config/persona.ts` ← `run-ask.ts` (Task 3), `agent-synthesis-runner.ts` (Task 4) and `assemble.ts` (Task 5); `engine/persona.ts` ← `run-conversational-agent.ts` (Task 3) and `synthesize.ts` (Task 4). The logger argument specifically is reached only from Task 5 — checked, because an `OrWarn` loader that nothing ever passes a logger to would have been decorative.
 
 **Type consistency.** `NimbusPersonaToml` is the type name in every task. `resolvePersona(configDir, logger?)` is used identically in Tasks 3 and 4. `personaDirective` (used by `synthesize.ts`) and `applyPersona` (used by `run-conversational-agent.ts`) are both defined in Task 2 — the brief path needs the bare directive, not the prompt-prefixing wrapper, which is why both are exported. `TONE_DIRECTIVES`/`VOICE_DIRECTIVES` are exported from `engine/persona.ts` and imported by tests in Tasks 2, 3 and 4 under those exact names.
 
