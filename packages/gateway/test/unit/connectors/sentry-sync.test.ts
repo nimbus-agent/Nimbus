@@ -487,8 +487,7 @@ describe("sentry-sync — issue pass", () => {
     fixture.fetchMock.respond("GET", ISSUES_RE, [], {
       headers: { "content-type": "application/json" },
     });
-    const legacy =
-      "nimbus-sentry1:" + Buffer.from(JSON.stringify({ pass: 1 }), "utf8").toString("base64url");
+    const legacy = `nimbus-sentry1:${Buffer.from(JSON.stringify({ pass: 1 }), "utf8").toString("base64url")}`;
     const res = await createSentrySyncable(ENSURE_MCP).sync(
       { ...fixture.createSyncContext(), depth: "full" },
       legacy,

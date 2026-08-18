@@ -163,6 +163,22 @@ nimbus ask "What caused the payment-service alert — what deployed recently?"
 nimbus ask "Summarise everything that happened across my projects this week"
 ```
 
+**Devil's-advocate mode (`--devil`):** argues *against* the plan or assumption in your question
+instead of helping to carry it out — the risks it runs, the edge cases it ignores, the alternative
+reading of the evidence. A confirmation-bias antidote for a decision you have already half made.
+
+```bash
+nimbus ask --devil "ship the checkout migration tonight"
+nimbus ask --devil --agent devops "roll the canary to 100%"
+```
+
+Two things worth knowing. It **always answers in prose**: the flag skips intent classification and
+takes the conversational path, so a phrasing that would normally execute a plan gets argued with
+instead. And objections are grounded in the index where the evidence exists — where it does not,
+the answer says the objection is unsupported rather than inventing support for it, so a confident
+counter-argument still has to be checkable. The mode needs an LLM like any other `nimbus ask`
+answer; with none configured it reports the same missing-LLM guidance.
+
 **Session mode:** Run `nimbus` with no arguments to open an interactive REPL. Context accumulates across turns.
 
 ```bash

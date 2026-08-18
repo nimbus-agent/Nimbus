@@ -77,6 +77,9 @@ export async function dispatchAgentInvoke(
   const agentRaw = rec?.["agent"];
   const agent =
     typeof agentRaw === "string" && agentRaw.trim() !== "" ? agentRaw.trim() : undefined;
+  // `=== true`, matching `stream` above: a truthy non-boolean from a hand-rolled client must
+  // not silently switch the answer's whole posture.
+  const devil = rec?.["devil"] === true;
   const streamId = parseOptionalString(rec, "streamId");
   const handler = ctx.getAgentInvokeHandler();
   if (handler === undefined) {
@@ -104,6 +107,9 @@ export async function dispatchAgentInvoke(
       }
       if (agent !== undefined) {
         payload.agent = agent;
+      }
+      if (devil) {
+        payload.devil = true;
       }
       return handler(payload);
     });
@@ -351,11 +357,14 @@ export function dispatchEngineAskStream(
         sendChunk: innerCtx.sendChunk ?? (() => undefined),
       };
       if (innerCtx.sessionId !== undefined) payload.sessionId = innerCtx.sessionId;
+      if (innerCtx.devil === true) payload.devil = true;
       return await handler(payload);
     },
   });
 
-  const askParams: { input: string; sessionId?: string } = { input };
+  const askParams: { input: string; sessionId?: string; devil?: boolean } = { input };
   if (sessionId !== undefined) askParams.sessionId = sessionId;
+  // Same `=== true` rule as `dispatchAgentInvoke` — this is the UI/editor path into the mode.
+  if (rec?.["devil"] === true) askParams.devil = true;
   return dispatch(clientId, askParams);
 }

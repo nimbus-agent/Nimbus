@@ -1472,3 +1472,121 @@ describe("runAsk", () => {
     localIndex.close();
   });
 });
+
+describe("devil's-advocate mode routing", () => {
+  test("--devil forces the conversational path over a high-confidence action intent", async () => {
+    // Without this, `--devil` is a flag that silently does nothing for any query the classifier
+    // reads as an action: plan dispatch has no prose to argue with, so the mode would apply to
+    // an arbitrary, model-decided subset of questions.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    // A non-empty index: runAsk short-circuits to onboarding guidance on an empty one, before
+    // any routing decision is reached.
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    const localIndex = new LocalIndex(db);
+    let classifierCalls = 0;
+    const out = await runAsk({
+      input: "deploy the checkout service now",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      conversationalAgent: fakeConversationalAgent("here is why that is a bad idea"),
+      devil: true,
+      classify: async () => {
+        classifierCalls += 1;
+        return {
+          intent: "file_search",
+          entities: { pattern: "*.ts" },
+          requiresHITL: false,
+          confidence: 0.99,
+        };
+      },
+    });
+
+    expect(out.reply).toBe("here is why that is a bad idea");
+    // And the classifier is not consulted at all — its answer cannot change the routing, so
+    // calling it would be a wasted LLM round-trip on every --devil turn.
+    expect(classifierCalls).toBe(0);
+    localIndex.close();
+  });
+
+  test("--devil still cannot conjure a conversational path with no LLM available", async () => {
+    // Forcing the route must not bypass the "is there anything to talk to" guard: with no agent
+    // and no local router, the honest outcome is the existing no-LLM error, not a crash.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    const localIndex = new LocalIndex(db);
+    let threw: unknown;
+    try {
+      await runAsk({
+        input: "deploy the checkout service now",
+        stream: false,
+        clientId: "test-client",
+        paths: stubPaths,
+        consentCoordinator: stubConsent,
+        localIndex,
+        dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
+        sendChunk: () => {},
+        devil: true,
+        classify: async () => ({
+          intent: "unknown",
+          entities: {},
+          requiresHITL: false,
+          confidence: 0,
+        }),
+      });
+    } catch (e) {
+      threw = e;
+    }
+    expect(threw).toBeInstanceOf(GatewayAgentUnavailableError);
+    localIndex.close();
+  });
+
+  test("without --devil the classifier still decides the route", async () => {
+    // The inverse defect: forcing conversational for everyone would silently disable plan
+    // dispatch for every user who never asked for devil mode.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    // A non-empty index: runAsk short-circuits to onboarding guidance on an empty one, before
+    // any routing decision is reached.
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    const localIndex = new LocalIndex(db);
+    let classifierCalls = 0;
+    await runAsk({
+      input: "deploy the checkout service now",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      conversationalAgent: fakeConversationalAgent("should not be used"),
+      classify: async () => {
+        classifierCalls += 1;
+        return {
+          intent: "file_search",
+          entities: { pattern: "*.ts" },
+          requiresHITL: false,
+          confidence: 0.99,
+        };
+      },
+    });
+    expect(classifierCalls).toBe(1);
+    localIndex.close();
+  });
+});

@@ -8,6 +8,58 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-18 — `nimbus ask --devil`: devil's-advocate mode (A1), with the roadmap's stated
+  hazard avoided rather than satisfied.** The agent argues AGAINST the plan or assumption in the
+  question — the risks it runs, the edge cases it ignores, the alternative reading of the evidence
+  — instead of helping to carry it out. Second of the three Wave 6 answer-quality surfaces to
+  land after A0 unblocked them (2026-08-16).
+
+  **The two-prompt-site trap this row warned about was designed out.** `docs/roadmap.md` recorded
+  (2026-08-16) that `--devil` needed `engine/agent.ts`'s three Mastra `instructions:` literals and
+  `run-conversational-agent.ts`'s separate hardcoded `systemPrompt` "updated together", since a
+  change at one silently no-ops on the other. Neither was touched. Both execution paths —
+  `runViaLocalRouter` and `runViaAgent` — consume a prompt built by a single function,
+  `buildPromptText`, so the directive is injected there and reaches both by construction. The
+  sentence itself has exactly one definition, `engine/devil-advocate.ts`'s
+  `DEVIL_ADVOCATE_DIRECTIVE`, following the same single-definition discipline as the previous
+  day's `brief-disclosures.ts`.
+
+  **The real two-site risk was one layer up, where the roadmap had not looked.** `agent.invoke`
+  and `engine.askStream` are separate IPC dispatchers that resolve the same
+  `getAgentInvokeHandler()`, each parsing its own params record — and `engine.askStream` is the
+  path the desktop UI and the VS Code extension use. Wiring only `agent.invoke` would have
+  shipped a flag that worked in the terminal and was inert on every other surface. Both are
+  wired (`AgentInvokeContext.devil`, `AskStreamParams.devil`, `AgentInvokeContextLike.devil`) and
+  independently tested; breaking either leg fails only its own test, which is how the coverage was
+  verified rather than assumed.
+
+  **Routing:** `--devil` skips intent classification and forces the conversational path.
+  Plan dispatch executes a plan and has no argument to make, so without this the flag would do
+  nothing for every query a probabilistic classifier reads as an action — a subset the user cannot
+  predict. Forcing the route does not fabricate one: with no agent and no local router it raises
+  the existing `GatewayAgentUnavailableError` rather than proceeding. The classifier is skipped
+  outright rather than called and ignored, saving an LLM round-trip per `--devil` turn. The
+  conversational block was extracted to one `answerConversationally` helper so the classifier's
+  route and the `--devil` route cannot drift apart.
+
+  **The directive carries an honesty clause, and it is load-bearing:** a mode that asks a model to
+  argue against the user is a mode that invites invented objections, so it must ground each
+  objection in citable indexed evidence and state that an objection is unsupported rather than
+  manufacture support for it.
+
+  **Acceptance criterion replaced, not met.** The Wave 6 row asked for an integration test
+  asserting the response "contains at least 3 distinct counter-arguments". That grades model prose,
+  requires a live model the suite does not have, and would be flaky where one exists. Substituted:
+  seam tests proving the directive reaches the prompt on both execution paths, is absent when the
+  flag is off, survives the indexed-context and prior-turns transforms, and crosses both
+  dispatchers — plus the forced-routing behaviour. **The counter-argument count is verified by no
+  automated test**; that is a recorded gap. Stated bound: a prompt-level directive carries less
+  weight with most models than a system-level one, and the router path's own `systemPrompt` is
+  deliberately left alone so there is a single application site rather than two free to diverge.
+
+  No schema change, no new IPC method, no HITL involvement, no invariant, no Tauri or LAN
+  allowlist change — `devil` is a new optional param on methods that already exist.
+
 - **2026-08-18 — the interleaved half of I31: one definition per disclosure, and the window
   clause finally guarded.** PR 1 (below, 2026-08-17) made whole-SECTION disclosures safe by
   construction. The sentences that sit inside prose the model is meant to rewrite could not use

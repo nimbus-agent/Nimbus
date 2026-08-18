@@ -1258,6 +1258,15 @@ const streamReq: JSONRPCRequest = {
 // on ONE connection attribute chunks to either — supply a streamId on both
 // calls and each chunk arrives tagged with the id that produced it.
 //
+// Devil's-advocate mode: BOTH `agent.invoke` and `engine.askStream` accept an
+// optional `devil?: boolean` (`nimbus ask --devil`), read with `=== true` so a
+// truthy non-boolean cannot flip an answer's whole posture. It must be accepted on
+// both, not one: they are separate dispatchers resolving the same agent handler,
+// and `engine.askStream` is the path the desktop UI and the editor extension use,
+// so wiring one leaves the mode inert on every surface but the terminal. Setting it
+// makes the agent argue AGAINST the question's plan and forces the conversational
+// route (plan dispatch has no argument to make). See `engine/devil-advocate.ts`.
+//
 // `status` on the result is one of "preview" (dry run) | "done" | "error" |
 // "cancelled" — it is the ONLY way an IPC caller can tell a workflow that was
 // cancelled after one step apart from one that simply finished in one step;

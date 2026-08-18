@@ -49,6 +49,12 @@ export type RunAskParams = {
   sendChunk: (text: string) => void;
   conversationalAgent?: Agent;
   llmRouter?: LlmRouter;
+  /**
+   * Devil's-advocate mode (`nimbus ask --devil`). Forces the conversational route — the mode
+   * argues in prose, and plan dispatch has nothing to argue with — and threads the directive
+   * through to `runConversationalAgent`. See `engine/devil-advocate.ts`.
+   */
+  devil?: boolean;
   sessionMemoryStore?: SessionMemoryStore;
   classify?: (input: string) => Promise<ClassifiedIntent>;
   // Owner-side delegated HITL (Slice 2, I20). When present, the executor gate routes a HITL action's
@@ -136,6 +142,39 @@ async function classifyIntentForAsk(input: string): Promise<ClassifiedIntent> {
 
 function canUseConversation(p: RunAskParams): boolean {
   return p.conversationalAgent !== undefined || p.llmRouter?.prefersLocal() === true;
+}
+
+/**
+ * The conversational answer path: prior turns + optional indexed context → the agent/router,
+ * then persist the turn.
+ *
+ * Extracted so the two routes that reach it — the classifier's verdict and `--devil`, which
+ * bypasses the classifier — cannot drift apart. A second inline copy for devil mode would be
+ * one session-memory or local-context fix away from applying to only one of them.
+ */
+async function answerConversationally(
+  p: RunAskParams,
+): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
+  const sessionId = getAgentRequestSessionId();
+  const priorTurns = await loadRecentConversationHistory(p.sessionMemoryStore, sessionId);
+  const localContext = shouldBuildLocalContext(p)
+    ? await buildLocalIndexedContext(p.localIndex, p.input)
+    : undefined;
+
+  const result = await runConversationalAgent({
+    input: p.input,
+    stream: p.stream,
+    sendChunk: p.sendChunk,
+    priorTurns,
+    ...(p.conversationalAgent === undefined ? {} : { agent: p.conversationalAgent }),
+    ...(p.llmRouter === undefined ? {} : { llmRouter: p.llmRouter }),
+    ...(localContext === undefined ? {} : { localContext }),
+    ...(p.devil === true ? { devil: true } : {}),
+  });
+
+  await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
+
+  return result;
 }
 
 function shouldBuildLocalContext(p: RunAskParams): boolean {
@@ -471,6 +510,20 @@ export async function runAsk(
     return empty;
   }
 
+  // Devil's-advocate mode answers in prose, so it routes conversationally REGARDLESS of intent.
+  // Plan dispatch has no argument to make — it executes a plan — so without this the flag would
+  // silently do nothing for every query the classifier reads as an action, i.e. for a subset the
+  // user cannot predict. The classifier is skipped entirely rather than called and ignored: its
+  // verdict cannot change the route here, and it costs an LLM round-trip.
+  if (p.devil === true) {
+    if (!canUseConversation(p)) {
+      // Forcing the route must not fabricate a path: with no agent and no local router there is
+      // nothing to converse with, and the existing no-LLM error is the honest answer.
+      throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+    }
+    return await answerConversationally(p);
+  }
+
   const classified = await classifyIntentForAskWithLocalFallback(p);
 
   const shouldUseConversational =
@@ -479,25 +532,7 @@ export async function runAsk(
     classified.confidence < 0.6;
 
   if (canUseConversation(p) && shouldUseConversational) {
-    const sessionId = getAgentRequestSessionId();
-    const priorTurns = await loadRecentConversationHistory(p.sessionMemoryStore, sessionId);
-    const localContext = shouldBuildLocalContext(p)
-      ? await buildLocalIndexedContext(p.localIndex, p.input)
-      : undefined;
-
-    const result = await runConversationalAgent({
-      input: p.input,
-      stream: p.stream,
-      sendChunk: p.sendChunk,
-      priorTurns,
-      ...(p.conversationalAgent === undefined ? {} : { agent: p.conversationalAgent }),
-      ...(p.llmRouter === undefined ? {} : { llmRouter: p.llmRouter }),
-      ...(localContext === undefined ? {} : { localContext }),
-    });
-
-    await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
-
-    return result;
+    return await answerConversationally(p);
   }
 
   const plan = planFromIntent(classified, p.paths);

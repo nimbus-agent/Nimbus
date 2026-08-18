@@ -10,6 +10,12 @@ export type AgentInvokeContext = {
   sendChunk: (text: string) => void;
   sessionId?: string;
   agent?: string;
+  /**
+   * Devil's-advocate mode (`nimbus ask --devil`). Carried on the context rather than parsed
+   * downstream, because TWO dispatchers reach this one handler — `agent.invoke` and
+   * `engine.askStream` — and the flag has to survive both.
+   */
+  devil?: boolean;
 };
 
 export type AgentInvokeResult = {

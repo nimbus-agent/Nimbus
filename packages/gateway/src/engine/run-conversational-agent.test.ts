@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { Agent } from "@mastra/core/agent";
 
 import type { LlmRouter } from "../llm/router.ts";
+import { DEVIL_ADVOCATE_DIRECTIVE } from "./devil-advocate.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 
@@ -241,5 +242,98 @@ describe("runConversationalAgent", () => {
       expect((e as Error).message).toContain("[REDACTED]");
       expect((e as Error).message).not.toContain("abcdefghijklmnop");
     }
+  });
+});
+
+describe("devil's-advocate mode reaches BOTH execution paths", () => {
+  // There are two ways a turn is answered — the local LLM router and the Mastra agent — and a
+  // directive wired into one silently no-ops on the other. Both assertions exist so a change
+  // that covers only the path the author happened to be testing fails here.
+  test("the Mastra agent path receives the directive", async () => {
+    const generate = mock(async (_prompt: unknown) => ({ text: "ok" }));
+    const agent = { generate } as unknown as Agent;
+    await runConversationalAgent({
+      agent,
+      input: "ship the migration tonight",
+      stream: false,
+      devil: true,
+      sendChunk: () => undefined,
+    });
+    const promptArg = generate.mock.calls[0]?.[0];
+    expect(typeof promptArg).toBe("string");
+    expect(promptArg as string).toContain(DEVIL_ADVOCATE_DIRECTIVE);
+    // The user's actual question must survive alongside the directive.
+    expect(promptArg as string).toContain("ship the migration tonight");
+  });
+
+  test("the local router path receives the directive", async () => {
+    const generate = mock(async (_opts: { prompt: string }) => ({
+      text: "local answer",
+      modelUsed: "m",
+      isLocal: true,
+      provider: "ollama" as const,
+    }));
+    const router = { generate, prefersLocal: () => true } as unknown as LlmRouter;
+    await runConversationalAgent({
+      llmRouter: router,
+      input: "ship the migration tonight",
+      stream: false,
+      devil: true,
+      sendChunk: () => undefined,
+    });
+    const opts = generate.mock.calls[0]?.[0] as { prompt: string } | undefined;
+    expect(opts?.prompt).toContain(DEVIL_ADVOCATE_DIRECTIVE);
+    expect(opts?.prompt).toContain("ship the migration tonight");
+  });
+
+  test("the directive is absent when the flag is off — on both paths", async () => {
+    // The inverse defect: a directive that leaks into every turn makes the mode meaningless
+    // and changes the default answer for every user who never asked for it.
+    const agentGenerate = mock(async (_prompt: unknown) => ({ text: "ok" }));
+    await runConversationalAgent({
+      agent: { generate: agentGenerate } as unknown as Agent,
+      input: "what changed?",
+      stream: false,
+      sendChunk: () => undefined,
+    });
+    expect(agentGenerate.mock.calls[0]?.[0] as string).not.toContain(DEVIL_ADVOCATE_DIRECTIVE);
+
+    const routerGenerate = mock(async (_opts: { prompt: string }) => ({
+      text: "x",
+      modelUsed: "m",
+      isLocal: true,
+      provider: "ollama" as const,
+    }));
+    await runConversationalAgent({
+      llmRouter: { generate: routerGenerate, prefersLocal: () => true } as unknown as LlmRouter,
+      input: "what changed?",
+      stream: false,
+      sendChunk: () => undefined,
+    });
+    const opts = routerGenerate.mock.calls[0]?.[0] as { prompt: string } | undefined;
+    expect(opts?.prompt).not.toContain(DEVIL_ADVOCATE_DIRECTIVE);
+  });
+
+  test("the directive survives alongside indexed context and prior turns", async () => {
+    // `buildPromptText` already prepends local context, and `buildPromptArg` converts the
+    // prompt to a message array once prior turns exist — the directive must still be in the
+    // message the model actually reads, not dropped by either transform.
+    const generate = mock(async (_prompt: unknown) => ({ text: "ok" }));
+    await runConversationalAgent({
+      agent: { generate } as unknown as Agent,
+      input: "roll it out now",
+      stream: false,
+      devil: true,
+      localContext: "Indexed Nimbus context:\n1. github/pr: risky migration",
+      priorTurns: [{ role: "user", text: "earlier question" }],
+      sendChunk: () => undefined,
+    });
+    const messages = generate.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
+    expect(Array.isArray(messages)).toBe(true);
+    const last = messages.at(-1);
+    expect(last?.role).toBe("user");
+    expect(last?.content).toContain(DEVIL_ADVOCATE_DIRECTIVE);
+    expect(last?.content).toContain("Indexed Nimbus context");
+    expect(last?.content).toContain("roll it out now");
   });
 });

@@ -3,10 +3,16 @@ import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handle
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
-function parseAskArgs(args: string[]): { rest: string[]; sessionId?: string; agent?: string } {
+function parseAskArgs(args: string[]): {
+  rest: string[];
+  sessionId?: string;
+  agent?: string;
+  devil?: boolean;
+} {
   const rest: string[] = [];
   let sessionId: string | undefined;
   let agent: string | undefined;
+  let devil = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--session" && args[i + 1] !== undefined) {
@@ -19,16 +25,25 @@ function parseAskArgs(args: string[]): { rest: string[]; sessionId?: string; age
       i += 1;
       continue;
     }
+    // A valueless flag: consumed here so it never reaches `rest` and gets joined into the
+    // question, which would ask the model to reason about the literal text "--devil".
+    if (a === "--devil") {
+      devil = true;
+      continue;
+    }
     if (a !== undefined) {
       rest.push(a);
     }
   }
-  const out: { rest: string[]; sessionId?: string; agent?: string } = { rest };
+  const out: { rest: string[]; sessionId?: string; agent?: string; devil?: boolean } = { rest };
   if (sessionId !== undefined) {
     out.sessionId = sessionId;
   }
   if (agent !== undefined) {
     out.agent = agent;
+  }
+  if (devil) {
+    out.devil = true;
   }
   return out;
 }
@@ -50,10 +65,12 @@ function isNoLlmError(e: unknown): boolean {
 }
 
 export async function runAsk(args: string[]): Promise<void> {
-  const { rest, sessionId, agent } = parseAskArgs(args);
+  const { rest, sessionId, agent, devil } = parseAskArgs(args);
   const query = rest.join(" ").trim();
   if (query.length === 0) {
-    throw new Error('Usage: nimbus ask [--session <uuid>] "<natural language query>"');
+    throw new Error(
+      'Usage: nimbus ask [--session <uuid>] [--agent <name>] [--devil] "<natural language query>"',
+    );
   }
 
   const paths = getCliPlatformPaths();
@@ -97,6 +114,9 @@ export async function runAsk(args: string[]): Promise<void> {
     }
     if (agent !== undefined) {
       invokeParams["agent"] = agent;
+    }
+    if (devil === true) {
+      invokeParams["devil"] = true;
     }
     let result: { reply: string };
     try {

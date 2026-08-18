@@ -160,6 +160,57 @@ describe("runAsk — happy paths", () => {
     });
   });
 
+  it("forwards --devil and keeps it out of the query text", async () => {
+    // The flag is consumed by the parser, not joined into the question — otherwise the model
+    // is asked to reason about the literal string "--devil".
+    const calls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          calls.push({ method, params });
+          if (method === "connector.listStatus") return [{ serviceId: "github" }];
+          if (method === "agent.invoke") return { reply: "here is the counter-case" };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runAsk(["--devil", "ship", "the", "migration", "tonight"]);
+    const invokeCall = calls.find((c) => c.method === "agent.invoke");
+    expect(invokeCall?.params).toMatchObject({
+      input: "ship the migration tonight",
+      devil: true,
+    });
+  });
+
+  it("omits devil entirely when the flag is absent", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          calls.push({ method, params });
+          if (method === "connector.listStatus") return [{ serviceId: "github" }];
+          if (method === "agent.invoke") return { reply: "ok" };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runAsk(["what", "changed"]);
+    const invokeCall = calls.find((c) => c.method === "agent.invoke");
+    // Asserted on a definitely-present call rather than through an optional chain, so a
+    // missing `agent.invoke` fails loudly here instead of passing as an absent `devil`.
+    expect(invokeCall).toBeDefined();
+    const params = invokeCall?.params as Record<string, unknown> | undefined;
+    expect(params?.["devil"]).toBeUndefined();
+  });
+
   it("skips assistant session.append when reply is empty / whitespace", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     setFixture({

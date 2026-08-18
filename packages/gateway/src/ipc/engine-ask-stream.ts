@@ -14,6 +14,8 @@ export type AgentInvokeContextLike = {
   sendChunk?: (text: string) => void;
   sessionId?: string;
   signal?: AbortSignal;
+  /** Devil's-advocate mode — see `engine/devil-advocate.ts`. */
+  devil?: boolean;
 };
 
 export type RequestContextLike = { sessionId?: string };
@@ -46,6 +48,7 @@ export type AskStreamHandlerDeps = {
 export type AskStreamParams = {
   input: string;
   sessionId?: string;
+  devil?: boolean;
 };
 
 export type AskStreamResult = { streamId: string };
@@ -91,6 +94,7 @@ export function createAskStreamHandler(
             signal: ac.signal,
           };
           if (params.sessionId !== undefined) payload.sessionId = params.sessionId;
+          if (params.devil === true) payload.devil = true;
           const invokeResult = await deps.agentInvokeHandler(payload);
           modelMeta = invokeResult.modelMeta;
         });

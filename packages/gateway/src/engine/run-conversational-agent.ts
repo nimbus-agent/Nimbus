@@ -4,6 +4,7 @@ import pino from "pino";
 import { Config } from "../config.ts";
 import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
+import { applyDevilAdvocate } from "./devil-advocate.ts";
 import { agentErrorFromCaughtError } from "./gateway-agent-error.ts";
 import { sanitizeExternalError } from "./sanitize-external-error.ts";
 
@@ -20,6 +21,11 @@ export type RunConversationalAgentParams = {
   sendChunk: (text: string) => void;
   priorTurns?: ReadonlyArray<{ role: "user" | "assistant" | "tool"; text: string }>;
   localContext?: string;
+  /**
+   * Devil's-advocate mode (`nimbus ask --devil`). Injected into the prompt both execution
+   * paths share — see `devil-advocate.ts` for why it is not in either system-prompt surface.
+   */
+  devil?: boolean;
 };
 
 function isTextDeltaChunk(chunk: unknown): chunk is {
@@ -165,7 +171,10 @@ export async function runConversationalAgent(
     return { reply: "" };
   }
 
-  const promptWithContext = buildPromptText(trimmed, p.localContext);
+  // Injected HERE, above the router-vs-agent fork below, so both paths carry it. Neither
+  // `runViaLocalRouter`'s `systemPrompt` nor the Mastra agents' baked `instructions` mention
+  // this mode — see `devil-advocate.ts`.
+  const promptWithContext = applyDevilAdvocate(buildPromptText(trimmed, p.localContext), p.devil);
   const promptArg = buildPromptArg(promptWithContext, p.priorTurns ?? []);
 
   try {

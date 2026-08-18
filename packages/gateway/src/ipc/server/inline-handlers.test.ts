@@ -625,6 +625,78 @@ describe("dispatchEngineAskStream", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Devil's-advocate mode (`nimbus ask --devil`) crosses the IPC boundary on TWO methods.
+// `agent.invoke` and `engine.askStream` are separate dispatchers that resolve the same
+// `getAgentInvokeHandler()`, each parsing its own params record — so wiring the flag into one
+// leaves it silently inert on the other, and `engine.askStream` is the path the desktop UI and
+// the VS Code extension use. Both are asserted here for that reason.
+// ---------------------------------------------------------------------------
+
+describe("devil's-advocate flag crosses both agent entry points", () => {
+  test("agent.invoke forwards devil: true to the handler", async () => {
+    let captured: Record<string, unknown> | undefined;
+    const handler = async (p: unknown): Promise<{ reply: string }> => {
+      captured = p as Record<string, unknown>;
+      return { reply: "ok" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    const { session } = makeSession();
+    await dispatchAgentInvoke(ctx, session, "c", { input: "ship it", devil: true });
+    expect(captured?.["devil"]).toBe(true);
+  });
+
+  test("agent.invoke omits devil when absent or not literally true", async () => {
+    // Parsed with `=== true`, matching how `stream` is read on the same dispatcher: a string
+    // "false" or 0 from a hand-rolled client must not enable the mode.
+    let captured: Record<string, unknown> | undefined;
+    const handler = async (p: unknown): Promise<{ reply: string }> => {
+      captured = p as Record<string, unknown>;
+      return { reply: "ok" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    const { session } = makeSession();
+    await dispatchAgentInvoke(ctx, session, "c", { input: "x" });
+    expect(captured?.["devil"]).toBeUndefined();
+    await dispatchAgentInvoke(ctx, session, "c", { input: "x", devil: "false" });
+    expect(captured?.["devil"]).toBeUndefined();
+  });
+
+  test("engine.askStream forwards devil: true to the handler", async () => {
+    // The handler runs inside the dispatcher's detached async IIFE, so wait for the call
+    // itself rather than for the dispatch return, which resolves before the run begins.
+    let resolveCall: ((p: Record<string, unknown>) => void) | undefined;
+    const called = new Promise<Record<string, unknown>>((res) => {
+      resolveCall = res;
+    });
+    const handler = async (p: unknown): Promise<{ reply: string }> => {
+      resolveCall?.(p as Record<string, unknown>);
+      return { reply: "done" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    const { session } = makeSession();
+    await dispatchEngineAskStream(ctx, session, "c", { input: "ship it", devil: true });
+    const captured = await called;
+    expect(captured["devil"]).toBe(true);
+  });
+
+  test("engine.askStream omits devil when absent", async () => {
+    let resolveCall: ((p: Record<string, unknown>) => void) | undefined;
+    const called = new Promise<Record<string, unknown>>((res) => {
+      resolveCall = res;
+    });
+    const handler = async (p: unknown): Promise<{ reply: string }> => {
+      resolveCall?.(p as Record<string, unknown>);
+      return { reply: "done" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    const { session } = makeSession();
+    await dispatchEngineAskStream(ctx, session, "c", { input: "x" });
+    const captured = await called;
+    expect(captured["devil"]).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #928 — the gateway binds before the embedding model is loaded, so a semantic query can
 // arrive while there are no vectors yet. It must say so, not return a lexical-only result
 // the caller reads as a complete answer.
