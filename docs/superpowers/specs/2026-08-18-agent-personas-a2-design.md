@@ -116,6 +116,18 @@ voice = "opinionated"  # neutral (default) | opinionated | collective
 - `voice` controls stance: `neutral` states findings; `opinionated` is willing to
   recommend; `collective` uses first-person-plural ("we should…").
 
+**Constraint on the directive text itself (D6).** Every `tone` and `voice` directive governs
+*how something is expressed* — register, sentence length, stance — and never *whether a
+piece of content appears*. `terse` means "say it in fewer words", never "leave things out".
+No persona directive may contain an instruction to omit, drop, skip, summarise-away or
+limit the number of items. This is a rule on the constant in `engine/persona.ts`, pinned by
+a test that asserts no directive string matches an omission-verb pattern.
+
+This constraint is load-bearing twice over: it is what keeps `terse` from fighting `--devil`
+(§ 5.4), and what keeps `terse` from pushing against I31's disclosure contract (§ 5.3).
+Getting it right in the directive text is cheaper and more reliable than detecting the
+conflict at runtime.
+
 Parsed in `config/nimbus-toml.ts` mirroring the existing `[agents]` block:
 `NimbusPersonaToml`, `DEFAULT_NIMBUS_PERSONA_TOML`, `applyNimbusPersonaKey`,
 `parseNimbusPersonaToml`. An unrecognised value silently keeps the default, matching how
@@ -140,8 +152,19 @@ intended output change for a user who sets no `[persona]` at all.
 ### 5.1 Loading — profile-aware by construction
 
 ```ts
-loadPersonaFromTomlPath(resolveNimbusTomlForProfile(configDir))
+loadPersonaOrWarn(resolveNimbusTomlForProfile(configDir), logger)
 ```
+
+The `OrWarn` suffix is not decoration. An unrecognised enum value keeps the default (§ 4),
+which on its own means a typo — `tone = "tree"` — leaves the user believing a persona is
+active when it is not. The loader therefore takes a logger and warns once per unrecognised
+key/value at load, naming the key, the rejected value and the default it fell back to.
+
+This mirrors `loadServiceConfigsOrDegrade(paths.configDir, syncLogger)` in
+`platform/assemble.ts`, which is the established shape in this codebase for "malformed
+config degrades rather than aborts, and says so". The parser in `config/nimbus-toml.ts`
+stays pure — it has no logger and must not acquire one — so the warn lives in the loader
+that the boot site calls, not in `applyNimbusPersonaKey`.
 
 Never `loadPersonaFromConfigDir`. Per F2, a `…FromConfigDir` loader would read
 `nimbus.toml` regardless of the active profile, which would make a per-profile persona
@@ -218,6 +241,49 @@ UX cost, and it is documented rather than guarded against a second time.
 One regression test pins the claim: a brief synthesized under `tone = "terse"` still
 carries every required anchor and every reserved section. That is a test of the existing
 mechanism under new pressure, not a new mechanism.
+
+**Making the discard rate measurable.** Because a raised discard rate is the predicted
+cost, it must be observable in production rather than inferred. The synthesis provenance
+already carries a rejection reason (`timeout` / `contract_violation` / `provider_error` /
+`egress_append_failed` / `empty_result`) out to the reader on the `briefReady`
+notification's `synthesis` field — shipped with A0 precisely so "why is my brief still
+deterministic?" is answerable without a debug build. A2 adds the **resolved persona** to
+that same provenance object. A `contract_violation` under `tone = "terse"` is then
+self-describing on the notification a user can already see, with no new log channel and
+nothing that only exists in a debug build.
+
+### 5.4 Precedence against `--devil`
+
+`--devil` and a persona can both be active. The composition order is fixed and stated here
+so it is not rediscovered by experiment: the persona directive is outermost, the devil
+directive sits immediately above the question, and the question is last.
+
+```
+[persona directive]
+[devil directive]
+[prompt text + local context]
+```
+
+`applyDevilAdvocate` stays innermost deliberately. The devil directive is the one that must
+not be diluted — it is the whole point of the invocation — and proximity to the question is
+the cheapest available emphasis.
+
+**There is less conflict here than there appears to be, and D6 is why.** A directive that
+governs register cannot contradict a directive that governs content: "argue against the
+plan, in few words" is a coherent instruction, where "argue against the plan, and omit some
+objections" would not be. Because no `tone` value may contain an omission instruction (D6),
+the incoherent form cannot be written.
+
+Two things this deliberately does **not** do:
+
+- **No runtime override.** `--devil` does not silently relax `tone = "terse"`. A flag that
+  quietly discards a user's configured setting is harder to explain than either setting
+  alone, and D6 removes the need for it.
+- **No conflict detection.** There is no code that inspects the two directives for
+  contradiction. The constraint is enforced on the constants at authoring time, by test,
+  which is where it is cheap.
+
+A test asserts both directives are present, in this order, when both are active.
 
 ---
 
@@ -298,6 +364,13 @@ same reason A1's was: it asserts something untestable and something impossible.
    and every reserved section (§ 5.3).
 8. `[agents] synthesis` set in a profile TOML is honoured (§ 5.1 — the F2 fix).
 9. `profile.list` succeeds against an assembled gateway rather than throwing (§ 7).
+10. No `PERSONA_DIRECTIVES` string contains an omission instruction (D6) — asserted against
+    an omission-verb pattern over the constants, so a future directive edit that reintroduces
+    "leave out" / "limit to N" / "skip" fails at authoring time.
+11. With `--devil` and a persona both active, both directives are present in the documented
+    order (§ 5.4).
+12. An unrecognised `[persona]` value warns once, naming key, rejected value and fallback,
+    and still yields the default (§ 5.1).
 
 **Recorded gap:** nothing asserts that a terse persona's prose is actually terser. That
 grades model output. This is a deliberate, recorded limitation — the same one A1 carries —
@@ -327,3 +400,25 @@ reasons, in D1.
 - `[persona]` joins `[agents]` on the profile-resolved path; the other ~20
   `loadNimbus*FromConfigDir` loaders remain profile-blind. Auditing all of them is separate
   work and is not silently claimed here.
+- D6 is enforced on the directive *constants*, not on model output. A model can still
+  respond tersely enough to drop an objection under `--devil`; what D6 guarantees is that
+  Nimbus never *asked* it to. For briefs, I31 catches the result; for `ask`, there is no
+  equivalent contract and none is proposed here.
+
+---
+
+## 11. Deferred from design review
+
+Recorded so they are not re-raised as oversights. Full reasoning in
+`2026-08-18-agent-personas-a2-design-review-response.md`.
+
+- **Auto-restart the gateway on desktop profile switch.** Feasible — Tauri already has
+  `shell_start_gateway` (`gateway_bridge.rs`) invoking `nimbus start`. Deferred because a
+  restart kills in-flight syncs, agent runs and pending HITL prompts; doing that as a
+  silent side effect of a settings toggle is a destructive action taken without consent.
+  The right shape is an explicit "Restart Gateway" button that says what it will interrupt.
+  Desktop UX work, its own issue, not A2.
+- **A shared persona-enum schema across gateway / CLI / UI.** Rejected. `ui` and `cli` must
+  not import gateway source (dependency rule), so the union cannot be shared directly; and
+  the UI authors no config at all — it has no `nimbus.toml` write path — so nothing would
+  consume it. YAGNI until a config-editing surface exists.
