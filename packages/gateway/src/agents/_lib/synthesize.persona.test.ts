@@ -81,5 +81,8 @@ describe("persona reaches the synthesis prompt", () => {
       },
     });
     expect(out.markdown).toContain("## Gaps");
+    // `## Gaps` also appears in the deterministic render (disabled/discarded/never-attempted),
+    // so `toContain` alone doesn't pin that the rewrite was actually USED — this does.
+    expect(out.provenance).toMatchObject({ attempted: true, used: true });
   });
 });
