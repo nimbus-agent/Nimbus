@@ -2069,6 +2069,53 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     expect(Object.keys(RESERVED_HEADINGS_BY_KIND).sort()).toEqual([...kinds].sort());
   });
 
+  test("I31: every interleaved disclosure's anchor occurs in the line the renderer emits", async () => {
+    // The Layer 2 (anchor-phrase) half of this invariant, for the disclosures that sit inside
+    // prose the model rewrites and so cannot be held back as a whole section. Its failure mode
+    // is an INERT anchor: a required phrase that no rendered line contains rejects every
+    // synthesis of that brief, and one drawn from text the renderer no longer emits guards
+    // nothing. Both are impossible only while the anchor is a substring of the line the SAME
+    // constant produces, which is what this asserts — for every disclosure at once, rather
+    // than per-site where a new one can be added without a matching check.
+    const d = await import("./agents/_lib/brief-disclosures.ts");
+    const { normalizeSectionText } = await import("./agents/_lib/markdown-sections.ts");
+    const evidence = { refs: [], total: 0 };
+    const ownership = d.negotiateOwnershipDisclosures({
+      services: [],
+      directories: [],
+      lastPassAt: null,
+      truncated: true,
+      unmappedIdentitiesInIndex: 0,
+    });
+    const disclosures = [
+      d.negotiateNotComputedDisclosure("Tickets"),
+      d.negotiateWindowDisclosure(86_400_000, 0),
+      ownership.truncation,
+      ownership.accountability,
+      d.negotiateIncidentsDisclosure({
+        resolved: 0,
+        assigned: 0,
+        unattributable: 1,
+        errorIssuesAssigned: 0,
+        evidence,
+      }),
+      d.negotiateDecisionsDisclosure(
+        { authored: 0, unattributable: 1, evidence },
+        { personId: "p-1", source: "git", displayName: "Ann", isOther: false },
+      ),
+      d.glossaryProvenanceDisclosure("CDR", "snippet"),
+      d.glossaryProvenanceDisclosure("CDR", "manual"),
+    ].filter((x) => x !== undefined);
+    // Fixture integrity: a builder whose predicate stops firing would drop out of this list
+    // silently and the loop below would assert over fewer disclosures, still green.
+    expect(disclosures.length).toBe(8);
+    for (const disclosure of disclosures) {
+      expect(normalizeSectionText(disclosure.line)).toContain(
+        normalizeSectionText(disclosure.anchor),
+      );
+    }
+  });
+
   test("I31: reserved blocks are constructed, never recovered by parsing the render", async () => {
     // The anti-pattern this invariant forbids. `reserved-sections.ts` must not scan rendered
     // markdown for its own headings — that is what makes untrusted brief content harmless.

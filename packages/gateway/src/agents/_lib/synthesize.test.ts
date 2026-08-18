@@ -437,17 +437,29 @@ function twoNullLaneBrief(): NegotiateBrief {
   };
 }
 
+/**
+ * The window clause `renderNegotiate` puts above the first `##`, for `twoNullLaneBrief`'s
+ * `sinceMs: 1_000` / `generatedAt: 0`. A compliant rewrite must keep it: it qualifies every
+ * count in the brief, so the contract requires it unconditionally (invariant I31, PR 2).
+ */
+const WINDOW_LINE_COMPLIANT =
+  "_window: last 1000ms — items authored by the subject that were ACTIVE in this window; the " +
+  "index records last-modified, not created. Two lanes sit outside it: decisions windows on " +
+  "its recorded decision date, and ownership is not windowed at all (it is an all-time " +
+  "snapshot) · generated 1970-01-01T00:00:00.000Z_";
+
 const ALL_SEVEN_COMPLIANT = [
-  "## PRs authored",
-  "## PRs reviewed",
-  "## Incidents",
-  "## Tickets",
-  "## Ownership",
-  "## Decisions",
-  "## Writing",
-]
-  .map((h) => `${h}\n\n_could not be computed_`)
-  .join("\n\n");
+  WINDOW_LINE_COMPLIANT,
+  ...[
+    "## PRs authored",
+    "## PRs reviewed",
+    "## Incidents",
+    "## Tickets",
+    "## Ownership",
+    "## Decisions",
+    "## Writing",
+  ].map((h) => `${h}\n\n_could not be computed_`),
+].join("\n\n");
 
 describe("the contract guard discards a violating synthesis", () => {
   test("a contract-violating synthesis is discarded for the deterministic render", async () => {

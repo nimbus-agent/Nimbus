@@ -24,8 +24,9 @@ function makeCtx(db: Database, extras?: { runner?: SynthesisRunner; configDir?: 
 /**
  * A SynthesisRunner whose effect is OBSERVABLE in the rendered brief. A runner that always reports
  * `no_eligible_provider` (the previous fixture here) makes a weaker proof: every brief kind but
- * `negotiate` has an empty `requiredPhrases` set, so `contractViolations` never rejects this
- * markdown (see `brief-contract.ts`), and — since `synthesize.ts` gives `no_eligible_provider` its
+ * `negotiate` and `glossary` has an empty `requiredPhrases` set, so `contractViolations` never
+ * rejects this markdown (see `brief-contract.ts`; a glossary brief requires a phrase only in
+ * `term` mode with a non-LLM definition), and — since `synthesize.ts` gives `no_eligible_provider` its
  * own footer, distinct from the plain "does not use an LLM" one a dropped `ctx.runner` renders —
  * asserting "was `ctx.runner` threaded through" would reduce to a footer-WORDING diff rather than
  * a brief-CONTENT diff. A threaded runner using this fake makes the brief carry `markdown`
@@ -473,8 +474,8 @@ describe("dispatchAgentsRpc — agents.catchup sinceMs+service validation", () =
 
 describe("dispatchAgentsRpc — runner-present branches", () => {
   // Each test below uses okRunner() — not a runner that always reports `no_eligible_provider` —
-  // because that outcome makes a weaker proof: every brief kind but `negotiate` has an empty
-  // `requiredPhrases` set, so `contractViolations` never rejects the markdown, and — since
+  // because that outcome makes a weaker proof: every brief kind but `negotiate` and `glossary`
+  // has an empty `requiredPhrases` set, so `contractViolations` never rejects the markdown, and — since
   // `synthesize.ts` gives `no_eligible_provider` its own footer, distinct from the plain
   // "does not use an LLM" one a dropped `ctx.runner` renders — asserting "was `ctx.runner`
   // threaded through" would reduce to a footer-WORDING diff rather than a brief-CONTENT diff.
@@ -674,9 +675,10 @@ describe("dispatchAgentsRpc — ctx.runner threading proof for the remaining age
   });
 
   test("agents.negotiate with runner set actually attempts synthesis (discarded by the contract guard, not dropped)", async () => {
-    // negotiate is the one brief kind with NON-EMPTY requiredPhrases (brief-contract.ts's
-    // NEGOTIATE_LANES): every null lane requires its own "could not be computed" disclaimer
-    // under its own heading. okRunner()'s bare marker string satisfies none of that, so
+    // negotiate always has NON-EMPTY requiredPhrases (brief-contract.ts): the preamble window
+    // clause is required unconditionally, every null lane requires its own "could not be
+    // computed" disclaimer under its own heading, and a populated ownership/incidents/decisions
+    // lane requires its interleaved sentence. okRunner()'s bare marker string satisfies none of that, so
     // contractViolations correctly discards it as a contract_violation — the guard working
     // exactly as designed, not a reason to weaken it for this test. The point here is only to
     // prove ctx.runner was threaded through, and `{attempted: true, used: false}` already does

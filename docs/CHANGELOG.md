@@ -8,6 +8,56 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-18 — the interleaved half of I31: one definition per disclosure, and the window
+  clause finally guarded.** PR 1 (below, 2026-08-17) made whole-SECTION disclosures safe by
+  construction. The sentences that sit inside prose the model is meant to rewrite could not use
+  that mechanism, and the fallback — an anchor-phrase check — covered only `negotiate`'s seven
+  null-lane disclaimers, from string literals in `render.ts` with a matching `NOT_COMPUTED` copy
+  in `brief-contract.ts`: two sets free to drift, where editing one yields either a guard
+  requiring a phrase nothing renders (rejects every synthesis) or a rendered disclosure nothing
+  guards.
+
+  A new `agents/_lib/brief-disclosures.ts` is now the single definition of every interleaved
+  disclosure — its `line` (what the renderer emits), its `anchor` (the factual fragment that must
+  survive a rewrite) and, where it is conditional, its presence PREDICATE. `render.ts` emits
+  `.line`; `brief-contract.ts`'s `requiredPhrases` requires `.anchor` under the same predicate,
+  by asking the module rather than re-deriving it — so the guard cannot require a phrase the
+  brief never rendered, nor miss one it did. Coverage widens from those seven sentences to the
+  whole set: `negotiate`'s ownership accountability disclaimer and list-truncation clause, its
+  two `unattributable` disambiguation lines, `glossary`'s two definition-provenance lines, and
+  the last-modified-not-created window clause.
+
+  The window clause needed a second SCOPE, not just an anchor. It lives in the PREAMBLE, above
+  the first `##` — deliberately, since it qualifies every headline count in the brief — where
+  `sectionBody` cannot reach, so a required phrase pointed at it had nowhere to be checked.
+  `markdown-sections.ts` gains `preambleBody` (everything above the first level-2 heading,
+  fence-aware through the same shared scan). It is scoped to the preamble rather than searching
+  the whole document: a rewrite that deletes the clause from the header and mentions it under
+  some unrelated section has still dropped it from the place the counts are read against. Anchors
+  are each sentence's factual clause, never its full text (requiring that verbatim would reject
+  legitimate paraphrase and discard the rewrite) and never its variable tail (the decisions line
+  ends "not necessarily yours"/"…theirs" depending on `--person`, so a tail-inclusive anchor
+  would be inert for half of all briefs).
+
+  **User-visible consequence, stated plainly:** a negotiate brief now ALWAYS has a non-empty
+  requirement set. Before this, a fully-populated brief had none — a model could return a single
+  line and it was accepted verbatim. Three fixtures across the suite encoded exactly that
+  behaviour and were updated to carry the disclosures a real rewrite must keep.
+
+  Two bounds remain and are recorded rather than hidden: a phrase check proves a FRAGMENT
+  survived, not that the sentence around it still means what it meant, so a rewrite that keeps
+  "no indexed author" inside a sentence reversing its sense would pass; and `glossary` requires
+  a phrase only in `term` mode, for `entries[0]`, exactly mirroring `renderGlossaryBody` —
+  `list`/`miss` mode render no provenance sentence at all, and requiring one there would reject
+  every list-mode synthesis over a disclosure the renderer never wrote. One item from the design
+  was dropped on contact with the code: exact-match heading scoping for glossary terms, proposed
+  against a prefix-collision between two `## <term>` sections that cannot occur, because term
+  mode renders a single entry. Enforcement: a new `security-invariants.test.ts` row asserts every
+  disclosure's anchor is a substring of the line the SAME constant produces — the inert-anchor
+  failure — plus render-derived tests per disclosure, each red-proved by reverting its mechanism.
+  No migration, no IPC change, no Tauri allowlist change; I31's text, the mirrored `CLAUDE.md` /
+  `GEMINI.md` bullets and the roadmap row are updated in place.
+
 - **2026-08-17 — disclosure integrity for synthesized briefs recorded as invariant I31.** The
   A0 synthesis feature (below, 2026-08-16) shipped a rewrite path with no structural guarantee
   that a model rewrite couldn't drop a brief's disclosure sections — confidence ceilings,

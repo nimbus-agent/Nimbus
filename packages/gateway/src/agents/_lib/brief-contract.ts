@@ -1,10 +1,15 @@
+import type { Disclosure } from "./brief-disclosures.ts";
+import {
+  glossaryProvenanceDisclosure,
+  negotiateDecisionsDisclosure,
+  negotiateIncidentsDisclosure,
+  negotiateNotComputedDisclosure,
+  negotiateOwnershipDisclosures,
+  negotiateWindowDisclosure,
+} from "./brief-disclosures.ts";
 import type { SynthInput } from "./brief-kinds.ts";
 import { assertNeverBrief } from "./brief-kinds.ts";
-import { normalizeSectionText, sectionBody } from "./markdown-sections.ts";
-
-export type RequiredPhrase = { readonly heading: string; readonly phrase: string };
-
-const NOT_COMPUTED = "could not be computed";
+import { normalizeSectionText, preambleBody, sectionBody } from "./markdown-sections.ts";
 
 /**
  * All SEVEN nullable negotiate lanes (`negotiate-types.ts:103-109`). `null` means the lane
@@ -22,13 +27,45 @@ const NEGOTIATE_LANES = [
   ["writing", "Writing"],
 ] as const;
 
-export function requiredPhrases(brief: SynthInput): readonly RequiredPhrase[] {
+/**
+ * The disclosures a rewrite of `brief` must not drop.
+ *
+ * Every entry is built by `brief-disclosures.ts` from the SAME constant the renderer emits,
+ * and under the SAME predicate — the guard cannot require a phrase the brief never rendered
+ * (which would reject every synthesis), and cannot miss one it did.
+ */
+export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
   if (brief.kind === "negotiate") {
-    const out: RequiredPhrase[] = [];
+    // Qualifies every count in the brief, so it is required unconditionally.
+    const out: Disclosure[] = [negotiateWindowDisclosure(brief.query.sinceMs, brief.generatedAt)];
     for (const [field, heading] of NEGOTIATE_LANES) {
-      if (brief[field] === null) out.push({ heading, phrase: NOT_COMPUTED });
+      if (brief[field] === null) out.push(negotiateNotComputedDisclosure(heading));
+    }
+    // A null lane renders ONLY its "could not be computed" section — none of the interleaved
+    // sentences below exist in that brief, so requiring one would reject every synthesis of
+    // a partially-failed brief.
+    if (brief.ownership !== null) {
+      const ownership = negotiateOwnershipDisclosures(brief.ownership);
+      if (ownership.truncation !== undefined) out.push(ownership.truncation);
+      out.push(ownership.accountability);
+    }
+    if (brief.incidents !== null) {
+      const incidents = negotiateIncidentsDisclosure(brief.incidents);
+      if (incidents !== undefined) out.push(incidents);
+    }
+    if (brief.decisions !== null) {
+      out.push(negotiateDecisionsDisclosure(brief.decisions, brief.subject));
     }
     return out;
+  }
+  if (brief.kind === "glossary") {
+    // Mirrors `renderGlossaryBody` exactly: `miss` and `list` mode render no provenance
+    // sentence at all, and `term` mode renders `entries[0]` and nothing else.
+    if (brief.mode !== "term") return [];
+    const entry = brief.entries[0];
+    if (entry === undefined) return [];
+    const provenance = glossaryProvenanceDisclosure(entry.term, entry.definitionSource);
+    return provenance === undefined ? [] : [provenance];
   }
   // Every other brief kind returns [] until its contractual strings are added.
   // Listed explicitly so a fifteenth kind is a COMPILE error, not a silent [].
@@ -41,7 +78,6 @@ export function requiredPhrases(brief: SynthInput): readonly RequiredPhrase[] {
     brief.kind === "janitor" ||
     brief.kind === "preflight" ||
     brief.kind === "why" ||
-    brief.kind === "glossary" ||
     brief.kind === "decisions" ||
     brief.kind === "ownership" ||
     brief.kind === "huddle" ||
@@ -54,14 +90,20 @@ export function requiredPhrases(brief: SynthInput): readonly RequiredPhrase[] {
 
 export function contractViolations(brief: SynthInput, markdown: string): string[] {
   const out: string[] = [];
-  for (const { heading, phrase } of requiredPhrases(brief)) {
-    const body = sectionBody(markdown, heading);
-    if (body === undefined) {
-      out.push(`missing required section "${heading}"`);
+  for (const { scope, anchor } of requiredPhrases(brief)) {
+    if (scope.kind === "preamble") {
+      if (!normalizeSectionText(preambleBody(markdown)).includes(normalizeSectionText(anchor))) {
+        out.push(`the brief preamble dropped required phrase "${anchor}"`);
+      }
       continue;
     }
-    if (!normalizeSectionText(body).includes(normalizeSectionText(phrase))) {
-      out.push(`section "${heading}" dropped required phrase "${phrase}"`);
+    const body = sectionBody(markdown, scope.heading);
+    if (body === undefined) {
+      out.push(`missing required section "${scope.heading}"`);
+      continue;
+    }
+    if (!normalizeSectionText(body).includes(normalizeSectionText(anchor))) {
+      out.push(`section "${scope.heading}" dropped required phrase "${anchor}"`);
     }
   }
   return out;

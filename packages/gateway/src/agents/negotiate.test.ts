@@ -337,7 +337,19 @@ test("emitNegotiateBrief routes through a configured LLM", async () => {
       runner: {
         run: async () => ({
           ok: true,
-          markdown: "# LLM-authored negotiate brief",
+          // Keeps the three disclosures this brief's data requires (invariant I31, PR 2):
+          // the preamble window clause, and — since `ownership`/`decisions` are non-null
+          // here — their two interleaved sentences. Deliberately PARAPHRASED around the
+          // anchors rather than copied verbatim, which is the property that keeps the guard
+          // usable: it requires the factual fragment to survive, not the exact sentence.
+          markdown: [
+            "# LLM-authored negotiate brief",
+            "_counts cover items active in the window; the index records last-modified, not created._",
+            "## Ownership",
+            "- authorship-derived ownership, not formal accountability",
+            "## Decisions",
+            "- some decisions have no indexed author and are not counted",
+          ].join("\n\n"),
           model: "test-model",
           remote: false,
         }),

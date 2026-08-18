@@ -9,6 +9,10 @@ import type { NegotiateBrief } from "./negotiate-types.ts";
 function allNullLaneBrief(): NegotiateBrief {
   return {
     kind: "negotiate",
+    // `query` and `generatedAt` are read to build the PREAMBLE window disclosure, which is
+    // required unconditionally — a fixture without them is not a brief the guard can judge.
+    query: { sinceMs: 86_400_000 },
+    generatedAt: 0,
     authoredPrs: null,
     reviewedPrs: null,
     incidents: null,
@@ -19,17 +23,30 @@ function allNullLaneBrief(): NegotiateBrief {
   } as unknown as NegotiateBrief;
 }
 
+/**
+ * The window clause every negotiate brief carries above its first `##`. Present in this
+ * fixture because it is a REQUIRED disclosure in its own right (it qualifies every count
+ * below it); markdown without it fails for that reason alone, which would make every
+ * per-section assertion below ambiguous.
+ */
+const WINDOW_LINE =
+  "_window: last 1d — items authored by the subject that were ACTIVE in this window; the " +
+  "index records last-modified, not created. Two lanes sit outside it: decisions windows on " +
+  "its recorded decision date, and ownership is not windowed at all (it is an all-time " +
+  "snapshot) · generated 1970-01-01T00:00:00.000Z_";
+
 const ALL_SEVEN = [
-  "## PRs authored",
-  "## PRs reviewed",
-  "## Incidents",
-  "## Tickets",
-  "## Ownership",
-  "## Decisions",
-  "## Writing",
-]
-  .map((h) => `${h}\n\n_could not be computed_`)
-  .join("\n\n");
+  WINDOW_LINE,
+  ...[
+    "## PRs authored",
+    "## PRs reviewed",
+    "## Incidents",
+    "## Tickets",
+    "## Ownership",
+    "## Decisions",
+    "## Writing",
+  ].map((h) => `${h}\n\n_could not be computed_`),
+].join("\n\n");
 
 describe("requiredPhrases", () => {
   // FIXTURE INTEGRITY. The fixture is a hand-written `as unknown as` cast, and this repo has
@@ -37,8 +54,8 @@ describe("requiredPhrases", () => {
   // lane is missed, requiredPhrases silently returns fewer pairs, every "accepts" test below
   // passes VACUOUSLY (no requirements = nothing to violate), and the guard protects nothing.
   // This assertion is what makes that failure loud.
-  test("derives one requirement per null lane — all seven", () => {
-    expect(requiredPhrases(allNullLaneBrief()).length).toBe(7);
+  test("derives one requirement per null lane — all seven, plus the window clause", () => {
+    expect(requiredPhrases(allNullLaneBrief()).length).toBe(8);
   });
 });
 
@@ -88,7 +105,8 @@ describe("contractViolations", () => {
       ...allNullLaneBrief(),
       tickets: { opened: 0, closed: 0 },
     } as unknown as NegotiateBrief;
-    expect(requiredPhrases(brief).length).toBe(6);
+    // Six remaining null lanes, plus the unconditional window clause.
+    expect(requiredPhrases(brief).length).toBe(7);
   });
 
   test("accepts a nested sub-heading before the disclaimer", () => {

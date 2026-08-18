@@ -1,5 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeSectionText, sectionBody, stripSections } from "./markdown-sections.ts";
+import {
+  normalizeSectionText,
+  preambleBody,
+  sectionBody,
+  stripSections,
+} from "./markdown-sections.ts";
+
+describe("preambleBody", () => {
+  test("returns everything above the first level-2 heading", () => {
+    const md = "# Brief\n\n_window: 90d_\n\n## Tickets\n\nrow one\n\n## Ownership\n\nother";
+    expect(preambleBody(md)).toContain("_window: 90d_");
+    expect(preambleBody(md)).not.toContain("row one");
+    expect(preambleBody(md)).not.toContain("other");
+  });
+
+  test("a level-2 heading INSIDE a fence does not end the preamble", () => {
+    // The markdown scanned here is the model's output, which may quote a `##` line in an
+    // example. Ending the preamble there would hide a disclosure written below it and report
+    // a dropped phrase that is present.
+    const md = "# Brief\n\n```md\n## Tickets\n```\n\n_window: 90d_\n\n## Tickets\n\nrow one";
+    expect(preambleBody(md)).toContain("_window: 90d_");
+    expect(preambleBody(md)).not.toContain("row one");
+  });
+
+  test("a document with no level-2 heading is all preamble", () => {
+    // A rewrite that returns one unstructured paragraph must still be searchable for the
+    // clause, rather than reporting an empty preamble and rejecting on a technicality.
+    expect(preambleBody("# Brief\n\n_window: 90d_")).toContain("_window: 90d_");
+  });
+
+  test("a level-3 heading does not end the preamble — only `##` opens a section", () => {
+    const md = "# Brief\n\n### Note\n\n_window: 90d_\n\n## Tickets\n\nrow one";
+    expect(preambleBody(md)).toContain("_window: 90d_");
+  });
+});
 
 describe("normalizeSectionText", () => {
   test("strips emphasis, collapses whitespace and lowercases", () => {

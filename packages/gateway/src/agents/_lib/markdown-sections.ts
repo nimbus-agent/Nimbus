@@ -109,6 +109,27 @@ export function sectionBody(markdown: string, heading: string): string | undefin
 }
 
 /**
+ * Everything above the FIRST level-2 heading — the brief's title, subject line and window
+ * clause — or the whole document when it has no `##` heading at all.
+ *
+ * `renderNegotiate` puts the window clause in the preamble, deliberately: it qualifies every
+ * headline count in the brief, so it belongs above them rather than inside any one section.
+ * That places it out of `sectionBody`'s reach, and a required phrase with nowhere to be
+ * checked is a disclosure with no guard. Scoped to the preamble rather than searching the
+ * whole document, because a document-wide check would let a rewrite satisfy the requirement
+ * with text living under some unrelated section — the same per-section leak the contract
+ * guard already refuses for `## Tickets`.
+ *
+ * Fence-aware through the shared `headingLines` scan, so a `##` line inside a fenced code
+ * block in the preamble does not end it early.
+ */
+export function preambleBody(markdown: string): string {
+  const lines = markdown.split("\n");
+  const firstSection = headingLines(lines).find((h) => h.level === 2);
+  return lines.slice(0, firstSection?.index ?? lines.length).join("\n");
+}
+
+/**
  * Every level-2 section whose heading matches one of `headings`, removed along with its
  * body — including any deeper sub-headings nested inside it, which end at the next
  * same-or-higher heading exactly as `sectionBody` defines it.

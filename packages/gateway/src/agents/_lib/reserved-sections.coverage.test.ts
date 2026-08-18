@@ -80,7 +80,13 @@ describe("untrusted brief content cannot break extraction", () => {
   test("a definition containing a `## Gaps` line does not suppress synthesis", async () => {
     const runner = fixedRunner({
       ok: true,
-      markdown: "# Glossary\n\nSLO means a service level objective.",
+      // A REALISTIC rewrite: it keeps the `## <term>` section and the snippet-provenance
+      // sentence, both of which the contract guard requires of this fixture (its entry is
+      // `definitionSource: "snippet"`). A rewrite that dropped them would be discarded as a
+      // contract violation and this test would prove nothing about reserved extraction.
+      markdown:
+        "# Glossary\n\n## SLO\n\nSLO means a service level objective.\n\n" +
+        "- _Definition quoted verbatim from a source; no LLM configured._",
       model: "test-model",
       remote: false,
     });

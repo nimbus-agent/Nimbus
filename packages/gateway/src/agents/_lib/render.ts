@@ -1,6 +1,15 @@
 import type { DecisionEvidence } from "../../decisions/decision-types.ts";
 import type { Risk } from "../../premortem/risks.ts";
 import type { WatcherProposal } from "../../premortem/watcher-proposals.ts";
+import {
+  glossaryProvenanceDisclosure,
+  negotiateDecisionsDisclosure,
+  negotiateIncidentsDisclosure,
+  negotiateNotComputedSection,
+  negotiateOwnershipDisclosures,
+  negotiateSubjectVoice,
+  negotiateWindowDisclosure,
+} from "./brief-disclosures.ts";
 import type { DecisionsBrief, DecisionsEntry } from "./decisions-types.ts";
 import type {
   CatchupBrief,
@@ -312,15 +321,17 @@ function renderGlossaryMiss(brief: GlossaryBrief): string[] {
   return lines;
 }
 
-/** Labels a definition that was not synthesized by an LLM, so the reader can weigh it. */
-function renderGlossaryProvenance(source: GlossaryEntry["definitionSource"]): string[] {
-  if (source === "snippet") {
-    return ["- _Definition quoted verbatim from a source; no LLM configured._"];
-  }
-  if (source === "manual") {
-    return ["- _Authored in `nimbus.toml`; not derived from indexed sources._"];
-  }
-  return [];
+/**
+ * Labels a definition that was not synthesized by an LLM, so the reader can weigh it.
+ * The sentences live in `brief-disclosures.ts`, which is also what the synthesis contract
+ * guard requires to survive a rewrite — one definition, not two.
+ */
+function renderGlossaryProvenance(
+  term: string,
+  source: GlossaryEntry["definitionSource"],
+): string[] {
+  const provenance = glossaryProvenanceDisclosure(term, source);
+  return provenance === undefined ? [] : [provenance.line];
 }
 
 function renderGlossarySources(sources: GlossaryEntry["topSources"]): string[] {
@@ -346,7 +357,7 @@ function renderGlossaryEntry(brief: GlossaryBrief, e: GlossaryEntry): string[] {
   if (e.synonyms.length > 0) lines.push(`- Also known as: ${e.synonyms.join(", ")}`);
   if (e.nearMisses.length > 0) lines.push(`- Easily confused with: ${e.nearMisses.join(", ")}`);
   lines.push(
-    ...renderGlossaryProvenance(e.definitionSource),
+    ...renderGlossaryProvenance(e.term, e.definitionSource),
     ...renderGlossarySources(e.topSources),
   );
   return lines;
@@ -674,7 +685,7 @@ function renderNegotiateEvidence(evidence: NegotiateEvidence): string[] {
  */
 function renderNegotiateAuthoredPrs(a: NegotiateAuthoredPrs | null): string {
   if (a === null) {
-    return ["## PRs authored", "", "_could not be computed_"].join("\n");
+    return negotiateNotComputedSection("PRs authored");
   }
   const lines = ["## PRs authored", "", `- ${String(a.count)} PR(s), ${String(a.merged)} merged`];
   if (a.stats === null) {
@@ -702,7 +713,7 @@ function renderNegotiateAuthoredPrs(a: NegotiateAuthoredPrs | null): string {
 /** Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. */
 function renderNegotiateReviewedPrs(r: NegotiateReviewedPrs | null): string {
   if (r === null) {
-    return ["## PRs reviewed", "", "_could not be computed_"].join("\n");
+    return negotiateNotComputedSection("PRs reviewed");
   }
   const lines = [
     "## PRs reviewed",
@@ -728,7 +739,7 @@ function renderNegotiateReviewedPrs(r: NegotiateReviewedPrs | null): string {
  */
 function renderNegotiateIncidents(i: NegotiateIncidents | null): string {
   if (i === null) {
-    return ["## Incidents", "", "_could not be computed_"].join("\n");
+    return negotiateNotComputedSection("Incidents");
   }
   const lines = [
     "## Incidents",
@@ -742,12 +753,8 @@ function renderNegotiateIncidents(i: NegotiateIncidents | null): string {
   if (i.errorIssuesAssigned > 0) {
     lines.push(`- ${String(i.errorIssuesAssigned)} Sentry error issue(s) assigned`);
   }
-  if (i.unattributable > 0) {
-    lines.push(
-      `- ${String(i.unattributable)} in-window incident(s) have no indexed assignee or ` +
-        "resolver and are not counted above — not necessarily inactivity",
-    );
-  }
+  const unattributable = negotiateIncidentsDisclosure(i);
+  if (unattributable !== undefined) lines.push(unattributable.line);
   lines.push(...renderNegotiateEvidence(i.evidence));
   return lines.join("\n");
 }
@@ -755,7 +762,7 @@ function renderNegotiateIncidents(i: NegotiateIncidents | null): string {
 /** Same "`null` ≠ `0`" rule as `renderNegotiateAuthoredPrs` — see its docstring. */
 function renderNegotiateTickets(t: NegotiateTickets | null): string {
   if (t === null) {
-    return ["## Tickets", "", "_could not be computed_"].join("\n");
+    return negotiateNotComputedSection("Tickets");
   }
   const lines = [
     "## Tickets",
@@ -776,7 +783,7 @@ function renderNegotiateTickets(t: NegotiateTickets | null): string {
  */
 function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
   if (o === null) {
-    return ["## Ownership", "", "_could not be computed_"].join("\n");
+    return negotiateNotComputedSection("Ownership");
   }
   const lines = ["## Ownership", ""];
   if (o.services.length === 0 && o.directories.length === 0) {
@@ -790,9 +797,8 @@ function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
       ? "- ownership pass: never run (`nimbus owners --refresh`)"
       : `- ownership pass last ran ${new Date(o.lastPassAt).toISOString()}`,
   );
-  if (o.truncated) {
-    lines.push("- list truncated at the display limit — more owned paths exist");
-  }
+  const disclosures = negotiateOwnershipDisclosures(o);
+  if (disclosures.truncation !== undefined) lines.push(disclosures.truncation.line);
   if (o.unmappedIdentitiesInIndex > 0) {
     lines.push(
       `- ${String(o.unmappedIdentitiesInIndex)} git identities in this index are not mapped ` +
@@ -802,34 +808,10 @@ function renderNegotiateOwnership(o: NegotiateOwnership | null): string {
   // Unconditional, exactly as `nimbus owners` states it in every brief (`agents/ownership.ts`):
   // this lane reads the SAME `owns` edges, which are derived from git blame. Under a heading
   // like "## Ownership — services: checkout", inside a document about someone's contribution,
-  // an unlabelled ownership claim reads as formal accountability.
-  lines.push(
-    // Do NOT shorten this to "there is no reviewer data in the index" — this same brief renders
-    // a measured "PRs reviewed" section, so that claim would contradict it. `nimbus owners`
-    // (`agents/ownership.ts`) is deliberately narrower for the same reason; match it.
-    "- this is authorship-derived ownership — who wrote the lines, not who is formally " +
-      "accountable. There is no CODEOWNERS and no on-call rotation in the index, and reviewer " +
-      "data (`reviewed` edges from GitHub PR reviews) is not factored into this ranking.",
-  );
+  // an unlabelled ownership claim reads as formal accountability. The sentence itself lives in
+  // `brief-disclosures.ts`, which is also what the synthesis contract guard requires to survive.
+  lines.push(disclosures.accountability.line);
   return lines.join("\n");
-}
-
-/**
- * How to address the subject in running prose. A self brief says "you"/"yours"; a
- * `--person <someone-else>` brief must not, or the section contradicts the subject line
- * three sections above it ("brief requested for someone other than you", then "attributed
- * to you"). Falls back to `personId`, then a neutral noun, so an unnamed subject still
- * reads as a third party rather than silently reverting to "you".
- */
-function negotiateSubjectVoice(subject: NegotiateSubject): {
-  addressed: string;
-  possessive: string;
-} {
-  if (!subject.isOther) return { addressed: "you", possessive: "yours" };
-  return {
-    addressed: subject.displayName ?? subject.personId ?? "the subject",
-    possessive: "theirs",
-  };
 }
 
 /**
@@ -853,15 +835,14 @@ function negotiateSubjectVoice(subject: NegotiateSubject): {
  */
 function renderNegotiateDecisions(d: NegotiateDecisions | null, subject: NegotiateSubject): string {
   if (d === null) {
-    return ["## Decisions", "", "_could not be computed_"].join("\n");
+    return negotiateNotComputedSection("Decisions");
   }
   const voice = negotiateSubjectVoice(subject);
   const lines = [
     "## Decisions",
     "",
     `- ${String(d.authored)} decision(s) attributed to ${voice.addressed}`,
-    `- ${String(d.unattributable)} decision(s) in this index have no indexed author and are ` +
-      `not counted above — they are not necessarily ${voice.possessive}`,
+    negotiateDecisionsDisclosure(d, subject).line,
   ];
   lines.push(...renderNegotiateEvidence(d.evidence));
   return lines.join("\n");
@@ -877,7 +858,7 @@ function renderNegotiateDecisions(d: NegotiateDecisions | null, subject: Negotia
  */
 function renderNegotiateWriting(w: NegotiateWriting | null): string {
   if (w === null) {
-    return ["## Writing", "", "_could not be computed_"].join("\n");
+    return negotiateNotComputedSection("Writing");
   }
   const lines = [
     "## Writing",
@@ -958,16 +939,6 @@ function renderIgnoredPersonalSources(unrecognised: readonly string[]): string {
  * down rather than a wider `toFixed`. A zero window renders `0ms`, which is accurate: it
  * selects nothing.
  */
-function negotiateWindowLabel(sinceMs: number): string {
-  const MINUTE = 60_000;
-  const HOUR = 3_600_000;
-  const DAY = 86_400_000;
-  if (sinceMs >= DAY) return `${String(Math.round(sinceMs / DAY))}d`;
-  if (sinceMs >= HOUR) return `${String(Math.round(sinceMs / HOUR))}h`;
-  if (sinceMs >= MINUTE) return `${String(Math.round(sinceMs / MINUTE))}m`;
-  return `${String(sinceMs)}ms`;
-}
-
 /**
  * Task 1's version rendered only the subject, the window and generation time, the gap
  * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
@@ -985,11 +956,9 @@ export function renderNegotiate(brief: NegotiateBrief, opts?: RenderOpts): strin
   // when the query actually means "40 you authored at any time that were touched in this
   // window" — a systematic OVERSTATEMENT of the headline numbers, the failure direction this
   // agent exists to avoid. Re-querying on creation date is unavailable, so saying so is the fix.
-  const windowLine = `_window: last ${negotiateWindowLabel(
-    brief.query.sinceMs,
-  )} — items authored by the subject that were ACTIVE in this window; the index records last-modified, not created. Two lanes sit outside it: decisions windows on its recorded decision date, and ownership is not windowed at all (it is an all-time snapshot) · generated ${new Date(
-    brief.generatedAt,
-  ).toISOString()}_`;
+  // It sits in the PREAMBLE because it qualifies every count below it; the synthesis contract
+  // guard reaches it there through `preambleBody`, not through any section.
+  const windowLine = negotiateWindowDisclosure(brief.query.sinceMs, brief.generatedAt).line;
   const authoredPrs = renderNegotiateAuthoredPrs(brief.authoredPrs);
   const reviewedPrs = renderNegotiateReviewedPrs(brief.reviewedPrs);
   const tickets = renderNegotiateTickets(brief.tickets);
