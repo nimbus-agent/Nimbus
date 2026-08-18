@@ -19,7 +19,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `run-conversational-agent.ts`'s separate hardcoded `systemPrompt` "updated together", since a
   change at one silently no-ops on the other. Neither was touched. Both execution paths —
   `runViaLocalRouter` and `runViaAgent` — consume a prompt built by a single function,
-  `buildPromptText`, so the directive is injected there and reaches both by construction. The
+  `buildPromptText`, and `applyDevilAdvocate` prefixes the directive to what that function
+  returns — one site, above the router-vs-agent fork, so both paths carry it by construction
+  rather than by anyone remembering to update two prompt strings. The
   sentence itself has exactly one definition, `engine/devil-advocate.ts`'s
   `DEVIL_ADVOCATE_DIRECTIVE`, following the same single-definition discipline as the previous
   day's `brief-disclosures.ts`.

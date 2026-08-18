@@ -8,8 +8,10 @@
  * written into either of those places covers one path and silently no-ops on the other —
  * `docs/roadmap.md` recorded exactly that hazard for this feature.
  *
- * So the directive goes into neither. It is injected into the PROMPT by `buildPromptText`,
- * which both paths already consume, so coverage is structural rather than a thing to remember.
+ * So the directive goes into neither. `applyDevilAdvocate` below prefixes it to the prompt
+ * `buildPromptText` returns, at the single site above the router-vs-agent fork — so both paths
+ * carry it structurally, rather than by anyone remembering to update two prompt strings.
+ * (`buildPromptText` itself is untouched; it builds the prompt, this wraps the result.)
  * `engine/agent.ts` is deliberately untouched, and the mode composes with `--agent
  * devops|research` for free, since it rides the prompt rather than one agent's own identity.
  *
