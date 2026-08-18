@@ -423,10 +423,12 @@ describe("applyPersona", () => {
     expect(out).toContain(TONE_DIRECTIVES.terse);
   });
 
-  test("a non-neutral voice alone still produces a directive", () => {
+  // Asserted as an EXACT composition, not as `.not.toContain(TONE_DIRECTIVES.neutral)`:
+  // that constant is the empty string, every string contains the empty string, and the
+  // negated assertion could therefore never pass.
+  test("a non-neutral voice alone contributes only the voice directive", () => {
     const out = applyPersona("q", { tone: "neutral", voice: "collective" });
-    expect(out).toContain(VOICE_DIRECTIVES.collective);
-    expect(out).not.toContain(TONE_DIRECTIVES.neutral);
+    expect(out).toBe(`${VOICE_DIRECTIVES.collective}\n\nq`);
   });
 
   test("both axes appear when both are non-neutral", () => {
@@ -597,78 +599,83 @@ Append to `packages/gateway/src/engine/run-conversational-agent.test.ts`:
 
 ```ts
 describe("persona (A2) reaches BOTH execution paths and composes with --devil", () => {
-  function capturingRouter(seen: string[]) {
-    return {
-      prefersLocal: () => true,
-      generate: async (prompt: unknown) => {
-        seen.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
-        return { text: "ok" };
-      },
-    };
+  // The router fake MIRRORS the one the devil tests above already use, and must:
+  // `llmRouter.generate` takes an OPTIONS OBJECT (`{ task, prompt, systemPrompt, ... }`),
+  // not a bare prompt string, and its result is read as `result.text` and returned as
+  // `modelMeta`. A fake taking a string would capture the wrong thing.
+  function routerMock() {
+    return mock(async (_opts: { prompt: string }) => ({
+      text: "local answer",
+      modelUsed: "m",
+      isLocal: true,
+      provider: "ollama" as const,
+    }));
   }
 
   test("router path carries the persona directive", async () => {
-    const seen: string[] = [];
+    const generate = routerMock();
+    const router = { generate, prefersLocal: () => true } as unknown as LlmRouter;
     await runConversationalAgent({
-      llmRouter: capturingRouter(seen) as never,
+      llmRouter: router,
       input: "what shipped?",
       stream: false,
-      sendChunk: () => {},
+      sendChunk: () => undefined,
       persona: { tone: "terse", voice: "neutral" },
     });
-    expect(seen[0]).toContain(TONE_DIRECTIVES.terse);
+    const opts = generate.mock.calls[0]?.[0] as { prompt: string } | undefined;
+    expect(opts?.prompt).toContain(TONE_DIRECTIVES.terse);
+    expect(opts?.prompt).toContain("what shipped?");
   });
 
   test("agent path carries the persona directive", async () => {
-    const seen: string[] = [];
-    const agent = {
-      generate: async (prompt: unknown) => {
-        seen.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
-        return { text: "ok" };
-      },
-    } as unknown as Agent;
+    const generate = mock(async (_prompt: unknown) => ({ text: "ok" }));
+    const agent = { generate } as unknown as Agent;
     await runConversationalAgent({
       agent,
       input: "what shipped?",
       stream: false,
-      sendChunk: () => {},
+      sendChunk: () => undefined,
       persona: { tone: "verbose", voice: "collective" },
     });
-    expect(seen[0]).toContain(TONE_DIRECTIVES.verbose);
-    expect(seen[0]).toContain(VOICE_DIRECTIVES.collective);
+    const promptArg = generate.mock.calls[0]?.[0] as string | undefined;
+    expect(promptArg).toContain(TONE_DIRECTIVES.verbose);
+    expect(promptArg).toContain(VOICE_DIRECTIVES.collective);
   });
 
   test("neutral persona leaves the prompt byte-identical to no persona at all", async () => {
-    const withNeutral: string[] = [];
-    const withNone: string[] = [];
+    const withNeutral = routerMock();
+    const withNone = routerMock();
     await runConversationalAgent({
-      llmRouter: capturingRouter(withNeutral) as never,
+      llmRouter: { generate: withNeutral, prefersLocal: () => true } as unknown as LlmRouter,
       input: "what shipped?",
       stream: false,
-      sendChunk: () => {},
+      sendChunk: () => undefined,
       persona: { tone: "neutral", voice: "neutral" },
     });
     await runConversationalAgent({
-      llmRouter: capturingRouter(withNone) as never,
+      llmRouter: { generate: withNone, prefersLocal: () => true } as unknown as LlmRouter,
       input: "what shipped?",
       stream: false,
-      sendChunk: () => {},
+      sendChunk: () => undefined,
     });
-    expect(withNeutral[0]).toBe(withNone[0]);
+    const a = (withNeutral.mock.calls[0]?.[0] as { prompt: string }).prompt;
+    const b = (withNone.mock.calls[0]?.[0] as { prompt: string }).prompt;
+    expect(a).toBe(b);
   });
 
   // Design § 5.4: persona outermost, devil directly above the question.
   test("with --devil both directives appear, persona first", async () => {
-    const seen: string[] = [];
+    const generate = routerMock();
+    const router = { generate, prefersLocal: () => true } as unknown as LlmRouter;
     await runConversationalAgent({
-      llmRouter: capturingRouter(seen) as never,
+      llmRouter: router,
       input: "ship the migration tonight",
       stream: false,
-      sendChunk: () => {},
+      sendChunk: () => undefined,
       devil: true,
       persona: { tone: "terse", voice: "neutral" },
     });
-    const prompt = seen[0] ?? "";
+    const prompt = (generate.mock.calls[0]?.[0] as { prompt: string }).prompt;
     const personaAt = prompt.indexOf(TONE_DIRECTIVES.terse);
     const devilAt = prompt.indexOf(DEVIL_ADVOCATE_DIRECTIVE);
     expect(personaAt).toBeGreaterThanOrEqual(0);
@@ -789,8 +796,18 @@ import { TONE_DIRECTIVES, VOICE_DIRECTIVES } from "../../engine/persona.ts";
 import { synthesize } from "./synthesize.ts";
 import type { SynthInput } from "./brief-kinds.ts";
 
+// NOTE the non-empty `gaps`. `## Gaps` is a RESERVED section: with `gaps: []` no reserved
+// block is produced, and the step-8 test below — which asserts `## Gaps` survives a terse
+// rewrite — would assert against a section that was never rendered. (The fail-closed identity
+// guard `reservedExtractionFailed` is itself gated on `reserved.length > 0`, so an empty-gaps
+// brief would still reach the runner; it is the assertion, not the dispatch, that breaks.)
 function glossaryBrief(): SynthInput {
-  return { kind: "glossary", mode: "list", entries: [], gaps: [] } as unknown as SynthInput;
+  return {
+    kind: "glossary",
+    mode: "list",
+    entries: [],
+    gaps: ["No sources were indexed in the window."],
+  } as unknown as SynthInput;
 }
 
 function capturingRunner(seen: string[], persona?: { tone: string; voice: string }) {
@@ -1060,7 +1077,9 @@ test("a terse persona's brief still carries its reserved sections", async () => 
   const out = await synthesize(brief, {
     runner: {
       persona: { tone: "terse", voice: "neutral" } as never,
-      run: async () => ({ ok: true as const, text: "Short.", model: "m", remote: false }),
+      // `SynthesisAttempt`'s ok-arm field is `markdown`, NOT `text` — check the type in
+      // `synthesis-llm.ts` before changing this literal.
+      run: async () => ({ ok: true as const, markdown: "Short.", model: "m", remote: false }),
     },
   });
   expect(out.markdown).toContain("## Gaps");
