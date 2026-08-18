@@ -81,6 +81,22 @@ describe("ProfilesPanel", () => {
     await waitFor(() => expect(profileSwitchMock).toHaveBeenCalledWith("work"));
   });
 
+  it("switch flow shows the restart notice after a successful switch", async () => {
+    profileListMock.mockResolvedValueOnce({
+      profiles: [{ name: "default" }, { name: "work" }],
+      active: "default",
+    });
+    profileSwitchMock.mockResolvedValueOnce({ active: "work" });
+    renderPanel();
+    await screen.findByText("work");
+    const switchBtn = screen.getByRole("button", { name: "Switch to work" });
+    await userEvent.click(switchBtn);
+    await waitFor(() => expect(profileSwitchMock).toHaveBeenCalledWith("work"));
+    expect(
+      await screen.findByText(/Restart the Gateway.*nimbus stop && nimbus start/),
+    ).toBeInTheDocument();
+  });
+
   it("delete requires typed-name confirmation", async () => {
     profileListMock.mockResolvedValueOnce({
       profiles: [{ name: "default" }, { name: "scratch" }],

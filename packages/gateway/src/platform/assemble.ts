@@ -58,6 +58,8 @@ import {
   type TeamCredentialConnector,
 } from "../config/nimbus-toml.ts";
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
+import { resolvePersona } from "../config/persona.ts";
+import { ProfileManager } from "../config/profiles.ts";
 import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
 import { applyLlmTomlOverrides, Config } from "../config.ts";
 import { bitbucketFetchOneUrlIsSupported } from "../connectors/bitbucket-sync.ts";
@@ -2278,6 +2280,16 @@ export async function assemblePlatformServices(
   const notifications = createUnimplementedNotifications(syncLogger);
   const rateLimiter = new ProviderRateLimiter();
   const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
+  // A2: resolve the persona ONCE at boot, discarding the result, purely so an unrecognised
+  // `[persona]` value is reported. This is the ONLY site that passes a logger.
+  //
+  // Why it has to exist: `run-ask.ts` and `agent-synthesis-runner.ts` both resolve the persona
+  // per invocation and both deliberately pass NO logger, because warning on every turn and
+  // every brief would be noise. Without this line the warn-once path in `config/persona.ts`
+  // is never reached in production — the loader would be `OrWarn` in name only, and a user
+  // with `tone = "tree"` would get silent neutral behaviour, which is the exact failure the
+  // design review raised (Q2).
+  resolvePersona(paths.configDir, syncLogger);
   const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
   const llmRegistry = buildLlmRegistryFromToml(db, activeTomlPath);
 
@@ -2479,6 +2491,17 @@ export async function assemblePlatformServices(
     embeddingBackfill: rt?.getBackfillProgress() ?? null,
     embedding: embeddingReadiness(),
   });
+
+  // A2: the gateway side of `profile.*` was declared (ipc/server/options.ts) and dispatched
+  // (ipc/server/dispatchers.ts) but NEVER constructed, so every call threw "Profile manager is
+  // not available on this gateway" — which is why the desktop app's routed Profiles settings
+  // page has never worked. All four methods are already on the Tauri allowlist; this is the
+  // one missing link, not a new surface.
+  //
+  // Switching a profile still requires a gateway restart: NIMBUS_PROFILE is read at spawn
+  // (cli/src/lib/spawn-gateway.ts), so the switch takes effect on the next start. The CLI
+  // already prints that, and ProfilesPanel must say it too.
+  ipcOpts.profileManager = new ProfileManager(paths.configDir);
 
   const federationCfg = loadNimbusFederationFromConfigDir(paths.configDir);
   const federationBooted = await bootFederationIntoIpcOpts({
