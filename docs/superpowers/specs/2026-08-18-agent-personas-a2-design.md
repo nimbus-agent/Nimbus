@@ -258,7 +258,7 @@ nothing that only exists in a debug build.
 so it is not rediscovered by experiment: the persona directive is outermost, the devil
 directive sits immediately above the question, and the question is last.
 
-```
+```text
 [persona directive]
 [devil directive]
 [prompt text + local context]

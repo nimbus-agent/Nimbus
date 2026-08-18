@@ -46,12 +46,14 @@ Persona is deliberately **not** a per-call IPC parameter, so `ipc/agent-invoke.t
 ## Task 1: `[persona]` config parsing and profile-aware resolution
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` (append after the `[agents]` block, ~line 2060)
 - Create: `packages/gateway/src/config/persona.ts`
 - Test: `packages/gateway/src/config/nimbus-toml-persona.test.ts`
 - Test: `packages/gateway/src/config/persona.test.ts`
 
 **Interfaces:**
+
 - Consumes: module-private `loadTomlSection`, `forEachSectionEntry` (both in `nimbus-toml.ts`); exported `resolveNimbusTomlForProfile(configDir: string): string`.
 - Produces:
   - `type PersonaTone = "neutral" | "terse" | "formal" | "casual" | "verbose"`
@@ -383,10 +385,12 @@ git commit -m "feat(config): [persona] section with profile-aware per-invocation
 ## Task 2: The persona directives (single definition + D6 guard)
 
 **Files:**
+
 - Create: `packages/gateway/src/engine/persona.ts`
 - Test: `packages/gateway/src/engine/persona.test.ts`
 
 **Interfaces:**
+
 - Consumes: `NimbusPersonaToml`, `PersonaTone`, `PersonaVoice` from Task 1.
 - Produces:
   - `const TONE_DIRECTIVES: Readonly<Record<PersonaTone, string>>`
@@ -585,11 +589,13 @@ git commit -m "feat(engine): persona directives with the D6 no-omission guard"
 ## Task 3: Wire persona into `nimbus ask`
 
 **Files:**
+
 - Modify: `packages/gateway/src/engine/run-conversational-agent.ts` (params type ~line 16-28; application site ~line 177)
 - Modify: `packages/gateway/src/engine/run-ask.ts` (`RunAskParams` ~line 32; the `runConversationalAgent` call ~line 164)
 - Test: `packages/gateway/src/engine/run-conversational-agent.test.ts` (append a describe block)
 
 **Interfaces:**
+
 - Consumes: `applyPersona` (Task 2), `resolvePersona` (Task 1), existing `applyDevilAdvocate` and `buildPromptText`.
 - Produces: `RunConversationalAgentParams.persona?: NimbusPersonaToml`; `RunAskParams` unchanged in shape (persona is resolved internally from `paths.configDir`, not passed in by callers).
 
@@ -774,6 +780,7 @@ git commit -m "feat(engine): apply persona to nimbus ask on both execution paths
 ## Task 4: Wire persona into brief synthesis + fix the profile-blind `[agents]` load
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/_lib/synthesis-llm.ts` (`SynthesisRunner`, ~line 17)
 - Modify: `packages/gateway/src/agents/_lib/synthesize.ts` (`SynthesisProvenance` ~line 59; `synthesisInstructionsFor` ~line 385; the prompt build ~line 252)
 - Modify: `packages/gateway/src/agents/_lib/agent-synthesis-runner.ts`
@@ -781,6 +788,7 @@ git commit -m "feat(engine): apply persona to nimbus ask on both execution paths
 - Test: `packages/gateway/src/agents/_lib/agent-synthesis-runner.test.ts` (append)
 
 **Interfaces:**
+
 - Consumes: `resolvePersona`, `loadNimbusAgentsFromPath` (Task 1); `personaDirective` (Task 2).
 - Produces: `SynthesisRunner.persona?: NimbusPersonaToml`; `SynthesisProvenance` gains `persona?: NimbusPersonaToml` on both `attempted: true` arms.
 
@@ -1103,11 +1111,13 @@ git commit -m "feat(agents): apply persona to brief synthesis; read [agents] fro
 ## Task 5: Wire `ProfileManager` and the persona boot warning
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble.ts` (near the `activeTomlPath` block, ~line 2280)
 - Modify: `packages/ui/src/pages/settings/ProfilesPanel.tsx`
 - Test: `packages/gateway/src/config/profiles-cli-parity.test.ts` (new)
 
 **Interfaces:**
+
 - Consumes: `ProfileManager` from `config/profiles.ts` (exists, previously unused in production); `resolvePersona` (Task 1); `ipcOpts` (`Parameters<typeof createIpcServer>[0]`).
 - Produces: nothing new — this makes four already-declared IPC methods reachable and makes the Task 1 warning path live.
 
@@ -1228,6 +1238,7 @@ git commit -m "fix(gateway): construct ProfileManager so profile.* and the deskt
 ## Task 6: Documentation, changelog, and roadmap
 
 **Files:**
+
 - Modify: `packages/docs/` — the `nimbus.toml` configuration reference (find the page documenting `[agents]` and add `[persona]` beside it)
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/roadmap.md`

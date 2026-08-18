@@ -9,6 +9,7 @@ This document collects feedback, suggestions, and open questions on the [Agent P
 ### Q1: Instruction Conflict (Persona vs. `--devil`)
 
 The design proposes composing the prompt modifiers as:
+
 ```ts
 const promptWithContext = applyPersona(
   applyDevilAdvocate(buildPromptText(trimmed, p.localContext), p.devil),
@@ -40,9 +41,11 @@ Section 7 notes: *"Switching a profile still requires a gateway restart... The p
 ### 1. Unified Client-Side Config Schema Validation
 
 Since the config enums for `tone` and `voice` are closed sets (`neutral` | `terse` | `formal` | `casual` | `verbose` and `neutral` | `opinionated` | `collective`), we should ensure these schemas are shared or validated at the CLI/UI level.
+
 * **Proposal:** Export the TypeScript string union types or a Zod/Valibot schema representing the persona configuration from the configuration package, ensuring the desktop UI settings page and CLI validation helper reuse the same definition and cannot drift.
 
 ### 2. High Discard Rate Warning for Terse Synthesis
 
 Section 5.3 acknowledges that `tone = "terse"` increases the brief discard rate due to required phrases being omitted or truncated.
+
 * **Proposal:** Since this is a known UX cost, consider adding a debug log or trace when a brief falls back to deterministic rendering specifically when `tone = "terse"` is active, so developers/testers can easily measure how often the terse directive causes honesty contract violations.
