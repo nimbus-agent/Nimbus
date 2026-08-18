@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.6.0](https://github.com/nimbus-agent/Nimbus/compare/v2.5.0...v2.6.0) (2026-08-18)
+
+
+### Features
+
+* **agents:** give every interleaved brief disclosure one definition and a guard ([#1245](https://github.com/nimbus-agent/Nimbus/issues/1245)) ([5b9c115](https://github.com/nimbus-agent/Nimbus/commit/5b9c1152c6c0df19f0035ab401bd62413132b89b))
+* **agents:** never let synthesis drop a brief's disclosures ([#1237](https://github.com/nimbus-agent/Nimbus/issues/1237)) ([f27b416](https://github.com/nimbus-agent/Nimbus/commit/f27b416b793fc096f59e73196a3b1717ca7e8764))
+
+
+### Bug Fixes
+
+* **release:** parse the squash message GitHub actually creates ([#1235](https://github.com/nimbus-agent/Nimbus/issues/1235)) ([044c16b](https://github.com/nimbus-agent/Nimbus/commit/044c16bd36b4aa06716a917d6a6e412ef9c8ef80))
+
 ## [2.5.0](https://github.com/nimbus-agent/Nimbus/compare/v2.4.9...v2.5.0) (2026-08-16)
 
 
