@@ -73,11 +73,27 @@ for pkg in packages/gateway packages/cli packages/mcp-launcher; do
   run_pkg "${pkg}"
 done
 
-for pkg in packages/mcp-connectors/*; do
+for pkg in packages/mcp-connectors/* packages/github-actions/*; do
   if [[ -f "${pkg}/package.json" ]]; then
     run_pkg "${pkg}"
   fi
 done
+
+# The two explicit shared-folder calls `_test-suite.yml` makes after its own
+# package.json loop. Both are relative-import folders with NO package.json, so
+# the loop above skips them, yet both carry their own `*.test.ts`.
+#
+# Omitting them is the same two-switch bug the `mcp-launcher` comment above
+# describes, pointed the other way: `scripts/coverage/instrument-scope.ts:16`
+# DOES claim `packages/mcp-connectors/shared/`, so those 16 files are in scope
+# and expected to report coverage — but their tests never ran here, so the
+# merged lcov had no data for them and `audit:coverage-floor` failed them at 0%.
+# CI passed the whole time, because CI has these two lines. A local verifier
+# that disagrees with CI in the failing direction is worse than no verifier: it
+# trains you to ignore it. This script's header calls itself a CI mirror; these
+# lines are what make that true.
+run_pkg "packages/mcp-connectors/shared"
+run_pkg "packages/github-actions/shared"
 
 if ! bun "${REPO_ROOT}/scripts/coverage/merge-coverage.ts"; then
   echo "ERROR: coverage merge failed" >&2

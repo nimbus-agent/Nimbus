@@ -137,8 +137,12 @@ opts.notify(opts.briefReadyMethod, { sessionId, brief: markdown, findings: brief
   rewrite of it (see below).
 - `findings` is **that agent's own typed brief object**, declared in `packages/gateway/src/agents/_lib/<agent>-types.ts` — `ExpertBrief`, `CatchupBrief`, `ImpactBrief`, `WhyBrief`, `GlossaryBrief`, `DecisionsBrief`, `OwnershipBrief`, `PremortemBrief`, and so on. This is deliberately not a closed union: adding an agent adds a type here, it does not change the contract. Clients can render it directly or transform the Markdown further. CLI-side narrowing guards (e.g. `PremortemBriefLike` in `packages/cli/src/commands/pre-mortem.ts`) are structural subsets used to validate an untyped IPC payload — they are not the gateway-side type this field carries.
 - `synthesis` is the `SynthesisProvenance` union (`packages/gateway/src/agents/_lib/synthesize.ts`):
-  `{attempted: false, reason: "disabled" | "no_eligible_provider"}` when `brief` is the
-  deterministic render because no LLM was ever called; `{attempted: true, used: true, model,
+  `{attempted: false, reason: "disabled" | "no_eligible_provider" | "reserved_extraction_failed"}`
+  when `brief` is the deterministic render because no LLM was ever called — `"disabled"` (no
+  runner), `"no_eligible_provider"` (a runner was invoked but nothing resolved), or
+  `"reserved_extraction_failed"` (invariant I31's fail-closed guard: a renderer did not honour
+  `omitReserved`, so the reserved-disclosure content would have gone to the model unguarded, and
+  no rewrite was even attempted); `{attempted: true, used: true, model,
   remote}` when `brief` is a synthesized rewrite; or `{attempted: true, used: false, reason, ...}`
   when a rewrite was attempted and discarded (a dropped contractual disclaimer, a timeout, a
   provider error, an egress-append failure, or the provider returning no usable text) — `brief` is

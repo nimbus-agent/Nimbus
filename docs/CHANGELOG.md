@@ -8,6 +8,43 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-17 — disclosure integrity for synthesized briefs recorded as invariant I31.** The
+  A0 synthesis feature (below, 2026-08-16) shipped a rewrite path with no structural guarantee
+  that a model rewrite couldn't drop a brief's disclosure sections — confidence ceilings,
+  truncation counts, "this is authorship-derived ownership, not accountability" — beyond the
+  narrow `negotiate`-only `requiredPhrases` check. A follow-up landed the fix: `agents/_lib/
+  synthesize.ts`'s `synthesize()` now renders each brief twice — once canonically and once with
+  `omitReserved: true` for the model prompt — and builds every disclosure-only section (`##
+  Gaps` for all fourteen brief kinds, plus `negotiate`'s `## Sources` and `## Evidence not
+  available from the index`) directly from the brief's own data via `agents/_lib/
+  reserved-sections.ts`'s `RESERVED_HEADINGS_BY_KIND` registry, never by parsing either render.
+  A reserved section the model emits anyway is stripped (`agents/_lib/markdown-sections.ts`'s
+  `stripSections`) and the canonical block is re-attached verbatim regardless, so a rewrite
+  cannot drop a disclosure by construction rather than by check. If a renderer's `omitReserved`
+  render comes back identical to its canonical one — meaning the flag was not honoured — no
+  rewrite is attempted at all (fail-closed). That coverage is broader than "Gaps" suggests:
+  `decisions`'s and `premortem`'s 0.86 confidence ceiling and every `glossary`/`decisions`/
+  `premortem` `body_complete = 0` truncation count are each emitted as a gap note, so they ride
+  the same `## Gaps` section as everything else and are fully protected by this fix, not an
+  exception to it. What remains genuinely interleaved — inside prose the model is meant to
+  rewrite, so it cannot be held back as a whole section — is narrower: `negotiate`'s ownership
+  list-truncation clause, its last-modified-not-created window clause, its two `unattributable`
+  lines, and `glossary`'s two definition-provenance lines. That set stays on the narrower
+  `requiredPhrases` anchor-phrase check in `agents/_lib/brief-contract.ts`, which today covers
+  only `negotiate`'s seven null-lane sentinels; widening it to the rest, and deriving its anchors
+  from constants shared with the render sites instead of the two independent copies that exist
+  today, is a follow-up PR's scope.
+  Recorded as **invariant I31** (`docs/SECURITY-INVARIANTS.md`) with no static `D`-rule —
+  deliberate, since there is exactly one production path that produces a brief's final markdown
+  today, so a source-scanning confinement rule would guard a risk that does not exist. Stated
+  bound: the strip step runs on the model's output and cannot distinguish a hallucinated `##
+  Gaps` heading from one faithfully echoed out of quoted brief content; fenced code blocks are
+  excluded from the scan, narrowing but not eliminating this, so a synthesized brief may drop a
+  fragment of quoted body text — it can never drop a disclosure, and the deterministic brief is
+  unaffected either way. `CLAUDE.md`/`GEMINI.md` roster line moves to "Invariants through I31";
+  the A0 roadmap entry's coverage claim (`docs/roadmap.md`) is updated to match. No migration, no
+  Tauri allowlist change, no `connectors.dispatch` involvement.
+
 - **2026-08-17 — the PR-time parse gate was judging a message GitHub never creates, and #1234
   was dropped because of it.** `feat(agents): make built-in brief synthesis executable` (#1234)
   merged with a green `PR quality — Release safety` check, then release-please failed to parse

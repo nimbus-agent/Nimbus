@@ -1,7 +1,9 @@
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { contractViolations } from "./brief-contract.ts";
 import { assertNeverBrief, type SynthInput } from "./brief-kinds.ts";
+import { stripSections } from "./markdown-sections.ts";
 import {
+  type RenderOpts,
   renderCatchup,
   renderConflict,
   renderDecisions,
@@ -17,6 +19,12 @@ import {
   renderPremortem,
   renderWhy,
 } from "./render.ts";
+import {
+  joinReserved,
+  type ReservedBlock,
+  reservedBlocksFor,
+  reservedHeadingsFor,
+} from "./reserved-sections.ts";
 import {
   redactedErrorDetail,
   type SynthesisAttempt,
@@ -49,7 +57,7 @@ export type SynthesisDiscardReason =
  * `SynthesisAttempt` that still must not reach the reader as a brief.
  */
 export type SynthesisProvenance =
-  | { attempted: false; reason: "disabled" | "no_eligible_provider" }
+  | { attempted: false; reason: "disabled" | "no_eligible_provider" | "reserved_extraction_failed" }
   | { attempted: true; used: true; model: string; remote: boolean }
   | {
       attempted: true;
@@ -66,23 +74,27 @@ export type SynthesisProvenance =
 
 export type SynthesisOutcome = { markdown: string; provenance: SynthesisProvenance };
 
-function deterministicRender(brief: SynthInput): string {
-  if (brief.kind === "expert") return renderExpert(brief);
-  if (brief.kind === "impact") return renderImpact(brief);
-  if (brief.kind === "catchup") return renderCatchup(brief);
-  if (brief.kind === "ghost") return renderGhost(brief);
-  if (brief.kind === "conflict") return renderConflict(brief);
-  if (brief.kind === "janitor") return renderJanitor(brief);
-  if (brief.kind === "preflight") return renderPreflight(brief);
-  if (brief.kind === "why") return renderWhy(brief);
-  if (brief.kind === "glossary") return renderGlossary(brief);
-  if (brief.kind === "decisions") return renderDecisions(brief);
-  if (brief.kind === "ownership") return renderOwnership(brief);
-  if (brief.kind === "huddle") return renderHuddle(brief);
-  if (brief.kind === "premortem") return renderPremortem(brief);
-  if (brief.kind === "negotiate") return renderNegotiate(brief);
+function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
+  if (brief.kind === "expert") return renderExpert(brief, opts);
+  if (brief.kind === "impact") return renderImpact(brief, opts);
+  if (brief.kind === "catchup") return renderCatchup(brief, opts);
+  if (brief.kind === "ghost") return renderGhost(brief, opts);
+  if (brief.kind === "conflict") return renderConflict(brief, opts);
+  if (brief.kind === "janitor") return renderJanitor(brief, opts);
+  if (brief.kind === "preflight") return renderPreflight(brief, opts);
+  if (brief.kind === "why") return renderWhy(brief, opts);
+  if (brief.kind === "glossary") return renderGlossary(brief, opts);
+  if (brief.kind === "decisions") return renderDecisions(brief, opts);
+  if (brief.kind === "ownership") return renderOwnership(brief, opts);
+  if (brief.kind === "huddle") return renderHuddle(brief, opts);
+  if (brief.kind === "premortem") return renderPremortem(brief, opts);
+  if (brief.kind === "negotiate") return renderNegotiate(brief, opts);
   return assertNeverBrief(brief);
 }
+
+/** Test-only re-export: the all-kinds `omitReserved` table test in
+ *  `reserved-sections.coverage.test.ts` must exercise the real dispatch, not a copy of it. */
+export const deterministicRenderForTest = deterministicRender;
 
 function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "expert") return "agents.expert";
@@ -174,6 +186,37 @@ function withProvenanceFooter(markdown: string, model: string, remote: boolean):
   return `${markdown.trimEnd()}\n\n_Synthesized by ${model} (${locality})._\n`;
 }
 
+const RESERVED_EXTRACTION_FAILED_FOOTER =
+  "_Rendered deterministically — the brief's reserved disclosure sections could not be isolated, so no rewrite was attempted._";
+
+/**
+ * Label the case where a renderer did not honour `omitReserved` — a new brief kind, or a new
+ * disclosure section added to an existing renderer without routing it through the flag. The
+ * reserved content would otherwise have gone to the model unguarded while everything looked
+ * healthy, so this path fails closed and says so. Distinct from every other footer for the
+ * reason recorded on `withDeterministicFooter`: conflating these was a real defect once.
+ */
+function withReservedExtractionFailedFooter(markdown: string): string {
+  return `${markdown.trimEnd()}\n\n${RESERVED_EXTRACTION_FAILED_FOOTER}\n`;
+}
+
+/**
+ * The I31 fail-closed assertion, extracted to a pure function so it can be unit-tested
+ * directly instead of only through a renderer that (correctly) never trips it. `full` and
+ * `body` are two renders of the SAME brief — the canonical one and the `omitReserved: true`
+ * one — never anything recovered by parsing either. If `reserved` is non-empty, the two MUST
+ * differ: identical output means the renderer ignored `omitReserved`, so the reserved content
+ * would have gone to the model unguarded. See `synthesize()`'s call site for why this is
+ * deliberately NOT a heading scan of `body` — brief content is untrusted markdown.
+ */
+export function reservedExtractionFailed(
+  full: string,
+  body: string,
+  reserved: readonly ReservedBlock[],
+): boolean {
+  return reserved.length > 0 && body === full;
+}
+
 export async function synthesize(
   brief: SynthInput,
   opts: SynthesizeOpts = {},
@@ -187,15 +230,33 @@ export async function synthesize(
     };
   }
 
+  // The synthesizable half and the reserved half, each CONSTRUCTED from the brief — never
+  // recovered by parsing `deterministic`. See `reserved-sections.ts` for why that matters.
+  const body = deterministicRender(brief, { omitReserved: true });
+  const reservedBlocks = reservedBlocksFor(brief);
+
+  // Fail closed if a renderer ignored `omitReserved`: identical output with reserved content
+  // present means the suppression did not happen, and prompting with `body` would hand the
+  // disclosure to the model. Deliberately NOT a heading scan of `body` — brief content is
+  // untrusted markdown (a quoted glossary definition can contain a `## Gaps` line), and a
+  // scan would switch synthesis off on the strength of what a source document happens to say.
+  // Comparing two renders of the same brief tests our code and nothing else.
+  if (reservedExtractionFailed(deterministic, body, reservedBlocks)) {
+    return {
+      markdown: withReservedExtractionFailedFooter(deterministic),
+      provenance: { attempted: false, reason: "reserved_extraction_failed" },
+    };
+  }
+
   const wrapped = wrapToolOutput({ service: "nimbus", tool: toolNameFor(brief) }, brief);
   const prompt = [
-    SYNTHESIS_INSTRUCTIONS,
+    synthesisInstructionsFor(brief),
     "",
     "Findings:",
     wrapped,
     "",
     "Deterministic fallback rendering (use as a structural template — do not copy verbatim):",
-    deterministic,
+    body,
   ].join("\n");
 
   // A REJECTING runner degrades to the deterministic brief, exactly like a runner that returns
@@ -256,7 +317,29 @@ export async function synthesize(
     };
   }
 
-  const violations = contractViolations(brief, attempt.markdown);
+  // Strip any reserved section the model emitted anyway, then re-attach the canonical blocks.
+  // The strip runs on the MODEL's markdown — untrusted, hence the shared parser — while the
+  // blocks come from the brief. The contract guard then inspects the artifact the reader
+  // actually receives, not an intermediate.
+  const strippedBody = stripSections(attempt.markdown, reservedHeadingsFor(brief));
+
+  // Re-check emptiness AFTER stripping, not just on the raw markdown above. A model that
+  // returns ONLY a fabricated reserved section (e.g. its own invented `## Gaps`) is non-empty
+  // raw — the check above lets it through — but strips down to nothing here. Without this,
+  // `joinReserved("", reservedBlocks)` would produce a "brief" consisting of nothing but the
+  // canonical disclosures plus a footer, which is exactly the pure-disclosure artifact the
+  // design's reassembly ordering exists to prevent. Falls through to the SAME `empty_result`
+  // path as the raw-empty case above, so the reader gets the full deterministic brief.
+  if (strippedBody.trim().length === 0) {
+    return {
+      markdown: withDiscardedSynthesisFooter(deterministic, "empty_result"),
+      provenance: { attempted: true, used: false, reason: "empty_result" },
+    };
+  }
+
+  const reassembled = joinReserved(strippedBody, reservedBlocks);
+
+  const violations = contractViolations(brief, reassembled);
   if (violations.length > 0) {
     return {
       markdown: withDiscardedSynthesisFooter(deterministic, "contract_violation"),
@@ -270,18 +353,48 @@ export async function synthesize(
   }
 
   return {
-    markdown: withProvenanceFooter(attempt.markdown, attempt.model, attempt.remote),
+    markdown: withProvenanceFooter(reassembled, attempt.model, attempt.remote),
     provenance: { attempted: true, used: true, model: attempt.model, remote: attempt.remote },
   };
 }
 
-const SYNTHESIS_INSTRUCTIONS = [
-  "You are presenting structured findings from a Nimbus built-in agent.",
-  "Rewrite the deterministic Markdown into a more readable brief.",
-  "Rules:",
-  "- Never invent evidence rows; only paraphrase or reorder what is already in the JSON.",
-  "- Keep all section headings.",
-  "- For each GapNote, include its `remediation` field if present, in plain English.",
-  "- If the JSON contains zero ranked findings, say so plainly; do not pad.",
-  "- Output Markdown only — no preamble, no code fences around the whole answer.",
-].join("\n");
+/** Strip the leading `#`s off a reserved heading literal (`"## Gaps"` → `"Gaps"`) for prose. */
+function bareHeading(heading: string): string {
+  return heading.replace(/^#+\s*/, "");
+}
+
+/**
+ * Join heading names into "`A`, `B`, or `C`" (Oxford-comma-free, matching this file's existing
+ * prose style) — or just "`A`" for the common one-heading case (thirteen of fourteen kinds).
+ */
+function formatHeadingList(names: readonly string[]): string {
+  const quoted = names.map((n) => `\`${n}\``);
+  if (quoted.length <= 1) return quoted.join("");
+  const last = quoted.at(-1) ?? "";
+  return `${quoted.slice(0, -1).join(", ")}, or ${last}`;
+}
+
+/**
+ * The reserved-section instruction, derived from `reservedHeadingsFor(brief)` rather than a
+ * single hardcoded sentence. Global text naming `Sources`/`Evidence not available from the
+ * index` for every kind was a real regression (I31 fix-round): only `negotiate` reserves those
+ * two — `RESERVED_HEADINGS_BY_KIND` is per-kind precisely so a kind that legitimately renders
+ * its own `## Sources` (glossary's term-mode citation rows, `render.ts`) is not gagged by a
+ * blanket instruction meant for a section it does not own. For every other kind this reduces
+ * to exactly "Gaps".
+ */
+function synthesisInstructionsFor(brief: SynthInput): string {
+  const names = reservedHeadingsFor(brief).map(bareHeading);
+  const list = formatHeadingList(names);
+  const pronoun = names.length === 1 ? "it" : "them";
+  return [
+    "You are presenting structured findings from a Nimbus built-in agent.",
+    "Rewrite the deterministic Markdown into a more readable brief.",
+    "Rules:",
+    "- Never invent evidence rows; only paraphrase or reorder what is already in the JSON.",
+    "- Keep all section headings.",
+    `- Do not write a ${list} section: ${names.length === 1 ? "it is" : "they are"} appended verbatim after your rewrite. The JSON still lists ${pronoun} so your prose does not contradict ${pronoun}.`,
+    "- If the JSON contains zero ranked findings, say so plainly; do not pad.",
+    "- Output Markdown only — no preamble, no code fences around the whole answer.",
+  ].join("\n");
+}
