@@ -44,6 +44,26 @@ updates:
       # GEMINI.md both pin "TypeScript 6.x strict" and must move with it.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # js-yaml 5 is not adoptable while the docs toolchain needs v4, and this was
+      # established by attempting it (#1049), not by inspection. Three blockers:
+      #   1. v5's ESM build DROPPED the default export. TypeScript does not catch
+      #      this; only running the tests does. Six files need named imports, four
+      #      of them CI gate scripts (workflow-lint, check-openapi-drift,
+      #      check-workflow-run-triggers, linux-repo-config) that would then fail
+      #      every future preflight.
+      #   2. The whole Astro/Starlight chain imports js-yaml as a DEFAULT export
+      #      and declares ^4.x — astro@7.2.0 `^4.3.0`, @astrojs/starlight@0.41.7
+      #      `^4.1.1`, @astrojs/internal-helpers `^4.1.1`/`^4.3.0`.
+      #   3. Root `overrides` is global by construction, so there is no
+      #      configuration where the gateway gets v5 and Astro gets v4 — and the
+      #      override cannot simply be dropped either, because it is also lifting
+      #      gray-matter and @istanbuljs/load-nyc-config off js-yaml 3.x.
+      # A v5 PR therefore cannot go green: the override pins 4.3.1, so bumping the
+      # declaration alone just trips audit:override-drift (see #1239). Revisit when
+      # the Astro chain ships js-yaml 5 support; the root `overrides` pin must move
+      # in the same PR as the declarations.
+      - dependency-name: "js-yaml"
+        update-types: ["version-update:semver-major"]
     groups:
       # First = wins. Everything routine collapses into a single PR.
       all-minor-patch:
