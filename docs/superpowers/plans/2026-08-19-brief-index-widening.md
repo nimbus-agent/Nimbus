@@ -168,9 +168,28 @@ In `packages/gateway/src/briefs/brief-registry.ts`, replace the body of the `for
   }
 ```
 
-- [ ] **Step 5: Fix the pre-existing fixtures**
+- [ ] **Step 5: Fix the pre-existing fixtures through one helper**
 
-`itemType` is required, so every existing `IndexHit` literal in the test file no longer compiles. Add `itemType: "web_clip"` to each — in `"adds index hits as C1..Cm with clip citations"`, `"caps index hits at MAX_INDEX_HITS"`, and any other hit literal the compiler flags. Search the file for `itemId:` to find them all.
+`itemType` is required, so every existing `IndexHit` literal in the test file no longer compiles. Do **not** hand-edit each one — add a single factory at the top of the file and route the literals through it, so the next required field is a one-line change instead of a sweep:
+
+```ts
+function mockHit(overrides: Partial<IndexHit> = {}): IndexHit {
+  return {
+    itemId: "nimbus:clip:aa",
+    itemType: "web_clip",
+    title: "Saved",
+    url: "https://z.test",
+    snippet: "snip",
+    ...overrides,
+  };
+}
+```
+
+Import the type for it: `import type { IndexHit } from "./brief-registry.ts";`
+
+Then rewrite the existing hit literals as `mockHit(...)` calls — in `"adds index hits as C1..Cm with clip citations"`, `"caps index hits at MAX_INDEX_HITS"` (its `Array.from` becomes `mockHit({ itemId: \`nimbus:clip:${i}\`, title: \`C${i}\`, url: null, snippet: "s" })`), and any other the compiler flags. Search for `itemId:` to find them all.
+
+Leave the three tests you wrote in Step 1 as explicit literals: they are *about* the field combinations, so spelling each one out is the point.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
@@ -200,6 +219,20 @@ git commit -m "feat(briefs): a citation can say what kind of item it cites"
 **Interfaces:**
 - Consumes: `IndexHit.itemType` from Task 1.
 - Produces: a `briefSearch` that returns hits of every type.
+
+> **Do NOT write `h.itemType ?? "unknown"`.** `RankedIndexItem` extends `NimbusItem`, whose
+> `itemType: ItemType` is **required and non-nullable** (`@nimbus-dev/sdk/dist/types.d.ts:14`),
+> and `rowToRankedItem` builds it unconditionally from `String(row.type)`
+> (`local-index.ts:161,179`) — `String()` cannot yield null or undefined. A fallback here
+> would be dead code that fabricates a type value, and the SDK is explicit about why that is
+> worse than nothing: *"The one thing consumers must never do is rewrite an unrecognised type
+> to a recognised one — that is data corruption"* (`item-types.ts:18-21`). A fabricated
+> `"unknown"` would also reach the clipper's UI and render as a real type label.
+>
+> Note also that `RankedIndexItem` carries **two** identical type fields — `itemType` from
+> `NimbusItem` and its own `indexedType`, both `String(row.type)`. Use `itemType`: it is the
+> SDK-canonical name and the one `IndexHit` mirrors. They are the same value; do not "fix"
+> one to the other later.
 
 - [ ] **Step 1: Drop the filter and map the type through**
 
@@ -394,6 +427,15 @@ Add to `packages/gateway/src/briefs/brief-e2e.test.ts`, following the file's exi
 - [ ] **Step 3: Teach the harness to serve typed hits**
 
 In `brief-test-server.ts`, add `itemType` to every hit literal it already builds, and expose the helper the test above calls — a function that starts the server with a given hit list injected as its `IndexSearch`, runs one brief through create → sources → run → poll, and returns the finished `Report`. Name it `runBriefWithIndexHits(hits: IndexHit[]): Promise<Report>` and export it from the test server module so the e2e file imports it rather than redefining the flow.
+
+Both names in that signature are types this file may not yet import. Add whichever are missing before writing the function, or the harness fails to compile:
+
+```ts
+import type { IndexHit } from "./brief-registry.ts";
+import type { Report } from "./brief-types.ts";
+```
+
+Import the e2e side too: `brief-e2e.test.ts` needs `runBriefWithIndexHits` imported from the test server module.
 
 - [ ] **Step 4: Run the e2e suite**
 
