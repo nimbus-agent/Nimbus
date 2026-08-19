@@ -705,8 +705,19 @@ Create `packages/gateway/src/prfiles/pr-file-mapping.test.ts`:
 ```ts
 import { describe, expect, test } from "bun:test";
 
-import fixture from "../../test/fixtures/pr-files/github-pull-files.json" with { type: "json" };
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { mapGithubPrFiles } from "./pr-file-mapping.ts";
+
+// Fixtures are read and parsed, NOT imported with an import attribute. This repo uses zero
+// `with { type: "json" }` imports; the established pattern is readFileSync + JSON.parse
+// (`connectors/openapi-indexer-parsing.test.ts:8-12`). Do not "modernise" this.
+const FIX = join(import.meta.dir, "../../test/fixtures/pr-files");
+const loadFixture = (name: string): unknown =>
+  JSON.parse(readFileSync(join(FIX, name), "utf8")) as unknown;
+
+const fixture = loadFixture("github-pull-files.json");
 
 describe("mapGithubPrFiles", () => {
   test("a rename produces TWO rows, one per touched path", () => {
@@ -886,11 +897,12 @@ As in Task 3: if the live API disagrees, use the live shape and say so in your r
 Append to `packages/gateway/src/prfiles/pr-file-mapping.test.ts`:
 
 ```ts
-import gitlabFixture from "../../test/fixtures/pr-files/gitlab-mr-diffs.json" with { type: "json" };
-import bitbucketFixture from "../../test/fixtures/pr-files/bitbucket-pr-diffstat.json" with {
-  type: "json",
-};
+// Reuse the `loadFixture` helper already defined at the top of this file by Task 3 — do not add a
+// second loader, and do not switch to an import attribute (this repo uses none).
 import { mapBitbucketPrFiles, mapGitlabMrFiles } from "./pr-file-mapping.ts";
+
+const gitlabFixture = loadFixture("gitlab-mr-diffs.json");
+const bitbucketFixture = loadFixture("bitbucket-pr-diffstat.json");
 
 describe("mapGitlabMrFiles", () => {
   test("a rename produces TWO rows", () => {
@@ -1036,7 +1048,8 @@ export function mapBitbucketPrFiles(payload: unknown): ChangedFileRow[] {
 - [ ] **Step 5: Run and confirm they pass**
 
 Run: `bun test packages/gateway/src/prfiles/pr-file-mapping.test.ts`
-Expected: PASS, 14 tests (6 from Task 3 + 8 here).
+Expected: PASS, **13 tests** — 6 from Task 3, plus 3 GitLab and 4 Bitbucket here. If your count
+differs, you added or dropped a test; reconcile rather than adjusting the number.
 
 - [ ] **Step 6: Commit**
 
@@ -1523,7 +1536,10 @@ export async function runPrFilePass(
       }
     } catch (err) {
       // A rate-limit error ends the whole tick; anything else costs only this PR.
-      if (isRateLimitError(err)) {
+      // `RateLimitError` is the class the connectors already throw — import it from
+      // wherever `connectors/github-sync.ts` imports it. Do NOT add an `isRateLimitError`
+      // helper; the instanceof check is the established shape here.
+      if (err instanceof RateLimitError) {
         throw err;
       }
       ctx.logger.warn(
@@ -1552,9 +1568,10 @@ export async function runPrFilePass(
 }
 ```
 
-For `isRateLimitError`, use the existing `RateLimitError` class the connectors already throw —
-read `packages/gateway/src/connectors/github-sync.ts` for its import path and write
-`err instanceof RateLimitError` inline rather than adding a helper.
+**Import placement:** the three `import` lines above belong at the TOP of `pr-file-fetch.ts`
+alongside Task 5's existing imports, not in the middle of the file where this block is appended.
+`RateLimitError`'s import path is whatever `packages/gateway/src/connectors/github-sync.ts` uses —
+read it rather than guessing.
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
