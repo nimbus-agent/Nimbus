@@ -52,6 +52,7 @@ import {
 import { PERSON_HANDLES_V5_ALTER_SQL } from "../person-handles-v5-sql.ts";
 import { PERSON_LINKED_V4_ALTER_SQL } from "../person-linked-v4-sql.ts";
 import { POLICY_V36_SQL } from "../policy-v36-sql.ts";
+import { PR_CHANGED_FILE_V55_SQL } from "../pr-changed-file-v55-sql.ts";
 import { PR_COMMIT_RELATION_V27_SEED_SQL } from "../pr-commit-relation-v27-sql.ts";
 import { PREMORTEM_V53_SQL } from "../premortem-v53-sql.ts";
 import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
@@ -548,6 +549,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   { fromVersion: 51, toVersion: 52, apply: migrateIndexedV51ToV52 },
   simpleStep(52, 53, "premortem theme extraction tables", PREMORTEM_V53_SQL),
   simpleStep(53, 54, "graph_entity metadata namespacing", ENTITY_METADATA_V54_SQL),
+  simpleStep(54, 55, "PR changed-file paths + coverage", PR_CHANGED_FILE_V55_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
