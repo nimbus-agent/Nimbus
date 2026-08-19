@@ -77,9 +77,23 @@ export function recordPrChangedFiles(
 /**
  * The canonical fail-closed negation query. W6-B calls this rather than rebuilding it.
  *
- * The INNER JOIN to `pr_files_state` is the mechanism, not an optimisation: a PR with no coverage
- * row cannot appear in the result at all. A LEFT JOIN here — or reading `pr_changed_file` alone —
- * silently returns every unfetched PR as a confident "does not touch X".
+ * Fail-closed by TWO independent mechanisms, and it is worth knowing both — an earlier version of
+ * this comment named only the first and claimed a LEFT JOIN alone would break it, which is FALSE
+ * (measured, not assumed):
+ *
+ *   1. the INNER JOIN to `pr_files_state` — an uncovered PR has no row to join to; and
+ *   2. `s.truncated = 0` — on an uncovered PR that column is NULL, and `NULL = 0` evaluates to
+ *      NULL, which `WHERE` treats as not-true, so the row drops here too.
+ *
+ * Either one alone excludes an unfetched PR. Swapping the JOIN for a LEFT JOIN therefore does NOT
+ * reintroduce the bug on its own. What DOES reintroduce it is losing both at once — a LEFT JOIN
+ * combined with a null-softened comparison such as `COALESCE(s.truncated, 0) = 0`, which is
+ * exactly the shape a well-meaning "null-safety" cleanup would produce — or dropping the coverage
+ * table from the query entirely and reading `pr_changed_file` alone.
+ *
+ * So: keep the INNER JOIN, and do not make the `truncated` comparison null-tolerant. The test
+ * "a PR with no coverage row is EXCLUDED, not returned" fails under the combined change, which is
+ * the regression worth guarding.
  *
  * GLOB, never LIKE: LIKE is case-insensitive for ASCII and treats `_` as a wildcard, both verified
  * against this repo's bun:sqlite. Paths are case-sensitive on Linux and macOS, and `_` is common in

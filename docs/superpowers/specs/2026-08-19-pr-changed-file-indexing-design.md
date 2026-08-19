@@ -211,10 +211,25 @@ WHERE i.type = 'pr'
       );
 ```
 
-**The `JOIN` is the fail-closed mechanism.** An inner join to the coverage table means a PR with no
-coverage row cannot appear, so § 2's false positive is structurally impossible rather than
-prevented by remembering a filter. A `LEFT JOIN` here, or reading `pr_changed_file` alone, silently
-restores the bug.
+**Fail-closed by two independent mechanisms.** *(Corrected during implementation — this section
+originally claimed a `LEFT JOIN` alone would restore the bug. Measured against `bun:sqlite`, it
+does not.)*
+
+1. The inner `JOIN` to the coverage table: an uncovered PR has no row to join to.
+2. `s.truncated = 0`: on an uncovered PR that column is `NULL`, and `NULL = 0` evaluates to `NULL`,
+   which `WHERE` treats as not-true — so the row drops here as well.
+
+| Query shape | Uncovered PR returned? |
+| --- | --- |
+| `JOIN` + `truncated = 0` | no |
+| `LEFT JOIN` + `truncated = 0` | no — the NULL comparison still excludes it |
+| `LEFT JOIN` + `COALESCE(truncated, 0) = 0` | **yes — the bug** |
+| no coverage join at all | **yes — the bug** |
+
+Either mechanism alone is sufficient, which makes the guard sturdier than first specified but also
+means **no single-line edit demonstrates its necessity**. The regression to guard against is the
+combined one: a `LEFT JOIN` plus a null-softened comparison — precisely the shape a well-meaning
+"null-safety" cleanup produces — or dropping the coverage table from the query altogether.
 
 **`GLOB`, not `LIKE`** — verified empirically against this repo's `bun:sqlite`, because both
 failure modes are silent:
