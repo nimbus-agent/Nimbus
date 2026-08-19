@@ -97,7 +97,12 @@ installed, already in conversation.
 
 It is the only thing Nimbus does that is simultaneously unique, free of every
 prerequisite (no LLM, no API key, no cloud account, no credentials), and
-visibly non-obvious within sixty seconds of install. It is also the *proven*
+visibly non-obvious within sixty seconds of install. **The brief is
+deterministic**: `agents/why.ts` renders it from the index, and the optional
+synthesis layer (`[agents] synthesis`, default `"local"`) only rewrites what is
+already there — `agents/_lib/synthesize.ts` fixes the deterministic render as
+the floor and catches synthesis failure, so a machine with no local model gets
+the full brief rather than an error. It is also the *proven*
 path: the Gate 1 Linux run in a clean container reached real authorship output,
 while semantic search stayed unverified because the embedding worker failed to
 initialise. Leading with what has actually been proven on a foreign machine is
@@ -153,6 +158,16 @@ repository. Actions:
 - Reference `create-nimbus-connector` from `docs/README.md` and
   `docs/CONTRIBUTING.md`, and state which of the two generators a contributor
   should reach for.
+- **Close the registration-drift gap.** `scripts/gen-bundled-connector-registry.ts`
+  scans `packages/mcp-connectors/` and writes a *committed* file, and nothing
+  regenerates-and-diffs it in CI. A connector added without rerunning
+  `gen:connector-registry` leaves a stale registry that no gate catches —
+  `test:connector-boot` cannot see it, because it boots the connectors the
+  registry ships, and this one is missing from it. Add a regenerate-and-diff
+  script beside the existing `audit:connector-entrypoints` and
+  `audit:connector-deps`, registered in `scripts/lib/preflight-gates.ts`.
+  **Not** in `check-nimbus-invariants.ts`: that file is the static complement
+  to the numbered *security* invariants, and registration drift is not one.
 
 ### Rung 2 — Docs and DX
 
@@ -229,6 +244,15 @@ Three additions to that spec:
    blocked list.** It is the highest-intent discovery surface that exists for
    this product, and the packaging decision it is blocked on is exactly this
    publish. The launcher package exists, is MIT, and has a `bin`.
+   **This is not a one-command task, and the spec should not pretend it is.**
+   `NPM_TOKEN` is `state: "forbidden"` in `scripts/release/credential-registry.ts`
+   (revoked 2026-07-19); publishing is OIDC-only with `mfa=publish`, and the
+   monorepo contains no `npm publish` path at all — `@nimbus-dev/sdk` and
+   `@nimbus-dev/client` publish from their own satellite repositories, which is
+   precisely why they are live and this one is not. So the first step is a
+   decision: configure npm trusted publishing (OIDC) for a third package and add
+   a publish path here, **or** move `packages/mcp-launcher` into its own
+   satellite repo, matching the pattern that already works.
    **Related documentation defect:** `CLAUDE.md` and `GEMINI.md` both describe
    `packages/mcp-launcher` as "the published `@nimbus-dev/mcp` npm launcher".
    It is not published. Either publish it or correct both files — an
@@ -268,9 +292,16 @@ Ten to twenty individual approaches beat any broadcast at this stage.
 **Hacktoberfest — in scope, ~6 weeks out.** Connector-shaped, scaffold-generated,
 self-contained issues are close to the ideal Hacktoberfest work item, and
 opting in costs a repository topic. It arrives exactly when the shelf would be
-stocked. The cost is spam pull requests; the mitigations are an issue-first
-policy stated in `CONTRIBUTING.md`, disciplined labelling, and a willingness to
-close low-effort PRs quickly and politely.
+stocked. The cost is spam pull requests. The mitigation is a checkable rule rather than
+guidance: an outside pull request is reviewed only if its author was
+**assigned the corresponding issue first**, stated in `docs/CONTRIBUTING.md`
+(which today says only "open a discussion before starting any large PR" — advice
+that does not cover this failure mode), plus disciplined labelling and a
+willingness to close low-effort PRs quickly and politely. Automated
+unassigned-PR replies are deliberately **not** part of this: the first genuine
+outside contributor is the likeliest person to trip such a bot, and that is a
+bad first interaction on a funnel this thin. Revisit in October only if volume
+appears.
 
 **The maintainer-side commitment decides whether any of this works:** the
 published 72-hour first response, honoured. At a few hours per week this is the
@@ -362,7 +393,7 @@ Decided now, while it is cheap to be honest:
 | 1 | Wedge copy pass (README, landing, launch-messaging, audiences) | — |
 | 2 | Contributor on-ramp: scaffold verification, scaffold discoverability, ratchet documentation, 72-hour response commitment | — |
 | 3 | Stock the issue shelf to 25–30 | — |
-| 4 | Finish the directory-listings spec (chase 2 open PRs, confirm Glama, run Tiers 2–4); publish `@nimbus-dev/mcp`; list the Actions; cross-link satellites | — |
+| 4 | Finish the directory-listings spec (chase 2 open PRs, confirm Glama, run Tiers 2–4); decide the `@nimbus-dev/mcp` publish route (OIDC here vs. satellite repo) and publish it; list the Actions; cross-link satellites | — |
 | 5 | Contributor recruiting: targeted outreach, ecosystem communities | 2, 3 |
 | 6 | Hacktoberfest opt-in | 3, 5 |
 | 7 | Gate 1 Windows and macOS | — (can run in parallel; contributors may close a leg) |
