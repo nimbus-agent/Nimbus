@@ -247,7 +247,7 @@ git commit -m "feat(metrics): pure bucket splitter for nimbus stats"
 - Consumes: `splitBuckets`, `StatsBucket`, `StatsBucketError` (Task 1); `ServiceConfig` from `./dora-config.ts`; `deploymentFrequency`, `leadTimeForChanges`, `changeFailureRate`, `mttr`, `type DoraMetricValue`, `type DoraGap` from `./dora.ts`.
 - Produces:
   - `type StatsMetricId = "deployment-frequency" | "lead-time" | "change-failure-rate" | "mttr" | "pr-merges" | "incidents-opened"`
-  - `type StatsGap = DoraGap | "github_only_merge_data"`
+  - `type StatsGap = DoraGap | "github_only_merge_data" | "incidents_missing_opened_at"`
   - `type StatsPoint = { startMs, endMs, value: number | null, unit: string, sample: number, gap: StatsGap }`
   - `type StatsSeries = { metric: StatsMetricId; service: string; window: { sinceMs, untilMs }; bucketMs: number; points: StatsPoint[] }`
   - `const STATS_METRIC_IDS: readonly StatsMetricId[]`
@@ -362,6 +362,69 @@ describe("computeStatsSeries — pr-merges", () => {
   });
 });
 
+// These three pin the corrections in Task 2 step 3 (a), (b) and (c). Without them the plan
+// states the rules and nothing enforces them.
+describe("computeStatsSeries — incidents-opened", () => {
+  function insertIncident(
+    db: Database,
+    id: string,
+    pdService: string,
+    openedAtMs: number | null,
+    status: string,
+    modifiedAt: number,
+  ): void {
+    const meta: Record<string, unknown> = { pagerduty_service_id: pdService, status };
+    if (openedAtMs !== null) meta["opened_at_ms"] = openedAtMs;
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
+       VALUES (?, 'pagerduty', 'incident', ?, 'x', ?, ?, ?)`,
+      [id, id, modifiedAt, JSON.stringify(meta), NOW],
+    );
+  }
+  const pd = (): ServiceConfig => ({ ...cfg(GH), pagerdutyServices: ["PSVC1"] });
+
+  // (a) buckets on the OPENED time, not modified_at.
+  test("an old incident touched recently stays in its ORIGINAL bucket", () => {
+    const db = makeDb();
+    insertIncident(db, "old", "PSVC1", NOW - 3.5 * DAY, "resolved", NOW);
+    const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, 4 * DAY, DAY);
+    expect(s.points[3]?.value).toBeNull(); // newest bucket: nothing opened
+    expect(s.points[0]?.value).toBe(1); // oldest bucket: where it opened
+  });
+
+  // (b) status is NOT filtered — an incident still burning still opened.
+  test("an unresolved incident is counted", () => {
+    const db = makeDb();
+    insertIncident(db, "live", "PSVC1", NOW - 0.5 * DAY, "triggered", NOW);
+    const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBe(1);
+  });
+
+  // (c) a missing opened_at_ms is EXCLUDED and REPORTED — never coalesced to synced_at.
+  test("an incident with no opened_at_ms is excluded and flagged, not back-dated", () => {
+    const db = makeDb();
+    insertIncident(db, "timed", "PSVC1", NOW - 0.5 * DAY, "resolved", NOW);
+    insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW);
+    const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBe(1);
+    expect(s.points[0]?.gap).toBe("incidents_missing_opened_at");
+  });
+
+  test("no pagerduty mapping yields no_pagerduty_mapping, not zero", () => {
+    const db = makeDb();
+    const s = computeStatsSeries(db, cfg(GH), "incidents-opened", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBeNull();
+    expect(s.points[0]?.gap).toBe("no_pagerduty_mapping");
+  });
+
+  test("an incident belonging to another pagerduty service is not counted", () => {
+    const db = makeDb();
+    insertIncident(db, "other", "PSVC2", NOW - 0.5 * DAY, "resolved", NOW);
+    const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBeNull();
+  });
+});
+
 describe("registry totality", () => {
   test("every declared metric id has an evaluator and returns a series", () => {
     const db = makeDb();
@@ -412,8 +475,8 @@ export type StatsMetricId =
   | "pr-merges"
   | "incidents-opened";
 
-/** DORA's own union stays frozen; this feature's extra reason lives here. */
-export type StatsGap = DoraGap | "github_only_merge_data";
+/** DORA's own union stays frozen; this feature's extra reasons live here. */
+export type StatsGap = DoraGap | "github_only_merge_data" | "incidents_missing_opened_at";
 
 export type StatsPoint = {
   readonly startMs: number;
@@ -479,7 +542,68 @@ function prMerges(db: Database, cfg: ServiceConfig, startMs: number, endMs: numb
 }
 ```
 
-`incidents-opened` follows the same shape: count incident rows whose `metadata.opened_at_ms` falls in `[startMs, endMs)`, scoped to `cfg.pagerdutyServices` exactly as `dora.ts` already scopes them, returning `{ value: null, unit: "incidents", sample: 0, gap: "no_pagerduty_mapping" }` when the service has no mapping and `{ value: null, …, gap: "low_sample" }` for an empty bucket.
+`incidents-opened` is the trickiest evaluator in this feature, and three things about `dora.ts`'s existing incident handling will mislead you if you copy it wholesale. Read `selectResolvedIncidents` (`metrics/dora.ts:286`) first, then note all three:
+
+**(a) Copy the SERVICE scoping, but NOT the time predicate.** That function's outer SQL filters on `i.modified_at >= ? AND i.modified_at <= ?` — a *last-modified* window — and only then uses the opened timestamp for duration arithmetic. For a series of when incidents *opened*, filtering on `modified_at` would bucket a months-old incident into this week because someone touched it, which is exactly the F1 trap this whole feature exists to avoid. Reuse the `service = 'pagerduty' AND type = 'incident' AND json_extract(metadata,'$.pagerduty_service_id') IN (…)` scoping; replace the time predicate.
+
+**(b) Do NOT filter on `status`.** `selectResolvedIncidents` skips anything not `"resolved"` because MTTR needs a resolution time. `incidents-opened` counts incidents *opened* in a window regardless of their current state — an incident still burning is still an incident that opened. Filtering by status here would undercount exactly the ones a reader most wants to see.
+
+**(c) `opened_at_ms` is optional, and the DORA fallback is NOT available to us.** `connectors/pagerduty-sync.ts:90` writes it conditionally (`if (Number.isFinite(openedAtMs))`), and `dora.ts:310` falls back to `r.synced_at` when it is missing. **We cannot take that fallback**: `synced_at` is when *we indexed the row*, not when the incident opened, and this plan's Global Constraints forbid bucketing on it. Neither option is acceptable — filtering on `opened_at_ms` alone silently drops those incidents, and coalescing to `synced_at` silently fabricates an event time.
+
+The honest third answer: **count only incidents with a real `opened_at_ms`, and make the exclusion visible** via a gap rather than swallowing it. Add the gap value to the union in this file:
+
+```ts
+export type StatsGap = DoraGap | "github_only_merge_data" | "incidents_missing_opened_at";
+```
+
+```ts
+function incidentsOpened(
+  db: Database,
+  cfg: ServiceConfig,
+  startMs: number,
+  endMs: number,
+): DoraMetricValue {
+  if (cfg.pagerdutyServices.length === 0) {
+    return { value: null, unit: "incidents", sample: 0, gap: "no_pagerduty_mapping" };
+  }
+  const ph = cfg.pagerdutyServices.map(() => "?").join(",");
+  // `json_valid` guards `json_extract`, which RAISES on malformed JSON here — and the guard
+  // is context-dependent, so it must sit in the WHERE clause beside every extract.
+  const scope = `FROM item
+     WHERE service = 'pagerduty' AND type = 'incident'
+       AND json_valid(metadata)
+       AND json_extract(metadata, '$.pagerduty_service_id') IN (${ph})`;
+  const counted = db
+    .query(
+      `SELECT COUNT(*) AS c ${scope}
+         AND json_extract(metadata, '$.opened_at_ms') >= ?
+         AND json_extract(metadata, '$.opened_at_ms') < ?`,
+    )
+    .get(...cfg.pagerdutyServices, startMs, endMs) as { c: number } | null;
+  // Incidents this service owns that carry NO opened timestamp at all. They cannot be placed
+  // in any bucket, so they are excluded from every one — and that exclusion is reported
+  // rather than hidden. Deliberately not windowed: an untimestamped row cannot be windowed.
+  const untimed = db
+    .query(`SELECT COUNT(*) AS c ${scope} AND json_extract(metadata, '$.opened_at_ms') IS NULL`)
+    .get(...cfg.pagerdutyServices) as { c: number } | null;
+  const count = counted?.c ?? 0;
+  const missing = (untimed?.c ?? 0) > 0;
+  if (count === 0) {
+    return {
+      value: null,
+      unit: "incidents",
+      sample: 0,
+      gap: (missing ? "incidents_missing_opened_at" : "low_sample") as DoraGap,
+    };
+  }
+  return {
+    value: count,
+    unit: "incidents",
+    sample: count,
+    gap: (missing ? "incidents_missing_opened_at" : null) as DoraGap,
+  };
+}
+```
 
 Then the registry and the driver:
 
@@ -705,6 +829,8 @@ function requireStatsParams(params: unknown): {
 }
 ```
 
+**Every error this arm raises must be actionable at the terminal**, because the CLI prints it verbatim and a bare `-32602` with a generic message is indistinguishable from a bug. Each one names the offending value: the unknown metric lists the valid ids, the unknown service names the config table to add, and a bucket error names both durations (`StatsBucketError` already does — that is why it is re-wrapped rather than replaced with a generic string). Do not lose the original message when converting.
+
 In `dispatchMetricsRpc`, replace the early `if (method !== "metrics.dora") return { kind: "miss" };` with a branch handling both methods, widen the return type to `DoraMetricsResult | StatsSeries`, and wrap the `computeStatsSeries` call so a `StatsBucketError` becomes a `MetricsRpcError(-32602, …)` rather than escaping:
 
 ```ts
@@ -881,7 +1007,15 @@ export function parseStatsArgs(args: string[]): StatsArgs {
 }
 ```
 
-`runStats` then prints help for no args / `--help`, calls `parseStatsArgs`, invokes `metrics.stats` through `withGatewayIpc`, and renders. **Rendering rule:** a `null` value prints as `—` with its gap in a trailing column, never as `0` — the whole point of the null. `--json` prints the response verbatim.
+`runStats` then prints help for no args / `--help`, calls `parseStatsArgs`, invokes `metrics.stats` through `withGatewayIpc`, and renders.
+
+**Rendering rules — three, all load-bearing:**
+
+1. A `null` value prints as `—` with its gap in a trailing column, **never as `0`**. That distinction is the whole point of the null.
+2. **Print a summary line beneath the table**, giving how many buckets carried a value out of the total, plus the distinct gap reasons present — e.g. `4 of 13 buckets had data (9 low_sample)`. Without it a sparse series renders as a wall of dashes and reads as breakage. Per spec D2 this is the *expected* shape for a weekly `mttr` bucket, so the summary is what turns "looks broken" into "data is thin, and here's why".
+3. If **every** bucket is null, say so in one plain sentence naming the dominant gap rather than printing an all-dash table — that is the case a user is most likely to misread as a bug.
+
+`--json` prints the response verbatim, with no summary — a machine consumer computes its own.
 
 - [ ] **Step 4: Run test to verify it passes**
 
