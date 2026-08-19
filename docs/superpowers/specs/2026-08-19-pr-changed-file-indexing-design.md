@@ -308,7 +308,7 @@ no improvement to it.
 `nimbus status` alongside the `Embedding backfill: <done> / <total>` line it already prints —
 the direct precedent for reporting backlog progress this way.
 
-```
+```text
 PR file coverage: 412 / 1203 (18 truncated)
 ```
 

@@ -42,12 +42,14 @@
 ## Task 1: V55 schema
 
 **Files:**
+
 - Create: `packages/gateway/src/index/pr-changed-file-v55-sql.ts`
 - Create: `packages/gateway/src/index/pr-changed-file-v55.test.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts` (import + `INDEXED_SCHEMA_STEPS`)
 - Modify: `packages/gateway/src/index/local-index.ts:265` (`CURRENT_SCHEMA_VERSION`)
 
 **Interfaces:**
+
 - Produces: `PR_CHANGED_FILE_V55_SQL: string` — the DDL, imported by the runner.
 
 - [ ] **Step 1: Write the failing test**
@@ -257,10 +259,12 @@ EOF
 ## Task 2: The store module
 
 **Files:**
+
 - Create: `packages/gateway/src/prfiles/pr-changed-file-store.ts`
 - Create: `packages/gateway/src/prfiles/pr-changed-file-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PR_CHANGED_FILE_V55_SQL` (Task 1).
 - Produces:
   - `type ChangedFileRow = { readonly path: string; readonly status: ChangedFileStatus; readonly counterpartPath: string | null }`
@@ -671,11 +675,13 @@ EOF
 ## Task 3: GitHub fetch path
 
 **Files:**
+
 - Create: `packages/gateway/test/fixtures/pr-files/github-pull-files.json`
 - Create: `packages/gateway/src/prfiles/pr-file-mapping.ts`
 - Create: `packages/gateway/src/prfiles/pr-file-mapping.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ChangedFileRow`, `ChangedFileStatus` (Task 2).
 - Produces: `mapGithubPrFiles(payload: unknown): ChangedFileRow[]`
 
@@ -855,12 +861,14 @@ EOF
 ## Task 4: GitLab and Bitbucket mappers
 
 **Files:**
+
 - Create: `packages/gateway/test/fixtures/pr-files/gitlab-mr-diffs.json`
 - Create: `packages/gateway/test/fixtures/pr-files/bitbucket-pr-diffstat.json`
 - Modify: `packages/gateway/src/prfiles/pr-file-mapping.ts`
 - Modify: `packages/gateway/src/prfiles/pr-file-mapping.test.ts`
 
 **Interfaces:**
+
 - Produces: `mapGitlabMrFiles(payload: unknown): ChangedFileRow[]`, `mapBitbucketPrFiles(payload: unknown): ChangedFileRow[]`
 
 - [ ] **Step 1: Record both fixtures**
@@ -1070,10 +1078,12 @@ EOF
 ## Task 5: Candidate selector and file cap (pure helpers)
 
 **Files:**
+
 - Create: `packages/gateway/src/prfiles/pr-file-fetch.ts`
 - Create: `packages/gateway/src/prfiles/pr-file-fetch.test.ts`
 
 **Interfaces:**
+
 - Consumes: `recordPrChangedFiles`, `ChangedFileRow` (Task 2); the mappers (Tasks 3–4).
 - Produces:
   - `MAX_PRS_PER_TICK = 10`, `MAX_FILES_PER_PR = 300`, `PR_FILES_PAGE_SIZE = 100`
@@ -1309,12 +1319,14 @@ EOF
 ## Task 6: The shared fetch driver, and GitHub wiring
 
 **Files:**
+
 - Modify: `packages/gateway/src/prfiles/pr-file-fetch.ts`
 - Modify: `packages/gateway/src/prfiles/pr-file-fetch.test.ts`
 - Modify: `packages/gateway/src/connectors/github-sync.ts`
 - Modify: `packages/gateway/src/connectors/github-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `selectPrFileCandidates`, `applyFileCap`, `MAX_PRS_PER_TICK`, `PR_FILES_PAGE_SIZE`, `MAX_FILES_PER_PR` (Task 5); `recordPrChangedFiles` (Task 2); `mapGithubPrFiles` (Task 3).
 - Produces:
   - `MAX_PAGES_PER_PR = 3`
@@ -1681,11 +1693,13 @@ EOF
 ## Task 7: GitLab and Bitbucket wiring
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/gitlab-sync.ts`
 - Modify: `packages/gateway/src/connectors/bitbucket-sync.ts`
 - Modify: their respective `.test.ts` files
 
 **Interfaces:**
+
 - Consumes: `runPrFilePass`, `PR_FILES_PAGE_SIZE` (Task 6); `mapGitlabMrFiles`, `mapBitbucketPrFiles` (Task 4).
 
 - [ ] **Step 1: Read both sync entry points first**
@@ -1747,12 +1761,14 @@ EOF
 ## Task 8: Coverage on `diag.snapshot`
 
 **Files:**
+
 - Modify: `packages/gateway/src/db/metrics.ts` (the `IndexMetrics` type and `collectIndexMetrics`)
 - Modify: `packages/gateway/src/db/metrics.test.ts` (or create it if absent)
 - Modify: `packages/cli/src/commands/status.ts`
 - Modify: `packages/cli/src/commands/status.test.ts`
 
 **Interfaces:**
+
 - Consumes: `collectPrFileCoverage` (Task 2).
 - Produces: `IndexMetrics.prFileCoverage: { covered: number; totalPrs: number; truncated: number }`
 
@@ -1884,6 +1900,7 @@ EOF
 ## Task 9: Documentation
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/architecture.md` (the "Latest applied migration" bullet)
 - Modify: `docs/schema-reference.md` (V55 entry + the canonical migration blockquote)

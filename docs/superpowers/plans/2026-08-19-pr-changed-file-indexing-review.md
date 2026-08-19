@@ -18,11 +18,13 @@ This document reviews [2026-08-19-pr-changed-file-indexing.md](./2026-08-19-pr-c
 ## 2. Bitbucket Pagination & Diffstat Envelope
 
 * **Context:** In Task 4, Bitbucket's mapper is defined as:
+
   ```ts
   export function mapBitbucketPrFiles(payload: unknown): ChangedFileRow[]
   ```
+
   And Bitbucket's diffstat API is paginated with a `next` URL.
-* **Question:** How is pagination handled for Bitbucket? 
+* **Question:** How is pagination handled for Bitbucket?
   * If the network fetch loop in the connector retrieves pages sequentially, does it concatenate the `values` arrays first and pass the full payload to `mapBitbucketPrFiles`? Or does it map each page individually and concatenate the resulting `ChangedFileRow` arrays?
   * *Suggestion:* Clarify the sequence. Mapping page-by-page and then concatenating the mapped arrays is generally safer to avoid building very large temporary JSON structures.
 
