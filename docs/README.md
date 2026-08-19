@@ -19,7 +19,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-cast-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="./assets/hero-cast-light.svg">
-  <img alt="Nimbus zero-config demo: nimbus init registers the current git repository for code indexing, the filesystem connector syncs it, and nimbus why traces a line back to its commit, pull request, ticket and incident — with no credentials, no API key and no LLM configured." src="./assets/hero-cast-light.svg" width="720">
+  <img alt="Nimbus zero-config demo: nimbus init registers the current git repository for code indexing, the filesystem connector syncs it, and nimbus why traces a line back to its commit and author from local git history — with no credentials, no API key and no LLM configured. Connecting GitHub, a ticket tracker and an incident tool extends the same command with the pull request, ticket and incident." src="./assets/hero-cast-light.svg" width="720">
 </picture>
 
 [**Install**](#quick-start) · [**Docs**](https://nimbus-agent.dev) · [**Watch the 15-second cast**](https://asciinema.org/a/HBEHmA2twRB7pPzI) · [**Architecture**](./architecture.md) · [**Roadmap**](./roadmap.md)
@@ -37,7 +37,7 @@ nimbus why src/auth.ts:42
 
 Who wrote this line, when, and in which commit — answered from your local git history, with no LLM configured, no API key, and no cloud account. Connect GitHub and a ticket tracker (Jira or Linear) and an incident tool, and the same command extends its answer with the pull request that carried the change, the ticket that asked for it, and the incident it touched.
 
-That is the whole first run. Everything below is what becomes available once you connect the tools you already use.
+That is the whole first run. Much of what follows is what becomes available once you connect the tools you already use.
 
 ---
 
@@ -65,7 +65,8 @@ The non-negotiables in [Contributing](#contributing) follow from that question �
 # Incident response — answered from the local index, no API calls, under 100ms
 nimbus ask "The payment-service alert just fired — what changed in the last 2 hours?"
 
-# Line-level provenance — commit, PR, ticket, incident. No credentials, no LLM needed
+# Line-level provenance — commit authorship from local git, no credentials or LLM needed.
+# Connect GitHub, a ticket tracker and an incident tool to extend it with the PR, ticket, and incident.
 nimbus why src/auth.ts:42
 
 # Release readiness — cross-service without tab-switching
@@ -323,13 +324,13 @@ nimbus init
 
 ### 3. Trace a line's provenance
 
-Who wrote it, the PR, the ticket, the incident it responded to, and what breaks downstream:
+Who wrote it and when, answered from your local git history. Connect GitHub, a ticket tracker (Jira or Linear), and an incident tool, and the same command extends its answer with the pull request that carried the change, the ticket that asked for it, and the incident it responded to:
 
 ```bash
 nimbus why src/auth.ts:42
 ```
 
-`nimbus init` prints a real `file:line` from your own repo to try first. This works with no credentials and no LLM configured.
+`nimbus init` prints a real `file:line` from your own repo to try first. Authorship — who wrote it, when, from your local git history — works with no credentials and no LLM configured; the PR, ticket, and incident need those tools connected.
 
 ### Optional: add an LLM
 
@@ -814,12 +815,7 @@ nimbus/
 └── package.json              # Bun workspace root
 ```
 
-Several surfaces live in their own repos and release independently of the Gateway:
-
-- **`@nimbus-dev/sdk`** — the extension-authoring contract: [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) (npm, MIT).
-- **`@nimbus-dev/client`** — the typed IPC wrapper consumed by `packages/cli` and the VS Code extension: [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) (npm, MIT).
-- **VS Code / Open VSX extension** — [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode).
-- **Browser web clipper (Chrome + Firefox MV3)** — [nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper); the gateway-side surface stays in this repo.
+Several surfaces live in their own repos and release independently of the Gateway — see the [Ecosystem](#ecosystem) table below.
 
 ---
 
@@ -829,11 +825,11 @@ Nimbus is a gateway plus a set of surfaces that talk to it. All of these are sep
 
 | Repo | What it is |
 |---|---|
-| [nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) | The extension-authoring contract (MIT) — what a connector is written against |
-| [nimbus-client](https://github.com/nimbus-agent/nimbus-client) | Typed IPC wrapper (MIT) — how a client talks to the gateway |
+| [nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) | The extension-authoring contract (npm, MIT) — what a connector is written against |
+| [nimbus-client](https://github.com/nimbus-agent/nimbus-client) | Typed IPC wrapper (npm, MIT) — how a client talks to the gateway; consumed by `packages/cli` and the VS Code extension |
 | [create-nimbus-connector](https://github.com/nimbus-agent/create-nimbus-connector) | Scaffolding generator for a new connector |
 | [nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) | VS Code / Open VSX extension |
-| [nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) | Chrome + Firefox MV3 web clipper |
+| [nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) | Chrome + Firefox MV3 web clipper; the gateway-side surface stays in this repo |
 | [nimbus-raycast](https://github.com/nimbus-agent/nimbus-raycast) | Raycast extension — quick-ask over the local gateway |
 | [awesome-nimbus](https://github.com/nimbus-agent/awesome-nimbus) | Curated connectors, recipes, extensions and resources |
 
@@ -850,7 +846,7 @@ Architecture is stabilizing; not all interfaces are frozen.
 3. Check issues tagged `good first issue`.
 4. Open a discussion before large PRs.
 
-**Adding a connector is the easiest way in.** `nimbus scaffold extension packages/mcp-connectors/your-service` generates the package, or use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) standalone. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
+**Adding a connector is the easiest way in.** `nimbus scaffold extension packages/mcp-connectors/your-service` generates a starting shell you then shape into a connector, or use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) standalone. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
 
 For workflow, verification commands, and PR expectations, see [`CONTRIBUTING.md`](./CONTRIBUTING.md). Community standards are in [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 

@@ -25,7 +25,7 @@ Every post, listing and landing page leads with this and nothing else. The conne
 
 ## ICP vs generic (say the first, not the others)
 
-- ✅ *"Hover any line: who wrote it, what ticket, what incident, and what breaks if you change it."*
+- ✅ *"`nimbus why src/auth.ts:42` — who wrote this line, when, and in what commit, from your local git history. Connect GitHub, a ticket tracker and an incident tool, and the same command adds the pull request, the ticket, and the incident."*
 - ✅ *"Verifiable proof of what your agent did off your machine."*
 - ⚠️ *"Give Copilot your private context"* — positions Nimbus as an accessory; avoid.
 
