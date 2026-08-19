@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.7.0](https://github.com/nimbus-agent/Nimbus/compare/v2.6.0...v2.7.0) (2026-08-19)
+
+
+### Features
+
+* **engine:** [persona] gives Nimbus a configurable voice ([#1248](https://github.com/nimbus-agent/Nimbus/issues/1248)) ([10b3175](https://github.com/nimbus-agent/Nimbus/commit/10b31750e57f1b3a6469b731b0942929b7f4d7fc))
+* **engine:** nimbus ask --devil argues against the plan ([#1246](https://github.com/nimbus-agent/Nimbus/issues/1246)) ([becc386](https://github.com/nimbus-agent/Nimbus/commit/becc386cb9d114ed4bf9f292b3ce99cb7e97afa7))
+
 ## [2.6.0](https://github.com/nimbus-agent/Nimbus/compare/v2.5.0...v2.6.0) (2026-08-18)
 
 
