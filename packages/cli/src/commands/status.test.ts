@@ -449,6 +449,38 @@ describe("runStatusImpl", () => {
     expect(out.stdout).toContain("gitlab: 10");
   });
 
+  it("prints PR file coverage when present", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      {
+        connectorHealth: [],
+        index: { totalItems: 5, prFileCoverage: { covered: 412, totalPrs: 1203, truncated: 18 } },
+      },
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: "/s" },
+      { wantDrift: false, verbose: true },
+    );
+    expect(out.stdout).toContain("PR file coverage: 412 / 1203 (18 truncated)");
+  });
+
+  it("omits the PR file coverage line entirely when there are no PRs", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      {
+        connectorHealth: [],
+        index: { totalItems: 5, prFileCoverage: { covered: 0, totalPrs: 0, truncated: 0 } },
+      },
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: "/s" },
+      { wantDrift: false, verbose: true },
+    );
+    expect(out.stdout).not.toContain("PR file coverage");
+  });
+
   it("does not print agent limits when agentLimits is undefined", async () => {
     const ipc = createMockIpcClient([{ version: "1.0", uptime: 500 }]);
     await runStatusImpl(

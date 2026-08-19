@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { collectPrFileCoverage } from "../prfiles/pr-changed-file-store.ts";
 import {
   computeLatencyPercentilesMs,
   latencyRingBuffer,
@@ -17,6 +18,8 @@ export type IndexMetrics = {
   queryLatencyP50Ms: number;
   queryLatencyP95Ms: number;
   queryLatencyP99Ms: number;
+  /** PR changed-file indexing progress. `covered` includes truncated PRs — they were fetched. */
+  prFileCoverage: { covered: number; totalPrs: number; truncated: number };
 };
 
 function pageStats(db: Database): { bytes: number } {
@@ -89,6 +92,8 @@ export function collectIndexMetrics(db: Database): IndexMetrics {
     /* item_fts absent on a partially-migrated database */
   }
 
+  const prFileCoverage = collectPrFileCoverage(db);
+
   return {
     itemCountByService,
     totalItems,
@@ -100,5 +105,6 @@ export function collectIndexMetrics(db: Database): IndexMetrics {
     queryLatencyP50Ms: lat.p50Ms,
     queryLatencyP95Ms: lat.p95Ms,
     queryLatencyP99Ms: lat.p99Ms,
+    prFileCoverage,
   };
 }

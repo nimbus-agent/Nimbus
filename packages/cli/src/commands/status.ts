@@ -14,6 +14,7 @@ type IndexMetricsBrief = {
   totalItems?: unknown;
   itemCountByService?: unknown;
   queryLatencyP95Ms?: unknown;
+  prFileCoverage?: unknown;
 };
 
 type DiagSnapshot = {
@@ -25,6 +26,23 @@ function printEmbeddingBackfill(emb: { done: number; total: number } | null | un
   if (emb !== undefined && emb !== null && emb.total > 0) {
     console.log(`Embedding backfill: ${String(emb.done)} / ${String(emb.total)}`);
   }
+}
+
+function printPrFileCoverage(raw: unknown): void {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return;
+  }
+  const c = raw as { covered?: unknown; totalPrs?: unknown; truncated?: unknown };
+  if (typeof c.covered !== "number" || typeof c.totalPrs !== "number") {
+    return;
+  }
+  // No PRs indexed at all: the line would read "0 / 0" and imply a problem where there is none.
+  if (c.totalPrs === 0) {
+    return;
+  }
+  const trunc = typeof c.truncated === "number" ? c.truncated : 0;
+  const suffix = trunc > 0 ? ` (${String(trunc)} truncated)` : "";
+  console.log(`PR file coverage: ${String(c.covered)} / ${String(c.totalPrs)}${suffix}`);
 }
 
 function printVerboseIndexMetrics(snap: DiagSnapshot): void {
@@ -48,6 +66,7 @@ function printVerboseIndexMetrics(snap: DiagSnapshot): void {
       console.log(`  ${k}: ${String(v)}`);
     }
   }
+  printPrFileCoverage(m.prFileCoverage);
 }
 
 function formatConnectorHealthLine(row: unknown): string | null {
