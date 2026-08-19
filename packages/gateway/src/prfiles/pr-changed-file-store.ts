@@ -13,7 +13,15 @@ export type ChangedFileRow = {
 
 export type NegationResult = {
   readonly itemIds: readonly string[];
+  /**
+   * GLOBAL count of indexed PRs with no coverage row — every service, every repo. It is NOT
+   * filtered by the `pathGlob` of the query that returned it, and NOT bounded by its `limit`.
+   */
   readonly excludedNoCoverage: number;
+  /**
+   * GLOBAL count of indexed PRs whose coverage row is flagged truncated — again every service and
+   * repo, unfiltered by `pathGlob` and unbounded by `limit`.
+   */
   readonly excludedTruncated: number;
 };
 
@@ -94,6 +102,14 @@ export function recordPrChangedFiles(
  * So: keep the INNER JOIN, and do not make the `truncated` comparison null-tolerant. The test
  * "a PR with no coverage row is EXCLUDED, not returned" fails under the combined change, which is
  * the regression worth guarding.
+ *
+ * THE TWO EXCLUSION COUNTS ARE GLOBAL, NOT SCOPED TO THIS QUERY — the natural misreading, and the
+ * one W6-B (the consumer) is most likely to make. `excludedNoCoverage` counts every indexed PR
+ * with no coverage row, across all services and repos; `excludedTruncated` counts every indexed PR
+ * whose coverage row is truncated, on the same global scope. Neither is filtered by `pathGlob` and
+ * neither is bounded by `limit` — read them as "how much of the index cannot answer a negation at
+ * all", never as "how many results this query dropped". A caller wanting the latter has to build
+ * it; the SQL below does not compute it.
  *
  * GLOB, never LIKE: LIKE is case-insensitive for ASCII and treats `_` as a wildcard, both verified
  * against this repo's bun:sqlite. Paths are case-sensitive on Linux and macOS, and `_` is common in
