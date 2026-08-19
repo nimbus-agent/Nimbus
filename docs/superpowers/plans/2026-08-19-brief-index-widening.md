@@ -25,11 +25,13 @@
 ### Task 1: The citation shape carries a type and a generic id
 
 **Files:**
+
 - Modify: `packages/gateway/src/briefs/brief-types.ts:2-10` (`SourceRef`)
 - Modify: `packages/gateway/src/briefs/brief-registry.ts:4-9` (`IndexHit`), `:79-92` (the `C{n}` loop)
 - Test: `packages/gateway/src/briefs/brief-registry.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing — first task.
 - Produces: `IndexHit.itemType: string` (**required**, not optional — the producer always knows it); `SourceRef.itemType?: string`; `SourceRef.itemId?: string`. Task 2 supplies `itemType` from `assemble.ts`; Task 5 may read it in the prompt.
 
@@ -187,7 +189,7 @@ function mockHit(overrides: Partial<IndexHit> = {}): IndexHit {
 
 Import the type for it: `import type { IndexHit } from "./brief-registry.ts";`
 
-Then rewrite the existing hit literals as `mockHit(...)` calls — in `"adds index hits as C1..Cm with clip citations"`, `"caps index hits at MAX_INDEX_HITS"` (its `Array.from` becomes `mockHit({ itemId: \`nimbus:clip:${i}\`, title: \`C${i}\`, url: null, snippet: "s" })`), and any other the compiler flags. Search for `itemId:` to find them all.
+Then rewrite the existing hit literals as `mockHit(...)` calls — in `"adds index hits as C1..Cm with clip citations"`, `"caps index hits at MAX_INDEX_HITS"` (its `Array.from` becomes `mockHit({ itemId: \`nimbus:clip:${i}\`, title: \`C${i}\`, url: null, snippet: "s" })`), and any other the compiler flags. Search for`itemId:` to find them all.
 
 Leave the three tests you wrote in Step 1 as explicit literals: they are *about* the field combinations, so spelling each one out is the point.
 
@@ -213,10 +215,12 @@ git commit -m "feat(briefs): a citation can say what kind of item it cites"
 ### Task 2: The brief search stops filtering to web_clip
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble.ts:1997-2016`
 - Test: `packages/gateway/src/briefs/brief-registry.test.ts` (already covers the mapping); typecheck is the real gate here
 
 **Interfaces:**
+
 - Consumes: `IndexHit.itemType` from Task 1.
 - Produces: a `briefSearch` that returns hits of every type.
 
@@ -286,10 +290,12 @@ git commit -m "feat(briefs): search the whole index, not only web clips"
 ### Task 3: The gap copy stops saying "clips" about a search that is not only clips
 
 **Files:**
+
 - Modify: `packages/gateway/src/briefs/brief-gaps.ts:33-50`
 - Test: `packages/gateway/src/briefs/brief-gaps.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks — pure string change.
 - Produces: three reworded gap strings. The clipper matches gaps by equality only against `synthesis.disclosure`, so nothing downstream pins these.
 
@@ -368,10 +374,12 @@ git commit -m "fix(briefs): the index gaps no longer say clips about the whole i
 ### Task 4: A mixed-type brief survives end to end
 
 **Files:**
+
 - Modify: `packages/gateway/src/briefs/brief-test-server.ts`
 - Test: `packages/gateway/src/briefs/brief-e2e.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 1-3.
 - Produces: the compatibility guarantee the clipper's spec depends on.
 
@@ -461,10 +469,12 @@ git commit -m "test(briefs): a mixed-type index brief keeps every type it cited"
 Decision 4 of the spec refuses to assume. This task **measures first** and is allowed to end with nothing shipped; that is a successful outcome, not a failed task.
 
 **Files:**
+
 - Modify (only if the measurement says so): `packages/gateway/src/briefs/brief-synthesis.ts:46-53`
 - Test: `packages/gateway/src/briefs/brief-synthesis.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SourceRef.itemType` from Task 1.
 - Produces: either a `type` key on the prompt's per-source object, or a recorded decision not to add one.
 
@@ -526,6 +536,7 @@ git commit -m "docs(spec): record that the prompt does not need the item type"
 ### Task 6: Land it
 
 **Files:**
+
 - Modify: `CHANGELOG.md`
 
 - [ ] **Step 1: Record the user-facing change**

@@ -6,7 +6,7 @@ Below are comments, questions, and suggested improvements for the `2026-08-19-br
 
 1. **Token Budget & Chunk Size Limits**
    * **Question:** Widening the search to pull requests, builds, and code files means the content chunk sizes (`contextChunks: 2` per hit, up to 8 hits) might be significantly larger than web clips. Do we have constraints/truncation logic to ensure a single massive PR/build log hit does not exhaust the model's prompt token limit?
-   
+
 2. **Result Ranking & Prioritization**
    * **Question:** When searching across all indexed types without filtering, how does the hybrid ranker rank them? If a query matches 20 items (some clips, some issues, some builds), does the ranking algorithm naturally bias towards certain types, or is it purely semantic/keyword score-based? Should there be a fallback ratio (e.g., at least 2 clips, at least 2 issues) to avoid one type dominating the 8 slots?
 
