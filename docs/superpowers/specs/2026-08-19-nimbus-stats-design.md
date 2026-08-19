@@ -143,12 +143,27 @@ never silently padded or dropped.
 ### 6.1 Input validation
 
 **Durations are parsed by `cli/src/lib/parse-since.ts`'s `parseSinceDurationToMs`**, which
-accepts `w | d | h | m | s | ms`. Pinning it matters: the gateway also has
-`index/item-list-query.ts`'s `parseRelativeSinceToWindowMs`, whose regex is
-`/^(\d+)\s*([dhms])$/i` — **no `w`** — so `--bucket 1w`, this spec's own default, would fail
-against it. Parsing happens CLI-side before the IPC call; the gateway receives resolved
-millisecond integers and never re-parses a duration string. Unifying the two parsers is out
-of scope here and is not silently claimed.
+accepts `w | d | h | m | s | ms`.
+
+Pinning it matters more than it first appeared. There are **three** duration parsers in this
+repo, with three different unit sets, and the narrowest one lives in the very file this work
+modifies:
+
+| Parser | Units | Note |
+| --- | --- | --- |
+| `cli/src/lib/parse-since.ts` `parseSinceDurationToMs` | `w d h m s ms` | **use this one** |
+| `index/item-list-query.ts` `parseRelativeSinceToWindowMs` | `d h m s` | no `w` |
+| `ipc/metrics-rpc.ts` `parseSinceToMs` | `d h` only, capped 1..365 | **in the file gaining `metrics.stats`** |
+
+`--bucket 1w` — this spec's own default — fails against both of the latter two. The third is
+the dangerous one: an implementer following the local pattern in `metrics-rpc.ts` would reach
+for `parseSinceToMs` by proximity and the documented default would be rejected outright, with
+an error that reads like a user typo rather than a wrong import.
+
+Parsing therefore happens **CLI-side, before the IPC call**; `metrics.stats` receives resolved
+millisecond integers (`window_ms`, `bucket_ms`) and never re-parses a duration string. That
+also keeps `parseSinceToMs` correct for `metrics.dora`, which is unchanged. Unifying the three
+parsers is out of scope here and is not silently claimed.
 
 **`bucket > window` is a validation error, not a degenerate single bucket.** `--window 3d
 --bucket 1w` asks for weekly granularity across three days, which is unsatisfiable; returning
