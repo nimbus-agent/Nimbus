@@ -56,14 +56,16 @@ export function reservedHeadingsFor(brief: SynthInput): readonly string[] {
 export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
   const blocks: ReservedBlock[] = [];
   if (brief.kind === "negotiate") {
-    blocks.push({
-      heading: NEGOTIATE_SOURCES_HEADING,
-      markdown: renderNegotiateSources(brief.sources).trim(),
-    });
-    blocks.push({
-      heading: NEGOTIATE_EVIDENCE_HEADING,
-      markdown: renderNegotiateEvidenceSection(brief.unavailableEvidence).trim(),
-    });
+    blocks.push(
+      {
+        heading: NEGOTIATE_SOURCES_HEADING,
+        markdown: renderNegotiateSources(brief.sources).trim(),
+      },
+      {
+        heading: NEGOTIATE_EVIDENCE_HEADING,
+        markdown: renderNegotiateEvidenceSection(brief.unavailableEvidence).trim(),
+      },
+    );
   }
   const gaps = renderGaps(brief.gaps).trim();
   if (gaps !== "") blocks.push({ heading: GAPS_HEADING, markdown: gaps });

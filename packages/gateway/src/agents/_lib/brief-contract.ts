@@ -27,46 +27,61 @@ const NEGOTIATE_LANES = [
   ["writing", "Writing"],
 ] as const;
 
+/** The negotiate arm of `requiredPhrases`, split out to keep that function under S3776. */
+function negotiateRequiredPhrases(brief: Extract<SynthInput, { kind: "negotiate" }>): Disclosure[] {
+  // Qualifies every count in the brief, so it is required unconditionally.
+  const out: Disclosure[] = [negotiateWindowDisclosure(brief.query.sinceMs, brief.generatedAt)];
+  for (const [field, heading] of NEGOTIATE_LANES) {
+    if (brief[field] === null) out.push(negotiateNotComputedDisclosure(heading));
+  }
+  // A null lane renders ONLY its "could not be computed" section — none of the interleaved
+  // sentences below exist in that brief, so requiring one would reject every synthesis of
+  // a partially-failed brief.
+  if (brief.ownership !== null) {
+    const ownership = negotiateOwnershipDisclosures(brief.ownership);
+    if (ownership.truncation !== undefined) out.push(ownership.truncation);
+    out.push(ownership.accountability);
+  }
+  if (brief.incidents !== null) {
+    const incidents = negotiateIncidentsDisclosure(brief.incidents);
+    if (incidents !== undefined) out.push(incidents);
+  }
+  if (brief.decisions !== null) {
+    out.push(negotiateDecisionsDisclosure(brief.decisions, brief.subject));
+  }
+  return out;
+}
+
+/**
+ * The glossary arm of `requiredPhrases`. Mirrors `renderGlossaryBody` exactly: `miss` and
+ * `list` mode render no provenance sentence at all, and `term` mode renders `entries[0]`
+ * and nothing else.
+ */
+function glossaryRequiredPhrases(
+  brief: Extract<SynthInput, { kind: "glossary" }>,
+): readonly Disclosure[] {
+  if (brief.mode !== "term") return [];
+  const entry = brief.entries[0];
+  if (entry === undefined) return [];
+  const provenance = glossaryProvenanceDisclosure(entry.term, entry.definitionSource);
+  return provenance === undefined ? [] : [provenance];
+}
+
 /**
  * The disclosures a rewrite of `brief` must not drop.
  *
  * Every entry is built by `brief-disclosures.ts` from the SAME constant the renderer emits,
  * and under the SAME predicate — the guard cannot require a phrase the brief never rendered
  * (which would reject every synthesis), and cannot miss one it did.
+ *
+ * The two kinds that have contractual strings delegate to a helper above. Keeping the arms
+ * inline pushed this function to a cognitive complexity of 26 (Sonar S3776, limit 15); the
+ * split is mechanical and the exhaustive kind list below is deliberately NOT folded into a
+ * default, for the reason stated there.
  */
 export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
-  if (brief.kind === "negotiate") {
-    // Qualifies every count in the brief, so it is required unconditionally.
-    const out: Disclosure[] = [negotiateWindowDisclosure(brief.query.sinceMs, brief.generatedAt)];
-    for (const [field, heading] of NEGOTIATE_LANES) {
-      if (brief[field] === null) out.push(negotiateNotComputedDisclosure(heading));
-    }
-    // A null lane renders ONLY its "could not be computed" section — none of the interleaved
-    // sentences below exist in that brief, so requiring one would reject every synthesis of
-    // a partially-failed brief.
-    if (brief.ownership !== null) {
-      const ownership = negotiateOwnershipDisclosures(brief.ownership);
-      if (ownership.truncation !== undefined) out.push(ownership.truncation);
-      out.push(ownership.accountability);
-    }
-    if (brief.incidents !== null) {
-      const incidents = negotiateIncidentsDisclosure(brief.incidents);
-      if (incidents !== undefined) out.push(incidents);
-    }
-    if (brief.decisions !== null) {
-      out.push(negotiateDecisionsDisclosure(brief.decisions, brief.subject));
-    }
-    return out;
-  }
-  if (brief.kind === "glossary") {
-    // Mirrors `renderGlossaryBody` exactly: `miss` and `list` mode render no provenance
-    // sentence at all, and `term` mode renders `entries[0]` and nothing else.
-    if (brief.mode !== "term") return [];
-    const entry = brief.entries[0];
-    if (entry === undefined) return [];
-    const provenance = glossaryProvenanceDisclosure(entry.term, entry.definitionSource);
-    return provenance === undefined ? [] : [provenance];
-  }
+  if (brief.kind === "negotiate") return negotiateRequiredPhrases(brief);
+  if (brief.kind === "glossary") return glossaryRequiredPhrases(brief);
   // Every other brief kind returns [] until its contractual strings are added.
   // Listed explicitly so a fifteenth kind is a COMPILE error, not a silent [].
   if (

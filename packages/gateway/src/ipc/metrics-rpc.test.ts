@@ -56,7 +56,7 @@ describe("metrics.stats", () => {
     );
     expect(out.kind).toBe("hit");
     const v = (out as { value: { points: readonly unknown[] } }).value;
-    expect(v.points.length).toBe(2);
+    expect(v.points).toHaveLength(2);
   });
 
   test("an unknown metric id is a -32602, naming the valid ids", async () => {

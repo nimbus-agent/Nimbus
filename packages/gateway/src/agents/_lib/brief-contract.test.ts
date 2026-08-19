@@ -55,7 +55,7 @@ describe("requiredPhrases", () => {
   // passes VACUOUSLY (no requirements = nothing to violate), and the guard protects nothing.
   // This assertion is what makes that failure loud.
   test("derives one requirement per null lane — all seven, plus the window clause", () => {
-    expect(requiredPhrases(allNullLaneBrief()).length).toBe(8);
+    expect(requiredPhrases(allNullLaneBrief())).toHaveLength(8);
   });
 });
 
@@ -87,14 +87,14 @@ describe("contractViolations", () => {
       "## Tickets\n\n- 4 closed",
     );
     const v = contractViolations(allNullLaneBrief(), md);
-    expect(v.length).toBe(1);
+    expect(v).toHaveLength(1);
     expect(v[0]).toContain("Tickets");
   });
 
   test("rejects a dropped heading rather than skipping the section", () => {
     const md = ALL_SEVEN.replace("## Writing\n\n_could not be computed_", "");
     const v = contractViolations(allNullLaneBrief(), md);
-    expect(v.length).toBe(1);
+    expect(v).toHaveLength(1);
     expect(v[0]).toContain("Writing");
   });
 
@@ -106,7 +106,7 @@ describe("contractViolations", () => {
       tickets: { opened: 0, closed: 0 },
     } as unknown as NegotiateBrief;
     // Six remaining null lanes, plus the unconditional window clause.
-    expect(requiredPhrases(brief).length).toBe(7);
+    expect(requiredPhrases(brief)).toHaveLength(7);
   });
 
   test("accepts a nested sub-heading before the disclaimer", () => {
@@ -132,7 +132,7 @@ describe("contractViolations", () => {
       "## Tickets\n\n## Ownership\n\n_could not be computed_\n\n_could not be computed_",
     );
     const v = contractViolations(allNullLaneBrief(), md);
-    expect(v.length).toBe(1);
+    expect(v).toHaveLength(1);
     expect(v[0]).toContain("Tickets");
   });
 
@@ -147,7 +147,7 @@ describe("contractViolations", () => {
       "## Tickets\n\n### Note\n\n_could not be computed_",
     ).replace("## Ownership\n\n_could not be computed_", "## Ownership\n\n- 3 services");
     const v = contractViolations(allNullLaneBrief(), md);
-    expect(v.length).toBe(1);
+    expect(v).toHaveLength(1);
     expect(v[0]).toContain("Ownership");
   });
 });
@@ -160,7 +160,7 @@ describe("a required section must be opened by a level-TWO heading", () => {
   test("`### Tickets` carrying the disclaimer does NOT satisfy the required `## Tickets`", () => {
     const md = ALL_SEVEN.replace("## Tickets", "### Tickets");
     const v = contractViolations(allNullLaneBrief(), md);
-    expect(v.length).toBe(1);
+    expect(v).toHaveLength(1);
     expect(v[0]).toContain("Tickets");
     expect(v[0]).toContain("missing required section");
   });
@@ -183,7 +183,7 @@ describe("a required section must be opened by a level-TWO heading", () => {
       "## PRs authored\n\n_could not be computed_\n\n### Tickets\n\n_could not be computed_",
     );
     const v = contractViolations(allNullLaneBrief(), md);
-    expect(v.length).toBe(1);
+    expect(v).toHaveLength(1);
     expect(v[0]).toContain("Tickets");
     expect(v[0]).toContain("dropped required phrase");
   });

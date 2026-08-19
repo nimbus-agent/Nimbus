@@ -8,7 +8,7 @@ const NOW = 1_700_000_000_000;
 describe("splitBuckets", () => {
   test("whole multiple: newest bucket ends exactly at untilMs", () => {
     const b = splitBuckets(NOW, 4 * WEEK, WEEK);
-    expect(b.length).toBe(4);
+    expect(b).toHaveLength(4);
     expect(b[3]?.endMs).toBe(NOW);
     expect(b[0]?.startMs).toBe(NOW - 4 * WEEK);
   });
@@ -26,7 +26,7 @@ describe("splitBuckets", () => {
   test("the partial leading bucket keeps its TRUE short bounds, not a padded week", () => {
     // 30 days at weekly granularity = 4 whole weeks + a 2-day remainder.
     const b = splitBuckets(NOW, 30 * DAY, WEEK);
-    expect(b.length).toBe(5);
+    expect(b).toHaveLength(5);
     const oldest = b[0];
     expect(oldest?.startMs).toBe(NOW - 30 * DAY);
     expect((oldest?.endMs ?? 0) - (oldest?.startMs ?? 0)).toBe(2 * DAY);
@@ -35,7 +35,7 @@ describe("splitBuckets", () => {
 
   test("bucket == window yields exactly one bucket", () => {
     const b = splitBuckets(NOW, WEEK, WEEK);
-    expect(b.length).toBe(1);
+    expect(b).toHaveLength(1);
     expect(b[0]).toEqual({ startMs: NOW - WEEK, endMs: NOW });
   });
 
@@ -70,6 +70,6 @@ describe("splitBuckets", () => {
   });
 
   test("exactly MAX_BUCKETS is allowed", () => {
-    expect(splitBuckets(NOW, MAX_BUCKETS * DAY, DAY).length).toBe(MAX_BUCKETS);
+    expect(splitBuckets(NOW, MAX_BUCKETS * DAY, DAY)).toHaveLength(MAX_BUCKETS);
   });
 });

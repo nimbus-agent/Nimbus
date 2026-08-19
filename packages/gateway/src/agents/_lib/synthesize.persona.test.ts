@@ -161,7 +161,7 @@ describe("I31 anchors under a terse persona (spec criterion 7)", () => {
   test("the negotiate fixture actually HAS anchors to protect", () => {
     const required = requiredPhrases(allNullLaneNegotiateBrief());
     // The unconditional window clause plus one "could not be computed" per null lane.
-    expect(required.length).toBe(8);
+    expect(required).toHaveLength(8);
     expect(required.some((d) => d.scope.kind === "preamble")).toBe(true);
   });
 

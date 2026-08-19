@@ -2108,7 +2108,7 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     ].filter((x) => x !== undefined);
     // Fixture integrity: a builder whose predicate stops firing would drop out of this list
     // silently and the loop below would assert over fewer disclosures, still green.
-    expect(disclosures.length).toBe(8);
+    expect(disclosures).toHaveLength(8);
     for (const disclosure of disclosures) {
       expect(normalizeSectionText(disclosure.line)).toContain(
         normalizeSectionText(disclosure.anchor),

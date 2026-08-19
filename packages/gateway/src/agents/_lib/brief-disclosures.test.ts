@@ -110,7 +110,7 @@ describe("negotiate interleaved disclosures", () => {
   // predicate stops firing, requiredPhrases silently returns fewer entries and every
   // "rejects" test below still passes while guarding nothing.
   test("derives one requirement per interleaved disclosure — all five", () => {
-    expect(requiredPhrases(populatedNegotiateBrief()).length).toBe(5);
+    expect(requiredPhrases(populatedNegotiateBrief())).toHaveLength(5);
   });
 
   test("the canonical render satisfies every requirement", () => {
@@ -118,48 +118,27 @@ describe("negotiate interleaved disclosures", () => {
     expect(contractViolations(brief, renderNegotiate(brief))).toEqual([]);
   });
 
-  test("rejects a rewrite that drops the authorship-derived ownership disclaimer", () => {
+  // One row per interleaved disclosure counted above: the clause, the fragment `withoutLine`
+  // deletes it by, and the scope the resulting violation must name. Deleting any one of them
+  // must produce exactly one violation — never zero (the guard is inert) and never two (a
+  // deletion that took an unrelated disclosure with it).
+  //
+  // The window-clause row is the one that is not section-scoped. It is the clause every
+  // headline count in the brief depends on: without it "4 PR(s)" reads as "4 authored this
+  // quarter" when the query means "authored at any time, TOUCHED in this window" — a
+  // systematic overstatement. It lives above the first `##`, so its scope is the preamble.
+  test.each([
+    ["the authorship-derived ownership disclaimer", "authorship-derived", "Ownership"],
+    ["the ownership list-truncation clause", "list truncated at the display limit", "Ownership"],
+    ["the unattributable-incidents clause", "no indexed assignee or resolver", "Incidents"],
+    ["the unattributable-decisions clause", "no indexed author", "Decisions"],
+    ["the last-modified window clause from the preamble", "last-modified, not created", "preamble"],
+  ])("rejects a rewrite that drops %s", (_clause, fragment, scope) => {
     const brief = populatedNegotiateBrief();
-    const md = withoutLine(renderNegotiate(brief), "authorship-derived");
+    const md = withoutLine(renderNegotiate(brief), fragment);
     const v = contractViolations(brief, md);
-    expect(v.length).toBe(1);
-    expect(v[0]).toContain("Ownership");
-  });
-
-  test("rejects a rewrite that drops the ownership list-truncation clause", () => {
-    const brief = populatedNegotiateBrief();
-    const md = withoutLine(renderNegotiate(brief), "list truncated at the display limit");
-    const v = contractViolations(brief, md);
-    expect(v.length).toBe(1);
-    expect(v[0]).toContain("Ownership");
-  });
-
-  test("rejects a rewrite that drops the unattributable-incidents clause", () => {
-    const brief = populatedNegotiateBrief();
-    const md = withoutLine(renderNegotiate(brief), "no indexed assignee or resolver");
-    const v = contractViolations(brief, md);
-    expect(v.length).toBe(1);
-    expect(v[0]).toContain("Incidents");
-  });
-
-  test("rejects a rewrite that drops the unattributable-decisions clause", () => {
-    const brief = populatedNegotiateBrief();
-    const md = withoutLine(renderNegotiate(brief), "no indexed author");
-    const v = contractViolations(brief, md);
-    expect(v.length).toBe(1);
-    expect(v[0]).toContain("Decisions");
-  });
-
-  test("rejects a rewrite that drops the last-modified window clause from the preamble", () => {
-    // The clause every headline count in the brief depends on: without it "4 PR(s)" reads as
-    // "4 authored this quarter" when the query means "authored at any time, TOUCHED in this
-    // window" — a systematic overstatement. It lives above the first `##`, so a section-scoped
-    // requirement cannot reach it.
-    const brief = populatedNegotiateBrief();
-    const md = withoutLine(renderNegotiate(brief), "last-modified, not created");
-    const v = contractViolations(brief, md);
-    expect(v.length).toBe(1);
-    expect(v[0]).toContain("preamble");
+    expect(v).toHaveLength(1);
+    expect(v[0]).toContain(scope);
   });
 
   test("the window clause cannot be satisfied from inside a section", () => {
@@ -168,7 +147,7 @@ describe("negotiate interleaved disclosures", () => {
     // disclosure from the place every count below it is read against.
     const brief = populatedNegotiateBrief();
     const md = `${withoutLine(renderNegotiate(brief), "last-modified, not created")}\n\n## Notes\n\nthe index records last-modified, not created`;
-    expect(contractViolations(brief, md).length).toBe(1);
+    expect(contractViolations(brief, md)).toHaveLength(1);
   });
 
   test("a truncation clause is required only when the list WAS truncated", () => {
@@ -179,7 +158,7 @@ describe("negotiate interleaved disclosures", () => {
       ...brief,
       ownership: { ...brief.ownership, truncated: false },
     } as NegotiateBrief;
-    expect(requiredPhrases(untruncated).length).toBe(4);
+    expect(requiredPhrases(untruncated)).toHaveLength(4);
     expect(contractViolations(untruncated, renderNegotiate(untruncated))).toEqual([]);
   });
 
@@ -189,7 +168,7 @@ describe("negotiate interleaved disclosures", () => {
       ...brief,
       incidents: { ...brief.incidents, unattributable: 0 },
     } as NegotiateBrief;
-    expect(requiredPhrases(none).length).toBe(4);
+    expect(requiredPhrases(none)).toHaveLength(4);
     expect(contractViolations(none, renderNegotiate(none))).toEqual([]);
   });
 });
@@ -197,7 +176,7 @@ describe("negotiate interleaved disclosures", () => {
 describe("glossary definition-provenance disclosures", () => {
   test("the canonical render satisfies the entry's provenance requirement", () => {
     const brief = glossaryBrief([glossaryEntry({ term: "CDR", definitionSource: "manual" })]);
-    expect(requiredPhrases(brief).length).toBe(1);
+    expect(requiredPhrases(brief)).toHaveLength(1);
     expect(contractViolations(brief, renderGlossary(brief))).toEqual([]);
   });
 
@@ -205,7 +184,7 @@ describe("glossary definition-provenance disclosures", () => {
     const brief = glossaryBrief([glossaryEntry({ term: "CDR", definitionSource: "manual" })]);
     const md = withoutLine(renderGlossary(brief), "not derived from indexed sources");
     const v = contractViolations(brief, md);
-    expect(v.length).toBe(1);
+    expect(v).toHaveLength(1);
     expect(v[0]).toContain("CDR");
   });
 
@@ -213,7 +192,7 @@ describe("glossary definition-provenance disclosures", () => {
     const brief = glossaryBrief([glossaryEntry({ term: "CDR", definitionSource: "snippet" })]);
     const md = withoutLine(renderGlossary(brief), "no LLM configured");
     const v = contractViolations(brief, md);
-    expect(v.length).toBe(1);
+    expect(v).toHaveLength(1);
     expect(v[0]).toContain("CDR");
   });
 
