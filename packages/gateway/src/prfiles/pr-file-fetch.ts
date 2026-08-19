@@ -96,6 +96,29 @@ export type FetchPage = (
 ) => Promise<{ readonly rows: readonly ChangedFileRow[]; readonly hasMore: boolean } | null>;
 
 /**
+ * Collapse to one row per path, keeping the FIRST occurrence.
+ *
+ * A rename chain in a single PR legitimately produces a repeated path: `a.ts -> b.ts` plus
+ * `c.ts -> a.ts` maps to `["b.ts","a.ts","a.ts","c.ts"]` (`a.ts` once as the new name of the first
+ * rename, once as the old name of the second). `pr_changed_file`'s primary key is `(item_id,
+ * path)`, so writing that raw would throw. First-wins is arbitrary but deterministic — a predicate
+ * only reads PATH MEMBERSHIP ("did this PR touch X"), never `status`, so which occurrence's status
+ * survives does not change any query result.
+ */
+function dedupeFileRowsByPath(rows: readonly ChangedFileRow[]): ChangedFileRow[] {
+  const seen = new Set<string>();
+  const out: ChangedFileRow[] = [];
+  for (const r of rows) {
+    if (seen.has(r.path)) {
+      continue;
+    }
+    seen.add(r.path);
+    out.push(r);
+  }
+  return out;
+}
+
+/**
  * Drain up to `MAX_PRS_PER_TICK` candidates for one service. Returns how many were recorded.
  *
  * Each candidate is fetched and written INDEPENDENTLY, and this loop deliberately holds no
@@ -114,7 +137,7 @@ export type FetchPage = (
 export async function runPrFilePass(
   ctx: SyncContext,
   args: {
-    readonly service: string;
+    readonly service: Provider;
     readonly fetchPage: FetchPage;
     readonly nowMs: number;
   },
@@ -127,10 +150,7 @@ export async function runPrFilePass(
     let failed = false;
     try {
       for (let page = 1; page <= MAX_PAGES_PER_PR; page++) {
-        // `args.service` is caller-supplied per-forge ("github"/"gitlab"/"bitbucket"), always a
-        // real `Provider` id; the driver itself is forge-agnostic so its own signature keeps
-        // `service` as `string` rather than importing every forge's literal into this type.
-        await ctx.rateLimiter.acquire(args.service as Provider);
+        await ctx.rateLimiter.acquire(args.service);
         const res = await args.fetchPage(c, page);
         if (res === null) {
           failed = true;
@@ -142,6 +162,23 @@ export async function runPrFilePass(
           break;
         }
       }
+      if (!failed) {
+        // The write happens INSIDE this try: a failure here (e.g. a genuine duplicate that
+        // slipped past `dedupeFileRowsByPath`) must cost only this candidate, same as a fetch
+        // failure — never escape `runPrFilePass` and strand every later candidate this tick.
+        const { kept, truncated } = applyFileCap(dedupeFileRowsByPath(collected));
+        recordPrChangedFiles(ctx.db, {
+          itemId: c.itemId,
+          repoFull: c.repoFull,
+          files: kept,
+          apiFileCount: collected.length,
+          // Truncated when the cap trimmed rows OR when we ran out of page budget with
+          // more pages still on offer — both mean we do not hold the full path set.
+          truncated: truncated || !pagesExhausted,
+          nowMs: args.nowMs,
+        });
+        recorded += 1;
+      }
     } catch (err) {
       // A rate-limit error ends the whole tick; anything else costs only this PR.
       if (err instanceof RateLimitError) {
@@ -151,23 +188,7 @@ export async function runPrFilePass(
         { service: args.service, itemId: c.itemId, err: String(err) },
         "PR changed-file fetch failed for one PR (non-fatal, will retry next tick)",
       );
-      failed = true;
     }
-    if (failed) {
-      continue;
-    }
-    const { kept, truncated } = applyFileCap(collected);
-    recordPrChangedFiles(ctx.db, {
-      itemId: c.itemId,
-      repoFull: c.repoFull,
-      files: kept,
-      apiFileCount: collected.length,
-      // Truncated when the cap trimmed rows OR when we ran out of page budget with
-      // more pages still on offer — both mean we do not hold the full path set.
-      truncated: truncated || !pagesExhausted,
-      nowMs: args.nowMs,
-    });
-    recorded += 1;
   }
   return recorded;
 }

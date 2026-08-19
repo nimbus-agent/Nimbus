@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
+import { PR_FILES_PAGE_SIZE } from "../prfiles/pr-file-fetch.ts";
 import { RateLimitError } from "../sync/types.ts";
 import {
   createMemoryIndexDb,
@@ -625,4 +626,186 @@ test("pullFilesUrl requests the largest page and a page number", () => {
   expect(u).toContain("/repos/o/r/pulls/7/files");
   expect(u).toContain("per_page=100");
   expect(u).toContain("page=2");
+});
+
+/**
+ * A PR with stats already present and a real title is NOT a pull-detail enrichment candidate
+ * (`selectPrEnrichCandidates` excludes it), so these tests exercise the files pass in isolation
+ * from `runPrDetailEnrichmentBestEffort` — no `/pulls/{n}` fetch happens.
+ */
+function enrichedPrPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    number: 1,
+    title: "Add rate limiter",
+    body: "",
+    html_url: "https://github.com/acme/app/pull/1",
+    user: { login: "author" },
+    state: "open",
+    additions: 10,
+    deletions: 2,
+    changed_files: 1,
+    commits: 1,
+    ...overrides,
+  };
+}
+
+function githubFileEntry(name: string): Record<string, unknown> {
+  return { filename: name, status: "modified" };
+}
+
+/** Stubs `/user` (login) and `/users/octocat/events` (304, the quiet-tick path under I-3). */
+function stubUserAnd304Events(
+  extra: (url: string) => Response | undefined,
+): (input: SyncTestFetchParams[0]) => Promise<Response> {
+  return (input: SyncTestFetchParams[0]) => {
+    const url = urlFromFetchInput(input);
+    if (url === "https://api.github.com/user") {
+      return Promise.resolve(new Response(JSON.stringify({ login: "octocat" }), { status: 200 }));
+    }
+    if (url.startsWith("https://api.github.com/users/octocat/events")) {
+      return Promise.resolve(new Response(null, { status: 304 }));
+    }
+    const res = extra(url);
+    if (res === undefined) {
+      throw new Error(`unexpected fetch in pull-files test: ${url}`);
+    }
+    return Promise.resolve(res);
+  };
+}
+
+describeWithFetchRestore("github-sync pull files pass", () => {
+  test("a full-length page (PR_FILES_PAGE_SIZE files) requests a second page", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "pat-value");
+    const now = Date.now();
+    upsertPr(ctx, "acme/app", enrichedPrPayload(), now);
+
+    const filesPages: string[] = [];
+    globalThis.fetch = stubUserAnd304Events((url) => {
+      if (url.startsWith("https://api.github.com/repos/acme/app/pulls/1/files")) {
+        filesPages.push(url);
+        // Match `&page=1` / `&page=2`, not the bare digit: `per_page=100` itself contains the
+        // substring "page=1" (as a prefix of "100"), so a naive `.includes("page=1")` matches
+        // every request regardless of its actual page number.
+        if (url.includes("&page=1")) {
+          const full = Array.from({ length: PR_FILES_PAGE_SIZE }, (_, i) =>
+            githubFileEntry(`f${String(i)}.ts`),
+          );
+          return new Response(JSON.stringify(full), { status: 200 });
+        }
+        // Page 2 is short — the pass stops here.
+        return new Response(JSON.stringify([githubFileEntry("last.ts")]), { status: 200 });
+      }
+      return undefined;
+    }) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    await syncable.sync(ctx, null);
+
+    expect(filesPages.some((u) => u.includes("&page=1"))).toBe(true);
+    expect(filesPages.some((u) => u.includes("&page=2"))).toBe(true);
+    const s = db
+      .query(
+        "SELECT stored_count, truncated FROM pr_files_state WHERE item_id = 'github:acme/app#1'",
+      )
+      .get() as { stored_count: number; truncated: number } | null;
+    expect(s?.stored_count).toBe(PR_FILES_PAGE_SIZE + 1);
+    expect(s?.truncated).toBe(0);
+    db.close();
+  });
+
+  test("a short page stops after one request and covers the PR", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "pat-value");
+    const now = Date.now();
+    upsertPr(ctx, "acme/app", enrichedPrPayload(), now);
+
+    let filesCalls = 0;
+    globalThis.fetch = stubUserAnd304Events((url) => {
+      if (url.startsWith("https://api.github.com/repos/acme/app/pulls/1/files")) {
+        filesCalls += 1;
+        return new Response(JSON.stringify([githubFileEntry("a.ts")]), { status: 200 });
+      }
+      return undefined;
+    }) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    await syncable.sync(ctx, null);
+
+    expect(filesCalls).toBe(1);
+    const s = db
+      .query("SELECT stored_count FROM pr_files_state WHERE item_id = 'github:acme/app#1'")
+      .get() as { stored_count: number } | null;
+    expect(s?.stored_count).toBe(1);
+    db.close();
+  });
+
+  test("a 401 on pull files leaves the PR uncovered and does not abort the sync", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "pat-value");
+    const now = Date.now();
+    upsertPr(ctx, "acme/app", enrichedPrPayload(), now);
+
+    globalThis.fetch = stubUserAnd304Events((url) => {
+      if (url.startsWith("https://api.github.com/repos/acme/app/pulls/1/files")) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      return undefined;
+    }) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    await expect(syncable.sync(ctx, null)).resolves.toBeDefined();
+
+    const s = db
+      .query("SELECT COUNT(*) AS c FROM pr_files_state WHERE item_id = 'github:acme/app#1'")
+      .get() as { c: number };
+    expect(s.c).toBe(0);
+    db.close();
+  });
+
+  test("a non-ok pull files response (e.g. 404) leaves the PR uncovered", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "pat-value");
+    const now = Date.now();
+    upsertPr(ctx, "acme/app", enrichedPrPayload(), now);
+
+    globalThis.fetch = stubUserAnd304Events((url) => {
+      if (url.startsWith("https://api.github.com/repos/acme/app/pulls/1/files")) {
+        return new Response("not found", { status: 404 });
+      }
+      return undefined;
+    }) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    await syncable.sync(ctx, null);
+
+    const s = db
+      .query("SELECT COUNT(*) AS c FROM pr_files_state WHERE item_id = 'github:acme/app#1'")
+      .get() as { c: number };
+    expect(s.c).toBe(0);
+    db.close();
+  });
+
+  test("a JSON parse failure on pull files leaves the PR uncovered", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "pat-value");
+    const now = Date.now();
+    upsertPr(ctx, "acme/app", enrichedPrPayload(), now);
+
+    globalThis.fetch = stubUserAnd304Events((url) => {
+      if (url.startsWith("https://api.github.com/repos/acme/app/pulls/1/files")) {
+        return new Response("not json{{{", { status: 200 });
+      }
+      return undefined;
+    }) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    await syncable.sync(ctx, null);
+
+    const s = db
+      .query("SELECT COUNT(*) AS c FROM pr_files_state WHERE item_id = 'github:acme/app#1'")
+      .get() as { c: number };
+    expect(s.c).toBe(0);
+    db.close();
+  });
 });

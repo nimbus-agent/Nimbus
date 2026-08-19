@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import { PR_CHANGED_FILE_V55_SQL } from "../index/pr-changed-file-v55-sql.ts";
-import type { SyncContext } from "../sync/types.ts";
+import { RateLimitError, type SyncContext } from "../sync/types.ts";
 import type { ChangedFileRow } from "./pr-changed-file-store.ts";
 import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
 import {
@@ -229,6 +229,70 @@ describe("runPrFilePass", () => {
       fetchPage: async (_c, page) => ({ rows: [row(`a${String(page)}.ts`)], hasMore: page < 2 }),
     });
     expect(acquired).toEqual(["github", "github"]);
+    db.close();
+  });
+
+  // Regression: a rename chain (`a.ts -> b.ts` plus `c.ts -> a.ts`) maps to
+  // ["b.ts","a.ts","a.ts","c.ts"] - a legitimate repeated path within ONE PR. Before the fix,
+  // the raw insert threw on `pr_changed_file`'s (item_id, path) primary key, and because
+  // `recordPrChangedFiles` was called OUTSIDE the try, that throw escaped `runPrFilePass`
+  // entirely and stranded every later candidate in the same tick.
+  test("a rename-chain duplicate path in one PR does not stop the tick", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 200);
+    addPr(db, "p2", "o/r#2", 100);
+    const n = await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (c) => {
+        if (c.itemId === "p1") {
+          return {
+            rows: [row("b.ts"), row("a.ts"), row("a.ts"), row("c.ts")],
+            hasMore: false,
+          };
+        }
+        return { rows: [row("d.ts")], hasMore: false };
+      },
+    });
+    expect(n).toBe(2);
+    const ids = (
+      db.query("SELECT item_id FROM pr_files_state").all() as Array<{ item_id: string }>
+    ).map((r) => r.item_id);
+    expect(ids.sort()).toEqual(["p1", "p2"]);
+    const p1Paths = (
+      db
+        .query("SELECT path FROM pr_changed_file WHERE item_id = 'p1' ORDER BY path")
+        .all() as Array<{ path: string }>
+    ).map((r) => r.path);
+    expect(p1Paths).toEqual(["a.ts", "b.ts", "c.ts"]);
+    db.close();
+  });
+
+  test("a RateLimitError from fetchPage propagates and ends the tick", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    const rejection = runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => {
+        throw new RateLimitError(new Date(), "rate limited");
+      },
+    });
+    await expect(rejection).rejects.toBeInstanceOf(RateLimitError);
+    db.close();
+  });
+
+  test("a plain Error from fetchPage does NOT propagate - it is swallowed per-candidate", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    const n = await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => {
+        throw new Error("transient");
+      },
+    });
+    expect(n).toBe(0);
     db.close();
   });
 });
