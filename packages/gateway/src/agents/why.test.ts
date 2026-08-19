@@ -709,6 +709,26 @@ describe("runWhy", () => {
     expect(brief.gaps.length).toBeGreaterThan(0);
   });
 
+  test("unresolvable ref: the authorship and downstream gap notes are still emitted — the ref arm's genuine gaps must survive the prUrl arm's suppression of the same notes", async () => {
+    const db = freshDb();
+
+    const brief = await runWhy({ ref: "nope" }, ctxFor(db));
+
+    expect(
+      brief.gaps.some(
+        (g) =>
+          g.detail === "Cannot anchor authorship: no resolvable file/line subject for this ref.",
+      ),
+    ).toBe(true);
+    expect(
+      brief.gaps.some(
+        (g) =>
+          g.detail ===
+          "No indexed code symbols for this file — enable code_index on the root and sync.",
+      ),
+    ).toBe(true);
+  });
+
   async function makeTempGitDir(): Promise<string> {
     const d = await fs.mkdtemp(path.join(os.tmpdir(), "why-agent-"));
     tempDirs.push(d);
@@ -798,5 +818,29 @@ describe("runWhy — the prUrl arm", () => {
     const db = freshDb();
     const brief = await runWhy({ ref: refAt(12) }, ctxFor(db));
     expect("changeSubject" in brief && brief.changeSubject !== undefined).toBe(false);
+  });
+
+  test("a resolved prUrl brief carries neither the authorship-anchor nor the no-symbols gap note — the change arm never had a file/line subject to report as missing", async () => {
+    const db = freshDb();
+    seedPrWithTicketAndDiscussion(db);
+
+    const brief = await runWhy(
+      { prUrl: "https://github.com/acme/web/pull/482" },
+      { db, roots: [], notify: () => {}, sessionId: "why-pr-3" },
+    );
+
+    expect(
+      brief.gaps.some(
+        (g) =>
+          g.detail === "Cannot anchor authorship: no resolvable file/line subject for this ref.",
+      ),
+    ).toBe(false);
+    expect(
+      brief.gaps.some(
+        (g) =>
+          g.detail ===
+          "No indexed code symbols for this file — enable code_index on the root and sync.",
+      ),
+    ).toBe(false);
   });
 });

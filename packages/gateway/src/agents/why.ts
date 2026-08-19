@@ -45,6 +45,15 @@ type LaneInput = {
   pr: PrForSha | null;
   /** Blame's author time on the ref arm, the PR's own timestamp on the prUrl arm. */
   occurredAt: number | null;
+  /**
+   * Which entry point ran. `subAuthorship` and `subDownstream` are file/line
+   * lanes by nature — they stay silent on `"change"` rather than reporting a
+   * gap for the file subject a `prUrl` question never had. Explicit, not
+   * inferred from `subject === null`: inference would also silence the
+   * genuine ref-arm case where a ref legitimately fails to resolve, which
+   * must keep its gap note.
+   */
+  arm: "ref" | "change";
 };
 
 type SubAgentResult = {
@@ -124,6 +133,7 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
     // borrow the PR's timestamp for a ref-arm answer, which is a different
     // (and wrong) answer, not a missing one.
     occurredAt: isWhyPrInput(input) ? (pr?.modifiedAt ?? null) : (blame?.authorTimeMs ?? null),
+    arm: isWhyPrInput(input) ? "change" : "ref",
   };
 
   const coordinator = new AgentCoordinator({
@@ -295,6 +305,10 @@ function ticketRowsForPr(db: Database, prEntityId: string): TicketRow[] {
 // ---------------------------------------------------------------------------
 
 async function subAuthorship(db: Database, lane: LaneInput): Promise<SubAgentResult> {
+  // Line-level by nature: a `prUrl` question never had a file/line subject to
+  // begin with, so that absence is the shape of the question, not a gap in
+  // anyone's index — nothing here is actionable on the change arm.
+  if (lane.arm === "change") return {};
   if (lane.subject?.lineNo == null) {
     return {
       gap: {
@@ -637,6 +651,10 @@ const NO_SYMBOLS_DETAIL =
   "No indexed code symbols for this file — enable code_index on the root and sync.";
 
 async function subDownstream(db: Database, lane: LaneInput): Promise<SubAgentResult> {
+  // File-shaped by nature — `agents.impact` already answers this question for
+  // a `prUrl`, so a missing file subject here is the shape of the question,
+  // not a gap in anyone's index.
+  if (lane.arm === "change") return {};
   if (lane.subject === null) {
     return { gap: { category: "missing_relation_emit", detail: NO_SYMBOLS_DETAIL } };
   }
