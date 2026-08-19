@@ -777,7 +777,7 @@ nimbus/
 │   ├── ui/                   # Tauri 2.0 desktop app (Phase 4; release vehicle in Phase 13)
 │   ├── docs/                 # Astro Starlight documentation site
 │   ├── mcp-connectors/       # First-party MCP servers (90+)
-│   ├── mcp-launcher/         # The published @nimbus-dev/mcp npm launcher
+│   ├── mcp-launcher/         # The @nimbus-dev/mcp npm launcher (unpublished)
 │   ├── admin-console/        # Static admin console served at /admin/*
 │   └── github-actions/       # First-party GitHub Actions (not workspace members)
 ├── docs/
