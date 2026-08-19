@@ -26,6 +26,12 @@
 - Coverage floor: every touched file ≥85% line AND ≥80% branch.
 - `bun run typecheck:tests` prints "ADVISORY on win32 — not gating" and **exits 0 even with violations**. **Quote the violation count, not the exit code.**
 - Run `bun run preflight:fast` before declaring any task done.
+- **Connector tests live in TWO trees, and `packages/gateway/src/...` is only one of them.** The
+  branch-level `.sync()` tests for GitHub, GitLab and Bitbucket are in
+  `packages/gateway/test/unit/connectors/` — 73 sync test files sit outside `src/`. Any task
+  touching a connector MUST also run `bun test packages/gateway/test/unit/connectors`. This is not
+  hypothetical: scoping to `src/` alone let a tick-blocking regression through Task 7's
+  implementation and reach review as green, because no `src` test calls `.sync()` at all.
 
 ## File Structure
 
@@ -1744,6 +1750,8 @@ mirroring Task 6 Step 6. Do not re-test the mappers or the driver — they are c
 - [ ] **Step 5: Run the suites and preflight**
 
 Run: `bun test packages/gateway/src/connectors packages/gateway/src/prfiles`
+And: `bun test packages/gateway/test/unit/connectors` — the branch-level `.sync()` tests live
+there, not under `src/`. Skipping this tree is what let a tick-blocking regression pass review.
 Then: `bun run preflight:fast`
 Expected: green.
 
