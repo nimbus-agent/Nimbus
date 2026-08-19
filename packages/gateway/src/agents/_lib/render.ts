@@ -281,6 +281,21 @@ const WHY_LANE_HEADINGS: Readonly<Record<WhyLane, string>> = Object.freeze({
 });
 
 function renderWhySubjectLine(brief: WhyBrief): string {
+  // Branch BEFORE the null check: on the prUrl arm `subject` is always null, and
+  // the old line would report a resolved pull request as an unresolvable ref.
+  if (brief.changeSubject !== undefined) {
+    const cs = brief.changeSubject;
+    if (cs === null) {
+      return `_\`${brief.query.ref}\` is not in your index._`;
+    }
+    const num = cs.number === null ? "" : `#${String(cs.number)}`;
+    return [
+      `\`${cs.repo}${num}\` — ${cs.title}`,
+      "",
+      "_Asked about a change: authorship needs a line (`nimbus why <file>:<line>`), " +
+        "and downstream impact is `nimbus impact <url>`._",
+    ].join("\n");
+  }
   if (brief.subject === null) {
     return `_Could not resolve \`${brief.query.ref}\` to an indexed location._`;
   }

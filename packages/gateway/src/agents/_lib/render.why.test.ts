@@ -53,6 +53,49 @@ test("an unresolved subject renders a could-not-resolve line, not a crash", () =
   expect(md.toLowerCase()).toContain("could not resolve");
 });
 
+test("a change subject names the PR and what this entry point cannot answer", () => {
+  const out = renderWhy(
+    brief({
+      subject: null,
+      changeSubject: {
+        itemId: "github:acme/web#482",
+        entityId: "e1",
+        repo: "acme/web",
+        number: 482,
+        url: "https://github.com/acme/web/pull/482",
+        title: "Cache the resolver",
+        modifiedAt: 1_700_000_000_000,
+      },
+    }),
+  );
+  expect(out).toContain("acme/web#482");
+  expect(out).toContain("Cache the resolver");
+  expect(out).toContain("nimbus why <file>:<line>");
+  expect(out).toContain("nimbus impact");
+  expect(out).not.toContain("Could not resolve");
+});
+
+test("a change subject that did not resolve says so, and does not blame the ref", () => {
+  const out = renderWhy(
+    brief({
+      subject: null,
+      changeSubject: null,
+      query: { ref: "https://github.com/acme/web/pull/999", line: null },
+    }),
+  );
+  expect(out).toContain("https://github.com/acme/web/pull/999");
+  expect(out).toContain("not in your index");
+});
+
+test("a ref brief renders exactly as before", () => {
+  const out = renderWhy(
+    brief({
+      subject: { repoRoot: "/repo", filePath: "src/a.ts", lineNo: 12, symbol: null },
+    }),
+  );
+  expect(out).toContain("`src/a.ts:12` in `/repo`");
+});
+
 test("gaps section renders when gaps exist", () => {
   const md = renderWhy(
     brief({ gaps: [{ category: "missing_connector", detail: "No Slack connector synced." }] }),

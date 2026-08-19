@@ -34,7 +34,28 @@ export type WhyPeekLike = {
   hasMore: boolean;
 };
 
-const USAGE = "Usage: nimbus why <path[:line] | symbol> [--line <n>] [--peek] [--json]";
+const USAGE = "Usage: nimbus why <path[:line] | symbol | pr-url> [--line <n>] [--peek] [--json]";
+
+/**
+ * Two call sites need this: choosing the params arm, and refusing `--peek` on a
+ * URL. The `catch` returns rather than being empty — `resolve-by-url.ts:133` is
+ * the repo's idiom, and an empty block is a lint risk for no gain.
+ */
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function whyParamsFor(ref: string, line: number | undefined): Record<string, unknown> {
+  if (isHttpUrl(ref)) {
+    return { prUrl: ref };
+  }
+  return line === undefined ? { ref } : { ref, line };
+}
 
 function parseLineFlag(raw: string | undefined): number {
   const n = Number(raw);
@@ -94,6 +115,9 @@ export function renderPeekLine(ref: string, peek: WhyPeekLike): string {
 export async function runWhyCli(args: string[]): Promise<void> {
   const parsed = parseWhyArgs(args);
   if (parsed.peek) {
+    if (isHttpUrl(parsed.ref)) {
+      throw new Error("--peek takes a path or symbol, not a pull request URL");
+    }
     const peek = await withGatewayIpc((c) =>
       c.call<WhyPeekLike>("agents.whyPeek", {
         ref: parsed.ref,
@@ -108,7 +132,7 @@ export async function runWhyCli(args: string[]): Promise<void> {
   await runAgentCli({
     agentName: "why",
     ipcMethod: "agents.why",
-    callParams: { ref: parsed.ref, ...(parsed.line === undefined ? {} : { line: parsed.line }) },
+    callParams: whyParamsFor(parsed.ref, parsed.line),
     guard: isWhyBriefLike,
     json: parsed.json,
   });

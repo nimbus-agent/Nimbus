@@ -20,7 +20,7 @@ describe("parseWhyArgs", () => {
 
   test("throws the usage string when ref is missing", () => {
     expect(() => parseWhyArgs([])).toThrow(
-      "Usage: nimbus why <path[:line] | symbol> [--line <n>] [--peek] [--json]",
+      "Usage: nimbus why <path[:line] | symbol | pr-url> [--line <n>] [--peek] [--json]",
     );
   });
 
@@ -172,6 +172,37 @@ describe("runWhyCli — dispatcher (full brief)", () => {
     expect(agentCallParams).toEqual({ ref: "src/a.ts", line: 7 });
   });
 
+  it("sends { prUrl } when the positional argument is an http(s) URL", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    let agentCallParams: unknown;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          if (method === "agents.why") {
+            agentCallParams = params;
+            setTimeout(() => {
+              handlers.get("why.briefReady")?.({
+                sessionId: "s",
+                brief: "x",
+                findings: makeValidWhyBrief(),
+              });
+            }, 0);
+            return { sessionId: "s" };
+          }
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (event: string, handler: (params: unknown) => void) => {
+          handlers.set(event, handler);
+        },
+      },
+    });
+    await runWhyCli(["https://github.com/acme/web/pull/482"]);
+    expect(agentCallParams).toEqual({ prUrl: "https://github.com/acme/web/pull/482" });
+  });
+
   it("exits 2 when why.briefError fires", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
@@ -277,5 +308,24 @@ describe("runWhyCli — peek", () => {
     await expect(runWhyCli(["src/a.ts:42", "--peek"])).rejects.toThrow(
       "Gateway is not running. Start with: nimbus start",
     );
+  });
+
+  it("--peek with a pull request URL fails locally, without calling the gateway", async () => {
+    let called = false;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async () => {
+          called = true;
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await expect(runWhyCli(["https://github.com/acme/web/pull/482", "--peek"])).rejects.toThrow(
+      "--peek takes a path or symbol, not a pull request URL",
+    );
+    expect(called).toBe(false);
   });
 });
