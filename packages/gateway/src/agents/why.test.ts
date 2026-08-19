@@ -15,6 +15,7 @@ import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { upsertBlameLines } from "../security/blame-store.ts";
 import type { SyncContext } from "../sync/types.ts";
+import type { BlameSpawn } from "./_lib/blame-on-demand.ts";
 import { runWhy } from "./why.ts";
 
 const HOUR = 60 * 60 * 1000;
@@ -116,6 +117,64 @@ function seedWhyFixture(db: Database, parts: FixtureParts): void {
       },
     ]);
   }
+}
+
+/**
+ * The prUrl arm's fixture: the same PR + ticket + discussion shape
+ * `seedWhyFixture` builds for the ref arm — a github PR referencing a linear
+ * ticket, and a Slack message mentioning that ticket — but deliberately NO
+ * blame row and NO filesystem-anchored commit. That absence is the point of
+ * this arm: `resolvePrSubject` resolves the PR straight from the index, no
+ * local checkout and no `git blame` process required.
+ */
+function seedPrWithTicketAndDiscussion(db: Database): void {
+  const t = Date.now();
+
+  upsertIndexedItem(db, {
+    service: "linear",
+    type: "issue",
+    externalId: "NIM-88",
+    title: "Retry backoff is wrong",
+    bodyPreview: "",
+    url: "https://linear.app/acme/issue/NIM-88",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: {},
+  });
+
+  // github PR — externalId/metadata shape from github-sync.ts, same as
+  // seedWhyFixture's `pr` part, but under acme/web#482 (the URL the prUrl
+  // arm's tests resolve against).
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/web#482",
+    title: "Fix retry backoff",
+    bodyPreview: "part of NIM-88",
+    url: "https://github.com/acme/web/pull/482",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: {
+      number: 482,
+      repo: "acme/web",
+      state: "merged",
+      draft: false,
+      merged: true,
+    },
+  });
+
+  // Slack message mentioning the ticket — same shape as the ref arm's
+  // discussion-lane fixture.
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "C1/1000.1",
+    title: "anyone looking at NIM-88?",
+    bodyPreview: "anyone looking at NIM-88?",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: { channel: "C1" },
+  });
 }
 
 describe("runWhy", () => {
@@ -640,5 +699,56 @@ describe("runWhy", () => {
 
     expect(c.count).toBeLessThanOrEqual(1);
     expect(brief.subject).not.toBeNull();
+  });
+});
+
+describe("runWhy — the prUrl arm", () => {
+  test("answers the four PR lanes without a checkout, and spawns no blame", async () => {
+    const db = freshDb();
+    // Seed the PR, its ticket and its discussion exactly as the ref-arm fixtures
+    // do, but DO NOT seed blame or filesystem roots — the point of this arm.
+    seedPrWithTicketAndDiscussion(db);
+    let spawned = 0;
+    const brief = await runWhy(
+      { prUrl: "https://github.com/acme/web/pull/482" },
+      {
+        db,
+        roots: [],
+        notify: () => {},
+        sessionId: "why-pr-1",
+        spawn: (() => {
+          spawned += 1;
+          return null;
+        }) as unknown as BlameSpawn,
+      },
+    );
+
+    expect(spawned).toBe(0);
+    expect(brief.subject).toBeNull();
+    expect(brief.changeSubject?.repo).toBe("acme/web");
+    expect(brief.query).toEqual({ ref: "https://github.com/acme/web/pull/482", line: null });
+    const lanes = new Set(brief.findings.map((f) => f.lane));
+    expect(lanes.has("pull_request")).toBe(true);
+    expect(lanes.has("ticket")).toBe(true);
+    expect(lanes.has("authorship")).toBe(false);
+    expect(lanes.has("downstream")).toBe(false);
+  });
+
+  test("a miss returns a brief with a null changeSubject, not a failure", async () => {
+    const db = freshDb();
+    const brief = await runWhy(
+      { prUrl: "https://github.com/acme/web/pull/999" },
+      { db, roots: [], notify: () => {}, sessionId: "why-pr-2" },
+    );
+    expect(brief.kind).toBe("why");
+    expect(brief.changeSubject).toBeNull();
+    expect(brief.subject).toBeNull();
+    expect(brief.findings).toEqual([]);
+  });
+
+  test("the ref arm leaves changeSubject absent", async () => {
+    const db = freshDb();
+    const brief = await runWhy({ ref: refAt(12) }, ctxFor(db));
+    expect("changeSubject" in brief && brief.changeSubject !== undefined).toBe(false);
   });
 });

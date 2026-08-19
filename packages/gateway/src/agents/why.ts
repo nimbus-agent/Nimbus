@@ -5,7 +5,7 @@ import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
 import type { BlameLookup } from "../security/blame-store.ts";
 import { type BlameSpawn, ensureBlameLine } from "./_lib/blame-on-demand.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
-import type { GapNote } from "./_lib/findings.ts";
+import type { GapNote, WhyChangeSubject } from "./_lib/findings.ts";
 import {
   aggregateMissingEntityTypes,
   detectEmptyIndex,
@@ -14,9 +14,11 @@ import {
   detectMissingRelationToEntityType,
 } from "./_lib/gap-notes.ts";
 import { reverseDependsOn } from "./_lib/graph-traversals.ts";
+import { resolvePrSubject } from "./_lib/pr-subject.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 import { parseRef, resolveWhySubject } from "./_lib/why-subject.ts";
 import type { WhyBrief, WhyFinding, WhyInput, WhySubject } from "./_lib/why-types.ts";
+import { isWhyPrInput } from "./_lib/why-types.ts";
 
 export type WhyContext = {
   db: Database;
@@ -34,6 +36,15 @@ const SHA_PORTION = "substr(external_id, instr(external_id, ':') + 1)";
 type LaneInput = {
   subject: WhySubject | null;
   blame: BlameLookup | null;
+  /**
+   * The pull request the lanes answer about, resolved ONCE by whichever entry
+   * point ran: blame -> sha -> findPrForSha on the ref arm, the index resolver
+   * on the prUrl arm. The lanes must not care which — that is what makes this
+   * an entry point rather than a second code path.
+   */
+  pr: PrForSha | null;
+  /** Blame's author time on the ref arm, the PR's own timestamp on the prUrl arm. */
+  occurredAt: number | null;
 };
 
 type SubAgentResult = {
@@ -58,27 +69,56 @@ function makeSubAgent(
 
 export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief> {
   const start = performance.now();
-
   const preflightGaps: GapNote[] = [];
   const empty = detectEmptyIndex(ctx.db);
   if (empty !== null) preflightGaps.push(empty);
 
-  const subject = resolveWhySubject(ctx.db, ctx.roots, input);
-  const parsedLine = parseRef(input.ref).line;
-
-  // Resolve-once design: two lanes need the blamed SHA, and running
-  // `ensureBlameLine` inside parallel sub-agents could double-spawn on a
-  // cold line. Resolve it here, once, and hand the result to every lane.
+  let subject: WhySubject | null = null;
   let blame: BlameLookup | null = null;
-  if (subject !== null && subject.lineNo !== null) {
-    blame = await ensureBlameLine(
-      ctx.db,
-      { repoRoot: subject.repoRoot, filePath: subject.filePath },
-      subject.lineNo,
-      ctx.spawn,
-    );
+  let pr: PrForSha | null = null;
+  let changeSubject: WhyChangeSubject | null | undefined;
+  let queryRef: string;
+  let queryLine: number | null;
+
+  if (isWhyPrInput(input)) {
+    queryRef = input.prUrl;
+    queryLine = null;
+    const resolved = resolvePrSubject(ctx.db, input.prUrl);
+    // null, not absent: the caller asked about a change and we could not name it.
+    changeSubject = resolved.ok ? resolved.subject : null;
+    pr = resolved.ok
+      ? {
+          entityId: resolved.subject.entityId,
+          number: resolved.subject.number,
+          title: resolved.subject.title,
+          url: resolved.subject.url,
+          modifiedAt: resolved.subject.modifiedAt,
+        }
+      : null;
+  } else {
+    queryRef = input.ref;
+    queryLine = input.line ?? parseRef(input.ref).line;
+    subject = resolveWhySubject(ctx.db, ctx.roots, input);
+    // Resolve-once design: two lanes need the blamed SHA, and running
+    // `ensureBlameLine` inside parallel sub-agents could double-spawn on a
+    // cold line. Resolve it here, once, and hand the result to every lane.
+    if (subject !== null && subject.lineNo !== null) {
+      blame = await ensureBlameLine(
+        ctx.db,
+        { repoRoot: subject.repoRoot, filePath: subject.filePath },
+        subject.lineNo,
+        ctx.spawn,
+      );
+    }
+    pr = blame === null ? null : findPrForSha(ctx.db, blame.commitSha);
   }
-  const lane: LaneInput = { subject, blame };
+
+  const lane: LaneInput = {
+    subject,
+    blame,
+    pr,
+    occurredAt: blame?.authorTimeMs ?? pr?.modifiedAt ?? null,
+  };
 
   const coordinator = new AgentCoordinator({
     sessionId: ctx.sessionId,
@@ -123,8 +163,9 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
     generatedAt: Date.now(),
     latencyMs: Math.round(performance.now() - start),
     gaps,
-    query: { ref: input.ref, line: input.line ?? parsedLine },
+    query: { ref: queryRef, line: queryLine },
     subject,
+    ...(changeSubject === undefined ? {} : { changeSubject }),
     findings: allFindings,
   };
 }
@@ -165,7 +206,11 @@ type PrForSha = {
   number: number | null;
   title: string;
   url: string | null;
-  modifiedAt: number;
+  // `number | null`, not `number`: findPrForSha's own row always has one (the
+  // `item.modified_at` column is NOT NULL), but resolvePrSubject's
+  // WhyChangeSubject — the prUrl arm's source for this field — types it
+  // nullable across every connector, so PrForSha must accept both.
+  modifiedAt: number | null;
 };
 
 function findPrForSha(db: Database, sha: string): PrForSha | null {
@@ -345,8 +390,7 @@ function detectUnresolvedReviewedRelation(db: Database, prEntityId: string): Gap
 }
 
 async function subPullRequest(db: Database, lane: LaneInput): Promise<SubAgentResult> {
-  const sha = lane.blame?.commitSha;
-  const pr = sha === undefined ? null : findPrForSha(db, sha);
+  const pr = lane.pr;
   if (pr === null) {
     const gap = detectMissingRelationEmit(
       db,
@@ -422,8 +466,7 @@ async function subPullRequest(db: Database, lane: LaneInput): Promise<SubAgentRe
 // ---------------------------------------------------------------------------
 
 async function subTicket(db: Database, lane: LaneInput): Promise<SubAgentResult> {
-  const sha = lane.blame?.commitSha;
-  const pr = sha === undefined ? null : findPrForSha(db, sha);
+  const pr = lane.pr;
   if (pr === null) return {};
 
   const rows = ticketRowsForPr(db, pr.entityId);
@@ -455,17 +498,19 @@ async function subTicket(db: Database, lane: LaneInput): Promise<SubAgentResult>
 
 async function subDiscussion(db: Database, lane: LaneInput): Promise<SubAgentResult> {
   const targetIds: string[] = [];
+  // A commit-message thread genuinely needs the SHA — there is none on the
+  // prUrl arm, so this half stays guarded on `lane.blame`.
   const sha = lane.blame?.commitSha;
   if (sha !== undefined) {
     const commit = findCommitEntity(db, sha, lane.subject?.repoRoot ?? "");
     if (commit !== null) targetIds.push(commit.id);
+  }
 
-    const pr = findPrForSha(db, sha);
-    if (pr !== null) {
-      targetIds.push(pr.entityId);
-      const ticket = ticketRowsForPr(db, pr.entityId).at(0);
-      if (ticket !== undefined) targetIds.push(ticket.entityId);
-    }
+  const pr = lane.pr;
+  if (pr !== null) {
+    targetIds.push(pr.entityId);
+    const ticket = ticketRowsForPr(db, pr.entityId).at(0);
+    if (ticket !== undefined) targetIds.push(ticket.entityId);
   }
 
   let rows: Array<{
@@ -520,8 +565,8 @@ async function subDriver(db: Database, lane: LaneInput): Promise<SubAgentResult>
   const missingEntityGap = detectMissingEntityType(db, "incident");
   if (missingEntityGap !== null) return { gap: missingEntityGap };
 
-  const authorTimeMs = lane.blame?.authorTimeMs;
-  if (authorTimeMs === null || authorTimeMs === undefined) return {};
+  const authorTimeMs = lane.occurredAt;
+  if (authorTimeMs === null) return {};
 
   const rows = db
     .query(

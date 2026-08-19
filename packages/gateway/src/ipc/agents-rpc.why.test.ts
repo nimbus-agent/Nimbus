@@ -227,11 +227,7 @@ describe("dispatchAgentsRpc — agents.whyPeek", () => {
 
   test("agents.whyPeek still rejects prUrl", async () => {
     await expect(
-      dispatchAgentsRpc(
-        "agents.whyPeek",
-        { prUrl: "https://x/y/pull/1" },
-        makeCtx(freshDb()),
-      ),
+      dispatchAgentsRpc("agents.whyPeek", { prUrl: "https://x/y/pull/1" }, makeCtx(freshDb())),
     ).rejects.toThrow(/ref/);
   });
 });
