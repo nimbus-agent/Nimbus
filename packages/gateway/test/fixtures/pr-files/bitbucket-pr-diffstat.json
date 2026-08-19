@@ -1,0 +1,9 @@
+{
+  "values": [
+    { "status": "modified", "old": { "path": "src/a.ts" }, "new": { "path": "src/a.ts" } },
+    { "status": "added", "old": null, "new": { "path": "src/b.ts" } },
+    { "status": "removed", "old": { "path": "tests/c.ts" }, "new": null },
+    { "status": "renamed", "old": { "path": "tests/d.ts" }, "new": { "path": "src/d.ts" } }
+  ],
+  "next": null
+}

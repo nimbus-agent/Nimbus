@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { mapGithubPrFiles } from "./pr-file-mapping.ts";
+import { mapBitbucketPrFiles, mapGithubPrFiles, mapGitlabMrFiles } from "./pr-file-mapping.ts";
 
 // Fixtures are read and parsed, NOT imported with an import attribute. This repo uses zero
 // `with { type: "json" }` imports; the established pattern is readFileSync + JSON.parse
@@ -55,5 +55,64 @@ describe("mapGithubPrFiles", () => {
     expect(mapGithubPrFiles([{ status: "added" }, { filename: "ok.ts", status: "added" }])).toEqual(
       [{ path: "ok.ts", status: "added", counterpartPath: null }],
     );
+  });
+});
+
+// Reuse the `loadFixture` helper already defined at the top of THIS SAME FILE by Task 3 — these
+// tests are APPENDED to it, so the helper is already in scope. Do NOT import it, and do NOT export
+// it: importing a `.test.ts` module re-executes its top-level `describe`/`test` calls, so a
+// consumer that imported this helper would silently re-run all of Task 3's tests inside its own
+// file (measured: 7 passes where 1 was expected). Also do not switch to an import attribute — this
+// repo uses none.
+const gitlabFixture = loadFixture("gitlab-mr-diffs.json");
+const bitbucketFixture = loadFixture("bitbucket-pr-diffstat.json");
+
+describe("mapGitlabMrFiles", () => {
+  test("a rename produces TWO rows", () => {
+    const rows = mapGitlabMrFiles(gitlabFixture);
+    expect(
+      rows
+        .filter((r) => r.status === "renamed")
+        .map((r) => r.path)
+        .sort(),
+    ).toEqual(["src/d.ts", "tests/d.ts"]);
+  });
+
+  test("the boolean flags map onto added / removed / modified", () => {
+    const rows = mapGitlabMrFiles(gitlabFixture);
+    expect(rows.find((r) => r.path === "src/b.ts")?.status).toBe("added");
+    expect(rows.find((r) => r.path === "tests/c.ts")?.status).toBe("removed");
+    expect(rows.find((r) => r.path === "src/a.ts")?.status).toBe("modified");
+  });
+
+  test("a non-array payload yields no rows", () => {
+    expect(mapGitlabMrFiles({ error: "nope" })).toEqual([]);
+  });
+});
+
+describe("mapBitbucketPrFiles", () => {
+  test("reads the paginated values envelope", () => {
+    expect(mapBitbucketPrFiles(bitbucketFixture).length).toBeGreaterThan(0);
+  });
+
+  test("a rename produces TWO rows", () => {
+    const rows = mapBitbucketPrFiles(bitbucketFixture);
+    expect(
+      rows
+        .filter((r) => r.status === "renamed")
+        .map((r) => r.path)
+        .sort(),
+    ).toEqual(["src/d.ts", "tests/d.ts"]);
+  });
+
+  test("a null old/new side is skipped rather than yielding an empty path", () => {
+    const rows = mapBitbucketPrFiles(bitbucketFixture);
+    expect(rows.some((r) => r.path === "")).toBe(false);
+    expect(rows.find((r) => r.path === "src/b.ts")?.status).toBe("added");
+    expect(rows.find((r) => r.path === "tests/c.ts")?.status).toBe("removed");
+  });
+
+  test("a payload with no values array yields no rows", () => {
+    expect(mapBitbucketPrFiles({})).toEqual([]);
   });
 });

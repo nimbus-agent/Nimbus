@@ -56,3 +56,82 @@ export function mapGithubPrFiles(payload: unknown): ChangedFileRow[] {
   }
   return out;
 }
+
+/** Emit one row per touched path, collapsing a rename's two paths into two rows. */
+function pushPair(out: ChangedFileRow[], oldPath: string, newPath: string): void {
+  out.push({ path: newPath, status: "renamed", counterpartPath: oldPath });
+  out.push({ path: oldPath, status: "renamed", counterpartPath: newPath });
+}
+
+/**
+ * GitLab reports a change as `old_path`/`new_path` plus three booleans rather than a status
+ * string. A rename is the only case where the two paths differ meaningfully, and it emits two
+ * rows for the same reason GitHub's does.
+ */
+export function mapGitlabMrFiles(payload: unknown): ChangedFileRow[] {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  const out: ChangedFileRow[] = [];
+  for (const entry of payload) {
+    const rec = asRecord(entry);
+    if (rec === undefined) {
+      continue;
+    }
+    const oldPath = stringField(rec, "old_path") ?? "";
+    const newPath = stringField(rec, "new_path") ?? "";
+    if (rec["renamed_file"] === true && oldPath !== "" && newPath !== "" && oldPath !== newPath) {
+      pushPair(out, oldPath, newPath);
+      continue;
+    }
+    const path = newPath !== "" ? newPath : oldPath;
+    if (path === "") {
+      continue;
+    }
+    const status: ChangedFileStatus =
+      rec["new_file"] === true ? "added" : rec["deleted_file"] === true ? "removed" : "modified";
+    out.push({ path, status, counterpartPath: null });
+  }
+  return out;
+}
+
+function bitbucketSidePath(side: unknown): string {
+  const rec = asRecord(side);
+  return rec === undefined ? "" : (stringField(rec, "path") ?? "");
+}
+
+/**
+ * Bitbucket wraps diffstat entries in a paginated `values` envelope and reports each side as an
+ * object that is `null` for an add (no `old`) or a delete (no `new`). Reading `.path` off the null
+ * side is how an empty-path row would get written, so each side is resolved independently and an
+ * empty result is skipped.
+ */
+export function mapBitbucketPrFiles(payload: unknown): ChangedFileRow[] {
+  const rec = asRecord(payload);
+  const values = rec?.["values"];
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  const out: ChangedFileRow[] = [];
+  for (const entry of values) {
+    const e = asRecord(entry);
+    if (e === undefined) {
+      continue;
+    }
+    const oldPath = bitbucketSidePath(e["old"]);
+    const newPath = bitbucketSidePath(e["new"]);
+    const raw = stringField(e, "status") ?? "modified";
+    if (raw === "renamed" && oldPath !== "" && newPath !== "" && oldPath !== newPath) {
+      pushPair(out, oldPath, newPath);
+      continue;
+    }
+    const path = newPath !== "" ? newPath : oldPath;
+    if (path === "") {
+      continue;
+    }
+    const status: ChangedFileStatus =
+      raw === "added" ? "added" : raw === "removed" ? "removed" : "modified";
+    out.push({ path, status, counterpartPath: null });
+  }
+  return out;
+}
