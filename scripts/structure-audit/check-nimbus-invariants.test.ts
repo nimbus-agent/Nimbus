@@ -855,6 +855,39 @@ describe("graph-entity-flat-coowned — flat upsertGraphEntity pinned away from 
     ).toBe(true);
   });
 
+  // REGRESSION. `upsertGraphEntity<string>(...)` in a PRODUCTION file must be flagged. The
+  // explicit type argument instantiates `T` as `string`, and `NonCoOwnedType<string>` collapses
+  // back to `string` because a non-union never distributes — so the compiler guard accepts this
+  // shape. Before the matcher grew its optional `<...>` segment the regex missed it too, which
+  // meant one added type argument defeated BOTH layers. Verified against a real probe file: it
+  // passed `audit:invariants` and `typecheck` before the fix, and fails the audit after it.
+  test("a flat call with an EXPLICIT type argument is flagged in a production file", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/graph/graph-populator.ts",
+          contents:
+            '  const id = upsertGraphEntity<string>(db, {\n    type: "person",\n    externalId: e,\n  });\n',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  // The same shape in a `.test.ts` file stays allowed: the exemption is by FILE PATH, and the
+  // fixture-only callers Tasks 1 and 3 established all live in test files. This pins that the
+  // widened matcher did not turn those legitimate fixtures into violations.
+  test("a flat call with an explicit type argument is still allowed in a test file", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/agents/negotiate.test.ts",
+          contents:
+            '  const id = upsertGraphEntity<string>(db, {\n    type: "person",\n    externalId: e,\n  });\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
   test("a flat call with a NON-co-owned type (pr) is allowed", () => {
     expect(
       flagged([

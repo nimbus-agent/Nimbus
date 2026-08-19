@@ -913,8 +913,17 @@ export function checkEgressChokepointConfinement(files: readonly FileEntry[]): V
 // claims otherwise.
 const GRAPH_ENTITY_FLAT_DEFINITION_SITE = "packages/gateway/src/graph/relationship-graph.ts";
 const GRAPH_ENTITY_COOWNED_TYPE_ALT = CO_OWNED_ENTITY_TYPES.join("|");
+// The optional `<...>` segment is LOAD-BEARING, not defensive tidiness. `upsertGraphEntity` is
+// generic, so `upsertGraphEntity<string>(db, { type: "person", … })` instantiates `T` as `string`
+// explicitly; `NonCoOwnedType<string>` collapses back to `string` (a non-union never distributes),
+// so the compiler guard accepts it. Without this segment the regex did not match that shape
+// either, which left a production caller able to defeat BOTH layers by adding one type argument —
+// re-creating, by accident, exactly the caller-controlled opt-out the path-based exemption below
+// was chosen to avoid. Red-proved in both directions before and after this change: a probe file
+// using `<string>` passed `audit:invariants` AND `typecheck` beforehand, and fails the audit now.
+// Bounded (`{0,120}`) and `(`-free so it cannot run past the call it is matching.
 const GRAPH_ENTITY_COOWNED_FLAT_RE = new RegExp(
-  `\\bupsertGraphEntity\\s*\\([\\s\\S]{0,120}?type:\\s*["'\`](?:${GRAPH_ENTITY_COOWNED_TYPE_ALT})["'\`]`,
+  `\\bupsertGraphEntity(?:\\s*<[^()]{0,120}>)?\\s*\\([\\s\\S]{0,120}?type:\\s*["'\`](?:${GRAPH_ENTITY_COOWNED_TYPE_ALT})["'\`]`,
   "g",
 );
 

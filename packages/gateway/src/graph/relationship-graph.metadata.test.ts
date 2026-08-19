@@ -62,6 +62,16 @@ describe("upsertGraphEntityNamespaced", () => {
       writer: "ownership",
       metadata: { ownerCount: 2 },
     });
+    // Seed the WRITER'S OWN namespace first. Without this the test proves only the sibling half
+    // of its own title: with `symbols` never written, an implementation that merely left the
+    // column alone would pass, and the "clears the writer's own" claim would rest on nothing.
+    upsertGraphEntityNamespaced(db, {
+      type: "source_file",
+      externalId: "file:/repo:b.ts",
+      label: "b.ts",
+      writer: "symbols",
+      metadata: { symbolCount: 9 },
+    });
     upsertGraphEntityNamespaced(db, {
       type: "source_file",
       externalId: "file:/repo:b.ts",
@@ -72,6 +82,9 @@ describe("upsertGraphEntityNamespaced", () => {
     expect(readEntityMetadata(rawMetadata(db, "file:/repo:b.ts"), "ownership")).toEqual({
       ownerCount: 2,
     });
+    // The writer's own prior field is GONE, not merged forward — this is the half the test was
+    // named for and did not previously exercise.
+    expect(readEntityMetadata(rawMetadata(db, "file:/repo:b.ts"), "symbols")).toEqual({});
   });
 
   test("a writer replaces its OWN namespace wholesale", () => {
