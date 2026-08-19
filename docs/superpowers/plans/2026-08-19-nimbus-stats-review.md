@@ -1,6 +1,6 @@
 # Review & Feedback: `nimbus stats` Implementation Plan
 
-This document reviews [2026-08-19-nimbus-stats.md](file:///C:/gitrep/Nimbus/docs/superpowers/plans/2026-08-19-nimbus-stats.md) and compiles open questions, suggestions, and potential improvements for the implementation steps.
+This document reviews [2026-08-19-nimbus-stats.md](./2026-08-19-nimbus-stats.md) and compiles open questions, suggestions, and potential improvements for the implementation steps.
 
 ---
 

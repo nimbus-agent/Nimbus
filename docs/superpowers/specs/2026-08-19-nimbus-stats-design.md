@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-19
 **Spine slot:** S1 (Local Brain) — "Answer-quality surfaces, remaining", the aggregation half of W6-B
-**Status:** design approved, not yet implemented
+**Status:** IMPLEMENTED — shipped in #1249. This document is the design as agreed; where the
+shipped code has since moved past it, `packages/gateway/src/metrics/stats.ts` is authoritative.
 **Roadmap row:** `docs/roadmap.md` § Phase 7 Wave 6 → "First-class aggregation-over-time queries (W6-B)"
 
 ---
@@ -79,7 +80,9 @@ this feature has. So: the claim "buckets on a real event timestamp" holds for `p
 `incidents-opened`, and for no others.
 
 **D2 — disjoint buckets, not rolling windows.** `--window 90d --bucket 1w` means 13
-independent weeks, each computed over its own rows. The roadmap's phrase "rolling 7-day MTTR
+independent buckets (12 full seven-day weeks plus one six-day remainder absorbed by the
+oldest bucket, since 90 = 12×7 + 6 — see `stats-buckets.ts`'s `splitBuckets`), each computed
+over its own rows. The roadmap's phrase "rolling 7-day MTTR
 trend" describes a *rolling* window, which is a different thing: smoother, better per-point
 samples, but ~90 evaluations instead of 13 and adjacent points sharing data, so a reader can
 over-trust an apparent trend. Disjoint is simpler to explain and each point is genuinely
@@ -87,6 +90,14 @@ independent. **Consequence stated plainly:** for a median metric like `mttr`, a 
 often holds one or two incidents, so `low_sample` will fire on most buckets and the series
 will contain many nulls. That is the data being thin, not the tool being broken, and the gap
 reason says which. Rolling is recorded as a named follow-up (§ 9), not built.
+
+**"Disjoint" holds without qualification for `pr-merges` and `incidents-opened` only.** They
+window half-open (`>= start AND < end`), so a boundary timestamp lands in exactly one bucket.
+The four wrapped DORA calculators reuse `dora.ts`'s inclusive-both-ends window
+(`>= lower AND <= nowMs`), so an event landing exactly on a shared boundary is counted in
+*both* adjacent buckets for those four metrics. Fixing that means touching `dora.ts` itself —
+out of scope here for the same reason as D1 (§ 3) — so it is recorded as a known limit, not
+fixed by a second, differently-bounded query path.
 
 **D3 — every metric is service-scoped through config that already exists.** No new
 `nimbus.toml` section. See § 5.
@@ -215,9 +226,13 @@ Each point is a `DoraMetricValue` plus its bucket bounds. A bucket with no rows 
 `value: null` with a gap — **never `0`** — matching negotiate's "could not be computed"
 discipline: zero incidents and no incident data are different facts.
 
-**Gap type:** `StatsGap = DoraGap | "github_only_merge_data"`. The new value is set by
-`pr-merges` when the resolved service binds any non-GitHub repo, so a GitLab or Bitbucket
-user sees a named limitation instead of a flat zero line. DORA's own union is left frozen.
+**Gap type:** `StatsGap = DoraGap | "github_only_merge_data" | "incidents_missing_opened_at"`.
+`github_only_merge_data` is set by `pr-merges` when the resolved service binds any non-GitHub
+repo, so a GitLab or Bitbucket user sees a named limitation instead of a flat zero line.
+`incidents_missing_opened_at` is set by `incidents-opened` when PagerDuty rows were excluded
+from the count for having no `opened_at_ms` — computed once per series, not per bucket, and
+attached only to a bucket that derived no gap reason of its own, so one untimed incident
+cannot displace a real per-bucket gap. DORA's own union is left frozen.
 
 ---
 

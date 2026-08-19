@@ -45,26 +45,42 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
   **Built differently from the roadmap row, in two ways, both recorded rather than left to
   surprise a reader.** The row said "rolling 7-day MTTR trend" — this ships **disjoint**
-  buckets instead. `--window 90d --bucket 1w` is 13 independent weeks, each computed over its
-  own rows, not ~90 overlapping evaluations sharing data: simpler to reason about and to test,
-  at the cost of a smoother series and fewer samples per point. Rolling windows (`--rolling`)
-  are a named follow-up, worth building once the sparse-bucket behaviour below has been seen
-  against real data. Separately, the row's other headline example, "PR merge throughput by
-  week," implies all forges; `pr-merges` is **GitHub-only**, because `connectors/
-  github-sync.ts` is the only connector that writes `metadata.merged_at` — `gitlab-sync.ts` and
-  `bitbucket-sync.ts` write nothing. A service binding a non-GitHub repo gets a
-  `github_only_merge_data` gap; one binding no GitHub repos at all gets `no_repos` rather than
-  a misleading zero.
+  buckets instead, each computed over its own rows rather than ~90 overlapping evaluations
+  sharing data: simpler to reason about and to test, at the cost of a smoother series and
+  fewer samples per point. `--window 90d --bucket 1w` is 13 buckets, not 13 uniform weeks —
+  buckets are built oldest-first and only the newest 12 are a full seven days wide; the
+  **oldest** bucket absorbs the six-day remainder (90 = 12×7 + 6) so the newest bucket still
+  ends exactly at the request time. Rolling windows (`--rolling`) are a named follow-up,
+  worth building once the sparse-bucket behaviour below has been seen against real data.
+  Separately, the row's other headline example, "PR merge throughput by week," implies all
+  forges; `pr-merges` is **GitHub-only**, because `connectors/github-sync.ts` is the only
+  connector that writes `metadata.merged_at` — `gitlab-sync.ts` and `bitbucket-sync.ts` write
+  nothing. A service binding a non-GitHub repo gets a `github_only_merge_data` gap; one
+  binding no GitHub repos at all gets `no_repos` rather than a misleading zero.
+
+  **"Disjoint" holds without qualification only for the two new counters.** `pr-merges` and
+  `incidents-opened` window half-open (`>= start` and `< end`), so a boundary timestamp lands
+  in exactly one bucket. The four wrapped DORA metrics reuse `dora.ts`'s inclusive-both-ends
+  window (`>= lower` and `<= upper`) unchanged, so an event landing exactly on a shared
+  boundary is counted in *both* adjacent buckets for those four — a known limit, not fixed
+  here, because fixing it means changing `dora.ts` itself and therefore `nimbus metrics
+  dora`'s numbers too.
 
   **A null is never a zero, and sparse output is expected, not a malfunction.** An empty bucket
   returns `value: null` with a named gap — never `0` — matching `negotiate`'s "could not be
   computed" discipline: zero incidents and no incident data are different facts. `mttr` is a
-  median, so a one-week bucket often holds one or two incidents and `low_sample` fires on most
-  buckets. A `low_sample` `mttr` bucket is not empty, though — the median is real and the gap
-  is a caveat on it — so the CLI prints the gap on every row that has one, and its summary line
-  counts caveated buckets separately from empty ones (`4 of 13 buckets had data (3 caveated: 3
-  low_sample) · 9 empty (9 low_sample)`), plus a plain sentence when every bucket is null. A
-  merged count read as "9 buckets had no data" and understated how many held a value.
+  median, so `low_sample` fires often — but it fires in **two different shapes**, and the
+  gap name alone does not tell them apart: a one-week bucket holding one or two incidents
+  returns a REAL median carrying `low_sample` as a caveat (not empty), while a bucket holding
+  zero incidents returns `value: null` with the same `low_sample` gap (empty — DORA's `mttr`
+  uses `low_sample` for both the below-threshold case and the zero-incident case). The value
+  column is what disambiguates, not the gap name, so the CLI prints the gap on every row that
+  has one and its summary line splits by `value`, not by gap: caveated buckets (real value +
+  gap) counted separately from empty ones (`null` + gap) — e.g. `4 of 13 buckets had data (3
+  caveated: 3 low_sample) · 9 empty (9 low_sample)` means 3 buckets each carry a real median
+  with a `low_sample` caveat (one or two incidents), and a *different* 9 buckets carry
+  `value: null` with the same gap name for a different reason (zero incidents). A merged
+  count read as "9 buckets had no data" and understated how many held a value.
   `incidents-opened` excludes incidents with no `opened_at_ms` and reports the exclusion via
   `incidents_missing_opened_at`, computed once per series and attached only to buckets that
   derived no reason of their own — so one ancient untimed incident no longer displaces every

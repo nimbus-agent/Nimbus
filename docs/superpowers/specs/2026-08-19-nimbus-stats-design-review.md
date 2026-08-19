@@ -1,6 +1,6 @@
 # Review & Feedback: `nimbus stats` Design
 
-This document reviews [2026-08-19-nimbus-stats-design.md](file:///C:/gitrep/Nimbus/docs/superpowers/specs/2026-08-19-nimbus-stats-design.md) and compiles open questions, suggestions, and potential improvements.
+This document reviews [2026-08-19-nimbus-stats-design.md](./2026-08-19-nimbus-stats-design.md) and compiles open questions, suggestions, and potential improvements.
 
 ---
 

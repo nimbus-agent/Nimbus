@@ -80,6 +80,29 @@ describe("parseStatsArgs", () => {
   test("a blank --service is an error", () => {
     expect(() => parseStatsArgs(["mttr", "--service", "   "])).toThrow(/--service/);
   });
+
+  // `takeFlag` regression: a flag as the LAST token, or immediately followed by another
+  // flag, must throw — never fall through to `?? DEFAULT_WINDOW` / `?? DEFAULT_BUCKET` and
+  // silently run with a value the user never typed. Each case names the offending flag.
+  describe("a flag present with no value throws, naming the flag", () => {
+    test("terminal --window (nothing after it)", () => {
+      expect(() => parseStatsArgs(["mttr", "--service", "s", "--window"])).toThrow(/--window/);
+    });
+
+    test("terminal --bucket (nothing after it)", () => {
+      expect(() => parseStatsArgs(["mttr", "--service", "s", "--bucket"])).toThrow(/--bucket/);
+    });
+
+    test("terminal --service (nothing after it)", () => {
+      expect(() => parseStatsArgs(["mttr", "--service"])).toThrow(/--service/);
+    });
+
+    test("--window immediately followed by another flag (--bucket 1w)", () => {
+      expect(() =>
+        parseStatsArgs(["mttr", "--service", "s", "--window", "--bucket", "1w"]),
+      ).toThrow(/--window/);
+    });
+  });
 });
 
 // The known gap this task's brief calls out: `parseStatsArgs` tests alone cannot catch a

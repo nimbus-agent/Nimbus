@@ -862,7 +862,7 @@ nimbus stats pr-merges --service payment-service --window 90d --bucket 1w --json
 | `--bucket <duration>` | Bucket width, same units as `--window` (default: `1w`). A bucket under a day labels rows with the time as well as the date |
 | `--json` | Machine-readable JSON output (human-readable table otherwise) |
 
-Four things worth knowing before reading the output:
+Five things worth knowing before reading the output:
 
 - **Only the two new counters bucket on a real event timestamp.** `pr-merges` uses
   `metadata.merged_at` and `incidents-opened` uses `metadata.opened_at_ms`. The four wrapped
@@ -872,6 +872,14 @@ Four things worth knowing before reading the output:
   yesterday's bucket. This is the accepted cost of not maintaining a second copy of DORA's
   arithmetic; fixing it means changing `dora.ts` itself, which moves `nimbus metrics dora`
   too, and is a named follow-up.
+
+- **Buckets are disjoint, except at a shared boundary for the four wrapped metrics.**
+  `pr-merges` and `incidents-opened` window half-open (`>= start` and `< end`), so a boundary
+  timestamp lands in exactly one bucket — genuinely disjoint. `deployment-frequency`,
+  `lead-time`, `change-failure-rate`, and `mttr` call the DORA calculators unchanged, which
+  window both bounds inclusively (`>= lower` and `<= upper`); an event landing exactly on a
+  bucket boundary is therefore counted in *both* adjacent buckets for those four. Fixing it
+  means changing `dora.ts` itself, the same accepted cost as the event-timestamp point above.
 
 - **Buckets walk backward from now and are not calendar-aligned.** `--window 90d --bucket 1w`
   produces 13 buckets ending exactly at the moment you ran the command, so the newest point is

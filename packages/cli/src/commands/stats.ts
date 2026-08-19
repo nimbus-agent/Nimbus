@@ -13,10 +13,20 @@ const METRICS = [
 const DEFAULT_WINDOW = "90d";
 const DEFAULT_BUCKET = "1w";
 
+/**
+ * Absent flag → `undefined` (the caller applies its own default). Present flag with no
+ * value — either it is the last token, or the next token is itself another flag (starts
+ * with `--`) — throws instead of returning `undefined`, so a terminal `--window` can never
+ * fall through to `?? DEFAULT_WINDOW` and silently run with a value the user never typed.
+ */
 function takeFlag(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
-  if (i < 0 || i + 1 >= args.length) return undefined;
-  return args[i + 1];
+  if (i < 0) return undefined;
+  const value = args[i + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`Missing value for ${flag}`);
+  }
+  return value;
 }
 
 export type StatsArgs = {
