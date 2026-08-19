@@ -20,6 +20,32 @@ But not "naimbus" or "nimbus_".
     const found = extractReadmeCliCommands(md);
     expect(found).toEqual([]);
   });
+
+  // Both cases below were live false positives against the real landing page:
+  // its install snippets pushed `nimbus less` and `nimbus install.sh` into the
+  // gate, which then demanded they be "registered" as CLI subcommands.
+  test("does not read a PATH ending in `nimbus` as the command", () => {
+    const md = [
+      "curl -fsSL .../nimbus.tar.gz -o /tmp/nimbus.tar.gz",
+      "tar -xzf /tmp/nimbus.tar.gz -C /tmp/nimbus",
+      "/tmp/nimbus/install.sh",
+      "brew install nimbus-agent/tap/nimbus",
+      "cd packages/nimbus && ls",
+    ].join("\n");
+    expect(extractReadmeCliCommands(md)).toEqual([]);
+  });
+
+  test("does not let a match span a newline", () => {
+    // `\s` would swallow the line break and pair the path with the next line's
+    // first word — this is verbatim the shape that produced `nimbus less`.
+    const md = "tar -xzf /tmp/nimbus.tar.gz -C /tmp/nimbus\nless /tmp/nimbus/install.sh";
+    expect(extractReadmeCliCommands(md)).toEqual([]);
+  });
+
+  test("still finds a real invocation on the line after a path", () => {
+    const md = "cd /tmp/nimbus\nnimbus doctor";
+    expect(extractReadmeCliCommands(md)).toEqual(["doctor"]);
+  });
 });
 
 describe("validateReadmeCommands", () => {

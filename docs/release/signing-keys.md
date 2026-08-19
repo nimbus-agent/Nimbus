@@ -70,7 +70,7 @@ Verifying a release on any platform follows the same `SHA256SUMS.asc` workflow d
 **Cross-check this fingerprint against four sources** — if any two disagree, **do not install**; open a private security issue per "Reporting a Vulnerability" in [`../SECURITY.md`](../SECURITY.md):
 
 1. This file (`docs/release/signing-keys.md`).
-2. The repository README (`README.md`, "Install → Verify any download" section).
+2. The repository landing page ([`../README.md`](../README.md), "Verifying what you downloaded" in the Quick Start section).
 3. The public key ASCII-armored block at [`SIGNING-KEY.asc`](./SIGNING-KEY.asc).
 4. Either keyserver — `keys.openpgp.org` or `keyserver.ubuntu.com`.
 

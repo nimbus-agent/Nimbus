@@ -135,3 +135,43 @@ describe("fenced code blocks", () => {
     expect(stripSections(md, ["## Gaps"])).toContain("tail");
   });
 });
+
+// The heading matcher is a hand-written character scan, replacing the quadratic
+// `/^(#+)\s+(.+)$/` (Sonar S8786 — a NON-matching long whitespace run made the
+// engine walk every split: measured 8 ms at 5k characters, 511 ms at 40k, a clean
+// 4x-input/16x-time curve). The scan is linear, and it was adopted on the promise
+// that it accepts exactly the same lines as the regex did.
+//
+// These are the edge cases where that promise is non-obvious, and where the regex
+// only ever succeeded by backtracking. Each one is a distinct arm of the scan, and
+// none was covered when the rewrite landed — the file fell to 78.26% branch, under
+// the 80% floor, which is what surfaced them.
+const LINE_SEPARATOR = String.fromCharCode(0x2028);
+
+describe("heading scan — the edge cases the old regex reached only by backtracking", () => {
+  test("hashes then whitespace and NOTHING else is still a heading, with empty text", () => {
+    // The regex matched here by handing `(.+)` the last whitespace character, so it
+    // needed two: one for `\s+` and one for `.`. Two spaces clear that bar.
+    expect(preambleBody(`intro\n##  \nafter`)).toBe("intro");
+  });
+
+  test("...but a SINGLE trailing space does not — `s+` and `.+` cannot both be fed", () => {
+    expect(preambleBody(`intro\n## \nafter`)).toBe(`intro\n## \nafter`);
+  });
+
+  test("a whitespace-only tail ending in a line separator is not a heading", () => {
+    // `$` is not multiline and `.` cannot match a line terminator, so the regex
+    // failed here. U+2028 survives a `.split("\n")`, so the scan really can see it.
+    const md = `intro\n##  ${LINE_SEPARATOR}\nafter`;
+    expect(preambleBody(md)).toBe(md);
+  });
+
+  test("a text tail containing a line separator is not a heading", () => {
+    const md = `intro\n## Gaps${LINE_SEPARATOR}x\nafter`;
+    expect(preambleBody(md)).toBe(md);
+  });
+
+  test("an empty-text heading still closes the section above it", () => {
+    expect(sectionBody(`## a\nbody\n##  \ntail`, "a")).toBe("body");
+  });
+});

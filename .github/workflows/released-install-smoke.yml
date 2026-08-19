@@ -15,7 +15,7 @@ name: released-install-smoke
 # capability, so the documented one-liner failed on every platform while
 # install-smoke stayed green.
 #
-# So this workflow runs the commands from README.md / install.mdx VERBATIM
+# So this workflow runs the commands from docs/README.md / install.mdx VERBATIM
 # against a real published release. Keep the commands below in sync with those
 # two files — if they drift, this proves the wrong thing.
 

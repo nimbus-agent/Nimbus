@@ -78,7 +78,7 @@ gpg --import docs/release/SIGNING-KEY.asc
 gpg --verify SHA256SUMS.asc SHA256SUMS
 ```
 
-Look for `Good signature from "Nimbus Release Signing <releases@...>"` and `Primary key fingerprint:` lines. **The fingerprint must match `docs/SECURITY.md`, README.md, and keys.openpgp.org — all four.**
+Look for `Good signature from "Nimbus Release Signing <releases@...>"` and `Primary key fingerprint:` lines. **The fingerprint must match `docs/SECURITY.md`, `docs/README.md`, and keys.openpgp.org — all four.**
 
 ### 3. Verify artifact hashes
 
@@ -135,7 +135,7 @@ Option A is faster on repeated runs. Option B has no system-level dependencies b
 Rotating the project signing key takes two releases:
 
 1. **`vN.N.N+1`** — signed by the **old** key. Contains updated `nimbus-verify.{sh,ps1}` whose `TRUSTED_FINGERPRINTS` array lists **both** the old and new fingerprint. Users who upgrade via `vN.N.N+1` pick up the new fingerprint.
-2. **`vN.N.N+2`** — signed by the **new** key. `TRUSTED_FINGERPRINTS` drops the old fingerprint. Publish a key revocation on `keys.openpgp.org` for the old key. Update `docs/SECURITY.md`, `README.md`, and `docs/release/SIGNING-KEY.asc`.
+2. **`vN.N.N+2`** — signed by the **new** key. `TRUSTED_FINGERPRINTS` drops the old fingerprint. Publish a key revocation on `keys.openpgp.org` for the old key. Update `docs/SECURITY.md`, `docs/README.md`, and `docs/release/SIGNING-KEY.asc`.
 
 Users who skip straight from `vN.N.N` to `vN.N.N+2` must manually update their keyring via `docs/SECURITY.md`'s recv-keys instructions. This is accepted as an edge case; users who update regularly never notice the transition.
 

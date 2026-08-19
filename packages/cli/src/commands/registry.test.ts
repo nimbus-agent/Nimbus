@@ -48,4 +48,40 @@ describe("COMMAND_NAMES — registry contract", () => {
       expect(n).toMatch(/^[a-z][a-z0-9-]*$/);
     }
   });
+
+  // `negotiate` shipped in #1166 wired into COMMAND_HANDLERS but never added
+  // here, and stayed missing until `audit:readme-cli` — which validates the
+  // landing page against this list, not against the dispatch table — happened
+  // to trip over it. Nothing else compared the two: the assertions above name
+  // individual commands by hand, so a command absent from BOTH the registry and
+  // every hand-written list is invisible. This closes that gap from the
+  // dispatch side.
+  //
+  // Source-scanned rather than imported: `packages/cli/src/index.ts` is the CLI
+  // entry point and runs argv parsing at import time, so importing it here
+  // would execute the CLI. The regex reads the `COMMAND_HANDLERS` object
+  // literal, whose keys are plain or double-quoted identifiers.
+  it("registers every command wired into the CLI dispatch table", async () => {
+    const src = await Bun.file(
+      new URL("../index.ts", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
+    ).text();
+
+    const block = /const COMMAND_HANDLERS[^=]*=\s*\{([\s\S]*?)\n\};/.exec(src);
+    expect(block, "COMMAND_HANDLERS object literal not found in index.ts").not.toBeNull();
+
+    const dispatched = [
+      ...(block?.[1] ?? "").matchAll(/^\s{2}(?:"([a-z][a-z0-9-]*)"|([a-z][a-z0-9-]*)):/gm),
+    ].map((m) => m[1] ?? m[2]);
+
+    // Guard the scanner itself: if the regex ever stops matching, the set is
+    // empty and every assertion below passes vacuously.
+    expect(dispatched.length).toBeGreaterThan(30);
+
+    const registered = new Set<string>(COMMAND_NAMES);
+    const missing = dispatched.filter((c) => c !== undefined && !registered.has(c));
+    expect(
+      missing,
+      `dispatched in index.ts but absent from COMMAND_NAMES: ${missing.join(", ")}`,
+    ).toEqual([]);
+  });
 });

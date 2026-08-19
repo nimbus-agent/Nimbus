@@ -10,6 +10,11 @@
 //   different parent sections (e.g. "Notes" under each phase).
 // - MD033 (no-inline-html): disabled — README and design docs use raw <picture>, <details>,
 //   <kbd>, etc. for GitHub-specific rendering features.
+// - docs/README.md used to be excluded here. It is now the repository LANDING PAGE (the root
+//   README.md was deleted as a duplicate, and GitHub falls back to docs/README.md to render the
+//   repo home), so the most-read file in the tree is the last one that should skip the gate.
+//   Un-excluding it surfaced 7 issues — 5 MD040 unlabelled fences and one MD001+MD026 tagline
+//   heading — all fixed rather than suppressed; the whole tree is clean with it included.
 // - MD034 (no-bare-urls): enabled — every URL must be a proper link so lychee can verify it.
 // - MD036 (no-emphasis-as-heading): disabled — legitimate emphasis (e.g. "**Note:**") trips
 //   this rule and there is no contextual signal that distinguishes real headings.
@@ -32,7 +37,6 @@
   "globs": [
     "docs/**/*.md",
     "*.md",
-    "!docs/README.md",
     "!docs/perf/slo.md",
     "!.claude/worktrees/**",
     "!node_modules/**",
