@@ -8,6 +8,42 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-19 — `agents.why` answers a pull-request URL with no local checkout, and
+  `agents.impact` moves onto the same resolver — fixing a live GitLab/self-hosted defect.**
+  `agents.why` gains a second entry point, `{ prUrl }`, alongside `{ ref }`: `nimbus why
+  <pull-request-url>` (and the browser extension) now gets a brief for a PR with no indexed
+  filesystem root and no git checkout at all — the browser-viable half of why-lens. Four of the
+  six lanes (pull request, ticket, discussion, driver) answer unchanged; authorship and
+  downstream stay silent, since both are file/line lanes by nature and a `prUrl` question never
+  had one to begin with. The subject line says so in one sentence — *"Asked about a change:
+  authorship needs a line (`nimbus why <file>:<line>`), and downstream impact is `nimbus impact
+  <url>`"* — because the browser extension renders that text verbatim; it is the whole
+  explanation a user gets for why two lanes are missing.
+
+  The resolver behind the new arm, `resolvePrSubject` (`agents/_lib/pr-subject.ts`), is
+  DELIBERATELY PARSE-FREE: it asks the index (`resolveItemByUrl`'s canonical-url ladder) instead
+  of reconstructing a `pr` entity's identity from a regex over the URL. `agents.impact`'s old
+  `PR_URL_RE` / `HOST_TO_SERVICE` did exactly that reconstruction and failed three independent
+  ways — GitHub-shaped regex, a hostname-guessed service (so every self-hosted instance missed),
+  and GitLab merge requests keyed with a BANG (`gitlabMrExternalId`), not a hash — none of which
+  a better pattern could fix, because the pattern was the mistake. `agents.impact`'s
+  `resolveStartEntity` now calls the same `resolvePrSubject`, so a self-hosted GitHub/GitLab/
+  Bitbucket PR resolves through one shared, forge-agnostic path instead of two divergent
+  parsers.
+
+  A second fix closes a gap the new arm itself opened: the change-arm disclosure sentence above
+  lives in the brief PREAMBLE, which `brief-contract.ts`'s synthesis guard left unregistered for
+  `why` — so with `ctx.runner` set, an LLM rewrite of the brief could silently drop it, leaving a
+  brief two lanes shorter with no explanation. That is the exact bug class invariant **I31**
+  closed for `negotiate`/`glossary` two commits before this branch's base; the sentence is now a
+  `brief-disclosures.ts` `Disclosure` (anchored on "authorship needs a line", not the whole
+  sentence) required by `requiredPhrases` whenever `changeSubject` resolves, following the same
+  conditional-emit/conditional-require pairing `negotiate` and `glossary` already use. Along the
+  way, the miss-path sentence for an unresolvable PR URL was reworded off "is not in your index"
+  — false when the URL resolves to an indexed item that just isn't a pull request — to "did not
+  resolve to a pull request in your index", honest for every miss reason `WhyBrief` collapses
+  into that one `null`.
+
 - **2026-08-19 — Graph-entity metadata namespacing (schema V54): fixes a live bug where
   `nimbus owners` silently alternated between its real output and an "owner breakdown not
   recorded" line.** `graph_entity.metadata` was last-writer-wins — `upsertGraphEntity`'s

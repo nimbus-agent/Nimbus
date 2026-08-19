@@ -104,10 +104,14 @@ function seedPr(
 ): string {
   const itemId = `${opts.service}:${opts.externalId}`;
   const title = opts.title ?? "Cache the resolver";
+  // NOTE (post-implementation correction): `item` has no `indexed_at` column — it is
+  // `synced_at` — and `resolve_key` is not optional: `resolveItemByUrl` (`resolve-by-url.ts`)
+  // matches every rung of its ladder on `resolve_key` alone, so a fixture without it resolves
+  // nothing. Both fixes below match what actually shipped in `pr-subject.test.ts`.
   db.query(
     `INSERT INTO item (id, service, type, external_id, title, url, canonical_url,
-                       body_preview, metadata, modified_at, indexed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, 1700000000000, 1700000000000)`,
+                       body_preview, metadata, resolve_key, modified_at, synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, 1700000000000, 1700000000000)`,
   ).run(
     itemId,
     opts.service,
@@ -117,6 +121,7 @@ function seedPr(
     opts.url,
     opts.url,
     JSON.stringify(opts.repo === undefined ? {} : { repo: opts.repo }),
+    opts.url,
   );
   upsertGraphEntity(db, {
     type: opts.type ?? "pr",
@@ -258,9 +263,10 @@ describe("resolvePrSubject — the non-nullable fallbacks", () => {
     const db = freshDb();
     db.query(
       `INSERT INTO item (id, service, type, external_id, title, url, canonical_url,
-                         body_preview, metadata, modified_at, indexed_at)
+                         body_preview, metadata, resolve_key, modified_at, synced_at)
        VALUES ('github:acme/web#482', 'github', 'pr', 'acme/web#482', 'T', NULL,
                'https://github.com/acme/web/pull/482', '', '{"repo":"acme/web"}',
+               'https://github.com/acme/web/pull/482',
                1700000000000, 1700000000000)`,
     ).run();
     upsertGraphEntity(db, {
@@ -437,13 +443,17 @@ test("a GitLab merge request URL resolves to its pr entity", async () => {
   const db = freshDb();
   // `gitlabMrExternalId` (connectors/_lib/gitlab/events.ts) — a BANG, not a hash.
   const itemId = "gitlab:acme/web!482";
+  // `resolve_key` is required — `resolveItemByUrl` matches on it alone (see the note beside
+  // Task 1's `seedPr`) — and `item` has no `indexed_at` column; it is `synced_at`.
   db.query(
     `INSERT INTO item (id, service, type, external_id, title, url, canonical_url,
-                       body_preview, metadata, modified_at, indexed_at)
+                       body_preview, metadata, resolve_key, modified_at, synced_at)
      VALUES (?, 'gitlab', 'pr', 'acme/web!482', 'Cache the resolver',
              'https://gitlab.com/acme/web/-/merge_requests/482',
              'https://gitlab.com/acme/web/-/merge_requests/482', '',
-             '{"repo":"acme/web","number":482}', 1700000000000, 1700000000000)`,
+             '{"repo":"acme/web","number":482}',
+             'https://gitlab.com/acme/web/-/merge_requests/482',
+             1700000000000, 1700000000000)`,
   ).run(itemId);
   // Capture the return: `upsertGraphEntity` gives back the id it inserted, and that
   // id is deterministic — `deterministicGraphEntityId` is sha256 over type+externalId
@@ -750,6 +760,16 @@ type LaneInput = {
    * and never one standing in for the other. See the per-arm computation below.
    */
   occurredAt: number | null;
+  /**
+   * Which entry point ran. `subAuthorship` and `subDownstream` are file/line lanes
+   * by nature — they stay silent on `"change"` rather than reporting a gap for the
+   * file subject a `prUrl` question never had. Explicit, not inferred from
+   * `subject === null`: inference would also silence the genuine ref-arm case
+   * where a ref legitimately fails to resolve, which must keep its gap note.
+   * (NOTE, post-implementation correction: this field is what makes Step 5's "no edit"
+   * claim for `subAuthorship`/`subDownstream` false — see that step's note.)
+   */
+  arm: "ref" | "change";
 };
 ```
 
@@ -846,7 +866,20 @@ const pr = sha === undefined ? null : findPrForSha(db, sha);
 
 with `const pr = lane.pr;`. In `subDiscussion` keep the commit-entity lookup guarded on `lane.blame?.commitSha`, since a commit-message thread genuinely needs the SHA and the prUrl arm has none. In `subDriver`, replace `lane.blame?.authorTimeMs` with `lane.occurredAt`.
 
-`subAuthorship` and `subDownstream` need no edit: they already return early on `lane.subject?.lineNo == null` and `lane.subject === null`, which is exactly the prUrl arm.
+**CORRECTION (post-implementation): this "need no edit" claim is false, and it is what produced
+the gap-note defect a follow-up commit had to fix.** On the prUrl arm `lane.subject` is `null`
+(never populated — the prUrl arm has no file/line subject to resolve), so `subAuthorship`'s
+existing `lane.subject?.lineNo == null` early-return and `subDownstream`'s existing
+`lane.subject === null` early-return are BOTH still true on that arm — but they return the gap
+note ("Cannot anchor authorship: no resolvable file/line subject for this ref.", "No indexed
+code symbols for this file …"), not silence. Those gap notes are correct on the ref arm (a ref
+that genuinely failed to resolve) and WRONG on the prUrl arm (the absence is the shape of the
+question, not a gap in anyone's index) — the two cases are indistinguishable from
+`lane.subject === null` alone. What actually shipped: both functions gained an explicit
+`if (lane.arm === "change") return {};` before their existing early-return, using the `arm`
+field Step 3 added for exactly this. `subPullRequest`, `subTicket` and `subDiscussion` needed no
+equivalent change — their existing `pr === null` / fixture guards already degrade correctly on
+both arms.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 

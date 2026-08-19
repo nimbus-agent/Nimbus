@@ -359,12 +359,13 @@ nimbus impact --json --service payment-service src/billing/retry.ts
 
 ### `nimbus why`
 
-Answer "why is this line/file the way it is?" — six parallel lanes over the local relationship graph: authorship (who last touched the line and when), pull request (the PR that merged it), ticket (the issue it resolves), discussion (Slack/Teams messages mentioning the commit, PR, or ticket), driver/what-drove-it (a temporally correlated incident within a 48h window — never a causal claim), and downstream (reverse `depends_on` edges from the file's indexed symbols). `<ref>` is a `path[:line]` (e.g. `src/billing/retry.ts:42`) or a bare symbol name resolved against indexed code symbols; `--line` overrides a line number embedded in `<ref>`. A lane with nothing to show degrades to a gap note naming the missing connector or graph relation rather than going silent.
+Answer "why is this line/file the way it is?" — six parallel lanes over the local relationship graph: authorship (who last touched the line and when), pull request (the PR that merged it), ticket (the issue it resolves), discussion (Slack/Teams messages mentioning the commit, PR, or ticket), driver/what-drove-it (a temporally correlated incident within a 48h window — never a causal claim), and downstream (reverse `depends_on` edges from the file's indexed symbols). `<ref>` is a `path[:line]` (e.g. `src/billing/retry.ts:42`), a bare symbol name resolved against indexed code symbols, **or a pull-request URL** — resolved against the index alone (`agents.why`'s `{ prUrl }` arm), so it needs no local checkout and works for a repo you have never cloned. `--line` overrides a line number embedded in a path `<ref>`; it has no meaning for a URL. A lane with nothing to show degrades to a gap note naming the missing connector or graph relation rather than going silent — except on the PR-URL arm, where the authorship and downstream lanes are file/line lanes by nature and stay silent with no gap note (a `prUrl` question never had a file/line subject for them to report as missing). The rendered subject line says so in one sentence: *"Asked about a change: authorship needs a line (`nimbus why <file>:<line>`), and downstream impact is `nimbus impact <url>`."*
 
 ```bash
 nimbus why src/billing/retry.ts:42
 nimbus why retryPayment --peek
 nimbus why src/billing/retry.ts --line 42 --json
+nimbus why https://github.com/acme/web/pull/482
 ```
 
 **Options:**
@@ -372,10 +373,10 @@ nimbus why src/billing/retry.ts --line 42 --json
 | Flag | Description |
 |---|---|
 | `--line <n>` | Line number, overriding any `:line` suffix on `<ref>` |
-| `--peek` | Sub-300ms one-liner via `agents.whyPeek` instead of the full six-lane brief: author · short SHA · date · commit subject · PR # · ticket key |
+| `--peek` | Sub-300ms one-liner via `agents.whyPeek` instead of the full six-lane brief: author · short SHA · date · commit subject · PR # · ticket key. **Path/symbol `<ref>` only** — `agents.whyPeek` has no PR-URL arm, and the CLI hard-fails (`--peek takes a path or symbol, not a pull request URL`) before dispatching rather than sending a URL it cannot answer |
 | `--json` | Machine-readable JSON output (otherwise Markdown / a one-line string for `--peek`) |
 
-**Output (Markdown):** one section per lane with its findings, plus gap notes for any lane that couldn't answer confidently (e.g. "no blame available for this line", "PRs emit `merged_as` when github-sync records a merge commit SHA — sync the connector for this repo"). The downstream lane currently degrades to a gap note on most real indexes — the graph populator emits `depends_on` at workspace→package granularity today; symbol-level edges are a populator follow-up. `--peek --json` returns the full `agents.whyPeek` payload (subject, author, commit, PR, ticket) rather than the one-line summary string, including `hasMore: true` whenever the full six-lane agent would surface findings beyond what author/PR/ticket already cover (a mentioning message, a `depends_on` edge, or a `correlates_with` deployment).
+**Output (Markdown):** one section per lane with its findings, plus gap notes for any lane that couldn't answer confidently (e.g. "no blame available for this line", "PRs emit `merged_as` when github-sync records a merge commit SHA — sync the connector for this repo"). The downstream lane currently degrades to a gap note on most real indexes — the graph populator emits `depends_on` at workspace→package granularity today; symbol-level edges are a populator follow-up. On the PR-URL arm, a URL that does not resolve to an indexed pull request renders as a one-line miss rather than a full brief. `--peek --json` returns the full `agents.whyPeek` payload (subject, author, commit, PR, ticket) rather than the one-line summary string, including `hasMore: true` whenever the full six-lane agent would surface findings beyond what author/PR/ticket already cover (a mentioning message, a `depends_on` edge, or a `correlates_with` deployment).
 
 **Read-only:** never triggers HITL, never makes a live connector API call — answered from the local index and relationship graph, with one exception: an unblamed line triggers a single, cached, root-fenced local `git blame` subprocess (via `ensureBlameLine`), scoped to a configured `[[filesystem.roots]]` repo, bounded by a 20s timeout, and cached forever after in `git_blame_line`. This is a local git read, not a connector dispatch.
 
