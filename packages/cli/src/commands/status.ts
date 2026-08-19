@@ -28,19 +28,42 @@ function printEmbeddingBackfill(emb: { done: number; total: number } | null | un
   }
 }
 
+/**
+ * A count is only printable if it is a finite, non-negative integer. `typeof x === "number"` alone
+ * is not that test: it admits `NaN`, `Infinity`, `-1` and `2.5`, which reach the user as
+ * "PR file coverage: NaN / Infinity". The payload crosses an IPC seam, so its shape is external
+ * data and gets checked rather than trusted.
+ */
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 function printPrFileCoverage(raw: unknown): void {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return;
   }
   const c = raw as { covered?: unknown; totalPrs?: unknown; truncated?: unknown };
-  if (typeof c.covered !== "number" || typeof c.totalPrs !== "number") {
+  if (!isCount(c.covered) || !isCount(c.totalPrs)) {
+    return;
+  }
+  // `truncated` is optional in a way the other two are not — a payload omitting it is read as
+  // zero — but a PRESENT value still has to be a count, so a malformed one suppresses the line
+  // rather than silently degrading to 0 and printing a coverage figure beside it.
+  if (c.truncated !== undefined && !isCount(c.truncated)) {
+    return;
+  }
+  const trunc = c.truncated ?? 0;
+  // Internally inconsistent counts: `covered` is PRs with a coverage row and `totalPrs` is all
+  // indexed PRs, so covered can never exceed it; `truncated` counts a SUBSET of the covered rows.
+  // Either inversion means the payload does not describe a real index state, and printing it
+  // would present a nonsense ratio with the same confidence as a true one.
+  if (c.covered > c.totalPrs || trunc > c.covered) {
     return;
   }
   // No PRs indexed at all: the line would read "0 / 0" and imply a problem where there is none.
   if (c.totalPrs === 0) {
     return;
   }
-  const trunc = typeof c.truncated === "number" ? c.truncated : 0;
   const suffix = trunc > 0 ? ` (${String(trunc)} truncated)` : "";
   console.log(`PR file coverage: ${String(c.covered)} / ${String(c.totalPrs)}${suffix}`);
 }

@@ -493,6 +493,60 @@ describe("runStatusImpl", () => {
     expect(out.stdout).toContain("Items by service:");
   });
 
+  // The payload crosses an IPC seam, so its shape is external data. `typeof x === "number"` alone
+  // admits NaN, Infinity, negatives and non-integers, each of which reaches the user as a
+  // confident-looking nonsense ratio. Rejecting the payload prints NOTHING — the same outcome as a
+  // missing snapshot, which the user can already read as "not measured".
+  const MALFORMED_COVERAGE: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+    ["covered is NaN", { covered: Number.NaN, totalPrs: 10, truncated: 0 }],
+    ["totalPrs is Infinity", { covered: 1, totalPrs: Number.POSITIVE_INFINITY, truncated: 0 }],
+    ["covered is negative", { covered: -1, totalPrs: 10, truncated: 0 }],
+    ["totalPrs is negative", { covered: 0, totalPrs: -5, truncated: 0 }],
+    ["covered is fractional", { covered: 2.5, totalPrs: 10, truncated: 0 }],
+    ["truncated is NaN", { covered: 5, totalPrs: 10, truncated: Number.NaN }],
+    ["truncated is negative", { covered: 5, totalPrs: 10, truncated: -3 }],
+    // Internally inconsistent rather than malformed: every count is a fine integer on its own,
+    // but no real index state produces them. `covered` counts a subset of `totalPrs`, and
+    // `truncated` counts a subset of `covered`.
+    ["covered exceeds totalPrs", { covered: 11, totalPrs: 10, truncated: 0 }],
+    ["truncated exceeds covered", { covered: 3, totalPrs: 10, truncated: 4 }],
+  ];
+
+  for (const [label, prFileCoverage] of MALFORMED_COVERAGE) {
+    it(`omits the PR file coverage line when ${label}`, async () => {
+      const ipc = createMockIpcClient([
+        { version: "1.0", uptime: 0 },
+        { connectorHealth: [], index: { totalItems: 5, prFileCoverage } },
+      ]);
+      await runStatusImpl(
+        ipc.client,
+        { pid: 1, socketPath: "/s" },
+        { wantDrift: false, verbose: false },
+      );
+      expect(out.stdout).not.toContain("PR file coverage");
+    });
+  }
+
+  // The complement of the table above: a payload that omits `truncated` entirely is still VALID —
+  // it reads as zero. Without this, tightening the guard could silently start suppressing the line
+  // for every well-formed payload and the tests above would all still pass.
+  it("prints the coverage line when truncated is absent, with no suffix", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      {
+        connectorHealth: [],
+        index: { totalItems: 5, prFileCoverage: { covered: 7, totalPrs: 9 } },
+      },
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: "/s" },
+      { wantDrift: false, verbose: false },
+    );
+    expect(out.stdout).toContain("PR file coverage: 7 / 9");
+    expect(out.stdout).not.toContain("truncated)");
+  });
+
   it("omits the PR file coverage line entirely when there are no PRs", async () => {
     const ipc = createMockIpcClient([
       { version: "1.0", uptime: 0 },
