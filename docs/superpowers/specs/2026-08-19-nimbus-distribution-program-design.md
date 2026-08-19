@@ -95,14 +95,27 @@ installed, already in conversation.
 
 **The wedge is `nimbus why <file>:<line>`.**
 
-It is the only thing Nimbus does that is simultaneously unique, free of every
-prerequisite (no LLM, no API key, no cloud account, no credentials), and
+It is the only thing Nimbus does that is simultaneously unique, free of the
+LLM/API-key/cloud-account prerequisites every other agent surface carries, and
 visibly non-obvious within sixty seconds of install. **The brief is
 deterministic**: `agents/why.ts` renders it from the index, and the optional
 synthesis layer (`[agents] synthesis`, default `"local"`) only rewrites what is
 already there — `agents/_lib/synthesize.ts` fixes the deterministic render as
 the floor and catches synthesis failure, so a machine with no local model gets
-the full brief rather than an error. It is also the *proven*
+a rendered brief rather than an error. **That rendered brief is not uniformly
+populated on a zero-config run.** `agents/why.ts`'s PR lane (`subTicket`)
+returns an empty result when `findPrForSha` finds nothing, and its incident
+lane (`subDriver`) returns `detectMissingEntityType(db, "incident")`, because
+pull-request, ticket and incident entities exist in the index only after a
+GitHub / Jira-Linear / incident-tool connector sync — i.e. only once
+credentials for those connectors are configured. A zero-config first run
+therefore returns **authorship and provenance from local git** (who wrote the
+line, when, in which commit), with the PR/ticket/incident lanes present as gap
+notes rather than data. This correction was needed because those three lanes
+are connector-sync-gated, not LLM-gated: "no LLM, no API key, no cloud
+account" is true of `why` itself, but it does not mean the PR/ticket/incident
+fields are populated without connectors, and copy must not conflate the two.
+It is also the *proven*
 path: the Gate 1 Linux run in a clean container reached real authorship output,
 while semantic search stayed unverified because the embedding worker failed to
 initialise. Leading with what has actually been proven on a foreign machine is

@@ -35,7 +35,7 @@ nimbus init            # index the repo you're standing in — no account, no AP
 nimbus why src/auth.ts:42
 ```
 
-Who wrote this line, which pull request carried it, which ticket asked for it, which incident it touched. Answered from a local index in under a second — with no LLM configured, no credentials, and nothing leaving your machine.
+Who wrote this line, when, and in which commit — answered from your local git history, with no LLM configured, no API key, and no cloud account. Connect GitHub and a ticket tracker (Jira or Linear) and an incident tool, and the same command extends its answer with the pull request that carried the change, the ticket that asked for it, and the incident it touched.
 
 That is the whole first run. Everything below is what becomes available once you connect the tools you already use.
 
