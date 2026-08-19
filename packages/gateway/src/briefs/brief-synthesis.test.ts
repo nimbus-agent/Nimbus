@@ -81,7 +81,13 @@ describe("buildPrompt", () => {
     // Inject a clip entry with url: null to exercise the null-url path.
     const { registry } = await buildRegistry(runOut.run, async () => ({
       hits: [
-        { itemId: "nimbus:clip:test", title: "No-URL Clip", url: null, snippet: "clipped text" },
+        {
+          itemId: "nimbus:clip:test",
+          itemType: "web_clip",
+          title: "No-URL Clip",
+          url: null,
+          snippet: "clipped text",
+        },
       ],
       semanticAvailable: true,
     }));
@@ -92,6 +98,46 @@ describe("buildPrompt", () => {
     // The ref should have url undefined (not null).
     const clipRef = registry.get("C1");
     expect(clipRef?.ref.url).toBeUndefined();
+  });
+
+  function runWithFedAndIndexHit(): BriefRun {
+    const c = new BriefRunController({ nowMs: () => 1000 });
+    const sources = [{ url: "https://a.test/0", title: "T0" }];
+    const out = c.create({ brief: "do workers die", sources, useIndex: true });
+    if ("error" in out) throw new Error("expected a run");
+    c.addSource(out.run, {
+      url: "https://a.test/0",
+      title: "T0",
+      body: "a",
+      capturedAt: 1,
+      truncated: false,
+    });
+    return out.run;
+  }
+
+  function registryWithTypedHit(run: BriefRun, itemType: string) {
+    return buildRegistry(run, async () => ({
+      hits: [
+        {
+          itemId: "nimbus:pull_request:acme/web/482",
+          itemType,
+          title: "Drop the legacy worker pool",
+          url: "https://github.test/acme/web/pull/482",
+          snippet: "the pool is replaced by",
+        },
+      ],
+      semanticAvailable: true,
+    }));
+  }
+
+  test("the prompt names each index hit's type when the type is known", async () => {
+    // Shape is fixed by the spec: ONE key, raw itemType, absent for S{n} entries.
+    const run = runWithFedAndIndexHit();
+    const { registry } = await registryWithTypedHit(run, "pull_request");
+    const prompt = buildPrompt(run, registry);
+    expect(prompt).toContain('"type":"pull_request"');
+    // A fed source is the user's own page and needs no type to be understood.
+    expect(prompt).not.toMatch(/"token":"S1"[^}]*"type"/);
   });
 });
 

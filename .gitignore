@@ -161,3 +161,8 @@ packages/docs/src/assets/architecture-*.svg
 
 # lychee link-check cache (scripts/check-links.sh); successes only, 1h TTL
 .lycheecache
+
+# Subagent-driven-development scratch: ledger, task briefs, implementer reports
+# and review packages for a plan in flight. Working notes — the commits they
+# name are the durable record.
+.superpowers/

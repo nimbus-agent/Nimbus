@@ -12,8 +12,9 @@ import {
   evaluateWatchersAfterSync,
   evaluateWatchersStartupCatchUp,
 } from "../automation/watcher-engine.ts";
+import { createBriefIndexSearch } from "../briefs/brief-index-search.ts";
 import { createBriefLlm } from "../briefs/brief-llm-adapter.ts";
-import { buildRegistry, type IndexSearch } from "../briefs/brief-registry.ts";
+import { buildRegistry } from "../briefs/brief-registry.ts";
 import { BriefRunController } from "../briefs/brief-run-store.ts";
 import { saveBriefReport } from "../briefs/brief-save.ts";
 import { runSynthesis } from "../briefs/brief-synthesis.ts";
@@ -1994,26 +1995,9 @@ function bootBriefsIntoHttpSidecar(deps: {
     ttlMs: briefsToml.ttlMinutes * 60_000,
   });
   const briefLlm = createBriefLlm(llmRouter, briefsToml.preferLocal);
-  const briefSearch: IndexSearch = async (query, limit) => {
-    const hits = await localIndex.searchRankedAsync(
-      { name: query, itemType: "web_clip", limit },
-      { semantic: true, contextChunks: 2 },
-    );
-    return {
-      // NOTE: RankedIndexItem extends the SDK's NimbusItem, whose title field is `name`
-      // — there is no `title` and no `body_preview` on it (see index/ranked-item.ts and
-      // @nimbus-dev/sdk types.d.ts). The only body text available here is the matched
-      // chunk in `semanticSnippet`, which is absent on the BM25 fallback path.
-      hits: hits.map((h) => ({
-        itemId: h.indexPrimaryKey,
-        title: h.name,
-        url: h.url ?? h.canonicalUrl ?? null,
-        snippet: h.semanticSnippet ?? h.name,
-      })),
-      // A hit with no vectorRank anywhere means the hybrid path did not run.
-      semanticAvailable: hits.some((h) => h.vectorRank !== undefined && h.vectorRank !== null),
-    };
-  };
+  // The query itself lives in briefs/brief-index-search.ts so a test can reach it — see the
+  // docblock there. This wiring is behaviour-identical to the closure it replaced.
+  const briefSearch = createBriefIndexSearch(localIndex);
   httpSidecarOpts.briefRuns = briefRuns;
   httpSidecarOpts.briefStartRun = (runId: string): void => {
     const run = briefRuns.get(runId);

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
 import { BriefRunController } from "./brief-run-store.ts";
 import { ReportTooLargeError, saveBriefReport } from "./brief-save.ts";
-import type { BriefRun, Report } from "./brief-types.ts";
+import type { BriefRun, Report, SourceRef } from "./brief-types.ts";
 
 function db(): Database {
   const d = new Database(":memory:");
@@ -139,6 +139,86 @@ describe("saveBriefReport", () => {
     const meta = JSON.parse(row.metadata) as { report: Report };
     expect(meta.report.findings[0]?.citations[0]?.quote).toBeUndefined();
     expect(meta.report.gaps.join(" ")).toContain("quotes");
+  });
+
+  // The degradation ORDER is the contract, not just the fact that degradation happens.
+  // `itemId` on a web_clip citation is byte-identical to `clipId`, so shedding it costs the
+  // user nothing; shedding a quote costs them the evidence. Redundant ids therefore go FIRST.
+  const CLIP_ID = `nimbus:clip:${"a".repeat(64)}`;
+  const clipCitation = (quoteLen: number): SourceRef => ({
+    kind: "clip",
+    title: "t".repeat(60),
+    url: "https://a.test/p",
+    clipId: CLIP_ID,
+    itemId: CLIP_ID,
+    itemType: "web_clip",
+    quote: "q".repeat(quoteLen),
+  });
+  const clipHeavy = (findings: number, citations: number, quoteLen: number): Report => ({
+    ...REPORT,
+    findings: Array.from({ length: findings }, () => ({
+      text: "x".repeat(400),
+      citations: Array.from({ length: citations }, () => clipCitation(quoteLen)),
+    })),
+  });
+  const savedReport = (d: Database, run: BriefRun): Report => {
+    const { itemId } = saveBriefReport(d, run);
+    const row = d.query("SELECT metadata FROM item WHERE id = ?").get(itemId) as {
+      metadata: string;
+    };
+    expect(Buffer.byteLength(row.metadata, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    return (JSON.parse(row.metadata) as { report: Report }).report;
+  };
+
+  test("drops the duplicated itemId BEFORE quotes, and keeps the quotes when that is enough", () => {
+    const d = db();
+    // Measured: 62383 bytes with itemId (over the 60 KB budget), 54463 without it (under).
+    const heavy = clipHeavy(15, 6, 300);
+    expect(Buffer.byteLength(JSON.stringify(heavy), "utf8")).toBeGreaterThan(60 * 1024);
+
+    const report = savedReport(d, doneRun(heavy));
+    const cite = report.findings[0]?.citations[0];
+    // The id the user can still resolve the item with survives; the duplicate does not.
+    expect(cite?.itemId).toBeUndefined();
+    expect(cite?.clipId).toBe(CLIP_ID);
+    expect(cite?.itemType).toBe("web_clip");
+    // The whole point of the ordering: the evidence is still there.
+    expect(cite?.quote).toBe("q".repeat(300));
+    expect(report.gaps.join(" ")).not.toContain("quotes");
+  });
+
+  test("falls through to stripping quotes when dropping the duplicated ids is not enough", () => {
+    const d = db();
+    // Measured: 89983 bytes full, 75903 with the ids gone (still over), 42143 quote-free.
+    const heavy = clipHeavy(20, 8, 200);
+    const report = savedReport(d, doneRun(heavy));
+    const cite = report.findings[0]?.citations[0];
+    expect(cite?.itemId).toBeUndefined();
+    expect(cite?.quote).toBeUndefined();
+    expect(cite?.clipId).toBe(CLIP_ID);
+    expect(report.gaps.join(" ")).toContain("quotes");
+  });
+
+  test("keeps itemId on a non-clip citation, where it is the ONLY id the user has", () => {
+    const d = db();
+    // Measured: 69580 bytes full, 25192 quote-free — so the ladder DOES run here. The first
+    // rung must find nothing to shed (no clipId to be identical to) and fall through.
+    const heavy: Report = {
+      ...REPORT,
+      findings: Array.from({ length: 18 }, () => ({
+        text: "x".repeat(400),
+        citations: Array.from({ length: 6 }, (): SourceRef => {
+          const { clipId: _clipId, ...rest } = clipCitation(400);
+          return { ...rest, itemType: "pull_request", itemId: "github:pr:1" };
+        }),
+      })),
+    };
+    expect(Buffer.byteLength(JSON.stringify(heavy), "utf8")).toBeGreaterThan(60 * 1024);
+
+    const report = savedReport(d, doneRun(heavy));
+    const cite = report.findings[0]?.citations[0];
+    expect(cite?.itemId).toBe("github:pr:1");
+    expect(cite?.quote).toBeUndefined();
   });
 
   test("throws ReportTooLargeError when even a quote-free report cannot fit", () => {

@@ -3,6 +3,8 @@ import type { BriefRun, SourceRegistry, SourceRegistryEntry } from "./brief-type
 
 export type IndexHit = {
   readonly itemId: string;
+  /** The item's type, e.g. `web_clip`, `pull_request`. Required: the producer always knows it. */
+  readonly itemType: string;
   readonly title: string;
   readonly url: string | null;
   readonly snippet: string;
@@ -29,8 +31,9 @@ function clipUrl(url: string): string {
 
 /**
  * Builds the set of sources the model is allowed to cite. Tokens are opaque and
- * server-issued (S1.. for fed sources, C1.. for indexed clips): the model never
- * authors a URL or a title, so it cannot invent a source that resolves.
+ * server-issued (S1.. for fed sources, C1.. for items from the user's index, of any
+ * type): the model never authors a URL or a title, so it cannot invent a source that
+ * resolves.
  */
 export async function buildRegistry(
   run: BriefRun,
@@ -85,7 +88,10 @@ export async function buildRegistry(
       ref: {
         kind: "clip",
         title: clipTitle(hit.title),
-        clipId: hit.itemId,
+        itemId: hit.itemId,
+        itemType: hit.itemType,
+        // `clipId` is the NARROW, legacy field: only a real clip may claim it.
+        ...(hit.itemType === "web_clip" ? { clipId: hit.itemId } : {}),
         ...(hit.url === null ? {} : { url: clipUrl(hit.url) }),
       },
       body: hit.snippet,
