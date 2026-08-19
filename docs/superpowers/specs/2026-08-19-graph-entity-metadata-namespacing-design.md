@@ -1,7 +1,12 @@
 # Graph-entity metadata namespacing — design
 
 **Date:** 2026-08-19
-**Status:** design approved, not yet implemented
+**Status:** IMPLEMENTED. This document is the design as agreed; where the shipped code has
+moved past it, `packages/gateway/src/graph/relationship-graph.ts` is authoritative. Two
+corrections made after implementation, both noted inline in § 5.1: `json_patch` is RFC 7396
+recursive merge, not the top-level-only merge originally assumed (sibling isolation still holds,
+by a different mechanism than assumed), and the type-level restriction this section originally
+called "rejected as non-functional" does ship, via a form this section did not consider.
 **Relationship to other work:** sub-project **A** of the changed-file-indexing effort. **B**
 (changed-file indexing + dual-keyspace `source_file`) is a separate spec built on this one.
 A is independently valuable — it fixes a live bug — and is a precondition for B.
@@ -140,7 +145,9 @@ So this spec requires two things, not one:
 
 1. **`graph-populator.ts` converts** its `source_file`, `directory`, `person` and `service` writes
    to the namespaced form, passing `writer: "symbols"` — with `metadata: {}` where it has nothing
-   to record, which under `json_patch` is a no-op that preserves siblings rather than a wipe.
+   to record. **`metadata: {}` is not a no-op**: it clears the `"symbols"` namespace to `{}`, but
+   it leaves every sibling namespace — in particular `"ownership"`'s owner counts — untouched,
+   which is the property this conversion actually depends on.
 2. **A static audit rule enforces it** (§ 5.4), because a convention that only exists in prose is
    one careless call site away from silently reintroducing the bug.
 
@@ -154,18 +161,65 @@ nothing — the failure mode this repo already records for allow-list guards. Cl
 properly at the type level would mean enumerating every entity type in the repo as a union, which
 is a far larger change than the defect warrants; the static audit does the job at the right size.
 
-The merge uses SQLite's `json_patch`, verified available in this repo's `bun:sqlite`:
+**Correction, made after implementation.** The analysis above is correct about `Exclude<string,
+U>` specifically, but its conclusion oversold what was possible: a **generic** type parameter
+closes the hole cheaply, for every literal call site, without enumerating the repo's entity
+types. The shipped guard is
 
-```sql
-ON CONFLICT (type, external_id) DO UPDATE SET
-  label = excluded.label,
-  service = excluded.service,
-  metadata = json_patch(COALESCE(graph_entity.metadata, '{}'), excluded.metadata)
+```ts
+type NonCoOwnedType<T extends string> = T extends CoOwnedEntityType ? never : T;
+
+export function upsertGraphEntity<T extends string>(
+  db: Database,
+  row: { type: NonCoOwnedType<T>; /* … */ },
+): string
 ```
 
-`excluded.metadata` is `{"<writer>": {...}}`. `json_patch` merges at the top level, so a writer
-replaces its own namespace wholesale — which is what each writer wants for its own data — and
-leaves every sibling namespace untouched.
+`upsertGraphEntity(db, { type: "source_file", … })` fails to compile: a literal argument narrows
+`T` to the literal type `"source_file"` itself, so the conditional resolves at that literal —
+`Exclude<string, U>`'s trap (forcing `T` to widen to bare `string`) never applies. This shipped
+as the first of two independent layers, both in `relationship-graph.ts` and the audit rule
+(§ 5.4); the static audit remains necessary, not redundant — the compiler guard only resolves a
+literal `type:` argument at the call site, not one computed through a `string`-typed variable or
+reached through a widened generic, and the audit is what covers that gap (and any file added
+after the guard shipped). Neither layer alone would be enough; see the audit rule's own comment
+in `scripts/structure-audit/check-nimbus-invariants.ts` for the boundary each layer does not
+cover.
+
+The merge uses SQLite's `json_patch`, verified available in this repo's `bun:sqlite`.
+**`json_patch` implements RFC 7396 JSON Merge Patch, which is recursive — not the top-level-only
+merge originally assumed here.** Verified directly against this repo's `bun:sqlite` on
+2026-08-19:
+
+```text
+json_patch('{"ownership":{"a":1,"stale":true}}', '{"ownership":{"a":9}}')
+  → {"ownership":{"a":9,"stale":true}}        -- "stale" SURVIVES
+```
+
+A single call — `json_patch(COALESCE(graph_entity.metadata, '{}'), excluded.metadata)`, the form
+originally proposed here — recursively merges a writer's new namespace *into* its own previous
+one, field by field, so a stale field the writer meant to drop would leak forward forever. Sibling
+isolation, this design's primary property, does still hold under a recursive merge: a top-level
+patch object containing only the acting writer's key can never touch a sibling top-level key,
+recursive or not.
+
+To get true wholesale replacement of the writer's **own** namespace, the shipped
+`upsertGraphEntityNamespaced` (`graph/relationship-graph.ts`) applies `json_patch` **twice**:
+first with `{"<writer>": null}`, which RFC 7396 defines as deleting that key outright, then with
+`{"<writer>": <metadata>}` against the now-key-free object, so the second call inserts fresh
+rather than merging into anything:
+
+```sql
+metadata = json_patch(json_patch(COALESCE(graph_entity.metadata, '{}'), ?/* null-patch */), ?/* set-patch */)
+```
+
+The same wrapping applies on first insert. An earlier version of this code wrote the raw
+namespace value straight into the `metadata` column on `INSERT`, skipping `json_patch` entirely
+— so a first-ever write with an explicit `null` field stored `null` verbatim instead of being
+deleted, unlike every subsequent write to that row. The shipped insert path is
+`json_patch('{}', <set-patch>)`, going through the same delete-on-`null` semantics as the update
+path, so insert and update agree. See `upsertGraphEntityNamespaced`'s doc comment for the
+authoritative statement of this mechanism.
 
 **A confirmed hazard, not a suspected one.** `json_patch` treats a JSON `null` value as a
 **delete** instruction, so a writer whose namespace legitimately contains a `null` field has that
@@ -279,8 +333,9 @@ preserve, and `readEntityMetadata` already degrades to `null` for them.
   user-visible assertion behind the whole spec.
 - **The static audit rejects a flat write to a co-owned type** (§ 5.4), red-proved by pointing one
   `graph-populator.ts` write back at `upsertGraphEntity` and confirming the audit fails.
-- **`metadata: {}` under `json_patch` is a no-op, not a wipe** — the property `graph-populator`'s
-  converted writes depend on. Assert an existing sibling namespace survives such a write.
+- **`metadata: {}` under `json_patch` clears the writer's own namespace but does not wipe a
+  sibling's** — the property `graph-populator`'s converted writes depend on, and not the same
+  thing as a true no-op. Assert an existing sibling namespace survives such a write.
 - **`readEntityMetadata` does NOT resurrect flat metadata** as the `ownership` namespace: a row
   with flat metadata returns `null`, so a clobber or a skipped migration stays visible (§ 5.2).
 
