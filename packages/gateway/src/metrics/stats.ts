@@ -21,6 +21,15 @@ export type StatsMetricId =
 /** DORA's own union stays frozen; this feature's extra reasons live here. */
 export type StatsGap = DoraGap | "github_only_merge_data" | "incidents_missing_opened_at";
 
+/**
+ * `DoraMetricValue` with its `gap` field widened from `DoraGap` to `StatsGap`. A DORA
+ * calculator's `DoraMetricValue` is still assignable here — `DoraGap` is a subset of
+ * `StatsGap` — so `wrapDora` needs no conversion; only the two evaluators that return a
+ * `StatsGap`-only reason (`github_only_merge_data`, `incidents_missing_opened_at`) need the
+ * wider type, and get it without a cast.
+ */
+type StatsMetricValue = Omit<DoraMetricValue, "gap"> & { readonly gap: StatsGap };
+
 export type StatsPoint = {
   readonly startMs: number;
   readonly endMs: number;
@@ -43,7 +52,7 @@ type Evaluator = (
   cfg: ServiceConfig,
   startMs: number,
   endMs: number,
-) => DoraMetricValue;
+) => StatsMetricValue;
 
 /**
  * A bucket is exactly "the DORA value for that sub-window". The four DORA calculators share
@@ -57,6 +66,14 @@ type Evaluator = (
  * into a no-op and silently making each point CUMULATIVE-to-date instead of per-bucket — no
  * DORA logic is reimplemented here either way; only the two numbers this wrapper computes
  * change.
+ *
+ * Known limit: the DORA calculators window inclusively (`>= lower AND <= nowMs`, dora.ts
+ * `selectDeploys`/`selectAnnotatedDeploys`/`selectResolvedIncidents`), while `prMerges` and
+ * `incidentsOpened` below window half-open (`>= start AND < end`). An event landing exactly
+ * on a bucket boundary can therefore be double-counted across two adjacent buckets for the
+ * four wrapped metrics, but not for the two native ones. Fixing that means touching `dora.ts`
+ * itself, which this task deliberately does not do — recorded here rather than left to
+ * surprise someone diffing bucket edges.
  */
 const wrapDora =
   (
@@ -76,7 +93,7 @@ function prMerges(
   cfg: ServiceConfig,
   startMs: number,
   endMs: number,
-): DoraMetricValue {
+): StatsMetricValue {
   // `ParsedDoraRepoUrn` is `{ provider: DoraProvider; providerId: string }` — there is NO
   // `forge` field. `DoraProvider` is "github" | "gitlab" | "bitbucket" | "jenkins" | "circleci".
   const githubRepos = cfg.repos.filter((r) => r.provider === "github").map((r) => r.providerId);
@@ -109,14 +126,14 @@ function prMerges(
       value: null,
       unit: "merges",
       sample: 0,
-      gap: (nonGithub ? "github_only_merge_data" : "low_sample") as DoraGap,
+      gap: nonGithub ? "github_only_merge_data" : "low_sample",
     };
   }
   return {
     value: count,
     unit: "merges",
     sample: count,
-    gap: (nonGithub ? "github_only_merge_data" : null) as DoraGap,
+    gap: nonGithub ? "github_only_merge_data" : null,
   };
 }
 
@@ -139,7 +156,7 @@ function incidentsOpened(
   cfg: ServiceConfig,
   startMs: number,
   endMs: number,
-): DoraMetricValue {
+): StatsMetricValue {
   if (cfg.pagerdutyServices.length === 0) {
     return { value: null, unit: "incidents", sample: 0, gap: "no_pagerduty_mapping" };
   }
@@ -170,14 +187,14 @@ function incidentsOpened(
       value: null,
       unit: "incidents",
       sample: 0,
-      gap: (missing ? "incidents_missing_opened_at" : "low_sample") as DoraGap,
+      gap: missing ? "incidents_missing_opened_at" : "low_sample",
     };
   }
   return {
     value: count,
     unit: "incidents",
     sample: count,
-    gap: (missing ? "incidents_missing_opened_at" : null) as DoraGap,
+    gap: missing ? "incidents_missing_opened_at" : null,
   };
 }
 
@@ -205,7 +222,7 @@ export function computeStatsSeries(
   const buckets = splitBuckets(untilMs, windowMs, bucketMs);
   const points = buckets.map((b) => {
     const v = evaluate(db, cfg, b.startMs, b.endMs);
-    return { startMs: b.startMs, endMs: b.endMs, ...v } as StatsPoint;
+    return { startMs: b.startMs, endMs: b.endMs, ...v };
   });
   return {
     metric,

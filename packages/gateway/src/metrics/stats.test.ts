@@ -35,6 +35,26 @@ function insertPr(db: Database, id: string, repo: string, mergedAtMs: number | n
   );
 }
 
+// Hoisted to module scope (rather than local to the "incidents-opened" describe block) so the
+// module-level discriminating mttr test below can build its own fixture with it.
+function insertIncident(
+  db: Database,
+  id: string,
+  pdService: string,
+  openedAtMs: number | null,
+  status: string,
+  modifiedAt: number,
+  syncedAtMs = NOW,
+): void {
+  const meta: Record<string, unknown> = { pagerduty_service_id: pdService, status };
+  if (openedAtMs !== null) meta["opened_at_ms"] = openedAtMs;
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
+     VALUES (?, 'pagerduty', 'incident', ?, 'x', ?, ?, ?)`,
+    [id, id, modifiedAt, JSON.stringify(meta), syncedAtMs],
+  );
+}
+
 function cfg(repos: ServiceConfig["repos"]): ServiceConfig {
   return {
     serviceId: "checkout-web",
@@ -144,22 +164,6 @@ describe("computeStatsSeries — pr-merges", () => {
 // These three pin the corrections in Task 2 step 3 (a), (b) and (c). Without them the plan
 // states the rules and nothing enforces them.
 describe("computeStatsSeries — incidents-opened", () => {
-  function insertIncident(
-    db: Database,
-    id: string,
-    pdService: string,
-    openedAtMs: number | null,
-    status: string,
-    modifiedAt: number,
-  ): void {
-    const meta: Record<string, unknown> = { pagerduty_service_id: pdService, status };
-    if (openedAtMs !== null) meta["opened_at_ms"] = openedAtMs;
-    db.run(
-      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
-       VALUES (?, 'pagerduty', 'incident', ?, 'x', ?, ?, ?)`,
-      [id, id, modifiedAt, JSON.stringify(meta), NOW],
-    );
-  }
   const pd = (): ServiceConfig => ({ ...cfg(GH), pagerdutyServices: ["PSVC1"] });
 
   // (a) buckets on the OPENED time, not modified_at.
@@ -180,10 +184,14 @@ describe("computeStatsSeries — incidents-opened", () => {
   });
 
   // (c) a missing opened_at_ms is EXCLUDED and REPORTED — never coalesced to synced_at.
+  // `synced_at` is deliberately set to mid-bucket (NOT NOW, the bucket's exclusive upper
+  // edge): a forbidden `synced_at` fallback would then land the untimed row INSIDE this same
+  // bucket too, turning `value` into 2 — so the count assertion is load-bearing, not a
+  // boundary coincidence.
   test("an incident with no opened_at_ms is excluded and flagged, not back-dated", () => {
     const db = makeDb();
     insertIncident(db, "timed", "PSVC1", NOW - 0.5 * DAY, "resolved", NOW);
-    insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW);
+    insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW, NOW - 0.5 * DAY);
     const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, DAY, DAY);
     expect(s.points[0]?.value).toBe(1);
     expect(s.points[0]?.gap).toBe("incidents_missing_opened_at");
@@ -206,12 +214,27 @@ describe("computeStatsSeries — incidents-opened", () => {
   // An empty bucket where the ONLY owned incident has no opened_at_ms at all is a distinct
   // branch from "an old incident touched recently": here count is 0 in every bucket, so the
   // exclusion must still surface as incidents_missing_opened_at, not the generic low_sample.
+  // Same mid-bucket synced_at reasoning as above.
   test("a bucket with zero timed incidents still flags the untimed exclusion", () => {
     const db = makeDb();
-    insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW);
+    insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW, NOW - 0.5 * DAY);
     const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, DAY, DAY);
     expect(s.points[0]?.value).toBeNull();
     expect(s.points[0]?.gap).toBe("incidents_missing_opened_at");
+  });
+
+  // Mirrors the pr-merges malformed-JSON test: `json_valid` is the context-dependent guard
+  // this repo has mis-tested before, and the incident path's copy of it was unexercised.
+  test("malformed metadata JSON does not raise", () => {
+    const db = makeDb();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
+       VALUES ('bad', 'pagerduty', 'incident', 'bad', 'x', ?, '{not json', ?)`,
+      [NOW, NOW],
+    );
+    insertIncident(db, "ok", "PSVC1", NOW - 0.5 * DAY, "resolved", NOW);
+    const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBe(1);
   });
 });
 
@@ -234,11 +257,33 @@ describe("registry totality", () => {
   });
 });
 
-test("a single-bucket series agrees with the DORA calculator over the same bounds", () => {
+// This is the regression guard for the wrapDora binding fix (see stats.ts's comment on
+// `wrapDora`): `sinceMs` in every DORA calculator is a LOOK-BACK DURATION, not the bucket's
+// raw absolute `startMs`. A single-bucket, empty-DB comparison cannot catch a wrong binding —
+// `cfg(GH)`'s empty `pagerdutyServices` makes `mttr` short-circuit before ever reaching the
+// arithmetic, and an empty DB compares null to null under either binding. This version puts
+// one resolved incident entirely inside the OLDER of two buckets and checks the NEWEST
+// bucket, which must see nothing.
+test("a wrapped DORA metric's newest bucket does not leak an older bucket's data", () => {
   const db = makeDb();
-  const series = computeStatsSeries(db, cfg(GH), "mttr", NOW, DAY, DAY);
-  const direct = mttr(db, cfg(GH), NOW, NOW - DAY);
-  expect(series.points[0]?.value).toBe(direct.value);
-  expect(series.points[0]?.unit).toBe(direct.unit);
-  expect(series.points[0]?.sample).toBe(direct.sample);
+  const pdCfg: ServiceConfig = { ...cfg(GH), pagerdutyServices: ["PSVC1"] };
+  // Opened AND resolved (modified_at) entirely inside [NOW-2*DAY, NOW-DAY) — the older bucket.
+  insertIncident(db, "old", "PSVC1", NOW - 1.9 * DAY, "resolved", NOW - 1.8 * DAY);
+
+  const series = computeStatsSeries(db, pdCfg, "mttr", NOW, 2 * DAY, DAY);
+  expect(series.points.length).toBe(2);
+  // Older bucket: the incident belongs here — it must carry the real duration.
+  expect(series.points[0]?.value).toBe(8640); // (NOW-1.8*DAY) - (NOW-1.9*DAY) = 0.1 day, in s.
+  // Newest bucket: nothing opened or resolved here. Under the CORRECT binding this is null;
+  // under the brief's literal `fn(db, cfg, endMs, startMs)` binding, `nowMs - sinceMs`
+  // collapses to a near-zero epoch value, the lower bound becomes a no-op, and the "old"
+  // incident leaks in — so this specific assertion is what catches a reverted binding.
+  expect(series.points[1]?.value).toBeNull();
+
+  // Direct DORA-calculator agreement for the newest bucket: `sinceMs` must be passed as a
+  // DURATION (`DAY`), never the bucket's raw absolute `startMs` (`NOW - DAY`).
+  const direct = mttr(db, pdCfg, NOW, DAY);
+  expect(series.points[1]?.value).toBe(direct.value);
+  expect(series.points[1]?.unit).toBe(direct.unit);
+  expect(series.points[1]?.sample).toBe(direct.sample);
 });
