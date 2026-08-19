@@ -1,8 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_REF_TITLE_CHARS, MAX_REF_URL_CHARS } from "./brief-constants.ts";
+import type { IndexHit } from "./brief-registry.ts";
 import { buildRegistry } from "./brief-registry.ts";
 import { BriefRunController } from "./brief-run-store.ts";
 import type { BriefRun } from "./brief-types.ts";
+
+function mockHit(overrides: Partial<IndexHit> = {}): IndexHit {
+  return {
+    itemId: "nimbus:clip:aa",
+    itemType: "web_clip",
+    title: "Saved",
+    url: "https://z.test",
+    snippet: "snip",
+    ...overrides,
+  };
+}
 
 function runWith(useIndex: boolean, bodies: readonly string[]): BriefRun {
   const c = new BriefRunController({ nowMs: () => 1000 });
@@ -83,7 +95,7 @@ describe("buildRegistry", () => {
 
   test("adds index hits as C1..Cm with clip citations", async () => {
     const { registry, indexHits } = await buildRegistry(runWith(true, ["a"]), async () => ({
-      hits: [{ itemId: "nimbus:clip:aa", title: "Saved", url: "https://z.test", snippet: "snip" }],
+      hits: [mockHit()],
       semanticAvailable: true,
     }));
     expect(indexHits).toBe(1);
@@ -93,12 +105,9 @@ describe("buildRegistry", () => {
   });
 
   test("caps index hits at MAX_INDEX_HITS", async () => {
-    const hits = Array.from({ length: 20 }, (_, i) => ({
-      itemId: `nimbus:clip:${i}`,
-      title: `C${i}`,
-      url: null,
-      snippet: "s",
-    }));
+    const hits = Array.from({ length: 20 }, (_, i) =>
+      mockHit({ itemId: `nimbus:clip:${i}`, title: `C${i}`, url: null, snippet: "s" }),
+    );
     const { registry } = await buildRegistry(runWith(true, ["a"]), async () => ({
       hits,
       semanticAvailable: true,
@@ -173,7 +182,7 @@ describe("buildRegistry", () => {
     const longTitle = "C".repeat(MAX_REF_TITLE_CHARS + 50);
     const longUrl = `https://z.test/${"y".repeat(MAX_REF_URL_CHARS + 50)}`;
     const { registry } = await buildRegistry(runWith(true, ["a"]), async () => ({
-      hits: [{ itemId: "nimbus:clip:aa", title: longTitle, url: longUrl, snippet: "snip" }],
+      hits: [mockHit({ title: longTitle, url: longUrl })],
       semanticAvailable: true,
     }));
     const ref = registry.get("C1")?.ref;
@@ -181,5 +190,62 @@ describe("buildRegistry", () => {
     expect(ref?.title).toBe(longTitle.slice(0, MAX_REF_TITLE_CHARS));
     expect(ref?.url?.length).toBe(MAX_REF_URL_CHARS);
     expect(ref?.url).toBe(longUrl.slice(0, MAX_REF_URL_CHARS));
+  });
+
+  test("a non-clip index hit gets itemId and itemType, and NO clipId", async () => {
+    const { registry } = await buildRegistry(runWith(true, ["a"]), async () => ({
+      hits: [
+        {
+          itemId: "nimbus:pull_request:acme/web/482",
+          itemType: "pull_request",
+          title: "Drop the legacy worker pool",
+          url: "https://github.test/acme/web/pull/482",
+          snippet: "the pool is replaced by",
+        },
+      ],
+      semanticAvailable: true,
+    }));
+    const ref = registry.get("C1")?.ref;
+    expect(ref?.kind).toBe("clip");
+    expect(ref?.itemType).toBe("pull_request");
+    expect(ref?.itemId).toBe("nimbus:pull_request:acme/web/482");
+    // The whole point: `clipId` says "clip", so a PR must not claim one.
+    expect(ref?.clipId).toBeUndefined();
+  });
+
+  test("a web_clip index hit still gets clipId, plus the new fields", async () => {
+    const { registry } = await buildRegistry(runWith(true, ["a"]), async () => ({
+      hits: [
+        {
+          itemId: "nimbus:clip:aa",
+          itemType: "web_clip",
+          title: "Saved",
+          url: "https://z.test",
+          snippet: "snip",
+        },
+      ],
+      semanticAvailable: true,
+    }));
+    const ref = registry.get("C1")?.ref;
+    expect(ref?.clipId).toBe("nimbus:clip:aa");
+    expect(ref?.itemId).toBe("nimbus:clip:aa");
+    expect(ref?.itemType).toBe("web_clip");
+  });
+
+  test("an itemType this build has never heard of is carried through verbatim", async () => {
+    const { registry } = await buildRegistry(runWith(true, ["a"]), async () => ({
+      hits: [
+        {
+          itemId: "nimbus:slack_message:C123/1699",
+          itemType: "slack_message",
+          title: "standup",
+          url: null,
+          snippet: "we are blocked on",
+        },
+      ],
+      semanticAvailable: true,
+    }));
+    // Connectors land upstream on their own schedule. Never an enum.
+    expect(registry.get("C1")?.ref.itemType).toBe("slack_message");
   });
 });

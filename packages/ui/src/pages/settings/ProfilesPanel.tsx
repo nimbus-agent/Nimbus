@@ -106,12 +106,9 @@ export function ProfilesPanel() {
         <PanelError message={`Failed to load profiles: ${fetchError}`} onRetry={refresh} />
       )}
       {switchNotice !== null && (
-        <div
-          role="status"
-          className="p-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)]"
-        >
-          <p className="text-sm">{switchNotice}</p>
-        </div>
+        <output className="block p-3 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
+          {switchNotice}
+        </output>
       )}
       <div className="flex justify-end">
         <button

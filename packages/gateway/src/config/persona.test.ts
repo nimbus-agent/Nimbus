@@ -66,7 +66,7 @@ describe("resolvePersona", () => {
     };
     resolvePersona(dir, logger);
     resolvePersona(dir, logger);
-    expect(warnings.length).toBe(1);
+    expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("tone");
     expect(warnings[0]).toContain("tree");
     expect(warnings[0]).toContain("neutral");
@@ -85,20 +85,20 @@ describe("resolvePersona", () => {
 
     writeFileSync(path, `[persona]\ntone = "tree"\n`, "utf8");
     resolvePersona(dir, logger);
-    expect(warnings.length).toBe(1);
+    expect(warnings).toHaveLength(1);
 
     // A boolean-per-key (or single-boolean) memo would stay silent here, because "tone" was
     // already warned once. The key=value memo warns again, because "tone=bark" is a distinct
     // memo entry from "tone=tree".
     writeFileSync(path, `[persona]\ntone = "bark"\n`, "utf8");
     resolvePersona(dir, logger);
-    expect(warnings.length).toBe(2);
+    expect(warnings).toHaveLength(2);
     expect(warnings[1]).toContain("tone");
     expect(warnings[1]).toContain("bark");
     expect(warnings[1]).toContain("neutral");
 
     // Resolving again with the same (now-seen) bad value must not warn a third time.
     resolvePersona(dir, logger);
-    expect(warnings.length).toBe(2);
+    expect(warnings).toHaveLength(2);
   });
 });

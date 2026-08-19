@@ -648,6 +648,116 @@ function requireIndexedJiraEpic(
   return rawRow;
 }
 
+/**
+ * The gap raised when no affected service could be derived and none was passed.
+ *
+ * Two distinct causes, never conflated: an epic with NO children at all is almost always a
+ * company-managed Jira project (`parent_key` is populated only for team-managed ones), while
+ * an epic WITH children but no merged PRs among them is simply early. Split out of
+ * {@link runPremortem} with {@link analyseCohort} to bring it under the cognitive-complexity
+ * gate (Sonar `S3776`).
+ */
+function noAffectedServicesGap(epicKey: string, childCount: number): GapNote {
+  return {
+    category: "missing_relation_emit",
+    detail:
+      childCount === 0 ? noChildrenDetail(epicKey) : noChildrenWithPrsDetail(epicKey, childCount),
+    remediation: "Pass `--service <repo>`, or re-run once child PRs land.",
+  };
+}
+
+/**
+ * The cohort-populated arm of {@link runPremortem}: risks, themes, and the three conditional
+ * honesty gaps that only mean anything once there IS a cohort to compare the target against.
+ *
+ * Split out to bring `runPremortem` back under the cognitive-complexity gate (Sonar `S3776`,
+ * which measured it at 24 against a limit of 15). Purely a move — same order, same
+ * conditions, same gap texts — so the caller keeps deciding WHETHER there is a cohort and
+ * this decides only what to say about one.
+ */
+function analyseCohort(
+  db: Database,
+  args: {
+    cohort: CohortResult;
+    services: readonly string[];
+    childCount: number;
+    targetCreatedAtMs: number | null;
+    epicRef: string;
+    now: number;
+    configIdFor: ResolveConfigServiceId | undefined;
+  },
+): { risks: Risk[]; themes: PremortemTheme[]; gaps: GapNote[] } {
+  const { cohort, services, now } = args;
+  const gaps: GapNote[] = [];
+  const { reviewDragMedianMs, repoReviewMedianMs, cohortHasPrsMissingTimingData } =
+    reviewDragMedians(db, cohort, services, now);
+  const incidentCoupling = countIncidentCoupledEpics(db, cohort.members, args.configIdFor);
+
+  const risks = computeRisks({
+    cohort: cohort.members,
+    targetChildCount: args.childCount,
+    // Passed through as `null`, never defaulted to `now`: a missing creation date is a
+    // missing date, and defaulting it made the brief say "this epic is brand new" about an
+    // epic of unknown age. `computeCycleTime` names the real cause instead.
+    targetCreatedAtMs: args.targetCreatedAtMs,
+    nowMs: now,
+    reviewDragMedianMs,
+    repoReviewMedianMs,
+    cohortHasPrsMissingTimingData,
+    incidentCoupling,
+    // Structurally true, not merely intended: `selectCohort`'s candidate query filters
+    // `service = 'jira'`, so the cohort cannot blend trackers with different cancel/done
+    // semantics even if another tracker started writing `metadata.issue_type = 'Epic'`.
+    cohortIsMixedTracker: false,
+  });
+
+  const themes = themesForServices(db, services);
+  if (themes.length === 0) {
+    gaps.push({
+      category: "missing_connector",
+      detail:
+        "No pre-mortem themes have been extracted for these services yet. Possible " +
+        "causes: the theme pass has not run yet; `[premortem].enabled = false`; " +
+        "`[premortem].use_llm = false`; no local LLM was reachable; or every " +
+        "previously-extracted theme was later demoted once its source items left the " +
+        "index. The risk figures above are structural findings only, unaffected by this.",
+      remediation: `Run \`nimbus pre-mortem ${args.epicRef} --refresh\`, or configure a local model and re-run.`,
+    });
+  }
+
+  // Honesty rule 1 (conditional) — history span, silent when deep.
+  if (
+    cohort.oldestResolvedAtMs !== null &&
+    now - cohort.oldestResolvedAtMs < HISTORY_SPAN_SHORT_MS
+  ) {
+    gaps.push({
+      category: "missing_connector",
+      detail:
+        `${String(cohort.members.length)} epic(s), oldest closed ${isoDay(cohort.oldestResolvedAtMs)} ` +
+        "— this is a short history, so the comparison above may not be representative yet.",
+      remediation:
+        "Run `nimbus index rebody --service jira --since <days>` to widen indexed history.",
+    });
+  }
+
+  // Honesty rule 2 (conditional) — truncated bodies, silent when none.
+  const truncation = cohortBodyTruncation(
+    db,
+    cohort.members.map((m) => m.itemId),
+  );
+  if (truncation.truncated > 0) {
+    gaps.push({
+      category: "missing_relation_emit",
+      detail:
+        `${String(truncation.truncated)} of ${String(truncation.total)} source(s) in this ` +
+        "cohort were indexed with a truncated body (`body_complete = 0`) — either migrated " +
+        "before full-body indexing and never re-synced, or a connector configured below " +
+        "`full` depth for that service; this brief does not distinguish which.",
+    });
+  }
+  return { risks, themes, gaps };
+}
+
 export async function runPremortem(
   input: PremortemInput,
   ctx: PremortemContext,
@@ -692,14 +802,7 @@ export async function runPremortem(
   let watchers: WatcherProposal[] = [];
 
   if (services.length === 0) {
-    gaps.push({
-      category: "missing_relation_emit",
-      detail:
-        childCount === 0
-          ? noChildrenDetail(epic.key)
-          : noChildrenWithPrsDetail(epic.key, childCount),
-      remediation: "Pass `--service <repo>`, or re-run once child PRs land.",
-    });
+    gaps.push(noAffectedServicesGap(epic.key, childCount));
   } else {
     // Watcher proposals are a function of the TARGET's affected services, NOT of the cohort:
     // an epic with no comparable history still has services worth watching. They used to sit
@@ -741,72 +844,18 @@ export async function runPremortem(
           "that `--service` names match real repos.",
       });
     } else {
-      const { reviewDragMedianMs, repoReviewMedianMs, cohortHasPrsMissingTimingData } =
-        reviewDragMedians(ctx.db, cohort, services, now);
-      const incidentCoupling = countIncidentCoupledEpics(ctx.db, cohort.members, configIdFor);
-
-      risks = computeRisks({
-        cohort: cohort.members,
-        targetChildCount: childCount,
-        // Passed through as `null`, never defaulted to `now`: a missing creation date is a
-        // missing date, and defaulting it made the brief say "this epic is brand new" about an
-        // epic of unknown age. `computeCycleTime` names the real cause instead.
+      const analysed = analyseCohort(ctx.db, {
+        cohort,
+        services,
+        childCount,
         targetCreatedAtMs: epicRow.created_at_ms,
-        nowMs: now,
-        reviewDragMedianMs,
-        repoReviewMedianMs,
-        cohortHasPrsMissingTimingData,
-        incidentCoupling,
-        // Structurally true, not merely intended: `selectCohort`'s candidate query filters
-        // `service = 'jira'`, so the cohort cannot blend trackers with different cancel/done
-        // semantics even if another tracker started writing `metadata.issue_type = 'Epic'`.
-        cohortIsMixedTracker: false,
+        epicRef: input.epicRef,
+        now,
+        configIdFor,
       });
-
-      themes = themesForServices(ctx.db, services);
-      if (themes.length === 0) {
-        gaps.push({
-          category: "missing_connector",
-          detail:
-            "No pre-mortem themes have been extracted for these services yet. Possible " +
-            "causes: the theme pass has not run yet; `[premortem].enabled = false`; " +
-            "`[premortem].use_llm = false`; no local LLM was reachable; or every " +
-            "previously-extracted theme was later demoted once its source items left the " +
-            "index. The risk figures above are structural findings only, unaffected by this.",
-          remediation: `Run \`nimbus pre-mortem ${input.epicRef} --refresh\`, or configure a local model and re-run.`,
-        });
-      }
-
-      // Honesty rule 1 (conditional) — history span, silent when deep.
-      if (
-        cohort.oldestResolvedAtMs !== null &&
-        now - cohort.oldestResolvedAtMs < HISTORY_SPAN_SHORT_MS
-      ) {
-        gaps.push({
-          category: "missing_connector",
-          detail:
-            `${String(cohort.members.length)} epic(s), oldest closed ${isoDay(cohort.oldestResolvedAtMs)} ` +
-            "— this is a short history, so the comparison above may not be representative yet.",
-          remediation:
-            "Run `nimbus index rebody --service jira --since <days>` to widen indexed history.",
-        });
-      }
-
-      // Honesty rule 2 (conditional) — truncated bodies, silent when none.
-      const truncation = cohortBodyTruncation(
-        ctx.db,
-        cohort.members.map((m) => m.itemId),
-      );
-      if (truncation.truncated > 0) {
-        gaps.push({
-          category: "missing_relation_emit",
-          detail:
-            `${String(truncation.truncated)} of ${String(truncation.total)} source(s) in this ` +
-            "cohort were indexed with a truncated body (`body_complete = 0`) — either migrated " +
-            "before full-body indexing and never re-synced, or a connector configured below " +
-            "`full` depth for that service; this brief does not distinguish which.",
-        });
-      }
+      risks = analysed.risks;
+      themes = analysed.themes;
+      gaps.push(...analysed.gaps);
     }
   }
 

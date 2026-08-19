@@ -36,15 +36,15 @@ export function buildServerGaps(input: ServerGapInput): string[] {
       // NEVER launder a broken index into "your corpus had nothing relevant". They are
       // completely different statements and only one of them is the user's problem.
       gaps.push(
-        "Saved clips could not be searched (the local index returned an error), so this report draws only on the sources you selected.",
+        "Your index could not be searched (the local index returned an error), so this report draws only on the sources you selected.",
       );
     } else if (input.indexHits === 0) {
       gaps.push(
-        "No saved clips matched this question, so the report draws only on the sources you selected.",
+        "Nothing in your index matched this question, so the report draws only on the sources you selected.",
       );
     } else if (!input.semanticAvailable) {
       gaps.push(
-        "Index recall was keyword-only (semantic search unavailable); relevant saved clips may be under-represented.",
+        "Index recall was keyword-only (semantic search unavailable); relevant indexed items may be under-represented.",
       );
     }
   }

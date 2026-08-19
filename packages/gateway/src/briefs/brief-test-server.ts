@@ -20,11 +20,13 @@ import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createSeededTokenVault } from "../ipc/test-token-vault.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import type { IndexHit, IndexSearch } from "./brief-registry.ts";
 import { buildRegistry } from "./brief-registry.ts";
 import { BriefRunController } from "./brief-run-store.ts";
 import { saveBriefReport } from "./brief-save.ts";
 import type { BriefSynthesizerLlm } from "./brief-synthesis.ts";
 import { runSynthesis } from "./brief-synthesis.ts";
+import type { Report } from "./brief-types.ts";
 
 const KNOWN_TOKEN = "brief-test-token-0123456789abcdef0123456789abcdef";
 const KNOWN_LABEL = "brief-test-harness";
@@ -37,10 +39,17 @@ function makeInMemoryVault(tokensJson?: string): NimbusVault {
   );
 }
 
+/** Turns a fixed hit list into the `IndexSearch` seam, ignoring the query and limit. */
+function makeIndexSearch(hits: IndexHit[]): IndexSearch {
+  return async (_query: string, limit: number) =>
+    Promise.resolve({ hits: hits.slice(0, limit), semanticAvailable: true });
+}
+
 /** Kicks off synthesis fire-and-forget — same contract as `BriefsWriteSurface.startRun`. */
 function makeStartRun(
   controller: BriefRunController,
   llm: BriefSynthesizerLlm | null,
+  search: IndexSearch | null,
 ): (runId: string) => void {
   return (runId: string): void => {
     const run = controller.get(runId);
@@ -49,7 +58,7 @@ function makeStartRun(
     void (async () => {
       const { registry, indexHits, semanticAvailable, searchFailed } = await buildRegistry(
         run,
-        null,
+        search,
       );
       const result = await runSynthesis({
         run,
@@ -96,9 +105,12 @@ export async function startBriefTestServer(opts?: {
   enabled?: boolean;
   /** Raw JSON for `http_api.web_clipper_tokens`. Omit for the legacy single-token default. */
   tokensJson?: string;
+  /** Index hits served to any run with `useIndex: true`. Omit to leave the index seam unwired. */
+  hits?: IndexHit[];
 }): Promise<BriefTestServer> {
   const enabled = opts?.enabled ?? true;
   const llm = opts?.llm ?? null;
+  const search = opts?.hits === undefined ? null : makeIndexSearch(opts.hits);
 
   const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-brief-e2e-"));
   const dbPath = join(tmpDir, "nimbus.db");
@@ -128,7 +140,7 @@ export async function startBriefTestServer(opts?: {
       ? {
           clipsVault: vault,
           briefRuns: controller,
-          briefStartRun: makeStartRun(controller, llm),
+          briefStartRun: makeStartRun(controller, llm, search),
           briefSave: makeSave(controller, db),
         }
       : // Opens the I13 write surface for an UNRELATED reason (no deployment token check is
@@ -163,4 +175,119 @@ export async function startBriefTestServer(opts?: {
       }
     },
   };
+}
+
+function mustMatch(m: RegExpMatchArray, group: number, what: string): string {
+  const v = m[group];
+  if (v === undefined) throw new Error(`${what}: capture group ${group} missing`);
+  return v;
+}
+
+/**
+ * Cites EVERY source and index-hit token the prompt carries (S1, S2, ..., C1, C2, ...) —
+ * same trick as `brief-e2e.test.ts`'s `citeAllLlm`, widened to also catch `C*` tokens so a
+ * finding cites each injected index hit deterministically, regardless of how many hits (or
+ * which `itemType`s) the caller passes to `runBriefWithIndexHits`.
+ */
+function citeAllTokensLlm(): BriefSynthesizerLlm {
+  return {
+    generateJson: async (prompt: string) => {
+      const tokens = [
+        ...new Set(
+          [...prompt.matchAll(/"token":"([A-Z]\d+)"/g)].map((m) =>
+            mustMatch(m, 1, "citeAllTokensLlm token match"),
+          ),
+        ),
+      ];
+      const findings = tokens.map((t, i) => ({
+        text: `Finding ${i + 1} supported by ${t}.`,
+        refs: [t],
+      }));
+      return Promise.resolve({
+        text: JSON.stringify({
+          summary: "Synthesized summary citing every available token.",
+          findings,
+          conflicts: [],
+          gaps: [],
+        }),
+        model: "stub-cite-all-tokens",
+        remote: false,
+      });
+    },
+  };
+}
+
+/**
+ * Drives one brief run through the same create -> feed -> run -> poll sequence as
+ * `brief-e2e.test.ts`, with `hits` injected as the run's `IndexSearch`, and returns the
+ * finished `Report`. Exported so callers (e.g. `brief-e2e.test.ts`) import this rather than
+ * redefining the flow — this file stays the single source of the harness.
+ */
+export async function runBriefWithIndexHits(hits: IndexHit[]): Promise<Report> {
+  const s = await startBriefTestServer({ llm: citeAllTokensLlm(), hits });
+  try {
+    const base = `http://127.0.0.1:${s.port}`;
+    const authHeaders = { authorization: `Bearer ${s.token}` };
+    const sourceUrl = "https://example.com/index-hits-source";
+
+    const createRes = await fetch(`${base}/v1/briefs`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders },
+      body: JSON.stringify({
+        brief: "What changed in the worker pool?",
+        sources: [{ url: sourceUrl, title: "Source" }],
+        useIndex: true,
+      }),
+    });
+    if (createRes.status !== 200) {
+      throw new Error(`runBriefWithIndexHits: create failed with ${createRes.status}`);
+    }
+    const created = (await createRes.json()) as { id: string };
+
+    const feedRes = await fetch(`${base}/v1/briefs/${created.id}/sources`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders },
+      body: JSON.stringify({
+        url: sourceUrl,
+        title: "Source",
+        body: "A fed source so the run has at least one declared source satisfied.",
+        capturedAt: Date.now(),
+        truncated: false,
+      }),
+    });
+    if (feedRes.status !== 200) {
+      throw new Error(`runBriefWithIndexHits: feeding the source failed with ${feedRes.status}`);
+    }
+
+    const runRes = await fetch(`${base}/v1/briefs/${created.id}/run`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+    if (runRes.status !== 200) {
+      throw new Error(`runBriefWithIndexHits: starting the run failed with ${runRes.status}`);
+    }
+
+    for (let i = 0; i < 200; i++) {
+      const pollRes = await fetch(`${base}/v1/briefs/${created.id}`, { headers: authHeaders });
+      if (pollRes.status !== 200) {
+        throw new Error(`runBriefWithIndexHits: unexpected GET status ${pollRes.status}`);
+      }
+      const body = (await pollRes.json()) as { status: string; report?: Report };
+      if (body.status === "done") {
+        if (body.report === undefined) {
+          throw new Error("runBriefWithIndexHits: done status but no report in the body");
+        }
+        return body.report;
+      }
+      if (body.status === "failed") {
+        throw new Error("runBriefWithIndexHits: run reached status failed");
+      }
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error(
+      "runBriefWithIndexHits: run never reached a terminal state within the poll budget",
+    );
+  } finally {
+    s.stop();
+  }
 }

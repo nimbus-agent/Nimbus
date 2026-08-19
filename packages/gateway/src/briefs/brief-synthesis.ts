@@ -40,12 +40,15 @@ const INSTRUCTIONS = [
 
 /**
  * Builds the synthesis prompt. Every source body goes through `wrapToolOutput`
- * (invariant I11) because these are arbitrary web pages the user did not write
- * and some will contain text engineered to hijack the model.
+ * (invariant I11) because none of this text is the user's own words: fed sources are
+ * arbitrary web pages, and a `C{n}` body is any indexed item — a pull request
+ * description, a chat message, an email — which is at least as good an injection
+ * vector. Some of it will contain text engineered to hijack the model.
  */
 export function buildPrompt(run: BriefRun, registry: SourceRegistry): string {
   const sources = [...registry.values()].map((e) => ({
     token: e.token,
+    ...(e.ref.itemType === undefined ? {} : { type: e.ref.itemType }),
     title: e.ref.title,
     url: e.ref.url ?? null,
     text: e.body,

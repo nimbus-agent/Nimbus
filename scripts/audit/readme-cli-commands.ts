@@ -2,9 +2,26 @@ import { readFile } from "node:fs/promises";
 
 const STOP_WORDS = new Set(["--version", "--help", "-v", "-h"]);
 
+/**
+ * Matches an invocation of the `nimbus` binary followed by its subcommand.
+ *
+ * Two deliberate narrowings over the obvious `/(?<!\w)nimbus\s+(\w+)/`, both of
+ * which produced false positives against the real landing page:
+ *
+ * - The lookbehind rejects a PATH whose last segment is `nimbus`, not just a
+ *   longer word. `/tmp/nimbus`, `./nimbus` and `nimbus-agent/tap/nimbus` are
+ *   filenames, not the command — a `\w`-only lookbehind lets every one of them
+ *   through, because `/`, `.` and `-` are not word characters.
+ * - The separator is `[ \t]`, not `\s`, so a match cannot span a NEWLINE. With
+ *   `\s` the two-line install snippet
+ *   `tar -xzf … -C /tmp/nimbus` / `less /tmp/nimbus/install.sh`
+ *   was read as the command `nimbus less`.
+ */
+const NIMBUS_INVOCATION = /(?<![\w/\\.-])nimbus[ \t]+([a-z][a-z0-9-]*)/g;
+
 export function extractReadmeCliCommands(markdown: string): string[] {
   const found = new Set<string>();
-  const pattern = /(?<!\w)nimbus\s+([a-z][a-z0-9-]*)/g;
+  const pattern = new RegExp(NIMBUS_INVOCATION.source, "g");
   for (const m of markdown.matchAll(pattern)) {
     const cmd = m[1];
     if (cmd && !STOP_WORDS.has(cmd)) found.add(cmd);

@@ -605,47 +605,30 @@ describe("dispatchAgentsRpc — ctx.runner threading proof for the remaining age
     });
   });
 
-  test("agents.glossary with runner set actually synthesizes", async () => {
-    const ctx = makeCtx(freshDb(), { runner: okRunner() });
-    const out = await dispatchAgentsRpc("agents.glossary", {}, ctx);
-    expect(out.kind).toBe("hit");
-    const params = await waitForNotifyParams(ctx.notify, "glossary.briefReady");
-    expect(params?.["brief"]).toContain("OBSERVABLE-SYNTHESIS-MARKER");
-    expect(params?.["synthesis"]).toMatchObject({
-      attempted: true,
-      used: true,
-      model: "fake-model",
-    });
-  });
-
-  test("agents.ownership with runner set actually synthesizes", async () => {
-    const ctx = makeCtx(freshDb(), { runner: okRunner() });
-    const out = await dispatchAgentsRpc("agents.ownership", {}, ctx);
-    expect(out.kind).toBe("hit");
-    const params = await waitForNotifyParams(ctx.notify, "ownership.briefReady");
-    expect(params?.["brief"]).toContain("OBSERVABLE-SYNTHESIS-MARKER");
-    expect(params?.["synthesis"]).toMatchObject({
-      attempted: true,
-      used: true,
-      model: "fake-model",
-    });
-  });
-
-  // Fix round 2: three more forwarding sites (handleDecisions, handleNegotiate,
-  // handlePremortem) had the SAME optional-spread shape and the SAME no-test gap.
-
-  test("agents.decisions with runner set actually synthesizes", async () => {
-    const ctx = makeCtx(freshDb(), { runner: okRunner() });
-    const out = await dispatchAgentsRpc("agents.decisions", {}, ctx);
-    expect(out.kind).toBe("hit");
-    const params = await waitForNotifyParams(ctx.notify, "decisions.briefReady");
-    expect(params?.["brief"]).toContain("OBSERVABLE-SYNTHESIS-MARKER");
-    expect(params?.["synthesis"]).toMatchObject({
-      attempted: true,
-      used: true,
-      model: "fake-model",
-    });
-  });
+  // Every handler whose runner-forwarding is provable with no params and no fixture, one row
+  // each. Fix round 2 found three more forwarding sites with the SAME optional-spread shape and
+  // the SAME no-test gap: handleDecisions joins the table here, while handleNegotiate and
+  // handlePremortem need their own setup and get their own tests below.
+  const forwardsRunner: readonly (readonly [method: string, notification: string])[] = [
+    ["agents.glossary", "glossary.briefReady"],
+    ["agents.ownership", "ownership.briefReady"],
+    ["agents.decisions", "decisions.briefReady"],
+  ];
+  test.each(forwardsRunner)(
+    "%s with runner set actually synthesizes",
+    async (method, notification) => {
+      const ctx = makeCtx(freshDb(), { runner: okRunner() });
+      const out = await dispatchAgentsRpc(method, {}, ctx);
+      expect(out.kind).toBe("hit");
+      const params = await waitForNotifyParams(ctx.notify, notification);
+      expect(params?.["brief"]).toContain("OBSERVABLE-SYNTHESIS-MARKER");
+      expect(params?.["synthesis"]).toMatchObject({
+        attempted: true,
+        used: true,
+        model: "fake-model",
+      });
+    },
+  );
 
   test("agents.premortem with runner set actually synthesizes", async () => {
     const db = freshDb();

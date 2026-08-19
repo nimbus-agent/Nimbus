@@ -165,6 +165,27 @@ function laneFailureGap(laneName: string, r: SubTaskResult): GapNote {
 }
 
 /**
+ * A PR row's `item.metadata` as a plain object, or `undefined` when the JSON will not parse.
+ *
+ * `undefined` and `{}` are deliberately different answers: unparseable JSON drops the row
+ * from every tally (the caller `continue`s), while JSON that parses to a non-object — a
+ * number, an array, `null` — yields `{}`, so the row is still walked and simply contributes
+ * nothing. That is the behaviour of the inline `try`/`catch` this replaces; it was extracted
+ * only to bring the caller back under the cognitive-complexity gate (Sonar S3776).
+ */
+function parsePrMetadata(json: string): Record<string, unknown> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
+
+/**
  * `person --authored--> pr` (graph_relation) joined back to `item` for the PR's metadata.
  * PR size stats (`additions`/`deletions`/`changed_files`) live in that metadata only where
  * the enrichment pass has run, hence `statsCoverage`: an aggregate over a partial subset
@@ -199,25 +220,20 @@ function accumulateAuthoredPrStats(rows: ReadonlyArray<{ metadata: string }>): {
   let deletions = 0;
   let changedFiles = 0;
   for (const row of rows) {
-    let meta: Record<string, unknown> = {};
-    try {
-      const parsed: unknown = JSON.parse(row.metadata);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        meta = parsed as Record<string, unknown>;
-      }
-    } catch {
-      continue;
-    }
+    const meta = parsePrMetadata(row.metadata);
+    // Unparseable JSON drops the row from both tallies, per the note above.
+    if (meta === undefined) continue;
     if (meta["merged"] === true) merged += 1;
     const a = meta["additions"];
-    if (typeof a === "number") {
-      covered += 1;
-      additions += a;
-      const d = meta["deletions"];
-      if (typeof d === "number") deletions += d;
-      const c = meta["changed_files"];
-      if (typeof c === "number") changedFiles += c;
-    }
+    // `additions` is the coverage key: a row without it counts toward neither `covered` nor
+    // any of the three sums, exactly as when the whole block was nested under `typeof a`.
+    if (typeof a !== "number") continue;
+    covered += 1;
+    additions += a;
+    const d = meta["deletions"];
+    if (typeof d === "number") deletions += d;
+    const c = meta["changed_files"];
+    if (typeof c === "number") changedFiles += c;
   }
   return { merged, covered, additions, deletions, changedFiles };
 }
@@ -948,6 +964,85 @@ function detectMissingErrorIssuePersonEdges(db: Database): GapNote | null {
   return note;
 }
 
+/**
+ * The seven lane-backed fields of `NegotiateBrief`, in the order their tasks are queued.
+ *
+ * ONE list, read by both the `laneNames` push below and `decodeLaneResults`'s guard: when the
+ * two were separate string literals, a lane renamed in one place and not the other decoded to
+ * nothing and left its field at `null` — indistinguishable from a lane that genuinely could
+ * not be computed, which is exactly the confusion the whole null-vs-0 contract exists to
+ * prevent. The order still has to match the `tasks.push` below; that pairing is positional
+ * (`SubTaskResult.taskIndex`) and is not something a type can carry.
+ */
+const NEGOTIATE_LANE_FIELDS = [
+  "authoredPrs",
+  "reviewedPrs",
+  "tickets",
+  "ownership",
+  "decisions",
+  "writing",
+  "incidents",
+] as const;
+type NegotiateLaneField = (typeof NEGOTIATE_LANE_FIELDS)[number];
+
+function isNegotiateLaneField(name: string | undefined): name is NegotiateLaneField {
+  return name !== undefined && (NEGOTIATE_LANE_FIELDS as readonly string[]).includes(name);
+}
+
+/** The seven lane-backed fields, each `null` until its lane decodes successfully. */
+type NegotiateLaneValues = {
+  authoredPrs: NegotiateAuthoredPrs | null;
+  reviewedPrs: NegotiateReviewedPrs | null;
+  tickets: NegotiateTickets | null;
+  ownership: NegotiateOwnership | null;
+  decisions: NegotiateDecisions | null;
+  writing: NegotiateWriting | null;
+  incidents: NegotiateIncidents | null;
+};
+
+/**
+ * Decode each completed lane's JSON into its field, appending a `laneFailureGap` to `gaps`
+ * for any lane whose text will not parse.
+ *
+ * Lifted out of `runNegotiate` to bring it back under the cognitive-complexity gate (Sonar
+ * S3776, was 20): the seven-arm `else if` chain this replaces was most of that score. A lane
+ * that never ran, ran and failed, or decoded to nothing all leave their field at `null` —
+ * unchanged from the chain, and the whole point of the mechanism.
+ *
+ * The single `as NegotiateLaneValues` stands in for the seven per-lane `as` casts it
+ * replaces; it asserts the same thing they did (each lane's task returns the shape its field
+ * declares) in one place instead of seven, and `Record<NegotiateLaneField, unknown>`
+ * guarantees every key is present before the assertion is made.
+ */
+function decodeLaneResults(
+  results: readonly SubTaskResult[],
+  laneNames: readonly string[],
+  gaps: GapNote[],
+): NegotiateLaneValues {
+  const out: Record<NegotiateLaneField, unknown> = {
+    authoredPrs: null,
+    reviewedPrs: null,
+    tickets: null,
+    ownership: null,
+    decisions: null,
+    writing: null,
+    incidents: null,
+  };
+  for (const r of results) {
+    // A non-`done` lane already got its gap from `reduceLaneResults`; only a DECODE failure
+    // is this function's to report.
+    if (r.status !== "done" || r.text === undefined) continue;
+    const laneName = laneNames[r.taskIndex];
+    try {
+      const decoded: unknown = JSON.parse(r.text);
+      if (isNegotiateLaneField(laneName)) out[laneName] = decoded;
+    } catch {
+      gaps.push(laneFailureGap(laneName ?? `#${String(r.taskIndex)}`, r));
+    }
+  }
+  return out as NegotiateLaneValues;
+}
+
 export async function runNegotiate(
   input: NegotiateInput,
   ctx: NegotiateContext,
@@ -1005,15 +1100,8 @@ export async function runNegotiate(
     // Sentry issue is the NORM, so the shared default's `nimbus index regraph` remediation
     // would be a no-op in the common case.
     pushConnectorOrEdgeGap(ctx.db, "sentry", detectMissingErrorIssuePersonEdges, gaps);
-    laneNames.push(
-      "authoredPrs",
-      "reviewedPrs",
-      "tickets",
-      "ownership",
-      "decisions",
-      "writing",
-      "incidents",
-    );
+    // Same order as `tasks.push` below — the pairing is positional (`SubTaskResult.taskIndex`).
+    laneNames.push(...NEGOTIATE_LANE_FIELDS);
     tasks.push(
       laneTask(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
       laneTask(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
@@ -1033,29 +1121,8 @@ export async function runNegotiate(
   const results = await coordinator.run(tasks);
   gaps.push(...reduceLaneResults(results, laneNames));
 
-  let authoredPrs: NegotiateAuthoredPrs | null = null;
-  let reviewedPrs: NegotiateReviewedPrs | null = null;
-  let tickets: NegotiateTickets | null = null;
-  let ownership: NegotiateOwnership | null = null;
-  let decisions: NegotiateDecisions | null = null;
-  let writing: NegotiateWriting | null = null;
-  let incidents: NegotiateIncidents | null = null;
-  for (const r of results) {
-    if (r.status !== "done" || r.text === undefined) continue;
-    const laneName = laneNames[r.taskIndex];
-    try {
-      const decoded: unknown = JSON.parse(r.text);
-      if (laneName === "authoredPrs") authoredPrs = decoded as NegotiateAuthoredPrs;
-      else if (laneName === "reviewedPrs") reviewedPrs = decoded as NegotiateReviewedPrs;
-      else if (laneName === "tickets") tickets = decoded as NegotiateTickets;
-      else if (laneName === "ownership") ownership = decoded as NegotiateOwnership;
-      else if (laneName === "decisions") decisions = decoded as NegotiateDecisions;
-      else if (laneName === "writing") writing = decoded as NegotiateWriting;
-      else if (laneName === "incidents") incidents = decoded as NegotiateIncidents;
-    } catch {
-      gaps.push(laneFailureGap(laneName ?? `#${String(r.taskIndex)}`, r));
-    }
-  }
+  const { authoredPrs, reviewedPrs, tickets, ownership, decisions, writing, incidents } =
+    decodeLaneResults(results, laneNames, gaps);
 
   return {
     kind: "negotiate",

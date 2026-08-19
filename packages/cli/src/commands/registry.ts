@@ -31,6 +31,7 @@ export const COMMAND_NAMES = [
   "llm",
   "mcp-server",
   "metrics",
+  "negotiate",
   "owners",
   "people",
   "policy",

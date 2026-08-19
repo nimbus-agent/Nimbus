@@ -50,7 +50,11 @@ export const MAX_SUMMARY_CHARS = 2000;
 /** Characters of one finding's or conflict's prose. */
 export const MAX_ITEM_TEXT_CHARS = 600;
 
-/** Indexed clips pulled in when useIndex is true. */
+/**
+ * Items pulled from the user's index when useIndex is true — of ANY indexed type, not
+ * only clips. The bound exists because a registry entry is prompt budget, and that
+ * reasoning is indifferent to which types the hits came from.
+ */
 export const MAX_INDEX_HITS = 8;
 
 /**

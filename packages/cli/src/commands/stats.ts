@@ -222,7 +222,8 @@ function summaryLine(points: readonly StatsPoint[]): string {
   }
   if (empty.length > 0) {
     const reasons = gapReasons(empty);
-    line += ` · ${String(empty.length)} empty${reasons === "" ? "" : ` (${reasons})`}`;
+    const detail = reasons === "" ? "" : ` (${reasons})`;
+    line += ` · ${String(empty.length)} empty${detail}`;
   }
   return line;
 }
@@ -230,8 +231,8 @@ function summaryLine(points: readonly StatsPoint[]): string {
 export function renderStatsSeries(series: StatsSeries): string {
   const withTime = series.bucket_ms < ONE_DAY_MS;
   const lines: string[] = [];
-  lines.push(`${series.metric} — ${series.service}`);
   lines.push(
+    `${series.metric} — ${series.service}`,
     `window ${formatBucketRange(series.window.since_ms, series.window.until_ms, withTime)} · bucket ${formatDurationMs(series.bucket_ms)}`,
     "",
   );

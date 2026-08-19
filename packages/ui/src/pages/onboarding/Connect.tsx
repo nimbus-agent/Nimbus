@@ -111,11 +111,7 @@ export function Connect() {
         for (const name of services) {
           const summary = list.find((c) => c.serviceId === name);
           // Absent healthState means the connector has no health row yet — not yet authenticated.
-          if (
-            summary &&
-            summary.healthState !== undefined &&
-            summary.healthState !== "unauthenticated"
-          ) {
+          if (summary?.healthState !== undefined && summary.healthState !== "unauthenticated") {
             setAuthStatus(name, "connected");
             anyConnected = true;
           }

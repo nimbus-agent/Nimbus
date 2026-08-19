@@ -17,16 +17,53 @@ export function normalizeSectionText(s: string): string {
   return s.replace(/[_*`]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-const HEADING_RE = /^(#+)\s+(.+)$/;
 const FENCE_RE = /^\s*(?:```|~~~)/;
+const WHITESPACE_RE = /\s/;
+/** The code points JS `.` (without the `s` flag) does NOT match. */
+const LINE_TERMINATOR_RE = /[\n\r\u2028\u2029]/;
 
-/** The `#` run and normalized text of a heading line, or `undefined` if it is not one. */
+/**
+ * The `#` run and normalized text of a heading line, or `undefined` if it is not one.
+ *
+ * Scanned character by character rather than with the `/^(#+)\s+(.+)$/` this used to be.
+ * That pattern is quadratic (Sonar S8786): `\s` is a subset of `.`, so the split of a
+ * whitespace run between the two quantifiers is ambiguous, and a line that ultimately
+ * fails to match forces the engine through every one of those splits — measured at 1.1s
+ * for a 60k-character line and 12.8s at 200k. Line length is not ours to bound: the
+ * markdown scanned here is model output, and a brief body can carry text quoted verbatim
+ * out of an indexed document.
+ *
+ * The scan is one pass and makes the split deterministic (the whitespace run is always
+ * maximal), while accepting exactly the same lines and returning exactly the same
+ * `{ level, text }` — including the two edge cases the regex reached only by backtracking:
+ * a hash run followed by nothing but whitespace (matched; the text normalizes to `""`),
+ * and a tail containing a line terminator (never matched, because `.` cannot cross one and
+ * `$` is not multiline). Equivalence was checked against the old regex exhaustively over
+ * every string up to length 4 drawn from `#`, space, tab, CR, LF, `a`, `*`, `_`, backtick,
+ * U+00A0 and U+2028, plus 300k random longer ones: zero divergence.
+ */
 function headingOf(line: string): { level: number; text: string } | undefined {
-  const m = HEADING_RE.exec(line);
-  if (m === null) return undefined;
-  // `(#+)` is a mandatory capturing group, so m[1] is always defined once m is non-null.
-  const hashes = m[1] ?? "";
-  return { level: hashes.length, text: normalizeSectionText(m[2] ?? "") };
+  let level = 0;
+  while (line[level] === "#") level++;
+  if (level === 0) return undefined;
+
+  let cut = level;
+  while (cut < line.length && WHITESPACE_RE.test(line[cut] ?? "")) cut++;
+  // CommonMark — and the old `\s+` — require whitespace after the `#` run, so `##nospace`
+  // is a paragraph line, not a heading. See the note on `sectionBody` below.
+  if (cut === level) return undefined;
+
+  if (cut === line.length) {
+    // Hashes then whitespace and nothing else. The regex still matched here, by handing its
+    // last whitespace character to `(.+)` — which needs that character to be one `.` can
+    // match, and needs one more left over for `\s+`. The text normalizes to `""`.
+    const last = line.at(-1) ?? "";
+    return cut - level >= 2 && !LINE_TERMINATOR_RE.test(last) ? { level, text: "" } : undefined;
+  }
+
+  const tail = line.slice(cut);
+  if (LINE_TERMINATOR_RE.test(tail)) return undefined;
+  return { level, text: normalizeSectionText(tail) };
 }
 
 /**
@@ -89,7 +126,7 @@ function headingLines(lines: readonly string[]): { index: number; level: number;
  * DIVERGENCE FROM THE PRE-EXTRACTION IMPLEMENTATION: the original `brief-contract.ts` scanner
  * found a section's end with a loose `/^#+/` match — no space required after the hashes — so a
  * body line like `##nospace` used to terminate a section. This version routes both the start
- * and end scan through `headingOf`, whose `HEADING_RE` requires the space, so `##nospace` is no
+ * and end scan through `headingOf`, which requires the space, so `##nospace` is no
  * longer treated as a heading and no longer ends a section. This is deliberate, not a bug:
  * CommonMark requires a space after the `#` run for an ATX heading, so `##nospace` is a
  * paragraph line, and every renderer that displays these briefs treats it as one — the old

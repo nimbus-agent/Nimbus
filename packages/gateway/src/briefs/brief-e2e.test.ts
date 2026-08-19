@@ -9,7 +9,7 @@
 import { expect, test } from "bun:test";
 import { MAX_RUN_BYTES, MAX_SOURCE_BYTES, MAX_SOURCES_PER_RUN } from "./brief-constants.ts";
 import type { BriefSynthesizerLlm } from "./brief-synthesis.ts";
-import { startBriefTestServer } from "./brief-test-server.ts";
+import { runBriefWithIndexHits, startBriefTestServer } from "./brief-test-server.ts";
 import type { Report } from "./brief-types.ts";
 
 type CreateOk = { id: string; status: string; expected: number };
@@ -174,6 +174,43 @@ test("happy path: create -> feed both -> run -> poll done -> citations resolve -
     expect(row.c).toBe(1);
   } finally {
     s.stop();
+  }
+});
+
+test("a brief whose index hits span several types cites each with its own itemType", async () => {
+  // Two DIFFERENT types, one of them unknown to this build, plus a real clip.
+  const hits = [
+    {
+      itemId: "nimbus:pull_request:acme/web/482",
+      itemType: "pull_request",
+      title: "Drop the legacy worker pool",
+      url: "https://github.test/acme/web/pull/482",
+      snippet: "the pool is replaced by a bounded queue",
+    },
+    {
+      itemId: "nimbus:slack_message:C123/1699",
+      itemType: "slack_message",
+      title: "standup",
+      url: null,
+      snippet: "we are blocked on the worker pool",
+    },
+    {
+      itemId: "nimbus:clip:aa",
+      itemType: "web_clip",
+      title: "Bounded queues",
+      url: "https://z.test",
+      snippet: "a bounded queue drops work",
+    },
+  ];
+  const report = await runBriefWithIndexHits(hits); // harness helper from Step 3
+  const cited = report.findings.flatMap((f) => f.citations).filter((c) => c.kind === "clip");
+  const types = new Set(cited.map((c) => c.itemType));
+  expect(types.size).toBeGreaterThan(1);
+  // The unknown type is carried, not dropped and not rejected.
+  expect(cited.some((c) => c.itemType === "slack_message")).toBe(true);
+  // Only the real clip claims clipId.
+  for (const c of cited) {
+    if (c.itemType !== "web_clip") expect(c.clipId).toBeUndefined();
   }
 });
 

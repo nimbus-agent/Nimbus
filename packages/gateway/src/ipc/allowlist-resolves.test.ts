@@ -144,7 +144,7 @@ test("the parsed allowlist matches the Rust size assertion", async () => {
   const rust = await Bun.file(BRIDGE_RS).text();
   const asserted = /ALLOWED_METHODS\.len\(\),\s*(\d+)/.exec(rust)?.[1];
   expect(asserted).toBeDefined();
-  expect(methods.length).toBe(Number(asserted));
+  expect(methods).toHaveLength(Number(asserted));
   expect(methods.length).toBeGreaterThan(100);
   expect(new Set(methods).size).toBe(methods.length);
 });

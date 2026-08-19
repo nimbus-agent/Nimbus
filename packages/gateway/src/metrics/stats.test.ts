@@ -83,7 +83,7 @@ describe("computeStatsSeries — pr-merges", () => {
     insertPr(db, "b", "acme/web", NOW - 2.5 * DAY); // older bucket
     insertPr(db, "c", "acme/web", NOW - 2.6 * DAY); // older bucket
     const s = computeStatsSeries(db, cfg(GH), "pr-merges", NOW, 4 * DAY, 2 * DAY);
-    expect(s.points.length).toBe(2);
+    expect(s.points).toHaveLength(2);
     expect(s.points[0]?.value).toBe(2);
     expect(s.points[1]?.value).toBe(1);
   });
@@ -248,7 +248,7 @@ describe("computeStatsSeries — incidents-opened", () => {
     insertIncident(db, "timed", "PSVC1", NOW - 0.5 * DAY, "resolved", NOW); // newest bucket
     insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW, NOW - 1.5 * DAY);
     const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, 3 * DAY, DAY);
-    expect(s.points.length).toBe(3);
+    expect(s.points).toHaveLength(3);
     // The two empty buckets keep the reason they derived for themselves...
     expect(s.points[0]?.value).toBeNull();
     expect(s.points[0]?.gap).toBe("low_sample");
@@ -267,7 +267,7 @@ describe("computeStatsSeries — incidents-opened", () => {
     insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW, NOW - 1.5 * DAY);
     const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, 3 * DAY, DAY);
     expect(s.points.every((p) => p.value === null)).toBe(true);
-    expect(s.points.filter((p) => p.gap === "incidents_missing_opened_at").length).toBe(1);
+    expect(s.points.filter((p) => p.gap === "incidents_missing_opened_at")).toHaveLength(1);
     expect(s.points[2]?.gap).toBe("incidents_missing_opened_at");
     expect(s.points[0]?.gap).toBe("low_sample");
   });
@@ -293,7 +293,7 @@ describe("registry totality", () => {
     for (const id of STATS_METRIC_IDS) {
       const s = computeStatsSeries(db, cfg(GH), id, NOW, 2 * DAY, DAY);
       expect(s.metric).toBe(id);
-      expect(s.points.length).toBe(2);
+      expect(s.points).toHaveLength(2);
       expect(typeof s.points[0]?.unit).toBe("string");
     }
   });
@@ -320,7 +320,7 @@ test("a wrapped DORA metric's newest bucket does not leak an older bucket's data
   insertIncident(db, "old", "PSVC1", NOW - 1.9 * DAY, "resolved", NOW - 1.8 * DAY);
 
   const series = computeStatsSeries(db, pdCfg, "mttr", NOW, 2 * DAY, DAY);
-  expect(series.points.length).toBe(2);
+  expect(series.points).toHaveLength(2);
   // Older bucket: the incident belongs here — it must carry the real duration.
   expect(series.points[0]?.value).toBe(8640); // (NOW-1.8*DAY) - (NOW-1.9*DAY) = 0.1 day, in s.
   // Newest bucket: nothing opened or resolved here. Under the CORRECT binding this is null;

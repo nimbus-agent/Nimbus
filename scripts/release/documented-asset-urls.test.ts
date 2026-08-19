@@ -93,7 +93,11 @@ describe("the real docs against the real release workflow", () => {
         }
       }
     };
-    docs.push({ path: "README.md", text: readFileSync(join(ROOT, "README.md"), "utf8") });
+    // The repository landing page is `docs/README.md`, not a root `README.md` —
+    // the root copy was deleted as a duplicate, and GitHub falls back to
+    // `docs/README.md` to render the repo home. It needs no explicit push here:
+    // the `collect(docs)` walk below already picks it up, so the front page that
+    // carried six simultaneously-dead download URLs stays covered.
     collect(join(ROOT, "docs"), "docs");
     collect(join(ROOT, "packages", "docs", "src"), "packages/docs/src");
 

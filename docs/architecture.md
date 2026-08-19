@@ -1937,7 +1937,7 @@ nimbus/
 │   └── BRANCH_PROTECTION.md   ← required check configuration (manual GitHub settings)
 │
 ├── docs/
-│   ├── README.md
+│   ├── README.md              ← the repository landing page (GitHub renders this as the repo home)
 │   ├── architecture.md         ← this file
 │   ├── SECURITY.md
 │   ├── roadmap.md
