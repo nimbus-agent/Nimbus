@@ -76,7 +76,7 @@ describe("watcher.validateCondition", () => {
       label: "Dev",
       service: "github",
     });
-    const prId = upsertGraphEntity<string>(db, {
+    const prId = upsertGraphEntity(db, {
       type: "pr",
       externalId: "pr-1",
       label: "feature",
@@ -124,7 +124,7 @@ describe("watcher.validateCondition", () => {
       label: "x",
       service: "github",
     });
-    const prId = upsertGraphEntity<string>(db, {
+    const prId = upsertGraphEntity(db, {
       type: "pr",
       externalId: "pr-1",
       label: "SECRET_TOKEN_xyz",

@@ -46,7 +46,14 @@ describe("upsertGraphEntityNamespaced", () => {
   });
 
   // graph-populator's converted writes rely on this exactly.
-  test("an EMPTY metadata object is a no-op, not a wipe", () => {
+  //
+  // NOTE: an empty `metadata` object is NOT a full no-op — the two-step patch (see the doc
+  // comment on `upsertGraphEntityNamespaced`) still clears the WRITER'S OWN namespace to `{}`
+  // on every call, including this one. What survives untouched is only the SIBLING namespace
+  // (`ownership`, asserted below), never the calling writer's own prior data. Harmless for
+  // `graph-populator` today (it never previously wrote `symbols` data to lose), but a real
+  // defect the moment a writer calls with `{}` expecting its OWN last write to persist.
+  test("an EMPTY metadata object preserves SIBLING namespaces but clears the writer's own", () => {
     const db = makeDb();
     upsertGraphEntityNamespaced(db, {
       type: "source_file",
@@ -152,13 +159,13 @@ describe("upsertGraphEntityNamespaced — service column", () => {
 describe("upsertGraphEntity — compile-time co-owned-type guard", () => {
   test("a non-co-owned literal type is accepted", () => {
     const db = makeDb();
-    expect(() =>
-      upsertGraphEntity(db, {
-        type: "pr",
-        externalId: "pr:1",
-        label: "PR #1",
-      }),
-    ).not.toThrow();
+    // The real assertion is compile-time (a non-co-owned literal type-checks at all, unlike the
+    // rejected case below) and is enforced by the `typecheck` gate, not by this runtime call.
+    upsertGraphEntity(db, {
+      type: "pr",
+      externalId: "pr:1",
+      label: "PR #1",
+    });
   });
 
   test("a co-owned literal type is rejected at compile time", () => {

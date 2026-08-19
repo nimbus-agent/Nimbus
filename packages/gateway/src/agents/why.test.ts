@@ -379,7 +379,7 @@ describe("runWhy", () => {
       externalId: "person:bob",
       label: "bob",
     });
-    const incidentId = upsertGraphEntity<string>(db, {
+    const incidentId = upsertGraphEntity(db, {
       type: "incident",
       externalId: "incident:PD-99",
       label: "Some unrelated incident",

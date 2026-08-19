@@ -154,7 +154,7 @@ function seedPersonAndPr(db: Database): { personId: string; prId: string } {
       label: "Dev",
       service: "github",
     }),
-    prId: upsertGraphEntity<string>(db, {
+    prId: upsertGraphEntity(db, {
       type: "pr",
       externalId: "pr-1",
       label: "Fix bug",
@@ -203,13 +203,13 @@ describe("itemMatchesGraphPredicate", () => {
   test("upstream_of matches an item → target outgoing edge", () => {
     const db = seededDb();
     const now = 1_700_000_000_000;
-    const prId = upsertGraphEntity<string>(db, {
+    const prId = upsertGraphEntity(db, {
       type: "pr",
       externalId: "pr-2",
       label: "PR",
       service: "github",
     });
-    const repoId = upsertGraphEntity<string>(db, {
+    const repoId = upsertGraphEntity(db, {
       type: "repo",
       externalId: "github:acme/svc",
       label: "acme/svc",
@@ -243,13 +243,13 @@ describe("itemMatchesGraphPredicate", () => {
   test("downstream_of matches a target → item edge", () => {
     const db = seededDb();
     const now = 1_700_000_000_000;
-    const wsId = upsertGraphEntity<string>(db, {
+    const wsId = upsertGraphEntity(db, {
       type: "workspace",
       externalId: "filesystem:/repo",
       label: "/repo",
       service: "filesystem",
     });
-    const depId = upsertGraphEntity<string>(db, {
+    const depId = upsertGraphEntity(db, {
       type: "package",
       externalId: "npm:left-pad@1.0.0",
       label: "left-pad@1.0.0",
@@ -342,13 +342,13 @@ describe("countItemsMatchingGraphPredicate", () => {
       label: "Dev",
       service: "github",
     });
-    const oldPrId = upsertGraphEntity<string>(db, {
+    const oldPrId = upsertGraphEntity(db, {
       type: "pr",
       externalId: "pr-old",
       label: "old",
       service: "github",
     });
-    const newPrId = upsertGraphEntity<string>(db, {
+    const newPrId = upsertGraphEntity(db, {
       type: "pr",
       externalId: "pr-new",
       label: "new",

@@ -293,7 +293,7 @@ describe("watcher-engine", () => {
       label: "Dev",
       service: "github",
     });
-    const alertId = upsertGraphEntity<string>(db, {
+    const alertId = upsertGraphEntity(db, {
       type: "alert",
       externalId: "a2",
       label: "oom",
