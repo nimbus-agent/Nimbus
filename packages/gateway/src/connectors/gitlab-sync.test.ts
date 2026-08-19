@@ -7,7 +7,7 @@ import {
   type SyncTestFetchParams,
   silentSyncContextExtras,
 } from "./connector-sync-test-helpers.ts";
-import { createGitlabSyncable } from "./gitlab-sync.ts";
+import { createGitlabSyncable, mrDiffsUrl } from "./gitlab-sync.ts";
 
 function ctxWithPat(
   db: ReturnType<typeof createMemoryIndexDb>,
@@ -282,4 +282,11 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     expect(row).not.toBeNull();
     expect(row?.resolve_key).toBe(callerUrl);
   });
+});
+
+test("mrDiffsUrl requests the diffs endpoint, a page number, and the page-size parameter", () => {
+  const u = mrDiffsUrl("https://gitlab.example.com/api/v4", "grp/sub/proj", 7, 2);
+  expect(u).toBe(
+    "https://gitlab.example.com/api/v4/projects/grp%2Fsub%2Fproj/merge_requests/7/diffs?page=2&per_page=100",
+  );
 });

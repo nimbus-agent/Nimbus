@@ -1,9 +1,13 @@
 import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
+import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
+import { mapBitbucketPrFiles } from "../prfiles/pr-file-mapping.ts";
 import { plainTextFromHtml } from "../string/html-plain-text.ts";
 import {
   FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
+  RateLimitError,
+  retryAfterDateFromHeader,
   type Syncable,
   type SyncContext,
   type SyncResult,
@@ -347,6 +351,80 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   };
 }
 
+/**
+ * `/repositories/:workspace/:repo_slug/pullrequests/:id/diffstat` — Bitbucket's PR file-diff
+ * endpoint. `pagelen` is Bitbucket's own page-size parameter (GitHub/GitLab both call theirs
+ * `per_page`).
+ */
+export function prDiffstatUrl(repoFull: string, id: number, page: number): string {
+  const segments = repoFull.split("/");
+  const workspace = segments[0] ?? "";
+  const repoSlug = segments.slice(1).join("/");
+  return `${API_ROOT}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(
+    repoSlug,
+  )}/pullrequests/${String(id)}/diffstat?pagelen=${String(PR_FILES_PAGE_SIZE)}&page=${String(page)}`;
+}
+
+/**
+ * Bitbucket paginates via a `next` URL in the envelope rather than a full-length page — a short
+ * final page can still carry `pagelen` items when the total is an exact multiple, so a length
+ * check would be wrong in both directions. Extracted so the pagination signal is testable in
+ * isolation from the network.
+ */
+export function bitbucketDiffstatHasMore(payload: unknown): boolean {
+  const rec = asRecord(payload);
+  return typeof rec?.["next"] === "string";
+}
+
+/**
+ * Mirrors `github-sync.ts`'s `runPrFilePassBestEffort` exactly — same try/catch, same rethrow of
+ * `RateLimitError`, same warn. Bitbucket PRs key as `<repoFull>#<id>`, so the id is parsed from
+ * after the LAST `#`.
+ */
+async function runBitbucketPrFilePassBestEffort(
+  ctx: SyncContext,
+  auth: string,
+  now: number,
+): Promise<void> {
+  try {
+    await runPrFilePass(ctx, {
+      service: SERVICE_ID,
+      nowMs: now,
+      fetchPage: async (c, page) => {
+        const cut = c.externalId.lastIndexOf("#");
+        if (cut < 0) return null;
+        const id = Number(c.externalId.slice(cut + 1));
+        if (!Number.isFinite(id)) return null;
+        const res = await fetch(prDiffstatUrl(c.repoFull, id, page), {
+          headers: { Authorization: auth, Accept: "application/json" },
+        });
+        if (res.status === 429) {
+          const retryAt = retryAfterDateFromHeader(res.headers.get("retry-after"), 60);
+          ctx.rateLimiter.penalise("bitbucket", Math.max(1000, retryAt.getTime() - Date.now()));
+          throw new RateLimitError(retryAt, "Bitbucket PR diffstat: rate limited (429)");
+        }
+        if (!res.ok) {
+          return null;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await res.text()) as unknown;
+        } catch {
+          return null;
+        }
+        const rows = mapBitbucketPrFiles(parsed);
+        return { rows, hasMore: bitbucketDiffstatHasMore(parsed) };
+      },
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) throw err; // honor backoff
+    ctx.logger.warn(
+      { service: SERVICE_ID, err: String(err) },
+      "PR changed-file pass failed (non-fatal)",
+    );
+  }
+}
+
 export type BitbucketSyncableOptions = {
   ensureBitbucketMcpRunning: () => Promise<void>;
 };
@@ -393,14 +471,24 @@ export function createBitbucketSyncable(options: BitbucketSyncableOptions): Sync
       let maxUpdated = state.since;
       let reposScannedThisSync = 0;
 
-      const syncResult = (nextState: BitbucketCursorV1, hasMore: boolean): SyncResult => ({
-        cursor: encodeCursor(nextState),
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred,
-      });
+      // Async and awaited by every exit below (all four `return syncResult(...)` sites), so the
+      // changed-file pass runs on every tick regardless of which pagination branch is hit — the
+      // same "run it on every exit" shape as `github-sync.ts`'s two call sites (changed AND
+      // unchanged/304 paths).
+      const syncResult = async (
+        nextState: BitbucketCursorV1,
+        hasMore: boolean,
+      ): Promise<SyncResult> => {
+        await runBitbucketPrFilePassBestEffort(ctx, auth, Date.now());
+        return {
+          cursor: encodeCursor(nextState),
+          itemsUpserted: upserted,
+          itemsDeleted: 0,
+          hasMore,
+          durationMs: Math.round(performance.now() - t0),
+          bytesTransferred,
+        };
+      };
 
       const drainPenalty = (res: Response, text: string): void => {
         if (res.status === 429) {
