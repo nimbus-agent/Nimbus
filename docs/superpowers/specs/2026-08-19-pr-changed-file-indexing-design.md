@@ -90,18 +90,30 @@ unindexed JSON array turns negation into a full scan.
 
 ```sql
 CREATE TABLE pr_changed_file (
-  service          TEXT NOT NULL,
-  pr_external_id   TEXT NOT NULL,
+  item_id          TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
   repo_full        TEXT NOT NULL,
   path             TEXT NOT NULL,
   status           TEXT NOT NULL,
   counterpart_path TEXT,
-  local_file_id    TEXT,
-  PRIMARY KEY (service, pr_external_id, path)
+  local_file_id    TEXT REFERENCES graph_entity(id) ON DELETE SET NULL,
+  PRIMARY KEY (item_id, path)
 ) WITHOUT ROWID;
 
 CREATE INDEX idx_pr_changed_file_path ON pr_changed_file(path);
+CREATE INDEX idx_pr_changed_file_local ON pr_changed_file(local_file_id);
 ```
+
+**Keyed on `item_id`, not `(service, pr_external_id)`.** The PR's `item.id` is already the
+deterministic `itemPrimaryKey(service, externalId)`, so the pair is redundant, and keying on the
+item id buys automatic cleanup: prune or re-sync a PR and its file rows and coverage row go with
+it. This follows the repo's established shape — `index/deployment-v28-sql.ts` makes the item id its
+own primary key with `REFERENCES item(id) ON DELETE CASCADE`, and `embedding-v6-sql.ts` does the
+same on a child table.
+
+**Foreign keys here are enforced, not decorative:** `index/local-index.ts` runs
+`PRAGMA foreign_keys = ON`, as do `db/repair.ts`, `db/verify.ts` and the embedding worker. A
+cascade written here actually fires, which is why the pruning story below is mechanical rather than
+a documented intention.
 
 **One row per touched path is the load-bearing invariant.** A single index on `path` then answers
 negation with no special cases, and two things that would otherwise be silent bugs become
@@ -122,15 +134,20 @@ structural:
 
 ```sql
 CREATE TABLE pr_files_state (
-  service        TEXT NOT NULL,
-  pr_external_id TEXT NOT NULL,
+  item_id        TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
   fetched_at_ms  INTEGER NOT NULL,
   api_file_count INTEGER NOT NULL,
   stored_count   INTEGER NOT NULL,
-  truncated      INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (service, pr_external_id)
+  truncated      INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 ```
+
+The cascade matters more here than on `pr_changed_file`, and in the opposite direction from
+storage hygiene: if a PR item is pruned and later re-synced, its coverage row must NOT survive.
+A stale coverage row would assert "we know this PR's files" about a PR whose rows were cascaded
+away — claiming verification the index no longer holds, which is the § 2 failure mode arriving
+through the back door. Cascading both tables from the same parent keeps them consistent by
+construction rather than by a cleanup routine that could lag.
 
 This table is what makes D2 mechanical rather than aspirational: the fail-closed exclusion is a
 **join against a coverage row**, not an inference from empty results.
@@ -156,7 +173,16 @@ It is **refreshable, not once-only**: cloning a repo months after its PRs were i
 to backfill the column. Nothing about negation depends on it — it exists so PR-touch data can join
 to ownership and symbol data when a local clone exists.
 
-**The ownership pass owns that backfill**, not a standalone step. It is already the code that
+**Deletion is handled by the schema, not by prose.** `local_file_id` is declared
+`REFERENCES graph_entity(id) ON DELETE SET NULL`, so when a file entity disappears the column
+returns to `NULL` on its own. This is not hypothetical: `ownership/ownership-pass.ts`'s
+`reapOrphansForRoot` deletes degree-0 `source_file` and `directory` entities, so untracking a
+workspace really does remove the rows this column points at. `SET NULL` makes that self-healing and
+returns the row to exactly the state it has for a repo that was never cloned — the same state the
+rest of this section already describes. An instruction to "nullify dangling references" would have
+been a rule someone must remember; this is one the database enforces.
+
+**The ownership pass owns the re-population**, not a standalone step. It is already the code that
 discovers a root, resolves its remote, and writes the `tracks_remote` edge this resolution reads —
 so it is the first code in the system that *knows* a previously-unresolvable repo has become
 resolvable. A standalone step would have to re-derive that same signal and would run on its own
@@ -166,6 +192,44 @@ ownership path, so the column has two writers. That is safe here because they wr
 columns** — the sync path never writes `local_file_id`, and the ownership pass writes nothing else
 — but it is the same shape as the bug sub-project A just fixed, so it is called out rather than
 left for a reader to discover.
+
+### 4.4 The canonical negation shape
+
+B ships this as a store helper rather than leaving W6-B to reconstruct it, because two of its
+three properties are easy to get wrong and wrong in the silent direction.
+
+```sql
+SELECT i.*
+FROM item i
+JOIN pr_files_state s ON s.item_id = i.id      -- coverage: no row => excluded
+WHERE i.type = 'pr'
+  AND s.truncated = 0                          -- a partial list cannot verify a negative
+  AND NOT EXISTS (
+        SELECT 1 FROM pr_changed_file f
+        WHERE f.item_id = i.id
+          AND f.path GLOB ?1                   -- GLOB, never LIKE
+      );
+```
+
+**The `JOIN` is the fail-closed mechanism.** An inner join to the coverage table means a PR with no
+coverage row cannot appear, so § 2's false positive is structurally impossible rather than
+prevented by remembering a filter. A `LEFT JOIN` here, or reading `pr_changed_file` alone, silently
+restores the bug.
+
+**`GLOB`, not `LIKE`** — verified empirically against this repo's `bun:sqlite`, because both
+failure modes are silent:
+
+| Expression | Result |
+| --- | --- |
+| `'Tests/a.ts' LIKE 'tests/%'` | **1** — LIKE is case-insensitive for ASCII |
+| `'Tests/a.ts' GLOB 'tests/*'` | `0` — GLOB is case-sensitive |
+| `'src/myXfile.ts' LIKE 'src/my_file.ts'` | **1** — `_` is a LIKE wildcard |
+| `'src/myXfile.ts' GLOB 'src/my_file.ts'` | `0` — `_` is literal under GLOB |
+
+Paths are case-sensitive on Linux and macOS, so `LIKE` would answer a `tests/` question using
+`Tests/` data. Worse, `_` is extremely common in real filenames, so any user-supplied pattern
+containing one silently becomes a wildcard under `LIKE`. `GLOB` is the correct operator for path
+matching on both counts, and the pattern is a bound parameter — never interpolated (I9/I14).
 
 ---
 
@@ -200,6 +264,24 @@ memory is exactly how a silently-wrong `status` or a missed rename field would s
 - `MAX_PAGES_PER_PR` / `MAX_FILES_PER_PR` — a PR exceeding the cap is stored **and marked
   `truncated`**, therefore excluded from negation per § 4.2.
 - The existing per-service rate limiter is reused, not reinvented.
+
+**Request the largest page the forge allows.** GitHub's files endpoint defaults to 30 per page and
+accepts `per_page=100`, so the default costs 3.3× the calls for any PR touching more than 30
+files — which is most PRs worth asking a negation about. Each forge's page-size parameter is set
+explicitly and sized against `MAX_FILES_PER_PR`, so the cap is reached in the fewest requests
+rather than incidentally.
+
+### 5.3 Writes are batched, in one transaction per PR
+
+A capped PR can contribute up to `MAX_FILES_PER_PR` rows, and a tick covers several PRs, so
+single-row inserts would pay SQLite's per-statement transaction overhead thousands of times per
+sync. Each PR's rows are written with one prepared statement reused across its paths, inside a
+single transaction that also writes that PR's `pr_files_state` row.
+
+Transaction scope is per PR, deliberately: the coverage row and the file rows it describes must
+land together. A crash between them would leave a PR marked covered with a partial file list —
+§ 2's failure mode again, produced by our own write path rather than by the forge. The write goes
+through `dbStmtRun` / `dbExec` per I14, and the statement is finalized rather than left open.
 
 ### 5.2 Cost, stated plainly
 
