@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { upsertGraphEntity } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { emitImpactBrief, runImpact } from "./impact.ts";
 
@@ -27,6 +28,17 @@ describe("runImpact", () => {
 
   test("resolves a PR URL to a graph_entity and emits a downstream_repo finding", async () => {
     const db = freshDb();
+    // The `pr` graph_entity's external_id IS the backing item's primary key
+    // (`graph-populator.ts`'s `syncPrGraph`) — seed both, keyed the same way a real sync would.
+    db.query(
+      `INSERT INTO item (id, service, type, external_id, title, url, canonical_url,
+                         body_preview, metadata, resolve_key, modified_at, synced_at)
+       VALUES ('github:acme/payment#501', 'github', 'pr', 'acme/payment#501', 'T',
+               'https://github.com/acme/payment/pull/501',
+               'https://github.com/acme/payment/pull/501', '',
+               '{"repo":"acme/payment"}', 'https://github.com/acme/payment/pull/501',
+               1700000000000, 1700000000000)`,
+    ).run();
     db.run(
       "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
         "('graph:pr:1', 'pr', 'github:acme/payment#501', 'acme/payment#501', 'github', '{}')",
@@ -43,6 +55,36 @@ describe("runImpact", () => {
     const serviceFindings = brief.affected.filter((f) => f.category === "service");
     expect(serviceFindings).toHaveLength(1);
     expect(serviceFindings[0]?.affectedItemId).toBe("graph:repo:1");
+  });
+
+  test("a GitLab merge request URL resolves to its pr entity", async () => {
+    const db = freshDb();
+    // `gitlabMrExternalId` (connectors/_lib/gitlab/events.ts) — a BANG, not a hash.
+    const itemId = "gitlab:acme/web!482";
+    db.query(
+      `INSERT INTO item (id, service, type, external_id, title, url, canonical_url,
+                         body_preview, metadata, resolve_key, modified_at, synced_at)
+       VALUES (?, 'gitlab', 'pr', 'acme/web!482', 'Cache the resolver',
+               'https://gitlab.com/acme/web/-/merge_requests/482',
+               'https://gitlab.com/acme/web/-/merge_requests/482', '',
+               '{"repo":"acme/web","number":482}',
+               'https://gitlab.com/acme/web/-/merge_requests/482',
+               1700000000000, 1700000000000)`,
+    ).run(itemId);
+    upsertGraphEntity(db, {
+      type: "pr",
+      externalId: itemId,
+      label: "acme/web#482",
+      service: "gitlab",
+      metadata: { repo: "acme/web" },
+    });
+
+    const brief = await runImpact(
+      { fileOrPrUrl: "https://gitlab.com/acme/web/-/merge_requests/482" },
+      { db, notify: () => {}, sessionId: "impact-gitlab-1" },
+    );
+
+    expect(brief.startEntityId).not.toBeNull();
   });
 
   test("emitImpactBrief returns a sessionId and emits a Markdown brief via notify (LLM-disabled deterministic path)", async () => {
@@ -312,28 +354,50 @@ describe("runImpact", () => {
     expect(failGaps.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("resolveStartEntity — unknown host uses hostFirstSegment as service name", async () => {
-    // Use a custom enterprise host not in HOST_TO_SERVICE.
-    // The service name is derived from the first DNS label (e.g. "myenterprise" from "myenterprise.corp.com").
+  // Was "resolveStartEntity — unknown host uses hostFirstSegment as service name": it asserted
+  // the exact defect this task removes — a `pr` entity keyed `myenterprise:acme/pay#7`, an id
+  // format only the deleted host-guessing code could ever have produced (`syncPrGraph` writes the
+  // entity's external_id as the item's real primary key, never a guessed service prefix). No
+  // realistic fixture can satisfy that assertion, so this now proves the replacement behavior
+  // instead: a self-hosted PR URL resolves without any host table being consulted.
+  test("resolveStartEntity — self-hosted PR URL resolves without a host table", async () => {
     const db = freshDb();
-    db.run(
-      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
-        "('graph:pr:ent1', 'pr', 'myenterprise:acme/pay#7', 'acme/pay#7', 'myenterprise', '{}')",
-    );
+    const itemId = "github:acme/pay#7";
+    db.query(
+      `INSERT INTO item (id, service, type, external_id, title, url, canonical_url,
+                         body_preview, metadata, resolve_key, modified_at, synced_at)
+       VALUES (?, 'github', 'pr', 'acme/pay#7', 'T',
+               'https://myenterprise.corp.com/acme/pay/pull/7',
+               'https://myenterprise.corp.com/acme/pay/pull/7', '',
+               '{"repo":"acme/pay"}', 'https://myenterprise.corp.com/acme/pay/pull/7',
+               1700000000000, 1700000000000)`,
+    ).run(itemId);
+    upsertGraphEntity(db, {
+      type: "pr",
+      externalId: itemId,
+      label: "acme/pay#7",
+      service: "github",
+      metadata: { repo: "acme/pay" },
+    });
     const brief = await runImpact(
       { fileOrPrUrl: "https://myenterprise.corp.com/acme/pay/pull/7" },
       { db, sessionId: "t-custom-host", notify: () => {} },
     );
-    expect(brief.startEntityId).toBe("graph:pr:ent1");
+    expect(brief.startEntityId).not.toBeNull();
   });
 
   test("subPipelines — finds pipeline via repoIds (hops=2, via-repo pathSummary)", async () => {
     // Set up a PR whose repo has a triggers->ci_run edge. Since start.repoIds.length > 0,
     // subPipelines uses hops=2 and the via-repo pathSummary.
     const db = freshDb();
+    // The item's primary key IS the `pr` graph_entity's external_id — same invariant as
+    // `graph-populator.ts`'s `syncPrGraph`; a mismatched id would never resolve.
     db.run(
-      "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
-        "('seed-pipe', 'github', 'pr', 'acme/svc#9', 't', '', " +
+      "INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url, " +
+        "metadata, resolve_key, modified_at, synced_at, pinned) VALUES " +
+        "('github:acme/svc#9', 'github', 'pr', 'acme/svc#9', 't', '', " +
+        "'https://github.com/acme/svc/pull/9', 'https://github.com/acme/svc/pull/9', " +
+        "'{\"repo\":\"acme/svc\"}', 'https://github.com/acme/svc/pull/9', " +
         String(Date.now()) +
         ", 0, 0)",
     );
@@ -508,9 +572,14 @@ describe("runImpact", () => {
     // Exercises the rows.length > 0 path in subDownstreamRepos: a PR whose matching repo
     // is in the DB produces a 'service' finding.
     const db = freshDb();
+    // The item's primary key IS the `pr` graph_entity's external_id — same invariant as
+    // `graph-populator.ts`'s `syncPrGraph`; a mismatched id would never resolve.
     db.run(
-      "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
-        "('seed-dr', 'github', 'pr', 'acme/mrepo#1', 't', '', " +
+      "INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url, " +
+        "metadata, resolve_key, modified_at, synced_at, pinned) VALUES " +
+        "('github:acme/mrepo#1', 'github', 'pr', 'acme/mrepo#1', 't', '', " +
+        "'https://github.com/acme/mrepo/pull/1', 'https://github.com/acme/mrepo/pull/1', " +
+        "'{\"repo\":\"acme/mrepo\"}', 'https://github.com/acme/mrepo/pull/1', " +
         String(Date.now()) +
         ", 0, 0)",
     );

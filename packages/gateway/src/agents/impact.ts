@@ -9,6 +9,7 @@ import {
   detectMissingEntityType,
 } from "./_lib/gap-notes.ts";
 import { reverseDependsOn } from "./_lib/graph-traversals.ts";
+import { resolvePrSubject } from "./_lib/pr-subject.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 export type ImpactInput = {
@@ -127,38 +128,14 @@ export function emitImpactBrief(
   });
 }
 
-const HOST_TO_SERVICE: Readonly<Record<string, string>> = Object.freeze({
-  "github.com": "github",
-  "gitlab.com": "gitlab",
-  "bitbucket.org": "bitbucket",
-});
-
-const PR_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
-
 function resolveStartEntity(db: Database, fileOrPrUrl: string): ResolvedStart | null {
-  const m = PR_URL_RE.exec(fileOrPrUrl);
-  if (m !== null) {
-    const [, rawHost, owner, repo, prNum] = m as unknown as [
-      string,
-      string,
-      string,
-      string,
-      string,
-    ];
-    const host = rawHost.toLowerCase();
-    const hostFirstSegment = host.split(".").at(0) ?? host;
-    const service = HOST_TO_SERVICE[host] ?? hostFirstSegment;
-    const externalId = `${service}:${owner}/${repo}#${prNum}`;
-    const row = db
-      .query("SELECT id FROM graph_entity WHERE type = 'pr' AND external_id = ? LIMIT 1")
-      .get(externalId) as { id?: string } | null;
-    if (row?.id !== undefined) {
-      return {
-        entityId: row.id,
-        entityType: "pr",
-        repoIds: repoIdsForRepoLabel(db, `${owner}/${repo}`),
-      };
-    }
+  const pr = resolvePrSubject(db, fileOrPrUrl);
+  if (pr.ok) {
+    return {
+      entityId: pr.subject.entityId,
+      entityType: "pr",
+      repoIds: repoIdsForRepoLabel(db, pr.subject.repo),
+    };
   }
 
   const exactSym = db
