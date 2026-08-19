@@ -219,12 +219,19 @@ export type EntityMetadataWriter = "ownership" | "symbols";
  * and `graph/graph-populator.ts` both write all four. Every other type has a single writer
  * and keeps flat metadata (design D2).
  */
-export const CO_OWNED_ENTITY_TYPES: readonly string[] = [
+export const CO_OWNED_ENTITY_TYPES = [
   "source_file",
   "directory",
   "person",
   "service",
-];
+] as const;
+
+/**
+ * DERIVED from the array above, never written as a second literal list. Step 4b's compile-time
+ * guard and this runtime array must never disagree about which types are co-owned; two hand-kept
+ * lists of the same four strings drift the moment a fifth type is added to one of them.
+ */
+export type CoOwnedEntityType = (typeof CO_OWNED_ENTITY_TYPES)[number];
 
 /**
  * Upsert an entity whose metadata is co-owned, merging the caller's namespace into whatever
@@ -300,16 +307,18 @@ export function readEntityMetadata(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/graph/relationship-graph.metadata.test.ts`
-Expected: PASS (11 tests).
+Expected: PASS (10 tests — 4 in the `upsertGraphEntityNamespaced` block, 6 in `readEntityMetadata`).
 
 - [ ] **Step 4b: Add the compile-time guard on the flat function**
 
 This narrows `upsertGraphEntity` so a **literal** co-owned type is a compile error, catching the
 mistake at the keystroke rather than at CI:
 
-```ts
-export type CoOwnedEntityType = "source_file" | "directory" | "person" | "service";
+`CoOwnedEntityType` already exists from Step 3, **derived** from `CO_OWNED_ENTITY_TYPES` — do not
+re-declare it as a second literal union here, or the compile guard and the runtime array become
+two hand-kept lists free to drift. Add only:
 
+```ts
 /** `never` for a co-owned literal, so `upsertGraphEntity({ type: "source_file" })` fails to compile. */
 type NonCoOwnedType<T extends string> = T extends CoOwnedEntityType ? never : T;
 ```
