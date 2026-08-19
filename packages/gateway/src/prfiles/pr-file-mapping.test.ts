@@ -9,7 +9,7 @@ import { mapGithubPrFiles } from "./pr-file-mapping.ts";
 // `with { type: "json" }` imports; the established pattern is readFileSync + JSON.parse
 // (`connectors/openapi-indexer-parsing.test.ts:8-12`). Do not "modernise" this.
 const FIX = join(import.meta.dir, "../../test/fixtures/pr-files");
-export const loadFixture = (name: string): unknown =>
+const loadFixture = (name: string): unknown =>
   JSON.parse(readFileSync(join(FIX, name), "utf8")) as unknown;
 
 const fixture = loadFixture("github-pull-files.json");
@@ -38,6 +38,12 @@ describe("mapGithubPrFiles", () => {
     const rows = mapGithubPrFiles(fixture);
     expect(rows.find((r) => r.path === "src/copied.ts")?.status).toBe("modified");
     expect(rows.find((r) => r.path === "src/changed.ts")?.status).toBe("modified");
+    // The copied entry carries its own `previous_filename` (GitHub sets this for copies too, not
+    // only renames). Pin that a copy stays ONE row: a regression that widened the rename branch to
+    // fire on any present `previous_filename` would emit a second row for this source path, and
+    // every assertion above would still pass.
+    expect(rows.find((r) => r.path === "src/original.ts")).toBeUndefined();
+    expect(rows.filter((r) => r.status === "renamed")).toHaveLength(2);
   });
 
   test("a non-array payload yields no rows rather than throwing", () => {
