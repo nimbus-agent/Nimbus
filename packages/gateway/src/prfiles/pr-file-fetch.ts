@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
 
+import type { Provider } from "../sync/rate-limiter.ts";
+import { RateLimitError, type SyncContext } from "../sync/types.ts";
 import type { ChangedFileRow } from "./pr-changed-file-store.ts";
+import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
 
 /** Matches `MAX_ENRICH_PER_TICK` in `connectors/github-sync.ts`, which drains the same way. */
 export const MAX_PRS_PER_TICK = 10;
@@ -78,4 +81,93 @@ export function applyFileCap(files: readonly ChangedFileRow[]): {
     return { kept: [...files], truncated: false };
   }
   return { kept: files.slice(0, MAX_FILES_PER_PR), truncated: true };
+}
+
+/** `MAX_FILES_PER_PR / PR_FILES_PAGE_SIZE` — three requests reach the largest set we store. */
+export const MAX_PAGES_PER_PR = 3;
+
+/**
+ * Fetch ONE page for a candidate. Returns `null` when the page could not be read at all — the
+ * driver treats that as a failure for this PR, not as "no files".
+ */
+export type FetchPage = (
+  candidate: PrFileCandidate,
+  page: number,
+) => Promise<{ readonly rows: readonly ChangedFileRow[]; readonly hasMore: boolean } | null>;
+
+/**
+ * Drain up to `MAX_PRS_PER_TICK` candidates for one service. Returns how many were recorded.
+ *
+ * Each candidate is fetched and written INDEPENDENTLY, and this loop deliberately holds no
+ * transaction of its own: `recordPrChangedFiles` scopes one per PR, so a candidate that throws
+ * mid-tick cannot roll back the PRs already written. A rate-limit error still propagates, because
+ * continuing to hammer a limited API is worse than ending the tick early.
+ *
+ * A failed candidate is left with NO coverage row rather than an empty one. An empty coverage row
+ * would assert "we checked this PR and it touched nothing" — a confident wrong negative, which is
+ * exactly what the coverage table exists to prevent. Leaving it uncovered means the selector
+ * re-queues it next tick.
+ *
+ * Pages are mapped and concatenated as they arrive rather than being buffered as raw JSON, so a
+ * large PR never holds more than one page of payload in memory.
+ */
+export async function runPrFilePass(
+  ctx: SyncContext,
+  args: {
+    readonly service: string;
+    readonly fetchPage: FetchPage;
+    readonly nowMs: number;
+  },
+): Promise<number> {
+  const candidates = selectPrFileCandidates(ctx.db, args.service, MAX_PRS_PER_TICK);
+  let recorded = 0;
+  for (const c of candidates) {
+    const collected: ChangedFileRow[] = [];
+    let pagesExhausted = false;
+    let failed = false;
+    try {
+      for (let page = 1; page <= MAX_PAGES_PER_PR; page++) {
+        // `args.service` is caller-supplied per-forge ("github"/"gitlab"/"bitbucket"), always a
+        // real `Provider` id; the driver itself is forge-agnostic so its own signature keeps
+        // `service` as `string` rather than importing every forge's literal into this type.
+        await ctx.rateLimiter.acquire(args.service as Provider);
+        const res = await args.fetchPage(c, page);
+        if (res === null) {
+          failed = true;
+          break;
+        }
+        collected.push(...res.rows);
+        if (!res.hasMore) {
+          pagesExhausted = true;
+          break;
+        }
+      }
+    } catch (err) {
+      // A rate-limit error ends the whole tick; anything else costs only this PR.
+      if (err instanceof RateLimitError) {
+        throw err;
+      }
+      ctx.logger.warn(
+        { service: args.service, itemId: c.itemId, err: String(err) },
+        "PR changed-file fetch failed for one PR (non-fatal, will retry next tick)",
+      );
+      failed = true;
+    }
+    if (failed) {
+      continue;
+    }
+    const { kept, truncated } = applyFileCap(collected);
+    recordPrChangedFiles(ctx.db, {
+      itemId: c.itemId,
+      repoFull: c.repoFull,
+      files: kept,
+      apiFileCount: collected.length,
+      // Truncated when the cap trimmed rows OR when we ran out of page budget with
+      // more pages still on offer — both mean we do not hold the full path set.
+      truncated: truncated || !pagesExhausted,
+      nowMs: args.nowMs,
+    });
+    recorded += 1;
+  }
+  return recorded;
 }

@@ -17,6 +17,7 @@ import {
   createGithubSyncable,
   extractPrMetadataForIndex,
   processEvent,
+  pullFilesUrl,
   selectPrEnrichCandidates,
   throwGithubRateLimitErrorIfApplicable,
   upsertPr,
@@ -617,4 +618,11 @@ test("a 403 with no retry-after and remaining left is not rate limiting", () => 
 
   expect(() => throwGithubRateLimitErrorIfApplicable(ctx, res, "events")).not.toThrow();
   db.close();
+});
+
+test("pullFilesUrl requests the largest page and a page number", () => {
+  const u = pullFilesUrl("o/r", 7, 2);
+  expect(u).toContain("/repos/o/r/pulls/7/files");
+  expect(u).toContain("per_page=100");
+  expect(u).toContain("page=2");
 });

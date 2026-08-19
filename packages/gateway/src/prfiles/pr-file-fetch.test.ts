@@ -2,9 +2,16 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import { PR_CHANGED_FILE_V55_SQL } from "../index/pr-changed-file-v55-sql.ts";
+import type { SyncContext } from "../sync/types.ts";
 import type { ChangedFileRow } from "./pr-changed-file-store.ts";
 import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
-import { applyFileCap, MAX_FILES_PER_PR, selectPrFileCandidates } from "./pr-file-fetch.ts";
+import {
+  applyFileCap,
+  MAX_FILES_PER_PR,
+  MAX_PAGES_PER_PR,
+  runPrFilePass,
+  selectPrFileCandidates,
+} from "./pr-file-fetch.ts";
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -91,5 +98,137 @@ describe("applyFileCap", () => {
     const r = applyFileCap(files);
     expect(r.kept).toHaveLength(MAX_FILES_PER_PR);
     expect(r.truncated).toBe(true);
+  });
+});
+
+/** Only the two fields the driver touches; cast keeps the fake honest about that. */
+function fakeCtx(db: Database, acquired: string[]): SyncContext {
+  return {
+    db,
+    logger: { warn: () => undefined, info: () => undefined } as unknown as SyncContext["logger"],
+    rateLimiter: {
+      acquire: async (s: string) => {
+        acquired.push(s);
+      },
+    } as unknown as SyncContext["rateLimiter"],
+  } as unknown as SyncContext;
+}
+
+describe("runPrFilePass", () => {
+  test("writes files and a coverage row for each candidate", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    const n = await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => ({ rows: [row("src/a.ts")], hasMore: false }),
+    });
+    expect(n).toBe(1);
+    const s = db.query("SELECT stored_count FROM pr_files_state").get() as { stored_count: number };
+    expect(s.stored_count).toBe(1);
+    db.close();
+  });
+
+  // Per-candidate isolation. p1 throwing must not cost p2 its coverage row, and
+  // must not roll back anything already written this tick.
+  test("one candidate failing does not stop or roll back the others", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 200);
+    addPr(db, "p2", "o/r#2", 100);
+    const n = await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (c) => {
+        if (c.itemId === "p1") throw new Error("boom");
+        return { rows: [row("src/b.ts")], hasMore: false };
+      },
+    });
+    expect(n).toBe(1);
+    const ids = (
+      db.query("SELECT item_id FROM pr_files_state").all() as Array<{ item_id: string }>
+    ).map((r) => r.item_id);
+    expect(ids).toEqual(["p2"]);
+    db.close();
+  });
+
+  // A failed candidate must NOT get a coverage row: an empty row would assert
+  // "we checked this PR and it touched nothing" - a confident wrong negative.
+  test("a failed candidate is left uncovered, not recorded as empty", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => {
+        throw new Error("boom");
+      },
+    });
+    const c = db.query("SELECT COUNT(*) AS c FROM pr_files_state").get() as { c: number };
+    expect(c.c).toBe(0);
+    db.close();
+  });
+
+  test("a null page result leaves the PR uncovered too", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => null,
+    });
+    const c = db.query("SELECT COUNT(*) AS c FROM pr_files_state").get() as { c: number };
+    expect(c.c).toBe(0);
+    db.close();
+  });
+
+  test("accumulates rows across pages until hasMore is false", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (_c, page) => ({
+        rows: [row(`p${String(page)}.ts`)],
+        hasMore: page < 2,
+      }),
+    });
+    const paths = (
+      db.query("SELECT path FROM pr_changed_file ORDER BY path").all() as Array<{ path: string }>
+    ).map((r) => r.path);
+    expect(paths).toEqual(["p1.ts", "p2.ts"]);
+    db.close();
+  });
+
+  test("stops at MAX_PAGES_PER_PR and marks the PR truncated", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (_c, page) => ({ rows: [row(`p${String(page)}.ts`)], hasMore: true }),
+    });
+    const s = db.query("SELECT stored_count, truncated FROM pr_files_state").get() as {
+      stored_count: number;
+      truncated: number;
+    };
+    expect(s.stored_count).toBe(MAX_PAGES_PER_PR);
+    expect(s.truncated).toBe(1);
+    db.close();
+  });
+
+  test("acquires the rate limiter once per request", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    const acquired: string[] = [];
+    await runPrFilePass(fakeCtx(db, acquired), {
+      service: "github",
+      nowMs: 5,
+      // Distinct paths per page: a real PR listing never repeats a path across pages, and a
+      // repeated path here would collide on `pr_changed_file`'s `(item_id, path)` primary key —
+      // unrelated to what this test actually checks (the rate limiter is acquired once per page).
+      fetchPage: async (_c, page) => ({ rows: [row(`a${String(page)}.ts`)], hasMore: page < 2 }),
+    });
+    expect(acquired).toEqual(["github", "github"]);
+    db.close();
   });
 });

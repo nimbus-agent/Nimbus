@@ -3,6 +3,8 @@ import type { Database } from "bun:sqlite";
 import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
+import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
+import { mapGithubPrFiles } from "../prfiles/pr-file-mapping.ts";
 import {
   FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
@@ -25,6 +27,12 @@ const USER_URL = "https://api.github.com/user";
 
 export function pullDetailUrl(repoFull: string, num: number): string {
   return `https://api.github.com/repos/${repoFull}/pulls/${String(num)}`;
+}
+
+export function pullFilesUrl(repoFull: string, num: number, page: number): string {
+  return `https://api.github.com/repos/${repoFull}/pulls/${String(num)}/files?per_page=${String(
+    PR_FILES_PAGE_SIZE,
+  )}&page=${String(page)}`;
 }
 
 function extractLabelNames(raw: unknown): string[] {
@@ -740,6 +748,46 @@ async function runPrDetailEnrichmentBestEffort(
   }
 }
 
+/**
+ * Mirrors `runPrDetailEnrichmentBestEffort` exactly — same try/catch, same rethrow of
+ * `RateLimitError`, same warn — and is called after BOTH of that function's call sites, including
+ * the 304 (unchanged) path: `enrichPrDetail`'s own docstring records that skipping the unchanged
+ * path once already drained a backlog at roughly zero on a low-activity account.
+ */
+async function runPrFilePassBestEffort(ctx: SyncContext, pat: string, now: number): Promise<void> {
+  try {
+    await runPrFilePass(ctx, {
+      service: SERVICE_ID,
+      nowMs: now,
+      fetchPage: async (c, page) => {
+        const num = Number(c.externalId.slice(c.externalId.lastIndexOf("#") + 1));
+        if (!Number.isFinite(num)) return null;
+        const res = await fetch(pullFilesUrl(c.repoFull, num, page), {
+          headers: buildGithubEventHeaders(pat, null),
+        });
+        if (res.status === 401) throw new UnauthenticatedError("GitHub pull files: 401");
+        throwGithubRateLimitErrorIfApplicable(ctx, res, "pull files");
+        if (!res.ok) return null;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await res.text()) as unknown;
+        } catch {
+          return null;
+        }
+        const rows = mapGithubPrFiles(parsed);
+        // A full page means there may be another; a short page is the last one.
+        return { rows, hasMore: Array.isArray(parsed) && parsed.length === PR_FILES_PAGE_SIZE };
+      },
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) throw err; // honor backoff
+    ctx.logger.warn(
+      { service: SERVICE_ID, err: String(err) },
+      "PR changed-file pass failed (non-fatal)",
+    );
+  }
+}
+
 async function fetchAuthenticatedLogin(ctx: SyncContext, pat: string): Promise<string> {
   await ctx.rateLimiter.acquire("github");
   const res = await fetch(USER_URL, {
@@ -799,6 +847,7 @@ async function syncGithubUserEvents(
     // run it here too so a quiet account still drains. The cursor/return shape below is
     // otherwise byte-identical to before this fix.
     await runPrDetailEnrichmentBestEffort(ctx, pat, Date.now());
+    await runPrFilePassBestEffort(ctx, pat, Date.now());
     return {
       ...syncNoopResult(cursor, t0),
       cursor: encodeCursor({ etag, login }),
@@ -841,6 +890,7 @@ async function syncGithubUserEvents(
 
   // Best-effort detail enrichment for fallback-titled or stats-missing PRs (existing rows + this tick's events).
   await runPrDetailEnrichmentBestEffort(ctx, pat, now);
+  await runPrFilePassBestEffort(ctx, pat, now);
 
   const newEtag = res.headers.get("etag");
   const nextCursor = encodeCursor({ etag: newEtag, login });
