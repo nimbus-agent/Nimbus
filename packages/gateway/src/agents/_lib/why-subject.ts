@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import type { NimbusFilesystemRootToml } from "../../config/filesystem-toml.ts";
-import type { WhyInput, WhySubject } from "./why-types.ts";
+import type { WhyRefInput, WhySubject } from "./why-types.ts";
 
 const LINE_SUFFIX_RE = /^(.+):(\d+)$/;
 
@@ -115,7 +115,7 @@ function lookupSymbol(
 export function resolveWhySubject(
   db: Database,
   roots: readonly NimbusFilesystemRootToml[],
-  input: WhyInput,
+  input: WhyRefInput,
   exists: (p: string) => boolean = existsSync,
 ): WhySubject | null {
   const parsed = parseRef(input.ref);

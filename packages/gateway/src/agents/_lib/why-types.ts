@@ -10,4 +10,17 @@
  */
 export type { WhyBrief, WhyFinding, WhyLane, WhyPeek, WhySubject } from "./findings.ts";
 
-export type WhyInput = { ref: string; line?: number };
+export type WhyRefInput = { ref: string; line?: number };
+
+/** The browser-viable arm: a pull request URL, no local checkout required. */
+export type WhyPrInput = { prUrl: string };
+
+/**
+ * Exactly one arm, never both. `agents.whyPeek` accepts only `WhyRefInput` — it
+ * is line-level by nature and stays HTTP-excluded.
+ */
+export type WhyInput = WhyRefInput | WhyPrInput;
+
+export function isWhyPrInput(input: WhyInput): input is WhyPrInput {
+  return "prUrl" in input;
+}

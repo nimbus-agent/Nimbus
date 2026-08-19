@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import { type BlameSpawn, ensureBlameLine } from "./_lib/blame-on-demand.ts";
 import { resolveWhySubject } from "./_lib/why-subject.ts";
-import type { WhyInput, WhyPeek } from "./_lib/why-types.ts";
+import type { WhyPeek, WhyRefInput } from "./_lib/why-types.ts";
 
 export type WhyPeekDeps = {
   db: Database;
@@ -114,7 +114,7 @@ function computeHasMore(
   );
 }
 
-export async function runWhyPeek(input: WhyInput, deps: WhyPeekDeps): Promise<WhyPeek> {
+export async function runWhyPeek(input: WhyRefInput, deps: WhyPeekDeps): Promise<WhyPeek> {
   const { db, roots, spawn, exists } = deps;
   const whySubject = resolveWhySubject(db, roots, input, exists);
 

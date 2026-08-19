@@ -108,6 +108,36 @@ describe("dispatchAgentsRpc — agents.why", () => {
       rpcCode: -32602,
     });
   });
+
+  test("agents.why accepts { prUrl }", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.why",
+      { prUrl: "https://github.com/acme/web/pull/482" },
+      makeCtx(freshDb()),
+    );
+    expect(out.kind).toBe("hit");
+    if (out.kind === "hit") {
+      const v = out.value as { sessionId: string };
+      expect(typeof v.sessionId).toBe("string");
+      expect(v.sessionId.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("agents.why rejects a payload carrying both arms", async () => {
+    await expect(
+      dispatchAgentsRpc(
+        "agents.why",
+        { ref: "src/a.ts", prUrl: "https://x/y/pull/1" },
+        makeCtx(freshDb()),
+      ),
+    ).rejects.toThrow(/exactly one of/i);
+  });
+
+  test("agents.why rejects an empty prUrl", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.why", { prUrl: "   " }, makeCtx(freshDb())),
+    ).rejects.toThrow(/prUrl/);
+  });
 });
 
 describe("dispatchAgentsRpc — agents.whyPeek", () => {
@@ -193,5 +223,15 @@ describe("dispatchAgentsRpc — agents.whyPeek", () => {
       expect(v).toHaveProperty("ticket");
       expect(v).toHaveProperty("hasMore");
     }
+  });
+
+  test("agents.whyPeek still rejects prUrl", async () => {
+    await expect(
+      dispatchAgentsRpc(
+        "agents.whyPeek",
+        { prUrl: "https://x/y/pull/1" },
+        makeCtx(freshDb()),
+      ),
+    ).rejects.toThrow(/ref/);
   });
 });

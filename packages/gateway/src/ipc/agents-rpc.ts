@@ -4,7 +4,7 @@ import type { GlossaryInput } from "../agents/_lib/glossary-types.ts";
 import type { OwnershipInput } from "../agents/_lib/ownership-types.ts";
 import type { PremortemInput } from "../agents/_lib/premortem-types.ts";
 import type { SynthesisRunner } from "../agents/_lib/synthesis-llm.ts";
-import type { WhyInput, WhyPeek } from "../agents/_lib/why-types.ts";
+import type { WhyInput, WhyPeek, WhyRefInput } from "../agents/_lib/why-types.ts";
 import { emitCatchupBrief } from "../agents/catchup.ts";
 import { emitConflictsBrief } from "../agents/conflicts.ts";
 import { emitDecisionsBrief } from "../agents/decisions.ts";
@@ -412,8 +412,9 @@ async function handlePreflight(params: unknown, ctx: AgentsRpcContext): Promise<
 
 const MIN_REF_LEN = 1;
 const MAX_REF_LEN = 1024;
+const MAX_PR_URL_LEN = 2048;
 
-function requireWhyParams(params: unknown): WhyInput {
+function requireWhyRefParams(params: unknown): WhyRefInput {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new AgentsRpcError(-32602, "agents.why requires { ref: string, line?: number }");
   }
@@ -432,6 +433,29 @@ function requireWhyParams(params: unknown): WhyInput {
     throw new AgentsRpcError(-32602, "line must be a positive integer");
   }
   return { ref: trimmed, ...(p.line === undefined ? {} : { line: p.line }) };
+}
+
+function requireWhyParams(params: unknown): WhyInput {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.why requires { ref: string } or { prUrl: string }");
+  }
+  const p = params as { ref?: unknown; prUrl?: unknown };
+  const hasRef = p.ref !== undefined;
+  const hasPrUrl = p.prUrl !== undefined;
+  if (hasRef === hasPrUrl) {
+    throw new AgentsRpcError(-32602, "agents.why requires exactly one of { ref } or { prUrl }");
+  }
+  if (hasPrUrl) {
+    if (typeof p.prUrl !== "string") {
+      throw new AgentsRpcError(-32602, "prUrl must be a string");
+    }
+    const trimmed = p.prUrl.trim();
+    if (trimmed.length === 0 || trimmed.length > MAX_PR_URL_LEN) {
+      throw new AgentsRpcError(-32602, `prUrl must be 1..${MAX_PR_URL_LEN} chars after trim`);
+    }
+    return { prUrl: trimmed };
+  }
+  return requireWhyRefParams(params);
 }
 
 function whyRoots(ctx: AgentsRpcContext) {
@@ -456,7 +480,7 @@ async function handleWhy(params: unknown, ctx: AgentsRpcContext): Promise<{ sess
  * not a hover").
  */
 async function handleWhyPeek(params: unknown, ctx: AgentsRpcContext): Promise<WhyPeek> {
-  const input = requireWhyParams(params);
+  const input = requireWhyRefParams(params);
   return await runWhyPeek(input, { db: ctx.db, roots: whyRoots(ctx) });
 }
 
