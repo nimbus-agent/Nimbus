@@ -848,7 +848,7 @@ Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Pla
 ### Extension Scaffold
 
 ```bash
-nimbus scaffold extension --name notion-connector --output ./nimbus-notion
+nimbus scaffold extension ./nimbus-notion
 ```
 
 ```typescript
