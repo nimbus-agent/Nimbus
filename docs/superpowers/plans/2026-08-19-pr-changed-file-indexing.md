@@ -1054,7 +1054,7 @@ EOF
 
 ---
 
-## Task 5: The bounded fetch tick
+## Task 5: Candidate selector and file cap (pure helpers)
 
 **Files:**
 - Create: `packages/gateway/src/prfiles/pr-file-fetch.ts`
@@ -1293,7 +1293,441 @@ EOF
 
 ---
 
-## Task 6: Coverage on `diag.snapshot`
+## Task 6: The shared fetch driver, and GitHub wiring
+
+**Files:**
+- Modify: `packages/gateway/src/prfiles/pr-file-fetch.ts`
+- Modify: `packages/gateway/src/prfiles/pr-file-fetch.test.ts`
+- Modify: `packages/gateway/src/connectors/github-sync.ts`
+- Modify: `packages/gateway/src/connectors/github-sync.test.ts`
+
+**Interfaces:**
+- Consumes: `selectPrFileCandidates`, `applyFileCap`, `MAX_PRS_PER_TICK`, `PR_FILES_PAGE_SIZE`, `MAX_FILES_PER_PR` (Task 5); `recordPrChangedFiles` (Task 2); `mapGithubPrFiles` (Task 3).
+- Produces:
+  - `MAX_PAGES_PER_PR = 3`
+  - `type FetchPage = (candidate: PrFileCandidate, page: number) => Promise<{ readonly rows: readonly ChangedFileRow[]; readonly hasMore: boolean } | null>`
+  - `runPrFilePass(ctx: SyncContext, args: { service: string; fetchPage: FetchPage; nowMs: number }): Promise<number>`
+
+**Why a driver plus a per-forge closure:** the loop holds every behaviour that matters —
+per-candidate isolation, page accumulation, the cap, the coverage write — and none of it is
+forge-specific. Splitting it this way lets the loop be tested exhaustively with a fake `fetchPage`
+and **no HTTP mocking at all**, while each forge task reduces to one function that builds a URL and
+maps a payload.
+
+- [ ] **Step 1: Write the failing driver test**
+
+Append to `packages/gateway/src/prfiles/pr-file-fetch.test.ts`:
+
+```ts
+import type { SyncContext } from "../sync/types.ts";
+import { MAX_PAGES_PER_PR, runPrFilePass } from "./pr-file-fetch.ts";
+
+/** Only the two fields the driver touches; cast keeps the fake honest about that. */
+function fakeCtx(db: Database, acquired: string[]): SyncContext {
+  return {
+    db,
+    logger: { warn: () => undefined, info: () => undefined } as unknown as SyncContext["logger"],
+    rateLimiter: {
+      acquire: async (s: string) => {
+        acquired.push(s);
+      },
+    } as unknown as SyncContext["rateLimiter"],
+  } as unknown as SyncContext;
+}
+
+describe("runPrFilePass", () => {
+  test("writes files and a coverage row for each candidate", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    const n = await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => ({ rows: [row("src/a.ts")], hasMore: false }),
+    });
+    expect(n).toBe(1);
+    const s = db.query("SELECT stored_count FROM pr_files_state").get() as { stored_count: number };
+    expect(s.stored_count).toBe(1);
+    db.close();
+  });
+
+  // Per-candidate isolation. p1 throwing must not cost p2 its coverage row, and
+  // must not roll back anything already written this tick.
+  test("one candidate failing does not stop or roll back the others", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 200);
+    addPr(db, "p2", "o/r#2", 100);
+    const n = await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (c) => {
+        if (c.itemId === "p1") throw new Error("boom");
+        return { rows: [row("src/b.ts")], hasMore: false };
+      },
+    });
+    expect(n).toBe(1);
+    const ids = (
+      db.query("SELECT item_id FROM pr_files_state").all() as Array<{ item_id: string }>
+    ).map((r) => r.item_id);
+    expect(ids).toEqual(["p2"]);
+    db.close();
+  });
+
+  // A failed candidate must NOT get a coverage row: an empty row would assert
+  // "we checked this PR and it touched nothing" - a confident wrong negative.
+  test("a failed candidate is left uncovered, not recorded as empty", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => {
+        throw new Error("boom");
+      },
+    });
+    const c = db.query("SELECT COUNT(*) AS c FROM pr_files_state").get() as { c: number };
+    expect(c.c).toBe(0);
+    db.close();
+  });
+
+  test("a null page result leaves the PR uncovered too", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => null,
+    });
+    const c = db.query("SELECT COUNT(*) AS c FROM pr_files_state").get() as { c: number };
+    expect(c.c).toBe(0);
+    db.close();
+  });
+
+  test("accumulates rows across pages until hasMore is false", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (_c, page) => ({
+        rows: [row(`p${String(page)}.ts`)],
+        hasMore: page < 2,
+      }),
+    });
+    const paths = (
+      db.query("SELECT path FROM pr_changed_file ORDER BY path").all() as Array<{ path: string }>
+    ).map((r) => r.path);
+    expect(paths).toEqual(["p1.ts", "p2.ts"]);
+    db.close();
+  });
+
+  test("stops at MAX_PAGES_PER_PR and marks the PR truncated", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (_c, page) => ({ rows: [row(`p${String(page)}.ts`)], hasMore: true }),
+    });
+    const s = db.query("SELECT stored_count, truncated FROM pr_files_state").get() as {
+      stored_count: number;
+      truncated: number;
+    };
+    expect(s.stored_count).toBe(MAX_PAGES_PER_PR);
+    expect(s.truncated).toBe(1);
+    db.close();
+  });
+
+  test("acquires the rate limiter once per request", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    const acquired: string[] = [];
+    await runPrFilePass(fakeCtx(db, acquired), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (_c, page) => ({ rows: [row("a.ts")], hasMore: page < 2 }),
+    });
+    expect(acquired).toEqual(["github", "github"]);
+    db.close();
+  });
+});
+```
+
+- [ ] **Step 2: Run it and confirm it fails**
+
+Run: `bun test packages/gateway/src/prfiles/pr-file-fetch.test.ts`
+Expected: FAIL — `runPrFilePass` and `MAX_PAGES_PER_PR` are not exported.
+
+- [ ] **Step 3: Write the driver**
+
+Append to `packages/gateway/src/prfiles/pr-file-fetch.ts`:
+
+```ts
+import type { SyncContext } from "../sync/types.ts";
+import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
+
+/** `MAX_FILES_PER_PR / PR_FILES_PAGE_SIZE` — three requests reach the largest set we store. */
+export const MAX_PAGES_PER_PR = 3;
+
+/**
+ * Fetch ONE page for a candidate. Returns `null` when the page could not be read at all — the
+ * driver treats that as a failure for this PR, not as "no files".
+ */
+export type FetchPage = (
+  candidate: PrFileCandidate,
+  page: number,
+) => Promise<{ readonly rows: readonly ChangedFileRow[]; readonly hasMore: boolean } | null>;
+
+/**
+ * Drain up to `MAX_PRS_PER_TICK` candidates for one service. Returns how many were recorded.
+ *
+ * Each candidate is fetched and written INDEPENDENTLY, and this loop deliberately holds no
+ * transaction of its own: `recordPrChangedFiles` scopes one per PR, so a candidate that throws
+ * mid-tick cannot roll back the PRs already written. A rate-limit error still propagates, because
+ * continuing to hammer a limited API is worse than ending the tick early.
+ *
+ * A failed candidate is left with NO coverage row rather than an empty one. An empty coverage row
+ * would assert "we checked this PR and it touched nothing" — a confident wrong negative, which is
+ * exactly what the coverage table exists to prevent. Leaving it uncovered means the selector
+ * re-queues it next tick.
+ *
+ * Pages are mapped and concatenated as they arrive rather than being buffered as raw JSON, so a
+ * large PR never holds more than one page of payload in memory.
+ */
+export async function runPrFilePass(
+  ctx: SyncContext,
+  args: {
+    readonly service: string;
+    readonly fetchPage: FetchPage;
+    readonly nowMs: number;
+  },
+): Promise<number> {
+  const candidates = selectPrFileCandidates(ctx.db, args.service, MAX_PRS_PER_TICK);
+  let recorded = 0;
+  for (const c of candidates) {
+    const collected: ChangedFileRow[] = [];
+    let pagesExhausted = false;
+    let failed = false;
+    try {
+      for (let page = 1; page <= MAX_PAGES_PER_PR; page++) {
+        await ctx.rateLimiter.acquire(args.service);
+        const res = await args.fetchPage(c, page);
+        if (res === null) {
+          failed = true;
+          break;
+        }
+        collected.push(...res.rows);
+        if (!res.hasMore) {
+          pagesExhausted = true;
+          break;
+        }
+      }
+    } catch (err) {
+      // A rate-limit error ends the whole tick; anything else costs only this PR.
+      if (isRateLimitError(err)) {
+        throw err;
+      }
+      ctx.logger.warn(
+        { service: args.service, itemId: c.itemId, err: String(err) },
+        "PR changed-file fetch failed for one PR (non-fatal, will retry next tick)",
+      );
+      failed = true;
+    }
+    if (failed) {
+      continue;
+    }
+    const { kept, truncated } = applyFileCap(collected);
+    recordPrChangedFiles(ctx.db, {
+      itemId: c.itemId,
+      repoFull: c.repoFull,
+      files: kept,
+      apiFileCount: collected.length,
+      // Truncated when the cap trimmed rows OR when we ran out of page budget with
+      // more pages still on offer — both mean we do not hold the full path set.
+      truncated: truncated || !pagesExhausted,
+      nowMs: args.nowMs,
+    });
+    recorded += 1;
+  }
+  return recorded;
+}
+```
+
+For `isRateLimitError`, use the existing `RateLimitError` class the connectors already throw —
+read `packages/gateway/src/connectors/github-sync.ts` for its import path and write
+`err instanceof RateLimitError` inline rather than adding a helper.
+
+- [ ] **Step 4: Run the test and confirm it passes**
+
+Run: `bun test packages/gateway/src/prfiles/pr-file-fetch.test.ts`
+Expected: PASS, 15 tests (8 from Task 5 + 7 here).
+
+- [ ] **Step 5: Wire GitHub in**
+
+In `packages/gateway/src/connectors/github-sync.ts`, add the URL builder beside `pullDetailUrl`:
+
+```ts
+export function pullFilesUrl(repoFull: string, num: number, page: number): string {
+  return `https://api.github.com/repos/${repoFull}/pulls/${String(num)}/files?per_page=${String(
+    PR_FILES_PAGE_SIZE,
+  )}&page=${String(page)}`;
+}
+```
+
+and a best-effort pass mirroring `runPrDetailEnrichmentBestEffort` exactly — same try/catch, same
+rethrow of `RateLimitError`, same warn:
+
+```ts
+async function runPrFilePassBestEffort(ctx: SyncContext, pat: string, now: number): Promise<void> {
+  try {
+    await runPrFilePass(ctx, {
+      service: SERVICE_ID,
+      nowMs: now,
+      fetchPage: async (c, page) => {
+        const num = Number(c.externalId.slice(c.externalId.lastIndexOf("#") + 1));
+        if (!Number.isFinite(num)) return null;
+        const res = await fetch(pullFilesUrl(c.repoFull, num, page), {
+          headers: buildGithubEventHeaders(pat, null),
+        });
+        if (res.status === 401) throw new UnauthenticatedError("GitHub pull files: 401");
+        throwGithubRateLimitErrorIfApplicable(ctx, res, "pull files");
+        if (!res.ok) return null;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await res.text()) as unknown;
+        } catch {
+          return null;
+        }
+        const rows = mapGithubPrFiles(parsed);
+        // A full page means there may be another; a short page is the last one.
+        return { rows, hasMore: Array.isArray(parsed) && parsed.length === PR_FILES_PAGE_SIZE };
+      },
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) throw err; // honor backoff
+    ctx.logger.warn(
+      { service: SERVICE_ID, err: String(err) },
+      "PR changed-file pass failed (non-fatal)",
+    );
+  }
+}
+```
+
+Call it immediately after **both** existing `runPrDetailEnrichmentBestEffort` call sites
+(currently lines 801 and 843). Both matter: line 843 is the 304 path, and `enrichPrDetail`'s own
+docstring records that before it ran on the unchanged path too, the backlog drained at roughly
+zero on a low-activity account. Wiring only the changed path would reproduce that bug.
+
+- [ ] **Step 6: Add a GitHub wiring test**
+
+Add to `packages/gateway/src/connectors/github-sync.test.ts`, matching its existing fetch-stub
+style:
+
+```ts
+test("pullFilesUrl requests the largest page and a page number", () => {
+  const u = pullFilesUrl("o/r", 7, 2);
+  expect(u).toContain("/repos/o/r/pulls/7/files");
+  expect(u).toContain("per_page=100");
+  expect(u).toContain("page=2");
+});
+```
+
+- [ ] **Step 7: Run both suites and preflight**
+
+Run: `bun test packages/gateway/src/prfiles packages/gateway/src/connectors/github-sync.test.ts`
+Then: `bun run preflight:fast`
+Expected: both green.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add packages/gateway/src/prfiles/ packages/gateway/src/connectors/github-sync.ts packages/gateway/src/connectors/github-sync.test.ts
+git commit -F - <<'EOF'
+feat(prfiles): fetch driver and GitHub wiring
+
+The driver holds every behaviour that is not forge-specific, so each
+forge reduces to one fetchPage closure and the loop is tested with no
+HTTP mocking.
+
+Per-candidate isolation is the point: the loop holds no transaction of
+its own, so one PR failing cannot roll back the PRs already written. A
+failed PR gets NO coverage row - an empty one would assert we checked
+it and found nothing, a confident wrong negative.
+
+Wired into both enrichment call sites, including the 304 path: the
+existing enrichment records that skipping it drained the backlog at
+roughly zero on a quiet account.
+EOF
+```
+
+---
+
+## Task 7: GitLab and Bitbucket wiring
+
+**Files:**
+- Modify: `packages/gateway/src/connectors/gitlab-sync.ts`
+- Modify: `packages/gateway/src/connectors/bitbucket-sync.ts`
+- Modify: their respective `.test.ts` files
+
+**Interfaces:**
+- Consumes: `runPrFilePass`, `PR_FILES_PAGE_SIZE` (Task 6); `mapGitlabMrFiles`, `mapBitbucketPrFiles` (Task 4).
+
+- [ ] **Step 1: Read both sync entry points first**
+
+Read `createGitlabSyncable`'s `sync` (`gitlab-sync.ts:189`) and `createBitbucketSyncable`'s
+(`bitbucket-sync.ts:361`). Note how each obtains its credential and how each already builds an
+authenticated request — reuse those, do not add a second auth path.
+
+- [ ] **Step 2: Wire GitLab**
+
+Add a `runPrFilePass` call at the end of GitLab's `sync`, wrapped in the same best-effort
+try/catch shape as Task 6's, with:
+
+- URL: the MR diffs endpoint for `c.repoFull` and the iid parsed from `c.externalId` after its
+  LAST `!`, with the forge's page-size parameter set to `PR_FILES_PAGE_SIZE`.
+- Mapping: `mapGitlabMrFiles(parsed)`.
+- `hasMore`: `Array.isArray(parsed) && parsed.length === PR_FILES_PAGE_SIZE`.
+- `service: "gitlab"` — must match the `item.service` value GitLab rows carry, or the selector
+  returns nothing and the pass is silently inert. Verify against a real row before trusting it.
+
+- [ ] **Step 3: Wire Bitbucket**
+
+Same shape, with:
+
+- URL: the PR `diffstat` endpoint, with Bitbucket's own page-size parameter.
+- Mapping: `mapBitbucketPrFiles(parsed)` — **called once per page**, and the driver concatenates
+  the returned rows. Do not accumulate raw envelopes and map once at the end; per-page mapping
+  keeps at most one page of payload in memory and is what the driver's contract expects.
+- `hasMore`: Bitbucket paginates with a `next` URL in the envelope, so
+  `typeof asRecord(parsed)?.["next"] === "string"` is the signal — not a length comparison.
+- `service: "bitbucket"` — same verification as GitLab.
+
+- [ ] **Step 4: Add one wiring test per forge**
+
+For each, assert the URL builder produces the documented path and carries the page-size parameter,
+mirroring Task 6 Step 6. Do not re-test the mappers or the driver — they are covered.
+
+- [ ] **Step 5: Run the suites and preflight**
+
+Run: `bun test packages/gateway/src/connectors packages/gateway/src/prfiles`
+Then: `bun run preflight:fast`
+Expected: green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add packages/gateway/src/connectors/
+git commit -F - <<'EOF'
+feat(prfiles): wire the changed-file pass into GitLab and Bitbucket
+
+Each forge supplies only a fetchPage closure; the driver owns the loop.
+Bitbucket signals another page with a next URL rather than a full-page
+length, so its hasMore reads that field instead of comparing counts.
+EOF
+```
+
+---
+
+## Task 8: Coverage on `diag.snapshot`
 
 **Files:**
 - Modify: `packages/gateway/src/db/metrics.ts` (the `IndexMetrics` type and `collectIndexMetrics`)
@@ -1430,7 +1864,7 @@ EOF
 
 ---
 
-## Task 7: Documentation
+## Task 9: Documentation
 
 **Files:**
 - Modify: `docs/CHANGELOG.md`
@@ -1490,26 +1924,47 @@ EOF
 
 **Spec coverage.** § 4.1 → Task 1. § 4.2 → Task 1. § 4.3 `local_file_id` column and its
 `SET NULL` → Task 1 (schema); its *population* is deferred, see below. § 4.4 canonical negation →
-Task 2. § 5 fetch path → Tasks 3–5. § 5.1 caps and page size → Task 5. § 5.3 batched writes in one
-transaction → Task 2. § 6 egress (no change) → nothing to build. § 7 observability → Task 6. § 9
-testing → each task's tests, with the fail-closed red-prove pinned in Task 2 Step 5. § 10.1 fixture
-verification → Tasks 3–4 Step 1.
+Task 2. § 5 fetch path → **Task 6 (the driver and GitHub) and Task 7 (GitLab, Bitbucket)**;
+Tasks 3–5 supply the pure pieces it calls. § 5.1 caps and page size → Task 5 (values) and Task 6
+(page budget). § 5.3 batched writes in one transaction → Task 2. § 6 egress (no change) → nothing
+to build. § 7 observability → Task 8. § 9 testing → each task's tests, with the fail-closed
+red-prove pinned in Task 2 Step 5. § 10.1 fixture verification → Tasks 3–4 Step 1.
+
+**Corrected after review — the first draft of this line was false and hid a whole missing task.**
+It claimed "§ 5 fetch path → Tasks 3–5". Tasks 3 and 4 are pure mappers and Task 5 is a pure
+selector plus a cap: **not one of them performs I/O or calls `recordPrChangedFiles`.** The plan as
+first written would have produced a schema, a store, mappers and a selector that nothing ever
+invoked — every task green, every test passing, and the feature completely inert. Tasks 6 and 7
+now carry the fetch loop and the per-forge wiring. The lesson is that a coverage line naming tasks
+by *topic* proves nothing; it has to name the task that makes the code RUN.
 
 **One deliberate deferral, recorded rather than silently dropped.** The spec's § 4.3 says the
 ownership pass populates `local_file_id`. This plan creates the column, its foreign key and its
 `SET NULL` behaviour, but does NOT wire the ownership pass to fill it. Nothing in B reads the
 column — negation uses `path` alone — so populating it would add a writer to `ownership-pass.ts`
 serving no consumer in this sub-project, which is the YAGNI the spec's own D2-style reasoning
-argues against. It becomes a task when a consumer exists. Task 7's CHANGELOG must say the column
-ships unpopulated, so nobody reads a `NULL` as "no local file".
+argues against. It becomes a task when a consumer exists. **Task 9's CHANGELOG must say the column
+ships unpopulated**, so nobody reads a `NULL` as "no local file".
 
-**Placeholder scan.** No "TBD"/"appropriate"/"as needed". Three steps say "read the existing file
-and match its helper" (Task 3 Step 4, Task 6 Steps 1 and 5) — these name a specific file and a
-specific reason, and exist because inventing a helper that already exists is the more likely
-failure.
+**Placeholder scan.** No "TBD"/"appropriate"/"as needed". Five steps say "read the existing file
+first and match what it exports" (Task 3 Step 4, Task 6 Step 3, Task 7 Step 1, Task 8 Steps 1
+and 5) — each names a specific file and a specific reason, and they exist because inventing a
+helper that already exists is the likelier failure than not finding one. Task 7's steps describe
+each wiring by its inputs, mapper, `hasMore` signal and service id rather than repeating Task 6's
+closure verbatim; that is deliberate, since the shape is established one task earlier and copying
+it would invite editing the wrong copy.
 
 **Type consistency.** `ChangedFileRow` / `ChangedFileStatus` are defined in Task 2 and consumed
 unchanged in Tasks 3, 4, 5. `recordPrChangedFiles` takes `counterpartPath` (camelCase) mapping to
 `counterpart_path` (snake_case) in SQL — consistent across every usage. `MAX_FILES_PER_PR` is
 defined once in Task 5 and imported by its test. `collectPrFileCoverage` returns
-`{ covered, totalPrs, truncated }` in Task 2 and is consumed with exactly those names in Task 6.
+`{ covered, totalPrs, truncated }` in Task 2 and is consumed with exactly those names in Task 8.
+`PrFileCandidate` is defined in Task 5 and is the parameter type of `FetchPage` in Task 6.
+`runPrFilePass` is defined in Task 6 and called by Task 7's two wirings with the same argument
+object shape.
+
+**A note on the two "truncated" sources.** Task 5's `applyFileCap` reports truncation from the row
+count; Task 6's driver ALSO sets `truncated` when it exhausts `MAX_PAGES_PER_PR` with more pages
+still on offer. Both mean the same thing — we do not hold the full path set — and the driver ORs
+them. A reviewer seeing only one of the two could reasonably think the other case was missed; it is
+not.
