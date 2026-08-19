@@ -182,16 +182,25 @@ returns the row to exactly the state it has for a repo that was never cloned —
 rest of this section already describes. An instruction to "nullify dangling references" would have
 been a rule someone must remember; this is one the database enforces.
 
-**The ownership pass owns the re-population**, not a standalone step. It is already the code that
-discovers a root, resolves its remote, and writes the `tracks_remote` edge this resolution reads —
-so it is the first code in the system that *knows* a previously-unresolvable repo has become
-resolvable. A standalone step would have to re-derive that same signal and would run on its own
+**Population is DEFERRED — this sub-project ships the column UNPOPULATED.** The schema, the
+`ON DELETE SET NULL` behaviour and the index all ship; no code writes the column, so it is `NULL`
+on every row. That is deliberate rather than unfinished: nothing in this sub-project reads
+`local_file_id` — negation is answered from `path` alone (§ 4.4) — so a writer would serve no
+consumer today, and the design intent below records who should own it when a consumer exists.
+Read the rest of this section as the eventual contract, not as shipped behaviour.
+
+**The ownership pass is the intended owner of the re-population**, not a standalone step. It is
+already the code that discovers a root, resolves its remote, and writes the `tracks_remote` edge
+this resolution reads — so it is the first code in the system that *knows* a
+previously-unresolvable repo has become resolvable.
+A standalone step would have to re-derive that same signal and would run on its own
 schedule, meaning the column could sit stale for a full cycle after the clone appeared. The cost of
-this choice, stated: `pr_changed_file` rows are then written by the sync path and updated by the
-ownership path, so the column has two writers. That is safe here because they write **disjoint
-columns** — the sync path never writes `local_file_id`, and the ownership pass writes nothing else
-— but it is the same shape as the bug sub-project A just fixed, so it is called out rather than
-left for a reader to discover.
+that choice, stated in advance: `pr_changed_file` rows would then be written by the sync path and
+updated by the ownership path, so the column would have two writers. That is safe because they
+would write **disjoint columns** — the sync path never writes `local_file_id`, and the ownership
+pass would write nothing else — but it is the same shape as the bug sub-project A just fixed, so it
+is called out rather than left for a reader to discover. Until that work lands the column has ONE
+writer (the schema default) and no reader.
 
 ### 4.4 The canonical negation shape
 
@@ -300,10 +309,21 @@ through `dbStmtRun` / `dbExec` per I14, and the statement is finalized rather th
 
 ### 5.2 Cost, stated plainly
 
-This roughly **doubles API calls per PR** on the enrich path — detail, then files. It is on by
-default for configured repos, matching how PR-detail enrichment already behaves, with a config
-knob to disable. A large index takes many ticks to reach full coverage; the coverage table is what
-makes that progress visible instead of mysterious.
+This roughly **doubles API calls per PR** on the enrich path — detail, then files. It runs
+**unconditionally for configured repos, with no config knob to disable it**, matching how
+PR-detail enrichment already behaves. A large index takes many ticks to reach full coverage; the
+coverage table is what makes that progress visible instead of mysterious.
+
+Unconditional is defensible because the pass is already bounded on both axes: at most
+`MAX_PRS_PER_TICK` (10) PRs are recorded per tick, at most `MAX_PAGES_PER_PR` (3) requests each,
+and it yields the moment the provider is penalised or its token bucket is empty — it calls
+`rateLimiter.tryAcquire`, which never sleeps, so a rate-limited provider ends the pass for that
+tick rather than blocking a scheduler slot.
+
+**Named follow-up: a `[connectors.pr_files] enabled` knob.** Deliberately not built here — a
+config surface needs its own field, default, wiring, docs and tests, which is a wider change than
+this sub-project. The cost of deferring, stated: a user on a tight API budget cannot turn the pass
+off without a follow-up PR.
 
 ---
 
