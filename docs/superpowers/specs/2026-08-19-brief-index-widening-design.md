@@ -107,7 +107,63 @@ a synthesis test shows it changes attribution behaviour; otherwise it stays out.
 citation carries `itemType` regardless, because the **user** benefits from it whether or
 not the model does.
 
-### 5. Out of scope: the query embedding leaves even when the corpus does not
+**If the test says yes, the shape is fixed in advance** so the decision is about whether,
+never about what: one additional key on the existing per-source object, carrying the raw
+`itemType` and nothing derived —
+
+```ts
+{ token: "C3", type: "pull_request", title: …, url: …, text: … }
+```
+
+Absent for `S{n}` entries, which are the pages the user themselves supplied and need no type
+to be understood. No prose label, no per-type instruction text in `INSTRUCTIONS`: the model
+is given the fact and left to use it. Anything more elaborate is a prompt-engineering slice
+with its own evidence bar, not a rider on this one.
+
+### 5. A hit's prompt cost is set by the chunker, not by the item
+
+The intuition that a build log or a large pull request would drag far more text into the
+prompt than a web clip is worth stating and rejecting, because it is wrong in a way that
+matters for whether this slice needs a new cap.
+
+A snippet is not the item. `semanticSnippetForHit` returns the **winning chunk plus
+`contextChunks` neighbours on each side** (`search/hybrid-internal.ts:34-39`), and a chunk is
+bounded by the chunker at 256 tokens — `maxChars = maxChunkTokens * 4`, so ~1 KB
+(`embedding/chunker.ts:9,142`). With `contextChunks: 2` that is at most 5 chunks, ~5 KB per
+hit, ~40 KB across all 8.
+
+A 40 MB build log therefore produces *more* chunks, not bigger ones, and still contributes
+one winning chunk plus its neighbours. **The bound is identical for every item type**, which
+is precisely why widening does not move it.
+
+Worth recording honestly: index-hit bodies are subject to **no brief-side byte cap**.
+`MAX_SOURCE_BYTES` and `MAX_RUN_BYTES` govern sources the client *feeds*; a `C{n}` body
+enters through `buildRegistry` and is capped only by the chunker. That is a pre-existing
+property, not one this slice introduces, and ~40 KB against a 4 MB run budget does not
+justify a second cap. Noted so the next reader does not assume the feed-stage accounting
+covers this path.
+
+### 6. Ranking stays purely score-based — no per-type quota
+
+`tryBuildHybridHit` scores by reciprocal rank fusion over the BM25 rank and the vector rank
+(`search/hybrid-internal.ts:258-266`). Nothing in it reads the item type, so widening
+introduces no type bias: the 8 slots go to the 8 best-scoring items.
+
+One consequence is real and accepted: **a single type can take all 8 slots.** Ask a question
+about a migration during a week of migration PRs and you may get eight pull requests and
+none of your clips.
+
+A quota — "at least 2 clips, at least 2 issues" — is the wrong fix. It buys type balance by
+demoting better-matching items in favour of worse-matching ones, on the assumption that
+variety of *source type* proxies for variety of *evidence*. It does not: eight PRs may be
+exactly the right answer, and a forced clip is noise the model then has to be told to ignore.
+Relevance ordering is the feature.
+
+If dominance turns out to hurt real briefs, the honest remedy is a gap line naming the skew
+("all 8 index hits were pull requests"), not a reshuffle that hides it. Not built now —
+there is no evidence it happens.
+
+### 7. Out of scope: the query embedding leaves even when the corpus does not
 
 `searchRankedAsync` embeds the query via `ss.embedQueryDual(nameQ)`. That call is routed by
 ordinary embedding configuration and is **not** covered by `LOCAL_ONLY_PROSE_TYPES`, which
@@ -123,7 +179,7 @@ disclosing it rather than papering over it. **Follow-up worth its own slice:** f
 local-only query embedding when a search is index-scoped for briefs, or expose a pre-run
 signal so a client can state the destination truthfully instead of hedging.
 
-### 6. What widening *does* change: more of your corpus can reach a remote model
+### 8. What widening *does* change: more of your corpus can reach a remote model
 
 Today a `useIndex` run can send the user's clips to whatever `createBriefLlm` resolves,
 which falls back to remote when no local provider is available. After this slice the same
@@ -158,10 +214,19 @@ A regression test worth having explicitly: **a search that returns hits of a typ
 client has never seen must not break report validation.** That is the compatibility claim
 decision 2 rests on.
 
+That claim has a second half, and it belongs on the **client** side of the boundary: a
+report carrying `itemType: "slack_message"` — a type from a connector that did not exist
+when the client shipped — must parse and render. Connectors are added to the gateway
+independently of any client release, so treating `itemType` as an enum would guarantee a
+break on the next connector. It is validated as *an optional string of any value*, which is
+what the clipper's hand-written guards do naturally (this repo and that one both use type
+guards, not a schema library, so there is no enum to accidentally reach for). The clipper
+spec's test list carries the matching case.
+
 ## Not in this slice
 
 - **A client-supplied scope.** `useIndex` stays a boolean. Which types to search is a
   contract change for a choice nobody has asked for.
 - **Renaming `kind`.** Decision 2.
-- **The query-embedding fix.** Decision 5.
+- **The query-embedding fix.** Decision 7.
 - **Changing `MAX_INDEX_HITS`.** Decision 1.
