@@ -302,6 +302,44 @@ export function readEntityMetadata(
 Run: `bun test packages/gateway/src/graph/relationship-graph.metadata.test.ts`
 Expected: PASS (11 tests).
 
+- [ ] **Step 4b: Add the compile-time guard on the flat function**
+
+This narrows `upsertGraphEntity` so a **literal** co-owned type is a compile error, catching the
+mistake at the keystroke rather than at CI:
+
+```ts
+export type CoOwnedEntityType = "source_file" | "directory" | "person" | "service";
+
+/** `never` for a co-owned literal, so `upsertGraphEntity({ type: "source_file" })` fails to compile. */
+type NonCoOwnedType<T extends string> = T extends CoOwnedEntityType ? never : T;
+```
+
+Then make `upsertGraphEntity` generic in its type parameter — `<T extends string>` with
+`type: NonCoOwnedType<T>` — leaving every other field and the whole body unchanged.
+
+**Do NOT write `type: Exclude<string, CoOwnedEntityType>`.** `Exclude` distributes over a union
+and `string` is not a union, so it evaluates back to `string` and every co-owned type still
+passes. Verified under `tsc --strict` on 2026-08-19: `const p: Exclude<string, "source_file"> =
+"source_file"` **compiles clean**. That shape reads as enforcement and enforces nothing.
+
+The generic form was verified the same way, and both halves of its behaviour matter:
+
+```text
+upsertFlat({ type: "pr" })           → compiles          (correct: not co-owned)
+upsertFlat({ type: "source_file" })  → TS2322 error      (correct: co-owned)
+const d: string = "source_file";
+upsertFlat({ type: d })              → compiles          (DEGRADES: no literal to narrow)
+```
+
+That third line is why **Task 4's static audit is still required and is not redundant**: the
+compiler protects literal call sites, the audit covers everything else. Neither alone is
+sufficient, and this plan ships both.
+
+Add two compile-assertion tests in the test file — one confirming a non-co-owned literal is
+accepted, one confirming a co-owned literal is rejected — using whatever `@ts-expect-error`
+convention the repo already uses for negative type tests. `@ts-expect-error` fails the build if
+the error it expects stops occurring, so the guard cannot silently rot into a no-op.
+
 - [ ] **Step 5: Confirm the existing graph suite is unaffected**
 
 Run: `bun test packages/gateway/src/graph/`
@@ -492,7 +530,13 @@ In `packages/gateway/src/index/migrations/runner.ts`, import `ENTITY_METADATA_V5
   simpleStep(53, 54, "graph_entity metadata namespacing", ENTITY_METADATA_V54_SQL),
 ```
 
-Read the surrounding `simpleStep` calls first — if the runner also maintains a `BACKFILL_LABELS` list or a schema-version constant, update it in the same commit. A migration registered without its companion bookkeeping is a half-landed migration.
+Read the surrounding `simpleStep` calls first — if the runner also maintains a `BACKFILL_LABELS` list, update it in the same commit.
+
+**One companion constant is confirmed and must change in this commit:**
+`packages/gateway/src/index/local-index.ts:265` holds `export const CURRENT_SCHEMA_VERSION = 53;`
+— set it to **54**. Verified present at that line on 2026-08-19. A migration step registered
+while the version constant still reads `53` is a half-landed migration: the step exists and
+nothing believes the schema moved.
 
 - [ ] **Step 6: Run the migration suite**
 
@@ -567,6 +611,13 @@ In `graph-populator.ts`, change co-owned `upsertGraphEntity` calls to `upsertGra
 
 Convert only the four co-owned types. Every other `upsertGraphEntity` call in that file stays flat (spec D2).
 
+**`ensureGraphEntity` is safe and must NOT be converted.** It is the sibling used for reference
+and stub nodes, and it upserts with `ON CONFLICT (type, external_id) DO NOTHING` — verified at
+`relationship-graph.ts:95-97`. It therefore writes metadata only when inserting a row that did
+not exist, and can never overwrite another writer's namespace. Converting it would be churn, and
+worse, would imply the flat/namespaced split tracks something other than "does this statement
+overwrite metadata". Leave it, and leave its callers alone.
+
 - [ ] **Step 5: Repoint the read**
 
 In `ownership-store.ts`, `parseCounts` currently `JSON.parse`s the raw column and reads `m["ownerCount"]` at the root. Route it through `readEntityMetadata(raw, "ownership")` and read the fields from the returned namespace, keeping its existing `absent` fallback for `null`. Do not change what it returns for a legacy or missing row — the `ownersAboveFloor`-gated logic and its comment stay as they are.
@@ -609,6 +660,26 @@ git commit -m "fix(ownership): stop the symbol sync wiping owner counts"
 Reject any file, other than `packages/gateway/src/graph/relationship-graph.ts` itself, that calls the flat `upsertGraphEntity` with `type:` set to a co-owned type.
 
 Write it as **what cannot pass**, not as what may: an allow-list of permitted callers is the shape that silently widens. State in a comment that the rule pins the flat function away from four types, and that a fifth co-owned type must be added here in the same commit it becomes co-owned.
+
+**Match across lines.** The call this must catch is normally formatted as
+
+```ts
+upsertGraphEntity(db, {
+  type: "source_file",
+```
+
+so a single-line regex would miss every real occurrence and pass vacuously — a guard that cannot
+fire is worse than none, because it is believed. Use a multi-line match (`[\s\S]` between the
+call and the `type:` literal, bounded so it cannot span into the next call), and **red-prove it
+against a multi-line call site specifically**, since that is the only shape that appears in the
+tree.
+
+**State the rule's limit in its comment rather than implying completeness.** Neither layer is
+total: the Step-4b compiler guard covers literal call sites and degrades on a `string`-typed
+variable; this audit covers literals in any file but cannot resolve a dynamic type through a
+variable either. Together they close every shape present in the tree today. A future call site
+computing its type at runtime would evade both, and the comment should say so — an honest guard
+records what it does not catch.
 
 - [ ] **Step 2: Red-prove the rule**
 
