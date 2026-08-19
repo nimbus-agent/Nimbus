@@ -16,11 +16,17 @@ function seedGraph(db: Database): void {
     "INSERT INTO graph_relation (from_id, to_id, type, weight, created_at) VALUES (?, ?, 'triggers', 1.0, ?)",
     ["graph:repo:acme/payment", "graph:ci_run:acme/payment#42", now],
   );
-  db.run(
-    "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) " +
-      "VALUES ('seed', 'github', 'pr', 'acme/payment#501', 't', '', ?, ?, 0)",
-    [now, now],
-  );
+  // The item's primary key IS the `pr` graph_entity's external_id — the invariant
+  // `graph-populator.ts`'s `syncPrGraph` writes; a fixture without a matching item row
+  // never occurs in production, and the index-based resolver has nothing to resolve without it.
+  db.query(
+    `INSERT INTO item (id, service, type, external_id, title, url, canonical_url,
+                       body_preview, metadata, resolve_key, modified_at, synced_at, pinned)
+     VALUES ('github:acme/payment#501', 'github', 'pr', 'acme/payment#501', 'mitigate retry bug',
+             'https://github.com/acme/payment/pull/501',
+             'https://github.com/acme/payment/pull/501', '',
+             '{"repo":"acme/payment"}', 'https://github.com/acme/payment/pull/501', ?, ?, 0)`,
+  ).run(now, now);
 }
 
 describe("nimbus impact (e2e, in-process)", () => {
