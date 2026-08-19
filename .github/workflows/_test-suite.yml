@@ -920,6 +920,12 @@ jobs:
     if: inputs.run-tests
     needs: unit-coverage
     runs-on: ${{ inputs.runner }}
+    # These two coverage-gate jobs were the only jobs in this file with no
+    # `timeout-minutes`, so they inherited GitHub's 360-minute default. On
+    # 2026-08-19 the Sandbox leg wedged in its apt step on two concurrent runs
+    # and would have burned six hours of runner time each; every sibling job
+    # here caps at 30, and the whole leg runs in 1-4 minutes.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -976,11 +982,7 @@ jobs:
       - name: Linux — bubblewrap + libcap-dev + strace + cppcheck (sandbox tests)
         if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
         shell: bash
-        run: |
-          # Drop the GHA runner's preinstalled Microsoft apt repos (azure-cli + prod);
-          # they periodically 403 and fail `apt-get update` wholesale. Not needed here.
-          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
-          sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap libcap-dev strace cppcheck
+        run: sudo bash scripts/linux/install-sandbox-deps.sh
 
       - name: Build sandbox helper (Linux only, sandbox gate)
         if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
@@ -1031,6 +1033,10 @@ jobs:
     if: inputs.run-tests && inputs.runner == 'ubuntu-24.04'
     needs: unit-coverage
     runs-on: ${{ inputs.runner }}
+    # 30, same as `coverage-gates-pal` and every sibling job in this file — see
+    # the note there. Batching makes each leg serial, so the headroom over the
+    # ~3-5 minutes three batches take is smaller here, but still 6x.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write

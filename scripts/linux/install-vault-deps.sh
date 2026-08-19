@@ -14,10 +14,17 @@
 # on CI runners, or run directly when already root (e.g. inside a Docker container).
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+# `a`utomatically restart affected services instead of opening needrestart's
+# interactive "which services should be restarted?" list. `DEBIAN_FRONTEND`
+# alone does not cover needrestart, which is a post-install hook, not a debconf
+# question — and a prompt on stdin blocks a runner forever. See the sibling
+# `install-sandbox-deps.sh`, written after the inline step it replaced wedged
+# for 2h20m with no output and no timeout.
+export NEEDRESTART_MODE=a
 
 # Drop the flaky/unneeded Microsoft repos so `apt-get update` only refreshes the
 # Ubuntu archive. `rm -f` is a no-op when the files are absent (non-GHA environments).
 rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
 
-apt-get update -qq
-apt-get install -y -qq libsecret-tools gnome-keyring dbus
+apt-get -o Acquire::Retries=3 update -qq < /dev/null
+apt-get -o Acquire::Retries=3 install -y -qq libsecret-tools gnome-keyring dbus < /dev/null
