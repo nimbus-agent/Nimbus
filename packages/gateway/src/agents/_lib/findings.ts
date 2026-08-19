@@ -34,6 +34,7 @@ export type {
   PreflightBrief,
   PreflightDownstream,
   WhyBrief,
+  WhyChangeSubject,
   WhyFinding,
   WhyLane,
   WhyPeek,
