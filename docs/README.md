@@ -28,6 +28,19 @@
 
 ---
 
+## Start here
+
+```bash
+nimbus init            # index the repo you're standing in — no account, no API key
+nimbus why src/auth.ts:42
+```
+
+Who wrote this line, which pull request carried it, which ticket asked for it, which incident it touched. Answered from a local index in under a second — with no LLM configured, no credentials, and nothing leaving your machine.
+
+That is the whole first run. Everything below is what becomes available once you connect the tools you already use.
+
+---
+
 Nimbus is an open-source, local-first AI agent built for engineers who run systems in production. A headless **Nimbus Gateway** runs on your machine, maintains a private SQLite index across your entire developer toolchain — source control, CI/CD, cloud infrastructure, monitoring, and incident management — and executes multi-step tasks on your behalf. Every write, send, or delete requires your explicit approval before it runs.
 
 **Your credentials never leave your machine. There is no Nimbus server.**
@@ -142,6 +155,8 @@ Nimbus is built for engineers and operators who run systems in production. If yo
 | **Analytics Engineer / Data Scientist** | Cross-stack lineage from dashboard to dbt model to warehouse table to orchestration DAG — one local query instead of five consoles; metadata-only ingestion keeps row data on the warehouse |
 
 This is not a tool for everyone. There is no managed cloud service, no Nimbus account, and no relay server. If that's what you need, look elsewhere.
+
+More detail on each role, including analytics and data roles: [Who Nimbus is for](./audiences.md).
 
 ---
 

@@ -9,6 +9,14 @@
 Private, local-first agent for on-call & platform engineers — grounded in your
 own index, with a verifiable record of what it did off your machine.
 
+## The one thing (lead with this)
+
+> `nimbus why src/auth.ts:42` — who wrote this line, which PR, which ticket, which incident. No LLM, no API key, no cloud account, no credentials. Answered from a local index in under a second.
+
+Every post, listing and landing page leads with this and nothing else. The connector count, the agents and the egress ledger are depth — they belong on the second screen, once someone has a reason to keep reading. The pillars below describe what makes people *stay*; this line is what makes them *start*.
+
+**Why this one:** it is the only capability that is simultaneously unique, free of every prerequisite, and provable in under a minute — and it is the only path verified end-to-end on a machine the author does not own.
+
 ## The three pillars
 
 - **Banner — the `why` lens** (*habit*): hover any line for who/PR/ticket/incident/blast-radius. Built on the gateway and reachable through the client; the in-editor hover is next (**not yet shipped — never advertise it as present**).
