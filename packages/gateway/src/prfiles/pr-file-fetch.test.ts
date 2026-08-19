@@ -9,6 +9,7 @@ import {
   applyFileCap,
   MAX_FILES_PER_PR,
   MAX_PAGES_PER_PR,
+  MAX_PRS_PER_TICK,
   runPrFilePass,
   selectPrFileCandidates,
 } from "./pr-file-fetch.ts";
@@ -101,11 +102,18 @@ describe("applyFileCap", () => {
   });
 });
 
+type WarnRecord = { readonly fields: Record<string, unknown>; readonly msg: string };
+
 /** Only the two fields the driver touches; cast keeps the fake honest about that. */
-function fakeCtx(db: Database, acquired: string[]): SyncContext {
+function fakeCtx(db: Database, acquired: string[], warns?: WarnRecord[]): SyncContext {
   return {
     db,
-    logger: { warn: () => undefined, info: () => undefined } as unknown as SyncContext["logger"],
+    logger: {
+      warn: (fields: Record<string, unknown>, msg: string) => {
+        warns?.push({ fields, msg });
+      },
+      info: () => undefined,
+    } as unknown as SyncContext["logger"],
     rateLimiter: {
       tryAcquire: async (s: string) => {
         acquired.push(s);
@@ -330,6 +338,70 @@ describe("runPrFilePass", () => {
     expect(fetchPageCalls).toBe(0);
     const c = db.query("SELECT COUNT(*) AS c FROM pr_files_state").get() as { c: number };
     expect(c.c).toBe(0);
+    db.close();
+  });
+
+  // Head-of-line regression. `selectPrFileCandidates` is strictly `modified_at DESC` and a failed
+  // candidate is deliberately left with no coverage row, so without an attempt budget the ten
+  // newest PRs — say, all in a repo that was deleted — would refill the whole budget every tick
+  // and coverage would sit at zero forever. With it, the healthy older PR is still reached.
+  test("a broken head does not starve older healthy PRs in the same tick", async () => {
+    const db = makeDb();
+    // Newest MAX_PRS_PER_TICK all fail; one older healthy PR sits behind them.
+    for (let i = 0; i < MAX_PRS_PER_TICK; i++) {
+      addPr(db, `broken${String(i)}`, `o/r#${String(100 + i)}`, 1000 + i);
+    }
+    addPr(db, "healthy", "o/r#1", 1);
+
+    const n = await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async (c) =>
+        c.itemId === "healthy" ? { rows: [row("src/a.ts")], hasMore: false } : null,
+    });
+
+    expect(n).toBe(1);
+    const ids = (
+      db.query("SELECT item_id FROM pr_files_state").all() as Array<{ item_id: string }>
+    ).map((r) => r.item_id);
+    expect(ids).toEqual(["healthy"]);
+    db.close();
+  });
+
+  // The other half of the budget: the extra candidates are an ATTEMPT allowance, not a raised
+  // record cap. A tick where everything succeeds must still stop at MAX_PRS_PER_TICK.
+  test("a healthy tick still records at most MAX_PRS_PER_TICK and attempts no more", async () => {
+    const db = makeDb();
+    for (let i = 0; i < MAX_PRS_PER_TICK + 5; i++) {
+      addPr(db, `p${String(i)}`, `o/r#${String(i)}`, 1000 + i);
+    }
+    let attempts = 0;
+    const n = await runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => {
+        attempts += 1;
+        return { rows: [row("src/a.ts")], hasMore: false };
+      },
+    });
+    expect(n).toBe(MAX_PRS_PER_TICK);
+    expect(attempts).toBe(MAX_PRS_PER_TICK);
+    db.close();
+  });
+
+  // FIX 4: the null-page path is the one a 404 on a deleted/private repo takes, and it is the
+  // failure that repeats forever. It must be visible in the log, naming the service and the PR.
+  test("a null page result is logged with the service and item id", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 100);
+    const warns: WarnRecord[] = [];
+    await runPrFilePass(fakeCtx(db, [], warns), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => null,
+    });
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.fields).toMatchObject({ service: "github", itemId: "p1" });
     db.close();
   });
 });

@@ -9,6 +9,29 @@ import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
 export const MAX_PRS_PER_TICK = 10;
 
 /**
+ * How many candidates a tick may ATTEMPT, against `MAX_PRS_PER_TICK` it may RECORD.
+ *
+ * Without a gap between the two, a persistently failing head pins coverage at zero forever. A
+ * failed candidate deliberately gets NO coverage row — a row asserts "we know this PR's files", so
+ * writing one on failure would break the fail-closed property the whole table exists for — and
+ * `selectPrFileCandidates` is strictly `modified_at DESC`. So ten newest PRs in repos that were
+ * deleted or made private 404 forever, fill the entire budget every tick, and no older healthy PR
+ * is ever reached: `PR file coverage: 0 / N` never moves on any account quiet enough that ten
+ * newer PRs do not arrive.
+ *
+ * The trade this makes: a tick can spend up to
+ * `MAX_PRS_PER_TICK * (PR_ATTEMPT_BUDGET_MULTIPLIER - 1)` candidate attempts that record nothing,
+ * every tick, for as long as the head stays broken (each attempt costs one request, or up to
+ * `MAX_PAGES_PER_PR` if it fails partway through pagination). That is a bounded per-tick cost, and
+ * it buys coverage that GROWS instead of stalling at zero.
+ *
+ * The alternative — persisting a failure marker so a known-bad PR is skipped — was rejected: it is
+ * a schema change, and any row in `pr_files_state` asserts coverage, so the marker would have to
+ * live somewhere new rather than reuse that table.
+ */
+export const PR_ATTEMPT_BUDGET_MULTIPLIER = 3;
+
+/**
  * Largest page each forge allows, so the cap is reached in the fewest requests. GitHub's files
  * endpoint defaults to 30, so the default would cost 3.3x the calls for any PR over 30 files.
  */
@@ -119,7 +142,9 @@ function dedupeFileRowsByPath(rows: readonly ChangedFileRow[]): ChangedFileRow[]
 }
 
 /**
- * Drain up to `MAX_PRS_PER_TICK` candidates for one service. Returns how many were recorded.
+ * Drain candidates for one service until `MAX_PRS_PER_TICK` are RECORDED or the attempt budget
+ * (`MAX_PRS_PER_TICK * PR_ATTEMPT_BUDGET_MULTIPLIER` selected candidates) runs out. Returns how
+ * many were recorded.
  *
  * Each candidate is fetched and written INDEPENDENTLY, and this loop deliberately holds no
  * transaction of its own: `recordPrChangedFiles` scopes one per PR, so a candidate that throws
@@ -142,9 +167,19 @@ export async function runPrFilePass(
     readonly nowMs: number;
   },
 ): Promise<number> {
-  const candidates = selectPrFileCandidates(ctx.db, args.service, MAX_PRS_PER_TICK);
+  const candidates = selectPrFileCandidates(
+    ctx.db,
+    args.service,
+    MAX_PRS_PER_TICK * PR_ATTEMPT_BUDGET_MULTIPLIER,
+  );
   let recorded = 0;
   for (const c of candidates) {
+    // The record budget, not the attempt budget: the extra candidates exist only so a failing
+    // head cannot consume the whole tick (see `PR_ATTEMPT_BUDGET_MULTIPLIER`). A tick whose
+    // candidates all succeed still writes exactly `MAX_PRS_PER_TICK` rows and stops here.
+    if (recorded >= MAX_PRS_PER_TICK) {
+      break;
+    }
     const collected: ChangedFileRow[] = [];
     let pagesExhausted = false;
     let failed = false;
@@ -166,6 +201,16 @@ export async function runPrFilePass(
         }
         const res = await args.fetchPage(c, page);
         if (res === null) {
+          // Warn on the SILENT failure path too, not just on the throw path below. `null` is what
+          // every forge closure returns for a non-ok response (a 404 on a deleted or now-private
+          // repo, most of all) and for an unparseable body — precisely the failures that repeat
+          // forever on the same PRs. Unlogged, the head-of-line stall that
+          // `PR_ATTEMPT_BUDGET_MULTIPLIER` bounds would be invisible: coverage would sit still
+          // with nothing in the log to say why.
+          ctx.logger.warn(
+            { service: args.service, itemId: c.itemId, page },
+            "PR changed-file page unavailable (non-fatal, PR left uncovered, will retry next tick)",
+          );
           failed = true;
           break;
         }

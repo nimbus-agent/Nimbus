@@ -43,10 +43,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `ON DELETE SET NULL` behaviour all exist, but nothing writes it yet — the spec assigns that to
   the ownership pass, deliberately deferred because nothing in this delivery reads it (negation
   matches on `path` alone). A `NULL` here means "not yet linked," never "no local file exists."
-  **Coverage grows over many sync ticks — it is not complete after one sync.** The pass drains at
+  **Coverage grows over many sync ticks — it is not complete after one sync.** The pass records at
   most 10 PRs per tick per service, so a freshly-connected large repo will show a low
   `covered / totalPrs` ratio for a while; that is the bounded design working as intended, not a
-  fault. — S1 "Local Brain", the W6-B negation-query prerequisite.
+  fault. It ATTEMPTS up to `MAX_PRS_PER_TICK * PR_ATTEMPT_BUDGET_MULTIPLIER` (30) candidates to
+  record those 10: a failed PR is deliberately left with no coverage row, and selection is strictly
+  newest-first, so without that gap a handful of permanently-404ing PRs at the head — a repo
+  deleted or made private — would refill the whole budget every tick and pin coverage at zero. The
+  cost is a bounded number of wasted requests per tick while a head stays broken. — S1 "Local
+  Brain", the W6-B negation-query prerequisite.
 
 - **2026-08-19 — Graph-entity metadata namespacing (schema V54): fixes a live bug where
   `nimbus owners` silently alternated between its real output and an "owner breakdown not
