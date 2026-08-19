@@ -338,6 +338,11 @@ export function resolvePrSubject(db: Database, url: string): PrResolveHit | PrRe
     return { ok: false, reason: "not_a_pr" };
   }
 
+  // `graph_entity` declares UNIQUE(type, external_id) (`graph-v7-sql.ts:9`), so
+  // this can match at most one row: the LIMIT 1 is belt-and-braces, not a
+  // tiebreak between candidates. The join is safe on casing for the same reason
+  // the design rests on — `syncPrGraph` writes `externalId: row.id`, so both
+  // sides of `i.id = e.external_id` are the same string from the same write.
   const row = db
     .query(
       `SELECT e.id                                  AS entity_id,
@@ -962,17 +967,33 @@ Expected: PASS, pre-existing render tests included.
 In `packages/cli/src/commands/why.ts`, send `{ prUrl }` when the positional argument parses as an `http`/`https` URL, and `{ ref }` otherwise:
 
 ```ts
-function whyParamsFor(ref: string, line: number | undefined): Record<string, unknown> {
-  let parsed: URL | null = null;
+/**
+ * Two call sites need this: choosing the params arm, and refusing `--peek` on a
+ * URL. The `catch` returns rather than being empty — `resolve-by-url.ts:133` is
+ * the repo's idiom, and an empty block is a lint risk for no gain.
+ */
+function isHttpUrl(value: string): boolean {
   try {
-    parsed = new URL(ref);
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
-    parsed = null;
+    return false;
   }
-  if (parsed !== null && (parsed.protocol === "http:" || parsed.protocol === "https:")) {
+}
+
+function whyParamsFor(ref: string, line: number | undefined): Record<string, unknown> {
+  if (isHttpUrl(ref)) {
     return { prUrl: ref };
   }
   return line === undefined ? { ref } : { ref, line };
+}
+```
+
+The `--peek` guard uses the same predicate, so the two cannot disagree about what a URL is:
+
+```ts
+if (args.peek && isHttpUrl(args.ref)) {
+  throw new Error("--peek takes a path or symbol, not a pull request URL");
 }
 ```
 
@@ -1021,3 +1042,5 @@ and rejects prUrl, so combining them fails locally rather than round-tripping."
 **Type consistency.** `WhyChangeSubject`'s seven members are spelled identically in Task 1's resolver, Task 4's `pr` mapping and Task 5's render fixture. `PrForSha` (`why.ts:171`) has five members — `entityId`, `number`, `title`, `url`, `modifiedAt` — and Task 4's mapping supplies exactly those. `resolvePrSubject` returns `PrResolveHit | PrResolveMiss` in Task 1 and is consumed as `.ok`-discriminated in Tasks 2 and 4.
 
 **Deliberately not here.** The `agents.why` HTTP allow-list (already open), `whyPeek`'s exclusion (unchanged), abort/cancellation (no upstream primitive), and the browser lane (the clipper's own slice, after this ships).
+
+**Review response (2026-08-19).** The plan review asked for a tidier URL check in Task 5: taken, but as a named `isHttpUrl` predicate with a returning `catch` rather than the suggested empty `catch {}` — the repo's own idiom returns from the catch, and the predicate has two call sites (the params arm and the `--peek` refusal), so extracting it is not gold-plating. It also asked whether an item can have several `pr` graph entities: it cannot, and the answer is now a comment in Task 1 — `graph_entity` declares `UNIQUE(type, external_id)`. The two remaining points (join casing, and `#0` rendering when `number` is `0`) were verified correct by the review and need no change; `=== null` is deliberately not a truthiness check, so a `0` would render rather than silently vanish.
