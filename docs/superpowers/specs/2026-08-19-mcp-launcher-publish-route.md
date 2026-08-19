@@ -1,7 +1,9 @@
 # Deciding the `@nimbus-dev/mcp` publish route
 
-**Status: decided.** This document records the decision; it does not implement it. Implementing
-the chosen branch is a follow-up plan, because the two branches share almost no steps.
+**Status: recommendation, awaiting the repository owner's decision.** This document costs both
+branches and ends at a recommendation; it does not decide for the owner and does not implement
+either branch. Implementing the chosen branch is a follow-up plan, because the two branches share
+almost no steps.
 
 ## Why this decision exists
 
@@ -81,9 +83,14 @@ a third package, publishing `packages/mcp-launcher` in place.
 - The launcher stays beside the gateway code it launches — `packages/mcp-launcher/src/index.ts` /
   `resolve-binary.ts` / `exit-status.ts` are the entire source surface, and they already ship as a
   workspace member (see Step 1 of the wiring check below).
-- Versioning stays under release-please, the same mechanism that drives `GATEWAY_VERSION` and the
-  root `CLAUDE.md`/`GEMINI.md` version line — no separate release cadence to keep in sync with the
-  gateway it launches.
+- The launcher stays close enough to the gateway to make future refactors touching both easier, at
+  the cost of a real gap: `.release-please-manifest.json` contains only a `"."` entry, and
+  `release-please-config.json`'s `node-workspace` plugin syncs versions across workspace packages
+  it is *told* to release — it does not, on its own, make an unlisted package a release-please
+  component. `packages/mcp-launcher/package.json` sits at `0.1.0` today with no component entry, so
+  Branch A would require explicit release-please configuration for this package (an added entry in
+  both files) before its version tracked anything at all. As things stand, the launcher's version
+  is not aligned with `GATEWAY_VERSION` and does not move when the gateway releases.
 
 **Risk:**
 

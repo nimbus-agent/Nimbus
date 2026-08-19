@@ -81,10 +81,15 @@ not something to write into a plan without naming one that exists.
   blocked on a prompt is expensive.
 - **The verified result is now recorded in the step:** there is no npm
   authentication on this machine at all. That is a genuine input to Task 7's
-  decision rather than a curiosity — it means publishing will happen from CI
-  under OIDC regardless of which branch is chosen, which is consistent with
-  `NPM_TOKEN` being `forbidden` and argues for the branch whose CI publish path
-  already exists.
+  decision rather than a curiosity — it is consistent with `NPM_TOKEN` being
+  `forbidden` and confirms publishing cannot happen from a developer machine
+  either way. It is not, however, evidence that a CI publish path already
+  exists for this package: the monorepo has zero `npm publish` steps today, so
+  whichever branch is chosen, publishing requires either standing up OIDC
+  trusted publishing with a new CI workflow in this repo, or moving the
+  package to a satellite repo that already has one (the pattern `sdk` and
+  `client` use). Nothing here should be read as implying an existing path will
+  carry the launcher.
 
 The step now presents `E401` as the expected result, so an executor does not
 mistake it for a blocker and stop.

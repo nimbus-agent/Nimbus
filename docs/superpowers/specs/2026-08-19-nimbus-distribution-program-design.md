@@ -171,16 +171,24 @@ repository. Actions:
 - Reference `create-nimbus-connector` from `docs/README.md` and
   `docs/CONTRIBUTING.md`, and state which of the two generators a contributor
   should reach for.
-- **Close the registration-drift gap.** `scripts/gen-bundled-connector-registry.ts`
-  scans `packages/mcp-connectors/` and writes a *committed* file, and nothing
-  regenerates-and-diffs it in CI. A connector added without rerunning
-  `gen:connector-registry` leaves a stale registry that no gate catches —
-  `test:connector-boot` cannot see it, because it boots the connectors the
-  registry ships, and this one is missing from it. Add a regenerate-and-diff
-  script beside the existing `audit:connector-entrypoints` and
-  `audit:connector-deps`, registered in `scripts/lib/preflight-gates.ts`.
-  **Not** in `check-nimbus-invariants.ts`: that file is the static complement
-  to the numbered *security* invariants, and registration drift is not one.
+- **Registration-drift gap — closed.** `scripts/gen-bundled-connector-registry.ts`
+  scans `packages/mcp-connectors/` and writes a *committed* file, which previously
+  had nothing regenerating-and-diffing it in CI: a connector added without
+  rerunning `gen:connector-registry` left a stale registry that no gate caught —
+  `test:connector-boot` could not see it, because it boots the connectors the
+  registry ships, and the missing one was never among them. `bun run
+  audit:connector-registry-drift`
+  (`scripts/structure-audit/check-connector-registry-drift.ts`) now exists,
+  runs regenerate-and-diff, sits beside `audit:connector-entrypoints` and
+  `audit:connector-deps`, and is registered in `scripts/lib/preflight-gates.ts`.
+  It also degrades to a distinct `indeterminate` outcome (rather than a false
+  flood of per-connector findings) when the committed registry file exists but
+  fails to parse — e.g. after a change to the generator's emitted import
+  format — so a format change reports as unreadable input, not as every
+  connector on disk suddenly missing. Intentionally **not** in
+  `check-nimbus-invariants.ts`: that file is the static complement to the
+  numbered *security* invariants, and registration drift is not one.
+  **Remaining follow-up:** none — the gap this bullet named is closed.
 
 ### Rung 2 — Docs and DX
 
@@ -266,11 +274,17 @@ Three additions to that spec:
    decision: configure npm trusted publishing (OIDC) for a third package and add
    a publish path here, **or** move `packages/mcp-launcher` into its own
    satellite repo, matching the pattern that already works.
-   **Related documentation defect:** `CLAUDE.md` and `GEMINI.md` both describe
-   `packages/mcp-launcher` as "the published `@nimbus-dev/mcp` npm launcher".
-   It is not published. Either publish it or correct both files — an
-   unpublished package described as published is the same honesty class the
-   launch guardrails exist to prevent.
+   **Related documentation defect — corrected.** `CLAUDE.md` and `GEMINI.md`
+   used to describe `packages/mcp-launcher` as "the published `@nimbus-dev/mcp`
+   npm launcher" while it was not published — an unpublished package described
+   as published is the same honesty class the launch guardrails exist to
+   prevent. Both files now read "Not yet published to npm," matching the
+   verified state. **Remaining follow-up:** the publish route itself is still
+   undecided — costed in
+   [`2026-08-19-mcp-launcher-publish-route.md`](./2026-08-19-mcp-launcher-publish-route.md),
+   which recommends Branch B (satellite repo) but leaves the choice to the
+   repository owner. The package stays unpublished, and both files' wording
+   stays accurate, until that decision is made and implemented.
 2. **List the first-party GitHub Actions.** `packages/github-actions/`
    (`annotate-action`, `preflight-query`) is built and unlisted on the Actions
    Marketplace.

@@ -427,7 +427,7 @@ Rewrite the opening of "Adding a New MCP Connector" in `docs/CONTRIBUTING.md` to
 
 Two generators exist. Use the one that matches how you are working:
 
-- **Inside this repo** (you have Nimbus checked out and built): `nimbus scaffold extension --name your-service --output packages/mcp-connectors/your-service`
+- **Inside this repo** (you have Nimbus checked out and built): `nimbus scaffold extension packages/mcp-connectors/your-service` — the id is a positional argument, not `--name`/`--output` flags, and it doubles as both the output directory and the `id` field written into the generated manifest.
 - **Standalone** (you want a connector outside the monorepo): [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector)
 
 After scaffolding, these steps are **not** automatic and the gates will reject the PR without them:
@@ -440,7 +440,7 @@ After scaffolding, these steps are **not** automatic and the gates will reject t
 In `docs/README.md`'s Contributing section, add:
 
 ```markdown
-**Adding a connector is the easiest way in.** `nimbus scaffold extension --name your-service` generates the package, or use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) standalone. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
+**Adding a connector is the easiest way in.** `nimbus scaffold extension packages/mcp-connectors/your-service` generates the package, or use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) standalone. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
 ```
 
 - [ ] **Step 6: Verify the docs gates**
