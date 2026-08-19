@@ -31,8 +31,9 @@ function clipUrl(url: string): string {
 
 /**
  * Builds the set of sources the model is allowed to cite. Tokens are opaque and
- * server-issued (S1.. for fed sources, C1.. for indexed clips): the model never
- * authors a URL or a title, so it cannot invent a source that resolves.
+ * server-issued (S1.. for fed sources, C1.. for items from the user's index, of any
+ * type): the model never authors a URL or a title, so it cannot invent a source that
+ * resolves.
  */
 export async function buildRegistry(
   run: BriefRun,
