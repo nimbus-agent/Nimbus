@@ -918,6 +918,11 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
       .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
       .get();
     expect(covered?.c).toBe(0);
+
+    // The penalty is the half a caller would not notice was missing: the throw alone ends THIS
+    // tick, but without `penalise` the next tick would walk straight back into the same 429.
+    // `tryAcquire` reports `false` while a provider is inside its penalty window.
+    expect(await fixture.rateLimiter.tryAcquire("gitlab")).toBe(false);
   });
 
   test("an unparseable MR diffs body leaves the MR uncovered and does not fail the sync", async () => {
