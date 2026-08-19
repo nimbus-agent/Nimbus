@@ -134,6 +134,12 @@ jobs:
       - name: Connector dependency allowlist (pure JS only — the binary bundles them)
         run: bun run audit:connector-deps
 
+      - name: Connector registry drift (generated file vs. tree)
+        # The bundled registry is generated into a committed file. Nothing else diffs it, and
+        # test:connector-boot cannot: it boots what the registry ships, so a connector missing
+        # FROM the registry is invisible to it.
+        run: bun run audit:connector-registry-drift
+
       - name: import.meta path confinement (compiled-binary asset resolution)
         # A source-tree-relative path derived from import.meta.dir resolves inside the read-only
         # bunfs root in a compiled binary. Two such sites made the admin console and the OpenAPI

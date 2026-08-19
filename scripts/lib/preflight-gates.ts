@@ -48,6 +48,14 @@ const FAST: readonly Gate[] = [
     tier: "fast",
   },
   {
+    // The bundled registry is GENERATED into a committed file and nothing else diffs it.
+    // `test:connector-boot` cannot catch a connector missing FROM the registry — it boots what the
+    // registry ships. A stale registry means a connector the shipped binary can never start.
+    name: "audit:connector-registry-drift",
+    cmd: ["bun", "run", "audit:connector-registry-drift"],
+    tier: "fast",
+  },
+  {
     // A source-tree-relative path derived from `import.meta.dir` resolves inside the read-only
     // bunfs root in a compiled binary, so it silently points at nothing. Two such sites made the
     // admin console and the OpenAPI route unreachable in every released binary.
