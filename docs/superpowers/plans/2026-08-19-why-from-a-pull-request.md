@@ -445,7 +445,10 @@ test("a GitLab merge request URL resolves to its pr entity", async () => {
              'https://gitlab.com/acme/web/-/merge_requests/482', '',
              '{"repo":"acme/web","number":482}', 1700000000000, 1700000000000)`,
   ).run(itemId);
-  upsertGraphEntity(db, {
+  // Capture the return: `upsertGraphEntity` gives back the id it inserted, and that
+  // id is deterministic — `deterministicGraphEntityId` is sha256 over type+externalId
+  // (`relationship-graph.ts:32-34`), not a random UUID.
+  const entityId = upsertGraphEntity(db, {
     type: "pr",
     externalId: itemId,
     label: "acme/web#482",
@@ -458,7 +461,10 @@ test("a GitLab merge request URL resolves to its pr entity", async () => {
     { db, notify: () => {}, sessionId: "impact-gitlab-1" },
   );
 
-  expect(brief.startEntityId).not.toBeNull();
+  // NOT `not.toBeNull()`. A non-null id is what the BUG produces too: a GitLab URL
+  // under the old code fell through to a LIKE scan over item titles and returned
+  // something. Only an exact match distinguishes the fix from what it replaces.
+  expect(brief.startEntityId).toBe(entityId);
 });
 ```
 
