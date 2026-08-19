@@ -57,7 +57,7 @@ function headingOf(line: string): { level: number; text: string } | undefined {
     // Hashes then whitespace and nothing else. The regex still matched here, by handing its
     // last whitespace character to `(.+)` — which needs that character to be one `.` can
     // match, and needs one more left over for `\s+`. The text normalizes to `""`.
-    const last = line[line.length - 1] ?? "";
+    const last = line.at(-1) ?? "";
     return cut - level >= 2 && !LINE_TERMINATOR_RE.test(last) ? { level, text: "" } : undefined;
   }
 
