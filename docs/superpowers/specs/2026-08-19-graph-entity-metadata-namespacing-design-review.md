@@ -3,6 +3,14 @@
 **Date:** 2026-08-19
 **Reviewer:** AI Coding Assistant (Antigravity)
 
+> **Editor's note (2026-08-19, after implementation).** This is a received review, kept as it was
+> written; it is a record of what was recommended, not a description of the shipped tree. Two of
+> its four-type lists (§ 1.1, § 1.2 recommendation 2) are stale: the shipped co-owned set is SIX
+> types — `source_file`, `directory`, `person`, `service`, `workspace`, `repo` — and
+> `graph-populator.ts` never writes `directory` at all, so it converted no `directory` site. The
+> design spec's § 3 is authoritative for the set and its per-type rationale; `CO_OWNED_ENTITY_TYPES`
+> in `packages/gateway/src/graph/relationship-graph.ts` is authoritative for the code.
+
 ---
 
 ## 1. Critical Safety Concerns & Improvements

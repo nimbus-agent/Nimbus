@@ -29,7 +29,7 @@ Examples:
 
 The SQL constant is exported from the file and consumed by the migration step function in `runner.ts`.
 
-**Version numbers are strictly sequential — never reuse or skip a number.** Latest applied migration: **V54** (namespaces `graph_entity.metadata` per writer for the four co-owned entity types — no new table; V53 added the pre-mortem theme extraction tables; V51 added the ownership graph and V52 the derived `item.resolve_key` — see [`docs/schema-reference.md`](../../docs/schema-reference.md) for the authoritative dated list).
+**Version numbers are strictly sequential — never reuse or skip a number.** Latest applied migration: **V54** (namespaces `graph_entity.metadata` per writer for the six co-owned entity types — no new table; V53 added the pre-mortem theme extraction tables; V51 added the ownership graph and V52 the derived `item.resolve_key` — see [`docs/schema-reference.md`](../../docs/schema-reference.md) for the authoritative dated list).
 
 ## Migration Runner Contract
 

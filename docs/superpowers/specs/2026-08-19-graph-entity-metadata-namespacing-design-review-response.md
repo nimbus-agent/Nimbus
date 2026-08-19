@@ -6,6 +6,13 @@ Every item checked against the tree on 2026-08-19 before being accepted or decli
 **Outcome:** 4 accepted, 1 rejected. The headline finding is correct and important; the mechanism
 it proposed does not work, and I verified that rather than adopting it.
 
+> **Editor's note (2026-08-19, after implementation).** Kept as written — this is a record of one
+> exchange, not a description of the shipped tree, and two of its statements have since been
+> superseded. The co-owned set is SIX types, not four (`workspace` and `repo` were added later),
+> and `metadata: {}` is **not** a `json_patch` no-op: it clears the acting writer's own namespace
+> to `{}` while leaving siblings untouched, which is the property the conversion depends on. The
+> design spec's § 3 and § 5.1 are authoritative.
+
 | # | Item | Outcome | Spec change |
 | --- | --- | --- | --- |
 | 1.1a | Flat `upsertGraphEntity` defeats namespacing | **Accepted — the central gap** | § 5.1 |
