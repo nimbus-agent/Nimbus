@@ -5,6 +5,7 @@ import { dbExec, dbRun } from "../db/write.ts";
 import {
   ensureGraphEntity,
   upsertGraphEntity,
+  upsertGraphEntityNamespaced,
   upsertGraphRelation,
 } from "../graph/relationship-graph.ts";
 import { aggregateBlameForRoot, type FileAuthorWeight } from "./blame-aggregate.ts";
@@ -417,11 +418,17 @@ function bindRootRemote(
 
   const boundServiceId = urnToService.get(`${remote.service}:${remote.ownerName}`);
   if (boundServiceId !== undefined) {
-    const svcId = upsertGraphEntity(db, {
+    // No owner-count facts to record here — those land later in `emitServiceRollup`,
+    // within the same pass, for every service this write can possibly touch (see that
+    // function's doc comment). `metadata: {}` clears our own "ownership" namespace to
+    // `{}` and leaves siblings untouched; it does not survive as the final state.
+    const svcId = upsertGraphEntityNamespaced(db, {
       type: "service",
       externalId: `service:${boundServiceId}`,
       label: boundServiceId,
       service: "nimbus",
+      writer: "ownership",
+      metadata: {},
     });
     upsertGraphRelation(db, repoId, svcId, "belongs_to", nowMs);
     servicesSeen.add(boundServiceId);
@@ -450,11 +457,15 @@ function emitOwnersFor(
 ): number {
   const ranked = rankOwners(weights, ctx.cfg.minShare, ctx.cfg.maxOwnersPerPath);
   for (const e of ranked.emitted) {
-    const personId = upsertGraphEntity(db, {
+    // No owner-count facts recorded on the person entity itself — a person's share is
+    // carried on the `owns` edge weight below, not on the node.
+    const personId = upsertGraphEntityNamespaced(db, {
       type: "person",
       externalId: e.externalId,
       label: ctx.ownerLabels.get(e.externalId) ?? e.externalId,
       service: "filesystem",
+      writer: "ownership",
+      metadata: {},
     });
     upsertGraphRelation(db, personId, targetEntityId, "owns", ctx.nowMs, e.share);
   }
@@ -476,16 +487,16 @@ function emitFileOwnership(
     // an upsert overwrites `service` unconditionally — so if the two writers
     // disagreed on this value they would churn it back and forth forever.
     //
-    // The consequence is that a code-symbol sync, which passes no metadata,
-    // transiently NULLs the ownership metadata below. That is self-healing:
-    // the next debounced pass restores it, and it is cosmetic — unlike the
-    // scoping it would break, which is why file scope comes from `contains`
-    // edges rather than from this column.
-    const fileId = upsertGraphEntity(db, {
+    // Owner-count metadata itself no longer collides with a code-symbol sync:
+    // both writers go through `upsertGraphEntityNamespaced`, which merges into
+    // its own namespace (`"ownership"` here, `"symbols"` there) and leaves the
+    // other writer's namespace untouched.
+    const fileId = upsertGraphEntityNamespaced(db, {
       type: "source_file",
       externalId: fileExternalId(ctx.root, path),
       label: path,
       service: "filesystem",
+      writer: "ownership",
       metadata: ownerCountsMetadata(ranked),
     });
     emitted += emitOwnersFor(db, fileId, weights, ctx);
@@ -517,11 +528,12 @@ function emitDirectoryOwnership(
   let emitted = 0;
   for (const [dir, weights] of dirWeights) {
     const ranked = rankOwners(weights, ctx.cfg.minShare, ctx.cfg.maxOwnersPerPath);
-    const dirId = upsertGraphEntity(db, {
+    const dirId = upsertGraphEntityNamespaced(db, {
       type: "directory",
       externalId: dirExternalId(ctx.root, dir),
       label: dir === "" ? ctx.root : dir,
       service: ctx.rootMarker,
+      writer: "ownership",
       metadata: ownerCountsMetadata(ranked),
     });
     emitted += emitOwnersFor(db, dirId, weights, ctx);
@@ -696,19 +708,22 @@ function emitServiceRollup(
     // workspace -> repo -> service bridge exists to serve, unable to report its own
     // truncation.
     const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-    const svcId = upsertGraphEntity(db, {
+    const svcId = upsertGraphEntityNamespaced(db, {
       type: "service",
       externalId: `service:${serviceId}`,
       label: serviceId,
       service: "nimbus",
+      writer: "ownership",
       metadata: ownerCountsMetadata(ranked),
     });
     for (const e of ranked.emitted) {
-      const personId = upsertGraphEntity(db, {
+      const personId = upsertGraphEntityNamespaced(db, {
         type: "person",
         externalId: e.externalId,
         label: totals.ownerLabelsAcrossRoots.get(e.externalId) ?? e.externalId,
         service: "filesystem",
+        writer: "ownership",
+        metadata: {},
       });
       upsertGraphRelation(db, personId, svcId, "owns", nowMs, e.share);
       emitted += 1;

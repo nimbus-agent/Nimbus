@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_NIMBUS_OWNERSHIP_TOML } from "../config/nimbus-toml.ts";
-import { upsertGraphEntity } from "../graph/relationship-graph.ts";
+import { readEntityMetadata, upsertGraphEntityNamespaced } from "../graph/relationship-graph.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { directoryAncestors, rankOwners, runOwnershipPass } from "./ownership-pass.ts";
@@ -233,10 +233,13 @@ describe("runOwnershipPass", () => {
     );
     const row = d
       .query("SELECT metadata FROM graph_entity WHERE type = 'source_file' LIMIT 1")
-      .get() as { metadata: string };
-    const meta = JSON.parse(row.metadata) as { ownerCount: number; truncated: boolean };
-    expect(meta.ownerCount).toBe(12);
-    expect(meta.truncated).toBe(true);
+      .get() as { metadata: string | null };
+    const meta = readEntityMetadata(row.metadata, "ownership") as {
+      ownerCount: number;
+      truncated: boolean;
+    } | null;
+    expect(meta?.ownerCount).toBe(12);
+    expect(meta?.truncated).toBe(true);
   });
 
   // Distinguishes the two possible `truncated` formulas: floor-excluded owners
@@ -268,15 +271,15 @@ describe("runOwnershipPass", () => {
     );
     const row = d
       .query("SELECT metadata FROM graph_entity WHERE type = 'source_file' LIMIT 1")
-      .get() as { metadata: string };
-    const meta = JSON.parse(row.metadata) as {
+      .get() as { metadata: string | null };
+    const meta = readEntityMetadata(row.metadata, "ownership") as {
       ownerCount: number;
       ownersAboveFloor: number;
       truncated: boolean;
-    };
-    expect(meta.ownerCount).toBe(23);
-    expect(meta.ownersAboveFloor).toBe(3);
-    expect(meta.truncated).toBe(false);
+    } | null;
+    expect(meta?.ownerCount).toBe(23);
+    expect(meta?.ownersAboveFloor).toBe(3);
+    expect(meta?.truncated).toBe(false);
   });
 
   test("is idempotent — running twice yields the same edge count", async () => {
@@ -638,21 +641,23 @@ describe("runOwnershipPass", () => {
   });
 
   // `syncCodeSymbolGraph` builds the BYTE-IDENTICAL `file:<root>:<path>` external
-  // id, and `upsertGraphEntity` overwrites `service` unconditionally — so it
-  // silently takes over the row. If file scope were read from that column, the
-  // takeover would put the file out of scope and strand its `owns` edge with no
-  // blame behind it. File scope therefore comes from our own `contains` edges.
+  // id, and overwrites `service` unconditionally — so it silently takes over the
+  // row. If file scope were read from that column, the takeover would put the
+  // file out of scope and strand its `owns` edge with no blame behind it. File
+  // scope therefore comes from our own `contains` edges.
   test("a code-symbol sync taking over the source_file row does not strand an owns edge", async () => {
     seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
     await runOwnershipPass(d, baseOpts());
 
-    // Exactly what `graph/graph-populator.ts` writes: same id, "filesystem", no
-    // metadata.
-    upsertGraphEntity(d, {
+    // Exactly what `graph/graph-populator.ts`'s `syncCodeSymbolGraph` writes: same
+    // id, "filesystem", its own ("symbols") namespace cleared to `{}`.
+    upsertGraphEntityNamespaced(d, {
       type: "source_file",
       externalId: `file:${ROOT}:src/a.ts`,
       label: "src/a.ts",
       service: "filesystem",
+      writer: "symbols",
+      metadata: {},
     });
 
     d.run("DELETE FROM git_blame_line WHERE file_path = 'src/a.ts'");
@@ -681,8 +686,10 @@ describe("runOwnershipPass", () => {
       .query("SELECT metadata FROM graph_entity WHERE type = 'directory' AND external_id = ?")
       .get(`dir:${ROOT}:`) as { metadata: string | null } | null;
     expect(row?.metadata).not.toBeNull();
-    const meta = JSON.parse(row?.metadata ?? "null") as { totalWeightedLines: number };
-    expect(meta.totalWeightedLines).toBeCloseTo(2, 6);
+    const meta = readEntityMetadata(row?.metadata ?? null, "ownership") as {
+      totalWeightedLines: number;
+    } | null;
+    expect(meta?.totalWeightedLines).toBeCloseTo(2, 6);
   });
 
   // Rollups must sum weighted line TOTALS and divide ONCE. Averaging per-file
@@ -766,7 +773,7 @@ describe("runOwnershipPass", () => {
       .query("SELECT metadata FROM graph_entity WHERE type = 'service' AND external_id = ?")
       .get("service:checkout") as { metadata: string | null } | null;
     expect(row).not.toBeNull();
-    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    const meta = readEntityMetadata(row?.metadata ?? null, "ownership") ?? {};
     expect(meta["ownerCount"]).toBe(2);
     expect(meta["ownersAboveFloor"]).toBe(2);
     expect(meta["truncated"]).toBe(false);

@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { readEntityMetadata } from "../graph/relationship-graph.ts";
+
 /** One `person --owns--> <target>` edge, presented for a brief. */
 export type OwnershipOwner = {
   readonly externalId: string;
@@ -49,19 +51,15 @@ function numberOrNull(v: unknown): number | null {
 
 /**
  * Parse entity metadata into counts, tolerating every shape the column has ever held:
- * absent, invalid JSON, the pre-split shape, and the current one.
+ * absent, invalid JSON, a namespace holding neither shape, and the current namespaced
+ * one. `readEntityMetadata` isolates the `"ownership"` namespace (V54 wraps every
+ * pre-existing row as `{"ownership": …}`, so a migrated legacy row parses the same way
+ * as a freshly-written one); everything else here is unchanged from before namespacing.
  */
 export function parseCounts(raw: string | null): OwnershipCounts {
   const absent: OwnershipCounts = { ownerCount: null, ownersAboveFloor: null, truncated: null };
-  if (raw === null || raw.length === 0) return absent;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return absent;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return absent;
-  const m = parsed as Record<string, unknown>;
+  const m = readEntityMetadata(raw, "ownership");
+  if (m === null) return absent;
   const aboveFloor = numberOrNull(m["ownersAboveFloor"]);
   return {
     ownerCount: numberOrNull(m["ownerCount"]),

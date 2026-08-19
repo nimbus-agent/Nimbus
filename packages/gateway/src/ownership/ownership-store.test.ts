@@ -139,10 +139,13 @@ describe("ownership-store", () => {
     seedLine("src/a.ts", 1, "a@x.com", "Ann");
     await runPass();
 
-    // Simulate a row written by PR A's pass, before Task 1 existed.
+    // Simulate a row written by PR A's pass, before Task 1 existed, and since migrated
+    // through V54 — which wraps EVERY pre-existing row as `{"ownership": …}` regardless
+    // of the shape inside, so a pre-split row reaches `parseCounts` namespaced too.
     d.run(
       `UPDATE graph_entity
-          SET metadata = json_object('ownerCount', 23, 'truncated', 1, 'totalWeightedLines', 5.0)
+          SET metadata = json_object('ownership',
+            json_object('ownerCount', 23, 'truncated', 1, 'totalWeightedLines', 5.0))
         WHERE type = 'source_file' AND external_id = ?`,
       [`file:${ROOT}:src/a.ts`],
     );
@@ -256,16 +259,27 @@ describe("parseCounts", () => {
     });
   });
 
-  test("the current (post-split) shape is parsed in full", () => {
+  test("the current (post-split, namespaced) shape is parsed in full", () => {
     expect(
       parseCounts(
         JSON.stringify({
-          ownerCount: 5,
-          ownersAboveFloor: 3,
-          truncated: true,
-          totalWeightedLines: 10,
+          ownership: {
+            ownerCount: 5,
+            ownersAboveFloor: 3,
+            truncated: true,
+            totalWeightedLines: 10,
+          },
         }),
       ),
     ).toEqual({ ownerCount: 5, ownersAboveFloor: 3, truncated: true });
+  });
+
+  // `readEntityMetadata` deliberately has NO flat fallback (see its own doc comment):
+  // un-namespaced metadata on a co-owned type is indistinguishable from a skipped V54,
+  // so it must surface as "no metadata" rather than be read as valid ownership data.
+  test("un-namespaced (flat) metadata yields all-null counts, not a partial read", () => {
+    expect(
+      parseCounts(JSON.stringify({ ownerCount: 5, ownersAboveFloor: 3, truncated: true })),
+    ).toEqual({ ownerCount: null, ownersAboveFloor: null, truncated: null });
   });
 });

@@ -11,6 +11,7 @@ import {
   ensureGraphEntity,
   isItemLinkedGraphType,
   upsertGraphEntity,
+  upsertGraphEntityNamespaced,
   upsertGraphRelation,
 } from "./relationship-graph.ts";
 
@@ -269,11 +270,13 @@ function syncPrGraph(db: Database, row: IndexedItemGraphInput, now: number): voi
   if (row.authorId !== null && row.authorId !== "") {
     const label =
       personDisplayName(db, row.authorId) ?? stringField(row.metadata, "user") ?? row.authorId;
-    const personEntityId = upsertGraphEntity(db, {
+    const personEntityId = upsertGraphEntityNamespaced(db, {
       type: "person",
       externalId: row.authorId,
       label,
       service: row.service,
+      writer: "symbols",
+      metadata: {},
     });
     upsertGraphRelation(db, personEntityId, prEntityId, "authored", now);
   }
@@ -331,11 +334,13 @@ function syncReviewGraph(db: Database, row: IndexedItemGraphInput, now: number):
   });
 
   const label = personDisplayName(db, row.authorId) ?? row.authorId;
-  const personEntityId = upsertGraphEntity(db, {
+  const personEntityId = upsertGraphEntityNamespaced(db, {
     type: "person",
     externalId: row.authorId,
     label,
     service: row.service,
+    writer: "symbols",
+    metadata: {},
   });
   upsertGraphRelation(db, personEntityId, prEntityId, "reviewed", now);
 }
@@ -365,11 +370,13 @@ function syncIssueGraph(db: Database, row: IndexedItemGraphInput, now: number): 
   if (row.authorId !== null && row.authorId !== "") {
     const label =
       personDisplayName(db, row.authorId) ?? stringField(row.metadata, "user") ?? row.authorId;
-    const personEntityId = upsertGraphEntity(db, {
+    const personEntityId = upsertGraphEntityNamespaced(db, {
       type: "person",
       externalId: row.authorId,
       label,
       service: row.service,
+      writer: "symbols",
+      metadata: {},
     });
     upsertGraphRelation(db, personEntityId, issueEntityId, "opened", now);
   }
@@ -440,11 +447,13 @@ function syncApiEndpointGraph(db: Database, row: IndexedItemGraphInput, now: num
   clearRelationsTouchingEntity(db, apiEndpointEntityId);
 
   const serviceExtId = `openapi:service:${serviceName}`;
-  const serviceEntityId = upsertGraphEntity(db, {
+  const serviceEntityId = upsertGraphEntityNamespaced(db, {
     type: "service",
     externalId: serviceExtId,
     label: serviceName,
     service: row.service,
+    writer: "symbols",
+    metadata: {},
   });
   upsertGraphRelation(db, apiEndpointEntityId, serviceEntityId, "targets", now);
 }
@@ -494,11 +503,21 @@ function syncCodeSymbolGraph(db: Database, row: IndexedItemGraphInput, now: numb
   clearRelationsTouchingEntity(db, symId);
   if (repoRoot !== undefined) {
     const fileExt = `file:${repoRoot}:${file}`;
-    const fileEntityId = upsertGraphEntity(db, {
+    // THE FIX: this entity's external id is BYTE-IDENTICAL to what
+    // `ownership/ownership-pass.ts` writes on the same file (deliberate
+    // convergence). `upsertGraphEntityNamespaced` merges into this writer's own
+    // `"symbols"` namespace instead of overwriting the whole `metadata` column, so
+    // ownership's owner-count facts under `"ownership"` survive this write. We have
+    // no symbol-level facts to record on the file node itself yet, so `metadata: {}`
+    // — which, per `upsertGraphEntityNamespaced`'s two-step patch, clears our OWN
+    // `"symbols"` namespace to `{}` while leaving `"ownership"` untouched.
+    const fileEntityId = upsertGraphEntityNamespaced(db, {
       type: "source_file",
       externalId: fileExt,
       label: file,
       service: "filesystem",
+      writer: "symbols",
+      metadata: {},
     });
     upsertGraphRelation(db, symId, fileEntityId, "defined_in", now);
     const wsExt = `filesystem:${repoRoot}`;
@@ -554,11 +573,13 @@ function syncMessageGraph(db: Database, row: IndexedItemGraphInput, now: number)
   if (row.authorId !== null && row.authorId !== "") {
     const label =
       personDisplayName(db, row.authorId) ?? stringField(row.metadata, "user") ?? row.authorId;
-    const personEntityId = upsertGraphEntity(db, {
+    const personEntityId = upsertGraphEntityNamespaced(db, {
       type: "person",
       externalId: row.authorId,
       label,
       service: row.service,
+      writer: "symbols",
+      metadata: {},
     });
     upsertGraphRelation(db, personEntityId, msgEntityId, "posted", now);
   }
@@ -748,11 +769,13 @@ function linkActorToEntity(
   if (email === null) return;
   const personId = resolvePersonForSync(db, { canonicalEmail: email });
   if (personId === null) return;
-  const personEntityId = upsertGraphEntity(db, {
+  const personEntityId = upsertGraphEntityNamespaced(db, {
     type: "person",
     externalId: personId,
     label: personDisplayName(db, personId) ?? email,
     service: row.service,
+    writer: "symbols",
+    metadata: {},
   });
   upsertGraphRelation(db, personEntityId, toEntityId, relationType, now);
 }
@@ -917,11 +940,13 @@ function syncErrorIssueGraph(db: Database, row: IndexedItemGraphInput, now: numb
   linkActorToEntity(db, row, entityId, sentryAssigneeEmail(row.metadata), "assigned", now);
 
   if (project !== undefined) {
-    const serviceId = upsertGraphEntity(db, {
+    const serviceId = upsertGraphEntityNamespaced(db, {
       type: "service",
       externalId: `${row.service}:${project}`,
       label: project,
       service: row.service,
+      writer: "symbols",
+      metadata: {},
     });
     upsertGraphRelation(db, entityId, serviceId, "belongs_to", now);
   }
