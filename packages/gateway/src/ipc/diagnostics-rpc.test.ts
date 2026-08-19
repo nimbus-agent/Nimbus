@@ -5,6 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { LocalIndex } from "../index/local-index.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
+import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
 import type { DiagnosticsRpcContext } from "./diagnostics-rpc.ts";
 import {
   buildSandboxDiagPayload,
@@ -932,6 +933,65 @@ describe("diag.snapshot", () => {
         expect(value.watchers).toHaveLength(1);
         expect(value.watchers[0]?.enabled).toBe(true);
         expect(value.watchers[0]?.lastFiredAtMs).toBe(12345);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  /**
+   * The IPC SEAM test for `prFileCoverage`, and the reason it is written this way.
+   *
+   * `serializeMetrics()` is a hand-built allow-list, so a field can be present on `IndexMetrics`,
+   * asserted by `db/metrics.test.ts`, consumed by a CLI test that hand-builds its own `index`
+   * payload — and still never cross this seam. That is exactly what happened. This test observes
+   * the real serializer's output for a real database with V55 applied and real `pr_files_state`
+   * rows, so removing the `prFileCoverage:` line from `serializeMetrics()` fails it.
+   */
+  test("diag.snapshot carries prFileCoverage across the IPC seam", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-prfiles-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        for (const n of [1, 2, 3]) {
+          db.run(
+            `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+             VALUES (?, 'github', 'pr', ?, ?, 0, 0)`,
+            [`github:o/r#${String(n)}`, `o/r#${String(n)}`, `PR #${String(n)}`],
+          );
+        }
+        // The production writer, not a hand-rolled INSERT: two of three PRs covered, one of the
+        // two truncated.
+        recordPrChangedFiles(db, {
+          itemId: "github:o/r#1",
+          repoFull: "o/r",
+          files: [{ path: "src/a.ts", status: "modified", counterpartPath: null }],
+          apiFileCount: 1,
+          truncated: false,
+          nowMs: 1,
+        });
+        recordPrChangedFiles(db, {
+          itemId: "github:o/r#2",
+          repoFull: "o/r",
+          files: [{ path: "src/b.ts", status: "modified", counterpartPath: null }],
+          apiFileCount: 5000,
+          truncated: true,
+          nowMs: 2,
+        });
+
+        const snap = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        expect(snap.kind).toBe("hit");
+        const index = (snap as { value: { index: Record<string, unknown> } }).value.index;
+        expect(index["prFileCoverage"]).toEqual({ covered: 2, totalPrs: 3, truncated: 1 });
+
+        // `index.metrics` shares `serializeMetrics`, so it must carry the same block. Asserted
+        // rather than assumed — "one fix covers both" is only true while both keep calling it.
+        const metrics = await dispatchDiagnosticsRpc("index.metrics", null, ctx);
+        expect(metrics.kind).toBe("hit");
+        const value = (metrics as { value: Record<string, unknown> }).value;
+        expect(value["prFileCoverage"]).toEqual({ covered: 2, totalPrs: 3, truncated: 1 });
       } finally {
         db.close();
       }

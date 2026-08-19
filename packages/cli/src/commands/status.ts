@@ -45,12 +45,46 @@ function printPrFileCoverage(raw: unknown): void {
   console.log(`PR file coverage: ${String(c.covered)} / ${String(c.totalPrs)}${suffix}`);
 }
 
-function printVerboseIndexMetrics(snap: DiagSnapshot): void {
+/**
+ * `diag.snapshot` is now fetched on the DEFAULT status too, because the PR file-coverage line
+ * prints unconditionally beside `Embedding backfill:` (design spec § 7) rather than behind
+ * `--verbose` — a user cannot be asked to already suspect a problem before the line that tells
+ * them whether there is one.
+ *
+ * That makes the call's failure mode matter. `diag.snapshot` throws "Local index is not
+ * available" whenever the gateway has no local index (`ipc/diagnostics-rpc.ts`'s
+ * `requireLocalIndex`, reached via `requireDb`), and turning a plain `nimbus status` into the
+ * "state exists but IPC failed" line over an optional extra line would be a bad trade — so a
+ * failure is swallowed here and no coverage line prints. Under `--verbose` it is rethrown: every
+ * verbose section is snapshot-derived, so there swallowing would hide the whole output.
+ */
+async function fetchDiagSnapshot(
+  client: IPCClient,
+  verbose: boolean,
+): Promise<DiagSnapshot | null> {
+  try {
+    return await client.call<DiagSnapshot>("diag.snapshot", {});
+  } catch (e) {
+    if (verbose) {
+      throw e;
+    }
+    return null;
+  }
+}
+
+function indexMetricsOf(snap: DiagSnapshot): IndexMetricsBrief | null {
   const idx = snap.index;
   if (idx === null || typeof idx !== "object" || Array.isArray(idx)) {
+    return null;
+  }
+  return idx as IndexMetricsBrief;
+}
+
+function printVerboseIndexMetrics(snap: DiagSnapshot): void {
+  const m = indexMetricsOf(snap);
+  if (m === null) {
     return;
   }
-  const m = idx as IndexMetricsBrief;
   const p95 =
     typeof m.queryLatencyP95Ms === "number" && Number.isFinite(m.queryLatencyP95Ms)
       ? m.queryLatencyP95Ms
@@ -66,7 +100,6 @@ function printVerboseIndexMetrics(snap: DiagSnapshot): void {
       console.log(`  ${k}: ${String(v)}`);
     }
   }
-  printPrFileCoverage(m.prFileCoverage);
 }
 
 function formatConnectorHealthLine(row: unknown): string | null {
@@ -239,10 +272,13 @@ export async function runStatusImpl(
       );
     }
     printEmbeddingBackfill(ping.embeddingBackfill);
-    if (verbose) {
-      const snap = await client.call<DiagSnapshot>("diag.snapshot", {});
-      printVerboseIndexMetrics(snap);
-      printVerboseConnectorHealth(snap);
+    const snap = await fetchDiagSnapshot(client, verbose);
+    if (snap !== null) {
+      printPrFileCoverage(indexMetricsOf(snap)?.prFileCoverage);
+      if (verbose) {
+        printVerboseIndexMetrics(snap);
+        printVerboseConnectorHealth(snap);
+      }
     }
     if (wantDrift && ping.drift !== undefined && Array.isArray(ping.drift.lines)) {
       printDriftHints(ping.drift.lines);

@@ -449,7 +449,10 @@ describe("runStatusImpl", () => {
     expect(out.stdout).toContain("gitlab: 10");
   });
 
-  it("prints PR file coverage when present", async () => {
+  // WITHOUT --verbose. The line's purpose is to let a user tell "still draining" from "broken",
+  // which is useless if they must already suspect a problem to pass a flag; the design spec § 7
+  // puts it alongside `Embedding backfill:`, which is unconditional.
+  it("prints PR file coverage on the DEFAULT status, without --verbose", async () => {
     const ipc = createMockIpcClient([
       { version: "1.0", uptime: 0 },
       {
@@ -460,9 +463,34 @@ describe("runStatusImpl", () => {
     await runStatusImpl(
       ipc.client,
       { pid: 1, socketPath: "/s" },
+      { wantDrift: false, verbose: false },
+    );
+    expect(ipc.calls[1]).toEqual({ method: "diag.snapshot", params: {} });
+    expect(out.stdout).toContain("PR file coverage: 412 / 1203 (18 truncated)");
+    // Verbose-only sections stay verbose-only.
+    expect(out.stdout).not.toContain("Items by service:");
+  });
+
+  it("prints PR file coverage exactly once under --verbose", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      {
+        connectorHealth: [],
+        index: {
+          totalItems: 5,
+          itemCountByService: { github: 5 },
+          prFileCoverage: { covered: 1, totalPrs: 2, truncated: 0 },
+        },
+      },
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: "/s" },
       { wantDrift: false, verbose: true },
     );
-    expect(out.stdout).toContain("PR file coverage: 412 / 1203 (18 truncated)");
+    expect(out.stdout.split("PR file coverage:")).toHaveLength(2);
+    expect(out.stdout).toContain("PR file coverage: 1 / 2");
+    expect(out.stdout).toContain("Items by service:");
   });
 
   it("omits the PR file coverage line entirely when there are no PRs", async () => {
@@ -476,9 +504,42 @@ describe("runStatusImpl", () => {
     await runStatusImpl(
       ipc.client,
       { pid: 1, socketPath: "/s" },
-      { wantDrift: false, verbose: true },
+      { wantDrift: false, verbose: false },
     );
     expect(out.stdout).not.toContain("PR file coverage");
+  });
+
+  // The default status now makes a second call that a gateway without a local index answers with
+  // an error ("Local index is not available"). That must cost the coverage line only, never the
+  // rest of the output.
+  it("a failing diag.snapshot on the default status costs only the coverage line", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      new Error("Local index is not available"),
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: FAKE_SOCKET_PATH },
+      { wantDrift: false, verbose: false },
+    );
+    expect(out.stdout).toContain("Gateway: running (pid 1)");
+    expect(out.stdout).toContain(`Socket:  ${FAKE_SOCKET_PATH}`);
+    expect(out.stdout).not.toContain("IPC failed");
+    expect(out.stdout).not.toContain("PR file coverage");
+  });
+
+  // …but --verbose output is entirely snapshot-derived, so there the failure still surfaces.
+  it("a failing diag.snapshot under --verbose still reports the IPC failure", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      new Error("Local index is not available"),
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: FAKE_SOCKET_PATH },
+      { wantDrift: false, verbose: true },
+    );
+    expect(out.stdout).toContain("state exists but IPC failed — Local index is not available");
   });
 
   it("does not print agent limits when agentLimits is undefined", async () => {

@@ -116,6 +116,17 @@ function serializeHealthSnapshot(
   return o;
 }
 
+/**
+ * The `index` payload for BOTH `index.metrics` and `diag.snapshot` — the two RPCs share this one
+ * function, so a field is either on both or on neither.
+ *
+ * It is a HAND-BUILT allow-list, not a spread of `collectIndexMetrics()`. A field added to
+ * `IndexMetrics` and not added here never crosses the IPC seam, and nothing fails: the gateway
+ * struct test still passes, the CLI still compiles, and the consumer-side line simply never
+ * renders. `prFileCoverage` shipped exactly that way. The guard is the seam test
+ * "diag.snapshot carries prFileCoverage across the IPC seam" in `diagnostics-rpc.test.ts`, which
+ * asserts on the value this function returns rather than on a hand-built payload.
+ */
 function serializeMetrics(db: Database): Record<string, unknown> {
   const m = collectIndexMetrics(db);
   const lastSync: Record<string, number | null> = {};
@@ -133,6 +144,7 @@ function serializeMetrics(db: Database): Record<string, unknown> {
     queryLatencyP50Ms: m.queryLatencyP50Ms,
     queryLatencyP95Ms: m.queryLatencyP95Ms,
     queryLatencyP99Ms: m.queryLatencyP99Ms,
+    prFileCoverage: m.prFileCoverage,
   };
 }
 
