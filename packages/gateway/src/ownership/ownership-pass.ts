@@ -4,7 +4,6 @@ import type { NimbusOwnershipToml } from "../config/nimbus-toml.ts";
 import { dbExec, dbRun } from "../db/write.ts";
 import {
   ensureGraphEntity,
-  upsertGraphEntity,
   upsertGraphEntityNamespaced,
   upsertGraphRelation,
 } from "../graph/relationship-graph.ts";
@@ -135,8 +134,10 @@ const FILE_SCOPE_TABLE = "ownership_file_scope";
  * `file:<repoRoot>:<path>` (`graph/graph-populator.ts`) — the convergence is
  * deliberate, so that ownership edges land on the same node as `defined_in` /
  * `in_repo` and a reader can walk symbol → file → owners in one traversal. But
- * `upsertGraphEntity` overwrites `service` unconditionally, so a code-symbol
- * sync flips our marker back to `filesystem`; a `service`-scoped clear would
+ * `upsertGraphEntityNamespaced` — like the flat `upsertGraphEntity` it replaced
+ * on this type — overwrites `service` unconditionally (only `metadata` is
+ * namespaced; `label` and `service` stay last-writer-wins by decision D3), so a
+ * code-symbol sync flips our marker back to `filesystem`; a `service`-scoped clear would
  * then stop matching the row and leave a `person --owns--> source_file` edge
  * standing with no blame behind it. We therefore write `service: "filesystem"`
  * on files, matching that populator exactly so neither side churns the other's
@@ -402,17 +403,27 @@ function bindRootRemote(
   },
 ): string | undefined {
   const { root, remote, urnToService, nowMs, servicesSeen } = args;
-  const wsId = upsertGraphEntity(db, {
+  // Both entities are co-owned with `graph/graph-populator.ts`, which writes the same
+  // `filesystem:<repoRoot>` and `<service>:<owner>/<name>` external ids from its commit,
+  // dependency, code-symbol, PR and issue syncs. No ownership facts belong on either node —
+  // owner counts land on `source_file`/`directory`/`service`, not on the workspace or repo —
+  // so `metadata: {}` clears this writer's own "ownership" namespace and leaves siblings
+  // untouched; it is not a no-op.
+  const wsId = upsertGraphEntityNamespaced(db, {
     type: "workspace",
     externalId: `filesystem:${root}`,
     label: root,
     service: "filesystem",
+    writer: "ownership",
+    metadata: {},
   });
-  const repoId = upsertGraphEntity(db, {
+  const repoId = upsertGraphEntityNamespaced(db, {
     type: "repo",
     externalId: `${remote.service}:${remote.ownerName}`,
     label: remote.ownerName,
     service: remote.service,
+    writer: "ownership",
+    metadata: {},
   });
   upsertGraphRelation(db, wsId, repoId, "tracks_remote", nowMs);
 
@@ -653,8 +664,8 @@ type PassTotals = {
   serviceWeights: Map<string, Map<string, number>>;
   /**
    * Owner labels must survive the per-root loop because the service rollup
-   * upserts the SAME `person` entities again, and `upsertGraphEntity` writes
-   * `label = excluded.label` unconditionally. Passing the external id there
+   * upserts the SAME `person` entities again, and `upsertGraphEntityNamespaced`
+   * writes `label = excluded.label` unconditionally. Passing the external id there
    * would overwrite a resolved display name with `git:<email>`.
    */
   ownerLabelsAcrossRoots: Map<string, string>;

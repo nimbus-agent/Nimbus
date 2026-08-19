@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { readEntityMetadata } from "../graph/relationship-graph.ts";
+import { CO_OWNED_ENTITY_TYPES, readEntityMetadata } from "../graph/relationship-graph.ts";
 import { ENTITY_METADATA_V54_SQL } from "./entity-metadata-v54-sql.ts";
 
 function makeDb(): Database {
@@ -37,14 +37,37 @@ describe("V54 entity metadata namespacing migration", () => {
     });
   });
 
-  test("wraps all four co-owned types", () => {
+  // Spelled out rather than read from `CO_OWNED_ENTITY_TYPES` on purpose: this pins what V54
+  // migrated on the day it shipped. A type added to that constant later needs its own
+  // migration, and importing the constant here would turn that gap green instead of red.
+  test("wraps every co-owned type in V54's filter", () => {
     const db = makeDb();
-    for (const t of ["source_file", "directory", "person", "service"]) {
+    const types = ["source_file", "directory", "person", "service", "workspace", "repo"];
+    for (const t of types) {
       insert(db, t, `e-${t}`, JSON.stringify({ ownerCount: 1 }));
     }
     db.run(ENTITY_METADATA_V54_SQL);
-    for (const t of ["source_file", "directory", "person", "service"]) {
+    for (const t of types) {
       expect(readEntityMetadata(raw(db, `e-${t}`), "ownership")).toEqual({ ownerCount: 1 });
+    }
+  });
+
+  // V54's filter and `CO_OWNED_ENTITY_TYPES` agree TODAY. Asserted rather than assumed,
+  // because a co-owned type absent from the filter would silently keep flat metadata that
+  // `readEntityMetadata` then reports as `null` — the exact symptom the no-flat-fallback
+  // decision exists to surface. If a later commit widens the constant, fix it by adding a
+  // migration and updating this expectation, not by importing the constant above.
+  test("V54's type filter matches CO_OWNED_ENTITY_TYPES as of this commit", () => {
+    expect([...CO_OWNED_ENTITY_TYPES].sort((a, b) => a.localeCompare(b))).toEqual([
+      "directory",
+      "person",
+      "repo",
+      "service",
+      "source_file",
+      "workspace",
+    ]);
+    for (const t of CO_OWNED_ENTITY_TYPES) {
+      expect(ENTITY_METADATA_V54_SQL).toContain(`'${t}'`);
     }
   });
 

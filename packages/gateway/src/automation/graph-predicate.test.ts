@@ -209,7 +209,7 @@ describe("itemMatchesGraphPredicate", () => {
       label: "PR",
       service: "github",
     });
-    const repoId = upsertGraphEntity(db, {
+    const repoId = upsertGraphEntity<string>(db, {
       type: "repo",
       externalId: "github:acme/svc",
       label: "acme/svc",
@@ -243,7 +243,7 @@ describe("itemMatchesGraphPredicate", () => {
   test("downstream_of matches a target → item edge", () => {
     const db = seededDb();
     const now = 1_700_000_000_000;
-    const wsId = upsertGraphEntity(db, {
+    const wsId = upsertGraphEntity<string>(db, {
       type: "workspace",
       externalId: "filesystem:/repo",
       label: "/repo",

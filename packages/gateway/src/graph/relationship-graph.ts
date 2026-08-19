@@ -80,7 +80,7 @@ export function upsertGraphEntity<T extends string>(
 /**
  * Subsystems permitted to own a namespace inside `graph_entity.metadata`.
  *
- * A CLOSED union on purpose: a free-form string would let a typo silently create a fifth
+ * A CLOSED union on purpose: a free-form string would let a typo silently create a third
  * namespace that nothing ever reads, which looks identical to data loss. Sub-project B adds
  * `"changed_files"` here when it lands, as a deliberate edit.
  */
@@ -90,21 +90,50 @@ export type EntityMetadataWriter = "ownership" | "symbols";
  * Entity types whose metadata is namespaced. Every other type has a single writer and keeps
  * flat metadata (design D2).
  *
- * Resolved from the tree, not guessed — and the tree does NOT say all four are co-owned:
- * `ownership/ownership-pass.ts` and `graph/graph-populator.ts` both write `source_file`,
- * `person` and `service`, but `directory` is written by `ownership-pass.ts` ALONE
- * (`graph-populator.ts` contains no `directory` write at all). `directory` is namespaced for
- * uniformity, so this list is derived from one rule rather than being a hand-picked set of
- * three plus an exception — and so it already holds if a second `directory` writer appears.
- * Do not restate this as "both write all four": that was the original claim here and it was
- * false. See the design spec § 3 for the per-type verification.
+ * This list is CHOSEN, not derived. An earlier version of this comment claimed it followed from
+ * one rule; it does not, and saying so misdescribed the tree. The six entries have three
+ * different justifications, recorded per type so the next reader inherits the gaps rather than
+ * rediscovering them. Verified against `ownership/ownership-pass.ts` and
+ * `graph/graph-populator.ts` as of this commit:
+ *
+ * - `source_file` — GENUINELY CO-OWNED, and the live bug this work exists to fix. Both files
+ *   write it under a byte-identical `file:<repoRoot>:<path>` external id (a deliberate
+ *   convergence), and the flat write NULLed the ownership pass's owner counts.
+ * - `person` — genuinely co-owned. `ownership-pass.ts` keys a resolved owner on `person.id`
+ *   (`ownership/owner-identity.ts`), and `graph-populator.ts` keys `row.authorId` /
+ *   `resolvePersonForSync(...)`, which is the same `person.id`. Converging keyspace.
+ * - `workspace` — genuinely co-owned by key shape. `ownership-pass.ts` writes
+ *   `filesystem:<root>`; `graph-populator.ts` writes `filesystem:<repoRoot>` from three syncs
+ *   (commit, dependency, code-symbol). Byte-identical shape.
+ * - `repo` — genuinely co-owned by key shape. `ownership-pass.ts` writes
+ *   `<service>:<owner>/<name>`; `graph-populator.ts` writes `<service>:<repoFull>`, the same
+ *   `<owner>/<name>` form, from the PR and issue syncs.
+ * - `directory` — NOT co-owned today: `ownership-pass.ts` is its only writer, and
+ *   `graph-populator.ts` contains no `directory` write at all. Namespaced for uniformity, so a
+ *   second writer appearing later is already safe. Do not cite it as a live collision.
+ * - `service` — both files write it, but their external ids are DISJOINT today:
+ *   `ownership-pass.ts` keys `service:<id>`, while `graph-populator.ts` keys
+ *   `<service>:<project>` and `openapi:service:<name>`. `ON CONFLICT` therefore cannot fire
+ *   between them, so this is a DEFENSIVE inclusion, not a proven collision. It stays namespaced
+ *   because the two writers are one id-shape change away from converging, and shrinking a
+ *   protection on a "disjoint today" argument is the fragile direction.
+ *
+ * Do not restate this as "both writers write all of them", and do not restate it as "derived
+ * from one rule": both claims stood here before and both were false.
  */
-export const CO_OWNED_ENTITY_TYPES = ["source_file", "directory", "person", "service"] as const;
+export const CO_OWNED_ENTITY_TYPES = [
+  "source_file",
+  "directory",
+  "person",
+  "service",
+  "workspace",
+  "repo",
+] as const;
 
 /**
  * DERIVED from the array above, never written as a second literal list. Step 4b's compile-time
  * guard and this runtime array must never disagree about which types are co-owned; two hand-kept
- * lists of the same four strings drift the moment a fifth type is added to one of them.
+ * lists of the same strings drift the moment a type is added to one of them.
  */
 export type CoOwnedEntityType = (typeof CO_OWNED_ENTITY_TYPES)[number];
 
