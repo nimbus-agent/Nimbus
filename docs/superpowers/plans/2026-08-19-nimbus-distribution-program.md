@@ -546,7 +546,6 @@ Nothing is removed. The connector count, the agents, federation and the egress l
 
 - Modify: `docs/README.md` (the section between the badge block and "What It Does")
 - Modify: `docs/launch-messaging.md` (add a section above "The three pillars")
-- Modify: `docs/audiences.md` (no content change — it is linked from deeper in the README rather than competing with the wedge)
 
 **Interfaces:**
 
@@ -586,9 +585,22 @@ That is the whole first run. Everything below is what becomes available once you
 
 Keep the existing paragraph beneath it unchanged — it becomes the second screen rather than the first.
 
-- [ ] **Step 3: Move the audience table below the fold**
+- [ ] **Step 3: Link the orphaned audiences doc from the README**
 
-In `docs/README.md`, ensure the link to `audiences.md` appears after "What It Does" rather than competing with the wedge. Do not edit `docs/audiences.md` itself — its content is correct, its position was the problem.
+The spec says `docs/audiences.md` should sit deeper rather than compete with the wedge. Verified
+during the pre-flight scan: **the README does not link it at all** (`grep -n audiences
+docs/README.md` returns nothing), and the README's own audience content — `## Who It's For` —
+already sits below `## What It Does`. The spec's intent is therefore already satisfied and nothing
+needs moving.
+
+What is actually wrong is that `docs/audiences.md` is orphaned. Add one line at the end of the
+`## Who It's For` section:
+
+```markdown
+More detail on each role, including analytics and data roles: [Who Nimbus is for](./audiences.md).
+```
+
+Do not edit `docs/audiences.md` itself — its content is correct.
 
 - [ ] **Step 4: Check every claim in the new copy against the guardrails**
 
