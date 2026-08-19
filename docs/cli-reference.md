@@ -832,6 +832,58 @@ Read-only; no HITL.
 
 ---
 
+### `nimbus stats`
+
+Bucketed time series over the local index — the counterpart to `nimbus metrics dora`, which
+returns a single scalar over one window. `nimbus stats` returns one value per bucket instead.
+
+```bash
+nimbus stats mttr --service payment-service
+nimbus stats pr-merges --service payment-service --window 90d --bucket 1w --json
+```
+
+**Metrics:**
+
+| Metric id | What it counts | Notes |
+|---|---|---|
+| `deployment-frequency` | deploys per bucket | wraps `nimbus metrics dora`'s calculator, unchanged |
+| `lead-time` | median lead time for changes | wraps the DORA calculator, unchanged |
+| `change-failure-rate` | share of deploys that caused an incident | wraps the DORA calculator, unchanged |
+| `mttr` | median incident-resolution time | wraps the DORA calculator, unchanged; sparse buckets are common — see below |
+| `pr-merges` | PRs merged, by `metadata.merged_at` | **GitHub-only** — see below |
+| `incidents-opened` | incidents opened, by `metadata.opened_at_ms` | excludes incidents with no `opened_at_ms`, reported via an `incidents_missing_opened_at` gap |
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--service <id>` | Service id (the table key in `[metrics.dora.<id>]` / `[ci.service.<id>]`) (required) |
+| `--window <duration>` | Total lookback — `<n>w`/`d`/`h`/`m`/`s`/`ms`, e.g. `90d` (default: `90d`) |
+| `--bucket <duration>` | Bucket width, same units as `--window` (default: `1w`) |
+| `--json` | Machine-readable JSON output (human-readable table otherwise) |
+
+Three things worth knowing before reading the output:
+
+- **Buckets walk backward from now and are not calendar-aligned.** `--window 90d --bucket 1w`
+  produces 13 buckets ending exactly at the moment you ran the command, so the newest point is
+  always complete rather than truncated at the last calendar boundary. The accepted cost: the
+  same command run on different days covers a different absolute span each time, so two runs
+  are not directly comparable point-for-point.
+- **`pr-merges` is GitHub-only.** Only `github-sync.ts` writes the `merged_at` timestamp this
+  metric buckets on — `gitlab-sync.ts` and `bitbucket-sync.ts` write nothing. A service bound
+  to a non-GitHub repo gets a `github_only_merge_data` gap alongside its count; a service with
+  no GitHub repos at all gets `no_repos` rather than a misleading zero.
+- **A sparse bucket prints `—`, not `0`.** An empty bucket means "could not be computed," not
+  "zero occurred" — the two are different facts, and the gap column names why. This is common
+  for `mttr`, a median: a one-week bucket often holds only one or two incidents, so
+  `low_sample` fires on most buckets. The table prints a summary line underneath (e.g. `4 of 13
+  buckets had data (9 low_sample)`) so this reads as thin data, not breakage.
+
+No new `nimbus.toml` section — every metric scopes through the same `[metrics.dora.<id>]` /
+`[ci.service.<id>]` config `nimbus metrics dora` already reads. Read-only; no HITL.
+
+---
+
 ### `nimbus deploy preflight`
 
 Pre-deploy index check: counts active P1 incidents, failing CI on the target ref, and open PR conflicts. Useful as a deploy-gate step in CI.

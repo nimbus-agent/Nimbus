@@ -49,6 +49,7 @@ export const COMMAND_NAMES = [
   "session",
   "share",
   "start",
+  "stats",
   "status",
   "stop",
   "team",

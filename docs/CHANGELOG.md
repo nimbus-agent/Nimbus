@@ -8,6 +8,66 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-19 — `nimbus stats`: aggregation-over-time queries (W6-B), shipped as disjoint
+  buckets rather than the rolling window the roadmap row named.** `nimbus stats <metric>
+  --service <id> [--window 90d] [--bucket 1w] [--json]` returns one value per bucket over the
+  local index — the time-series counterpart to `nimbus metrics dora`'s single scalar over one
+  window. Closes the aggregation half of the last open Wave 6 answer-quality row now that A0
+  (2026-08-16), A1 and A2 (both 2026-08-18) have shipped; negation (`--negate`/`--explain`)
+  remains open.
+
+  Six metrics. Four wrap the existing DORA calculators unchanged, called once per bucket with
+  the bucket's end bound to the calculator's `nowMs` and the bucket's width bound to its
+  look-back duration (`deployment-frequency`, `lead-time`, `change-failure-rate`, `mttr`). Two
+  are new counters over real event timestamps: `pr-merges` (`metadata.merged_at`) and
+  `incidents-opened` (`metadata.opened_at_ms`). Every metric buckets on a real event timestamp
+  by design — the `item` table carries only `modified_at` (last touch) and `synced_at` (our own
+  indexing time), and bucketing on either would measure activity or sync schedule rather than
+  when the thing actually happened, the same trap `negotiate` already documented as "active
+  in," not "created in." That is why no "count items by type" metric ships alongside the six.
+
+  **Built differently from the roadmap row, in two ways, both recorded rather than left to
+  surprise a reader.** The row said "rolling 7-day MTTR trend" — this ships **disjoint**
+  buckets instead. `--window 90d --bucket 1w` is 13 independent weeks, each computed over its
+  own rows, not ~90 overlapping evaluations sharing data: simpler to reason about and to test,
+  at the cost of a smoother series and fewer samples per point. Rolling windows (`--rolling`)
+  are a named follow-up, worth building once the sparse-bucket behaviour below has been seen
+  against real data. Separately, the row's other headline example, "PR merge throughput by
+  week," implies all forges; `pr-merges` is **GitHub-only**, because `connectors/
+  github-sync.ts` is the only connector that writes `metadata.merged_at` — `gitlab-sync.ts` and
+  `bitbucket-sync.ts` write nothing. A service binding a non-GitHub repo gets a
+  `github_only_merge_data` gap; one binding no GitHub repos at all gets `no_repos` rather than
+  a misleading zero.
+
+  **A null is never a zero, and sparse output is expected, not a malfunction.** An empty bucket
+  returns `value: null` with a named gap — never `0` — matching `negotiate`'s "could not be
+  computed" discipline: zero incidents and no incident data are different facts. `mttr` is a
+  median, so a one-week bucket often holds one or two incidents and `low_sample` fires on most
+  buckets; the CLI prints a summary line (`4 of 13 buckets had data (9 low_sample)`) and a
+  plain sentence when every bucket is null, so this reads as thin data rather than breakage.
+  `incidents-opened` excludes incidents with no `opened_at_ms` and reports the exclusion via
+  `incidents_missing_opened_at`; DORA's own code falls back to `synced_at` in this case, and
+  this feature deliberately does not, since that would place an incident in the week it
+  happened to be indexed while presenting it as the week it opened.
+
+  **Buckets walk backward from the request time and are not calendar-aligned.** The newest
+  bucket always ends exactly at "now," so the freshest point is complete rather than truncated
+  at the last calendar boundary. Accepted cost: two runs on different days cover different
+  absolute spans and are not comparable point-for-point. A `--align` option for UTC-aligned
+  buckets is a named follow-up.
+
+  Scoping reuses the DORA config that already exists — `pr-merges` filters to the service's
+  bound repos, `incidents-opened` to its `pagerdutyServices` — no new `nimbus.toml` section. No
+  schema migration, no new IPC-visible config, no new HTTP route, no new security invariant, no
+  Tauri allowlist change — `ALLOWED_METHODS` stays at 105. `metrics.stats` appends no
+  `egress_ledger` row: it reads local SQLite only, dispatches no connector action and makes no
+  remote model call, the same posture as `metrics.dora` alongside which it sits.
+
+  **Named follow-ups, not silently deferred:** rolling windows (`--rolling`); `--align` for
+  UTC-aligned buckets; `merged_at` for GitLab/Bitbucket, which would remove the
+  `github_only_merge_data` gap; and `pr-opened`, a PR-creation-rate series blocked on
+  connectors capturing a PR creation timestamp, not on effort.
+
 - **2026-08-18 — agent personas (A2): `tone` and `voice` ship; `tool_caution` and
   `confidence_threshold` are rejected, not deferred.** A new `[persona]` section in
   `nimbus.toml` — `tone` (`neutral` default / `terse` / `formal` / `casual` / `verbose`) and
