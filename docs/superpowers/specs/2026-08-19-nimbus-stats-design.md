@@ -121,13 +121,47 @@ case (`no_repos`, `no_pagerduty_mapping`) rather than a new one.
 ## 6. Bucketing and output
 
 **Buckets walk backward from the request time, with no calendar alignment.** `--window 90d
---bucket 1w` produces 13 buckets ending at "now". Calendar weeks would need a timezone, and
-this product has no timezone configuration — so alignment is deliberately arithmetic, and
-documented rather than silently chosen.
+--bucket 1w` produces 13 buckets ending at "now".
+
+The reason is **not** that calendar alignment needs a timezone — UTC would be a defensible
+fixed choice needing no configuration, and an earlier draft of this spec justified the
+decision that way, which was weaker than it sounded. The actual reason is that walking back
+from "now" makes the newest bucket end exactly at the request time, so the most recent point
+covers data right up to the moment you asked. Calendar alignment would truncate it at the
+last boundary, making the freshest bucket systematically short and the newest number
+systematically low — the worst place to put an artefact, since it is the number people read
+first.
+
+**Accepted cost:** the same query run on different days covers different absolute spans, so
+two runs are not directly comparable point-for-point. A `--align` option that snaps to UTC
+boundaries is a named follow-up (§ 9) for users who want stable, comparable charts.
 
 The trailing (oldest) bucket may be partial when `window` is not a whole multiple of
 `bucket`; it is emitted with its true `start_ms`/`end_ms` so a reader can see it is short,
 never silently padded or dropped.
+
+### 6.1 Input validation
+
+**Durations are parsed by `cli/src/lib/parse-since.ts`'s `parseSinceDurationToMs`**, which
+accepts `w | d | h | m | s | ms`. Pinning it matters: the gateway also has
+`index/item-list-query.ts`'s `parseRelativeSinceToWindowMs`, whose regex is
+`/^(\d+)\s*([dhms])$/i` — **no `w`** — so `--bucket 1w`, this spec's own default, would fail
+against it. Parsing happens CLI-side before the IPC call; the gateway receives resolved
+millisecond integers and never re-parses a duration string. Unifying the two parsers is out
+of scope here and is not silently claimed.
+
+**`bucket > window` is a validation error, not a degenerate single bucket.** `--window 3d
+--bucket 1w` asks for weekly granularity across three days, which is unsatisfiable; returning
+one honestly-bounded 3-day bucket answers a question the user did not ask. Fail with a
+message naming both values.
+
+**The bucket count is clamped**, matching the clamping convention already used by
+`index.queryItems` (`Math.min(1000, …)`) and `listAuditWithChain` (`Math.min(10_000, …)`).
+Note the reason precisely: this is **not** a denial-of-service control — `metrics.stats` has
+no remote caller, since D4 gives it no HTTP route — it is arithmetic footgun protection, so
+`--window 10y --bucket 1s` fails fast with a clear message instead of attempting 315 million
+evaluations. A window/bucket pair exceeding the cap is rejected, never silently truncated to
+the first N buckets.
 
 Response shape:
 
@@ -169,12 +203,33 @@ integrations consume it; nothing consumes stats yet, and `GET /v1/metrics/dora` 
 consumer present rather than by copying. `ALLOWED_METHODS` stays at **105**. When
 `nimbus-statuspage` is built it can argue for a route on its own merits.
 
+### 7.1 Egress ledger (I29) — exempt, and why
+
+`metrics.stats` appends **no** `egress_ledger` row, and this is recorded here so it is a
+decision rather than an oversight a future audit has to re-derive.
+
+I29's append site is the executor's chokepoint immediately before `connectors.dispatch`.
+`metrics.stats` reads local SQLite and dispatches no connector action, exactly like
+`metrics.dora` alongside which it sits. It performs no remote model call either, so the
+`model` coverage class added for brief synthesis does not apply. Nothing leaves the machine,
+so there is nothing to ledger — the same posture as the gate-only executors wired with
+`NULL_EGRESS_SINK`.
+
+The claim to hold this to in review: **if a future metric's evaluator ever needs data the
+index does not already hold, it must not fetch it here.** That would turn a read into an
+egress path, and the append would have to come with it.
+
 ---
 
 ## 8. Testing
 
-- **Bucket splitter, pure function:** whole-multiple windows; a partial trailing bucket;
-  `bucket > window` (one bucket); `bucket == window`; a zero or negative duration rejected.
+- **Bucket splitter, pure function:** whole-multiple windows; a partial trailing bucket
+  carrying its true short bounds; `bucket == window` (one bucket); `bucket > window`
+  **rejected with an error naming both values**, not silently collapsed; a zero or negative
+  duration rejected; a window/bucket pair over the cap rejected rather than truncated.
+- **Duration parsing is the CLI's:** `--bucket 1w` resolves, proving the pinned parser is
+  `parseSinceDurationToMs` and not the gateway's `w`-less `parseRelativeSinceToWindowMs`
+  (§ 6.1). Without this, the spec's own default silently fails against the wrong parser.
 - **Registry totality:** every metric id has an evaluator — a compile-time guarantee plus a
   runtime test that iterates the union.
 - **Per metric, against a real SQLite fixture:** a populated bucket returns a value and a
@@ -201,6 +256,18 @@ Tauri allowlist change.
 - **Rolling windows** (`--rolling`), which is what the roadmap's "rolling 7-day MTTR trend"
   literally describes. Worth building once disjoint buckets exist and the sparse-bucket
   behaviour has been seen against real data.
+- **`--align`**, snapping bucket boundaries to UTC day/week starts, for users who want two
+  runs on different days to be comparable point-for-point (§ 6). It trades the freshest
+  bucket's completeness for stability, which is the right trade for a dashboard and the wrong
+  one for an ad-hoc check — hence an option rather than a change of default.
 - **`merged_at` for GitLab and Bitbucket**, which would remove `github_only_merge_data`
-  entirely. This is connector work and belongs with the changed-file indexing project
-  already queued behind this one.
+  entirely. This is connector work and belongs with the changed-file indexing project already
+  queued behind this one. **Give it a target shape now so the work has one:** epoch
+  milliseconds at `metadata.merged_at`, matching what `github-sync.ts` already writes, so the
+  `pr-merges` evaluator keeps one metadata path rather than growing a per-connector branch.
+  A connector-specific path is how a single metric quietly becomes three.
+- **`pr-opened`**, a PR-creation-rate series. Blocked on data, not effort:
+  `extractPrMetadataForIndex` records `number`, `repo`, `state`, `draft`, `merged`, `user`,
+  `labels` and the size stats, but **no creation timestamp** — so per F1 there is nothing
+  honest to bucket on today. It becomes cheap the moment connectors write a `created_at`
+  alongside `merged_at`, and should ship in that same pass.
