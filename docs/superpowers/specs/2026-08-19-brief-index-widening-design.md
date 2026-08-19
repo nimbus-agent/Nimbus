@@ -120,6 +120,13 @@ to be understood. No prose label, no per-type instruction text in `INSTRUCTIONS`
 is given the fact and left to use it. Anything more elaborate is a prompt-engineering slice
 with its own evidence bar, not a rider on this one.
 
+**Measured (Task 5, 2026-08-19): kept.** Added the `type` key per the fixed shape above and
+ran the full `packages/gateway/src/briefs` suite (164 tests) before and after: no synthesis
+test regressed, and the discriminating test (`brief-synthesis.test.ts`, `buildPrompt` describe
+block) confirms the key is present on a typed `C{n}` entry and absent on `S1`. Cost is exactly
+the single short key the spec allowed. Nothing else in `INSTRUCTIONS` or the source shape
+changed.
+
 ### 5. A hit's prompt cost is set by the chunker, not by the item
 
 The intuition that a build log or a large pull request would drag far more text into the

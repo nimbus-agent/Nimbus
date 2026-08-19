@@ -46,6 +46,7 @@ const INSTRUCTIONS = [
 export function buildPrompt(run: BriefRun, registry: SourceRegistry): string {
   const sources = [...registry.values()].map((e) => ({
     token: e.token,
+    ...(e.ref.itemType === undefined ? {} : { type: e.ref.itemType }),
     title: e.ref.title,
     url: e.ref.url ?? null,
     text: e.body,
