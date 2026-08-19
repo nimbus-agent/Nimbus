@@ -48,6 +48,7 @@ export { runServe } from "./serve.ts";
 export { runSession } from "./session.ts";
 export { runShare, runVerifyShare } from "./share.ts";
 export { runStart } from "./start.ts";
+export { runStats } from "./stats.ts";
 export { runStatus } from "./status.ts";
 export { runStop } from "./stop.ts";
 export { runTeam } from "./team.ts";
