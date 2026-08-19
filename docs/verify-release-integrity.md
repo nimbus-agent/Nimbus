@@ -78,7 +78,7 @@ gpg --import docs/release/SIGNING-KEY.asc
 gpg --verify SHA256SUMS.asc SHA256SUMS
 ```
 
-Look for `Good signature from "Nimbus Release Signing <releases@...>"` and `Primary key fingerprint:` lines. **The fingerprint must match `docs/SECURITY.md`, `docs/README.md`, and keys.openpgp.org — all four.**
+Look for `Good signature from "Nimbus Release Signing <releases@...>"` and `Primary key fingerprint:` lines. **The fingerprint must match `docs/SECURITY.md`, `docs/README.md`, [`docs/release/SIGNING-KEY.asc`](./release/SIGNING-KEY.asc), and keys.openpgp.org — all four.**
 
 ### 3. Verify artifact hashes
 

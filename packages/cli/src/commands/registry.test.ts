@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { fileURLToPath } from "node:url";
 
 import { COMMAND_NAMES, type CommandName } from "./registry.ts";
 
@@ -62,9 +63,11 @@ describe("COMMAND_NAMES — registry contract", () => {
   // would execute the CLI. The regex reads the `COMMAND_HANDLERS` object
   // literal, whose keys are plain or double-quoted identifiers.
   it("registers every command wired into the CLI dispatch table", async () => {
-    const src = await Bun.file(
-      new URL("../index.ts", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
-    ).text();
+    // `fileURLToPath`, not `.pathname` — `URL.pathname` stays percent-encoded, so a
+    // checkout under a path containing a space or a `#` yields `C:/My%20Repos/…`,
+    // which `Bun.file()` cannot open. It also strips the leading slash off a Windows
+    // drive letter itself, so no manual rewrite is needed.
+    const src = await Bun.file(fileURLToPath(new URL("../index.ts", import.meta.url))).text();
 
     const block = /const COMMAND_HANDLERS[^=]*=\s*\{([\s\S]*?)\n\};/.exec(src);
     expect(block, "COMMAND_HANDLERS object literal not found in index.ts").not.toBeNull();
