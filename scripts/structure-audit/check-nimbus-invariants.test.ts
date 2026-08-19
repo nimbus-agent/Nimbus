@@ -6,6 +6,7 @@ import {
   checkAgentEmitterImportConfinement,
   checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
+  checkFlatUpsertGraphEntityCoOwnedTypes,
   checkForwardShareConfinement,
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
@@ -813,6 +814,131 @@ describe("D22(d) — agent emitter import confinement", () => {
         },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("graph-entity-flat-coowned — flat upsertGraphEntity pinned away from co-owned types", () => {
+  const flagged = (files: FileEntry[]): boolean =>
+    checkFlatUpsertGraphEntityCoOwnedTypes(files).some(
+      (x) => x.rule === "graph-entity-flat-coowned",
+    );
+
+  // The real shape, from graph-populator.ts before Task 3 converted it: multi-line, `type:` on the
+  // line after the call opens. A same-line regex would miss this — the only shape in the tree —
+  // and pass vacuously, so this is the primary case, not an edge case.
+  test.each(["source_file", "directory", "person", "service"] as const)(
+    "flags a MULTI-LINE flat call with co-owned type %s",
+    (type) => {
+      const v = checkFlatUpsertGraphEntityCoOwnedTypes([
+        {
+          relPath: "packages/gateway/src/graph/graph-populator.ts",
+          contents: `  const entityId = upsertGraphEntity(db, {\n    type: "${type}",\n    externalId: row.id,\n    label: row.title,\n  });\n`,
+        },
+      ]);
+      expect(v.some((x) => x.rule === "graph-entity-flat-coowned")).toBe(true);
+      expect(v[0]?.file).toBe("packages/gateway/src/graph/graph-populator.ts");
+    },
+  );
+
+  test("a same-line flat call with a co-owned type is also flagged", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/graph/graph-populator.ts",
+          contents: 'upsertGraphEntity(db, { type: "source_file", externalId: e, label: l });\n',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  test("a flat call with a NON-co-owned type (pr) is allowed", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/graph/graph-populator.ts",
+          contents:
+            '  const prEntityId = upsertGraphEntity(db, {\n    type: "pr",\n    externalId: e,\n  });\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("upsertGraphEntityNamespaced with a co-owned type is allowed — different identifier", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/graph/graph-populator.ts",
+          contents:
+            '  const personEntityId = upsertGraphEntityNamespaced(db, {\n    type: "person",\n    writer: "symbols",\n  });\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("relationship-graph.ts itself, where upsertGraphEntity is defined, is allowed", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/graph/relationship-graph.ts",
+          contents:
+            'export function upsertGraphEntity(db, row) {\n  // type: "source_file" appears only in doc comments here\n}\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("does not span into a SUBSEQUENT call — a legit call followed by a co-owned one attributes to the right site", () => {
+    // A non-co-owned call, then (well past the 120-char window) a co-owned one. If the bound were
+    // unbounded or too generous, the first call's window could reach the second call's `type:` and
+    // either double-count or mis-attribute the line.
+    const filler = "    // filler to push the next call past the match window\n".repeat(5);
+    const contents =
+      '  const prId = upsertGraphEntity(db, {\n    type: "pr",\n    externalId: e,\n    label: l,\n  });\n' +
+      filler +
+      '  const personId = upsertGraphEntity(db, {\n    type: "person",\n    externalId: e2,\n  });\n';
+    const v = checkFlatUpsertGraphEntityCoOwnedTypes([
+      { relPath: "packages/gateway/src/graph/graph-populator.ts", contents },
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("graph-entity-flat-coowned");
+    // Attributed to the SECOND call's own opening line (`m.index` is the call-site match start,
+    // not the `type:` line), not the first call.
+    const line = v[0]?.line ?? -1;
+    expect(contents.split("\n")[line - 1]).toContain("personId");
+  });
+
+  test("ignores test files — fixture-only co-owned writes keep the flat call by design", () => {
+    // Established by Tasks 1/3: packages/gateway/src/agents/negotiate.test.ts calls
+    // upsertGraphEntity<string>(db, { type: "person", ... }) with no metadata, purely to
+    // materialise a node so a relation has an endpoint. Converting it would write a namespace
+    // ("ownership"/"symbols") that describes neither the fixture nor anything it does.
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/agents/negotiate.test.ts",
+          contents:
+            '  const ghost = upsertGraphEntity<string>(db, {\n    type: "person",\n    externalId: "git:jane@example.com",\n  });\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("a commented-out flat co-owned call does not trip it — comments are stripped first", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/graph/graph-populator.ts",
+          contents: '  // upsertGraphEntity(db, { type: "source_file", externalId: e });\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("the match window is bounded, not catastrophic, on a long non-matching call", () => {
+    const pathological = `upsertGraphEntity(db, { ${"x".repeat(20_000)}`;
+    const started = performance.now();
+    flagged([{ relPath: "packages/gateway/src/graph/graph-populator.ts", contents: pathological }]);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 
