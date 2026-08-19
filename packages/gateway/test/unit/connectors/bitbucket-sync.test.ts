@@ -12,6 +12,8 @@ const CURSOR_PREFIX = "nimbus-bbkt1:";
 const WORKSPACE_RE = /^https:\/\/api\.bitbucket\.org\/2\.0\/repositories\?[^/]*role=member[^/]*$/;
 const PR_LIST_RE_ANY =
   /^https:\/\/api\.bitbucket\.org\/2\.0\/repositories\/[^/]+\/[^/]+\/pullrequests\?/;
+const DIFFSTAT_RE_ANY =
+  /^https:\/\/api\.bitbucket\.org\/2\.0\/repositories\/[^/]+\/[^/]+\/pullrequests\/\d+\/diffstat\?/;
 
 function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -709,5 +711,89 @@ describe("bitbucket-sync — cycle-completion and integration", () => {
     fixture.fetchMock.respond("GET", WORKSPACE_RE, { values: [], next: null });
     await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(fixture.notifications.emitted).toHaveLength(0);
+  });
+});
+
+/**
+ * End-to-end wiring for the PR changed-file pass, driven through the real syncable rather than
+ * through `runPrFilePass` with a hand-written `fetchPage`. GitHub has five such tests; GitLab and
+ * Bitbucket had none, so nothing would have caught the pass being dropped from either sync flow.
+ *
+ * Bitbucket's is the one most worth pinning: the pass runs inside `syncResult`, an async helper
+ * every `return` in the sync body awaits, so it fires on all four exits rather than at one call
+ * site. Nothing else in this file exercises that.
+ */
+describe("bitbucket-sync — PR changed-file pass (end-to-end)", () => {
+  test("fetches the PR diffstat for an uncovered PR and writes its coverage row", async () => {
+    fixture.fetchMock.respond("GET", WORKSPACE_RE, {
+      values: [{ full_name: "acme/app" }],
+      next: null,
+    });
+    fixture.fetchMock.respond("GET", PR_LIST_RE_ANY, {
+      values: [{ id: 42, title: "add a rate limiter" }],
+      next: null,
+    });
+    fixture.fetchMock.respond("GET", DIFFSTAT_RE_ANY, {
+      values: [
+        { status: "modified", old: { path: "src/a.ts" }, new: { path: "src/a.ts" } },
+        // An added file has no `old` side at all — reading `.path` off it is how an empty-path
+        // row would be written.
+        { status: "added", old: null, new: { path: "src/b.ts" } },
+      ],
+      next: null,
+    });
+
+    await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+
+    const diffstatCalls = fixture.fetchMock.calls.filter((c) => DIFFSTAT_RE_ANY.test(c.url));
+    expect(diffstatCalls).toHaveLength(1);
+    const diffstatCall = diffstatCalls[0];
+    if (diffstatCall === undefined) throw new Error("expected exactly one diffstat request");
+    expect(diffstatCall.url).toContain("/repositories/acme/app/pullrequests/42/diffstat?");
+    // Bitbucket's page-size parameter is `pagelen`, not GitHub/GitLab's `per_page`.
+    expect(diffstatCall.url).toContain("pagelen=100");
+    expect(diffstatCall.url).toContain("page=1");
+    expect(diffstatCall.headers["authorization"]).toBe(
+      authHeaderForUserPass("bitbucket-stub-username", "bitbucket-stub-pass"),
+    );
+
+    const state = fixture.db
+      .query<{ stored_count: number; truncated: number }, []>(
+        "SELECT stored_count, truncated FROM pr_files_state WHERE item_id = 'bitbucket:acme/app#42'",
+      )
+      .get();
+    expect(state?.stored_count).toBe(2);
+    expect(state?.truncated).toBe(0);
+
+    const paths = fixture.db
+      .query<{ path: string }, []>(
+        "SELECT path FROM pr_changed_file WHERE item_id = 'bitbucket:acme/app#42' ORDER BY path",
+      )
+      .all()
+      .map((r) => r.path);
+    expect(paths).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  test("a non-ok diffstat response leaves the PR uncovered and does not fail the sync", async () => {
+    fixture.fetchMock.respond("GET", WORKSPACE_RE, {
+      values: [{ full_name: "acme/app" }],
+      next: null,
+    });
+    fixture.fetchMock.respond("GET", PR_LIST_RE_ANY, {
+      values: [{ id: 42, title: "add a rate limiter" }],
+      next: null,
+    });
+    fixture.fetchMock.respond("GET", DIFFSTAT_RE_ANY, { type: "error" }, { status: 404 });
+
+    const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.itemsUpserted).toBe(1);
+
+    // Assert the request HAPPENED before asserting nothing was written — otherwise "zero coverage
+    // rows" is equally true of a pass that never ran, and the test proves nothing.
+    expect(fixture.fetchMock.calls.filter((c) => DIFFSTAT_RE_ANY.test(c.url))).toHaveLength(1);
+    const covered = fixture.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
+      .get();
+    expect(covered?.c).toBe(0);
   });
 });

@@ -15,6 +15,7 @@ const DEFAULT_API_BASE = "https://gitlab.com/api/v4";
 const EVENTS_PREFIX_DEFAULT = "https://gitlab.com/api/v4/events?";
 const EVENTS_RE_DEFAULT = /^https:\/\/gitlab\.com\/api\/v4\/events\?/;
 const PIPELINES_RE_ANY = /\/api\/v4\/projects\/[^/]+\/pipelines\?/;
+const MR_DIFFS_RE_ANY = /\/api\/v4\/projects\/[^/]+\/merge_requests\/\d+\/diffs\?/;
 
 function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -745,5 +746,74 @@ describe("gitlab-sync — phase machine + cycle", () => {
     expect(res.itemsUpserted).toBe(0);
     expect(res.itemsDeleted).toBe(0);
     expect(fixture.notifications.emitted).toHaveLength(0);
+  });
+});
+
+/**
+ * End-to-end wiring for the PR changed-file pass, driven through the real syncable rather than
+ * through `runPrFilePass` with a hand-written `fetchPage`. GitHub has five such tests; GitLab and
+ * Bitbucket had none, so nothing would have caught the pass being dropped from either sync flow.
+ */
+describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
+  test("fetches MR diffs for an uncovered MR and writes its coverage row", async () => {
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    fixture.fetchMock.respond("GET", MR_DIFFS_RE_ANY, [
+      { old_path: "src/a.ts", new_path: "src/a.ts" },
+      { old_path: "docs/old.md", new_path: "docs/new.md", renamed_file: true },
+    ]);
+
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+
+    const diffCalls = fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url));
+    expect(diffCalls).toHaveLength(1);
+    const diffCall = diffCalls[0];
+    if (diffCall === undefined) throw new Error("expected exactly one MR diffs request");
+    // The group path is URL-encoded as ONE segment, and the iid comes from after the LAST `!`.
+    expect(diffCall.url).toContain("/projects/grp%2Fproj/merge_requests/1/diffs?");
+    expect(diffCall.url).toContain("per_page=100");
+    expect(diffCall.url).toContain("page=1");
+    expect(diffCall.headers["private-token"]).toBe("gitlab-stub-pat");
+
+    const state = fixture.db
+      .query<{ stored_count: number; truncated: number }, []>(
+        "SELECT stored_count, truncated FROM pr_files_state WHERE item_id = 'gitlab:grp/proj!1'",
+      )
+      .get();
+    // A rename writes BOTH paths, so "does not touch docs/old.md" cannot match this MR.
+    expect(state?.stored_count).toBe(3);
+    expect(state?.truncated).toBe(0);
+
+    const paths = fixture.db
+      .query<{ path: string }, []>(
+        "SELECT path FROM pr_changed_file WHERE item_id = 'gitlab:grp/proj!1' ORDER BY path",
+      )
+      .all()
+      .map((r) => r.path);
+    expect(paths).toEqual(["docs/new.md", "docs/old.md", "src/a.ts"]);
+  });
+
+  test("a non-ok MR diffs response leaves the MR uncovered and does not fail the sync", async () => {
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    fixture.fetchMock.respond(
+      "GET",
+      MR_DIFFS_RE_ANY,
+      { message: "404 Not found" },
+      { status: 404 },
+    );
+
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+
+    // Assert the request HAPPENED before asserting nothing was written — otherwise "zero coverage
+    // rows" is equally true of a pass that never ran, and the test proves nothing.
+    expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(1);
+    const covered = fixture.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
+      .get();
+    expect(covered?.c).toBe(0);
   });
 });
