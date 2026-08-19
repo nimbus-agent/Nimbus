@@ -2,6 +2,21 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.7.0](https://github.com/nimbus-agent/Nimbus/compare/v2.6.0...v2.7.0) (2026-08-19)
+
+
+### Features
+
+* **briefs:** research briefs draw on the whole index, not only clips ([#1253](https://github.com/nimbus-agent/Nimbus/issues/1253)) ([80c21df](https://github.com/nimbus-agent/Nimbus/commit/80c21dfa0590d1bbb6af88c6556a4a0cfb7da2d3))
+* **engine:** [persona] gives Nimbus a configurable voice ([#1248](https://github.com/nimbus-agent/Nimbus/issues/1248)) ([10b3175](https://github.com/nimbus-agent/Nimbus/commit/10b31750e57f1b3a6469b731b0942929b7f4d7fc))
+* **engine:** nimbus ask --devil argues against the plan ([#1246](https://github.com/nimbus-agent/Nimbus/issues/1246)) ([becc386](https://github.com/nimbus-agent/Nimbus/commit/becc386cb9d114ed4bf9f292b3ce99cb7e97afa7))
+* **metrics:** nimbus stats charts a metric over time ([#1249](https://github.com/nimbus-agent/Nimbus/issues/1249)) ([ba316d4](https://github.com/nimbus-agent/Nimbus/commit/ba316d412fb25b83d78be798e757bd64c9fdfb80))
+
+
+### Bug Fixes
+
+* **ci:** stop the AuditPanel vitest flake, clear the Sonar board, and make docs/README.md the only README ([#1252](https://github.com/nimbus-agent/Nimbus/issues/1252)) ([70f15ca](https://github.com/nimbus-agent/Nimbus/commit/70f15ca9ab2d0ad1ccb93acc01ab54ad3106c38f))
+
 ## [2.6.0](https://github.com/nimbus-agent/Nimbus/compare/v2.5.0...v2.6.0) (2026-08-18)
 
 
