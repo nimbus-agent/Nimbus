@@ -802,6 +802,24 @@ test("CURRENT_SCHEMA_VERSION is 55, so V54 runs in production", () => {
   db.close();
 });
 
+test("V55 creates pr_changed_file and pr_files_state through the runner", () => {
+  // `pr-changed-file-v55.test.ts` execs `PR_CHANGED_FILE_V55_SQL` directly, so it proves the SQL
+  // is right but NOT that the runner is wired to run it — a step registered under the wrong
+  // version, or not registered at all, passes that test and ships a database with no tables. The
+  // "CURRENT_SCHEMA_VERSION is 55" test above migrates all the way here but only asserts V54's
+  // effect, so this is the first check that V55's own DDL actually executes in production.
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 54);
+  expect(tableNames(db)).not.toContain("pr_changed_file");
+
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  const names = tableNames(db);
+  expect(names).toContain("pr_changed_file");
+  expect(names).toContain("pr_files_state");
+  expect(userVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
+  db.close();
+});
+
 test("V52 leaves user_version unadvanced when the backfill throws", () => {
   const db = freshDb();
   runIndexedSchemaMigrations(db, 51);

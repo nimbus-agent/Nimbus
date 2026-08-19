@@ -92,4 +92,49 @@ describe("V55 pr changed-file schema", () => {
     ).toThrow();
     db.close();
   });
+
+  test("status CHECK accepts the four mapped values and rejects anything else", () => {
+    const db = makeDb();
+    // All four must be ACCEPTED — a CHECK that is too narrow would reject rows the mappers
+    // legitimately produce, turning a valid sync into a per-PR write failure.
+    for (const status of ["added", "modified", "removed", "renamed"]) {
+      db.exec(`INSERT INTO pr_changed_file (item_id, repo_full, path, status)
+               VALUES ('github:o/r#1','o/r','src/${status}.ts','${status}')`);
+    }
+    const c = db.query("SELECT COUNT(*) AS c FROM pr_changed_file").get() as { c: number };
+    expect(c.c).toBe(4);
+
+    // GitHub's raw vocabulary that `normaliseGithubStatus` folds into `modified`. If that
+    // normalisation were ever bypassed, the value would land here — and the CHECK is what turns
+    // that into a loud failure instead of a status nothing branches on.
+    expect(() =>
+      db.exec(`INSERT INTO pr_changed_file (item_id, repo_full, path, status)
+               VALUES ('github:o/r#1','o/r','src/z.ts','copied')`),
+    ).toThrow();
+    expect(() =>
+      db.exec(`INSERT INTO pr_changed_file (item_id, repo_full, path, status)
+               VALUES ('github:o/r#1','o/r','src/y.ts','')`),
+    ).toThrow();
+    db.close();
+  });
+
+  test("truncated CHECK rejects a value outside {0,1}", () => {
+    const db = makeDb();
+    db.exec(`INSERT INTO pr_files_state (item_id, fetched_at_ms, api_file_count, stored_count,
+               truncated) VALUES ('github:o/r#1', 1, 1, 1, 1)`);
+    db.exec("DELETE FROM pr_files_state");
+
+    // 2 is the value that matters: it satisfies neither `truncated = 0` (the negation query's
+    // filter) nor `truncated = 1` (the exclusion count), so such a PR would vanish from BOTH —
+    // answering no negation while also not being disclosed as excluded.
+    expect(() =>
+      db.exec(`INSERT INTO pr_files_state (item_id, fetched_at_ms, api_file_count, stored_count,
+                 truncated) VALUES ('github:o/r#1', 1, 1, 1, 2)`),
+    ).toThrow();
+    expect(() =>
+      db.exec(`INSERT INTO pr_files_state (item_id, fetched_at_ms, api_file_count, stored_count,
+                 truncated) VALUES ('github:o/r#1', 1, 1, 1, -1)`),
+    ).toThrow();
+    db.close();
+  });
 });
