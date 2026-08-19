@@ -116,6 +116,21 @@ function unconfiguredEnvelope(service: string, sinceMs: number, nowMs: number): 
 }
 
 export async function dispatchMetricsRpc(
+  method: "metrics.dora",
+  params: unknown,
+  ctx: MetricsRpcContext,
+): Promise<{ kind: "miss" } | { kind: "hit"; value: DoraMetricsResult }>;
+export async function dispatchMetricsRpc(
+  method: "metrics.stats",
+  params: unknown,
+  ctx: MetricsRpcContext,
+): Promise<{ kind: "miss" } | { kind: "hit"; value: StatsSeries }>;
+export async function dispatchMetricsRpc(
+  method: string,
+  params: unknown,
+  ctx: MetricsRpcContext,
+): Promise<{ kind: "miss" } | { kind: "hit"; value: DoraMetricsResult | StatsSeries }>;
+export async function dispatchMetricsRpc(
   method: string,
   params: unknown,
   ctx: MetricsRpcContext,

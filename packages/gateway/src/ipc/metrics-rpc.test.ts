@@ -97,23 +97,29 @@ describe("metrics.stats", () => {
   });
 
   // A StatsBucketError must not escape as an unhandled 500-class fault.
-  test("bucket larger than window surfaces as -32602, not an internal error", async () => {
+  test("bucket larger than window surfaces as -32602, not an internal error, naming both durations", async () => {
+    const windowMs = 86_400_000;
+    const bucketMs = 7 * 86_400_000;
     let code = 0;
+    let msg = "";
     try {
       await dispatchMetricsRpc(
         "metrics.stats",
         {
           service: "checkout-web",
           metric: "pr-merges",
-          window_ms: 86_400_000,
-          bucket_ms: 7 * 86_400_000,
+          window_ms: windowMs,
+          bucket_ms: bucketMs,
         },
         ctx,
       );
     } catch (e) {
       code = (e as { rpcCode: number }).rpcCode;
+      msg = (e as Error).message;
     }
     expect(code).toBe(-32602);
+    expect(msg).toContain(String(windowMs));
+    expect(msg).toContain(String(bucketMs));
   });
 
   test("an unconfigured service is a -32602 naming the service", async () => {
@@ -133,5 +139,7 @@ describe("metrics.stats", () => {
   test("metrics.dora still dispatches unchanged", async () => {
     const out = await dispatchMetricsRpc("metrics.dora", { service: "checkout-web" }, ctx);
     expect(out.kind).toBe("hit");
+    if (out.kind !== "hit") throw new Error("expected hit");
+    expect(out.value.metrics.deployment_frequency.unit).toBe("deploys_per_day");
   });
 });
