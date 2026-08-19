@@ -296,4 +296,9 @@ test("bitbucketDiffstatHasMore reads the next-URL, not page length", () => {
   // A `next` field of the wrong type must not be treated as "there is a next page".
   expect(bitbucketDiffstatHasMore({ next: 123, values: [] })).toBe(false);
   expect(bitbucketDiffstatHasMore(null)).toBe(false);
+  // An EMPTY `next` is the same "no next page" as an absent one, and is read that way for the PR
+  // list itself elsewhere in this file. A bare `typeof === "string"` says true here, which keeps
+  // the driver paging to `MAX_PAGES_PER_PR` and records a fully-stored PR as `truncated` —
+  // permanently excluding it from negation.
+  expect(bitbucketDiffstatHasMore({ next: "", values: [] })).toBe(false);
 });
