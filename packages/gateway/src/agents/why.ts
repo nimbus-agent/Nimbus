@@ -117,7 +117,13 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
     subject,
     blame,
     pr,
-    occurredAt: blame?.authorTimeMs ?? pr?.modifiedAt ?? null,
+    // Computed per-arm, not through one shared nullish chain: on the ref arm
+    // `blame.authorTimeMs` can itself be null (no `author-time` line in the
+    // `git blame --line-porcelain` output) while `pr` is still non-null — a
+    // shared `blame?.authorTimeMs ?? pr?.modifiedAt ?? null` would silently
+    // borrow the PR's timestamp for a ref-arm answer, which is a different
+    // (and wrong) answer, not a missing one.
+    occurredAt: isWhyPrInput(input) ? (pr?.modifiedAt ?? null) : (blame?.authorTimeMs ?? null),
   };
 
   const coordinator = new AgentCoordinator({
@@ -565,8 +571,8 @@ async function subDriver(db: Database, lane: LaneInput): Promise<SubAgentResult>
   const missingEntityGap = detectMissingEntityType(db, "incident");
   if (missingEntityGap !== null) return { gap: missingEntityGap };
 
-  const authorTimeMs = lane.occurredAt;
-  if (authorTimeMs === null) return {};
+  const occurredAt = lane.occurredAt;
+  if (occurredAt === null) return {};
 
   const rows = db
     .query(
@@ -579,7 +585,7 @@ async function subDriver(db: Database, lane: LaneInput): Promise<SubAgentResult>
         ORDER BY occurred_at DESC, e.id ASC
         LIMIT 10`,
     )
-    .all(authorTimeMs - DRIVER_WINDOW_MS, authorTimeMs) as Array<{
+    .all(occurredAt - DRIVER_WINDOW_MS, occurredAt) as Array<{
     id: string;
     label: string;
     url: string | null;

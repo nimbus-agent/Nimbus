@@ -43,7 +43,11 @@ type FixtureParts = {
   commit?: boolean;
   issue?: boolean;
   pr?: boolean;
-  blame?: { lineNo: number; authorTimeMs?: number };
+  // `authorTimeMs` omitted defaults to a real timestamp; `null` is
+  // deliberately distinct from "omitted" — it seeds a blame row with no
+  // `author-time` line, the real shape `parseBlamePorcelain` produces
+  // (`blame-store.ts:36,47`).
+  blame?: { lineNo: number; authorTimeMs?: number | null };
 };
 
 /**
@@ -113,7 +117,8 @@ function seedWhyFixture(db: Database, parts: FixtureParts): void {
         commitSha: SHA,
         authorName: "alice",
         authorEmail: "alice@example.com",
-        authorTimeMs: parts.blame.authorTimeMs ?? 1_700_000_000_000,
+        authorTimeMs:
+          parts.blame.authorTimeMs === undefined ? 1_700_000_000_000 : parts.blame.authorTimeMs,
       },
     ]);
   }
@@ -592,6 +597,49 @@ describe("runWhy", () => {
         (g) => g.category === "missing_relation_emit" && g.detail.includes("affects"),
       ),
     ).toBe(true);
+  });
+
+  test("driver lane: a blame row with no author-time line yields no finding, even when its commit resolves to a merged PR with an incident in ITS window", async () => {
+    // Regression for the ref arm borrowing the PR's `modifiedAt` as a stand-in
+    // for a missing blame timestamp. `git blame --line-porcelain` omits the
+    // `author-time` line for some blame states, so `authorTimeMs` really can
+    // be null on a resolved blame row (`blame-store.ts:36,47`) — and `pr` is
+    // still non-null here, since the blamed commit is the PR's merge commit.
+    // `occurredAt` must come from `blame.authorTimeMs` alone on this arm, not
+    // fall through to `pr.modifiedAt`.
+    //
+    // A quiet "no findings either way" assertion wouldn't distinguish the fix
+    // from the bug (subDriver returns no findings whenever nothing is seeded
+    // in the query window, regardless of which timestamp it used). So this
+    // seeds an incident squarely inside the window the BUGGY fallback would
+    // have queried — anchored to the PR's own `modifiedAt`, not to blame — so
+    // a driver finding here is proof the bug reappeared, not a coincidence.
+    const db = freshDb();
+    seedWhyFixture(db, { pr: true, blame: { lineNo: 42, authorTimeMs: null } });
+
+    const prModifiedAt = db
+      .query(
+        `SELECT i.modified_at AS modified_at FROM item i
+           JOIN graph_entity e ON e.external_id = i.id
+          WHERE e.type = 'pr'
+          LIMIT 1`,
+      )
+      .get() as { modified_at: number };
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "PD-regression",
+      title: "Should never surface via the PR's timestamp",
+      bodyPreview: "",
+      modifiedAt: prModifiedAt.modified_at - HOUR,
+      syncedAt: Date.now(),
+      metadata: {},
+    });
+
+    const brief = await runWhy({ ref: refAt(42) }, ctxFor(db));
+
+    const driver = brief.findings.filter((f) => f.lane === "driver");
+    expect(driver).toHaveLength(0);
   });
 
   test("downstream lane: reverse depends_on from the file's symbols", async () => {
