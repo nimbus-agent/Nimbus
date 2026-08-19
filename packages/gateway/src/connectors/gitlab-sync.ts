@@ -196,9 +196,16 @@ export function mrDiffsUrl(
 }
 
 /**
- * Mirrors `github-sync.ts`'s `runPrFilePassBestEffort` exactly — same try/catch, same rethrow of
+ * Mirrors `github-sync.ts`'s `runPrFilePassBestEffort` — same try/catch, same rethrow of
  * `RateLimitError`, same warn. GitLab MRs key as `<pathWithNamespace>!<iid>`, and a group path may
  * itself contain slashes, so the iid is parsed from AFTER the LAST `!`, not the first.
+ *
+ * It does NOT carry GitHub's `UnauthenticatedError` rethrow, and deliberately: no GitLab codepath
+ * raises that error at all — this connector maps no status to a credential failure, so the closure
+ * below returns `null` for a 401 like any other non-ok response. Adding the rethrow here would be
+ * an unreachable branch, not a defence. Surfacing a GitLab 401 is a separate change: it would make
+ * this best-effort side pass the connector's ONLY health signal for a revoked PAT, which is a
+ * connector-health decision, not a changed-file one.
  */
 async function runGitlabPrFilePassBestEffort(
   ctx: SyncContext,
@@ -215,9 +222,22 @@ async function runGitlabPrFilePassBestEffort(
         if (cut < 0) return null;
         const iid = Number(c.externalId.slice(cut + 1));
         if (!Number.isFinite(iid)) return null;
-        const res = await fetch(mrDiffsUrl(apiBase, c.repoFull, iid, page), {
-          headers: { "PRIVATE-TOKEN": pat },
-        });
+        let res: Response;
+        try {
+          res = await fetch(mrDiffsUrl(apiBase, c.repoFull, iid, page), {
+            headers: { "PRIVATE-TOKEN": pat },
+          });
+        } catch {
+          // Same rule `fetchOneMergeRequest` states about itself at lines 116-120 of this file: a
+          // DNS/TLS/connect rejection can carry the request URL — which embeds the Vault-stored
+          // `api_base` — in its message, and `runPrFilePass`'s per-candidate catch logs
+          // `err: String(err)`. Swallow it entirely rather than let it propagate.
+          //
+          // `null`, not a rethrow: it is the driver's existing "this page could not be read"
+          // signal, so the MR is left with NO coverage row and `selectPrFileCandidates` re-queues
+          // it next tick. The driver logs its own URL-free warn on this path.
+          return null;
+        }
         if (res.status === 429) {
           const retryAt = retryAfterDateFromHeader(res.headers.get("retry-after"), 60);
           ctx.rateLimiter.penalise("gitlab", Math.max(1000, retryAt.getTime() - Date.now()));
