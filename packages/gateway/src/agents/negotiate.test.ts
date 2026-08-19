@@ -249,12 +249,16 @@ test("--person naming an id that matches nothing declares the counts structurall
 test("--person naming a git: blame alias says which lanes are structurally zero", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
-  const ghost = upsertGraphEntity(db, {
+  const ghost = upsertGraphEntity<string>(db, {
     type: "person",
     externalId: "git:jane@example.com",
     label: "jane@example.com",
   });
-  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  const svc = upsertGraphEntity<string>(db, {
+    type: "service",
+    externalId: "svc:api",
+    label: "api",
+  });
   upsertGraphRelation(db, ghost, svc, "owns", Date.now(), 0.9);
 
   const brief = await runNegotiate(
@@ -703,8 +707,16 @@ test("ownership reports services and cites the pass timestamp", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
   db.run("INSERT INTO ownership_pass_state (id, last_pass_at) VALUES (1, 1700000000000)");
-  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
-  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  const me = upsertGraphEntity<string>(db, {
+    type: "person",
+    externalId: "person:me",
+    label: "Me",
+  });
+  const svc = upsertGraphEntity<string>(db, {
+    type: "service",
+    externalId: "svc:api",
+    label: "api",
+  });
   upsertGraphRelation(db, me, svc, "owns", Date.now(), 0.8);
 
   const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
@@ -723,12 +735,16 @@ test("an unmapped git identity for the self subject raises a named gap", async (
     "me@work.example",
   ]);
   // Ownership recorded under a DIFFERENT, unmapped email — exactly what resolveOwner emits.
-  const ghost = upsertGraphEntity(db, {
+  const ghost = upsertGraphEntity<string>(db, {
     type: "person",
     externalId: "git:me@personal.example",
     label: "me@personal.example",
   });
-  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  const svc = upsertGraphEntity<string>(db, {
+    type: "service",
+    externalId: "svc:api",
+    label: "api",
+  });
   upsertGraphRelation(db, ghost, svc, "owns", Date.now(), 0.9);
 
   const brief = await runNegotiate(
@@ -745,22 +761,26 @@ test("an unmapped git identity for the self subject raises a named gap", async (
 test("--person reports a count of unmapped git identities in the index, never a guess", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:target", "Target Person"]);
-  const target = upsertGraphEntity(db, {
+  const target = upsertGraphEntity<string>(db, {
     type: "person",
     externalId: "person:target",
     label: "Target Person",
   });
-  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  const svc = upsertGraphEntity<string>(db, {
+    type: "service",
+    externalId: "svc:api",
+    label: "api",
+  });
   upsertGraphRelation(db, target, svc, "owns", Date.now(), 0.7);
 
   // Unrelated `git:` alias elsewhere in the index — must be COUNTED, never attributed to the
   // named subject by name/email matching (spec § 5.A0).
-  const ghost = upsertGraphEntity(db, {
+  const ghost = upsertGraphEntity<string>(db, {
     type: "person",
     externalId: "git:ghost@example.com",
     label: "ghost@example.com",
   });
-  const otherSvc = upsertGraphEntity(db, {
+  const otherSvc = upsertGraphEntity<string>(db, {
     type: "service",
     externalId: "svc:other",
     label: "other",
@@ -785,10 +805,14 @@ test("--person reports a count of unmapped git identities in the index, never a 
 test("ownership truncates at OWNERSHIP_LIMIT owned targets and reports truncated", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
-  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
+  const me = upsertGraphEntity<string>(db, {
+    type: "person",
+    externalId: "person:me",
+    label: "Me",
+  });
   const total = OWNERSHIP_LIMIT + 5;
   for (let i = 0; i < total; i += 1) {
-    const svc = upsertGraphEntity(db, {
+    const svc = upsertGraphEntity<string>(db, {
       type: "service",
       externalId: `svc:${String(i)}`,
       label: `svc-${String(i)}`,
@@ -806,9 +830,13 @@ test("ownership truncates at OWNERSHIP_LIMIT owned targets and reports truncated
 test("ownership at exactly OWNERSHIP_LIMIT owned targets is not truncated", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
-  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
+  const me = upsertGraphEntity<string>(db, {
+    type: "person",
+    externalId: "person:me",
+    label: "Me",
+  });
   for (let i = 0; i < OWNERSHIP_LIMIT; i += 1) {
-    const svc = upsertGraphEntity(db, {
+    const svc = upsertGraphEntity<string>(db, {
       type: "service",
       externalId: `svc:${String(i)}`,
       label: `svc-${String(i)}`,
@@ -826,8 +854,12 @@ test("ownership at exactly OWNERSHIP_LIMIT owned targets is not truncated", asyn
 test("ownership reports directories for directory-typed owns targets", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
-  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
-  const dir = upsertGraphEntity(db, {
+  const me = upsertGraphEntity<string>(db, {
+    type: "person",
+    externalId: "person:me",
+    label: "Me",
+  });
+  const dir = upsertGraphEntity<string>(db, {
     type: "directory",
     externalId: "dir:root:src/api",
     label: "src/api",
@@ -1289,8 +1321,16 @@ test("an unnamed other subject falls back to the id, never to 'you'", async () =
 test("the ownership section labels itself authorship-derived, unconditionally", async () => {
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
-  const me = upsertGraphEntity(db, { type: "person", externalId: "person:me", label: "Me" });
-  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  const me = upsertGraphEntity<string>(db, {
+    type: "person",
+    externalId: "person:me",
+    label: "Me",
+  });
+  const svc = upsertGraphEntity<string>(db, {
+    type: "service",
+    externalId: "svc:api",
+    label: "api",
+  });
   upsertGraphRelation(db, me, svc, "owns", Date.now(), 0.8);
 
   const withOwnership = renderNegotiate(
@@ -1321,12 +1361,16 @@ test("an explicit self subject still carries the unmapped-git-identity caveat", 
   ]);
   // Blame indexed before the person record was linked: the SAME email exists both as the
   // person's canonical email and as an unmapped `git:` graph entity carrying `owns` edges.
-  const ghost = upsertGraphEntity(db, {
+  const ghost = upsertGraphEntity<string>(db, {
     type: "person",
     externalId: "git:me@work.example",
     label: "me@work.example",
   });
-  const svc = upsertGraphEntity(db, { type: "service", externalId: "svc:api", label: "api" });
+  const svc = upsertGraphEntity<string>(db, {
+    type: "service",
+    externalId: "svc:api",
+    label: "api",
+  });
   upsertGraphRelation(db, ghost, svc, "owns", Date.now(), 0.9);
 
   // No `mePersonIdOverride` — an override short-circuits `resolveSelfPerson` before it ever

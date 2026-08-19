@@ -374,12 +374,12 @@ describe("runWhy", () => {
     // entities, unconnected to the PR, must NOT surface in the ticket lane.
     // (Excluded regardless of type scoping — `WHERE r.from_id = ?` alone
     // would already reject it, since its from_id isn't the PR entity.)
-    const personId = upsertGraphEntity(db, {
+    const personId = upsertGraphEntity<string>(db, {
       type: "person",
       externalId: "person:bob",
       label: "bob",
     });
-    const incidentId = upsertGraphEntity(db, {
+    const incidentId = upsertGraphEntity<string>(db, {
       type: "incident",
       externalId: "incident:PD-99",
       label: "Some unrelated incident",

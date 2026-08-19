@@ -148,13 +148,13 @@ function seededDb(): Database {
 
 function seedPersonAndPr(db: Database): { personId: string; prId: string } {
   return {
-    personId: upsertGraphEntity(db, {
+    personId: upsertGraphEntity<string>(db, {
       type: "person",
       externalId: "gh:42",
       label: "Dev",
       service: "github",
     }),
-    prId: upsertGraphEntity(db, {
+    prId: upsertGraphEntity<string>(db, {
       type: "pr",
       externalId: "pr-1",
       label: "Fix bug",
@@ -203,13 +203,13 @@ describe("itemMatchesGraphPredicate", () => {
   test("upstream_of matches an item → target outgoing edge", () => {
     const db = seededDb();
     const now = 1_700_000_000_000;
-    const prId = upsertGraphEntity(db, {
+    const prId = upsertGraphEntity<string>(db, {
       type: "pr",
       externalId: "pr-2",
       label: "PR",
       service: "github",
     });
-    const repoId = upsertGraphEntity(db, {
+    const repoId = upsertGraphEntity<string>(db, {
       type: "repo",
       externalId: "github:acme/svc",
       label: "acme/svc",
@@ -243,13 +243,13 @@ describe("itemMatchesGraphPredicate", () => {
   test("downstream_of matches a target → item edge", () => {
     const db = seededDb();
     const now = 1_700_000_000_000;
-    const wsId = upsertGraphEntity(db, {
+    const wsId = upsertGraphEntity<string>(db, {
       type: "workspace",
       externalId: "filesystem:/repo",
       label: "/repo",
       service: "filesystem",
     });
-    const depId = upsertGraphEntity(db, {
+    const depId = upsertGraphEntity<string>(db, {
       type: "package",
       externalId: "npm:left-pad@1.0.0",
       label: "left-pad@1.0.0",
@@ -336,19 +336,19 @@ describe("countItemsMatchingGraphPredicate", () => {
        VALUES ('i2', 'github', 'pr', 'pr-new', 'new', ?, ?)`,
       [t0 + 10_000, t0 + 10_000],
     );
-    const personId = upsertGraphEntity(db, {
+    const personId = upsertGraphEntity<string>(db, {
       type: "person",
       externalId: "gh:7",
       label: "Dev",
       service: "github",
     });
-    const oldPrId = upsertGraphEntity(db, {
+    const oldPrId = upsertGraphEntity<string>(db, {
       type: "pr",
       externalId: "pr-old",
       label: "old",
       service: "github",
     });
-    const newPrId = upsertGraphEntity(db, {
+    const newPrId = upsertGraphEntity<string>(db, {
       type: "pr",
       externalId: "pr-new",
       label: "new",

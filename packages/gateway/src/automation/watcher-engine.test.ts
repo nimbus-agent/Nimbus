@@ -287,13 +287,13 @@ describe("watcher-engine", () => {
       t0,
     );
     insertSentryAlert(db, "a2", "oom", t0);
-    const personId = upsertGraphEntity(db, {
+    const personId = upsertGraphEntity<string>(db, {
       type: "person",
       externalId: "gh:7",
       label: "Dev",
       service: "github",
     });
-    const alertId = upsertGraphEntity(db, {
+    const alertId = upsertGraphEntity<string>(db, {
       type: "alert",
       externalId: "a2",
       label: "oom",
