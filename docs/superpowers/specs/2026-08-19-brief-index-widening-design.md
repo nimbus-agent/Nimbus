@@ -103,9 +103,9 @@ registry entry. Once entries span types, telling the model that `C3` is a pull r
 tokens.
 
 Not assumed either way here. The implementation adds the field to the prompt entry only if
-a synthesis test shows it changes attribution behaviour; otherwise it stays out. The
-citation carries `itemType` regardless, because the **user** benefits from it whether or
-not the model does.
+doing so does not regress the synthesis suite and costs no more than the single
+pre-authorised key below; otherwise it stays out. The citation carries `itemType`
+regardless, because the **user** benefits from it whether or not the model does.
 
 **If the test says yes, the shape is fixed in advance** so the decision is about whether,
 never about what: one additional key on the existing per-source object, carrying the raw
@@ -126,6 +126,13 @@ test regressed, and the discriminating test (`brief-synthesis.test.ts`, `buildPr
 block) confirms the key is present on a typed `C{n}` entry and absent on `S1`. Cost is exactly
 the single short key the spec allowed. Nothing else in `INSTRUCTIONS` or the source shape
 changed.
+
+What this did **not** measure: every LLM call in this suite is a canned/stubbed response
+that ignores prompt content, so no test here can show a change in attribution behaviour in
+either direction — the stricter "does the model use it" question this section opens with is
+still open, and stays open until a slice with a real (live-model) eval harness can ask it.
+"Kept" rests on absence of regression at pre-authorised cost, not on a demonstrated
+improvement in grounding.
 
 ### 5. A hit's prompt cost is set by the chunker, not by the item
 
