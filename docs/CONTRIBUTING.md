@@ -50,6 +50,7 @@ bun test              # All unit tests
 - Issues tagged [`good first issue`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) are the best starting point
 - Issues tagged [`help-wanted`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3Ahelp-wanted) are open for contributors
 - **Open a discussion before starting any large PR.** Architecture decisions belong in a discussion, not in a surprise diff
+- **Ask to be assigned before you start.** Comment on the issue and wait for it to be assigned to you. Pull requests from outside contributors are reviewed only for issues the author was assigned first — this keeps two people from building the same thing, and keeps the review queue honest during high-traffic periods.
 
 ---
 
@@ -156,6 +157,18 @@ The `scripts/` directory holds repository tooling — release packaging (`script
 - [ ] Platform-specific code is behind the `PlatformServices` abstraction
 - [ ] No credentials, tokens, or secret values appear in any log, IPC message, or config
 
+### The per-file coverage floor
+
+`audit:coverage-floor` enforces **≥85% line and ≥80% branch coverage on every non-exempt file**, including new ones. A new connector or script will be rejected by it unless its tests carry it over both floors.
+
+It is **CI-Linux-authoritative** — running it on Windows or macOS produces false violations, so do not trust a local pass or panic at a local failure. Reproduce what CI sees with:
+
+```bash
+bun run verify:docker --full
+```
+
+If a file is genuinely untestable glue rather than logic, it can be excluded — but excluding is a reviewed decision, not a default. Say why in the PR description.
+
 ---
 
 ## Adding a New MCP Connector
@@ -214,6 +227,12 @@ Circular dependencies are forbidden. The linter will catch cross-package source 
 3. All CI checks must be green: `pr-quality` (Ubuntu) must pass before review begins. To run optional desktop E2E (Tauri + Playwright) on a PR, add the `ci:e2e-desktop` label (that retriggers CI so the E2E job can run).
 4. At least one maintainer approval is required before merge
 5. Squash-merge is preferred for feature branches; merge commits for release branches
+
+### What to expect from the maintainer
+
+**First response within 72 hours** on any new issue or pull request — a review, a question, or at minimum an acknowledgement that it is queued. Nimbus is maintained by one person, so a full review may take longer than the first response; if 72 hours pass with silence, a nudge on the thread is welcome and appropriate.
+
+Write access follows contribution: the switches that move this repository from single-maintainer to two-maintainer mode are already written down in `.github/rulesets/general-branch.json` under `$contributor_two`.
 
 ---
 
