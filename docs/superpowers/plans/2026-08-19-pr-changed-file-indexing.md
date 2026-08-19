@@ -905,8 +905,12 @@ As in Task 3: if the live API disagrees, use the live shape and say so in your r
 Append to `packages/gateway/src/prfiles/pr-file-mapping.test.ts`:
 
 ```ts
-// Reuse the `loadFixture` helper already defined at the top of this file by Task 3 — do not add a
-// second loader, and do not switch to an import attribute (this repo uses none).
+// Reuse the `loadFixture` helper already defined at the top of THIS SAME FILE by Task 3 — these
+// tests are APPENDED to it, so the helper is already in scope. Do NOT import it, and do NOT export
+// it: importing a `.test.ts` module re-executes its top-level `describe`/`test` calls, so a
+// consumer that imported this helper would silently re-run all of Task 3's tests inside its own
+// file (measured: 7 passes where 1 was expected). Also do not switch to an import attribute — this
+// repo uses none.
 import { mapBitbucketPrFiles, mapGitlabMrFiles } from "./pr-file-mapping.ts";
 
 const gitlabFixture = loadFixture("gitlab-mr-diffs.json");
