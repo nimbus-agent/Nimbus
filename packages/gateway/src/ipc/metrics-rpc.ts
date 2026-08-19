@@ -1,6 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { computeDoraMetrics, type DoraMetricsResult } from "../metrics/dora.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import {
+  computeStatsSeries,
+  STATS_METRIC_IDS,
+  type StatsMetricId,
+  type StatsSeries,
+} from "../metrics/stats.ts";
+import { StatsBucketError } from "../metrics/stats-buckets.ts";
 
 export class MetricsRpcError extends Error {
   readonly rpcCode: number;
@@ -55,6 +62,43 @@ function requireDoraParams(params: unknown): { service: string; since: string } 
   return { service, since };
 }
 
+function requireStatsParams(params: unknown): {
+  service: string;
+  metric: StatsMetricId;
+  windowMs: number;
+  bucketMs: number;
+} {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new MetricsRpcError(-32602, "metrics.stats requires an object");
+  }
+  const p = params as Record<string, unknown>;
+  if (typeof p["service"] !== "string") {
+    throw new MetricsRpcError(-32602, "service must be a string");
+  }
+  const service = p["service"].trim();
+  if (service.length < MIN_SERVICE_LEN || service.length > MAX_SERVICE_LEN) {
+    throw new MetricsRpcError(
+      -32602,
+      `service must be ${MIN_SERVICE_LEN}..${MAX_SERVICE_LEN} chars`,
+    );
+  }
+  const metric = p["metric"];
+  if (typeof metric !== "string" || !(STATS_METRIC_IDS as readonly string[]).includes(metric)) {
+    throw new MetricsRpcError(-32602, `metric must be one of ${STATS_METRIC_IDS.join(", ")}`);
+  }
+  const windowMs = p["window_ms"];
+  const bucketMs = p["bucket_ms"];
+  if (!Number.isInteger(windowMs) || !Number.isInteger(bucketMs)) {
+    throw new MetricsRpcError(-32602, "window_ms and bucket_ms must be integer milliseconds");
+  }
+  return {
+    service,
+    metric: metric as StatsMetricId,
+    windowMs: windowMs as number,
+    bucketMs: bucketMs as number,
+  };
+}
+
 function unconfiguredEnvelope(service: string, sinceMs: number, nowMs: number): DoraMetricsResult {
   const placeholder = (unit: string) =>
     ({ value: null, unit, sample: 0, gap: "no_repos" as const }) as const;
@@ -75,7 +119,27 @@ export async function dispatchMetricsRpc(
   method: string,
   params: unknown,
   ctx: MetricsRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: DoraMetricsResult }> {
+): Promise<{ kind: "miss" } | { kind: "hit"; value: DoraMetricsResult | StatsSeries }> {
+  if (method === "metrics.stats") {
+    const { service, metric, windowMs, bucketMs } = requireStatsParams(params);
+    const nowMs = (ctx.nowMs ?? (() => Date.now()))();
+    const cfg = ctx.loadConfig().get(service);
+    if (cfg === undefined) {
+      throw new MetricsRpcError(
+        -32602,
+        `unknown service '${service}' — add [metrics.dora.${service}] or [ci.service.${service}] to nimbus.toml`,
+      );
+    }
+    try {
+      return {
+        kind: "hit",
+        value: computeStatsSeries(ctx.db, cfg, metric, nowMs, windowMs, bucketMs),
+      };
+    } catch (e) {
+      if (e instanceof StatsBucketError) throw new MetricsRpcError(-32602, e.message);
+      throw e;
+    }
+  }
   if (method !== "metrics.dora") return { kind: "miss" };
   const { service, since } = requireDoraParams(params);
   const sinceMs = parseSinceToMs(since);
