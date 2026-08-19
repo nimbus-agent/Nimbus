@@ -823,6 +823,24 @@ Several surfaces live in their own repos and release independently of the Gatewa
 
 ---
 
+## Ecosystem
+
+Nimbus is a gateway plus a set of surfaces that talk to it. All of these are separate, independently released repositories:
+
+| Repo | What it is |
+|---|---|
+| [nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) | The extension-authoring contract (MIT) — what a connector is written against |
+| [nimbus-client](https://github.com/nimbus-agent/nimbus-client) | Typed IPC wrapper (MIT) — how a client talks to the gateway |
+| [create-nimbus-connector](https://github.com/nimbus-agent/create-nimbus-connector) | Scaffolding generator for a new connector |
+| [nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) | VS Code / Open VSX extension |
+| [nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) | Chrome + Firefox MV3 web clipper |
+| [nimbus-raycast](https://github.com/nimbus-agent/nimbus-raycast) | Raycast extension — quick-ask over the local gateway |
+| [awesome-nimbus](https://github.com/nimbus-agent/awesome-nimbus) | Curated connectors, recipes, extensions and resources |
+
+The SDK and client are **MIT**, not AGPL — building on Nimbus does not pull the core's license into your project.
+
+---
+
 ## Contributing
 
 Architecture is stabilizing; not all interfaces are frozen.
