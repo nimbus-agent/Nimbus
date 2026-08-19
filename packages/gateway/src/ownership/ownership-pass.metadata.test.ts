@@ -64,6 +64,12 @@ describe("owner counts vs. the code-symbol sync (THE BUG)", () => {
     const before = findFileEntity(d, ROOT, "a.ts");
     expect(before?.counts.ownerCount).not.toBeNull();
     expect(before?.counts.ownerCount).toBe(2);
+    // Both authors own exactly one line each (0.5 share), clearing the default 5% floor
+    // with the default cap of 10 never binding — pinned concretely so the post-sync
+    // comparison below rests on known values, not on two possibly-null/possibly-equal
+    // sides that would pass vacuously if the metadata went missing on both ends.
+    expect(before?.counts.ownersAboveFloor).toBe(2);
+    expect(before?.counts.truncated).toBe(false);
 
     // Exactly what `graph/graph-populator.ts`'s `syncCodeSymbolGraph` does on a
     // real code-symbol sync: the same `source_file` external id, via the same

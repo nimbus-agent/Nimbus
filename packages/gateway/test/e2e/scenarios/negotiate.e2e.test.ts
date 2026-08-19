@@ -125,12 +125,12 @@ function seedNegotiateEvidence(db: Database): void {
   });
 
   // An ownership edge, through the real graph writers.
-  const personEntityId = upsertGraphEntity(db, {
+  const personEntityId = upsertGraphEntity<string>(db, {
     type: "person",
     externalId: PERSON_ID,
     label: "Ada Lovelace",
   });
-  const serviceEntityId = upsertGraphEntity(db, {
+  const serviceEntityId = upsertGraphEntity<string>(db, {
     type: "service",
     externalId: "svc:checkout",
     label: "checkout",
