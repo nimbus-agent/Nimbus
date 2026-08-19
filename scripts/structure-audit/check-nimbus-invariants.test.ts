@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
+import { CO_OWNED_ENTITY_TYPES } from "../../packages/gateway/src/graph/relationship-graph.ts";
 import {
   assertScanIsMeaningful,
   checkAgentEmitterImportConfinement,
@@ -826,7 +827,10 @@ describe("graph-entity-flat-coowned — flat upsertGraphEntity pinned away from 
   // The real shape, from graph-populator.ts before Task 3 converted it: multi-line, `type:` on the
   // line after the call opens. A same-line regex would miss this — the only shape in the tree —
   // and pass vacuously, so this is the primary case, not an edge case.
-  test.each(["source_file", "directory", "person", "service"] as const)(
+  // Driven off CO_OWNED_ENTITY_TYPES rather than a literal list: the rule builds its regex from
+  // that constant, so a type added there must gain a case here automatically or this suite would
+  // keep passing while covering one fewer type than the rule polices.
+  test.each([...CO_OWNED_ENTITY_TYPES])(
     "flags a MULTI-LINE flat call with co-owned type %s",
     (type) => {
       const v = checkFlatUpsertGraphEntityCoOwnedTypes([
@@ -934,11 +938,25 @@ describe("graph-entity-flat-coowned — flat upsertGraphEntity pinned away from 
     ).toBe(false);
   });
 
-  test("the match window is bounded, not catastrophic, on a long non-matching call", () => {
-    const pathological = `upsertGraphEntity(db, { ${"x".repeat(20_000)}`;
-    const started = performance.now();
-    flagged([{ relPath: "packages/gateway/src/graph/graph-populator.ts", contents: pathological }]);
-    expect(performance.now() - started).toBeLessThan(1_000);
+  // Asserts the ACTUAL bound — `[\s\S]{0,120}?` — not how fast the scan ran. A wall-clock
+  // assertion cannot tell a bounded window from an unbounded-but-fast one, and is flaky on a
+  // loaded CI runner. Both halves are needed: the far case alone would pass against a rule that
+  // matched nothing at all.
+  test("the match window is bounded at 120 characters, in both directions", () => {
+    // The window opens right after the `(`, so `db, {` already spends 5 of the 120.
+    const PREFIX = "db, {".length;
+    const site = (gap: number): string =>
+      `upsertGraphEntity(db, {${" ".repeat(gap)}type: "person", externalId: e });\n`;
+    const scan = (gap: number): boolean =>
+      flagged([{ relPath: "packages/gateway/src/graph/graph-populator.ts", contents: site(gap) }]);
+    // Inside the window: flagged. Real call sites sit 10–12 characters in.
+    expect(scan(10)).toBe(true);
+    expect(scan(120 - PREFIX)).toBe(true);
+    // One character past it: NOT flagged. A known, deliberate bound, asserted so it is inherited
+    // rather than rediscovered — and the reason 120 is measured against real call sites rather
+    // than guessed. `20_000` is the old pathological input, now asserted on its RESULT.
+    expect(scan(120 - PREFIX + 1)).toBe(false);
+    expect(scan(20_000)).toBe(false);
   });
 });
 

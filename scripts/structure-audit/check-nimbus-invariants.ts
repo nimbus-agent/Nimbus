@@ -852,10 +852,12 @@ export function checkEgressChokepointConfinement(files: readonly FileEntry[]): V
 // map 1:1 onto specific I-numbers). It follows the D20–D22 SHAPE — a named regex plus an
 // allowed-path constant — without claiming their provenance.
 //
-// WHAT IT PROTECTS: `graph_entity.metadata` is namespaced per-writer for exactly four co-owned
-// types (`source_file`, `directory`, `person`, `service` — `CO_OWNED_ENTITY_TYPES`, imported
-// directly from relationship-graph.ts rather than restated here, so the two lists cannot drift:
-// this script already imports other production constants, e.g. CONNECTOR_VAULT_SECRET_KEYS above).
+// WHAT IT PROTECTS: `graph_entity.metadata` is namespaced per-writer for the co-owned types
+// named by `CO_OWNED_ENTITY_TYPES` — imported directly from relationship-graph.ts rather than
+// restated here, so the two lists cannot drift (this script already imports other production
+// constants, e.g. CONNECTOR_VAULT_SECRET_KEYS above). The membership rule, and which entries are
+// live collisions versus defensive or uniformity inclusions, is documented at that constant and
+// deliberately NOT duplicated here — a copy would be one more thing to keep true.
 // The flat `upsertGraphEntity` REPLACES the whole `metadata` column; calling it with a co-owned
 // type is exactly the bug Tasks 1–3 fixed (a code-symbol sync wiping the ownership-pass's owner
 // counts). Step 1's `NonCoOwnedType<T>` already rejects a LITERAL co-owned type at compile time;
@@ -863,7 +865,7 @@ export function checkEgressChokepointConfinement(files: readonly FileEntry[]): V
 // the compiler guard cannot see if the call site widens its type parameter, and including files
 // added after this commit.
 //
-// A FIFTH co-owned type must be added to `CO_OWNED_ENTITY_TYPES` in relationship-graph.ts, in the
+// A NEW co-owned type must be added to `CO_OWNED_ENTITY_TYPES` in relationship-graph.ts, in the
 // SAME commit it becomes co-owned; this rule reads that constant directly and needs no edit of its
 // own, but the commit must still convert every new co-owned write site to
 // `upsertGraphEntityNamespaced` or this rule (and the compiler guard) will start catching them.
@@ -872,15 +874,22 @@ export function checkEgressChokepointConfinement(files: readonly FileEntry[]): V
 //   upsertGraphEntity(db, {
 //     type: "source_file",
 // — never on one line — so a same-line regex would miss every real occurrence and pass vacuously.
-// `[\s\S]{0,120}?` (lazy) spans from the call to the `type:` literal across newlines. 120 is
-// bounded deliberately: measured against every real call site in graph-populator.ts, `type:` is
-// always the FIRST field and sits 28–30 characters after `upsertGraphEntity(db, {`, so 120 is
-// generous slack without being able to reach a SUBSEQUENT call, whose own `upsertGraphEntity(`
-// starts hundreds of characters later in every measured case.
+// `[\s\S]{0,120}?` (lazy) spans from the `(` the regex just consumed to the `type:` literal,
+// across newlines. 120 is bounded deliberately: re-measured against every real
+// `upsertGraphEntity(` call site in graph-populator.ts on 2026-08-19, `type:` is always the FIRST
+// field and starts 10–12 characters after that `(` (`db, {`, a newline, then a four- or
+// six-space indent). 120 is therefore an order of magnitude of slack without being able to reach
+// a SUBSEQUENT call, whose own `upsertGraphEntity(` starts hundreds of characters later in every
+// measured case. This bound is asserted directly in this file's tests — a `type:` pushed past the
+// window is NOT matched — rather than inferred from how fast the scan runs.
 //
-// `\bupsertGraphEntity\b` does not match `upsertGraphEntityNamespaced` — after `...Entity` the very
-// next character in the namespaced name is the word character `N`, so the trailing `\b` cannot
-// fire there. No exclusion of the namespaced name is needed.
+// `\bupsertGraphEntity\s*\(` does not match `upsertGraphEntityNamespaced`, and the reason is the
+// `\s*\(`, NOT a trailing `\b`: the shipped pattern below has a LEADING `\b` only. In
+// `upsertGraphEntityNamespaced(` the character right after `...Entity` is `N` — neither
+// whitespace nor `(` — so the pattern cannot complete there. (A trailing `\b` would separate the
+// two names as well, since `y`→`N` is word-to-word and no boundary exists; it simply is not what
+// the code does, and this comment claimed it was.) No explicit exclusion of the namespaced name
+// is needed either way.
 //
 // EXEMPTION: `.test.ts` files, matching every other rule in this file (D20/D21/D22). Tasks 1 and 3
 // established that fixture-only test writes — `upsertGraphEntity<string>(db, { type: "person", ... })`
@@ -993,7 +1002,11 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/connectors/connector-write-registry.ts", // D20
   "packages/gateway/src/share/share-gate.ts", // D21
   "packages/gateway/src/share/share-forward.ts", // D21 second emit path
-  "packages/gateway/src/graph/relationship-graph.ts", // graph-entity-flat-coowned — flat call's home
+  // graph-entity-flat-coowned. Anchored on a file the rule SCANS, not on relationship-graph.ts:
+  // that file is the rule's own skip target (GRAPH_ENTITY_FLAT_DEFINITION_SITE), so its presence
+  // in the scanned set proves nothing about whether the rule can see anything. ownership-pass.ts
+  // is one of the two converted co-owned writers and is scanned normally.
+  "packages/gateway/src/ownership/ownership-pass.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -1179,7 +1192,7 @@ async function run(): Promise<void> {
     const v = checkFlatUpsertGraphEntityCoOwnedTypes(files);
     for (const e of v) {
       console.error(
-        `::error file=${e.file},line=${e.line}::flat upsertGraphEntity called with a co-owned type (source_file/directory/person/service) — use upsertGraphEntityNamespaced instead, or the flat write wipes the other owner's namespace: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::flat upsertGraphEntity called with a co-owned type (${CO_OWNED_ENTITY_TYPES.join("/")}) — use upsertGraphEntityNamespaced instead, or the flat write wipes the other owner's namespace: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
