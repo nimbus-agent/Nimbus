@@ -1,10 +1,23 @@
 /** A validated citation. `quote`, when present, is a span taken from the cited body. */
 export type SourceRef = {
+  /**
+   * `"source"` = a page the client fed. `"clip"` = an item from the user's INDEX —
+   * historically only clips, hence the name, which is kept because it is persisted
+   * in every saved `research_brief`. Read `itemType` for what the item actually is.
+   */
   kind: "source" | "clip";
   title: string;
   url?: string;
-  /** The `nimbus:clip:<sha256>` item id. Present only for kind: "clip". */
+  /**
+   * The `nimbus:clip:<sha256>` item id. Present only for a `nimbus:web_clip` hit —
+   * NOT for every kind: "clip" ref. A non-clip index hit sets `itemId` and leaves
+   * this absent, so a reader that trusts the name is never lied to.
+   */
   clipId?: string;
+  /** The index item id for ANY indexed hit, whatever its type. */
+  itemId?: string;
+  /** The indexed item's type, verbatim. Arbitrary string — never validated as an enum. */
+  itemType?: string;
   /** <= MAX_QUOTE_CHARS, verbatim from the cited body (see quote-verify.ts). */
   quote?: string;
 };

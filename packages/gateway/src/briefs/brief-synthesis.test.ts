@@ -81,7 +81,13 @@ describe("buildPrompt", () => {
     // Inject a clip entry with url: null to exercise the null-url path.
     const { registry } = await buildRegistry(runOut.run, async () => ({
       hits: [
-        { itemId: "nimbus:clip:test", title: "No-URL Clip", url: null, snippet: "clipped text" },
+        {
+          itemId: "nimbus:clip:test",
+          itemType: "web_clip",
+          title: "No-URL Clip",
+          url: null,
+          snippet: "clipped text",
+        },
       ],
       semanticAvailable: true,
     }));
