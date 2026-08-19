@@ -218,6 +218,11 @@ export interface RegistryDriftViolation {
 // Matched on the import PATH rather than the object key: Biome's formatter strips unnecessary
 // quotes from keys, so a key-based pattern would have to duplicate that policy and would rot the
 // next time the formatter's rules change. The path is always a quoted string literal.
+//
+// No platform normalization is needed and none should be added: the separators here are
+// literal characters in the generator's template string, not the output of any path API, and
+// the interpolated id is a readdirSync entry NAME, which never contains a separator. The
+// generated file is byte-identical on Windows, macOS and Linux.
 const ENTRY_RE = /import\("\.\.\/\.\.\/\.\.\/mcp-connectors\/([^"/]+)\/src\/server\.ts"\)/g;
 
 export function registryIds(registryFile: string): string[] {
@@ -678,15 +683,26 @@ Run:
 bunx markdownlint-cli2 docs/README.md && bun run audit:doc-refs
 ```
 
-Then verify each URL resolves:
+Then verify each URL **as written in the README** — this is not redundant with Step 1, which
+checks repo names via `gh`; this catches a typo in the markdown:
 
 ```bash
 grep -o 'https://github.com/nimbus-agent/[a-z-]*' docs/README.md | sort -u | while read -r u; do
-  echo -n "$u "; curl -s -o /dev/null -w "%{http_code}\n" "$u"
+  echo -n "$u "; curl -s --retry 3 --retry-all-errors --max-time 15 -o /dev/null -w "%{http_code}\n" "$u"
 done
 ```
 
-Expected: every line ends in `200`. A `404` means the repo is private or renamed — remove that row rather than shipping a dead link.
+Expected: every line ends in `200`.
+
+- A `404` means the repo is private, renamed, or the URL is mistyped — fix the URL or remove the
+  row rather than shipping a dead link.
+- A `000` is **not** a verdict — it means curl got no response at all (a transient network
+  failure). This was observed twice while writing this plan, on repos that were live both times.
+  The retry flags above absorb it; if a `000` survives them, rerun before concluding anything.
+- Do **not** add `-L`. No `nimbus-agent` repo redirects today — all seven return `200` directly —
+  and following redirects would mask the one case worth catching: a renamed repo answers `301` at
+  its old URL, and a README quietly relying on GitHub's rename redirect is a stale link waiting
+  to break.
 
 - [ ] **Step 4: Commit**
 
@@ -721,12 +737,22 @@ Run:
 
 ```bash
 npm view @nimbus-dev/mcp version
-npm org ls nimbus-dev 2>&1 | head -5
+timeout 30 npm org ls nimbus-dev 2>&1 | head -5
 grep -n "NPM_TOKEN" -A 12 scripts/release/credential-registry.ts | head -20
 grep -rn "npm publish\|npm-publish\|trusted publish" .github/workflows/ | head
 ```
 
-Record what each returns. If `npm org ls` fails on authentication, record that — it means the publishing identity is not on this machine, which is itself an input to the decision.
+Record what each returns.
+
+**Already verified on the author's machine (2026-08-19), so treat this as the expected result
+rather than a surprise:** `npm whoami` and `npm org ls nimbus-dev` both fail with `E401` in about
+a second — **there is no npm authentication on this machine at all.** The command does not hang
+and does not open a browser, so the `timeout` above is insurance, not a fix. (`--no-audit` is not
+a valid flag for `npm org`; do not add it.)
+
+That absence is itself an input to the decision: whichever branch is chosen, publishing happens
+from CI under OIDC rather than from a developer machine — consistent with `NPM_TOKEN` being
+`forbidden`, and an argument in favour of the branch whose CI publish path already exists.
 
 - [ ] **Step 2: Write the decision document with both branches costed**
 
