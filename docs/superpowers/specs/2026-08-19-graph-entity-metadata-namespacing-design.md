@@ -130,6 +130,30 @@ export function upsertGraphEntityNamespaced(
 `"changed_files"` in sub-project B. A closed union means a new writer is a deliberate edit, not a
 free-form string that silently creates a fifth namespace through a typo.
 
+**Every write to a co-owned type must go through this function.** Namespacing is worthless if the
+flat `upsertGraphEntity` can still be called on `source_file`, `directory`, `person` or `service`:
+its `metadata = excluded.metadata` would replace the whole namespaced map with the caller's flat
+value — or with `NULL` when it passes none — wiping every sibling namespace in one statement.
+That is not hypothetical: it is exactly what `graph-populator.ts:497` does today.
+
+So this spec requires two things, not one:
+
+1. **`graph-populator.ts` converts** its `source_file`, `directory`, `person` and `service` writes
+   to the namespaced form, passing `writer: "symbols"` — with `metadata: {}` where it has nothing
+   to record, which under `json_patch` is a no-op that preserves siblings rather than a wipe.
+2. **A static audit rule enforces it** (§ 5.4), because a convention that only exists in prose is
+   one careless call site away from silently reintroducing the bug.
+
+**A type-level restriction was considered and rejected as non-functional.** The obvious shape —
+typing the flat function's `type` field as `Exclude<string, CoOwnedEntityType>` — does nothing.
+`Exclude<T, U>` distributes over a union; `string` is not a union, so `Exclude<string,
+"source_file">` evaluates to `string` and every co-owned type still passes. Verified by compiling
+`const probe: Exclude<string, "source_file" | "directory"> = "source_file"` under `tsc --strict`
+on 2026-08-19: **it compiles clean.** Such a guard would read as enforcement in review and enforce
+nothing — the failure mode this repo already records for allow-list guards. Closing the hole
+properly at the type level would mean enumerating every entity type in the repo as a union, which
+is a far larger change than the defect warrants; the static audit does the job at the right size.
+
 The merge uses SQLite's `json_patch`, verified available in this repo's `bun:sqlite`:
 
 ```sql
@@ -154,9 +178,16 @@ json_patch('{"ownership":{"a":1}}', '{"symbols":{"b":null}}')
 ```
 
 `b` is gone, not stored as `null`. `ownerCountsMetadata` returns numbers, so this does not bite
-today — but sub-project B's writer must not assume otherwise, and any writer wanting to record
-"known to be absent" must use a sentinel rather than `null`. Pinned by a test so the next reader
+today — but sub-project B's writer must not assume otherwise. Pinned by a test so the next reader
 inherits the fact rather than rediscovering it.
+
+**The convention for "absent", so it is not invented per writer: omit the key.** Absence is the
+representation; `readEntityMetadata` yields `undefined` for a missing field either way, so writing
+`null` buys nothing and silently deletes. A magic sentinel such as `"__absent__"` was considered
+and rejected — it is a second thing every reader must know, and a writer that forgets it is back
+to a silent delete. Where a writer must genuinely distinguish *computed and found nothing* from
+*not computed*, it records that as an explicit non-null field of its own — a count of `0`, or a
+boolean — never as a `null` and never as a sentinel string.
 
 ### 5.2 The read API
 
@@ -176,14 +207,55 @@ must degrade to "no metadata" rather than break a read.
 `ownership-store.ts`'s `parseCounts` is the only current reader of these four types' metadata and
 is repointed through it.
 
+**No flat-metadata fallback, deliberately.** A resilience fallback was considered — if no known
+namespace key is present at the root, treat the whole object as the `ownership` namespace — and
+rejected. It would mask the precise failure this spec exists to prevent: a flat write landing on a
+co-owned type (§ 5.1) produces exactly that shape, and the fallback would render it as valid
+ownership data instead of surfacing the clobber. A failed or skipped V54 would likewise read as
+success. Migrations here run at startup before any read, so the race the fallback guards against
+is not a real window; what it would actually buy is silence over the one symptom worth seeing.
+
+### 5.4 Static enforcement
+
+A new rule in `scripts/structure-audit/check-nimbus-invariants.ts` fails the build when
+`upsertGraphEntity` — the flat one — is called with `type:` set to any co-owned type
+(`source_file`, `directory`, `person`, `service`) outside `graph/relationship-graph.ts` itself.
+
+This is the repo's established mechanism for exactly this shape of rule, it runs before the test
+suite, and it is what makes § 5.1's requirement real rather than advisory. It is also the reason
+the rejected type-level trick is not merely suboptimal but unnecessary.
+
+Write the rule as **what cannot pass**, and red-prove it by temporarily pointing one
+`graph-populator.ts` co-owned write back at the flat function and confirming the audit fails.
+A guard nobody has seen reject anything is a guard nobody knows works.
+
 ### 5.3 Migration V54
 
 For `graph_entity` rows of type `source_file`, `directory`, `person` or `service` with non-null,
 `json_valid` metadata that is **not already namespaced**, rewrite to `{"ownership": <existing>}`.
 
 Idempotence matters because migrations here are forward-only and the runner may re-enter: the
-"not already namespaced" test is that no top-level key equals a known writer name. A row already
-shaped `{"ownership": …}` is left alone.
+"not already namespaced" test is that **no top-level key equals any known writer name** — not
+merely that `$.ownership` is absent, which would still re-wrap a row shaped `{"symbols": …}`.
+That case cannot arise before this migration, since `ownership` is the only current writer on
+these types, but the broader check costs nothing and does not depend on that staying true.
+
+```sql
+UPDATE graph_entity
+SET metadata = json_object('ownership', json(metadata))
+WHERE type IN ('source_file', 'directory', 'person', 'service')
+  AND metadata IS NOT NULL
+  AND json_valid(metadata)
+  AND json_type(metadata) = 'object'
+  AND NOT EXISTS (
+    SELECT 1 FROM json_each(graph_entity.metadata)
+    WHERE json_each.key IN ('ownership', 'symbols')
+  );
+```
+
+`json(metadata)` rather than bare `metadata` — without it the existing object is stored as an
+escaped string rather than nested JSON. `json_type(metadata) = 'object'` excludes a row whose
+metadata is a valid JSON scalar or array, which `json_each` would otherwise iterate positionally.
 
 Rows whose metadata is `NULL` or fails `json_valid` are left untouched — there is nothing to
 preserve, and `readEntityMetadata` already degrades to `null` for them.
@@ -205,6 +277,12 @@ preserve, and `readEntityMetadata` already degrades to `null` for them.
 - **Migration leaves other types alone:** a `pr` or `incident` row's flat metadata is unchanged.
 - **`nimbus owners` renders the real line, not the legacy fallback**, after a symbol sync — the
   user-visible assertion behind the whole spec.
+- **The static audit rejects a flat write to a co-owned type** (§ 5.4), red-proved by pointing one
+  `graph-populator.ts` write back at `upsertGraphEntity` and confirming the audit fails.
+- **`metadata: {}` under `json_patch` is a no-op, not a wipe** — the property `graph-populator`'s
+  converted writes depend on. Assert an existing sibling namespace survives such a write.
+- **`readEntityMetadata` does NOT resurrect flat metadata** as the `ownership` namespace: a row
+  with flat metadata returns `null`, so a clobber or a skipped migration stays visible (§ 5.2).
 
 ---
 
