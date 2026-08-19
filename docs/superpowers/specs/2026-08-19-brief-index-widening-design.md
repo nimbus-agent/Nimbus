@@ -204,19 +204,91 @@ that provider — they left this machine"* is true of a PR snippet as much as a 
 is a wider blast radius under the same sentence, and it is recorded here so the next reader
 does not discover it by surprise.
 
+### 9. A `briefs`-scoped token now reads the whole index
+
+`clips/api-scopes.ts:16-24` says that granting every scope to tokens already in the wild
+would hand them "the ability to run any read-only agent over the whole index … which is
+precisely the escalation scopes exist to prevent", and `LEGACY_SCOPES` is
+`["clip", "briefs"]`. After this slice, a `briefs` token minted so a browser extension
+could save web pages can surface material from the user's indexed email, transcripts,
+invoices and pull requests. The token did not change; what `briefs` reaches did.
+
+The bound is real and worth stating precisely. A citation carries `title`, `url`, `itemId`
+and `itemType` plus a verified quote of at most `MAX_QUOTE_CHARS` (200) characters, and
+`resolveItem` (`briefs/brief-report.ts:112-133`) is the only path a body reaches the report
+through — the raw item body is never returned. So the exposure is metadata plus short
+verified spans, not the corpus.
+
+It is nonetheless materially wider than "pages this extension clipped", which is how the
+scope reads to anyone who granted it, and this spec did not frame it that way before.
+Recorded, not fixed: a code-level restriction — scoping the brief search by the token's
+scope, or splitting `briefs` into a clip-only and an index-wide grant — is an available
+follow-up. **This slice does not take it**, and shipping without it is a decision, not an
+oversight.
+
+### 10. A brief can now cite an earlier brief
+
+`briefs/brief-save.ts:64-84` writes every saved report into the index as a `research_brief`
+item, with `body: effective.summary`, and schedules an embedding for it. While the search
+was pinned to `web_clip` that item was unreachable by any later brief. It is not any more.
+
+So model-written prose can come back as a `C{n}` citation and sit in the registry beside a
+pull request, indistinguishable as evidence except by `itemType`. A second brief on the same
+topic can cite the first one's summary and read as corroboration when it is really the same
+inference repeated — and quote verification does not help here, because the quote genuinely
+does appear verbatim in the cited body.
+
+The alternative is one line: exclude `research_brief` from the brief search the way
+`web_clip` was excluded from everything else. **This slice does not take it.** The user's own
+saved research is legitimately part of their corpus, and suppressing it by type would be the
+same kind of unasked-for scoping decision this design rejects elsewhere. Recorded as a known
+consequence so the first person to see a brief cite a brief knows it was foreseen.
+
+### 11. Two new ref fields fan out to 400 citations, so the save ladder sheds ids first
+
+`brief-constants.ts:57-70` already reasons about ref fan-out: a ref is copied into every
+citation that names it, and the count caps allow `MAX_FINDINGS` 25 x `MAX_CITATIONS_PER_ITEM`
+8, plus the same again for conflicts — 400 citations. This slice adds `itemId` (on a
+`web_clip` citation, byte-identical to `clipId`) and `itemType` to every one of them:
+roughly +110 bytes per article-clip citation and +175 for a selection clip, so +44-70 KB
+worst case against `brief-save.ts`'s 60 KB `META_BUDGET_BYTES`. A brief that used to save at
+~55 KB could now throw `ReportTooLargeError`, and the user cannot save the brief in front of
+them.
+
+The budget constants do not move — they are sized against `RAW_META_MAX_BYTES` and are not
+this slice's to spend. Instead the degradation ladder gains a first rung ABOVE quote
+stripping: drop `itemId` wherever it equals `clipId`. That rung is free — `clipId` still
+resolves the item and `itemType` still says what it is, so nothing recoverable is lost and it
+carries no gap line. Quotes are the user's evidence and go only when the duplicate ids were
+not enough. The ordering is the contract and is pinned by test, not just the fact that
+degradation happens.
+
 ## Shape
 
 | File | Change |
 | --- | --- |
-| `platform/assemble.ts` | Drop `itemType: "web_clip"` from the brief search; map `itemType` into each `IndexHit` |
+| `platform/assemble.ts` | Drop `itemType: "web_clip"` from the brief search; map `itemType` into each `IndexHit` — now via the factory below |
+| `briefs/brief-index-search.ts` | **New.** `createBriefIndexSearch(localIndex)`: the real query, extracted out of the boot closure so a seeded-index test can reach it |
 | `briefs/brief-registry.ts` | `IndexHit.itemType`; set `itemType`/`itemId` on each `C{n}` ref; `clipId` only for `nimbus:web_clip` |
 | `briefs/brief-types.ts` | `SourceRef.itemType?` / `.itemId?`; re-document `kind: "clip"` and `clipId` |
 | `briefs/brief-gaps.ts` | Reword the three "saved clips" lines; keep the three-way split |
 | `briefs/brief-validate.ts` | Unchanged — `useIndex` already validated |
 | `briefs/brief-synthesis.ts` | Only if decision 4's test says so |
 | `briefs/brief-test-server.ts` | Serve hits of more than one type |
+| `briefs/brief-save.ts` | Degradation ladder sheds `itemId` where it equals `clipId` BEFORE stripping quotes (decision 11) |
 
 ## Testing
+
+`brief-index-search.test.ts` carries the widening itself, and it is the ONLY test that can:
+every other brief test injects a stub `IndexSearch`, so none of them can see the query the
+gateway actually issues — which is why the query was extracted out of `assemble.ts` into
+`createBriefIndexSearch`. It seeds a real in-memory `LocalIndex` with a `web_clip`, a
+`pull_request` and an `email`, and asserts all three come back with the `itemType` they were
+seeded with. Restoring `itemType: "web_clip"` to the query fails it.
+
+`brief-save.test.ts` pins the degradation ORDER of decision 11, not merely that degradation
+happens: a report that fits once the duplicated ids are gone keeps its quotes, and one that
+does not fall through to stripping them.
 
 `brief-registry.test.ts` carries the core: a non-clip hit gets `itemId` and `itemType` and
 **no** `clipId`; a `web_clip` hit still gets `clipId`; declaration order and token minting
@@ -244,3 +316,5 @@ spec's test list carries the matching case.
 - **Renaming `kind`.** Decision 2.
 - **The query-embedding fix.** Decision 7.
 - **Changing `MAX_INDEX_HITS`.** Decision 1.
+- **Restricting the brief search by token scope.** Decision 9.
+- **Excluding `research_brief` from the brief search.** Decision 10.
