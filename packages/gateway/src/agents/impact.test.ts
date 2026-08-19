@@ -71,7 +71,7 @@ describe("runImpact", () => {
                'https://gitlab.com/acme/web/-/merge_requests/482',
                1700000000000, 1700000000000)`,
     ).run(itemId);
-    upsertGraphEntity(db, {
+    const entityId = upsertGraphEntity(db, {
       type: "pr",
       externalId: itemId,
       label: "acme/web#482",
@@ -84,7 +84,7 @@ describe("runImpact", () => {
       { db, notify: () => {}, sessionId: "impact-gitlab-1" },
     );
 
-    expect(brief.startEntityId).not.toBeNull();
+    expect(brief.startEntityId).toBe(entityId);
   });
 
   test("emitImpactBrief returns a sessionId and emits a Markdown brief via notify (LLM-disabled deterministic path)", async () => {
@@ -372,7 +372,7 @@ describe("runImpact", () => {
                '{"repo":"acme/pay"}', 'https://myenterprise.corp.com/acme/pay/pull/7',
                1700000000000, 1700000000000)`,
     ).run(itemId);
-    upsertGraphEntity(db, {
+    const entityId = upsertGraphEntity(db, {
       type: "pr",
       externalId: itemId,
       label: "acme/pay#7",
@@ -383,7 +383,7 @@ describe("runImpact", () => {
       { fileOrPrUrl: "https://myenterprise.corp.com/acme/pay/pull/7" },
       { db, sessionId: "t-custom-host", notify: () => {} },
     );
-    expect(brief.startEntityId).not.toBeNull();
+    expect(brief.startEntityId).toBe(entityId);
   });
 
   test("subPipelines — finds pipeline via repoIds (hops=2, via-repo pathSummary)", async () => {
