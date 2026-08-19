@@ -70,17 +70,27 @@ Resolved to files, the overlap is a single pair:
 | Entity type | Writers |
 | --- | --- |
 | `source_file` | `ownership/ownership-pass.ts`, `graph/graph-populator.ts` |
-| `directory` | `ownership/ownership-pass.ts`, `graph/graph-populator.ts` |
 | `person` | `ownership/ownership-pass.ts`, `graph/graph-populator.ts` |
 | `service` | `ownership/ownership-pass.ts`, `graph/graph-populator.ts` |
+| `directory` | `ownership/ownership-pass.ts` **only** — see below |
+
+**Correction, made during implementation.** This table originally listed `graph-populator.ts` as a
+second `directory` writer. It is not one: `graph-populator.ts` contains no `directory` write at all
+(zero matches, on `main` and on this branch). `directory` therefore has **no second writer today**,
+and is namespaced for mechanism uniformity rather than to resolve a live collision — the same
+reasoning as the paragraph below, one step further. The other three rows were re-verified and are
+accurate: `graph-populator.ts` writes `source_file` (:515), `person` (:274/:338/:374/:773) and
+`service` (:451/:944).
 
 `pr`'s four writers are three connectors covering disjoint repositories plus `agents/premortem.ts`.
 Whether those collide is a **different question with no evidence behind it yet**, and it is out of
 scope — see § 7.
 
-**Only `source_file` has a proven, user-visible failure.** The other three are the same pair on
-the same statement, so the mechanism is identical; they are included because fixing one and
-leaving three identical cases behind is how a fix becomes folklore.
+**Only `source_file` has a proven, user-visible failure.** `person` and `service` are the same pair
+on the same statement, so the mechanism is identical; they are included because fixing one and
+leaving two identical cases behind is how a fix becomes folklore. `directory` has no second writer
+at all and is included for uniformity — a co-owned-type list that omitted it would make the audit
+rule's set arbitrary rather than derived.
 
 ---
 
