@@ -26,9 +26,13 @@ precisely because it can be missing. The field is genuinely optional.
 
 **But the recommended fix — `COALESCE(json_extract(metadata,'$.opened_at_ms'), synced_at)` —
 is rejected.** `synced_at` is when *we indexed the row*, not when the incident opened.
-Bucketing on it violates this feature's governing rule, stated in the spec's D1 and repeated
-in the plan's Global Constraints: every metric buckets on a real event timestamp, because
-`item` has no creation timestamp and F1's whole point is that indexing time is not event time.
+Bucketing on it violates the rule governing this evaluator, stated in the spec's D1 and
+repeated in the plan's Global Constraints: the two NEW counters bucket on a real event
+timestamp, because `item` has no creation timestamp and F1's whole point is that indexing time
+is not event time. (This sentence originally generalised that rule to all six metrics. It was
+false — the four wrapped DORA calculators inherit `dora.ts`'s `item.modified_at` predicate, and
+`mttr` its `synced_at` fallback. Corrected 2026-08-19; spec § 3 D1 records why that inheritance
+is the accepted cost of not reimplementing them.)
 Coalescing would not fix a silent drop; it would replace it with a silent fabrication — an
 incident placed in the week we happened to sync it, presented as the week it opened. That is
 strictly worse, because a dropped row at least does not lie about *when*.
