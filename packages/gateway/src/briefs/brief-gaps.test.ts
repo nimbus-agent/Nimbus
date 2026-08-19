@@ -79,12 +79,36 @@ describe("buildServerGaps", () => {
     }
   });
 
-  test("a broken search and an empty result stay DIFFERENT statements", () => {
+  test("all THREE index outcomes stay DIFFERENT statements", () => {
+    // The rule the code comment states is three-way: a broken search, an empty result and
+    // degraded recall are completely different things to tell the user, and laundering any
+    // one of them into another is the dishonesty brief-gaps.ts exists to prevent. Pinning
+    // only failed-vs-empty would let a reword collapse keyword-only into either of them.
     const failed = buildServerGaps({ ...base, useIndex: true, searchFailed: true }).join(" ");
     const empty = buildServerGaps({ ...base, useIndex: true, indexHits: 0 }).join(" ");
-    expect(failed).not.toEqual(empty);
+    const keyword = buildServerGaps({
+      ...base,
+      useIndex: true,
+      indexHits: 3,
+      semanticAvailable: false,
+    }).join(" ");
+
+    expect(new Set([failed, empty, keyword]).size).toBe(3);
+    for (const g of [failed, empty, keyword]) expect(g.trim()).not.toBe("");
+
+    // Each says its OWN thing and does not claim either of the others.
     // Only one of these is the user's problem, and it is not the empty one.
     expect(failed).toContain("error");
+    expect(failed.toLowerCase()).not.toContain("matched");
+    expect(failed.toLowerCase()).not.toContain("keyword-only");
+
     expect(empty.toLowerCase()).toContain("matched");
+    expect(empty.toLowerCase()).not.toContain("error");
+    expect(empty.toLowerCase()).not.toContain("keyword-only");
+
+    // Degraded recall is NOT "nothing matched" and NOT "the index broke": hits came back.
+    expect(keyword.toLowerCase()).toContain("keyword-only");
+    expect(keyword.toLowerCase()).not.toContain("error");
+    expect(keyword.toLowerCase()).not.toContain("matched");
   });
 });
