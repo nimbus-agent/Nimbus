@@ -300,11 +300,13 @@ function cfg(repos: ServiceConfig["repos"]): ServiceConfig {
   };
 }
 
-const GH = [{ forge: "github", owner: "acme", name: "web" }] as unknown as ServiceConfig["repos"];
-const GL = [
-  { forge: "github", owner: "acme", name: "web" },
-  { forge: "gitlab", owner: "acme", name: "api" },
-] as unknown as ServiceConfig["repos"];
+// ParsedDoraRepoUrn is { provider, providerId } — NOT { forge, owner, name }. For GitHub,
+// providerId is the "owner/name" string that `metadata.repo` carries on an indexed PR.
+const GH: ServiceConfig["repos"] = [{ provider: "github", providerId: "acme/web" }];
+const GL: ServiceConfig["repos"] = [
+  { provider: "github", providerId: "acme/web" },
+  { provider: "gitlab", providerId: "acme/api" },
+];
 
 describe("computeStatsSeries — pr-merges", () => {
   test("counts merges into the bucket their merged_at falls in", () => {
@@ -359,6 +361,25 @@ describe("computeStatsSeries — pr-merges", () => {
     insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
     const s = computeStatsSeries(db, cfg(GH), "pr-merges", NOW, DAY, DAY);
     expect(s.points[0]?.gap).not.toBe("github_only_merge_data");
+  });
+
+  // Spec § 5: scoped to the SERVICE's bound repos. Without the metadata.repo predicate this
+  // metric counts every PR in the index and silently reports another team's throughput.
+  test("a merge in a repo this service does NOT own is not counted", () => {
+    const db = makeDb();
+    insertPr(db, "ours", "acme/web", NOW - 0.5 * DAY);
+    insertPr(db, "theirs", "other/thing", NOW - 0.5 * DAY);
+    const s = computeStatsSeries(db, cfg(GH), "pr-merges", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBe(1);
+  });
+
+  test("a service binding no github repos yields no_repos, not zero", () => {
+    const db = makeDb();
+    insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
+    const gitlabOnly: ServiceConfig["repos"] = [{ provider: "gitlab", providerId: "acme/api" }];
+    const s = computeStatsSeries(db, cfg(gitlabOnly), "pr-merges", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBeNull();
+    expect(s.points[0]?.gap).toBe("no_repos");
   });
 });
 
@@ -519,20 +540,41 @@ const wrapDora =
  * clause beside the extract, not merely somewhere in the statement.
  */
 function prMerges(db: Database, cfg: ServiceConfig, startMs: number, endMs: number): DoraMetricValue {
-  const nonGithub = cfg.repos.some((r) => r.forge !== "github");
-  const gap: StatsGap = nonGithub ? "github_only_merge_data" : "low_sample";
+  // `ParsedDoraRepoUrn` is `{ provider: DoraProvider; providerId: string }` — there is NO
+  // `forge` field. `DoraProvider` is "github" | "gitlab" | "bitbucket" | "jenkins" | "circleci".
+  const githubRepos = cfg.repos.filter((r) => r.provider === "github").map((r) => r.providerId);
+  if (githubRepos.length === 0) {
+    // Either the service binds no repos at all, or none of them are GitHub — and only
+    // github-sync.ts writes `merged_at`, so there is nothing this metric can count.
+    return { value: null, unit: "merges", sample: 0, gap: "no_repos" };
+  }
+  const nonGithub = cfg.repos.some((r) => r.provider !== "github");
+  const ph = githubRepos.map(() => "?").join(",");
+  // Spec § 5: scoped to the SERVICE's bound repos. `metadata.repo` is the key
+  // `repoLikeMatchesUrn` (dora.ts:65) matches GitHub URNs on — that helper is module-private
+  // in dora.ts, so this mirrors its predicate rather than importing it.
+  // `json_valid` guards `json_extract`, which RAISES on malformed JSON here, and the guard is
+  // context-dependent — it must sit in the WHERE clause beside every extract.
   const row = db
     .query(
       `SELECT COUNT(*) AS c FROM item
        WHERE type = 'pr'
          AND json_valid(metadata)
+         AND json_extract(metadata, '$.repo') IN (${ph})
          AND json_extract(metadata, '$.merged_at') IS NOT NULL
          AND json_extract(metadata, '$.merged_at') >= ?
          AND json_extract(metadata, '$.merged_at') < ?`,
     )
-    .get(startMs, endMs) as { c: number } | null;
+    .get(...githubRepos, startMs, endMs) as { c: number } | null;
   const count = row?.c ?? 0;
-  if (count === 0) return { value: null, unit: "merges", sample: 0, gap: gap as DoraGap };
+  if (count === 0) {
+    return {
+      value: null,
+      unit: "merges",
+      sample: 0,
+      gap: (nonGithub ? "github_only_merge_data" : "low_sample") as DoraGap,
+    };
+  }
   return {
     value: count,
     unit: "merges",
