@@ -148,9 +148,22 @@ export async function runPrFilePass(
     const collected: ChangedFileRow[] = [];
     let pagesExhausted = false;
     let failed = false;
+    let rateLimited = false;
     try {
       for (let page = 1; page <= MAX_PAGES_PER_PR; page++) {
-        await ctx.rateLimiter.acquire(args.service);
+        // `tryAcquire`, never `acquire`: at least one existing 429 handler in this codebase
+        // (`_lib/gitlab/pipelines.ts`) calls `rateLimiter.penalise()` WITHOUT throwing, by
+        // design — its own caller keeps going rather than aborting the sync. `acquire` would
+        // then SLEEP OUT that whole penalty window right here, blocking one of only
+        // `maxConcurrentSyncs` scheduler slots for the full `Retry-After`. `tryAcquire` never
+        // sleeps (see its doc comment in `sync/rate-limiter.ts`) — it takes a token if one is
+        // free and returns `false` instantly otherwise — so a penalised or exhausted provider
+        // is detected without blocking, and the pass simply stops for THIS tick.
+        const ok = await ctx.rateLimiter.tryAcquire(args.service);
+        if (!ok) {
+          rateLimited = true;
+          break;
+        }
         const res = await args.fetchPage(c, page);
         if (res === null) {
           failed = true;
@@ -161,6 +174,13 @@ export async function runPrFilePass(
           pagesExhausted = true;
           break;
         }
+      }
+      if (rateLimited) {
+        // No coverage row for this candidate — same handling as a failed fetch, and the
+        // selector re-queues it next tick. Stop the WHOLE pass, not just this candidate: every
+        // remaining candidate shares the same per-provider penalty/token bucket, so continuing
+        // to loop would just call `tryAcquire` repeatedly for a `false` we already know.
+        break;
       }
       if (!failed) {
         // The write happens INSIDE this try: a failure here (e.g. a genuine duplicate that

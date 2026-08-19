@@ -471,10 +471,10 @@ export function createBitbucketSyncable(options: BitbucketSyncableOptions): Sync
       let maxUpdated = state.since;
       let reposScannedThisSync = 0;
 
-      // Async and awaited by every exit below (all four `return syncResult(...)` sites), so the
-      // changed-file pass runs on every tick regardless of which pagination branch is hit — the
-      // same "run it on every exit" shape as `github-sync.ts`'s two call sites (changed AND
-      // unchanged/304 paths).
+      // Returned by every exit below (all four `return syncResult(...)` sites), whose promise
+      // `sync` adopts, so the changed-file pass runs on every tick regardless of which
+      // pagination branch is hit — the same "run it on every exit" shape as `github-sync.ts`'s
+      // two call sites (changed AND unchanged/304 paths).
       const syncResult = async (
         nextState: BitbucketCursorV1,
         hasMore: boolean,

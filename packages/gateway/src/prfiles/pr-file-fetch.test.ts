@@ -107,9 +107,21 @@ function fakeCtx(db: Database, acquired: string[]): SyncContext {
     db,
     logger: { warn: () => undefined, info: () => undefined } as unknown as SyncContext["logger"],
     rateLimiter: {
-      acquire: async (s: string) => {
+      tryAcquire: async (s: string) => {
         acquired.push(s);
+        return true;
       },
+    } as unknown as SyncContext["rateLimiter"],
+  } as unknown as SyncContext;
+}
+
+/** A `tryAcquire` that always reports the provider penalised/exhausted — never grants a token. */
+function fakeCtxRateLimited(db: Database): SyncContext {
+  return {
+    db,
+    logger: { warn: () => undefined, info: () => undefined } as unknown as SyncContext["logger"],
+    rateLimiter: {
+      tryAcquire: async () => false,
     } as unknown as SyncContext["rateLimiter"],
   } as unknown as SyncContext;
 }
@@ -293,6 +305,31 @@ describe("runPrFilePass", () => {
       },
     });
     expect(n).toBe(0);
+    db.close();
+  });
+
+  // Regression: a provider under a rate-limit penalty must be detected via `tryAcquire`
+  // (non-blocking) rather than `acquire` (which sleeps out the whole penalty window). Some 429
+  // handlers in this codebase call `rateLimiter.penalise()` WITHOUT throwing, so the driver
+  // cannot rely on an exception to learn the provider is penalised — it must poll `tryAcquire`
+  // and back off itself. `fetchPage` must never be called once `tryAcquire` reports `false`.
+  test("tryAcquire returning false records nothing, calls fetchPage never, and stops the tick", async () => {
+    const db = makeDb();
+    addPr(db, "p1", "o/r#1", 200);
+    addPr(db, "p2", "o/r#2", 100);
+    let fetchPageCalls = 0;
+    const n = await runPrFilePass(fakeCtxRateLimited(db), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => {
+        fetchPageCalls += 1;
+        return { rows: [row("never.ts")], hasMore: false };
+      },
+    });
+    expect(n).toBe(0);
+    expect(fetchPageCalls).toBe(0);
+    const c = db.query("SELECT COUNT(*) AS c FROM pr_files_state").get() as { c: number };
+    expect(c.c).toBe(0);
     db.close();
   });
 });
