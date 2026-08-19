@@ -1995,8 +1995,10 @@ function bootBriefsIntoHttpSidecar(deps: {
   });
   const briefLlm = createBriefLlm(llmRouter, briefsToml.preferLocal);
   const briefSearch: IndexSearch = async (query, limit) => {
+    // NO itemType filter: a brief draws on the whole index. `IndexSearchQuery.itemType`
+    // is optional and the SQL applies it only when set, so omitting it is the widening.
     const hits = await localIndex.searchRankedAsync(
-      { name: query, itemType: "web_clip", limit },
+      { name: query, limit },
       { semantic: true, contextChunks: 2 },
     );
     return {
@@ -2006,6 +2008,7 @@ function bootBriefsIntoHttpSidecar(deps: {
       // chunk in `semanticSnippet`, which is absent on the BM25 fallback path.
       hits: hits.map((h) => ({
         itemId: h.indexPrimaryKey,
+        itemType: h.itemType,
         title: h.name,
         url: h.url ?? h.canonicalUrl ?? null,
         snippet: h.semanticSnippet ?? h.name,
