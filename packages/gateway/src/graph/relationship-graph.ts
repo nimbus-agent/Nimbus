@@ -87,10 +87,17 @@ export function upsertGraphEntity<T extends string>(
 export type EntityMetadataWriter = "ownership" | "symbols";
 
 /**
- * Entity types written by more than one subsystem, and therefore the only types whose
- * metadata is namespaced. Resolved from the tree, not guessed: `ownership/ownership-pass.ts`
- * and `graph/graph-populator.ts` both write all four. Every other type has a single writer
- * and keeps flat metadata (design D2).
+ * Entity types whose metadata is namespaced. Every other type has a single writer and keeps
+ * flat metadata (design D2).
+ *
+ * Resolved from the tree, not guessed — and the tree does NOT say all four are co-owned:
+ * `ownership/ownership-pass.ts` and `graph/graph-populator.ts` both write `source_file`,
+ * `person` and `service`, but `directory` is written by `ownership-pass.ts` ALONE
+ * (`graph-populator.ts` contains no `directory` write at all). `directory` is namespaced for
+ * uniformity, so this list is derived from one rule rather than being a hand-picked set of
+ * three plus an exception — and so it already holds if a second `directory` writer appears.
+ * Do not restate this as "both write all four": that was the original claim here and it was
+ * false. See the design spec § 3 for the per-type verification.
  */
 export const CO_OWNED_ENTITY_TYPES = ["source_file", "directory", "person", "service"] as const;
 
