@@ -2,17 +2,6 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
-## [Unreleased]
-
-### Changed
-
-- **A research brief can draw on everything Nimbus has indexed, not only your saved
-  clips.** `useIndex` searched `web_clip` and nothing else, so the pull requests,
-  builds and issues the connectors index — the reason to run a local gateway at all —
-  were invisible to a brief. The search now covers every indexed type, and each
-  citation carries what kind of item it is, so a brief that leans on a pull request
-  says so rather than calling it a clip.
-
 ## [2.6.0](https://github.com/nimbus-agent/Nimbus/compare/v2.5.0...v2.6.0) (2026-08-18)
 
 
