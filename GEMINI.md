@@ -87,7 +87,7 @@ Each live invariant (I1–I27, I29–I31) has a production wiring site + an enfo
 - `packages/mcp-connectors/*` — first-party MCP servers (AGPL)
 - `packages/docs` — Astro Starlight documentation site
 - `packages/admin-console` — dependency-free static admin console served at `/admin/*` (Phase 6 Slice 4)
-- `packages/mcp-launcher` — the published `@nimbus-dev/mcp` npm launcher (`nimbus-mcp` bin) that resolves and execs the local gateway MCP server
+- `packages/mcp-launcher` — the `@nimbus-dev/mcp` npm launcher (`nimbus-mcp` bin) that resolves and execs the local gateway MCP server. **Not yet published to npm** — publishing it is what unblocks the official MCP Registry listing (see `docs/superpowers/specs/2026-08-19-nimbus-distribution-program-design.md`).
 - `packages/github-actions/*` — first-party GitHub Actions (annotate-action, preflight-query); tracked but intentionally NOT workspace members
 
 Several surfaces live in their own standalone repos and release independently of the Gateway:
