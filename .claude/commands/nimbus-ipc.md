@@ -363,6 +363,7 @@ Team-vault secrets are **consumed** only via `federation/invoke-gate.ts` `answer
 | Method | Type | Description |
 |---|---|---|
 | `metrics.dora` | request | Four DORA metrics for a service from the local index |
+| `metrics.stats` | request | Bucketed time series for one metric over the local index — one value per disjoint bucket. Params `{ service, metric, window_ms, bucket_ms }` (resolved integers; the CLI parses the durations). Rejects an unknown metric / non-integer duration / `bucket > window` with `-32602`, rather than returning `metrics.dora`'s soft envelope |
 | `deploy.preflight` | request | Pre-deploy check: active P1 incidents, failing CI, open PR conflicts |
 | `deployment.annotate` | request | Internal post-deploy annotation. **NOT** in the Tauri allowlist; also reachable via the `POST /v1/deployments` HTTP write surface (`I13`) |
 

@@ -1333,6 +1333,8 @@ const streamReq: JSONRPCRequest = {
 // agents.ghost / agents.conflicts / agents.huddle — read-only cross-colleague agents (Phase 6 Slice 6a);
 //   fan out federated queries via federation/peer-fanout.ts across paired peers; emit <agent>.briefReady
 // metrics.dora        — four DORA calculators from the local index (ipc/metrics-rpc.ts)
+// metrics.stats       — bucketed time series over the local index, one value per disjoint bucket
+//   (metrics/stats.ts + metrics/stats-buckets.ts); same handler file as metrics.dora
 // deploy.preflight    — pre-deploy index check (ipc/preflight-rpc.ts)
 // deployment.annotate — internal post-deploy annotation; NOT in the renderer allowlist (ipc/deployment-rpc.ts)
 // security.scan / security.scanCancel — long-running credential-hygiene scan job (returns {jobId});

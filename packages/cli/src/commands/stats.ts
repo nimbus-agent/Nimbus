@@ -13,6 +13,12 @@ const METRICS = [
 const DEFAULT_WINDOW = "90d";
 const DEFAULT_BUCKET = "1w";
 
+function takeFlag(args: string[], flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  if (i < 0 || i + 1 >= args.length) return undefined;
+  return args[i + 1];
+}
+
 export type StatsArgs = {
   metric: string;
   service: string;
@@ -21,10 +27,18 @@ export type StatsArgs = {
   json: boolean;
 };
 
-function takeFlag(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i < 0 || i + 1 >= args.length) return undefined;
-  return args[i + 1];
+/**
+ * `parse-since.ts` is SHARED with `nimbus query --since`, where its message naming `--since`
+ * is correct — so it is deliberately not changed. This command has no `--since` flag, so its
+ * raw message would name a flag the user cannot have typed. Re-thrown here naming the flag
+ * that actually failed, keeping the offending value.
+ */
+function parseDurationFlag(raw: string, flag: string): number {
+  try {
+    return parseSinceDurationToMs(raw);
+  } catch {
+    throw new Error(`Invalid ${flag} value "${raw}" (examples: 90d, 1w, 48h, 30m)`);
+  }
 }
 
 /**
@@ -46,18 +60,22 @@ export function parseStatsArgs(args: string[]): StatsArgs {
   return {
     metric,
     service: service.trim(),
-    windowMs: parseSinceDurationToMs(takeFlag(args, "--window") ?? DEFAULT_WINDOW),
-    bucketMs: parseSinceDurationToMs(takeFlag(args, "--bucket") ?? DEFAULT_BUCKET),
+    windowMs: parseDurationFlag(takeFlag(args, "--window") ?? DEFAULT_WINDOW, "--window"),
+    bucketMs: parseDurationFlag(takeFlag(args, "--bucket") ?? DEFAULT_BUCKET, "--bucket"),
     json: args.includes("--json"),
   };
 }
 
 // --- metrics.stats response shape (validated at the IPC boundary — the gateway is a
-// separate process, so its response arrives as `unknown`, never trusted blind). ---
+// separate process, so its response arrives as `unknown`, never trusted blind).
+//
+// Field names are snake_case because the WIRE shape is: `metrics.stats` request params are
+// `window_ms`/`bucket_ms` and the sibling `metrics.dora` response carries `since_ms` /
+// `computed_at`. The gateway's `metrics/stats.ts` declares the same names. ---
 
 export type StatsPoint = {
-  readonly startMs: number;
-  readonly endMs: number;
+  readonly start_ms: number;
+  readonly end_ms: number;
   readonly value: number | null;
   readonly unit: string;
   readonly sample: number;
@@ -67,8 +85,8 @@ export type StatsPoint = {
 export type StatsSeries = {
   readonly metric: string;
   readonly service: string;
-  readonly window: { readonly sinceMs: number; readonly untilMs: number };
-  readonly bucketMs: number;
+  readonly window: { readonly since_ms: number; readonly until_ms: number };
+  readonly bucket_ms: number;
   readonly points: readonly StatsPoint[];
 };
 
@@ -76,8 +94,8 @@ function isStatsPoint(value: unknown): value is StatsPoint {
   if (value === null || typeof value !== "object") return false;
   const p = value as Record<string, unknown>;
   return (
-    typeof p["startMs"] === "number" &&
-    typeof p["endMs"] === "number" &&
+    typeof p["start_ms"] === "number" &&
+    typeof p["end_ms"] === "number" &&
     (p["value"] === null || typeof p["value"] === "number") &&
     typeof p["unit"] === "string" &&
     typeof p["sample"] === "number" &&
@@ -89,21 +107,23 @@ function isStatsSeries(value: unknown): value is StatsSeries {
   if (value === null || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
   if (typeof v["metric"] !== "string" || typeof v["service"] !== "string") return false;
-  if (typeof v["bucketMs"] !== "number") return false;
+  if (typeof v["bucket_ms"] !== "number") return false;
   const w = v["window"];
   if (w === null || typeof w !== "object") return false;
   const win = w as Record<string, unknown>;
-  if (typeof win["sinceMs"] !== "number" || typeof win["untilMs"] !== "number") return false;
+  if (typeof win["since_ms"] !== "number" || typeof win["until_ms"] !== "number") return false;
   const points = v["points"];
   return Array.isArray(points) && points.every(isStatsPoint);
 }
 
 // --- rendering ---
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
 /** Largest-unit-first so `604800000` prints `1w`, not `604800000ms`. */
 const DURATION_UNITS: ReadonlyArray<readonly [string, number]> = [
-  ["w", 7 * 24 * 60 * 60 * 1000],
-  ["d", 24 * 60 * 60 * 1000],
+  ["w", 7 * ONE_DAY_MS],
+  ["d", ONE_DAY_MS],
   ["h", 60 * 60 * 1000],
   ["m", 60 * 1000],
   ["s", 1000],
@@ -118,10 +138,22 @@ function formatDurationMs(ms: number): string {
   return `${String(ms)}ms`;
 }
 
-function formatBucketRange(startMs: number, endMs: number): string {
-  const s = new Date(startMs).toISOString().slice(0, 10);
-  const e = new Date(endMs).toISOString().slice(0, 10);
-  return `${s} → ${e}`;
+/**
+ * A sub-day bucket needs the time component or every row in the series carries an identical
+ * label — `--bucket 6h` renders four rows all reading the same date, and `printHelp`
+ * advertises `h`/`m`/`s`. Dates only above a day, where a time of `00:00` is noise.
+ */
+function formatBucketRange(startMs: number, endMs: number, withTime: boolean): string {
+  const at = (ms: number): string => {
+    const iso = new Date(ms).toISOString();
+    return withTime ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}` : iso.slice(0, 10);
+  };
+  return `${at(startMs)} → ${at(endMs)}`;
+}
+
+/** Widest `formatBucketRange` output for each mode, so the value column stays aligned. */
+function rangeColumnWidth(withTime: boolean): number {
+  return withTime ? 35 : 23;
 }
 
 /**
@@ -143,6 +175,14 @@ function gapCounts(points: readonly StatsPoint[]): Map<string, number> {
   return counts;
 }
 
+/** `"9 low_sample, 1 no_repos"` — most frequent first. Empty string when nothing is flagged. */
+function gapReasons(points: readonly StatsPoint[]): string {
+  return [...gapCounts(points)]
+    .sort((a, b) => b[1] - a[1])
+    .map(([gap, count]) => `${String(count)} ${gap}`)
+    .join(", ");
+}
+
 function dominantGap(points: readonly StatsPoint[]): string | undefined {
   let best: { gap: string; count: number } | undefined;
   for (const [gap, count] of gapCounts(points)) {
@@ -153,23 +193,36 @@ function dominantGap(points: readonly StatsPoint[]): string | undefined {
   return best?.gap;
 }
 
-/** Rule 2: a summary line beneath the table — how many buckets had data, plus why the rest didn't. */
+/**
+ * Rule 2: a summary line beneath the table. EMPTY buckets and CAVEATED ones are counted
+ * separately and never merged: a gap next to a real value (`low_sample` on an `mttr` median
+ * of two incidents, `github_only_merge_data`, `approximate_lead_time`, `mixed_source`) means
+ * "this number, with a caveat", while a gap next to a `—` means "no number at all". Reporting
+ * one combined count read as "N buckets had no data" and understated how many buckets
+ * actually held a value.
+ */
 function summaryLine(points: readonly StatsPoint[]): string {
   const total = points.length;
-  const withValue = points.filter((p) => p.value !== null).length;
-  const reasons = [...gapCounts(points)]
-    .sort((a, b) => b[1] - a[1])
-    .map(([gap, count]) => `${String(count)} ${gap}`)
-    .join(", ");
-  const base = `${String(withValue)} of ${String(total)} buckets had data`;
-  return reasons === "" ? base : `${base} (${reasons})`;
+  const withData = points.filter((p) => p.value !== null);
+  const empty = points.filter((p) => p.value === null);
+  const caveated = withData.filter((p) => p.gap !== null);
+  let line = `${String(withData.length)} of ${String(total)} buckets had data`;
+  if (caveated.length > 0) {
+    line += ` (${String(caveated.length)} caveated: ${gapReasons(caveated)})`;
+  }
+  if (empty.length > 0) {
+    const reasons = gapReasons(empty);
+    line += ` · ${String(empty.length)} empty${reasons === "" ? "" : ` (${reasons})`}`;
+  }
+  return line;
 }
 
 export function renderStatsSeries(series: StatsSeries): string {
+  const withTime = series.bucket_ms < ONE_DAY_MS;
   const lines: string[] = [];
   lines.push(`${series.metric} — ${series.service}`);
   lines.push(
-    `window ${formatBucketRange(series.window.sinceMs, series.window.untilMs)} · bucket ${formatDurationMs(series.bucketMs)}`,
+    `window ${formatBucketRange(series.window.since_ms, series.window.until_ms, withTime)} · bucket ${formatDurationMs(series.bucket_ms)}`,
     "",
   );
 
@@ -187,19 +240,16 @@ export function renderStatsSeries(series: StatsSeries): string {
     return lines.join("\n");
   }
 
-  if (total === 0) {
-    lines.push("(no buckets in this window)");
-    return lines.join("\n");
-  }
-
+  const pad = rangeColumnWidth(withTime);
   for (const p of series.points) {
-    // Rule 1: the gap column is populated only when the value is null — a caveat gap next to
-    // a real value (e.g. `github_only_merge_data`) is not printed per-row. `summaryLine`
-    // still counts it, via `gapCounts`, which counts every non-null gap regardless of
-    // whether its bucket also carries a value.
-    const gapCell = p.value === null && p.gap !== null ? p.gap : "";
+    // Rule 1: EVERY non-null gap is printed, whether or not the bucket also carries a value.
+    // A caveated value (`mttr`'s median over two incidents is a real number carrying
+    // `low_sample`) must not render as a bare number indistinguishable from a solid one. The
+    // null/zero distinction is still carried by the value column itself — `—` for null,
+    // never `0` — so showing the gap here blurs nothing.
+    const gapCell = p.gap ?? "";
     lines.push(
-      `  ${formatBucketRange(p.startMs, p.endMs).padEnd(23)} ${formatStatsValue(p.value).padStart(10)} ${p.unit.padEnd(18)} n=${String(p.sample).padEnd(4)} ${gapCell}`,
+      `  ${formatBucketRange(p.start_ms, p.end_ms, withTime).padEnd(pad)} ${formatStatsValue(p.value).padStart(10)} ${p.unit.padEnd(18)} n=${String(p.sample).padEnd(4)} ${gapCell}`.trimEnd(),
     );
   }
 
@@ -216,7 +266,8 @@ Usage:
 Durations (--window / --bucket) accept: w d h m s ms  (e.g. 90d, 1w, 48h)
 
 Output:
-  table   (default) one row per bucket, plus a summary line of how many buckets had data
+  table   (default) one row per bucket, plus a summary line splitting buckets that had data
+          (some with a caveat gap) from buckets that were empty
   --json  raw metrics.stats response, verbatim, with no summary
 `);
 }

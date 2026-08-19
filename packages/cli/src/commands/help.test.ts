@@ -47,6 +47,9 @@ describe("printHelp", () => {
     expect(out.stdout).toContain("nimbus expert");
     expect(out.stdout).toContain("nimbus impact");
     expect(out.stdout).toContain("nimbus metrics dora");
+    // `audit:readme-cli` only validates README→registry, so nothing else catches a command
+    // that is registered and documented but missing from `nimbus help`. `nimbus stats` was.
+    expect(out.stdout).toContain("nimbus stats");
     expect(out.stdout).toContain("nimbus deploy");
   });
 

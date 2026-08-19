@@ -846,10 +846,10 @@ nimbus stats pr-merges --service payment-service --window 90d --bucket 1w --json
 
 | Metric id | What it counts | Notes |
 |---|---|---|
-| `deployment-frequency` | deploys per bucket | wraps `nimbus metrics dora`'s calculator, unchanged |
-| `lead-time` | median lead time for changes | wraps the DORA calculator, unchanged |
-| `change-failure-rate` | share of deploys that caused an incident | wraps the DORA calculator, unchanged |
-| `mttr` | median incident-resolution time | wraps the DORA calculator, unchanged; sparse buckets are common — see below |
+| `deployment-frequency` | deploys per bucket | wraps `nimbus metrics dora`'s calculator, unchanged — windows on `item.modified_at`, which for `ci_run`/`deployment` rows is effectively event time |
+| `lead-time` | median lead time for changes | wraps the DORA calculator, unchanged — windows on `item.modified_at`, **last touch** for the `pr` rows it reads |
+| `change-failure-rate` | share of deploys that caused an incident | wraps the DORA calculator, unchanged — windows on `item.modified_at`, **last touch** for the `incident` rows it reads |
+| `mttr` | median incident-resolution time | wraps the DORA calculator, unchanged — same `modified_at` windowing, plus DORA's `synced_at` fallback for an incident with no `opened_at_ms`; sparse buckets are common — see below |
 | `pr-merges` | PRs merged, by `metadata.merged_at` | **GitHub-only** — see below |
 | `incidents-opened` | incidents opened, by `metadata.opened_at_ms` | excludes incidents with no `opened_at_ms`, reported via an `incidents_missing_opened_at` gap |
 
@@ -859,10 +859,19 @@ nimbus stats pr-merges --service payment-service --window 90d --bucket 1w --json
 |---|---|
 | `--service <id>` | Service id (the table key in `[metrics.dora.<id>]` / `[ci.service.<id>]`) (required) |
 | `--window <duration>` | Total lookback — `<n>w`/`d`/`h`/`m`/`s`/`ms`, e.g. `90d` (default: `90d`) |
-| `--bucket <duration>` | Bucket width, same units as `--window` (default: `1w`) |
+| `--bucket <duration>` | Bucket width, same units as `--window` (default: `1w`). A bucket under a day labels rows with the time as well as the date |
 | `--json` | Machine-readable JSON output (human-readable table otherwise) |
 
-Three things worth knowing before reading the output:
+Four things worth knowing before reading the output:
+
+- **Only the two new counters bucket on a real event timestamp.** `pr-merges` uses
+  `metadata.merged_at` and `incidents-opened` uses `metadata.opened_at_ms`. The four wrapped
+  DORA metrics call the existing calculators unchanged, which also inherits their
+  `item.modified_at` windowing — last touch, not event time, for the `pr` and `incident` rows
+  three of them read, so a PR merged three weeks ago and commented on yesterday counts toward
+  yesterday's bucket. This is the accepted cost of not maintaining a second copy of DORA's
+  arithmetic; fixing it means changing `dora.ts` itself, which moves `nimbus metrics dora`
+  too, and is a named follow-up.
 
 - **Buckets walk backward from now and are not calendar-aligned.** `--window 90d --bucket 1w`
   produces 13 buckets ending exactly at the moment you ran the command, so the newest point is
@@ -873,11 +882,14 @@ Three things worth knowing before reading the output:
   metric buckets on — `gitlab-sync.ts` and `bitbucket-sync.ts` write nothing. A service bound
   to a non-GitHub repo gets a `github_only_merge_data` gap alongside its count; a service with
   no GitHub repos at all gets `no_repos` rather than a misleading zero.
-- **A sparse bucket prints `—`, not `0`.** An empty bucket means "could not be computed," not
-  "zero occurred" — the two are different facts, and the gap column names why. This is common
-  for `mttr`, a median: a one-week bucket often holds only one or two incidents, so
-  `low_sample` fires on most buckets. The table prints a summary line underneath (e.g. `4 of 13
-  buckets had data (9 low_sample)`) so this reads as thin data, not breakage.
+- **A sparse bucket prints `—`, not `0`, and a caveated one prints both its number and its
+  gap.** An empty bucket means "could not be computed," not "zero occurred" — the two are
+  different facts, and the gap column names why. But a gap does not always mean an empty
+  bucket: `mttr` is a median, so a one-week bucket holding two incidents returns a REAL median
+  carrying `low_sample`. Every non-null gap is printed on its own row, and the summary line
+  underneath counts caveated buckets separately from empty ones — e.g. `4 of 13 buckets had
+  data (3 caveated: 3 low_sample) · 9 empty (9 low_sample)` — so a caveated number is never
+  mistaken for a solid one, nor counted as missing data.
 
 No new `nimbus.toml` section — every metric scopes through the same `[metrics.dora.<id>]` /
 `[ci.service.<id>]` config `nimbus metrics dora` already reads. Read-only; no HITL.

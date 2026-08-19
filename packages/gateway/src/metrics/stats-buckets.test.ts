@@ -20,7 +20,10 @@ describe("splitBuckets", () => {
     }
   });
 
-  test("partial trailing bucket keeps its TRUE short bounds, not a padded week", () => {
+  // The short bucket is the OLDEST (leading) one, not a trailing one: buckets walk backward
+  // from `untilMs`, so the remainder lands at the window's old edge and the NEWEST bucket is
+  // always a whole one. Hence the assertions below read `b[0]`.
+  test("the partial leading bucket keeps its TRUE short bounds, not a padded week", () => {
     // 30 days at weekly granularity = 4 whole weeks + a 2-day remainder.
     const b = splitBuckets(NOW, 30 * DAY, WEEK);
     expect(b.length).toBe(5);

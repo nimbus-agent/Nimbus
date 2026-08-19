@@ -85,7 +85,7 @@ describe("splitBuckets", () => {
     }
   });
 
-  test("partial trailing bucket keeps its TRUE short bounds, not a padded week", () => {
+  test("the partial leading bucket keeps its TRUE short bounds, not a padded week", () => {
     // 30 days at weekly granularity = 4 whole weeks + a 2-day remainder.
     const b = splitBuckets(NOW, 30 * DAY, WEEK);
     expect(b.length).toBe(5);
@@ -248,12 +248,24 @@ git commit -m "feat(metrics): pure bucket splitter for nimbus stats"
 - Produces:
   - `type StatsMetricId = "deployment-frequency" | "lead-time" | "change-failure-rate" | "mttr" | "pr-merges" | "incidents-opened"`
   - `type StatsGap = DoraGap | "github_only_merge_data" | "incidents_missing_opened_at"`
-  - `type StatsPoint = { startMs, endMs, value: number | null, unit: string, sample: number, gap: StatsGap }`
-  - `type StatsSeries = { metric: StatsMetricId; service: string; window: { sinceMs, untilMs }; bucketMs: number; points: StatsPoint[] }`
+  - `type StatsPoint = { start_ms, end_ms, value: number | null, unit: string, sample: number, gap: StatsGap }`
+  - `type StatsSeries = { metric: StatsMetricId; service: string; window: { since_ms, until_ms }; bucket_ms: number; points: StatsPoint[] }`
   - `const STATS_METRIC_IDS: readonly StatsMetricId[]`
   - `function computeStatsSeries(db, cfg, metric, untilMs, windowMs, bucketMs): StatsSeries`
 
-**Context the implementer needs:** the four DORA calculators share the signature `(db: Database, cfg: ServiceConfig, nowMs: number, sinceMs: number) => DoraMetricValue`. Binding `nowMs` to a bucket's `endMs` and `sinceMs` to its `startMs` makes a bucket exactly "the DORA value for that sub-window" — no DORA logic is copied.
+**Context the implementer needs:** the four DORA calculators share the signature `(db: Database, cfg: ServiceConfig, nowMs: number, sinceMs: number) => DoraMetricValue`, in which **`sinceMs` is a LOOK-BACK DURATION, not an absolute timestamp** — every calculator computes its lower bound as `nowMs - sinceMs`. So a bucket is "the DORA value for that sub-window" when `nowMs` binds to the bucket's `endMs` and `sinceMs` binds to the bucket's WIDTH, `endMs - startMs`.
+
+> **Corrected 2026-08-19, during the whole-branch review.** This paragraph and the `wrapDora`
+> body in Task 2 step 2 both originally said to bind `sinceMs` to the bucket's `startMs` —
+> i.e. `fn(db, cfg, endMs, startMs)`. That is wrong by roughly four orders of magnitude:
+> `startMs` is an absolute epoch value (~1.7e12), so `nowMs - sinceMs` collapses to a
+> near-zero epoch, every bucket's lower bound becomes a no-op, and each point silently
+> becomes CUMULATIVE-to-date instead of per-bucket. The shipped binding is
+> `fn(db, cfg, endMs, endMs - startMs)`, guarded by the regression test
+> "a wrapped DORA metric's newest bucket does not leak an older bucket's data" in
+> `metrics/stats.test.ts` — an empty-DB or single-bucket comparison cannot discriminate the
+> two bindings, so that test deliberately places one incident inside the OLDER of two buckets
+> and asserts the newest is null.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -460,8 +472,8 @@ describe("registry totality", () => {
   test("the series echoes its own window and bucket", () => {
     const db = makeDb();
     const s = computeStatsSeries(db, cfg(GH), "pr-merges", NOW, 4 * DAY, 2 * DAY);
-    expect(s.window).toEqual({ sinceMs: NOW - 4 * DAY, untilMs: NOW });
-    expect(s.bucketMs).toBe(2 * DAY);
+    expect(s.window).toEqual({ since_ms: NOW - 4 * DAY, until_ms: NOW });
+    expect(s.bucket_ms).toBe(2 * DAY);
   });
 });
 ```
@@ -500,8 +512,10 @@ export type StatsMetricId =
 export type StatsGap = DoraGap | "github_only_merge_data" | "incidents_missing_opened_at";
 
 export type StatsPoint = {
-  readonly startMs: number;
-  readonly endMs: number;
+  // WIRE SHAPE — snake_case, matching the `window_ms`/`bucket_ms` request params and
+  // `DoraMetricsResult`'s `since_ms`/`computed_at` on the same namespace.
+  readonly start_ms: number;
+  readonly end_ms: number;
   readonly value: number | null;
   readonly unit: string;
   readonly sample: number;
@@ -511,8 +525,8 @@ export type StatsPoint = {
 export type StatsSeries = {
   readonly metric: StatsMetricId;
   readonly service: string;
-  readonly window: { readonly sinceMs: number; readonly untilMs: number };
-  readonly bucketMs: number;
+  readonly window: { readonly since_ms: number; readonly until_ms: number };
+  readonly bucket_ms: number;
   readonly points: readonly StatsPoint[];
 };
 
@@ -525,13 +539,17 @@ type Evaluator = (
 
 /**
  * A bucket is exactly "the DORA value for that sub-window": `nowMs` binds to the bucket's
- * end and `sinceMs` to its start. No DORA logic is reimplemented here — a second copy in SQL
- * is free to drift from the TypeScript original, which is the defect this shape avoids.
+ * END, and `sinceMs` — a LOOK-BACK DURATION, never an absolute timestamp — binds to the
+ * bucket's WIDTH. Binding `sinceMs` to the bucket's absolute `startMs` instead makes
+ * `nowMs - sinceMs` a near-zero epoch value and turns every point cumulative-to-date; see
+ * the correction note in Task 2's context paragraph. No DORA logic is reimplemented here —
+ * a second copy in SQL is free to drift from the TypeScript original, which is the defect
+ * this shape avoids.
  */
 const wrapDora =
   (fn: (db: Database, cfg: ServiceConfig, nowMs: number, sinceMs: number) => DoraMetricValue): Evaluator =>
   (db, cfg, startMs, endMs) =>
-    fn(db, cfg, endMs, startMs);
+    fn(db, cfg, endMs, endMs - startMs);
 
 /**
  * `merged_at` is written ONLY by `connectors/github-sync.ts`; gitlab-sync and bitbucket-sync
@@ -674,13 +692,13 @@ export function computeStatsSeries(
   const buckets = splitBuckets(untilMs, windowMs, bucketMs);
   const points = buckets.map((b) => {
     const v = evaluate(db, cfg, b.startMs, b.endMs);
-    return { startMs: b.startMs, endMs: b.endMs, ...v } as StatsPoint;
+    return { start_ms: b.startMs, end_ms: b.endMs, ...v } as StatsPoint;
   });
   return {
     metric,
     service: cfg.serviceId,
-    window: { sinceMs: untilMs - windowMs, untilMs },
-    bucketMs,
+    window: { since_ms: untilMs - windowMs, until_ms: untilMs },
+    bucket_ms: bucketMs,
     points,
   };
 }
@@ -1118,11 +1136,11 @@ git commit -m "docs: nimbus stats reference, changelog entry, roadmap update"
 
 ## Self-Review
 
-**Spec coverage.** § 4 registry → Task 2. § 5 service scoping → Task 2 (`cfg.repos`, `cfg.pagerdutyServices`). § 6 backward buckets + partial trailing bucket → Task 1. § 6.1 parser pin → Tasks 3 and 4 (the gateway takes integers; the CLI parses, with a `1w` test). § 6.1 `bucket > window` error → Task 1 step 1, Task 3's -32602 mapping. § 6.1 cap → Task 1 (`MAX_BUCKETS`, rejects not truncates). § 7 IPC + CLI → Tasks 3 and 4. § 7 no HTTP route / no allowlist change → no task touches either, by construction. § 7.1 I29 exemption → no code; recorded in the spec, and no task adds a dispatch or a fetch. § 8 tests → Tasks 1, 2, 4.
+**Spec coverage.** § 4 registry → Task 2. § 5 service scoping → Task 2 (`cfg.repos`, `cfg.pagerdutyServices`). § 6 backward buckets + partial oldest bucket → Task 1. § 6.1 parser pin → Tasks 3 and 4 (the gateway takes integers; the CLI parses, with a `1w` test). § 6.1 `bucket > window` error → Task 1 step 1, Task 3's -32602 mapping. § 6.1 cap → Task 1 (`MAX_BUCKETS`, rejects not truncates). § 7 IPC + CLI → Tasks 3 and 4. § 7 no HTTP route / no allowlist change → no task touches either, by construction. § 7.1 I29 exemption → no code; recorded in the spec, and no task adds a dispatch or a fetch. § 8 tests → Tasks 1, 2, 4.
 
 **Placeholder scan.** Task 2 step 3 describes `incidentsOpened` in prose plus a shape contract rather than full source, because it must mirror `dora.ts`'s existing incident scoping, which the implementer has to read anyway; the contract fixes its return values. Task 4 step 3 describes `runStats`'s rendering rather than supplying it, with the one binding rule stated (`null` renders `—`, never `0`). Task 5 describes documentation content, as prose must match surrounding voice. No `TBD`/`TODO`.
 
-**Type consistency.** `StatsMetricId`, `StatsGap`, `StatsPoint`, `StatsSeries`, `computeStatsSeries`, `STATS_METRIC_IDS`, `splitBuckets`, `StatsBucketError`, `MAX_BUCKETS` are used under exactly these names in every task that references them. The IPC wire shape is `window_ms`/`bucket_ms` (snake, matching `since_ms` in `DoraMetricsResult`) while the TypeScript is `windowMs`/`bucketMs` — deliberate, and consistent across Tasks 3 and 4.
+**Type consistency.** `StatsMetricId`, `StatsGap`, `StatsPoint`, `StatsSeries`, `computeStatsSeries`, `STATS_METRIC_IDS`, `splitBuckets`, `StatsBucketError`, `MAX_BUCKETS` are used under exactly these names in every task that references them. The IPC wire shape is snake_case throughout — request params `window_ms`/`bucket_ms` and response fields `since_ms`/`until_ms`/`bucket_ms`/`start_ms`/`end_ms` — matching `since_ms`/`computed_at` in `DoraMetricsResult` on the same namespace, and consistent across Tasks 2, 3 and 4. **Corrected 2026-08-19, during the whole-branch review:** this line, and the `StatsPoint`/`StatsSeries` declarations in Task 2, originally shipped the RESPONSE fields as camelCase while the request params were snake, so one method mixed both conventions on the wire. Only CLI-internal types (`StatsArgs`' `windowMs`/`bucketMs`, `stats-buckets.ts`' `StatsBucket`) stay camelCase; they never leave the process.
 
 **Reachability, checked rather than left to the implementer.** The obvious way for this feature to ship dead is a dispatch guard matching the literal `"metrics.dora"` instead of the `metrics.` prefix — every unit test would pass and the CLI would get a method-not-found. Verified on 2026-08-19: `ipc/server/dispatchers.ts:456` guards with `method.startsWith("metrics.")`, and production assembly already supplies the `localIndex` and `configDir` that guard also requires. Task 3 step 5 records the finding so nobody spends the round re-deriving it.
 

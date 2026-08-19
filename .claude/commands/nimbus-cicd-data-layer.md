@@ -34,15 +34,18 @@ Adding a new metric or check means writing a pure calculator and wiring it; do n
 |---|---|---|
 | **DORA calculators** | [`packages/gateway/src/metrics/dora.ts`](../../packages/gateway/src/metrics/dora.ts) | Four pure functions: `deploymentFrequency`, `leadTimeForChanges`, `changeFailureRate`, `mttr`. Each returns a `{ value, unit, sample, gap }` envelope |
 | | [`packages/gateway/src/metrics/dora-config.ts`](../../packages/gateway/src/metrics/dora-config.ts) | `ServiceConfig` type (and `DoraServiceConfig` back-compat alias), URN parser, provider-prefix → `service` column map |
+| **Bucketed series** | [`packages/gateway/src/metrics/stats.ts`](../../packages/gateway/src/metrics/stats.ts) | `nimbus stats`' six-metric registry: four entries wrap the DORA calculators unchanged (`wrapDora` binds the bucket's END to `nowMs` and its WIDTH to `sinceMs` — never the bucket's absolute start), two are native counters (`pr-merges` on `metadata.merged_at`, `incidents-opened` on `metadata.opened_at_ms`). Wire shape is snake_case (`start_ms`/`end_ms`/`bucket_ms`), matching `metrics.dora` |
+| | [`packages/gateway/src/metrics/stats-buckets.ts`](../../packages/gateway/src/metrics/stats-buckets.ts) | Pure bucket splitter: disjoint buckets walking BACKWARD from the request time, oldest bucket absorbs the remainder, `MAX_BUCKETS` guard |
 | **Preflight** | [`packages/gateway/src/preflight/preflight.ts`](../../packages/gateway/src/preflight/preflight.ts) | Pure: counts active P1 incidents, failing CI on target ref, open PR conflicts. Returns `DeployPreflightResult` envelope |
 | **Deployment annotation** | [`packages/gateway/src/deployment/annotate.ts`](../../packages/gateway/src/deployment/annotate.ts) | Pure validator + index upsert (one `item` row + one `deployment_items` shadow row + one audit entry) |
 | | [`packages/gateway/src/deployment/external-id.ts`](../../packages/gateway/src/deployment/external-id.ts) | Stable `external_id` derivation: `<provider>:<sha>:<env>` |
 | | [`packages/gateway/src/deployment/types.ts`](../../packages/gateway/src/deployment/types.ts) | Shared `DeploymentAnnotateInput` / `DeploymentAnnotateResult` types |
-| **RPC** | [`packages/gateway/src/ipc/metrics-rpc.ts`](../../packages/gateway/src/ipc/metrics-rpc.ts) | `metrics.dora` handler |
+| **RPC** | [`packages/gateway/src/ipc/metrics-rpc.ts`](../../packages/gateway/src/ipc/metrics-rpc.ts) | `metrics.dora` + `metrics.stats` handlers |
 | | [`packages/gateway/src/ipc/preflight-rpc.ts`](../../packages/gateway/src/ipc/preflight-rpc.ts) | `deploy.preflight` handler |
 | | [`packages/gateway/src/ipc/deployment-rpc.ts`](../../packages/gateway/src/ipc/deployment-rpc.ts) | Internal `deployment.annotate` handler (NOT in renderer allowlist) |
 | **HTTP surface** | [`packages/gateway/openapi/v1.yaml`](../../packages/gateway/openapi/v1.yaml) | OpenAPI schema for `/v1/metrics/dora`, `/v1/preflight/deploy`, `POST /v1/deployments` |
 | **CLI** | [`packages/cli/src/commands/metrics.ts`](../../packages/cli/src/commands/metrics.ts) | `nimbus metrics dora` |
+| | [`packages/cli/src/commands/stats.ts`](../../packages/cli/src/commands/stats.ts) | `nimbus stats <metric> --service <id>` — the bucketed counterpart |
 | | [`packages/cli/src/commands/deploy.ts`](../../packages/cli/src/commands/deploy.ts) | `nimbus deploy preflight` |
 | | [`packages/cli/src/commands/deploy-annotate.ts`](../../packages/cli/src/commands/deploy-annotate.ts) | `nimbus deploy annotate` |
 | **First-party Actions** | [`packages/github-actions/preflight-query/`](../../packages/github-actions/preflight-query/) | Wraps `GET /v1/preflight/deploy` |

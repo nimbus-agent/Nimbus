@@ -140,6 +140,12 @@ export async function dispatchMetricsRpc(
     const nowMs = (ctx.nowMs ?? (() => Date.now()))();
     const cfg = ctx.loadConfig().get(service);
     if (cfg === undefined) {
+      // Deliberate asymmetry with `metrics.dora` below, which answers an unconfigured service
+      // with a soft all-null envelope: `dora` returns a FIXED set of four metric slots that
+      // can be filled with `no_repos` placeholders, while `stats` returns a series whose
+      // shape (bucket count, unit) depends on config it does not have — so there is nothing
+      // honest to place-hold, and a typo'd `--service` must say so rather than render 13
+      // empty buckets that look like real thin data. Behaviour kept as-is; recorded, not fixed.
       throw new MetricsRpcError(
         -32602,
         `unknown service '${service}' — add [metrics.dora.${service}] or [ci.service.${service}] to nimbus.toml`,

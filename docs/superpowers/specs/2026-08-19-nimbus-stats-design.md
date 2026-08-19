@@ -54,10 +54,29 @@ S1 surface reports what it could not compute.
 
 ## 3. Decisions taken (recorded so they are not relitigated)
 
-**D1 — six metrics, and every one buckets on a real event timestamp.** Four DORA series plus
-`pr-merges` and `incidents-opened`. Rejected alternative: also shipping `modified_at`-based
-"activity" series with an `activity_not_completion` label. A label mitigates a misleading
-headline number; it does not remove it, and F1 is exactly the trap that costs credibility.
+**D1 — six metrics; the two NEW counters bucket on a real event timestamp, the four wrapped
+DORA metrics inherit `modified_at`.** Four DORA series plus `pr-merges` (on
+`metadata.merged_at`) and `incidents-opened` (on `metadata.opened_at_ms`). Rejected
+alternative: also shipping *new* `modified_at`-based "activity" series with an
+`activity_not_completion` label. A label mitigates a misleading headline number; it does not
+remove it, and F1 is exactly the trap that costs credibility.
+
+**Stated precisely, because an earlier draft of this line over-claimed.** Reusing the four
+DORA calculators unchanged (§ 4) also reuses their time predicate, which is
+`item.modified_at`. For the `ci_run` and `deployment` rows behind `deployment-frequency`
+that is effectively event time — `deployment/annotate.ts` binds `started_at_ms` into
+`modified_at`, and `connectors/github-actions-sync.ts` binds the run's `created_at` — but for
+the `pr` rows `lead-time` reads and the `incident` rows `change-failure-rate` and `mttr`
+read, it is genuine last-touch (`connectors/github-sync.ts` binds a PR's `updated_at`;
+`connectors/pagerduty-sync.ts` binds an incident's) — the exact F1 timestamp this section
+calls disqualifying. `mttr` additionally inherits
+`selectResolvedIncidents`' `synced_at` fallback for an incident with no `opened_at_ms`. Both
+are the **accepted cost** of calling four tested calculators unchanged rather than
+reimplementing them with a different time predicate — a second copy of DORA's arithmetic
+would be free to drift from the original, and changing `dora.ts` itself would move
+`nimbus metrics dora`'s numbers too. Recorded as a named follow-up (§ 9), not as a property
+this feature has. So: the claim "buckets on a real event timestamp" holds for `pr-merges` and
+`incidents-opened`, and for no others.
 
 **D2 — disjoint buckets, not rolling windows.** `--window 90d --bucket 1w` means 13
 independent weeks, each computed over its own rows. The roadmap's phrase "rolling 7-day MTTR
@@ -83,10 +102,10 @@ reason says which. Rolling is recorded as a named follow-up (§ 9), not built.
 
 | Metric id | Source | Event timestamp | Notes |
 | --- | --- | --- | --- |
-| `deployment-frequency` | existing calculator | as today | wraps `deploymentFrequency` unchanged |
-| `lead-time` | existing calculator | as today | wraps `leadTimeForChanges` unchanged |
-| `change-failure-rate` | existing calculator | as today | wraps `changeFailureRate` unchanged |
-| `mttr` | existing calculator | as today | wraps `mttr` unchanged; see D2 on sparse buckets |
+| `deployment-frequency` | existing calculator | `item.modified_at` — effectively event time for `ci_run`/`deployment` rows | wraps `deploymentFrequency` unchanged |
+| `lead-time` | existing calculator | `item.modified_at` — **last touch** for the `pr` rows it reads | wraps `leadTimeForChanges` unchanged |
+| `change-failure-rate` | existing calculator | `item.modified_at` — **last touch** for the `incident` rows it reads | wraps `changeFailureRate` unchanged |
+| `mttr` | existing calculator | `item.modified_at`, plus DORA's `synced_at` fallback for an incident with no `opened_at_ms` | wraps `mttr` unchanged; see D2 on sparse buckets, and D1 on the inherited timestamps |
 | `pr-merges` | `item` where `type = 'pr'` | `json_extract(metadata,'$.merged_at')` | **GitHub only** (F2) |
 | `incidents-opened` | the incident rows DORA already reads | `metadata.opened_at_ms` | count, not duration — distinct from `mttr` |
 
@@ -136,8 +155,8 @@ first.
 two runs are not directly comparable point-for-point. A `--align` option that snaps to UTC
 boundaries is a named follow-up (§ 9) for users who want stable, comparable charts.
 
-The trailing (oldest) bucket may be partial when `window` is not a whole multiple of
-`bucket`; it is emitted with its true `start_ms`/`end_ms` so a reader can see it is short,
+The OLDEST bucket — the one at the trailing edge of the lookback, i.e. `points[0]`, never
+the newest — may be partial when `window` is not a whole multiple of `bucket`; it is emitted with its true `start_ms`/`end_ms` so a reader can see it is short,
 never silently padded or dropped.
 
 ### 6.1 Input validation
@@ -238,7 +257,7 @@ egress path, and the append would have to come with it.
 
 ## 8. Testing
 
-- **Bucket splitter, pure function:** whole-multiple windows; a partial trailing bucket
+- **Bucket splitter, pure function:** whole-multiple windows; a partial OLDEST bucket
   carrying its true short bounds; `bucket == window` (one bucket); `bucket > window`
   **rejected with an error naming both values**, not silently collapsed; a zero or negative
   duration rejected; a window/bucket pair over the cap rejected rather than truncated.
@@ -281,6 +300,13 @@ Tauri allowlist change.
   milliseconds at `metadata.merged_at`, matching what `github-sync.ts` already writes, so the
   `pr-merges` evaluator keeps one metadata path rather than growing a per-connector branch.
   A connector-specific path is how a single metric quietly becomes three.
+- **A real event timestamp for the four wrapped DORA metrics** (D1). They window on
+  `item.modified_at`, which is last-touch for the `pr` and `incident` rows three of them
+  read, and `mttr` falls back to `synced_at` for an incident with no `opened_at_ms`. Fixing
+  it means changing `dora.ts`'s own time predicate, which moves `nimbus metrics dora`'s
+  numbers as well as `nimbus stats`' — a deliberate, separately-reviewed change, not a
+  side-effect of adding a bucketing layer. Until then this is an accepted cost, stated in
+  D1, in `docs/CHANGELOG.md`'s 2026-08-19 entry and in the roadmap row.
 - **`pr-opened`**, a PR-creation-rate series. Blocked on data, not effort:
   `extractPrMetadataForIndex` records `number`, `repo`, `state`, `draft`, `merged`, `user`,
   `labels` and the size stats, but **no creation timestamp** — so per F1 there is nothing

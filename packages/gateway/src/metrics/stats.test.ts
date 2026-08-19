@@ -151,6 +151,22 @@ describe("computeStatsSeries — pr-merges", () => {
     expect(s.points[0]?.value).toBe(1);
   });
 
+  // The `service = 'github'` predicate. `connectors/bitbucket-sync.ts` writes the same
+  // `metadata.repo` key, so an `owner/name` collision across forges lands a non-GitHub PR in
+  // this metric's scope. Without the column predicate the only thing keeping it out is that
+  // bitbucket-sync happens not to write `merged_at` today — incidental, not structural. This
+  // row carries one, so it is counted iff the predicate is missing.
+  test("a same-named repo on another forge is not counted, even carrying merged_at", () => {
+    const db = makeDb();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
+       VALUES ('bb', 'bitbucket', 'pr', 'bb', 'x', ?, ?, ?)`,
+      [NOW, JSON.stringify({ repo: "acme/web", merged_at: NOW - 0.5 * DAY }), NOW],
+    );
+    const s = computeStatsSeries(db, cfg(GH), "pr-merges", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBeNull();
+  });
+
   test("a service binding no github repos yields no_repos, not zero", () => {
     const db = makeDb();
     insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
@@ -223,6 +239,39 @@ describe("computeStatsSeries — incidents-opened", () => {
     expect(s.points[0]?.gap).toBe("incidents_missing_opened_at");
   });
 
+  // The untimed-incident probe is a SERIES-level disclosure, not a per-bucket reason: it must
+  // fill only a bucket that derived NO reason of its own, never displace a bucket's own
+  // `low_sample`. Before this, one ancient untimed incident stamped
+  // `incidents_missing_opened_at` on EVERY bucket forever.
+  test("the untimed exclusion does not displace an empty bucket's own low_sample", () => {
+    const db = makeDb();
+    insertIncident(db, "timed", "PSVC1", NOW - 0.5 * DAY, "resolved", NOW); // newest bucket
+    insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW, NOW - 1.5 * DAY);
+    const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, 3 * DAY, DAY);
+    expect(s.points.length).toBe(3);
+    // The two empty buckets keep the reason they derived for themselves...
+    expect(s.points[0]?.value).toBeNull();
+    expect(s.points[0]?.gap).toBe("low_sample");
+    expect(s.points[1]?.gap).toBe("low_sample");
+    // ...and the bucket that HAS a value, which would otherwise report no reason at all,
+    // carries the series-level exclusion.
+    expect(s.points[2]?.value).toBe(1);
+    expect(s.points[2]?.gap).toBe("incidents_missing_opened_at");
+  });
+
+  // The last-resort placement. If every bucket derived its own reason the disclosure would
+  // vanish from the series entirely — which is exactly the case (nothing placeable anywhere)
+  // where it matters most — so the NEWEST bucket carries it. Exactly one bucket does.
+  test("when no bucket has data the exclusion still appears, on the newest bucket alone", () => {
+    const db = makeDb();
+    insertIncident(db, "untimed", "PSVC1", null, "resolved", NOW, NOW - 1.5 * DAY);
+    const s = computeStatsSeries(db, pd(), "incidents-opened", NOW, 3 * DAY, DAY);
+    expect(s.points.every((p) => p.value === null)).toBe(true);
+    expect(s.points.filter((p) => p.gap === "incidents_missing_opened_at").length).toBe(1);
+    expect(s.points[2]?.gap).toBe("incidents_missing_opened_at");
+    expect(s.points[0]?.gap).toBe("low_sample");
+  });
+
   // Mirrors the pr-merges malformed-JSON test: `json_valid` is the context-dependent guard
   // this repo has mis-tested before, and the incident path's copy of it was unexercised.
   test("malformed metadata JSON does not raise", () => {
@@ -252,8 +301,8 @@ describe("registry totality", () => {
   test("the series echoes its own window and bucket", () => {
     const db = makeDb();
     const s = computeStatsSeries(db, cfg(GH), "pr-merges", NOW, 4 * DAY, 2 * DAY);
-    expect(s.window).toEqual({ sinceMs: NOW - 4 * DAY, untilMs: NOW });
-    expect(s.bucketMs).toBe(2 * DAY);
+    expect(s.window).toEqual({ since_ms: NOW - 4 * DAY, until_ms: NOW });
+    expect(s.bucket_ms).toBe(2 * DAY);
   });
 });
 

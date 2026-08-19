@@ -20,11 +20,28 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   the bucket's end bound to the calculator's `nowMs` and the bucket's width bound to its
   look-back duration (`deployment-frequency`, `lead-time`, `change-failure-rate`, `mttr`). Two
   are new counters over real event timestamps: `pr-merges` (`metadata.merged_at`) and
-  `incidents-opened` (`metadata.opened_at_ms`). Every metric buckets on a real event timestamp
-  by design — the `item` table carries only `modified_at` (last touch) and `synced_at` (our own
-  indexing time), and bucketing on either would measure activity or sync schedule rather than
-  when the thing actually happened, the same trap `negotiate` already documented as "active
-  in," not "created in." That is why no "count items by type" metric ships alongside the six.
+  `incidents-opened` (`metadata.opened_at_ms`). No *new* metric buckets on `modified_at` — the
+  `item` table carries only `modified_at` (last touch) and `synced_at` (our own indexing time),
+  and bucketing on either would measure activity or sync schedule rather than when the thing
+  actually happened, the same trap `negotiate` already documented as "active in," not "created
+  in." That is why no "count items by type" metric ships alongside the six.
+
+  **The four wrapped metrics do inherit `modified_at`, and that is an accepted cost, not a
+  property this feature has.** Calling the tested DORA calculators unchanged also inherits
+  their time predicate, which is `item.modified_at`. For the `ci_run` and `deployment` rows
+  behind `deployment-frequency` that is effectively event time — `deployment/annotate.ts`
+  binds `started_at_ms` into `modified_at`, and `connectors/github-actions-sync.ts` binds the
+  run's `created_at` — but for the `pr` rows `lead-time` reads and the `incident` rows
+  `change-failure-rate` and `mttr` read, it is genuine last-touch
+  (`connectors/github-sync.ts` binds a PR's `updated_at`; `connectors/pagerduty-sync.ts` binds
+  an incident's): a PR merged three weeks ago and commented on yesterday lands in yesterday's
+  bucket. `mttr` additionally inherits DORA's
+  `synced_at` fallback for an incident with no `opened_at_ms`. Both were accepted
+  deliberately: a second copy of DORA's arithmetic with a different time predicate would be
+  free to drift from the original, and changing `dora.ts` itself moves `nimbus metrics dora`'s
+  numbers too — a separately-reviewed change, named as a follow-up rather than smuggled into a
+  bucketing layer. So the "real event timestamp" property holds for `pr-merges` and
+  `incidents-opened`, and for no others.
 
   **Built differently from the roadmap row, in two ways, both recorded rather than left to
   surprise a reader.** The row said "rolling 7-day MTTR trend" — this ships **disjoint**
@@ -43,12 +60,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   returns `value: null` with a named gap — never `0` — matching `negotiate`'s "could not be
   computed" discipline: zero incidents and no incident data are different facts. `mttr` is a
   median, so a one-week bucket often holds one or two incidents and `low_sample` fires on most
-  buckets; the CLI prints a summary line (`4 of 13 buckets had data (9 low_sample)`) and a
-  plain sentence when every bucket is null, so this reads as thin data rather than breakage.
+  buckets. A `low_sample` `mttr` bucket is not empty, though — the median is real and the gap
+  is a caveat on it — so the CLI prints the gap on every row that has one, and its summary line
+  counts caveated buckets separately from empty ones (`4 of 13 buckets had data (3 caveated: 3
+  low_sample) · 9 empty (9 low_sample)`), plus a plain sentence when every bucket is null. A
+  merged count read as "9 buckets had no data" and understated how many held a value.
   `incidents-opened` excludes incidents with no `opened_at_ms` and reports the exclusion via
-  `incidents_missing_opened_at`; DORA's own code falls back to `synced_at` in this case, and
-  this feature deliberately does not, since that would place an incident in the week it
-  happened to be indexed while presenting it as the week it opened.
+  `incidents_missing_opened_at`, computed once per series and attached only to buckets that
+  derived no reason of their own — so one ancient untimed incident no longer displaces every
+  bucket's `low_sample`, and if no bucket has data the newest one carries it so the exclusion
+  can never vanish. DORA's own code falls back to `synced_at` in this case; this NEW counter
+  deliberately does not, since that would place an incident in the week it happened to be
+  indexed while presenting it as the week it opened. `mttr`, which wraps DORA unchanged, still
+  inherits that fallback — see above.
 
   **Buckets walk backward from the request time and are not calendar-aligned.** The newest
   bucket always ends exactly at "now," so the freshest point is complete rather than truncated
@@ -64,9 +88,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   remote model call, the same posture as `metrics.dora` alongside which it sits.
 
   **Named follow-ups, not silently deferred:** rolling windows (`--rolling`); `--align` for
-  UTC-aligned buckets; `merged_at` for GitLab/Bitbucket, which would remove the
-  `github_only_merge_data` gap; and `pr-opened`, a PR-creation-rate series blocked on
-  connectors capturing a PR creation timestamp, not on effort.
+  UTC-aligned buckets; a real event timestamp for the four wrapped DORA metrics, which means
+  changing `dora.ts`'s own time predicate and therefore `nimbus metrics dora` with it;
+  `merged_at` for GitLab/Bitbucket, which would remove the `github_only_merge_data` gap; and
+  `pr-opened`, a PR-creation-rate series blocked on connectors capturing a PR creation
+  timestamp, not on effort.
 
 - **2026-08-18 — agent personas (A2): `tone` and `voice` ship; `tool_caution` and
   `confidence_threshold` are rejected, not deferred.** A new `[persona]` section in

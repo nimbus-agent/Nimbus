@@ -32,6 +32,10 @@ Usage:
   nimbus glossary [<term>] [--limit N] [--json]   The team's own terminology, mined from the local index
   nimbus llm status [--json]   Show selected LLM provider/model per task type and availability
   nimbus metrics dora --service <id> [--since 30d] [--json]   DORA four-key metrics for a configured service
+  nimbus stats <metric> --service <id> [--window 90d] [--bucket 1w] [--json]
+                            Bucketed time series over the local index — one value per disjoint bucket.
+                            Metrics: deployment-frequency, lead-time, change-failure-rate, mttr, pr-merges,
+                            incidents-opened. An empty bucket is null with a named gap, never 0
   nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn|block|off] [--json]   Pre-deploy index check
   nimbus deploy annotate --service <id> --sha <sha> --target-ref <ref> --env <env> --status <success|failure|cancelled|in_progress> --started-at <ms> [--provider P] [--run-id R] [--job-id J] [--workflow-url U] [--finished-at <ms>] [--json]
       Record a completed deployment for DORA + agent correlation.
