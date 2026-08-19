@@ -24,9 +24,10 @@ describe("fetch-host-boundary", () => {
 
   test("an arbitrary host never resolves — no first-segment guessing", async () => {
     const map = await deriveFetchHostMap(fakeVault({ "github.pat": "t" }));
-    // agents/impact.ts's HOST_TO_SERVICE would answer "github" here via hostFirstSegment.
-    // That is acceptable as a hint inside a generated brief and unacceptable as a gate on an
-    // outbound request carrying the user's stored credentials.
+    // `agents/impact.ts` used to answer "github" here via a first-segment host guess before
+    // it moved onto the index-based resolver. That kind of guess is acceptable as a hint
+    // inside a generated brief and unacceptable as a gate on an outbound request carrying the
+    // user's stored credentials.
     expect(serviceForHost(map, "github.evil.example")).toBeNull();
     expect(serviceForHost(map, "notgithub.com")).toBeNull();
     // Dot-boundary suffix matching (`host === key || host.endsWith("." + key)`) would also pass

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { contractViolations, requiredPhrases } from "./brief-contract.ts";
 import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
-import { renderGlossary, renderNegotiate } from "./render.ts";
+import { renderGlossary, renderNegotiate, renderWhy } from "./render.ts";
+import type { WhyBrief } from "./why-types.ts";
 
 /**
  * Drop every LINE containing `fragment`, and THROW if nothing was dropped.
@@ -224,5 +225,64 @@ describe("glossary definition-provenance disclosures", () => {
     };
     expect(requiredPhrases(brief)).toEqual([]);
     expect(contractViolations(brief, renderGlossary(brief))).toEqual([]);
+  });
+});
+
+function whyBriefWithChangeSubject(): WhyBrief {
+  return {
+    kind: "why",
+    agentVersion: 1,
+    generatedAt: 0,
+    latencyMs: 0,
+    gaps: [],
+    query: { ref: "https://github.com/acme/web/pull/482", line: null },
+    subject: null,
+    changeSubject: {
+      itemId: "github:acme/web#482",
+      entityId: "e-1",
+      repo: "acme/web",
+      number: 482,
+      url: "https://github.com/acme/web/pull/482",
+      title: "Fix retry backoff",
+      modifiedAt: 1_700_000_000_000,
+    },
+    findings: [],
+  };
+}
+
+describe("why change-subject disclosure", () => {
+  // Same fixture-integrity role as the negotiate/glossary tests above: if the predicate stops
+  // firing, requiredPhrases silently returns [] and the "rejects" test below passes while
+  // guarding nothing.
+  test("a resolved change subject requires the lane-caveat disclosure", () => {
+    expect(requiredPhrases(whyBriefWithChangeSubject())).toHaveLength(1);
+  });
+
+  test("the canonical render satisfies the requirement", () => {
+    const brief = whyBriefWithChangeSubject();
+    expect(contractViolations(brief, renderWhy(brief))).toEqual([]);
+  });
+
+  test("a synthesised rewrite that drops the disclosure is rejected", () => {
+    // This is the bug I31 PR 1 closed for negotiate/glossary and this branch reopened for
+    // `why`: `ctx.runner` set means an LLM rewrite of the preamble prose is possible, and
+    // without this requirement it could drop "authorship needs a line" silently, leaving a
+    // brief two lanes shorter than the deterministic one with no explanation.
+    const brief = whyBriefWithChangeSubject();
+    const md = withoutLine(renderWhy(brief), "authorship needs a line");
+    const v = contractViolations(brief, md);
+    expect(v).toHaveLength(1);
+    expect(v[0]).toContain("preamble");
+  });
+
+  test("a null changeSubject (miss) requires nothing — its own line is a different disclosure", () => {
+    const brief = { ...whyBriefWithChangeSubject(), changeSubject: null };
+    expect(requiredPhrases(brief)).toEqual([]);
+  });
+
+  test("an absent changeSubject (the ref arm) requires nothing", () => {
+    const { changeSubject: _drop, ...rest } = whyBriefWithChangeSubject();
+    const brief = rest as WhyBrief;
+    expect(requiredPhrases(brief)).toEqual([]);
   });
 });

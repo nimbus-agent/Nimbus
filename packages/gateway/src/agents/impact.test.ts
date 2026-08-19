@@ -551,8 +551,8 @@ describe("runImpact", () => {
     expect(briefFiltered.affected.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("resolveStartEntity — PR URL matches regex but entity not in DB falls through to symbol/topic search", async () => {
-    // PR URL matches the regex but no graph_entity row exists → falls through, resolves to null.
+  test("resolveStartEntity — a PR URL that does not resolve falls through to symbol/topic search", async () => {
+    // `resolvePrSubject` misses (no indexed item at this URL) → falls through, resolves to null.
     const db = freshDb();
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +

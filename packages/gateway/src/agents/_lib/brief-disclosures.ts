@@ -257,3 +257,29 @@ export function glossaryProvenanceDisclosure(
   }
   return undefined;
 }
+
+// ---------------------------------------------------------------------------
+// why — change arm
+// ---------------------------------------------------------------------------
+
+/**
+ * The change-arm caveat `renderWhySubjectLine` (`render.ts`) prints under a resolved
+ * `changeSubject`: two of the six lanes — authorship and downstream — cannot answer a
+ * pull-request URL, because both are file/line lanes by nature and a `prUrl` question never
+ * had one. Lives in the preamble, not a section: `renderWhy` puts it directly under the
+ * subject line, above the first `##` lane heading.
+ *
+ * Anchored on "authorship needs a line" rather than the whole sentence, for the same reason
+ * every anchor in this module is a factual fragment: it is the half that cannot be dropped
+ * without losing the meaning, and it stops short of the sentence's tail (the `nimbus impact
+ * <url>` pointer), which is incidental phrasing a rewrite is free to restate.
+ */
+export function whyChangeSubjectDisclosure(): Disclosure {
+  return {
+    scope: { kind: "preamble" },
+    line:
+      "_Asked about a change: authorship needs a line (`nimbus why <file>:<line>`), " +
+      "and downstream impact is `nimbus impact <url>`._",
+    anchor: "authorship needs a line",
+  };
+}

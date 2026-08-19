@@ -771,7 +771,7 @@ describe("runWhy", () => {
 });
 
 describe("runWhy — the prUrl arm", () => {
-  test("answers the four PR lanes without a checkout, and spawns no blame", async () => {
+  test("answers the pull_request, ticket and discussion lanes without a checkout, and spawns no blame", async () => {
     const db = freshDb();
     // Seed the PR, its ticket and its discussion exactly as the ref-arm fixtures
     // do, but DO NOT seed blame or filesystem roots — the point of this arm.
@@ -798,6 +798,9 @@ describe("runWhy — the prUrl arm", () => {
     const lanes = new Set(brief.findings.map((f) => f.lane));
     expect(lanes.has("pull_request")).toBe(true);
     expect(lanes.has("ticket")).toBe(true);
+    // The Slack message mentions the ticket, which `subDiscussion` reaches via the PR's
+    // resolved ticket entity — this fixture answers discussion too, not just PR/ticket.
+    expect(lanes.has("discussion")).toBe(true);
     expect(lanes.has("authorship")).toBe(false);
     expect(lanes.has("downstream")).toBe(false);
   });
@@ -817,7 +820,11 @@ describe("runWhy — the prUrl arm", () => {
   test("the ref arm leaves changeSubject absent", async () => {
     const db = freshDb();
     const brief = await runWhy({ ref: refAt(12) }, ctxFor(db));
-    expect("changeSubject" in brief && brief.changeSubject !== undefined).toBe(false);
+    // NOT `"changeSubject" in brief && brief.changeSubject !== undefined` — that passes both
+    // when the key is absent AND when it is present-and-`undefined`, which is exactly the
+    // distinction `why.ts`'s `...(changeSubject === undefined ? {} : { changeSubject })`
+    // spread exists to preserve (the repo compiles with `exactOptionalPropertyTypes`).
+    expect("changeSubject" in brief).toBe(false);
   });
 
   test("a resolved prUrl brief carries neither the authorship-anchor nor the no-symbols gap note — the change arm never had a file/line subject to report as missing", async () => {

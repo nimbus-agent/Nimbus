@@ -6,6 +6,7 @@ import {
   negotiateNotComputedDisclosure,
   negotiateOwnershipDisclosures,
   negotiateWindowDisclosure,
+  whyChangeSubjectDisclosure,
 } from "./brief-disclosures.ts";
 import type { SynthInput } from "./brief-kinds.ts";
 import { assertNeverBrief } from "./brief-kinds.ts";
@@ -68,6 +69,17 @@ function glossaryRequiredPhrases(
 }
 
 /**
+ * The why arm of `requiredPhrases`. `renderWhySubjectLine` (`render.ts`) prints the
+ * change-arm caveat ONLY when `changeSubject` resolved to a subject — a `null` changeSubject
+ * renders the distinct "did not resolve to a pull request in your index" miss line instead,
+ * and an absent one (the ref arm) never reaches this branch at all — so the requirement
+ * follows that same `!= null` check exactly.
+ */
+function whyRequiredPhrases(brief: Extract<SynthInput, { kind: "why" }>): readonly Disclosure[] {
+  return brief.changeSubject != null ? [whyChangeSubjectDisclosure()] : [];
+}
+
+/**
  * The disclosures a rewrite of `brief` must not drop.
  *
  * Every entry is built by `brief-disclosures.ts` from the SAME constant the renderer emits,
@@ -82,6 +94,7 @@ function glossaryRequiredPhrases(
 export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
   if (brief.kind === "negotiate") return negotiateRequiredPhrases(brief);
   if (brief.kind === "glossary") return glossaryRequiredPhrases(brief);
+  if (brief.kind === "why") return whyRequiredPhrases(brief);
   // Every other brief kind returns [] until its contractual strings are added.
   // Listed explicitly so a fifteenth kind is a COMPILE error, not a silent [].
   if (
@@ -92,7 +105,6 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
     brief.kind === "conflict" ||
     brief.kind === "janitor" ||
     brief.kind === "preflight" ||
-    brief.kind === "why" ||
     brief.kind === "decisions" ||
     brief.kind === "ownership" ||
     brief.kind === "huddle" ||

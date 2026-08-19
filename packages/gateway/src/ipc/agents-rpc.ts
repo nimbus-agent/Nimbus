@@ -4,7 +4,12 @@ import type { GlossaryInput } from "../agents/_lib/glossary-types.ts";
 import type { OwnershipInput } from "../agents/_lib/ownership-types.ts";
 import type { PremortemInput } from "../agents/_lib/premortem-types.ts";
 import type { SynthesisRunner } from "../agents/_lib/synthesis-llm.ts";
-import type { WhyInput, WhyPeek, WhyRefInput } from "../agents/_lib/why-types.ts";
+import {
+  isWhyPrInput,
+  type WhyInput,
+  type WhyPeek,
+  type WhyRefInput,
+} from "../agents/_lib/why-types.ts";
 import { emitCatchupBrief } from "../agents/catchup.ts";
 import { emitConflictsBrief } from "../agents/conflicts.ts";
 import { emitDecisionsBrief } from "../agents/decisions.ts";
@@ -465,9 +470,13 @@ function whyRoots(ctx: AgentsRpcContext) {
 async function handleWhy(params: unknown, ctx: AgentsRpcContext): Promise<{ sessionId: string }> {
   const input = requireWhyParams(params);
   const sessionId = newSessionId("why");
+  // `runWhy` never reads `roots` on the `prUrl` arm (it has no file/line subject to resolve
+  // against a filesystem root) — skip the per-call TOML read on that arm rather than doing it
+  // for nothing on the browser-facing path.
+  const roots = isWhyPrInput(input) ? [] : whyRoots(ctx);
   return await emitWhyBrief(input, {
     db: ctx.db,
-    roots: whyRoots(ctx),
+    roots,
     notify: ctx.notify,
     sessionId,
     ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),

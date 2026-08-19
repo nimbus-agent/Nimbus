@@ -12,12 +12,14 @@ export type FetchableService = "github" | "gitlab" | "bitbucket" | "jenkins" | "
  * Static SaaS hosts. EXACT hosts only — there is no wildcard, no suffix match and no
  * first-segment fallback.
  *
- * Explicitly NOT `agents/impact.ts`'s `HOST_TO_SERVICE`, which ends in
- * `HOST_TO_SERVICE[host] ?? hostFirstSegment` (impact.ts:150) and so resolves an arbitrary host
- * like `github.evil.example` to the plausible-looking service `"github"`. That guessing fallback
- * is acceptable as a hint inside a generated brief and unacceptable as a gate on an outbound
- * request that carries the user's stored credentials: here a miss must mean "not fetchable",
- * never "guess".
+ * Explicitly NOT a first-segment or suffix guess. `agents/impact.ts` used to resolve an
+ * arbitrary host like `github.evil.example` to the plausible-looking service `"github"` by
+ * guessing from the host's first label — that guessing code is gone (`agents.impact` now
+ * resolves a PR URL the same index-based way `agents.why` does, via `resolvePrSubject` /
+ * `resolveItemByUrl` in `_lib/pr-subject.ts` / `index/resolve-by-url.ts`, neither of which
+ * ever guesses a service from a hostname). A guess like that is acceptable as a hint inside a
+ * generated brief and unacceptable as a gate on an outbound request that carries the user's
+ * stored credentials: here a miss must mean "not fetchable", never "guess".
  *
  * This table is an INGREDIENT, not an authorization decision — it is not itself a source of
  * truth for what is fetchable. Authorization comes only from `deriveFetchHostMap`, which gates

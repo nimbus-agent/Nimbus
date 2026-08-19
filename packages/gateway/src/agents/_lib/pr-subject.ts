@@ -28,7 +28,7 @@ export type PrResolveHit = { readonly ok: true; readonly subject: WhyChangeSubje
 export function resolvePrSubject(db: Database, url: string): PrResolveHit | PrResolveMiss {
   const resolved = resolveItemByUrl(db, url);
   if (!resolved.found) {
-    return { ok: false, reason: resolved.reason === "ambiguous" ? "ambiguous" : resolved.reason };
+    return { ok: false, reason: resolved.reason };
   }
   if (resolved.item.type !== "pr") {
     return { ok: false, reason: "not_a_pr" };

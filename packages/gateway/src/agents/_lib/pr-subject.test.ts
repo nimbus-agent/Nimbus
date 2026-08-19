@@ -26,10 +26,14 @@ function seedPr(
     repo?: string;
     title?: string;
     type?: string;
+    number?: number;
   },
 ): string {
   const itemId = `${opts.service}:${opts.externalId}`;
   const title = opts.title ?? "Cache the resolver";
+  const metadata: Record<string, unknown> = {};
+  if (opts.repo !== undefined) metadata["repo"] = opts.repo;
+  if (opts.number !== undefined) metadata["number"] = opts.number;
   db.query(
     `INSERT INTO item (id, service, type, external_id, title, url, canonical_url,
                        body_preview, metadata, resolve_key, modified_at, synced_at)
@@ -42,7 +46,7 @@ function seedPr(
     title,
     opts.url,
     opts.url,
-    JSON.stringify(opts.repo === undefined ? {} : { repo: opts.repo }),
+    JSON.stringify(metadata),
     opts.url,
   );
   upsertGraphEntity(db, {
@@ -63,6 +67,7 @@ describe("resolvePrSubject — forge coverage", () => {
       externalId: "acme/web#482",
       url: "https://github.com/acme/web/pull/482",
       repo: "acme/web",
+      number: 482,
     });
     const out = resolvePrSubject(db, "https://github.com/acme/web/pull/482");
     expect(out.ok).toBe(true);
@@ -72,6 +77,9 @@ describe("resolvePrSubject — forge coverage", () => {
     expect(out.subject.url).toBe("https://github.com/acme/web/pull/482");
     expect(out.subject.title).toBe("Cache the resolver");
     expect(out.subject.modifiedAt).toBe(1_700_000_000_000);
+    // The `#N` in the rendered subject line is user-visible: exercises the
+    // `CAST(json_extract(...))` for `number` against a REAL value, not just `null`.
+    expect(out.subject.number).toBe(482);
   });
 
   test("GitHub Enterprise host resolves — no host table is consulted", () => {
@@ -177,6 +185,43 @@ describe("resolvePrSubject — the ladder and the misses", () => {
   test("an unparseable url", () => {
     const db = freshDb();
     expect(resolvePrSubject(db, "not-a-url")).toEqual({ ok: false, reason: "unresolvable_url" });
+  });
+
+  test("ambiguous: two indexed items share a trimmed key", () => {
+    const db = freshDb();
+    // Both rows resolve to the SAME `resolve_key` — a realistic duplicate-index case (e.g.
+    // the same PR re-synced under a second connector run) — so the exact and query-stripped
+    // rungs miss on the deeper query URL below, and the drop-2 trim rung matches both rows
+    // via one exact `resolve_key` lookup rather than guessing between them.
+    seedPr(db, {
+      service: "github",
+      externalId: "acme/web#482",
+      url: "https://github.com/acme/web/pull/482",
+      repo: "acme/web",
+    });
+    seedPr(db, {
+      service: "github",
+      externalId: "acme/web#482-reindexed",
+      url: "https://github.com/acme/web/pull/482",
+      repo: "acme/web",
+    });
+    const out = resolvePrSubject(db, "https://github.com/acme/web/pull/482/checks/123");
+    expect(out).toEqual({ ok: false, reason: "ambiguous" });
+  });
+
+  test("over-trim: a URL more than RESOLVE_MAX_TRIMMED_SEGMENTS (3) segments deeper misses", () => {
+    const db = freshDb();
+    seedPr(db, {
+      service: "github",
+      externalId: "acme/web#482",
+      url: "https://github.com/acme/web/pull/482",
+      repo: "acme/web",
+    });
+    // Four segments below the canonical `/acme/web/pull/482` — one more than the trim ladder
+    // (`RESOLVE_MAX_TRIMMED_SEGMENTS`, resolve-by-url.ts) is bounded to walk, so no rung ever
+    // reaches the indexed key and this must miss rather than guess.
+    const out = resolvePrSubject(db, "https://github.com/acme/web/pull/482/commits/abc123/file/x");
+    expect(out).toEqual({ ok: false, reason: "not_indexed" });
   });
 });
 

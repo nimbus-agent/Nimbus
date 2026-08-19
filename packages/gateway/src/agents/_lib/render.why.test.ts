@@ -84,7 +84,11 @@ test("a change subject that did not resolve says so, and does not blame the ref"
     }),
   );
   expect(out).toContain("https://github.com/acme/web/pull/999");
-  expect(out).toContain("not in your index");
+  // NOT "is not in your index": `resolvePrSubject` collapses several distinct misses into
+  // this one `null` (not_indexed, not_a_pr, ambiguous, unresolvable_url), and `not_a_pr`
+  // resolves to an INDEXED item that simply isn't a pull request — asserting absence would
+  // be false in that case.
+  expect(out).toContain("did not resolve to a pull request in your index");
 });
 
 test("a ref brief renders exactly as before", () => {
