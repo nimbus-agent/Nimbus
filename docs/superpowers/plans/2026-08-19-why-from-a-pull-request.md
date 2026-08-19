@@ -745,7 +745,10 @@ type LaneInput = {
    * an entry point rather than a second code path.
    */
   pr: PrForSha | null;
-  /** Blame's author time on the ref arm, the PR's own timestamp on the prUrl arm. */
+  /**
+   * Blame's author time on the ref arm, the PR's own timestamp on the prUrl arm —
+   * and never one standing in for the other. See the per-arm computation below.
+   */
   occurredAt: number | null;
 };
 ```
@@ -802,7 +805,14 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
     subject,
     blame,
     pr,
-    occurredAt: blame?.authorTimeMs ?? pr?.modifiedAt ?? null,
+    // PER-ARM, not a shared `??` chain. `BlameLookup.authorTimeMs` is
+    // `number | null` — `blame-store.ts` defaults it to null when git blame emits
+    // no author-time line — so `blame?.authorTimeMs ?? pr?.modifiedAt` would, on
+    // the REF arm, silently substitute the PR's merge time for the commit's author
+    // time whenever both are present. `subDriver` would then correlate incidents
+    // against the wrong instant: a wrong answer, not an absent one, in the arm this
+    // work must leave untouched.
+    occurredAt: isWhyPrInput(input) ? (pr?.modifiedAt ?? null) : (blame?.authorTimeMs ?? null),
   };
   // …coordinator and tasks unchanged…
 ```
