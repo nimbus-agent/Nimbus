@@ -817,6 +817,8 @@ Architecture is stabilizing; not all interfaces are frozen.
 3. Check issues tagged `good first issue`.
 4. Open a discussion before large PRs.
 
+**Adding a connector is the easiest way in.** `nimbus scaffold extension packages/mcp-connectors/your-service` generates the package, or use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) standalone. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
+
 For workflow, verification commands, and PR expectations, see [`CONTRIBUTING.md`](./CONTRIBUTING.md). Community standards are in [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 
 **Non-negotiables** — PRs violating these will not be merged:
