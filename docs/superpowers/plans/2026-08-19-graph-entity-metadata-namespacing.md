@@ -11,6 +11,18 @@
 **Spec:** [`docs/superpowers/specs/2026-08-19-graph-entity-metadata-namespacing-design.md`](../specs/2026-08-19-graph-entity-metadata-namespacing-design.md)
 **Review response:** [`docs/superpowers/specs/2026-08-19-graph-entity-metadata-namespacing-design-review-response.md`](../specs/2026-08-19-graph-entity-metadata-namespacing-design-review-response.md)
 
+> **Editor's note, added after implementation — this plan is kept AS WRITTEN and one of its
+> constraints turned out to be wrong.** The plan asserts below that "the four co-owned types are
+> exactly `source_file`, `directory`, `person`, `service`. No others." The final whole-branch
+> review disproved that in both directions: `workspace` and `repo` are also written by both
+> subsystems under converging external-id keys and were MISSING, while `directory` has only one
+> writer and `service`'s two writers use disjoint keyspaces that cannot collide. The shipped set
+> is **six** types, and the reasoning for each is recorded per type on `CO_OWNED_ENTITY_TYPES` in
+> `packages/gateway/src/graph/relationship-graph.ts` — that comment and the spec are authoritative
+> here, not this plan. The wrong constraint is left in place deliberately: it is the only artefact
+> showing the plan was wrong about the set, and that is the finding worth preserving. Read every
+> "four types" and "No others" phrase below as superseded.
+
 ## Global Constraints
 
 - **No `any`.** Use `unknown` for external data. TypeScript strict is non-negotiable.
