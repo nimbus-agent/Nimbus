@@ -21,6 +21,7 @@ import {
   EMBEDDING_V6_MIGRATION_SQL,
   EMBEDDING_V6_NO_VEC_MIGRATION_SQL,
 } from "../embedding-v6-sql.ts";
+import { ENTITY_METADATA_V54_SQL } from "../entity-metadata-v54-sql.ts";
 import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts";
 import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
@@ -546,6 +547,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   ]),
   { fromVersion: 51, toVersion: 52, apply: migrateIndexedV51ToV52 },
   simpleStep(52, 53, "premortem theme extraction tables", PREMORTEM_V53_SQL),
+  simpleStep(53, 54, "graph_entity metadata namespacing", ENTITY_METADATA_V54_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [

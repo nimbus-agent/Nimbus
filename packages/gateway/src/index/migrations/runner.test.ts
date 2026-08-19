@@ -781,15 +781,24 @@ test("V52 leaves resolve_key NULL for a row with neither url", () => {
   db.close();
 });
 
-test("CURRENT_SCHEMA_VERSION is 53, so V53 runs in production", () => {
+test("CURRENT_SCHEMA_VERSION is 54, so V54 runs in production", () => {
   // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
   // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
-  expect(CURRENT_SCHEMA_VERSION).toBe(53);
+  expect(CURRENT_SCHEMA_VERSION).toBe(54);
   const db = freshDb();
-  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  runIndexedSchemaMigrations(db, 53);
   expect(tableNames(db)).toContain("item");
   const cols = db.query("PRAGMA table_info(item)").all() as Array<{ name: string }>;
   expect(cols.map((c) => c.name)).toContain("resolve_key");
+  db.query(
+    `INSERT INTO graph_entity (id, type, external_id, label, metadata)
+     VALUES ('source_file:s1', 'source_file', 's1', 'x', '{"ownerCount":1}')`,
+  ).run();
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  const row = db.query("SELECT metadata FROM graph_entity WHERE id = 'source_file:s1'").get() as {
+    metadata: string;
+  };
+  expect(row.metadata).toBe(JSON.stringify({ ownership: { ownerCount: 1 } }));
   db.close();
 });
 
