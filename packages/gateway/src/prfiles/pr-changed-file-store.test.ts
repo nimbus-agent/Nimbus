@@ -191,4 +191,18 @@ describe("pr-changed-file-store", () => {
     expect(collectPrFileCoverage(db)).toEqual({ covered: 2, totalPrs: 3, truncated: 1 });
     db.close();
   });
+
+  // Regression: collectIndexMetrics calls collectPrFileCoverage unconditionally, and that
+  // function is reached from callers on a timer (telemetry/flush-scheduler.ts,
+  // ipc/metrics-server.ts). A database predating the V55 migration must not make this throw.
+  test("returns zeros, and does not throw, when the V55 tables do not exist", () => {
+    const db = new Database(":memory:");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec(`CREATE TABLE item (id TEXT PRIMARY KEY, service TEXT NOT NULL,
+      type TEXT NOT NULL, external_id TEXT NOT NULL)`);
+    // Deliberately no PR_CHANGED_FILE_V55_SQL — pr_files_state / pr_changed_file don't exist.
+    expect(() => collectPrFileCoverage(db)).not.toThrow();
+    expect(collectPrFileCoverage(db)).toEqual({ covered: 0, totalPrs: 0, truncated: 0 });
+    db.close();
+  });
 });

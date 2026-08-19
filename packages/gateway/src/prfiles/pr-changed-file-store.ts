@@ -159,23 +159,41 @@ export function selectPrsNotTouching(
   };
 }
 
-/** Coverage summary for `diag.snapshot`. `covered` includes truncated PRs — they were fetched. */
+/**
+ * Coverage summary for `diag.snapshot`. `covered` includes truncated PRs — they were fetched.
+ *
+ * Wrapped like `ftsIndexBytes` in `db/metrics.ts` (`metrics.ts:85-91`) — same precedent, same
+ * reason: `pr_files_state` and `pr_changed_file` are V55 tables, so a database that predates that
+ * migration (or is only partially migrated) does not have them. `collectIndexMetrics`, this
+ * function's only caller, is itself called from `telemetry/flush-scheduler.ts` and
+ * `ipc/metrics-server.ts` on a timer, so an unhandled throw here doesn't just fail one query — it
+ * silently kills the entire metrics snapshot (and, on the flush scheduler, the periodic telemetry
+ * POST) every tick until the tables exist. Falling back to zeros is safe to read as "unknown, not
+ * measured": `nimbus status`'s `printPrFileCoverage` (`cli/src/commands/status.ts`) already omits
+ * the PR file coverage line entirely when `totalPrs === 0`, so a database missing these tables
+ * prints nothing rather than a false "0 covered".
+ */
 export function collectPrFileCoverage(db: Database): {
   readonly covered: number;
   readonly totalPrs: number;
   readonly truncated: number;
 } {
-  const row = db
-    .query(
-      `SELECT
-         (SELECT COUNT(*) FROM pr_files_state) AS covered,
-         (SELECT COUNT(*) FROM item WHERE type = 'pr') AS total_prs,
-         (SELECT COUNT(*) FROM pr_files_state WHERE truncated = 1) AS truncated`,
-    )
-    .get() as { covered: number; total_prs: number; truncated: number } | null;
-  return {
-    covered: row?.covered ?? 0,
-    totalPrs: row?.total_prs ?? 0,
-    truncated: row?.truncated ?? 0,
-  };
+  try {
+    const row = db
+      .query(
+        `SELECT
+           (SELECT COUNT(*) FROM pr_files_state) AS covered,
+           (SELECT COUNT(*) FROM item WHERE type = 'pr') AS total_prs,
+           (SELECT COUNT(*) FROM pr_files_state WHERE truncated = 1) AS truncated`,
+      )
+      .get() as { covered: number; total_prs: number; truncated: number } | null;
+    return {
+      covered: row?.covered ?? 0,
+      totalPrs: row?.total_prs ?? 0,
+      truncated: row?.truncated ?? 0,
+    };
+  } catch {
+    /* pr_files_state / pr_changed_file absent on a pre-V55 or partially-migrated database */
+    return { covered: 0, totalPrs: 0, truncated: 0 };
+  }
 }
