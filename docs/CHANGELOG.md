@@ -8,6 +8,46 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-19 — PR changed-file indexing (schema V55): the data and the fail-closed primitive for
+  negation queries, not the queries themselves.** Adds two tables, both keyed on `item.id` with
+  `REFERENCES item(id) ON DELETE CASCADE` and both `WITHOUT ROWID`: `pr_changed_file` stores one
+  row per touched path (a rename writes TWO rows — old path and new — a deletion writes ONE;
+  `status` is descriptive only, membership decides every predicate) and `local_file_id` (
+  `REFERENCES graph_entity(id) ON DELETE SET NULL`) linking to the ownership graph;
+  `pr_files_state` records per-PR fetch coverage (`fetched_at_ms`, `api_file_count`,
+  `stored_count`, `truncated`). Three forge mappers land the payload shape into that row set —
+  `mapGithubPrFiles` (`pulls/{n}/files`), `mapGitlabMrFiles` (MR diffs), `mapBitbucketPrFiles`
+  (diffstat) — feeding a shared bounded per-tick driver, `runPrFilePass`
+  (`prfiles/pr-file-fetch.ts`), wired into all three syncs (`MAX_PRS_PER_TICK = 10`,
+  `MAX_PAGES_PER_PR = 3` at `PR_FILES_PAGE_SIZE = 100`, `MAX_FILES_PER_PR = 300` — a PR beyond the
+  cap is stored AND flagged `truncated`). `nimbus status` gains a
+  `PR file coverage: <covered> / <totalPrs> (<N> truncated)` line, its truncated suffix present
+  only when truncated PRs exist, and the whole line omitted when no PRs are indexed at all. No new
+  IPC method — `ALLOWED_METHODS` stays at 105.
+  **Three things a reader must not assume:**
+  (1) **No predicate language ships here.** There is no `--negate`, `--touches`, or `--explain` —
+  those belong to W6-B. This delivery ships `selectPrsNotTouching`
+  (`prfiles/pr-changed-file-store.ts`), the canonical fail-closed negation query, as a primitive
+  for W6-B to call, not a CLI surface of its own.
+  (2) **A PR is excluded from a negation result for TWO independent reasons, not one**: it has no
+  `pr_files_state` row at all, OR its row has `truncated = 1`. Knowing only the first risks
+  misreading a truncated PR — one that WAS fetched, just not completely — as covered. The query
+  enforces both fail-closed, by two independent mechanisms: the `JOIN` to `pr_files_state` (an
+  uncovered PR has no row to join), and `s.truncated = 0` in the `WHERE` clause (on an uncovered
+  PR that column is `NULL`, and `NULL = 0` evaluates to `NULL`, which `WHERE` treats as not-true —
+  so the row is excluded by BOTH mechanisms at once, not just the join). Softening either one
+  alone — swapping the `JOIN` for a `LEFT JOIN`, or comparing with `COALESCE(s.truncated, 0) = 0`
+  — does not by itself reintroduce the bug; it takes losing both at once, or dropping the coverage
+  join entirely and reading `pr_changed_file` alone.
+  (3) **`local_file_id` ships unpopulated.** The column, its foreign key, and its
+  `ON DELETE SET NULL` behaviour all exist, but nothing writes it yet — the spec assigns that to
+  the ownership pass, deliberately deferred because nothing in this delivery reads it (negation
+  matches on `path` alone). A `NULL` here means "not yet linked," never "no local file exists."
+  **Coverage grows over many sync ticks — it is not complete after one sync.** The pass drains at
+  most 10 PRs per tick per service, so a freshly-connected large repo will show a low
+  `covered / totalPrs` ratio for a while; that is the bounded design working as intended, not a
+  fault. — S1 "Local Brain", the W6-B negation-query prerequisite.
+
 - **2026-08-19 — Graph-entity metadata namespacing (schema V54): fixes a live bug where
   `nimbus owners` silently alternated between its real output and an "owner breakdown not
   recorded" line.** `graph_entity.metadata` was last-writer-wins — `upsertGraphEntity`'s
