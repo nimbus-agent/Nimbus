@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import { PR_CHANGED_FILE_V55_SQL } from "../index/pr-changed-file-v55-sql.ts";
-import { RateLimitError, type SyncContext } from "../sync/types.ts";
+import { RateLimitError, type SyncContext, UnauthenticatedError } from "../sync/types.ts";
 import type { ChangedFileRow } from "./pr-changed-file-store.ts";
 import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
 import {
@@ -299,6 +299,31 @@ describe("runPrFilePass", () => {
       },
     });
     await expect(rejection).rejects.toBeInstanceOf(RateLimitError);
+    db.close();
+  });
+
+  test("an UnauthenticatedError propagates and stops attempting further candidates", async () => {
+    const db = makeDb();
+    // Three candidates: without the rethrow the pass swallows the 401 per-candidate and issues one
+    // doomed request for EACH of them, so `attempts` is what distinguishes the fix from the bug.
+    addPr(db, "p1", "o/r#1", 300);
+    addPr(db, "p2", "o/r#2", 200);
+    addPr(db, "p3", "o/r#3", 100);
+    let attempts = 0;
+    const rejection = runPrFilePass(fakeCtx(db, []), {
+      service: "github",
+      nowMs: 5,
+      fetchPage: async () => {
+        attempts += 1;
+        throw new UnauthenticatedError("GitHub pull files: 401");
+      },
+    });
+    await expect(rejection).rejects.toBeInstanceOf(UnauthenticatedError);
+    expect(attempts).toBe(1);
+    // The candidate is left UNCOVERED, exactly as a failed fetch leaves it — a coverage row here
+    // would assert "we know this PR's files" on the strength of a 401.
+    const covered = db.query("SELECT COUNT(*) AS c FROM pr_files_state").get() as { c: number };
+    expect(covered.c).toBe(0);
     db.close();
   });
 

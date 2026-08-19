@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import type { Provider } from "../sync/rate-limiter.ts";
-import { RateLimitError, type SyncContext } from "../sync/types.ts";
+import { RateLimitError, type SyncContext, UnauthenticatedError } from "../sync/types.ts";
 import type { ChangedFileRow } from "./pr-changed-file-store.ts";
 import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
 
@@ -247,6 +247,17 @@ export async function runPrFilePass(
     } catch (err) {
       // A rate-limit error ends the whole tick; anything else costs only this PR.
       if (err instanceof RateLimitError) {
+        throw err;
+      }
+      // So does a credential failure, and for a stronger reason. Swallowing it here would cost
+      // twice: `sync/scheduler.ts`'s `runJob` catch — the ONLY place that calls
+      // `transitionHealth(..., { type: "unauthenticated" })` and notifies the user to re-run
+      // `nimbus connector auth` — never sees it, so the connector keeps reporting healthy while
+      // it cannot authenticate; and the enclosing candidate loop carries on issuing one doomed
+      // request per remaining candidate (`MAX_PRS_PER_TICK * PR_ATTEMPT_BUDGET_MULTIPLIER` of them),
+      // every tick, forever. A revoked token is not a per-PR problem, so it cannot have a
+      // per-PR cost. The candidate is left uncovered exactly as a failed fetch would leave it.
+      if (err instanceof UnauthenticatedError) {
         throw err;
       }
       ctx.logger.warn(

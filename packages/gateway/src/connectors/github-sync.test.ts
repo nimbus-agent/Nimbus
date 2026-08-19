@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { PR_FILES_PAGE_SIZE } from "../prfiles/pr-file-fetch.ts";
-import { RateLimitError } from "../sync/types.ts";
+import { RateLimitError, UnauthenticatedError } from "../sync/types.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -740,22 +740,35 @@ describeWithFetchRestore("github-sync pull files pass", () => {
     db.close();
   });
 
-  test("a 401 on pull files leaves the PR uncovered and does not abort the sync", async () => {
+  /**
+   * This test previously asserted the OPPOSITE — that a 401 resolved and the sync carried on. That
+   * was the bug: `UnauthenticatedError` never escaped, so `sync/scheduler.ts`'s `runJob` catch, the
+   * only site that marks a connector `unauthenticated` and prompts the user to re-authenticate,
+   * could not see it, and the pass kept spending one request per candidate on a revoked token
+   * every tick. A 401 is a connector-wide fact, not a per-PR one.
+   */
+  test("a 401 on pull files aborts the sync so the scheduler can mark it unauthenticated", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "pat-value");
     const now = Date.now();
     upsertPr(ctx, "acme/app", enrichedPrPayload(), now);
 
+    let filesCalls = 0;
     globalThis.fetch = stubUserAnd304Events((url) => {
       if (url.startsWith("https://api.github.com/repos/acme/app/pulls/1/files")) {
+        filesCalls += 1;
         return new Response("unauthorized", { status: 401 });
       }
       return undefined;
     }) as unknown as typeof fetch;
 
     const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
-    await expect(syncable.sync(ctx, null)).resolves.toBeDefined();
+    await expect(syncable.sync(ctx, null)).rejects.toBeInstanceOf(UnauthenticatedError);
 
+    // Assert the request HAPPENED — otherwise "zero coverage rows" is equally true of a pass that
+    // never ran, and the test would prove nothing about the 401 path.
+    expect(filesCalls).toBe(1);
+    // Still uncovered: a coverage row asserts "we know this PR's files", which a 401 does not.
     const s = db
       .query("SELECT COUNT(*) AS c FROM pr_files_state WHERE item_id = 'github:acme/app#1'")
       .get() as { c: number };

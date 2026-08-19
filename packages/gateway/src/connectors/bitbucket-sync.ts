@@ -373,13 +373,23 @@ export function prDiffstatUrl(repoFull: string, id: number, page: number): strin
  */
 export function bitbucketDiffstatHasMore(payload: unknown): boolean {
   const rec = asRecord(payload);
-  return typeof rec?.["next"] === "string";
+  const next = rec?.["next"];
+  // `!== ""` matters, and matches how this same envelope field is read for the PR list itself
+  // (`nextPrUrl`, earlier in this file). An empty `next` is not a page — treating it as one keeps
+  // the driver requesting pages to `MAX_PAGES_PER_PR`, so `pagesExhausted` never becomes true and
+  // the PR is recorded `truncated`. Truncated PRs are excluded from negation entirely, so a PR
+  // whose files we hold IN FULL would be permanently unanswerable: still fail-closed, but the
+  // coverage is lost silently.
+  return typeof next === "string" && next !== "";
 }
 
 /**
- * Mirrors `github-sync.ts`'s `runPrFilePassBestEffort` exactly — same try/catch, same rethrow of
+ * Mirrors `github-sync.ts`'s `runPrFilePassBestEffort` — same try/catch, same rethrow of
  * `RateLimitError`, same warn. Bitbucket PRs key as `<repoFull>#<id>`, so the id is parsed from
  * after the LAST `#`.
+ *
+ * As with `gitlab-sync.ts`, it does NOT carry GitHub's `UnauthenticatedError` rethrow: no
+ * Bitbucket codepath raises that error, so the branch would be unreachable.
  */
 async function runBitbucketPrFilePassBestEffort(
   ctx: SyncContext,

@@ -781,6 +781,14 @@ async function runPrFilePassBestEffort(ctx: SyncContext, pat: string, now: numbe
     });
   } catch (err) {
     if (err instanceof RateLimitError) throw err; // honor backoff
+    // The 401 thrown by the closure above must reach `sync/scheduler.ts`'s `runJob` catch — the
+    // only site that marks the connector `unauthenticated` and tells the user to re-run
+    // `nimbus connector auth`. `runPrFilePass` rethrows it out of its per-candidate catch for the
+    // same reason; swallowing it HERE would undo that one line later. The cost of propagating is
+    // this tick's events cursor, exactly as for `RateLimitError` above — a re-fetch of an
+    // idempotent feed, against a connector that otherwise reports healthy while it cannot
+    // authenticate.
+    if (err instanceof UnauthenticatedError) throw err;
     ctx.logger.warn(
       { service: SERVICE_ID, err: String(err) },
       "PR changed-file pass failed (non-fatal)",
