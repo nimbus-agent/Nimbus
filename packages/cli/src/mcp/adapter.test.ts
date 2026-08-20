@@ -437,7 +437,7 @@ function spec(name: string) {
 }
 
 describe("TOOL_SPECS", () => {
-  it("exposes exactly the eighteen read-only tools", () => {
+  it("exposes exactly the twenty-one read-only tools", () => {
     expect(TOOL_SPECS.map((t) => t.name).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         "assessImpact",
@@ -445,8 +445,11 @@ describe("TOOL_SPECS", () => {
         "explainWhy",
         "findConflicts",
         "findDecisions",
+        "findDeploymentsWithoutIncident",
         "findExpert",
         "findOwners",
+        "findPeopleWithoutReviews",
+        "findPrsNotTouching",
         "getCatchup",
         "getConnectorStatus",
         "getDoraMetrics",
@@ -530,7 +533,7 @@ describe("TOOL_SPECS", () => {
 });
 
 describe("buildMcpServer", () => {
-  it("registers all eighteen tools without throwing", () => {
+  it("registers all twenty-one tools without throwing", () => {
     const { deps } = recordingDeps({ result: [] });
     const server = buildMcpServer(deps);
     expect(server).toBeDefined();
@@ -539,7 +542,7 @@ describe("buildMcpServer", () => {
 
 /**
  * Owner decision: on a gateway that rejects `session.declareKind` as an unsupported method, the
- * twelve agent-classified tools are withdrawn and the six read-only index tools are kept. The
+ * twelve agent-classified tools are withdrawn and the nine read-only index tools are kept. The
  * previous behaviour — warn on stderr, serve the briefs anyway — handed the operator unrecorded
  * briefs while `nimbus prove` reported a clean scope, and editor-spawned MCP servers usually
  * discard stderr, so nothing said otherwise.
@@ -569,20 +572,25 @@ describe("degraded mode on a gateway without session.declareKind", () => {
     return listed.tools.map((t) => t.name).sort();
   }
 
-  it("lists exactly the six read-only index tools, and no agent tool", async () => {
+  it("lists exactly the nine read-only index tools, and no agent tool", async () => {
     const deps = createDeps(envRejectingDeclareKind(new Error("Method not found")));
     await captureStdio(() => deps.getClient());
     expect(await agentToolsSupported(deps)).toBe(false);
 
     const names = await listToolNames(buildMcpServer(deps, false));
-    expect(names).toEqual([
-      "getConnectorStatus",
-      "getDoraMetrics",
-      "getRecentDeployments",
-      "getRecentIncidents",
-      "getRecentPullRequests",
-      "searchIndex",
-    ]);
+    expect(names).toEqual(
+      [
+        "findDeploymentsWithoutIncident",
+        "findPeopleWithoutReviews",
+        "findPrsNotTouching",
+        "getConnectorStatus",
+        "getDoraMetrics",
+        "getRecentDeployments",
+        "getRecentIncidents",
+        "getRecentPullRequests",
+        "searchIndex",
+      ].sort(),
+    );
     // Derived, not retyped: the withheld set is exactly TOOL_SPECS minus INDEX_TOOL_SPECS, and it
     // includes peekWhy — synchronous, but still `agents.whyPeek` and still ledgered gateway-side.
     const withheld = TOOL_SPECS.filter((s) => !names.includes(s.name)).map((s) => s.name);
@@ -639,7 +647,7 @@ describe("degraded mode on a gateway without session.declareKind", () => {
     expect(names).toContain("explainWhy");
   });
 
-  it("a DISCONNECT-class declareKind failure is not degraded mode — all eighteen tools stay", async () => {
+  it("a DISCONNECT-class declareKind failure is not degraded mode — all twenty-one tools stay", async () => {
     // The distinction shipped earlier on this branch: a dead transport must not be reported as an
     // old gateway. It keeps its behaviour exactly, including full tool registration.
     const deps = createDeps(envRejectingDeclareKind(new Error("IPC connection closed")));
@@ -902,13 +910,133 @@ test("peekWhy sends `ref` — the key agents.whyPeek's validator actually reads"
   expect(Object.keys(spec("peekWhy").schema)).toEqual(["ref"]);
 });
 
-test("the registered tool set is the six index tools plus peekWhy plus eleven agents", () => {
-  expect(TOOL_SPECS).toHaveLength(18);
+test("the registered tool set is the nine index tools plus peekWhy plus eleven agents", () => {
+  expect(TOOL_SPECS).toHaveLength(21);
   const names = new Set(TOOL_SPECS.map((s) => s.name));
   expect(names.has("searchIndex")).toBe(true);
   expect(names.has("peekWhy")).toBe(true);
   expect(names.has("explainWhy")).toBe(true);
+  expect(names.has("findPrsNotTouching")).toBe(true);
+  expect(names.has("findDeploymentsWithoutIncident")).toBe(true);
+  expect(names.has("findPeopleWithoutReviews")).toBe(true);
   expect(names.has("runPreflight")).toBe(false);
+});
+
+test("findPrsNotTouching forwards notTouching and pins the pr type", async () => {
+  const { deps, calls } = recordingDeps({
+    result: {
+      items: [],
+      meta: { limit: 50, total: 0 },
+      gaps: { excludedNoCoverage: 0, excludedTruncated: 0 },
+    },
+  });
+  const out = await spec("findPrsNotTouching").run(deps, {
+    pathGlob: "tests/**",
+    service: "github",
+  });
+  expect(calls[0]?.method).toBe("index.queryItems");
+  expect(calls[0]?.params).toMatchObject({
+    services: ["github"],
+    types: ["pr"],
+    notTouching: "tests/**",
+  });
+  expect(out.isError).toBeUndefined();
+});
+
+test("findPrsNotTouching omits services when service is not supplied", async () => {
+  const { deps, calls } = recordingDeps({
+    result: {
+      items: [],
+      meta: { limit: 50, total: 0 },
+      gaps: { excludedNoCoverage: 0, excludedTruncated: 0 },
+    },
+  });
+  await spec("findPrsNotTouching").run(deps, { pathGlob: "tests/**" });
+  const params = calls[0]?.params as Record<string, unknown>;
+  expect("services" in params).toBe(false);
+});
+
+test("findPrsNotTouching returns a refusal document intact to the MCP caller", async () => {
+  const { deps } = recordingDeps({
+    result: {
+      status: "refused",
+      reason: "missing_substrate",
+      message: "no PR file-coverage data is indexed",
+      remediation: "sync a connector",
+    },
+  });
+  const out = await spec("findPrsNotTouching").run(deps, { pathGlob: "tests/**" });
+  const text = out.content[0]?.text ?? "";
+  expect(text).toContain("missing_substrate");
+  expect(text).toContain("sync a connector");
+});
+
+test("findDeploymentsWithoutIncident forwards noDownstreamIncident and pins the deployment type", async () => {
+  const { deps, calls } = recordingDeps({
+    result: { items: [], meta: { limit: 50, total: 0 }, gaps: { excludedNoGraphEntity: 0 } },
+  });
+  await spec("findDeploymentsWithoutIncident").run(deps, { service: "circleci" });
+  expect(calls[0]?.method).toBe("index.queryItems");
+  expect(calls[0]?.params).toMatchObject({
+    services: ["circleci"],
+    types: ["deployment"],
+    noDownstreamIncident: true,
+  });
+});
+
+test("findDeploymentsWithoutIncident returns a refusal document intact to the MCP caller", async () => {
+  const { deps } = recordingDeps({
+    result: {
+      status: "refused",
+      reason: "missing_substrate",
+      message: "no deployment-to-incident correlation is indexed",
+      remediation: "sync a connector",
+    },
+  });
+  const out = await spec("findDeploymentsWithoutIncident").run(deps, {});
+  const text = out.content[0]?.text ?? "";
+  expect(text).toContain("missing_substrate");
+  expect(text).toContain("sync a connector");
+});
+
+test("findPeopleWithoutReviews forwards notReviewed and converts sinceDays to sinceMs at the boundary", async () => {
+  const { deps, calls } = recordingDeps({
+    result: { people: [], gaps: { excludedNoGraphEntity: 0 } },
+  });
+  const before = Date.now();
+  await spec("findPeopleWithoutReviews").run(deps, { sinceDays: 7 });
+  const after = Date.now();
+  expect(calls[0]?.method).toBe("people.list");
+  const params = calls[0]?.params as Record<string, unknown>;
+  expect(params["notReviewed"]).toBe(true);
+  const sinceMs = params["sinceMs"] as number;
+  expect(sinceMs).toBeGreaterThanOrEqual(before - 7 * 86_400_000);
+  expect(sinceMs).toBeLessThanOrEqual(after - 7 * 86_400_000);
+  expect("service" in params).toBe(false);
+});
+
+test("findPeopleWithoutReviews omits sinceMs when sinceDays is not supplied", async () => {
+  const { deps, calls } = recordingDeps({
+    result: { people: [], gaps: { excludedNoGraphEntity: 0 } },
+  });
+  await spec("findPeopleWithoutReviews").run(deps, {});
+  const params = calls[0]?.params as Record<string, unknown>;
+  expect("sinceMs" in params).toBe(false);
+});
+
+test("findPeopleWithoutReviews returns a refusal document naming the time window remediation", async () => {
+  const { deps } = recordingDeps({
+    result: {
+      status: "refused",
+      reason: "missing_substrate",
+      message: "no review activity is indexed for the window",
+      remediation: "widen the time window",
+    },
+  });
+  const out = await spec("findPeopleWithoutReviews").run(deps, { sinceDays: 1 });
+  const text = out.content[0]?.text ?? "";
+  expect(text).toContain("missing_substrate");
+  expect(text).toContain("widen the time window");
 });
 
 /** Drain every pending microtask, so a lazily-opened connection is fully established. */
