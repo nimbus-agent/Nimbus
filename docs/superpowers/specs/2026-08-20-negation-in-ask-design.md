@@ -136,7 +136,8 @@ Flow:
 1. A negation tool, having refused or having excluded rows, pushes its sentence onto a
    lazily-created array on the **existing** `agentRequestContext` store (`engine/agent-request-context.ts`).
    Lazy creation matters: `ipc/server/inline-handlers.ts` builds that store in **three** places
-   (`engine.ask` at :96, `workflow.run` at :215, and the `engine.askStream` dispatcher at :350),
+   (`agent.invoke` at :96 — the method `nimbus ask` actually calls; `workflow.run` at :215; and the
+   `engine.askStream` dispatcher at :350),
    and a field that had to be initialised at each would eventually be initialised at some. Counted
    during Task 1's review, which caught this sentence saying "two".
 2. `runConversationalAgent` (`engine/run-conversational-agent.ts`) **drains** the array — a
