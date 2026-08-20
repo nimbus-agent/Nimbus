@@ -195,6 +195,24 @@ five entries are `SELECTED` visibility with an explicit repo list:
 in the plan (Task 2b Step 10b); the sharp ones are that `cla` is a **required check**, so
 two of the four block every PR, and `RELEASE_BOT_PRIVATE_KEY` blocks the release itself.
 
+### Bot Apps are a second, separate grant
+
+Confirmed live on 2026-08-20 when `nimbus-mcp`'s first Release run failed at
+`Mint release-bot token` with *"The 'private-key' input must be set to a non-empty
+string"*. Two of the org's GitHub Apps are installed with
+`repository_selection: "selected"` and must have the repo added to their own list, on top
+of the secret grant above:
+
+| App | Selection |
+| --- | --- |
+| `nimbus-release-bot` | **selected** — add the repo |
+| `nimbus-cla-bot` | **selected** — add the repo |
+| `sonarqubecloud`, `coderabbitai`, `nimbus-secret-auditor` | `all` — automatic |
+
+`gh api orgs/nimbus-agent/installations --jq '.installations[] | "\(.app_slug)\t\(.repository_selection)"'`
+reports this. Listing an installation's *repos* needs `read:user` plus an App-authorized
+token, so confirm that half in the UI.
+
 **No `NPM_TOKEN` appears anywhere in the precedent** — grep over every file fetched here
 returns nothing, consistent with `scripts/release/credential-registry.ts` recording it as
 `forbidden`.

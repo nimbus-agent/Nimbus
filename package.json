@@ -172,6 +172,7 @@
     "gen:connector-registry": "bun scripts/gen-bundled-connector-registry.ts",
     "test:connector-boot": "bun scripts/connector-boot-smoke.ts dist/nimbus-gateway",
     "audit:doc-refs": "bun scripts/structure-audit/check-doc-references.ts --check",
+    "audit:launcher-contract": "bun scripts/structure-audit/check-launcher-installer-contract.ts",
     "audit:openapi-drift": "bun scripts/structure-audit/check-openapi-drift.ts --check",
     "audit:release-please": "bun scripts/structure-audit/check-release-please-manifest.ts",
     "audit:override-drift": "bun scripts/structure-audit/check-override-drift.ts",

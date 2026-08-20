@@ -757,6 +757,28 @@ for s in SONAR_TOKEN CLA_BOT_CLIENT_ID CLA_BOT_PRIVATE_KEY RELEASE_BOT_PRIVATE_K
 done
 ```
 
+- [ ] **Step 10b-ii: Install the two bot GitHub Apps on the repo — a SEPARATE step from the secrets**
+
+Found the hard way on 2026-08-20: granting the secret is only half of it. Both bot Apps are installed with `repository_selection: "selected"`, so the repo must be added to each App's own repo list as well.
+
+```bash
+gh api orgs/nimbus-agent/installations --jq '.installations[] | "\(.app_slug)\t\(.repository_selection)"'
+```
+
+Verified output:
+
+| App | Selection | Action |
+|---|---|---|
+| `nimbus-release-bot` | **selected** | Add `nimbus-mcp` (UI: org → Settings → GitHub Apps → Configure) |
+| `nimbus-cla-bot` | **selected** | Add `nimbus-mcp` |
+| `sonarqubecloud` | all | Nothing |
+| `coderabbitai` | all | Nothing |
+| `nimbus-secret-auditor` | all | Nothing |
+
+Having the secret without the App installation fails differently from having neither, and the message does not say so: `actions/create-github-app-token` reports `The 'private-key' input must be set to a non-empty string` for the missing *secret*, but an App that is not installed on the repo fails later, at token exchange, with a 404. Fix both before re-running the release.
+
+There is no API to list an installation's repos from a normal `gh auth` token (`user/installations/{id}/repositories` needs `read:user` and an App-authorized token), so confirm this one in the UI rather than scripting it.
+
 - [ ] **Step 10c: Verify all four grants landed**
 
 ```bash
