@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import pino, { type Logger } from "pino";
 
 import { createGitlabSyncable } from "../../../src/connectors/gitlab-sync.ts";
 import { dbRun } from "../../../src/db/write.ts";
+import { RateLimitError } from "../../../src/sync/types.ts";
 import {
   type ConnectorSyncFixture,
   createConnectorSyncFixture,
@@ -14,7 +16,10 @@ const CURSOR_PREFIX = "nimbus-glab1:";
 const DEFAULT_API_BASE = "https://gitlab.com/api/v4";
 const EVENTS_PREFIX_DEFAULT = "https://gitlab.com/api/v4/events?";
 const EVENTS_RE_DEFAULT = /^https:\/\/gitlab\.com\/api\/v4\/events\?/;
+/** Host-agnostic, for the self-hosted `api_base` cases. */
+const EVENTS_RE_ANY_HOST = /\/api\/v4\/events\?/;
 const PIPELINES_RE_ANY = /\/api\/v4\/projects\/[^/]+\/pipelines\?/;
+const MR_DIFFS_RE_ANY = /\/api\/v4\/projects\/[^/]+\/merge_requests\/\d+\/diffs\?/;
 
 function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -23,6 +28,48 @@ function encodeCursor(payload: unknown): string {
 function decodeCursor<T>(cursor: string): T {
   const body = cursor.slice(CURSOR_PREFIX.length);
   return JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as T;
+}
+
+/**
+ * A pino logger that captures its output, for asserting what a code path DOES and DOES NOT log.
+ * The fixture's own logger is `level: "silent"`, which cannot be inspected.
+ */
+function capturingLogger(sink: string[]): Logger {
+  return pino(
+    { level: "trace" },
+    {
+      write(line: string): void {
+        sink.push(line);
+      },
+    },
+  );
+}
+
+/** Seed a gitlab PR row with an arbitrary external id, for the id-parsing edge cases. */
+function seedGitlabPr(fixture: ConnectorSyncFixture, externalId: string): void {
+  const id = `gitlab:${externalId}`;
+  dbRun(
+    fixture.db,
+    `INSERT INTO item (
+      id, service, type, external_id, title, body_preview, url, canonical_url,
+      modified_at, author_id, metadata, synced_at, pinned
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      "gitlab",
+      "pr",
+      externalId,
+      `seed for ${externalId}`,
+      `seed for ${externalId}`,
+      null,
+      null,
+      Date.now(),
+      null,
+      "{}",
+      Date.now(),
+      0,
+    ],
+  );
 }
 
 function seedGitlabIndexProject(fixture: ConnectorSyncFixture, projectPath: string): void {
@@ -745,5 +792,249 @@ describe("gitlab-sync — phase machine + cycle", () => {
     expect(res.itemsUpserted).toBe(0);
     expect(res.itemsDeleted).toBe(0);
     expect(fixture.notifications.emitted).toHaveLength(0);
+  });
+});
+
+/**
+ * End-to-end wiring for the PR changed-file pass, driven through the real syncable rather than
+ * through `runPrFilePass` with a hand-written `fetchPage`. GitHub has five such tests; GitLab and
+ * Bitbucket had none, so nothing would have caught the pass being dropped from either sync flow.
+ */
+describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
+  test("fetches MR diffs for an uncovered MR and writes its coverage row", async () => {
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    fixture.fetchMock.respond("GET", MR_DIFFS_RE_ANY, [
+      { old_path: "src/a.ts", new_path: "src/a.ts" },
+      { old_path: "docs/old.md", new_path: "docs/new.md", renamed_file: true },
+    ]);
+
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+
+    const diffCalls = fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url));
+    expect(diffCalls).toHaveLength(1);
+    const diffCall = diffCalls[0];
+    if (diffCall === undefined) throw new Error("expected exactly one MR diffs request");
+    // The group path is URL-encoded as ONE segment, and the iid comes from after the LAST `!`.
+    expect(diffCall.url).toContain("/projects/grp%2Fproj/merge_requests/1/diffs?");
+    expect(diffCall.url).toContain("per_page=100");
+    expect(diffCall.url).toContain("page=1");
+    expect(diffCall.headers["private-token"]).toBe("gitlab-stub-pat");
+
+    const state = fixture.db
+      .query<{ stored_count: number; truncated: number }, []>(
+        "SELECT stored_count, truncated FROM pr_files_state WHERE item_id = 'gitlab:grp/proj!1'",
+      )
+      .get();
+    // A rename writes BOTH paths, so "does not touch docs/old.md" cannot match this MR.
+    expect(state?.stored_count).toBe(3);
+    expect(state?.truncated).toBe(0);
+
+    const paths = fixture.db
+      .query<{ path: string }, []>(
+        "SELECT path FROM pr_changed_file WHERE item_id = 'gitlab:grp/proj!1' ORDER BY path",
+      )
+      .all()
+      .map((r) => r.path);
+    expect(paths).toEqual(["docs/new.md", "docs/old.md", "src/a.ts"]);
+  });
+
+  test("a non-ok MR diffs response leaves the MR uncovered and does not fail the sync", async () => {
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    fixture.fetchMock.respond(
+      "GET",
+      MR_DIFFS_RE_ANY,
+      { message: "404 Not found" },
+      { status: 404 },
+    );
+
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+
+    // Assert the request HAPPENED before asserting nothing was written — otherwise "zero coverage
+    // rows" is equally true of a pass that never ran, and the test proves nothing.
+    expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(1);
+    const covered = fixture.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
+      .get();
+    expect(covered?.c).toBe(0);
+  });
+
+  test("a rejecting fetch is swallowed: no coverage row, no throw, and the api_base never logged", async () => {
+    // A SELF-HOSTED api_base — the whole point. It is a Vault-stored value, and a DNS/TLS/connect
+    // rejection can carry the request URL (which embeds it) in its message. `MockFetch` throws
+    // exactly that shape for an unstubbed URL: `no stub matched GET <url>`. So this test is a real
+    // reproduction rather than a synthetic one — leaving the MR-diffs route unstubbed IS the
+    // rejecting fetch, and the thrown message genuinely contains the host.
+    // The host carries a unique SENTINEL token rather than being a plain realistic hostname, and
+    // the assertion below matches on that token alone. Two reasons, in order of importance:
+    //
+    // 1. It is a stricter probe. A token that exists nowhere else in the codebase cannot match a
+    //    log line coincidentally, whereas a bare domain could in principle appear via some other
+    //    route and mask a real leak behind an already-passing assertion.
+    // 2. It stops `js/incomplete-url-substring-sanitization` firing on the assertion. That rule
+    //    exists for production code that gates on a URL substring, where an attacker-controlled
+    //    prefix or suffix defeats the check. Here the check runs the other way round — it asserts
+    //    a secret is ABSENT — so a "bypass" would only make it catch MORE leaks, never fewer.
+    //    The rule is not excluded repo-wide, because it is genuinely right about production host
+    //    checks; only this assertion is reshaped.
+    const sentinel = "vault-api-base-sentinel-9f3a2c";
+    const host = `gitlab-${sentinel}.example`;
+    await fixture.vault.set("gitlab.api_base", `https://${host}/api/v4`);
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_ANY_HOST, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    // NOTE: no MR_DIFFS stub — that fetch rejects.
+
+    const lines: string[] = [];
+    const ctx = { ...fixture.createSyncContext(), logger: capturingLogger(lines) };
+    // Must not throw: the rejection is caught in the closure, `null` flows to the driver as an
+    // ordinary "page unavailable", and the best-effort wrapper is never reached.
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(ctx, null);
+    expect(res.hasMore).toBe(false);
+
+    expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(1);
+    const covered = fixture.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
+      .get();
+    expect(covered?.c).toBe(0);
+
+    // The assertion the fix exists for. Without the try/catch the rejection reaches
+    // `runPrFilePass`'s catch, which logs `err: String(err)` — and that string contains the URL,
+    // hence the host. Assert on the LOG OUTPUT, not on the absence of a throw: the sync resolves
+    // either way, so "did not throw" alone would pass against the unfixed code.
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.some((l) => l.includes(sentinel))).toBe(false);
+  });
+
+  test("a 429 on MR diffs raises RateLimitError out of the sync and penalises the provider", async () => {
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    fixture.fetchMock.respond(
+      "GET",
+      MR_DIFFS_RE_ANY,
+      { message: "Too Many Requests" },
+      { status: 429, headers: { "retry-after": "120" } },
+    );
+
+    // Rate limiting is the ONE failure the best-effort wrapper deliberately re-raises, so the
+    // scheduler can honour the backoff instead of the pass hammering a limited API.
+    await expect(
+      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+    ).rejects.toBeInstanceOf(RateLimitError);
+
+    const covered = fixture.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
+      .get();
+    expect(covered?.c).toBe(0);
+
+    // The penalty is the half a caller would not notice was missing: the throw alone ends THIS
+    // tick, but without `penalise` the next tick would walk straight back into the same 429.
+    // `tryAcquire` reports `false` while a provider is inside its penalty window.
+    expect(await fixture.rateLimiter.tryAcquire("gitlab")).toBe(false);
+  });
+
+  test("an unparseable MR diffs body leaves the MR uncovered and does not fail the sync", async () => {
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    fixture.fetchMock.respondWithText("GET", MR_DIFFS_RE_ANY, "not json{{{");
+
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+
+    expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(1);
+    const covered = fixture.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
+      .get();
+    expect(covered?.c).toBe(0);
+  });
+
+  test("a full-length page requests a second page; a short second page ends pagination", async () => {
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    // `hasMore` is derived from page LENGTH here (unlike Bitbucket's `next` URL), so a full page
+    // must ask for another and a short one must stop. Anchor on `?page=N`, never a bare `page=N`:
+    // `mrDiffsUrl` emits `?page=1&per_page=100`, and `per_page=100` contains "page=1" as a prefix
+    // of "page=100", so `.includes("page=1")` matches EVERY request regardless of its real page.
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      old_path: `src/f${String(i)}.ts`,
+      new_path: `src/f${String(i)}.ts`,
+    }));
+    fixture.fetchMock.respond("GET", /merge_requests\/\d+\/diffs\?page=1(&|$)/, fullPage);
+    fixture.fetchMock.respond("GET", /merge_requests\/\d+\/diffs\?page=2(&|$)/, [
+      { old_path: "src/last.ts", new_path: "src/last.ts" },
+    ]);
+
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+
+    const diffCalls = fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url));
+    expect(diffCalls.some((c) => c.url.includes("?page=1&"))).toBe(true);
+    expect(diffCalls.some((c) => c.url.includes("?page=2&"))).toBe(true);
+    expect(diffCalls).toHaveLength(2);
+
+    const state = fixture.db
+      .query<{ stored_count: number; truncated: number }, []>(
+        "SELECT stored_count, truncated FROM pr_files_state WHERE item_id = 'gitlab:grp/proj!1'",
+      )
+      .get();
+    expect(state?.stored_count).toBe(101);
+    // Pagination ENDED on the short page, so the full path set is held — not truncated.
+    expect(state?.truncated).toBe(0);
+  });
+
+  test("an external id with no '!' is skipped without a request", async () => {
+    // `selectPrFileCandidates` splits on the last `#` OR `!`, so a `#`-keyed row is a legitimate
+    // gitlab candidate that this connector's own closure cannot parse — it looks for `!` only.
+    seedGitlabPr(fixture, "grp/proj#9");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+
+    // No request at all — the malformed id is rejected before any network call.
+    expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(0);
+    const covered = fixture.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
+      .get();
+    expect(covered?.c).toBe(0);
+  });
+
+  test("a non-numeric iid is skipped without a request", async () => {
+    seedGitlabPr(fixture, "grp/proj!notanumber");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+
+    // `Number("notanumber")` is NaN. Without the `Number.isFinite` guard the URL would carry
+    // `merge_requests/NaN/diffs` — a request that can only ever fail.
+    expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(0);
+    const covered = fixture.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM pr_files_state")
+      .get();
+    expect(covered?.c).toBe(0);
+  });
+
+  test("a failure INSIDE the pass is warned, not fatal, and the sync still returns", async () => {
+    // Exercises the wrapper's warn arm (as against its `RateLimitError` rethrow arm above). The
+    // driver's own per-candidate catch handles fetch failures, so reaching the wrapper needs a
+    // failure OUTSIDE that loop — `selectPrFileCandidates` querying a table that is not there.
+    seedGitlabIndexProject(fixture, "grp/proj");
+    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+    fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
+    fixture.db.exec("DROP TABLE pr_files_state");
+
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    // The events sync's own result survives: the changed-file pass is best-effort by design.
+    expect(res.hasMore).toBe(false);
+    expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(0);
   });
 });

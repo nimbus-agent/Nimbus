@@ -1,0 +1,74 @@
+[
+  {
+    "sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "filename": "src/added.ts",
+    "status": "added",
+    "additions": 42,
+    "deletions": 0,
+    "changes": 42,
+    "blob_url": "https://github.com/octocat/Hello-World/blob/6dcb09b/src/added.ts",
+    "raw_url": "https://github.com/octocat/Hello-World/raw/6dcb09b/src/added.ts",
+    "contents_url": "https://api.github.com/repos/octocat/Hello-World/contents/src/added.ts?ref=6dcb09b",
+    "patch": "@@ -0,0 +1,42 @@\n+export const added = true;"
+  },
+  {
+    "sha": "b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4",
+    "filename": "src/my_file.ts",
+    "status": "modified",
+    "additions": 5,
+    "deletions": 2,
+    "changes": 7,
+    "blob_url": "https://github.com/octocat/Hello-World/blob/6dcb09b/src/my_file.ts",
+    "raw_url": "https://github.com/octocat/Hello-World/raw/6dcb09b/src/my_file.ts",
+    "contents_url": "https://api.github.com/repos/octocat/Hello-World/contents/src/my_file.ts?ref=6dcb09b",
+    "patch": "@@ -1,5 +1,7 @@\n-export const oldValue = 1;\n+export const newValue = 2;"
+  },
+  {
+    "sha": "c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5",
+    "filename": "tests/gone.ts",
+    "status": "removed",
+    "additions": 0,
+    "deletions": 18,
+    "changes": 18,
+    "blob_url": "https://github.com/octocat/Hello-World/blob/6dcb09b/tests/gone.ts",
+    "raw_url": "https://github.com/octocat/Hello-World/raw/6dcb09b/tests/gone.ts",
+    "contents_url": "https://api.github.com/repos/octocat/Hello-World/contents/tests/gone.ts?ref=6dcb09b",
+    "patch": "@@ -1,18 +0,0 @@\n-export const gone = true;"
+  },
+  {
+    "sha": "d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6",
+    "filename": "src/moved.ts",
+    "status": "renamed",
+    "previous_filename": "tests/moved.ts",
+    "additions": 0,
+    "deletions": 0,
+    "changes": 0,
+    "blob_url": "https://github.com/octocat/Hello-World/blob/6dcb09b/src/moved.ts",
+    "raw_url": "https://github.com/octocat/Hello-World/raw/6dcb09b/src/moved.ts",
+    "contents_url": "https://api.github.com/repos/octocat/Hello-World/contents/src/moved.ts?ref=6dcb09b"
+  },
+  {
+    "sha": "e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7",
+    "filename": "src/copied.ts",
+    "status": "copied",
+    "previous_filename": "src/original.ts",
+    "additions": 0,
+    "deletions": 0,
+    "changes": 0,
+    "blob_url": "https://github.com/octocat/Hello-World/blob/6dcb09b/src/copied.ts",
+    "raw_url": "https://github.com/octocat/Hello-World/raw/6dcb09b/src/copied.ts",
+    "contents_url": "https://api.github.com/repos/octocat/Hello-World/contents/src/copied.ts?ref=6dcb09b"
+  },
+  {
+    "sha": "f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8",
+    "filename": "src/changed.ts",
+    "status": "changed",
+    "additions": 3,
+    "deletions": 3,
+    "changes": 6,
+    "blob_url": "https://github.com/octocat/Hello-World/blob/6dcb09b/src/changed.ts",
+    "raw_url": "https://github.com/octocat/Hello-World/raw/6dcb09b/src/changed.ts",
+    "contents_url": "https://api.github.com/repos/octocat/Hello-World/contents/src/changed.ts?ref=6dcb09b",
+    "patch": "@@ -1,3 +1,3 @@\n-old\n+new"
+  }
+]

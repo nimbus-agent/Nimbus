@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { PR_CHANGED_FILE_V55_SQL } from "../index/pr-changed-file-v55-sql.ts";
 import { latencyRingBuffer } from "./latency-ring-buffer.ts";
 import { collectIndexMetrics } from "./metrics.ts";
 
@@ -38,6 +39,10 @@ function createMinimalSchema(db: Database): void {
       last_sync_at INTEGER
     )
   `);
+  // collectIndexMetrics reads PR file coverage via collectPrFileCoverage, which queries
+  // pr_files_state unconditionally — these tables must exist even for tests that don't
+  // otherwise touch PR coverage.
+  db.exec(PR_CHANGED_FILE_V55_SQL);
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +174,19 @@ describe("collectIndexMetrics — real SQLite happy paths", () => {
     const m = collectIndexMetrics(db);
     expect(m.indexSizeBytes).toBeGreaterThanOrEqual(0);
     expect(Number.isInteger(m.indexSizeBytes)).toBe(true);
+  });
+
+  test("index metrics report PR changed-file coverage", () => {
+    db.exec(
+      `INSERT INTO item (id, service, type, external_id, modified_at, title, synced_at)
+       VALUES ('p1','github','pr','o/r#1',1,'PR #1',1)`,
+    );
+    db.exec(
+      `INSERT INTO pr_files_state (item_id, fetched_at_ms, api_file_count, stored_count)
+       VALUES ('p1',1,2,2)`,
+    );
+    const m = collectIndexMetrics(db);
+    expect(m.prFileCoverage).toEqual({ covered: 1, totalPrs: 1, truncated: 0 });
   });
 });
 

@@ -781,10 +781,10 @@ test("V52 leaves resolve_key NULL for a row with neither url", () => {
   db.close();
 });
 
-test("CURRENT_SCHEMA_VERSION is 54, so V54 runs in production", () => {
+test("CURRENT_SCHEMA_VERSION is 55, so V54 runs in production", () => {
   // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
   // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
-  expect(CURRENT_SCHEMA_VERSION).toBe(54);
+  expect(CURRENT_SCHEMA_VERSION).toBe(55);
   const db = freshDb();
   runIndexedSchemaMigrations(db, 53);
   expect(tableNames(db)).toContain("item");
@@ -799,6 +799,24 @@ test("CURRENT_SCHEMA_VERSION is 54, so V54 runs in production", () => {
     metadata: string;
   };
   expect(row.metadata).toBe(JSON.stringify({ ownership: { ownerCount: 1 } }));
+  db.close();
+});
+
+test("V55 creates pr_changed_file and pr_files_state through the runner", () => {
+  // `pr-changed-file-v55.test.ts` execs `PR_CHANGED_FILE_V55_SQL` directly, so it proves the SQL
+  // is right but NOT that the runner is wired to run it — a step registered under the wrong
+  // version, or not registered at all, passes that test and ships a database with no tables. The
+  // "CURRENT_SCHEMA_VERSION is 55" test above migrates all the way here but only asserts V54's
+  // effect, so this is the first check that V55's own DDL actually executes in production.
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 54);
+  expect(tableNames(db)).not.toContain("pr_changed_file");
+
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  const names = tableNames(db);
+  expect(names).toContain("pr_changed_file");
+  expect(names).toContain("pr_files_state");
+  expect(userVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
   db.close();
 });
 

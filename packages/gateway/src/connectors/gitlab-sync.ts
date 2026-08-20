@@ -1,7 +1,11 @@
 import { itemPrimaryKey } from "../index/item-store.ts";
+import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
+import { mapGitlabMrFiles } from "../prfiles/pr-file-mapping.ts";
 import {
   FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
+  RateLimitError,
+  retryAfterDateFromHeader,
   type Syncable,
   type SyncContext,
   type SyncResult,
@@ -175,6 +179,93 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
   };
 }
 
+/**
+ * `/projects/:id/merge_requests/:iid/diffs` — GitLab's MR file-diff endpoint. Built from the
+ * caller-supplied `apiBase` (never a hardcoded `gitlab.com` host), mirroring `fetchOneMergeRequest`'s
+ * `detailUrl` above — GitLab is self-hostable, so the host cannot be assumed.
+ */
+export function mrDiffsUrl(
+  apiBase: string,
+  pathWithNamespace: string,
+  iid: number,
+  page: number,
+): string {
+  return `${apiBase}/projects/${encodeURIComponent(pathWithNamespace)}/merge_requests/${String(
+    iid,
+  )}/diffs?page=${String(page)}&per_page=${String(PR_FILES_PAGE_SIZE)}`;
+}
+
+/**
+ * Mirrors `github-sync.ts`'s `runPrFilePassBestEffort` — same try/catch, same rethrow of
+ * `RateLimitError`, same warn. GitLab MRs key as `<pathWithNamespace>!<iid>`, and a group path may
+ * itself contain slashes, so the iid is parsed from AFTER the LAST `!`, not the first.
+ *
+ * It does NOT carry GitHub's `UnauthenticatedError` rethrow, and deliberately: no GitLab codepath
+ * raises that error at all — this connector maps no status to a credential failure, so the closure
+ * below returns `null` for a 401 like any other non-ok response. Adding the rethrow here would be
+ * an unreachable branch, not a defence. Surfacing a GitLab 401 is a separate change: it would make
+ * this best-effort side pass the connector's ONLY health signal for a revoked PAT, which is a
+ * connector-health decision, not a changed-file one.
+ */
+async function runGitlabPrFilePassBestEffort(
+  ctx: SyncContext,
+  pat: string,
+  apiBase: string,
+  now: number,
+): Promise<void> {
+  try {
+    await runPrFilePass(ctx, {
+      service: SERVICE_ID,
+      nowMs: now,
+      fetchPage: async (c, page) => {
+        const cut = c.externalId.lastIndexOf("!");
+        if (cut < 0) return null;
+        const iid = Number(c.externalId.slice(cut + 1));
+        if (!Number.isFinite(iid)) return null;
+        let res: Response;
+        try {
+          res = await fetch(mrDiffsUrl(apiBase, c.repoFull, iid, page), {
+            headers: { "PRIVATE-TOKEN": pat },
+          });
+        } catch {
+          // Same rule `fetchOneMergeRequest` states about itself at lines 116-120 of this file: a
+          // DNS/TLS/connect rejection can carry the request URL — which embeds the Vault-stored
+          // `api_base` — in its message, and `runPrFilePass`'s per-candidate catch logs
+          // `err: String(err)`. Swallow it entirely rather than let it propagate.
+          //
+          // `null`, not a rethrow: it is the driver's existing "this page could not be read"
+          // signal, so the MR is left with NO coverage row and `selectPrFileCandidates` re-queues
+          // it next tick. The driver logs its own URL-free warn on this path.
+          return null;
+        }
+        if (res.status === 429) {
+          const retryAt = retryAfterDateFromHeader(res.headers.get("retry-after"), 60);
+          ctx.rateLimiter.penalise("gitlab", Math.max(1000, retryAt.getTime() - Date.now()));
+          throw new RateLimitError(retryAt, "GitLab MR diffs: rate limited (429)");
+        }
+        if (!res.ok) {
+          return null;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await res.text()) as unknown;
+        } catch {
+          return null;
+        }
+        const rows = mapGitlabMrFiles(parsed);
+        // A full page means there may be another; a short page is the last one.
+        return { rows, hasMore: Array.isArray(parsed) && parsed.length === PR_FILES_PAGE_SIZE };
+      },
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) throw err; // honor backoff
+    ctx.logger.warn(
+      { service: SERVICE_ID, err: String(err) },
+      "PR changed-file pass failed (non-fatal)",
+    );
+  }
+}
+
 export type GitlabSyncableOptions = {
   ensureGitlabMcpRunning: () => Promise<void>;
 };
@@ -217,6 +308,8 @@ export function createGitlabSyncable(options: GitlabSyncableOptions): Syncable {
         pipelinesIn,
         floorMs,
       );
+
+      await runGitlabPrFilePassBestEffort(ctx, pat, apiBase, Date.now());
 
       const durationMs = Math.round(performance.now() - t0);
       return {

@@ -1,0 +1,30 @@
+[
+  {
+    "old_path": "src/a.ts",
+    "new_path": "src/a.ts",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": false
+  },
+  {
+    "old_path": "src/b.ts",
+    "new_path": "src/b.ts",
+    "new_file": true,
+    "renamed_file": false,
+    "deleted_file": false
+  },
+  {
+    "old_path": "tests/c.ts",
+    "new_path": "tests/c.ts",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": true
+  },
+  {
+    "old_path": "tests/d.ts",
+    "new_path": "src/d.ts",
+    "new_file": false,
+    "renamed_file": true,
+    "deleted_file": false
+  }
+]

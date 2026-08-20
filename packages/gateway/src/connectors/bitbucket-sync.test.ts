@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
-import { createBitbucketSyncable } from "./bitbucket-sync.ts";
+import {
+  bitbucketDiffstatHasMore,
+  createBitbucketSyncable,
+  prDiffstatUrl,
+} from "./bitbucket-sync.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -275,4 +279,26 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
 
     expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
+});
+
+test("prDiffstatUrl requests the diffstat endpoint, a page number, and the page-size parameter", () => {
+  const u = prDiffstatUrl("w/r", 42, 2);
+  expect(u).toBe(
+    "https://api.bitbucket.org/2.0/repositories/w/r/pullrequests/42/diffstat?pagelen=100&page=2",
+  );
+});
+
+test("bitbucketDiffstatHasMore reads the next-URL, not page length", () => {
+  expect(bitbucketDiffstatHasMore({ next: "https://api.bitbucket.org/2.0/...", values: [] })).toBe(
+    true,
+  );
+  expect(bitbucketDiffstatHasMore({ values: [] })).toBe(false);
+  // A `next` field of the wrong type must not be treated as "there is a next page".
+  expect(bitbucketDiffstatHasMore({ next: 123, values: [] })).toBe(false);
+  expect(bitbucketDiffstatHasMore(null)).toBe(false);
+  // An EMPTY `next` is the same "no next page" as an absent one, and is read that way for the PR
+  // list itself elsewhere in this file. A bare `typeof === "string"` says true here, which keeps
+  // the driver paging to `MAX_PAGES_PER_PR` and records a fully-stored PR as `truncated` —
+  // permanently excluding it from negation.
+  expect(bitbucketDiffstatHasMore({ next: "", values: [] })).toBe(false);
 });

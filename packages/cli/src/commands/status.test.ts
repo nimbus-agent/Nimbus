@@ -449,6 +449,153 @@ describe("runStatusImpl", () => {
     expect(out.stdout).toContain("gitlab: 10");
   });
 
+  // WITHOUT --verbose. The line's purpose is to let a user tell "still draining" from "broken",
+  // which is useless if they must already suspect a problem to pass a flag; the design spec § 7
+  // puts it alongside `Embedding backfill:`, which is unconditional.
+  it("prints PR file coverage on the DEFAULT status, without --verbose", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      {
+        connectorHealth: [],
+        index: { totalItems: 5, prFileCoverage: { covered: 412, totalPrs: 1203, truncated: 18 } },
+      },
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: "/s" },
+      { wantDrift: false, verbose: false },
+    );
+    expect(ipc.calls[1]).toEqual({ method: "diag.snapshot", params: {} });
+    expect(out.stdout).toContain("PR file coverage: 412 / 1203 (18 truncated)");
+    // Verbose-only sections stay verbose-only.
+    expect(out.stdout).not.toContain("Items by service:");
+  });
+
+  it("prints PR file coverage exactly once under --verbose", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      {
+        connectorHealth: [],
+        index: {
+          totalItems: 5,
+          itemCountByService: { github: 5 },
+          prFileCoverage: { covered: 1, totalPrs: 2, truncated: 0 },
+        },
+      },
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: "/s" },
+      { wantDrift: false, verbose: true },
+    );
+    expect(out.stdout.split("PR file coverage:")).toHaveLength(2);
+    expect(out.stdout).toContain("PR file coverage: 1 / 2");
+    expect(out.stdout).toContain("Items by service:");
+  });
+
+  // The payload crosses an IPC seam, so its shape is external data. `typeof x === "number"` alone
+  // admits NaN, Infinity, negatives and non-integers, each of which reaches the user as a
+  // confident-looking nonsense ratio. Rejecting the payload prints NOTHING — the same outcome as a
+  // missing snapshot, which the user can already read as "not measured".
+  const MALFORMED_COVERAGE: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+    ["covered is NaN", { covered: Number.NaN, totalPrs: 10, truncated: 0 }],
+    ["totalPrs is Infinity", { covered: 1, totalPrs: Number.POSITIVE_INFINITY, truncated: 0 }],
+    ["covered is negative", { covered: -1, totalPrs: 10, truncated: 0 }],
+    ["totalPrs is negative", { covered: 0, totalPrs: -5, truncated: 0 }],
+    ["covered is fractional", { covered: 2.5, totalPrs: 10, truncated: 0 }],
+    ["truncated is NaN", { covered: 5, totalPrs: 10, truncated: Number.NaN }],
+    ["truncated is negative", { covered: 5, totalPrs: 10, truncated: -3 }],
+    // Internally inconsistent rather than malformed: every count is a fine integer on its own,
+    // but no real index state produces them. `covered` counts a subset of `totalPrs`, and
+    // `truncated` counts a subset of `covered`.
+    ["covered exceeds totalPrs", { covered: 11, totalPrs: 10, truncated: 0 }],
+    ["truncated exceeds covered", { covered: 3, totalPrs: 10, truncated: 4 }],
+  ];
+
+  for (const [label, prFileCoverage] of MALFORMED_COVERAGE) {
+    it(`omits the PR file coverage line when ${label}`, async () => {
+      const ipc = createMockIpcClient([
+        { version: "1.0", uptime: 0 },
+        { connectorHealth: [], index: { totalItems: 5, prFileCoverage } },
+      ]);
+      await runStatusImpl(
+        ipc.client,
+        { pid: 1, socketPath: "/s" },
+        { wantDrift: false, verbose: false },
+      );
+      expect(out.stdout).not.toContain("PR file coverage");
+    });
+  }
+
+  // The complement of the table above: a payload that omits `truncated` entirely is still VALID —
+  // it reads as zero. Without this, tightening the guard could silently start suppressing the line
+  // for every well-formed payload and the tests above would all still pass.
+  it("prints the coverage line when truncated is absent, with no suffix", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      {
+        connectorHealth: [],
+        index: { totalItems: 5, prFileCoverage: { covered: 7, totalPrs: 9 } },
+      },
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: "/s" },
+      { wantDrift: false, verbose: false },
+    );
+    expect(out.stdout).toContain("PR file coverage: 7 / 9");
+    expect(out.stdout).not.toContain("truncated)");
+  });
+
+  it("omits the PR file coverage line entirely when there are no PRs", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      {
+        connectorHealth: [],
+        index: { totalItems: 5, prFileCoverage: { covered: 0, totalPrs: 0, truncated: 0 } },
+      },
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: "/s" },
+      { wantDrift: false, verbose: false },
+    );
+    expect(out.stdout).not.toContain("PR file coverage");
+  });
+
+  // The default status now makes a second call that a gateway without a local index answers with
+  // an error ("Local index is not available"). That must cost the coverage line only, never the
+  // rest of the output.
+  it("a failing diag.snapshot on the default status costs only the coverage line", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      new Error("Local index is not available"),
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: FAKE_SOCKET_PATH },
+      { wantDrift: false, verbose: false },
+    );
+    expect(out.stdout).toContain("Gateway: running (pid 1)");
+    expect(out.stdout).toContain(`Socket:  ${FAKE_SOCKET_PATH}`);
+    expect(out.stdout).not.toContain("IPC failed");
+    expect(out.stdout).not.toContain("PR file coverage");
+  });
+
+  // …but --verbose output is entirely snapshot-derived, so there the failure still surfaces.
+  it("a failing diag.snapshot under --verbose still reports the IPC failure", async () => {
+    const ipc = createMockIpcClient([
+      { version: "1.0", uptime: 0 },
+      new Error("Local index is not available"),
+    ]);
+    await runStatusImpl(
+      ipc.client,
+      { pid: 1, socketPath: FAKE_SOCKET_PATH },
+      { wantDrift: false, verbose: true },
+    );
+    expect(out.stdout).toContain("state exists but IPC failed — Local index is not available");
+  });
+
   it("does not print agent limits when agentLimits is undefined", async () => {
     const ipc = createMockIpcClient([{ version: "1.0", uptime: 500 }]);
     await runStatusImpl(

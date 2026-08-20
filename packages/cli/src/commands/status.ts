@@ -14,6 +14,7 @@ type IndexMetricsBrief = {
   totalItems?: unknown;
   itemCountByService?: unknown;
   queryLatencyP95Ms?: unknown;
+  prFileCoverage?: unknown;
 };
 
 type DiagSnapshot = {
@@ -27,12 +28,86 @@ function printEmbeddingBackfill(emb: { done: number; total: number } | null | un
   }
 }
 
-function printVerboseIndexMetrics(snap: DiagSnapshot): void {
-  const idx = snap.index;
-  if (idx === null || typeof idx !== "object" || Array.isArray(idx)) {
+/**
+ * A count is only printable if it is a finite, non-negative integer. `typeof x === "number"` alone
+ * is not that test: it admits `NaN`, `Infinity`, `-1` and `2.5`, which reach the user as
+ * "PR file coverage: NaN / Infinity". The payload crosses an IPC seam, so its shape is external
+ * data and gets checked rather than trusted.
+ */
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function printPrFileCoverage(raw: unknown): void {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return;
   }
-  const m = idx as IndexMetricsBrief;
+  const c = raw as { covered?: unknown; totalPrs?: unknown; truncated?: unknown };
+  if (!isCount(c.covered) || !isCount(c.totalPrs)) {
+    return;
+  }
+  // `truncated` is optional in a way the other two are not — a payload omitting it is read as
+  // zero — but a PRESENT value still has to be a count, so a malformed one suppresses the line
+  // rather than silently degrading to 0 and printing a coverage figure beside it.
+  if (c.truncated !== undefined && !isCount(c.truncated)) {
+    return;
+  }
+  const trunc = c.truncated ?? 0;
+  // Internally inconsistent counts: `covered` is PRs with a coverage row and `totalPrs` is all
+  // indexed PRs, so covered can never exceed it; `truncated` counts a SUBSET of the covered rows.
+  // Either inversion means the payload does not describe a real index state, and printing it
+  // would present a nonsense ratio with the same confidence as a true one.
+  if (c.covered > c.totalPrs || trunc > c.covered) {
+    return;
+  }
+  // No PRs indexed at all: the line would read "0 / 0" and imply a problem where there is none.
+  if (c.totalPrs === 0) {
+    return;
+  }
+  const suffix = trunc > 0 ? ` (${String(trunc)} truncated)` : "";
+  console.log(`PR file coverage: ${String(c.covered)} / ${String(c.totalPrs)}${suffix}`);
+}
+
+/**
+ * `diag.snapshot` is now fetched on the DEFAULT status too, because the PR file-coverage line
+ * prints unconditionally beside `Embedding backfill:` (design spec § 7) rather than behind
+ * `--verbose` — a user cannot be asked to already suspect a problem before the line that tells
+ * them whether there is one.
+ *
+ * That makes the call's failure mode matter. `diag.snapshot` throws "Local index is not
+ * available" whenever the gateway has no local index (`ipc/diagnostics-rpc.ts`'s
+ * `requireLocalIndex`, reached via `requireDb`), and turning a plain `nimbus status` into the
+ * "state exists but IPC failed" line over an optional extra line would be a bad trade — so a
+ * failure is swallowed here and no coverage line prints. Under `--verbose` it is rethrown: every
+ * verbose section is snapshot-derived, so there swallowing would hide the whole output.
+ */
+async function fetchDiagSnapshot(
+  client: IPCClient,
+  verbose: boolean,
+): Promise<DiagSnapshot | null> {
+  try {
+    return await client.call<DiagSnapshot>("diag.snapshot", {});
+  } catch (e) {
+    if (verbose) {
+      throw e;
+    }
+    return null;
+  }
+}
+
+function indexMetricsOf(snap: DiagSnapshot): IndexMetricsBrief | null {
+  const idx = snap.index;
+  if (idx === null || typeof idx !== "object" || Array.isArray(idx)) {
+    return null;
+  }
+  return idx as IndexMetricsBrief;
+}
+
+function printVerboseIndexMetrics(snap: DiagSnapshot): void {
+  const m = indexMetricsOf(snap);
+  if (m === null) {
+    return;
+  }
   const p95 =
     typeof m.queryLatencyP95Ms === "number" && Number.isFinite(m.queryLatencyP95Ms)
       ? m.queryLatencyP95Ms
@@ -220,10 +295,13 @@ export async function runStatusImpl(
       );
     }
     printEmbeddingBackfill(ping.embeddingBackfill);
-    if (verbose) {
-      const snap = await client.call<DiagSnapshot>("diag.snapshot", {});
-      printVerboseIndexMetrics(snap);
-      printVerboseConnectorHealth(snap);
+    const snap = await fetchDiagSnapshot(client, verbose);
+    if (snap !== null) {
+      printPrFileCoverage(indexMetricsOf(snap)?.prFileCoverage);
+      if (verbose) {
+        printVerboseIndexMetrics(snap);
+        printVerboseConnectorHealth(snap);
+      }
     }
     if (wantDrift && ping.drift !== undefined && Array.isArray(ping.drift.lines)) {
       printDriftHints(ping.drift.lines);
