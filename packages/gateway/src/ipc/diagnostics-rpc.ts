@@ -332,27 +332,61 @@ function rpcDbSetMeta(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsR
   }
 }
 
-type MissingSubstrateRefusal = {
-  readonly status: "refused";
-  readonly reason: "missing_substrate";
-  readonly message: string;
-  readonly remediation: string;
-};
-
-function missingSubstrateRefusal(message: string, remediation: string): MissingSubstrateRefusal {
-  return { status: "refused", reason: "missing_substrate", message, remediation };
-}
-
 /**
  * `explain` shape pinned by the spec (`docs/superpowers/specs/2026-08-20-negation-queries-design.md`
- * § 5/9): `{ sql, params, substrate }`, `substrate` present only for a negation query — a plain
- * query has no probe to report.
+ * § 5/9): `{ sql, params, substrate }`. `sql`/`params` are the COMPOSED statement that actually
+ * shaped — or, on a refusal, would have shaped — `items`: for a negation query that is
+ * `id IN (<predicate SELECT>) ... LIMIT ?`, never the bare predicate SQL alone, so the LIMIT and
+ * the caller's own services/types/since/until filters are visible in explain too, not just the
+ * negation clause. `substrate` is present only for a negation query — a plain query has no probe
+ * to report.
  */
 type QueryExplain = {
   readonly sql: string;
   readonly params: ReadonlyArray<string | number>;
   readonly substrate?: SubstrateProbe;
 };
+
+type MissingSubstrateRefusal = {
+  readonly status: "refused";
+  readonly reason: "missing_substrate";
+  readonly message: string;
+  readonly remediation: string;
+  readonly explain?: QueryExplain;
+};
+
+/**
+ * `explainBlock` is attached to a refusal too, not only to a successful result: spec § 5 calls
+ * the substrate probe "the only way to see WHY a query refused", which is exactly the case where
+ * `--explain` matters most — a refused query has no `items`/`gaps` to inspect instead.
+ */
+function missingSubstrateRefusal(
+  message: string,
+  remediation: string,
+  explainBlock: QueryExplain | undefined,
+): MissingSubstrateRefusal {
+  return {
+    status: "refused",
+    reason: "missing_substrate",
+    message,
+    remediation,
+    ...(explainBlock === undefined ? {} : { explain: explainBlock }),
+  };
+}
+
+/**
+ * A negation predicate builder (`buildNotTouchingSql` / `buildNoDownstreamIncidentSql`) numbers
+ * its own placeholders `?1`, `?2`, ... for standalone use. Embedded as an `id IN (<sql>)`
+ * subquery inside `buildItemListSql`'s flat, positionally-bound filter list (see
+ * `ItemListQueryParams.idInSql`'s doc comment), a numbered placeholder would desynchronize
+ * SQLite's own auto-numbering of the surrounding unnumbered `?`s from that flat array's order and
+ * misbind. This renumbers every placeholder to plain, unnumbered `?`, which SQLite auto-numbers
+ * in left-to-right order — exactly the order each predicate's own `vals` array is already in, so
+ * no reordering of `vals` is needed, only of the placeholder syntax.
+ */
+function toUnnumberedPlaceholders(sql: string): string {
+  return sql.replace(/\?\d+/g, "?");
+}
 
 function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
   const rec = asRecord(params);
@@ -378,8 +412,15 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
     ? (rec["types"] as unknown[]).filter((x): x is string => typeof x === "string")
     : [];
   const rawNotTouching = rec?.["notTouching"];
-  const notTouching =
-    typeof rawNotTouching === "string" && rawNotTouching !== "" ? rawNotTouching : undefined;
+  // A present-but-blank `notTouching` must NEVER silently fall through to the plain path: that
+  // would answer a different question ("every item") than the one asked ("items not touching X"),
+  // which is exactly the confident-wrong-answer failure this whole feature exists to prevent.
+  // Reachable from the documented CLI surface: `takeFlag` (cli/src/commands/serve.ts) returns
+  // `args[i + 1]` verbatim, so `--not-touching ''` reaches here as `""`.
+  if (typeof rawNotTouching === "string" && rawNotTouching.trim() === "") {
+    throw new DiagnosticsRpcError(-32602, "notTouching must be a non-empty glob pattern");
+  }
+  const notTouching = typeof rawNotTouching === "string" ? rawNotTouching : undefined;
   const noDownstreamIncident = rec?.["noDownstreamIncident"] === true;
   const explain = rec?.["explain"] === true;
 
@@ -390,6 +431,10 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
     ...(sinceMs === undefined ? {} : { sinceMs }),
     ...(untilMs === undefined ? {} : { untilMs }),
   };
+  // The SAME services/types the query itself used, so a gap count printed beside a scoped result
+  // set describes THAT result set — an unscoped (index-global) count next to it would be read as
+  // belonging to it and would not.
+  const gapScope = { services, types };
 
   const db = requireDb(ctx);
 
@@ -400,22 +445,30 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
   // both negation params are somehow supplied together.
   if (notTouching !== undefined) {
     const probeResult = probePrFileCoverage(db);
+    const predicate = buildNotTouchingSql(notTouching);
+    // Embedded as a subquery, never materialised into one bind parameter per matching id: SQLite
+    // has a ~65,535 bind-parameter ceiling per statement, so a large matching set would otherwise
+    // throw instead of answering. The subquery costs exactly its own parameter count (one, here)
+    // no matter how many rows it matches.
+    const idInSql = { sql: toUnnumberedPlaceholders(predicate.sql), vals: predicate.vals };
+    const composed = buildItemListSql({ ...baseParams, idInSql });
     if (!probeResult.passed) {
       return {
         kind: "hit",
         value: missingSubstrateRefusal(
           "no PR file-coverage data is indexed, so which PRs do not touch a path cannot be verified",
           "sync a connector that populates PR changed-file coverage (GitHub/GitLab), then retry",
+          explain
+            ? { sql: composed.sql, params: composed.vals, substrate: probeResult }
+            : undefined,
         ),
       };
     }
-    const built = buildNotTouchingSql(notTouching);
-    const ids = (db.query(built.sql).all(...built.vals) as Array<{ id: string }>).map((r) => r.id);
-    const items = requireLocalIndex(ctx).listItems({ ...baseParams, ids });
-    const gaps = countNotTouchingExclusions(db);
+    const items = requireLocalIndex(ctx).listItems({ ...baseParams, idInSql });
+    const gaps = countNotTouchingExclusions(db, gapScope);
     const explainBlock: QueryExplain = {
-      sql: built.sql,
-      params: built.vals,
+      sql: composed.sql,
+      params: composed.vals,
       substrate: probeResult,
     };
     return {
@@ -432,6 +485,9 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
   // --no-downstream-incident: same probe-first shape, over the `correlates_with` substrate.
   if (noDownstreamIncident) {
     const probeResult = probeCorrelatesWith(db);
+    const predicate = buildNoDownstreamIncidentSql();
+    const idInSql = { sql: toUnnumberedPlaceholders(predicate.sql), vals: predicate.vals };
+    const composed = buildItemListSql({ ...baseParams, idInSql });
     if (!probeResult.passed) {
       return {
         kind: "hit",
@@ -439,20 +495,21 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
           "no `correlates_with` edges are indexed, so which deployments have no downstream " +
             "incident cannot be verified",
           "run a sync that populates deployment-to-incident correlation, then retry",
+          explain
+            ? { sql: composed.sql, params: composed.vals, substrate: probeResult }
+            : undefined,
         ),
       };
     }
-    const built = buildNoDownstreamIncidentSql();
-    const ids = (db.query(built.sql).all(...built.vals) as Array<{ id: string }>).map((r) => r.id);
-    const items = requireLocalIndex(ctx).listItems({ ...baseParams, ids });
+    const items = requireLocalIndex(ctx).listItems({ ...baseParams, idInSql });
     // The Task 2 -> Task 3 ruling: an ungraphed deployment is silently DROPPED by the predicate's
     // INNER JOIN — fail-closed and correct — but must not be dropped UNCOUNTED. See
     // `countNoDownstreamIncidentExclusions`'s doc comment for why it is labelled "no graph entity
     // of the required type" rather than "not graphed".
-    const gaps = countNoDownstreamIncidentExclusions(db);
+    const gaps = countNoDownstreamIncidentExclusions(db, gapScope);
     const explainBlock: QueryExplain = {
-      sql: built.sql,
-      params: built.vals,
+      sql: composed.sql,
+      params: composed.vals,
       substrate: probeResult,
     };
     return {

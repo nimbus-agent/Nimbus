@@ -862,13 +862,14 @@ describe("index.queryItems", () => {
         const v = (
           r as {
             value: {
-              items: unknown[];
+              items: Array<{ id: string }>;
               meta: Record<string, unknown>;
               gaps: { excludedNoCoverage: number };
             };
           }
         ).value;
         expect(v.items).toHaveLength(1);
+        expect(v.items[0]?.id).toBe("p1");
         expect(v.gaps.excludedNoCoverage).toBe(1);
         expect(v.meta["gaps"]).toBeUndefined(); // sibling key, never nested in meta
       } finally {
@@ -1002,6 +1003,217 @@ describe("index.queryItems", () => {
       rmTmp(dir);
     }
   });
+
+  // CRITICAL from the Task 3 review: an empty/blank notTouching must never fall through to the
+  // plain path and silently answer a different question than the one asked. Reachable from the
+  // documented CLI surface — `takeFlag` (cli/src/commands/serve.ts) returns `args[i + 1]`
+  // verbatim, so `nimbus query --service github --type pr --not-touching ''` produces this.
+  test("an empty notTouching is rejected with -32602, not silently treated as absent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg7-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+           VALUES ('github:issue-1', 'github', 'issue', 'issue-1', 'not a pr', 1000, 1000)`,
+        );
+        expect(() => dispatchDiagnosticsRpc("index.queryItems", { notTouching: "" }, ctx)).toThrow(
+          DiagnosticsRpcError,
+        );
+        try {
+          dispatchDiagnosticsRpc("index.queryItems", { notTouching: "" }, ctx);
+        } catch (e) {
+          expect(e).toBeInstanceOf(DiagnosticsRpcError);
+          expect((e as DiagnosticsRpcError).rpcCode).toBe(-32602);
+          expect((e as DiagnosticsRpcError).message).toContain("notTouching");
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("a whitespace-only notTouching is rejected the same way", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg8-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        expect(() =>
+          dispatchDiagnosticsRpc("index.queryItems", { notTouching: "   " }, ctx),
+        ).toThrow(DiagnosticsRpcError);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  // IMPORTANT 2 from the Task 3 review: a refusal is the case explain matters most (spec § 5 —
+  // the probe is "the only way to see WHY a query refused"), so it must carry an explain block
+  // too when requested, not only a successful result.
+  test("a refusal carries an explain block (with substrate) when explain: true", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg9-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { notTouching: "tests/*", explain: true },
+          ctx,
+        );
+        const v = (
+          r as {
+            value: {
+              status?: string;
+              explain?: { sql: string; params: unknown[]; substrate: { passed: boolean } };
+            };
+          }
+        ).value;
+        expect(v.status).toBe("refused");
+        expect(v.explain).toBeDefined();
+        expect(v.explain?.substrate.passed).toBe(false);
+        expect(v.explain?.sql).toContain("NOT EXISTS");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("a refusal without explain: true carries no explain block", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg10-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("index.queryItems", { notTouching: "tests/*" }, ctx);
+        const v = (r as { value: { status?: string; explain?: unknown } }).value;
+        expect(v.status).toBe("refused");
+        expect(v.explain).toBeUndefined();
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  // IMPORTANT 3 from the Task 3 review: explain must report the COMPOSED statement that actually
+  // shaped `items` (id IN (<predicate>) ... LIMIT ?), not the bare predicate SQL alone — the
+  // caller's own filters and the LIMIT must be visible, since that is what "what ran" means.
+  test("explain.sql is the composed statement — includes the caller's filters and LIMIT", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg11-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        seedCoveredPr(db, "p1", ["src/a.ts"]);
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { notTouching: "tests/*", services: ["github"], limit: 7, explain: true },
+          ctx,
+        );
+        const v = (r as { value: { explain: { sql: string; params: unknown[] } } }).value;
+        expect(v.explain.sql).toContain("NOT EXISTS"); // the predicate, still present
+        expect(v.explain.sql).toContain("id IN (");
+        expect(v.explain.sql).toContain("service IN"); // the caller's own filter
+        expect(v.explain.sql).toContain("LIMIT ?"); // the limit, invisible before this fix
+        expect(v.explain.params).toContain(7);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  // IMPORTANT 4 from the Task 3 review: the printed gap count must be scoped to the query's own
+  // services filter, not the whole index — a github-scoped query must not report an uncovered
+  // gitlab PR's exclusion as if it belonged to this answer.
+  test("gaps are scoped to the query's own services filter, not index-global", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg12-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        seedCoveredPr(db, "p1", ["src/a.ts"]); // github, covered — passes the probe
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+           VALUES ('gl-1', 'gitlab', 'pr', 'gl-1', 'gl-1', 0, 0)`, // gitlab, uncovered
+        );
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { notTouching: "tests/*", services: ["github"] },
+          ctx,
+        );
+        const v = (r as { value: { gaps: { excludedNoCoverage: number } } }).value;
+        // The gitlab PR must NOT be counted against a github-scoped answer.
+        expect(v.gaps.excludedNoCoverage).toBe(0);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  // IMPORTANT 5 from the Task 3 review: the matching id set must not be bind-parameter bounded.
+  // SQLite's per-statement bind-parameter ceiling is well under 100,000; before this fix, a
+  // matching set at this scale threw instead of answering. This inserts tens of thousands of
+  // covered, non-matching PRs (so all of them satisfy `--not-touching tests/*`) and confirms the
+  // query still succeeds.
+  test("a matching set of tens of thousands of ids does not hit a bind-parameter ceiling", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg13-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const N = 70_000;
+        const insertItemStmt = db.prepare(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+           VALUES (?, 'github', 'pr', ?, ?, ?, ?)`,
+        );
+        const insertStateStmt = db.prepare(
+          `INSERT INTO pr_files_state (item_id, fetched_at_ms, api_file_count, stored_count, truncated)
+           VALUES (?, 0, 1, 1, 0)`,
+        );
+        const insertFileStmt = db.prepare(
+          `INSERT INTO pr_changed_file (item_id, repo_full, path, status)
+           VALUES (?, 'o/r', ?, 'modified')`,
+        );
+        try {
+          db.transaction(() => {
+            for (let i = 0; i < N; i++) {
+              const id = `p${i}`;
+              insertItemStmt.run(id, id, id, i, i);
+              insertStateStmt.run(id);
+              insertFileStmt.run(id, `src/file${i}.ts`);
+            }
+          })();
+        } finally {
+          insertItemStmt.finalize();
+          insertStateStmt.finalize();
+          insertFileStmt.finalize();
+        }
+
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { notTouching: "tests/*", limit: 1000 },
+          ctx,
+        );
+        expect(r.kind).toBe("hit");
+        const v = (r as { value: { items: unknown[]; meta: { total: number }; gaps: unknown } })
+          .value;
+        expect(v.items).toHaveLength(1000); // clamped to the requested limit, not the match count
+        expect(v.meta.total).toBe(1000);
+        expect(v.gaps).toBeDefined();
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  }, 30_000);
 });
 
 describe("diag.slowQueries", () => {

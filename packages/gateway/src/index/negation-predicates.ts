@@ -140,14 +140,35 @@ export function buildNotReviewedSql(sinceMs: number): {
 }
 
 /**
- * The two `buildNotTouchingSql` exclusion counts, reported SEPARATELY: a PR the index never
- * fetched a file list for, and a PR whose file list is known-incomplete. They mean different
- * things to a reader — the first is "we never checked", the second is "we checked partially" —
- * and summing them would erase that distinction.
+ * Optionally narrows a count to the same `services`/`types` a query was scoped to, so the count
+ * printed beside a result set describes THAT result set rather than the whole index. Omitted (or
+ * both empty) means unscoped — every indexed row of the predicate's own type, matching the
+ * previous (global) behavior byte-for-byte, which is what every existing caller of these count
+ * functions still gets.
  */
-export type NoDownstreamIncidentGaps = {
-  readonly excludedNoGraphEntity: number;
+export type ExclusionScope = {
+  readonly services?: readonly string[];
+  readonly types?: readonly string[];
 };
+
+function scopeFilter(
+  alias: string,
+  scope: ExclusionScope | undefined,
+): { readonly sql: string; readonly vals: Array<string | number> } {
+  const filters: string[] = [];
+  const vals: Array<string | number> = [];
+  const services = scope?.services ?? [];
+  const types = scope?.types ?? [];
+  if (services.length > 0) {
+    filters.push(`${alias}.service IN (${services.map(() => "?").join(", ")})`);
+    vals.push(...services);
+  }
+  if (types.length > 0) {
+    filters.push(`${alias}.type IN (${types.map(() => "?").join(", ")})`);
+    vals.push(...types);
+  }
+  return { sql: filters.length > 0 ? ` AND ${filters.join(" AND ")}` : "", vals };
+}
 
 /**
  * Deployments `buildNoDownstreamIncidentSql` silently drops for having no graph entity of the
@@ -163,35 +184,59 @@ export type NoDownstreamIncidentGaps = {
  * as some OTHER entity type (a real possibility, since `graph_entity` only enforces
  * `UNIQUE(type, external_id)`, not uniqueness on `external_id` alone) — and the second is the
  * likelier case in practice. "Not graphed" would claim a precision this count does not have.
+ *
+ * `scope`, when given, narrows the count to the caller's own `services`/`types` filter — passing
+ * the SAME `services`/`types` the query itself used keeps the printed count describing the result
+ * set beside it, rather than the whole index (a count silently wider than its query reads as
+ * belonging to it, and is not).
  */
-export function countNoDownstreamIncidentExclusions(db: Database): NoDownstreamIncidentGaps {
+export type NoDownstreamIncidentGaps = {
+  readonly excludedNoGraphEntity: number;
+};
+
+export function countNoDownstreamIncidentExclusions(
+  db: Database,
+  scope?: ExclusionScope,
+): NoDownstreamIncidentGaps {
+  const { sql: scopeSql, vals } = scopeFilter("i", scope);
   const row = db
     .query(
       `SELECT COUNT(*) AS n
          FROM item i
          LEFT JOIN graph_entity e ON e.external_id = i.id AND e.type = 'deployment'
-        WHERE i.type = 'deployment' AND e.id IS NULL`,
+        WHERE i.type = 'deployment' AND e.id IS NULL${scopeSql}`,
     )
-    .get() as { n: number };
+    .get(...vals) as { n: number };
   return { excludedNoGraphEntity: row.n };
 }
 
-export function countNotTouchingExclusions(db: Database): NegationGaps {
+/**
+ * The two `buildNotTouchingSql` exclusion counts, reported SEPARATELY: a PR the index never
+ * fetched a file list for, and a PR whose file list is known-incomplete. They mean different
+ * things to a reader — the first is "we never checked", the second is "we checked partially" —
+ * and summing them would erase that distinction.
+ *
+ * `scope`, when given, narrows both counts to the caller's own `services`/`types` filter — see
+ * `countNoDownstreamIncidentExclusions`'s doc comment for why: an unscoped count next to a scoped
+ * result set reads as belonging to it and is not.
+ */
+export function countNotTouchingExclusions(db: Database, scope?: ExclusionScope): NegationGaps {
+  const { sql: scopeSql, vals } = scopeFilter("i", scope);
   const noCoverage = db
     .query(
       `SELECT COUNT(*) AS n
          FROM item i
          LEFT JOIN pr_files_state s ON s.item_id = i.id
-        WHERE i.type = 'pr' AND s.item_id IS NULL`,
+        WHERE i.type = 'pr' AND s.item_id IS NULL${scopeSql}`,
     )
-    .get() as { n: number };
+    .get(...vals) as { n: number };
   const truncated = db
     .query(
       `SELECT COUNT(*) AS n
          FROM item i
          JOIN pr_files_state s ON s.item_id = i.id
-        WHERE i.type = 'pr' AND s.truncated = 1`,
+        WHERE i.type = 'pr' AND s.truncated = 1${scopeSql}`,
     )
-    .get() as { n: number };
+    .get(...vals) as { n: number };
   return { excludedNoCoverage: noCoverage.n, excludedTruncated: truncated.n };
 }

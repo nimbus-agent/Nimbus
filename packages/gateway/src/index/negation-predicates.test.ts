@@ -336,3 +336,58 @@ describe("buildNotReviewedSql", () => {
     db.close();
   });
 });
+
+// Important 4 from the Task 3 review: the gap counts must be SCOPED to the same services/types a
+// query used, not global — an unscoped count printed beside a scoped result set reads as
+// belonging to it, and a github-scoped query reporting an uncovered gitlab PR's exclusion is
+// exactly that misattribution.
+describe("countNotTouchingExclusions scope", () => {
+  const insertUncoveredPrForService = (db: Database, id: string, service: string): void => {
+    db.query(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+       VALUES (?1, ?2, 'pr', ?1, ?1, 0, 0)`,
+    ).run(id, service);
+  };
+
+  test("a github-scoped count excludes an uncovered gitlab PR", () => {
+    const db = makeDb();
+    insertUncoveredPrForService(db, "gh-1", "github");
+    insertUncoveredPrForService(db, "gl-1", "gitlab");
+    expect(countNotTouchingExclusions(db, { services: ["github"] })).toEqual({
+      excludedNoCoverage: 1,
+      excludedTruncated: 0,
+    });
+    db.close();
+  });
+
+  test("no scope (undefined) matches the previous global behavior", () => {
+    const db = makeDb();
+    insertUncoveredPrForService(db, "gh-1", "github");
+    insertUncoveredPrForService(db, "gl-1", "gitlab");
+    expect(countNotTouchingExclusions(db)).toEqual({ excludedNoCoverage: 2, excludedTruncated: 0 });
+    db.close();
+  });
+});
+
+describe("countNoDownstreamIncidentExclusions scope", () => {
+  const insertDeploymentNoGraphEntityForService = (
+    db: Database,
+    id: string,
+    service: string,
+  ): void => {
+    db.query(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+       VALUES (?1, ?2, 'deployment', ?1, ?1, 0, 0)`,
+    ).run(id, service);
+  };
+
+  test("a github-scoped count excludes an ungraphed gitlab deployment", () => {
+    const db = makeDb();
+    insertDeploymentNoGraphEntityForService(db, "gh-d1", "github");
+    insertDeploymentNoGraphEntityForService(db, "gl-d1", "gitlab");
+    expect(countNoDownstreamIncidentExclusions(db, { services: ["github"] })).toEqual({
+      excludedNoGraphEntity: 1,
+    });
+    db.close();
+  });
+});

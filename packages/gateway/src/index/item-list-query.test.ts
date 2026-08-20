@@ -105,4 +105,34 @@ describe("buildItemListSql (additional branches)", () => {
     expect(sql).not.toContain("id IN");
     expect(sql).not.toContain("1 = 0");
   });
+
+  test("idInSql embeds the given SELECT verbatim as a subquery, no per-row bind params", () => {
+    const { sql, vals } = buildItemListSql({
+      services: ["github"],
+      types: [],
+      idInSql: {
+        sql: "SELECT i.id FROM item i WHERE i.type = 'pr' AND NOT EXISTS (SELECT 1 WHERE 0)",
+        vals: [],
+      },
+      limit: 10,
+    });
+    expect(sql).toContain(
+      "id IN (SELECT i.id FROM item i WHERE i.type = 'pr' AND NOT EXISTS (SELECT 1 WHERE 0))",
+    );
+    expect(vals).toEqual(["github", 10]);
+  });
+
+  test("idInSql's own vals splice in at the right position for a large id-matching set", () => {
+    // Exercises the actual reason this filter exists: a huge matching set costs exactly the
+    // subquery's own parameter count (one, here), never one bind parameter per matched row.
+    const { sql, vals } = buildItemListSql({
+      services: [],
+      types: [],
+      idInSql: { sql: "SELECT id FROM item WHERE service = ?", vals: ["gitlab"] },
+      sinceMs: 500,
+      limit: 10,
+    });
+    expect(sql).toContain("id IN (SELECT id FROM item WHERE service = ?)");
+    expect(vals).toEqual(["gitlab", 500, 10]);
+  });
 });
