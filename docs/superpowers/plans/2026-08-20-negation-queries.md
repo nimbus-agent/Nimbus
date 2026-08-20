@@ -271,7 +271,64 @@ describe("buildNotTouchingSql", () => {
     db.close();
   });
 });
+
+// The graph_entity BRIDGE is the highest-consequence join in this plan, and a wrong one fails
+// SILENTLY in the dangerous direction: no edges found means every deployment looks clean, and
+// every person looks like they never reviewed. These tests exist to make a wrong join loud.
+describe("buildNoDownstreamIncidentSql", () => {
+  test("a deployment WITH a correlates_with edge is excluded", () => {
+    const db = makeDb();
+    seedDeploymentWithIncident(db, "d1");
+    expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual([]);
+    db.close();
+  });
+
+  test("a deployment with no edge is returned", () => {
+    const db = makeDb();
+    seedDeploymentWithoutIncident(db, "d2");
+    expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual(["d2"]);
+    db.close();
+  });
+
+  test("an incident's own edge does not make the incident look like a clean deployment", () => {
+    const db = makeDb();
+    seedDeploymentWithIncident(db, "d1");
+    // Only `type = 'deployment'` rows may ever appear, whatever else the graph holds.
+    expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual([]);
+    db.close();
+  });
+});
+
+describe("buildNotReviewedSql", () => {
+  test("a person WITH a recent reviewed edge is excluded", () => {
+    const db = makeDb();
+    seedPersonWithReview(db, "alice", 5_000);
+    expect(runIds(db, buildNotReviewedSql(1_000))).toEqual([]);
+    db.close();
+  });
+
+  test("a person with no reviewed edge is returned", () => {
+    const db = makeDb();
+    seedPersonWithoutReview(db, "bob");
+    expect(runIds(db, buildNotReviewedSql(1_000))).toEqual(["bob"]);
+    db.close();
+  });
+
+  test("a review OLDER than the cutoff does not count - the person is returned", () => {
+    const db = makeDb();
+    seedPersonWithReview(db, "carol", 500);
+    expect(runIds(db, buildNotReviewedSql(1_000))).toEqual(["carol"]);
+    db.close();
+  });
+});
 ```
+
+`seedDeploymentWithIncident` / `seedDeploymentWithoutIncident` / `seedPersonWithReview` /
+`seedPersonWithoutReview` are file-local too. Each must build the row the REAL populator builds —
+a `graph_entity` whose `external_id` is the item id (or person id) and whose `type` is
+`deployment` / `person`, with `graph_relation.from_id` pointing at that entity's PRIMARY KEY.
+Seeding `from_id = item.id` directly would make these tests pass against a broken join, which is
+the one thing they exist to prevent.
 
 Write `makeDb`, `seedCoveredPr`, `seedUncoveredPr`, `seedTruncatedPr` and `runIds` as file-local
 consts. **Do NOT export them** — importing a `.test.ts` module re-executes its `describe`/`test`
@@ -438,7 +495,9 @@ must not be summed.
 - [ ] **Step 4: Run the tests and confirm they pass**
 
 Run: `bun test packages/gateway/src/index/negation-predicates.test.ts`
-Expected: PASS, 10 tests.
+Expected: PASS, **15 tests** — 3 probes, 6 `buildNotTouchingSql`, 3 `buildNoDownstreamIncidentSql`,
+3 `buildNotReviewedSql`. If your count differs, reconcile it rather than adjusting the number; a
+stale count is how an invented or dropped test hides.
 
 - [ ] **Step 5: Red-prove the fail-closed guard**
 
@@ -451,6 +510,12 @@ the doc comment gives. Then run the test file.
 Expected: "a PR with NO coverage row is excluded, not returned" FAILS, receiving `["p1","p2"]`.
 **Restore both and re-run to green.** Record the observed failure output in your report. If it does
 NOT fail, stop and say so — the test is not pinning what it claims.
+
+**Then red-prove the graph bridge too**, because it fails in the same silent direction. Change
+`e.external_id = i.id` to `e.id = i.id` in `buildNoDownstreamIncidentSql` — the wrong join a
+reader would most plausibly write — and confirm "a deployment WITH a correlates_with edge is
+excluded" FAILS by returning `["d1"]`. Restore and re-run. Report both outputs. A bad bridge
+returns every deployment as clean, which reads as a good answer.
 
 - [ ] **Step 6: Commit**
 
