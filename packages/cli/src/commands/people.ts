@@ -59,6 +59,13 @@ function parseListFlags(args: string[]): { unlinkedOnly: boolean; limit: number 
         limit = Number.parseInt(limStr, 10);
         i += 1;
       }
+      // Negation-query flags (Task 5 wires the actual predicate behaviour): recognized
+      // here only so the documented examples don't look like unknown flags — not yet
+      // applied to the `people.list` params.
+    } else if (a === "--not-reviewed") {
+      // accept-and-ignore
+    } else if (a === "--since") {
+      i += 1; // also consume its value argument, e.g. "7d"
     }
   }
   return { unlinkedOnly, limit };

@@ -47,6 +47,11 @@ Output:
   const type = takeFlag(args, "--type");
   const sinceRaw = takeFlag(args, "--since");
   const limitRaw = takeFlag(args, "--limit");
+  // Negation-query flags (Task 5 wires the actual predicate behaviour): recognized here
+  // only so the documented examples don't look like unknown flags — not yet applied to
+  // `params`, and deliberately discarded rather than bound to an unused local.
+  void takeFlag(args, "--not-touching");
+  void args.includes("--no-downstream-incident");
   const limit = limitRaw === undefined ? Number.NaN : Number.parseInt(limitRaw, 10);
 
   let sinceMs: number | undefined;
