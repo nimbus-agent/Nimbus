@@ -328,7 +328,17 @@ test("a tool retrieved from a real Mastra Agent sees the request store", async (
 If `agent.getTools()` is not the accessor on `@mastra/core` 1.59, copy the retrieval used by
 `getTool` in `packages/gateway/src/engine/agent.test.ts:47` (`listAgentTools`) rather than
 inventing one. **No live model is called** — the tool is executed directly after being retrieved
-through the Agent, which is the part Mastra mediates and CI can reach.
+through the Agent, which is the part Mastra mediates and CI can reach. Constructing an `Agent` with
+`model: "openai/gpt-4o-mini"` touches no network and needs no `OPENAI_API_KEY`; `agent.test.ts`
+already does it throughout and passes in CI.
+
+**If construction ever does throw, the fallback ladder is: (1) real `Agent`, as written; (2) a mock
+model PROVIDER passed to a real `Agent`; (3) declare it not provable in CI and fall back to the
+spec's § 5.1.1 table.** Never a fake `Agent` object. This step's entire subject is whether a tool
+retrieved *through Mastra* sees the store, so substituting a hand-built agent deletes the thing
+under test and leaves a green test that proves nothing. (`fakeConversationalAgent` in
+`packages/gateway/src/engine/run-ask.test.ts:46` is the right tool for `run-ask.test.ts`, whose
+subject is the caller, and the wrong one here.)
 
 - [ ] **Step 7: Run it**
 
@@ -580,6 +590,29 @@ assert on them.
 Run: `bun test packages/gateway/src/index/negation-query.test.ts`
 Expected: PASS, 12 tests.
 
+- [ ] **Step 4b: Make the `--since` remediation surface-neutral**
+
+B.1 wrote its remediations for the CLI, which was right when the CLI was the only caller. **B.2 is
+what breaks that**: this same string now reaches a model answering in `nimbus ask` and an external
+MCP client, neither of which has a `--since` flag, so it would tell those users to widen something
+that does not exist where they are. Fixed at the single definition, in the orchestrator, so no
+per-surface copy can drift:
+
+```ts
+        "widen the time window (`--since` on the CLI, `sinceDays` on the tool surfaces) to " +
+          "include older reviews, or sync a connector that populates PR review activity and run " +
+          "nimbus index regraph",
+```
+
+Then update the two assertions that pin the old wording — these are **expected** test edits, which
+is why this is its own step and not part of Step 5/6, whose contract is that no existing test
+changes:
+
+- `packages/cli/src/commands/people.test.ts:580` — the full remediation string in the fixture.
+- `packages/cli/src/commands/people.test.ts:590` — `expect(out.stderr).toContain("widen --since")`
+  becomes `toContain("widen the time window")`. Keep an assertion that `--since` still appears
+  somewhere in the remediation, so the CLI's own advice cannot be lost while making it portable.
+
 - [ ] **Step 5: Rewire `rpcIndexQueryItems` to call the orchestrator**
 
 In `packages/gateway/src/ipc/diagnostics-rpc.ts`, keep every `-32602` validation and the
@@ -617,8 +650,9 @@ bare-array plain path untouched.
 - [ ] **Step 7: Prove the refactor changed nothing**
 
 Run: `bun test packages/gateway/src/ipc/diagnostics-rpc.test.ts packages/gateway/src/ipc/people-rpc.test.ts packages/gateway/src/index packages/cli/src/commands/query.test.ts packages/cli/src/commands/people.test.ts`
-Expected: PASS with the **same counts as before the refactor** and **zero edits to those test
-files**. If a test needed changing, the refactor was not behaviour-preserving — revert and redo.
+Expected: PASS with the **same counts as before the refactor**, and **zero edits to those test files
+beyond the two lines Step 4b names**. If any other test needed changing, the refactor was not
+behaviour-preserving — revert and redo.
 
 - [ ] **Step 8: Commit**
 
@@ -755,6 +789,21 @@ Expected: FAIL — `Cannot find module './negation-tools.ts'`.
 Create `packages/gateway/src/engine/negation-tools.ts`. Kept out of `agent.ts` because that file is
 already ~500 lines of tool definitions; these three belong together and change together.
 
+**★ Every description MUST name its parameters in prose.** No engine tool in this codebase uses
+Mastra's `inputSchema` — verified: `grep -rn "inputSchema" packages/gateway/src/engine/*.ts` returns
+nothing — so the description and `toolGuidance` are the **only** places the model learns which
+arguments exist. `fetchMoreIndexResults` sets the convention by spelling its signature out in
+`toolGuidance`. A tool whose one required argument is never named is a tool the model calls wrong
+and gets an error from, which then reads as the model being bad at the task.
+
+**`findPeopleWithoutReviews` takes `sinceDays: number`, not a duration string and not an epoch.**
+A duration string (`"7d"`) would need a parser, and the gateway has none — `parseSinceDurationToMs`
+lives in `packages/cli/src/lib/parse-since.ts`, and B.1's spec § 4.3 explicitly refused to write a
+second one, because two parsers that disagree about `7d` is a silent cross-surface bug. An epoch
+millisecond is what `people.list` wants but is a hostile thing to ask a model to compute. So the
+tool takes days-back and converts at its own boundary:
+`sinceMs: Date.now() - sinceDays * 86_400_000`. Omitting it still means "ever".
+
 ```ts
 import { createTool } from "@mastra/core/tools";
 
@@ -827,7 +876,7 @@ export function createNegationTools(deps: { localIndex: LocalIndex }) {
   const findPrsNotTouching = createTool({
     id: "findPrsNotTouching",
     description:
-      "Pull requests with NO indexed changed-file path matching a glob (e.g. 'tests/**'). Use this — never searchLocalIndex — when the question is which PRs do NOT touch something: this tool proves its substrate first and refuses when PR file coverage is not indexed, because an unfetched PR is indistinguishable from one that genuinely never touched the path. Scoped to pull requests intrinsically; `service` is optional and omitting it searches every indexed forge.",
+      "findPrsNotTouching(pathGlob, service?, limit?) — pull requests with NO indexed changed-file path matching pathGlob (a GLOB such as 'tests/**'; required). Use this, never searchLocalIndex, when the question is which PRs do NOT touch something: it proves its substrate first and refuses when PR file coverage is not indexed, because an unfetched PR is indistinguishable from one that genuinely never touched the path. Scoped to pull requests intrinsically — there is no itemType argument. service is optional; omitting it searches every indexed forge.",
     execute: async (inputData: unknown) => {
       const q = asRecord(inputData);
       const pathGlob = optTrimmed(q, "pathGlob");
@@ -854,10 +903,20 @@ export function createNegationTools(deps: { localIndex: LocalIndex }) {
       );
     },
   });
-  // findDeploymentsWithoutIncident and findPeopleWithoutReviews follow the same shape.
+  // findDeploymentsWithoutIncident(service?, limit?) and
+  // findPeopleWithoutReviews(sinceDays?, limit?) follow the same shape, and their descriptions
+  // open with that same signature line for the reason given above.
+  //
   // The deployment tool's description must state that the correlation window is FIXED at write
-  // time and cannot be widened per query; the people tool's `since` accepts a millisecond epoch
-  // cutoff and defaults to "ever".
+  // time and cannot be widened per query — there is deliberately no `within` argument, because
+  // the edge timestamp is a WRITE time, not an event time, so a query-time window cannot be
+  // reconstructed even in principle.
+  //
+  // The people tool converts at its own boundary and defaults to "ever":
+  //   const sinceDays = typeof q["sinceDays"] === "number" && Number.isFinite(q["sinceDays"])
+  //     ? Math.max(0, Math.floor(q["sinceDays"]))
+  //     : undefined;
+  //   const sinceMs = sinceDays === undefined ? undefined : Date.now() - sinceDays * 86_400_000;
   return { findPrsNotTouching /* , … */ };
 }
 ```
@@ -896,7 +955,7 @@ Append to `searchLocalIndex`'s `description` (spec § 6):
 Append to `toolGuidance`:
 
 ```text
- For a negative question ("which X did NOT ..."), use the find*Not*/find*Without* tools rather than searchLocalIndex: only they prove the underlying data exists, and only they can tell "nothing matched" apart from "nothing was indexed". If one of them refuses, say so and stop — do not substitute a ranked search.
+ For a negative question ("which X did NOT ..."), use findPrsNotTouching(pathGlob, service?, limit?), findDeploymentsWithoutIncident(service?, limit?) or findPeopleWithoutReviews(sinceDays?, limit?) rather than searchLocalIndex: only they prove the underlying data exists, and only they can tell "nothing matched" apart from "nothing was indexed". If one of them refuses, say so and stop — do not substitute a ranked search.
 ```
 
 - [ ] **Step 6: Run the engine tests**
@@ -1225,7 +1284,9 @@ distinction is what decides whether the call is ledgered):
 Write `findDeploymentsWithoutIncident` (`types: ["deployment"]`, `noDownstreamIncident: true`, and
 a description stating the correlation window is fixed at write time) and `findPeopleWithoutReviews`
 (`c.call("people.list", { notReviewed: true, sinceMs, limit })`, **no `service`** — `people.list`
-has no service dimension).
+has no service dimension). Its schema takes `sinceDays: z.number().int().nonnegative().optional()`
+and converts to `sinceMs` at the tool boundary, exactly as the engine tool does, so the two
+surfaces present one vocabulary rather than two.
 
 - [ ] **Step 4: Run the tests**
 
