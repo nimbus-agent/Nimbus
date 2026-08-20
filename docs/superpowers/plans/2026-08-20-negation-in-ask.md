@@ -204,8 +204,9 @@ export type AgentRequestContext = {
    * Disclosure sentences recorded by negation tools during this turn, drained and appended by
    * `runConversationalAgent`. Created LAZILY by `recordNegationDisclosure` rather than
    * initialised where the store is built: `ipc/server/inline-handlers.ts` constructs the store
-   * in TWO places (`engine.ask` and the `engine.askStream` dispatcher), and a field that had to
-   * be initialised at both would eventually be initialised at one.
+   * in THREE places (`engine.ask` :96, `workflow.run` :215, the `engine.askStream` dispatcher
+   * :350), and a field that had to be initialised at each would eventually be initialised at
+   * some.
    */
   negationDisclosures?: string[];
 };
