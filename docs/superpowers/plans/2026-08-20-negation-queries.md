@@ -296,8 +296,15 @@ describe("buildNotTouchingSql", () => {
 });
 
 // The graph_entity BRIDGE is the highest-consequence join in this plan, and a wrong one fails
-// SILENTLY in the dangerous direction: no edges found means every deployment looks clean, and
-// every person looks like they never reviewed. These tests exist to make a wrong join loud.
+// SILENTLY. Corrected after implementation: the direction is UNDER-inclusion, not over — the
+// bridge is an INNER JOIN in the main query, so a broken join matches nothing and the predicate
+// returns an EMPTY result rather than returning every deployment as clean. That is the safer
+// direction, but it is still silent: "no deploys matched" reads as a finding.
+//
+// The same INNER JOIN also drops any deployment or person with no graph_entity row at all, which
+// is reachable (`syncGraphFromIndexedItem` writes nothing below user_version 7, and
+// `regraphAllItems` exists to backfill exactly those). Dropping them is correct; dropping them
+// UNCOUNTED is not — see the `excludedNoGraphEntity` requirement in Task 3.
 describe("buildNoDownstreamIncidentSql", () => {
   test("a deployment WITH a correlates_with edge is excluded", () => {
     const db = makeDb();

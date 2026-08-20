@@ -144,8 +144,21 @@ duration parsers that disagree about `7d` would be a silent correctness bug acro
 | Predicate | Empty-substrate probe | Partial handling |
 | --- | --- | --- |
 | `--not-touching` | any `pr_files_state` row | per-PR: uncovered or truncated → excluded, counted separately |
-| `--no-downstream-incident` | any `correlates_with` edge | none — global fact, all-or-nothing |
-| `--not-reviewed` | any `reviewed` edge | none — global fact, all-or-nothing |
+| `--no-downstream-incident` | any `correlates_with` edge | per-deployment: no `graph_entity` row → excluded, counted |
+| `--not-reviewed` | any `reviewed` edge | per-person: no `graph_entity` row → excluded, counted |
+
+**Corrected during implementation — this table originally claimed the second and third predicates
+had NO per-row partial state ("global fact, all-or-nothing"). That was wrong.** Both reach their
+edges through an INNER JOIN to `graph_entity`, so an item or person with no graph entity is
+silently dropped: never returned, and — before this correction — never counted either. That is
+reachable, not theoretical: `syncGraphFromIndexedItem` (`graph/graph-populator.ts:1067`) returns
+without writing when `user_version < 7`, and `regraphAllItems` exists precisely to backfill items
+that were indexed ungraphed.
+
+Dropping them is the FAIL-CLOSED direction and stays. Dropping them **uncounted** is not: a user
+asking "which deploys were clean?" would get a shorter list with no explanation, which is the
+silent shortfall this whole design exists to make visible. Both predicates therefore report an
+`excludedNoGraphEntity` count alongside their results.
 
 Two of the three probes are exactly what `agents/_lib/gap-notes.ts`'s `detectMissingRelationEmit`
 already does; it is used by `why` and `expert` today and is reused rather than reimplemented.
