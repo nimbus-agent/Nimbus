@@ -869,7 +869,20 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
     // exactly that shape for an unstubbed URL: `no stub matched GET <url>`. So this test is a real
     // reproduction rather than a synthetic one — leaving the MR-diffs route unstubbed IS the
     // rejecting fetch, and the thrown message genuinely contains the host.
-    const host = "gitlab.internal.example.com";
+    // The host carries a unique SENTINEL token rather than being a plain realistic hostname, and
+    // the assertion below matches on that token alone. Two reasons, in order of importance:
+    //
+    // 1. It is a stricter probe. A token that exists nowhere else in the codebase cannot match a
+    //    log line coincidentally, whereas a bare domain could in principle appear via some other
+    //    route and mask a real leak behind an already-passing assertion.
+    // 2. It stops `js/incomplete-url-substring-sanitization` firing on the assertion. That rule
+    //    exists for production code that gates on a URL substring, where an attacker-controlled
+    //    prefix or suffix defeats the check. Here the check runs the other way round — it asserts
+    //    a secret is ABSENT — so a "bypass" would only make it catch MORE leaks, never fewer.
+    //    The rule is not excluded repo-wide, because it is genuinely right about production host
+    //    checks; only this assertion is reshaped.
+    const sentinel = "vault-api-base-sentinel-9f3a2c";
+    const host = `gitlab-${sentinel}.example`;
     await fixture.vault.set("gitlab.api_base", `https://${host}/api/v4`);
     seedGitlabIndexProject(fixture, "grp/proj");
     fixture.fetchMock.respond("GET", EVENTS_RE_ANY_HOST, []);
@@ -894,7 +907,7 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
     // hence the host. Assert on the LOG OUTPUT, not on the absence of a throw: the sync resolves
     // either way, so "did not throw" alone would pass against the unfixed code.
     expect(lines.length).toBeGreaterThan(0);
-    expect(lines.some((l) => l.includes(host))).toBe(false);
+    expect(lines.some((l) => l.includes(sentinel))).toBe(false);
   });
 
   test("a 429 on MR diffs raises RateLimitError out of the sync and penalises the provider", async () => {
