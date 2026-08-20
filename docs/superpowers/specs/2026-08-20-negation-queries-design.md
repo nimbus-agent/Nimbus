@@ -14,10 +14,16 @@ Three negation predicates, one per example the roadmap row names, each on the co
 shape it already matches:
 
 ```text
-nimbus query  --type pr         --not-touching 'tests/**'
-nimbus query  --type deployment --no-downstream-incident
-nimbus people --not-reviewed --since 7d
+nimbus query       --type pr         --not-touching 'tests/**'
+nimbus query       --type deployment --no-downstream-incident
+nimbus people list --not-reviewed --since 7d
 ```
+
+**Note the `list` on the third line — it is required, not stylistic.** `runPeople`
+(`packages/cli/src/commands/people.ts:152`) dispatches on `args[0]` as a SUBCOMMAND, so
+`nimbus people --not-reviewed` resolves `sub` to `"--not-reviewed"` and exits with "Unknown people
+subcommand". `nimbus query` is flag-first and `nimbus people` is subcommand-first; the two surfaces
+genuinely differ and this spec follows each as it is rather than reshaping one to match the other.
 
 Plus `--explain`, which shows the SQL that ran.
 
@@ -110,13 +116,21 @@ The output names the window instead — and **derives it from `CORRELATION_WINDO
 restating "2h"**. Sub-project A shipped a defect where a constant and its prose drifted; the fix
 was deriving one from the other, and the same applies to a number that appears in every result.
 
-### 4.3 `nimbus people --not-reviewed --since <window>`
+### 4.3 `nimbus people list --not-reviewed --since <window>`
 
 People with no outgoing `reviewed` edge newer than the cutoff.
 
 This is the one predicate whose window is genuine: `--since` filters the edges themselves, so it
-means what a reader expects. The `reviewed` edge is written by `graph/graph-populator.ts` from PR
-review activity.
+means what a reader expects. The `reviewed` edge is written by `graph/graph-populator.ts:350` from
+PR review activity.
+
+**Lands on the `list` subcommand**, per the note in § 1: `runPeople` dispatches `args[0]` as a
+subcommand, so the flags hang off `runPeopleList` and the parameters go on `people.list`.
+
+`--since` is parsed with the EXISTING `parseSinceDurationToMs`
+(`packages/cli/src/lib/parse-since.ts:1`), which `nimbus query` already uses. `nimbus people` does
+not currently parse durations at all, so this is a reuse, not a second implementation — two
+duration parsers that disagree about `7d` would be a silent correctness bug across two commands.
 
 ### 4.4 Substrate checks
 
@@ -179,10 +193,26 @@ and adds a redaction pass that implies these values were sensitive.
 
 When a substrate probe finds nothing:
 
-- non-zero exit, on the CLI's existing error path;
-- a message naming the missing substrate and its remediation, in the shape
-  `detectMissingRelationEmit` already produces;
-- under `--json`, a STRUCTURED refusal document.
+- **exit code `1`**, set via `process.exitCode = 1` — the convention `runPeople` already uses for
+  an unknown subcommand (`people.ts:181`), so this is the existing error path, not a new one;
+- human mode: the message and remediation to **stderr**, in the shape `detectMissingRelationEmit`
+  already produces;
+- `--json` mode: a structured refusal document to **stdout**, so a pipeline can parse it, with
+  exit `1` unchanged:
+
+```json
+{
+  "status": "refused",
+  "reason": "missing_substrate",
+  "message": "no `reviewed` edges are indexed",
+  "remediation": "nimbus index regraph"
+}
+```
+
+The stream split is deliberate. A refusal is not a result, so it must not land on stdout where a
+human's `--json`-less invocation might pipe it into something expecting rows; but under `--json`
+the refusal IS the document the caller asked for, and putting it on stderr would leave stdout
+empty and indistinguishable from a successful zero-row answer.
 
 The last point is the one worth insisting on. A script asking "which deploys were clean?" must be
 able to distinguish **refused** from **none matched** — those are opposite answers, and a non-zero
@@ -228,13 +258,30 @@ three independent flags.
 
 ## 9. Open questions carried into the plan
 
-Both are lookups against the tree, not unresolved design decisions. Every decision in this spec is
-made, in § 3 and § 4.
+**Both original open questions are now CLOSED**, answered against the tree during design review and
+folded into § 4.3 and § 6:
 
-1. The exact exit code and error-path helper the CLI uses for a "cannot answer" failure — the plan
-   reads `packages/cli/src/commands/` and matches the existing convention rather than inventing one.
-2. Whether `nimbus people` already accepts a `--since` flag, and if not, which people-side IPC
-   method gains the predicate parameters.
+1. **Exit code and error path** — `process.exitCode = 1`, the convention `people.ts:181` already
+   uses; human message to stderr, `--json` refusal document to stdout. See § 6.
+2. **`nimbus people` and `--since`** — it parses no durations today, so `--since` reuses
+   `parseSinceDurationToMs` from `packages/cli/src/lib/parse-since.ts:1`, and the predicate
+   parameters go on `people.list` / `runPeopleList`. See § 4.3.
+
+One item remains for the plan, and it is a shape decision rather than a lookup:
+
+1. The exact `explain` payload shape. The working shape is
+   `{ sql, params, substrate: { probeSql, passed, rowCount } }`, which is what the plan should
+   implement unless reading `index.queryItems`'s existing response envelope shows a house shape it
+   should match instead. The plan checks that envelope first.
+
+**Verified against the tree while writing and reviewing this spec:** `correlates_with` is always
+directed deployment → incident (`graph-populator.ts:898,913`); `CORRELATION_WINDOW_MS` is
+`2 * 60 * 60 * 1000` (`:702`); `reviewed` is written at `:350`; `graph_relation` carries
+`created_at` as a WRITE timestamp (`index/graph-v7-sql.ts`); `detectMissingRelationEmit` exists at
+`agents/_lib/gap-notes.ts:58`; `runPeople` dispatches `args[0]` as a subcommand
+(`packages/cli/src/commands/people.ts:152`) with `list` / `search` / `get` / `items` / `link`;
+`parseSinceDurationToMs` exists at `packages/cli/src/lib/parse-since.ts:1`;
+`ALLOWED_METHODS.len()` asserts **105** at `packages/ui/src-tauri/src/gateway_bridge.rs:594`.
 
 **Verified against the tree while writing this spec:** `correlates_with` is always directed
 deployment → incident (`graph-populator.ts:898,913`); `CORRELATION_WINDOW_MS` is
