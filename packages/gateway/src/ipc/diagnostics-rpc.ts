@@ -422,6 +422,9 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
     const outcome = runNotTouchingQuery(db, requireLocalIndex(ctx), {
       pathGlob: notTouching,
       ...(services.length > 0 ? { services } : {}),
+      // The caller's own `types` filter, reproducing the pre-refactor composed SQL exactly —
+      // ANDed with the predicate's own `i.type = 'pr'` restriction, never a replacement for it.
+      types,
       ...(sinceMs === undefined ? {} : { sinceMs }),
       ...(untilMs === undefined ? {} : { untilMs }),
       limit,
@@ -445,6 +448,8 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
   if (noDownstreamIncident) {
     const outcome = runNoDownstreamIncidentQuery(db, requireLocalIndex(ctx), {
       ...(services.length > 0 ? { services } : {}),
+      // Same reasoning as `runNotTouchingQuery`'s call above.
+      types,
       ...(sinceMs === undefined ? {} : { sinceMs }),
       ...(untilMs === undefined ? {} : { untilMs }),
       limit,

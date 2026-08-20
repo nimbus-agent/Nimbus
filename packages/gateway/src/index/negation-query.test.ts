@@ -147,6 +147,39 @@ describe("runNotTouchingQuery", () => {
     expect(out.explain).toBeUndefined();
     db.close();
   });
+
+  // Fix round 1: a caller-supplied `types` disjoint from `pr` must intersect down to ZERO rows,
+  // never silently be ignored in favor of the predicate's own `i.type = 'pr'` restriction — that
+  // would answer a different question than the caller asked, the exact failure this feature
+  // exists to prevent. Reproduces the pre-refactor composed SQL
+  // (`type IN ('issue') AND id IN (<pr-subquery>)`), which always returned empty.
+  test("a caller-supplied types filter disjoint from 'pr' returns zero rows, not every PR", () => {
+    const { index, db } = freshIndex();
+    seedCoveredPr(db, "touches-src", ["src/a.ts"]);
+    const out = runNotTouchingQuery(db, index, {
+      pathGlob: "tests/**",
+      types: ["issue"],
+      limit: 20,
+    });
+    expect(out.kind).toBe("ok");
+    if (out.kind !== "ok") return;
+    expect(out.rows).toEqual([]);
+    db.close();
+  });
+
+  test("a caller-supplied types filter of 'pr' still returns matching rows (no regression)", () => {
+    const { index, db } = freshIndex();
+    seedCoveredPr(db, "touches-src", ["src/a.ts"]);
+    const out = runNotTouchingQuery(db, index, {
+      pathGlob: "tests/**",
+      types: ["pr"],
+      limit: 20,
+    });
+    expect(out.kind).toBe("ok");
+    if (out.kind !== "ok") return;
+    expect(out.rows.map((r) => r.id)).toEqual(["touches-src"]);
+    db.close();
+  });
 });
 
 describe("runNoDownstreamIncidentQuery", () => {
@@ -193,6 +226,30 @@ describe("runNoDownstreamIncidentQuery", () => {
     expect(out.kind).toBe("ok");
     if (out.kind !== "ok") return;
     expect(out.explain).toBeUndefined();
+    db.close();
+  });
+
+  // Fix round 1: same regression as `runNotTouchingQuery` — a caller-supplied `types` disjoint
+  // from `deployment` must intersect down to ZERO rows, not be silently ignored.
+  test("a caller-supplied types filter disjoint from 'deployment' returns zero rows", () => {
+    const { index, db } = freshIndex();
+    seedDeploymentWithIncident(db, "with-incident");
+    seedDeploymentWithoutIncident(db, "clean");
+    const out = runNoDownstreamIncidentQuery(db, index, { types: ["issue"], limit: 20 });
+    expect(out.kind).toBe("ok");
+    if (out.kind !== "ok") return;
+    expect(out.rows).toEqual([]);
+    db.close();
+  });
+
+  test("a caller-supplied types filter of 'deployment' still returns matching rows", () => {
+    const { index, db } = freshIndex();
+    seedDeploymentWithIncident(db, "with-incident");
+    seedDeploymentWithoutIncident(db, "clean");
+    const out = runNoDownstreamIncidentQuery(db, index, { types: ["deployment"], limit: 20 });
+    expect(out.kind).toBe("ok");
+    if (out.kind !== "ok") return;
+    expect(out.rows.map((r) => r.id)).toEqual(["clean"]);
     db.close();
   });
 });

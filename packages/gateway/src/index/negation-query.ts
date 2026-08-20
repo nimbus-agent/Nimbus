@@ -49,6 +49,17 @@ type ItemLister = { listItems(params: ItemListQueryParams): IndexedItem[] };
 export type NotTouchingParams = {
   readonly pathGlob: string;
   readonly services?: readonly string[];
+  /**
+   * The caller's own type filter (e.g. an RPC-level `types` param), ANDed with the predicate's
+   * own `id IN (<pr-subquery>)` restriction — NOT a replacement for it. `buildNotTouchingSql`
+   * still hardcodes `i.type = 'pr'` inside its own predicate SQL (fail-closed regardless of this
+   * filter); this is the OUTER scope a raw JSON-RPC caller can additionally narrow with, exactly
+   * as `index.queryItems`'s plain path already lets it. Omitted or empty means unrestricted
+   * (the pre-refactor default). A caller passing a type disjoint from `'pr'` (e.g. `["issue"]`)
+   * gets zero rows, not every PR — the two filters intersect, reproducing the pre-refactor
+   * composed SQL exactly.
+   */
+  readonly types?: readonly string[];
   readonly sinceMs?: number;
   readonly untilMs?: number;
   readonly limit: number;
@@ -71,7 +82,12 @@ export function runNotTouchingQuery(
   index: ItemLister,
   params: NotTouchingParams,
 ): NegationOutcome<IndexedItem, NotTouchingGaps> {
-  const types = ["pr"] as const;
+  // `types` is the CALLER's own filter (see `NotTouchingParams.types`'s doc comment) — the
+  // predicate's own `i.type = 'pr'` restriction lives inside `buildNotTouchingSql` and is
+  // unconditional. Threading the caller's filter through, rather than hardcoding `["pr"]` here,
+  // reproduces the pre-refactor composed SQL exactly: a caller-supplied type disjoint from `pr`
+  // still intersects down to zero rows instead of silently being ignored.
+  const types = params.types ?? [];
   const baseParams: ItemListQueryParams = {
     ...(params.services === undefined ? {} : { services: params.services }),
     types,
@@ -111,6 +127,12 @@ export function runNotTouchingQuery(
 
 export type NoDownstreamIncidentParams = {
   readonly services?: readonly string[];
+  /**
+   * The caller's own type filter, ANDed with the predicate's own `id IN (<deployment-subquery>)`
+   * restriction — see `NotTouchingParams.types`'s doc comment for the full reasoning.
+   * `buildNoDownstreamIncidentSql` still hardcodes `i.type = 'deployment'` unconditionally.
+   */
+  readonly types?: readonly string[];
   readonly sinceMs?: number;
   readonly untilMs?: number;
   readonly limit: number;
@@ -128,7 +150,10 @@ export function runNoDownstreamIncidentQuery(
   index: ItemLister,
   params: NoDownstreamIncidentParams,
 ): NegationOutcome<IndexedItem, NoDownstreamIncidentGapsResult> {
-  const types = ["deployment"] as const;
+  // Same reasoning as `runNotTouchingQuery`: `types` is the CALLER's own filter, threaded through
+  // rather than hardcoded, so it reproduces the pre-refactor composed SQL exactly. The predicate's
+  // own `i.type = 'deployment'` restriction lives inside `buildNoDownstreamIncidentSql`.
+  const types = params.types ?? [];
   const baseParams: ItemListQueryParams = {
     ...(params.services === undefined ? {} : { services: params.services }),
     types,
