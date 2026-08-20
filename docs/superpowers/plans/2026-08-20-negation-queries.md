@@ -756,9 +756,20 @@ Expected: FAIL — params ignored.
 
 - [ ] **Step 4: Implement, then run to green**
 
-Same order as Task 3: probe first, refuse on empty, otherwise filter. `--not-reviewed` has NO
-per-row partial state — the `reviewed` edge set is a global fact — so it emits **no** `gaps` key.
-Do not invent one for symmetry; an always-zero gap count would imply a check that is not happening.
+Same order as Task 3: probe first, refuse on empty, otherwise filter.
+
+**`--not-reviewed` DOES have per-row partial state — corrected after Task 2 disproved the original
+claim here.** This step previously said it had none and forbade a `gaps` key. That was wrong.
+`buildNotReviewedSql` reaches `reviewed` edges through an INNER JOIN to `graph_entity`, so a person
+with no graph entity of type `person` is silently dropped — not returned, not counted. It is
+reachable: `syncGraphFromIndexedItem` (`graph/graph-populator.ts:1067`) writes nothing when
+`user_version < 7`, and `regraphAllItems` exists to backfill items indexed ungraphed.
+
+So emit a gaps key carrying `excludedNoGraphEntity`. Label it "no graph entity of the required
+type" rather than "not graphed": the count conflates never-graphed with graphed-but-lacking-a
+-`person`-entity, and the second is the case a reader is more likely to hit. Dropping these rows is
+the fail-closed direction and stays; dropping them UNCOUNTED is the silent shortfall this feature
+exists to prevent.
 
 Run: `bun test packages/gateway/src/ipc/people-rpc.test.ts`
 Expected: PASS.
@@ -930,10 +941,12 @@ git commit -F - <<'EOF'
 docs: record first-class negation queries (W6-B.1)
 
 States the four bounds a reader needs: an empty substrate refuses
-rather than returning rows; only --not-touching has per-row exclusion,
-because the other two substrates are global facts; the correlation
-window is fixed at two hours by the populator and no flag can widen it;
-and nimbus ask exposure is B.2, not this delivery.
+rather than returning rows; ALL THREE predicates exclude and count
+unverifiable rows, differing only in shape - a PR can be fetched
+incompletely, while a deployment or person can lack the graph entity
+the predicate joins through; the correlation window is fixed at two
+hours by the populator and no flag can widen it; and nimbus ask
+exposure is B.2, not this delivery.
 
 Marks the negation half of the W6-B row shipped without marking the row
 complete, and keeps its 2026-08-16 correction, which records why the

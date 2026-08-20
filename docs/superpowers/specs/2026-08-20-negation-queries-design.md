@@ -163,9 +163,19 @@ silent shortfall this whole design exists to make visible. Both predicates there
 Two of the three probes are exactly what `agents/_lib/gap-notes.ts`'s `detectMissingRelationEmit`
 already does; it is used by `why` and `expert` today and is reused rather than reimplemented.
 
-**The asymmetry is load-bearing and must not be smoothed over.** Only the file predicate has
-per-row coverage. For the other two there is no partial state to report, which makes the refusal
-the ENTIRE safety mechanism for them rather than a backstop behind per-row exclusion.
+**All three predicates have per-row partial state, and the asymmetry is in its SHAPE, not its
+existence.** *(This paragraph originally said the other two had none — the same claim the table
+above corrects. It survived the first correction because that edit fixed the table and not the
+prose eight lines below it.)*
+
+The file predicate's partial state is about DATA WE FETCHED INCOMPLETELY: a PR can be uncovered or
+truncated, and the two are reported separately because they mean different things. The other two
+predicates' partial state is about a MISSING BRIDGE: an item or person that has no `graph_entity`
+row of the required type cannot be evaluated at all.
+
+Both are excluded and both are counted. What differs is that a truncated PR was reached and only
+partly read, while an ungraphed deployment was never reachable — which is why they get different
+labels rather than one shared count.
 
 ### 4.5 Subject-type scoping is mandatory
 
