@@ -31,6 +31,90 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   Both are recorded in the satellite's `SECURITY.md` and its `nimbus-mcp-boundaries` skill rather
   than left for rediscovery.
 
+- **2026-08-20 — First-class negation queries (W6-B.2): the three B.1 predicates reachable by a
+  model, closing Wave 6.** `findPrsNotTouching(pathGlob, service?, limit?)`,
+  `findDeploymentsWithoutIncident(service?, limit?)`, and `findPeopleWithoutReviews(sinceDays?,
+  limit?)` — the same three predicates B.1 shipped as CLI flags — now exist as named tools under
+  the same names on **two surfaces**: the gateway engine (`engine/agent.ts`, reached by `nimbus
+  ask` and, because they share the engine, the desktop app and the VS Code extension), and the MCP
+  server (`INDEX_TOOL_SPECS` in `packages/cli/src/mcp/adapter.ts`, reached by any external MCP
+  client — `TOOL_SPECS` moves from 18 to 21). One tool per predicate, not a `predicate` enum: each
+  carries its own substrate story in its own description, and type scope is now intrinsic
+  (`findPrsNotTouching` hardcodes `types: ["pr"]`) rather than a caller-suppliable parameter that
+  could be omitted or set wrong. The orchestration sequence B.1 left inside the two IPC handlers —
+  probe the substrate, refuse if empty, build the predicate, compose, run, count exclusions — is
+  now extracted once into `index/negation-query.ts` and shared by all three consumers (the two RPC
+  handlers keep their own wire-contract tests; the extracted module gets its own for the sequence).
+
+  **The guarantee this delivery provides is UNEQUAL across the two surfaces, and stating that
+  precisely is the point of shipping both in one delivery rather than describing them as the same
+  feature.** Refusals are structural on **both**: a refusing tool returns *only* the refusal — no
+  rows sit alongside it — so there is nothing for a model on either surface to present instead.
+  But **exclusion counts are guaranteed only on the engine surface.** A new
+  `engine/negation-disclosure.ts` owns one definition per disclosure sentence; a negation tool that
+  refused or excluded rows pushes its sentence onto a lazily-created array on the per-request
+  `AsyncLocalStorage` store (`agentRequestContext`, built at all three
+  `ipc/server/inline-handlers.ts` sites that need it: `agent.invoke`, `workflow.run`,
+  `engine.askStream`), and `runConversationalAgent` **drains** that array — read-and-clear, so a
+  reused store within one dispatch frame cannot re-emit a disclosure already shown — and appends
+  the sentences to the reply at the single site both the local-router and Mastra-agent paths
+  return through. The streamed answer and the returned answer are byte-identical: the same text is
+  also emitted through `sendChunk` before the streaming handler returns, closing the exact
+  two-dispatcher trap that made `--devil` inert on the UI path (A1, 2026-08-18) before it was
+  caught. A turn where nothing fired is unchanged byte-for-byte. An external MCP client never
+  reaches any of this — it calls `tools/call`, gets JSON back, and what its model does with that
+  JSON (report the rows, drop "12 excluded") is beyond the gateway's reach: no system prompt, no
+  persona, no append hook exists on that path, and `@nimbus-dev/mcp` cannot close the gap either,
+  since the launcher execs `nimbus mcp-server --stdio` with `stdio: "inherit"` — a pure exec, not a
+  proxy that could inject anything into the wire. So "negation in ask and MCP" is not one
+  guarantee: `nimbus ask` (and the desktop/VS Code surfaces sharing its engine) cannot lose an
+  exclusion count to a paraphrase; an MCP client can.
+
+  **The disclosure append is a tested guarantee, not a hope.** The design flagged a real risk that
+  the per-request `AsyncLocalStorage` store might not survive Mastra's internal tool-call
+  scheduling — a failure mode that would look identical to a turn with nothing to disclose, since
+  `getStore()` would return `undefined` and nothing would push, drain, or warn. That was probed
+  against a real `@mastra/core` `Agent` (not a hand-built fake) during implementation: a
+  `createTool`-registered probe tool retrieved through the Agent's own accessor, executed inside an
+  `agentRequestContext.run()` scope, and the pushed sentinel arrived on the first attempt. As a
+  fail-safe regardless, every negation tool also embeds its disclosure sentence in its own returned
+  payload — the MCP-level guarantee — and `recordNegationDisclosure` logs a warning on the rare
+  path where no store is present, so the guarantee degrades visibly rather than silently.
+
+  **A model can still ignore the tool descriptions, and this delivery does not close that.**
+  `searchLocalIndex`'s description now says it ranks and returns matches, cannot answer which items
+  do *not* match, and names the three negation tools as the right ones for that question — but
+  steering is by description only. There is deliberately no detector: classifying a user's
+  free-text question as "a negation" is a guess about natural language, and a false positive would
+  attach a scary caveat to a correct answer. A model can call `searchLocalIndex` for a negation
+  question anyway and produce a fluent wrong answer with no disclosure attached, because no
+  negation tool ran and nothing was recorded. That residual is a known open bound, not something
+  this delivery closes.
+
+  **The local-router path has no tools at all, so "negation in `nimbus ask`" does not hold there.**
+  When `[llm].prefer_local = true` (the documented Ollama setup), a turn goes through
+  `runViaLocalRouter`, which calls the router's `generate()` — and no router under
+  `packages/gateway/src/llm/` has tool-calling support of any kind. Not the three new negation
+  tools, and not `searchLocalIndex` either. This is pre-existing behaviour B.2 neither causes nor
+  fixes, so the claim is bounded precisely: negation in `nimbus ask` holds for turns answered by
+  the Mastra agent; a `prefer_local = true` user reaches these predicates only through `nimbus
+  query` / `nimbus people list` (B.1) or an MCP client. This project has twice shipped a capability
+  that was inert on a real path and believed to work — A0's synthesis seam, which had never once
+  run in production, and A1's devil mode, inert on the UI dispatcher — both found by measuring
+  rather than reasoning; this bound is recorded before it could join them.
+
+  **Scope boundary.** No schema migration — all three predicates read tables and edges B.1 already
+  populates. No new IPC method — the tools reuse `index.queryItems` / `people.list`, exactly as
+  B.1's handlers did. No new HTTP route. No new invariant. `ALLOWED_METHODS` stays at **105**
+  (unchanged; no Tauri allowlist work needed). No `egress_ledger` row on either surface: engine
+  tools read local SQLite and never reach `connectors.dispatch`, and `engine.ask` is not an
+  `agents.*` brief method, so the agent-brief append path never considers it; MCP *index* tools
+  have never been ledgered — only `AGENT_CLASSIFIED_TOOL_SPECS`, which serve gateway-synthesised
+  briefs, are — and the three new tools serve index rows, so they join `INDEX_TOOL_SPECS` and
+  append nothing, exactly like the six index tools already there. Closes both W6-B rows (Remaining
+  in S1, and the Phase 7 Wave 6 row) — Wave 6 is now complete. Design:
+  [`docs/superpowers/specs/2026-08-20-negation-in-ask-design.md`](./superpowers/specs/2026-08-20-negation-in-ask-design.md).
+
 - **2026-08-20 — `@nimbus-dev/mcp` extracted to its own repo and published to npm.**
   `packages/mcp-launcher` moved to
   [nimbus-agent/nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp) and now publishes via
