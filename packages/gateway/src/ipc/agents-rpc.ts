@@ -440,6 +440,26 @@ function requireWhyRefParams(params: unknown): WhyRefInput {
   return { ref: trimmed, ...(p.line === undefined ? {} : { line: p.line }) };
 }
 
+/**
+ * True when an http(s)-shaped URL carries userinfo (`user:pass@host`).
+ * `new URL()` parses that happily, and forwarding it downstream would land
+ * plaintext credentials in the brief's `query.ref` and get rendered back in
+ * the miss line — this repo's rule is explicit: never store plaintext
+ * credentials in logs, IPC messages, configuration, or source. This is the
+ * durable fix: every caller of `agents.why` (the browser extension included)
+ * goes through this validator, not just the CLI. An unparseable `prUrl` has
+ * nothing to check here; `resolveItemByUrl` rejects it later as
+ * `unresolvable_url`.
+ */
+function prUrlHasCredentials(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.username.length > 0 || parsed.password.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function requireWhyParams(params: unknown): WhyInput {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new AgentsRpcError(-32602, "agents.why requires { ref: string } or { prUrl: string }");
@@ -457,6 +477,9 @@ function requireWhyParams(params: unknown): WhyInput {
     const trimmed = p.prUrl.trim();
     if (trimmed.length === 0 || trimmed.length > MAX_PR_URL_LEN) {
       throw new AgentsRpcError(-32602, `prUrl must be 1..${MAX_PR_URL_LEN} chars after trim`);
+    }
+    if (prUrlHasCredentials(trimmed)) {
+      throw new AgentsRpcError(-32602, "prUrl must not contain userinfo (user:pass@) credentials");
     }
     return { prUrl: trimmed };
   }

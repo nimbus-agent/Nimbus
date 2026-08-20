@@ -203,6 +203,44 @@ describe("runWhyCli — dispatcher (full brief)", () => {
     expect(agentCallParams).toEqual({ prUrl: "https://github.com/acme/web/pull/482" });
   });
 
+  it("rejects a pull request URL with userinfo credentials, without calling the gateway", async () => {
+    let called = false;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async () => {
+          called = true;
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await expect(runWhyCli(["https://u:p@github.com/acme/web/pull/482"])).rejects.toThrow(
+      "Pull request URL must not contain userinfo (user:pass@) credentials",
+    );
+    expect(called).toBe(false);
+  });
+
+  it("rejects --line combined with a pull request URL, without calling the gateway", async () => {
+    let called = false;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async () => {
+          called = true;
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await expect(
+      runWhyCli(["https://github.com/acme/web/pull/482", "--line", "12"]),
+    ).rejects.toThrow("--line takes a path or symbol, not a pull request URL");
+    expect(called).toBe(false);
+  });
+
   it("exits 2 when why.briefError fires", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({

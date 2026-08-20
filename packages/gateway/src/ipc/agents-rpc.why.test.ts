@@ -138,6 +138,19 @@ describe("dispatchAgentsRpc — agents.why", () => {
       dispatchAgentsRpc("agents.why", { prUrl: "   " }, makeCtx(freshDb())),
     ).rejects.toThrow(/prUrl/);
   });
+
+  test("agents.why rejects a prUrl carrying userinfo credentials, without echoing it", async () => {
+    await expect(
+      dispatchAgentsRpc(
+        "agents.why",
+        { prUrl: "https://u:p@example.test/acme/web/pull/482" },
+        makeCtx(freshDb()),
+      ),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: "prUrl must not contain userinfo (user:pass@) credentials",
+    });
+  });
 });
 
 describe("dispatchAgentsRpc — agents.whyPeek", () => {

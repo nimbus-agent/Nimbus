@@ -50,6 +50,23 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+/**
+ * True when an http(s) URL carries userinfo (`user:pass@host`). `new URL()`
+ * parses that happily, and forwarding it as `prUrl` would send plaintext
+ * credentials over IPC and print them back in the brief's miss line — this
+ * repo's rule is explicit: never store plaintext credentials in logs, IPC
+ * messages, configuration, or source. Checked separately from `isHttpUrl` so
+ * the caller can reject with a message that never echoes the URL back.
+ */
+function hasUrlCredentials(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.username.length > 0 || parsed.password.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function whyParamsFor(ref: string, line: number | undefined): Record<string, unknown> {
   if (isHttpUrl(ref)) {
     return { prUrl: ref };
@@ -114,10 +131,18 @@ export function renderPeekLine(ref: string, peek: WhyPeekLike): string {
 
 export async function runWhyCli(args: string[]): Promise<void> {
   const parsed = parseWhyArgs(args);
-  if (parsed.peek) {
-    if (isHttpUrl(parsed.ref)) {
+  if (isHttpUrl(parsed.ref)) {
+    if (hasUrlCredentials(parsed.ref)) {
+      throw new Error("Pull request URL must not contain userinfo (user:pass@) credentials");
+    }
+    if (parsed.peek) {
       throw new Error("--peek takes a path or symbol, not a pull request URL");
     }
+    if (parsed.line !== undefined) {
+      throw new Error("--line takes a path or symbol, not a pull request URL");
+    }
+  }
+  if (parsed.peek) {
     const peek = await withGatewayIpc((c) =>
       c.call<WhyPeekLike>("agents.whyPeek", {
         ref: parsed.ref,

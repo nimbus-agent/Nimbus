@@ -400,7 +400,7 @@ export function resolvePrSubject(db: Database, url: string): PrResolveHit | PrRe
 
 Run: `bun test packages/gateway/src/agents/_lib/pr-subject.test.ts`
 
-Expected: PASS, 12 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 6: Gates and commit**
 
