@@ -20,8 +20,18 @@ import { formatRepairReport, repairIndex } from "../db/repair.ts";
 import { listSnapshots, previewRestore, pruneSnapshots, takeSnapshot } from "../db/snapshot.ts";
 import { formatVerifyResult, verifyIndex } from "../db/verify.ts";
 import { preT2DisabledCount, signatureDisabledRegistry } from "../extensions/hard-disable.ts";
+import { buildItemListSql } from "../index/item-list-query.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { LocalIndex as LocalIndexClass } from "../index/local-index.ts";
+import {
+  buildNoDownstreamIncidentSql,
+  buildNotTouchingSql,
+  countNoDownstreamIncidentExclusions,
+  countNotTouchingExclusions,
+  probeCorrelatesWith,
+  probePrFileCoverage,
+  type SubstrateProbe,
+} from "../index/negation-predicates.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
 import type { ConsentCoordinator } from "./consent.ts";
@@ -322,6 +332,28 @@ function rpcDbSetMeta(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsR
   }
 }
 
+type MissingSubstrateRefusal = {
+  readonly status: "refused";
+  readonly reason: "missing_substrate";
+  readonly message: string;
+  readonly remediation: string;
+};
+
+function missingSubstrateRefusal(message: string, remediation: string): MissingSubstrateRefusal {
+  return { status: "refused", reason: "missing_substrate", message, remediation };
+}
+
+/**
+ * `explain` shape pinned by the spec (`docs/superpowers/specs/2026-08-20-negation-queries-design.md`
+ * § 5/9): `{ sql, params, substrate }`, `substrate` present only for a negation query — a plain
+ * query has no probe to report.
+ */
+type QueryExplain = {
+  readonly sql: string;
+  readonly params: ReadonlyArray<string | number>;
+  readonly substrate?: SubstrateProbe;
+};
+
 function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
   const rec = asRecord(params);
   const rawSinceMs = rec?.["sinceMs"];
@@ -345,14 +377,108 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
   const types = Array.isArray(rec?.["types"])
     ? (rec["types"] as unknown[]).filter((x): x is string => typeof x === "string")
     : [];
-  const items = requireLocalIndex(ctx).listItems({
+  const rawNotTouching = rec?.["notTouching"];
+  const notTouching =
+    typeof rawNotTouching === "string" && rawNotTouching !== "" ? rawNotTouching : undefined;
+  const noDownstreamIncident = rec?.["noDownstreamIncident"] === true;
+  const explain = rec?.["explain"] === true;
+
+  const baseParams = {
     services,
     types,
     limit,
     ...(sinceMs === undefined ? {} : { sinceMs }),
     ...(untilMs === undefined ? {} : { untilMs }),
-  });
-  return { kind: "hit", value: { items, meta: { limit, total: items.length } } };
+  };
+
+  const db = requireDb(ctx);
+
+  // --not-touching: probe the substrate FIRST. On an empty `pr_files_state`, every uncovered PR
+  // would trivially satisfy "does not touch this path" — a confident false positive, not an
+  // incomplete answer — so an empty substrate refuses rather than silently answering.
+  // Spec § 8: negation predicates do not compose in one query, so `notTouching` takes priority if
+  // both negation params are somehow supplied together.
+  if (notTouching !== undefined) {
+    const probeResult = probePrFileCoverage(db);
+    if (!probeResult.passed) {
+      return {
+        kind: "hit",
+        value: missingSubstrateRefusal(
+          "no PR file-coverage data is indexed, so which PRs do not touch a path cannot be verified",
+          "sync a connector that populates PR changed-file coverage (GitHub/GitLab), then retry",
+        ),
+      };
+    }
+    const built = buildNotTouchingSql(notTouching);
+    const ids = (db.query(built.sql).all(...built.vals) as Array<{ id: string }>).map((r) => r.id);
+    const items = requireLocalIndex(ctx).listItems({ ...baseParams, ids });
+    const gaps = countNotTouchingExclusions(db);
+    const explainBlock: QueryExplain = {
+      sql: built.sql,
+      params: built.vals,
+      substrate: probeResult,
+    };
+    return {
+      kind: "hit",
+      value: {
+        items,
+        meta: { limit, total: items.length },
+        gaps,
+        ...(explain ? { explain: explainBlock } : {}),
+      },
+    };
+  }
+
+  // --no-downstream-incident: same probe-first shape, over the `correlates_with` substrate.
+  if (noDownstreamIncident) {
+    const probeResult = probeCorrelatesWith(db);
+    if (!probeResult.passed) {
+      return {
+        kind: "hit",
+        value: missingSubstrateRefusal(
+          "no `correlates_with` edges are indexed, so which deployments have no downstream " +
+            "incident cannot be verified",
+          "run a sync that populates deployment-to-incident correlation, then retry",
+        ),
+      };
+    }
+    const built = buildNoDownstreamIncidentSql();
+    const ids = (db.query(built.sql).all(...built.vals) as Array<{ id: string }>).map((r) => r.id);
+    const items = requireLocalIndex(ctx).listItems({ ...baseParams, ids });
+    // The Task 2 -> Task 3 ruling: an ungraphed deployment is silently DROPPED by the predicate's
+    // INNER JOIN — fail-closed and correct — but must not be dropped UNCOUNTED. See
+    // `countNoDownstreamIncidentExclusions`'s doc comment for why it is labelled "no graph entity
+    // of the required type" rather than "not graphed".
+    const gaps = countNoDownstreamIncidentExclusions(db);
+    const explainBlock: QueryExplain = {
+      sql: built.sql,
+      params: built.vals,
+      substrate: probeResult,
+    };
+    return {
+      kind: "hit",
+      value: {
+        items,
+        meta: { limit, total: items.length },
+        gaps,
+        ...(explain ? { explain: explainBlock } : {}),
+      },
+    };
+  }
+
+  // Plain path — no negation predicate requested. `--explain` still works here: the spec (§ 5)
+  // requires it on ANY `query` invocation, not only negation ones, so it is attached on every
+  // return path rather than gated inside the negation branches above.
+  const items = requireLocalIndex(ctx).listItems(baseParams);
+  if (!explain) {
+    return { kind: "hit", value: { items, meta: { limit, total: items.length } } };
+  }
+  const built = buildItemListSql(baseParams);
+  const explainBlock: QueryExplain = { sql: built.sql, params: built.vals };
+  return {
+    kind: "hit",
+    value: { items, meta: { limit, total: items.length }, explain: explainBlock },
+  };
 }
 
 async function rpcIndexQuerySql(

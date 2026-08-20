@@ -4,6 +4,15 @@ export type ItemListQueryParams = {
   readonly sinceMs?: number;
   readonly untilMs?: number;
   readonly limit: number;
+  /**
+   * Restrict to exactly this id set — e.g. the rows a negation-predicate query
+   * (`buildNotTouchingSql` / `buildNoDownstreamIncidentSql`) returned. AND-ed with every other
+   * filter, so this composes as an intersection, never a union. `undefined` means "no
+   * restriction" (unchanged default behavior); an EMPTY array means "nothing qualifies" and must
+   * still return zero rows — SQLite has no `IN ()` syntax for a zero-length list, so that case is
+   * special-cased to a literal false rather than emitted as an empty `IN (...)` clause.
+   */
+  readonly ids?: readonly string[];
 };
 
 export function buildItemListSql(params: ItemListQueryParams): {
@@ -26,6 +35,15 @@ export function buildItemListSql(params: ItemListQueryParams): {
     const ph = types.map(() => "?").join(", ");
     filters.push(`type IN (${ph})`);
     vals.push(...types);
+  }
+  if (params.ids !== undefined) {
+    if (params.ids.length === 0) {
+      filters.push("1 = 0");
+    } else {
+      const ph = params.ids.map(() => "?").join(", ");
+      filters.push(`id IN (${ph})`);
+      vals.push(...params.ids);
+    }
   }
   if (params.sinceMs !== undefined) {
     filters.push("modified_at >= ?");

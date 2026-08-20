@@ -6,6 +6,7 @@ import {
   buildNoDownstreamIncidentSql,
   buildNotReviewedSql,
   buildNotTouchingSql,
+  countNoDownstreamIncidentExclusions,
   countNotTouchingExclusions,
   probeCorrelatesWith,
   probePrFileCoverage,
@@ -129,6 +130,11 @@ const seedDeploymentWithIncident = (db: Database, id: string): void => {
 const seedDeploymentWithoutIncident = (db: Database, id: string): void => {
   insertItem(db, id, "deployment");
   insertGraphEntity(db, "deployment", id, id);
+};
+
+/** No `graph_entity` row at all — distinct from `seedDeploymentWithoutIncident`, which HAS one. */
+const seedDeploymentNoGraphEntity = (db: Database, id: string): void => {
+  insertItem(db, id, "deployment");
 };
 
 /**
@@ -283,6 +289,27 @@ describe("buildNoDownstreamIncidentSql", () => {
     const db = makeDb();
     seedDeploymentWithUnrelatedEdge(db, "d4");
     expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual(["d4"]);
+    db.close();
+  });
+});
+
+// The Task 2 -> Task 3 ruling this pins: the predicate's INNER JOIN to `graph_entity` silently
+// drops a deployment with no graph entity of the required type, rather than returning or counting
+// it. That is fail-closed and stays, but it must not stay UNCOUNTED — this is the count that makes
+// the drop visible.
+describe("countNoDownstreamIncidentExclusions", () => {
+  test("a deployment with no graph entity at all is absent from results and appears in the count", () => {
+    const db = makeDb();
+    seedDeploymentWithoutIncident(db, "d5"); // HAS a deployment-typed graph entity, no edge.
+    seedDeploymentNoGraphEntity(db, "d6"); // no graph_entity row at all.
+    expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual(["d5"]);
+    expect(countNoDownstreamIncidentExclusions(db)).toEqual({ excludedNoGraphEntity: 1 });
+    db.close();
+  });
+
+  test("zero on an empty item table", () => {
+    const db = makeDb();
+    expect(countNoDownstreamIncidentExclusions(db)).toEqual({ excludedNoGraphEntity: 0 });
     db.close();
   });
 });

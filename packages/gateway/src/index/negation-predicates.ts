@@ -145,6 +145,37 @@ export function buildNotReviewedSql(sinceMs: number): {
  * things to a reader — the first is "we never checked", the second is "we checked partially" —
  * and summing them would erase that distinction.
  */
+export type NoDownstreamIncidentGaps = {
+  readonly excludedNoGraphEntity: number;
+};
+
+/**
+ * Deployments `buildNoDownstreamIncidentSql` silently drops for having no graph entity of the
+ * required type (`type = 'deployment'`) to join through at all — not because a downstream
+ * incident was found, but because the predicate's INNER JOIN to `graph_entity` has nothing to
+ * match. See that function's doc comment for why the join is required and why it drops such rows
+ * instead of including them: dropping an unverifiable row is the fail-closed direction, but
+ * dropping it UNCOUNTED is the silent shortfall this whole feature exists to prevent — a caller
+ * asking "which deploys were clean?" would otherwise get a shorter list with no explanation.
+ *
+ * Labelled "no graph entity of the required type", deliberately NOT "not graphed": this count
+ * conflates two different states — a deployment with no `graph_entity` row at all, and one graphed
+ * as some OTHER entity type (a real possibility, since `graph_entity` only enforces
+ * `UNIQUE(type, external_id)`, not uniqueness on `external_id` alone) — and the second is the
+ * likelier case in practice. "Not graphed" would claim a precision this count does not have.
+ */
+export function countNoDownstreamIncidentExclusions(db: Database): NoDownstreamIncidentGaps {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n
+         FROM item i
+         LEFT JOIN graph_entity e ON e.external_id = i.id AND e.type = 'deployment'
+        WHERE i.type = 'deployment' AND e.id IS NULL`,
+    )
+    .get() as { n: number };
+  return { excludedNoGraphEntity: row.n };
+}
+
 export function countNotTouchingExclusions(db: Database): NegationGaps {
   const noCoverage = db
     .query(

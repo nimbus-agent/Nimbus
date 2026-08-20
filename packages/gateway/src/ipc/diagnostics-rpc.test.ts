@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
@@ -68,6 +69,68 @@ function rmTmp(dir: string): void {
   } catch {
     /* best-effort */
   }
+}
+
+// -- negation-query seed helpers (index.queryItems: notTouching / noDownstreamIncident) --------
+//
+// Production writers, not hand-rolled INSERTs — `recordPrChangedFiles` for PR coverage,
+// `upsertGraphEntity`/`upsertGraphRelation` for the graph_entity bridge — mirroring the
+// "diag.snapshot carries prFileCoverage" test above and `premortem/cohort.test-helpers.ts`.
+
+function seedCoveredPr(db: Database, id: string, paths: readonly string[]): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES (?, 'github', 'pr', ?, ?, 0, 0)`,
+    [id, id, id],
+  );
+  recordPrChangedFiles(db, {
+    itemId: id,
+    repoFull: "o/r",
+    files: paths.map((path) => ({ path, status: "modified", counterpartPath: null })),
+    apiFileCount: paths.length,
+    truncated: false,
+    nowMs: 1,
+  });
+}
+
+function seedUncoveredPr(db: Database, id: string): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES (?, 'github', 'pr', ?, ?, 0, 0)`,
+    [id, id, id],
+  );
+}
+
+function seedDeploymentWithoutIncident(db: Database, id: string): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES (?, 'github', 'deployment', ?, ?, 0, 0)`,
+    [id, id, id],
+  );
+  upsertGraphEntity(db, { type: "deployment", externalId: id, label: id });
+}
+
+function seedDeploymentNoGraphEntity(db: Database, id: string): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES (?, 'github', 'deployment', ?, ?, 0, 0)`,
+    [id, id, id],
+  );
+}
+
+function seedDeploymentWithIncident(db: Database, id: string): void {
+  const depEntity = upsertGraphEntity(db, { type: "deployment", externalId: id, label: id });
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES (?, 'github', 'deployment', ?, ?, 0, 0)`,
+    [id, id, id],
+  );
+  const incidentEntity = upsertGraphEntity(db, {
+    type: "incident",
+    externalId: `inc-${id}`,
+    label: `inc-${id}`,
+  });
+  upsertGraphRelation(db, depEntity, incidentEntity, "correlates_with", 0);
 }
 
 describe("telemetry.getStatus", () => {
@@ -762,6 +825,176 @@ describe("index.queryItems", () => {
           expect(keys.length).toBeGreaterThan(0);
           expect(keys.filter((k) => k.includes("_"))).toEqual([]);
         }
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("refuses --not-touching when no PR coverage exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg1-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("index.queryItems", { notTouching: "tests/*" }, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (r as { value: { status?: string; reason?: string } }).value;
+        expect(v.status).toBe("refused");
+        expect(v.reason).toBe("missing_substrate");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("returns gaps alongside items, not inside meta", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        seedCoveredPr(db, "p1", ["src/a.ts"]);
+        seedUncoveredPr(db, "p2");
+        const r = await dispatchDiagnosticsRpc("index.queryItems", { notTouching: "tests/*" }, ctx);
+        const v = (
+          r as {
+            value: {
+              items: unknown[];
+              meta: Record<string, unknown>;
+              gaps: { excludedNoCoverage: number };
+            };
+          }
+        ).value;
+        expect(v.items).toHaveLength(1);
+        expect(v.gaps.excludedNoCoverage).toBe(1);
+        expect(v.meta["gaps"]).toBeUndefined(); // sibling key, never nested in meta
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("explain carries the SQL and the probe result for --not-touching", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg3-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        seedCoveredPr(db, "p1", ["src/a.ts"]);
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { notTouching: "tests/*", explain: true },
+          ctx,
+        );
+        const v = (
+          r as {
+            value: {
+              explain: {
+                sql: string;
+                params: unknown[];
+                substrate: { passed: boolean; probeSql: string };
+              };
+            };
+          }
+        ).value;
+        expect(v.explain.sql).toContain("NOT EXISTS");
+        expect(v.explain.params).toContain("tests/*");
+        expect(v.explain.substrate.passed).toBe(true);
+        expect(v.explain.substrate.probeSql).toContain("pr_files_state");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("refuses --no-downstream-incident when no correlation data exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg4-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { noDownstreamIncident: true },
+          ctx,
+        );
+        const v = (r as { value: { status?: string; reason?: string } }).value;
+        expect(v.status).toBe("refused");
+        expect(v.reason).toBe("missing_substrate");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  // Pins the Task 2 -> Task 3 ruling: a deployment with no graph entity of the required type is
+  // silently dropped by the predicate's INNER JOIN (fail-closed, correct), but that drop must be
+  // COUNTED, not silent — a caller asking "which deploys were clean?" must see why the list is
+  // shorter than the deployment count.
+  test("--no-downstream-incident: a deployment with no graph entity is absent from results AND counted", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg5-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        // Substrate probe needs at least one correlates_with edge to pass.
+        seedDeploymentWithIncident(db, "d-incident");
+        seedDeploymentWithoutIncident(db, "d-clean"); // graphed, no edge -> returned
+        seedDeploymentNoGraphEntity(db, "d-ungraphed"); // no graph entity at all -> dropped, counted
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { noDownstreamIncident: true },
+          ctx,
+        );
+        const v = (
+          r as {
+            value: {
+              items: Array<{ id: string }>;
+              gaps: { excludedNoGraphEntity: number };
+            };
+          }
+        ).value;
+        const ids = v.items.map((i) => i.id);
+        expect(ids).toContain("d-clean");
+        expect(ids).not.toContain("d-incident");
+        expect(ids).not.toContain("d-ungraphed");
+        expect(v.gaps.excludedNoGraphEntity).toBe(1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("--explain works on a plain --services-only query, not only negation ones", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg6-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+           VALUES ('github:i1', 'github', 'pr', 'i1', 'feature', 1000, 1000)`,
+        );
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { services: ["github"], explain: true },
+          ctx,
+        );
+        expect(r.kind).toBe("hit");
+        const v = (
+          r as { value: { items: unknown[]; explain: { sql: string; params: unknown[] } } }
+        ).value;
+        expect(v.items).toHaveLength(1);
+        expect(v.explain).toBeDefined();
+        expect(v.explain.sql).toContain("FROM item");
+        expect(v.explain.params).toContain("github");
       } finally {
         db.close();
       }

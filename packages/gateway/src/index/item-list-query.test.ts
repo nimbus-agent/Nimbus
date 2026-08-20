@@ -75,4 +75,34 @@ describe("buildItemListSql (additional branches)", () => {
     expect(sql).toMatch(/FROM item\s+ORDER BY modified_at DESC LIMIT \?/);
     expect(vals).toEqual([5]);
   });
+
+  test("ids restricts with an IN (...) clause, AND-ed with other filters", () => {
+    const { sql, vals } = buildItemListSql({
+      services: ["github"],
+      types: [],
+      ids: ["p1", "p2"],
+      limit: 10,
+    });
+    expect(sql).toContain("service IN (?)");
+    expect(sql).toContain("id IN (?, ?)");
+    expect(vals).toEqual(["github", "p1", "p2", 10]);
+  });
+
+  test("an empty ids array matches nothing rather than emitting IN ()", () => {
+    const { sql, vals } = buildItemListSql({
+      services: [],
+      types: [],
+      ids: [],
+      limit: 10,
+    });
+    expect(sql).not.toContain("IN ()");
+    expect(sql).toContain("1 = 0");
+    expect(vals).toEqual([10]);
+  });
+
+  test("no ids filter (undefined) leaves the query unrestricted", () => {
+    const { sql } = buildItemListSql({ services: [], types: [], limit: 10 });
+    expect(sql).not.toContain("id IN");
+    expect(sql).not.toContain("1 = 0");
+  });
 });
