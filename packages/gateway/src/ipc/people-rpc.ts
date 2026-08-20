@@ -114,7 +114,14 @@ function rpcPeopleGet(rec: Record<string, unknown> | undefined, db: Database): H
  * path) — it already carries its own `explain?`, so it never needs a further wrapper.
  */
 function rpcPeopleList(rec: Record<string, unknown> | undefined, db: Database): Hit {
-  const limit = optionalLimit(rec, "limit", 100);
+  // Clamped HERE, to the same 1..500 range `buildPersonListSql` applies, so the `meta.limit` this
+  // handler reports is the limit that actually ran. `optionalLimit` only floors, so an unclamped
+  // `limit: 10000` would run under `LIMIT 500` while `meta` advertised `10000` — and a caller
+  // comparing `meta.total` against `meta.limit` to detect truncation would read a truncated answer
+  // as complete. `rpcIndexQueryItems` already clamps in the handler for this reason; this matches
+  // it. The clamp bound is duplicated rather than imported because it is `buildPersonListSql`'s
+  // own floor; `people-rpc.test.ts` pins the two together so they cannot drift apart silently.
+  const limit = Math.min(500, Math.max(1, optionalLimit(rec, "limit", 100)));
   const unlinkedOnly = rec?.["unlinkedOnly"] === true;
 
   const rawNotReviewed = rec?.["notReviewed"];

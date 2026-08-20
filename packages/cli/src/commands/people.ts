@@ -86,10 +86,16 @@ function parseListFlags(args: string[]): ListFlags {
       notReviewed = true;
     } else if (a === "--since") {
       const sinceStr = args[i + 1];
-      if (sinceStr !== undefined) {
-        sinceRaw = sinceStr;
-        i += 1; // also consume its value argument, e.g. "7d"
+      // A SUPPLIED --since must never become an OMITTED window. Silently ignoring a valueless
+      // `--since` falls back to the all-time predicate (`sinceMs` defaults to 0 gateway-side),
+      // which answers a WIDER question than the caller asked and reports no gap saying so. A
+      // malformed value (`--since --json`) is already rejected by `parseSinceDurationToMs`; this
+      // closes the missing-value case it never sees.
+      if (sinceStr === undefined) {
+        throw new Error("--since requires a duration (examples: 7d, 24h, 30m)");
       }
+      sinceRaw = sinceStr;
+      i += 1; // also consume its value argument, e.g. "7d"
     } else if (a === "--explain") {
       explain = true;
     } else if (a === "--json") {

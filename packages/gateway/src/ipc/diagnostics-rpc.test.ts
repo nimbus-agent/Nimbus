@@ -1055,6 +1055,68 @@ describe("index.queryItems", () => {
     }
   });
 
+  // A PADDED glob is the blank-string guard's blind spot: `" tests/**"` survives the
+  // `.trim() === ""` rejection, and as a GLOB it matches NO path — so without the trim every
+  // covered PR comes back as "not touching tests", the exact confident-wrong answer, with a
+  // clean-looking zero gap count beside it. Asserted on BEHAVIOUR (the PR that does touch
+  // `tests/` is excluded), not on the string handed to the builder, so deleting the `.trim()`
+  // turns this red.
+  test("a padded notTouching glob is trimmed before use, never matched verbatim", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg8a-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        seedCoveredPr(db, "touches-tests", ["tests/a.test.ts"]);
+        seedCoveredPr(db, "touches-src", ["src/a.ts"]);
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { notTouching: "  tests/**  " },
+          ctx,
+        );
+        const v = (r as { value: { items: Array<{ id: string }> } }).value;
+        const ids = v.items.map((i) => i.id);
+        expect(ids).toContain("touches-src");
+        expect(ids).not.toContain("touches-tests");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  // The two predicates do not compose (spec § 8). Answering one and dropping the other tells the
+  // caller nothing about the substitution — the same failure the present-but-unusable guards
+  // reject. Unreachable from the CLI (the `--type` scoping guards are mutually exclusive) and
+  // reachable from raw JSON-RPC, which is why it is enforced here.
+  test("supplying BOTH negation params is rejected, not silently resolved by priority", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg8c-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        // Both substrates populated, so a rejection here cannot be a disguised refusal.
+        seedCoveredPr(db, "p1", ["src/a.ts"]);
+        seedDeploymentWithIncident(db, "d1");
+        try {
+          dispatchDiagnosticsRpc(
+            "index.queryItems",
+            { notTouching: "tests/**", noDownstreamIncident: true },
+            ctx,
+          );
+          throw new Error("expected a rejection");
+        } catch (e) {
+          expect(e).toBeInstanceOf(DiagnosticsRpcError);
+          expect((e as DiagnosticsRpcError).rpcCode).toBe(-32602);
+          expect((e as DiagnosticsRpcError).message).toContain("do not compose");
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
   // Residual from the Task 3 re-review, closed here. The blank-string guard above covers the
   // CLI-reachable door; a JSON-RPC caller can also send a NON-STRING `notTouching` or a
   // NON-BOOLEAN `noDownstreamIncident`. Both are the same confident-wrong-answer failure through

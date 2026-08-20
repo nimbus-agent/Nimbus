@@ -12,7 +12,7 @@ To align with the CLI's existing paradigms, we propose the following refusal exe
 
 * **Exit Code:** Use **Exit Code `1`** (general CLI error) when the query refuses due to a missing substrate, but ensure the structured output is cleanly separated.
 * **Error-Path Helper:**
-  * For **TTY/Human output**, write the remediation message directly to `process.stderr` using the output format from [`packages/gateway/src/agents/_lib/gap-notes.ts`](file:///C:/gitrep/Nimbus/packages/gateway/src/agents/_lib/gap-notes.ts#L58) and then exit.
+  * For **TTY/Human output**, write the remediation message directly to `process.stderr` using the output format from `packages/gateway/src/agents/_lib/gap-notes.ts:58` and then exit.
   * For **`--json` output**, print the structured refusal document to `process.stdout` (enabling scripting pipelines to parse it) and exit with code `1`.
   * **Structured Refusal Schema**:
 
@@ -29,7 +29,7 @@ To align with the CLI's existing paradigms, we propose the following refusal exe
 
 The spec shows `nimbus people --not-reviewed --since 7d`. In the current tree:
 
-* [`packages/cli/src/commands/people.ts`](file:///C:/gitrep/Nimbus/packages/cli/src/commands/people.ts#L151) expects a subcommand like `list`, `search`, `get`, `items`, or `link`.
+* `packages/cli/src/commands/people.ts:151` expects a subcommand like `list`, `search`, `get`, `items`, or `link`.
 * Passing `--not-reviewed` as the first argument would trigger an `"Unknown people subcommand"` error.
 
 **Proposal:**
@@ -41,7 +41,7 @@ The spec shows `nimbus people --not-reviewed --since 7d`. In the current tree:
    ```
 
 2. For convenience, if the first argument starts with `--` (indicating a flag instead of a subcommand), default the routing inside `runPeople` to `list`. This preserves the cleaner `nimbus people --not-reviewed --since 7d` syntax without breaking subcommand dispatch.
-3. Update the `people.list` IPC endpoint (`rpcPeopleList` in [`people-rpc.ts`](file:///C:/gitrep/Nimbus/packages/gateway/src/ipc/people-rpc.ts#L83)) to accept:
+3. Update the `people.list` IPC endpoint (`rpcPeopleList` in `packages/gateway/src/ipc/people-rpc.ts:83`) to accept:
 
    ```typescript
    type PeopleListParams = {

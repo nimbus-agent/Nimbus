@@ -24,7 +24,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   third is a subcommand, since `runPeople` dispatches `args[0]`, so `nimbus people --not-reviewed`
   exits with "Unknown people subcommand". Two spec examples shipped in the design doc missing
   exactly those two tokens, which is why the first thing built was a test
-  (`cli/src/commands/negation-examples.test.ts`) that drives every documented example through the
+  (`packages/cli/src/commands/negation-examples.test.ts`) that drives every documented example through the
   real argument parsers: a doc example that cannot run now fails CI instead of waiting to be
   noticed.
 
@@ -91,9 +91,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   **Delivered as fields on existing methods, not new ones.** `index.queryItems` and `people.list`
   gain optional `notTouching` / `noDownstreamIncident` / `notReviewed` / `sinceMs` / `explain`
   request params and sibling `gaps` / `explain` response keys; `people.list` keeps returning a
-  BARE ARRAY on a plain call, byte-for-byte as before, so no existing caller breaks. A
-  present-but-unusable param is rejected (`-32602`), never treated as absent — a caller who asked
-  to negate must never silently fall through to the full unfiltered list. No schema migration
+  BARE ARRAY on a plain call, byte-for-byte as before, so no existing caller breaks. **A supplied
+  flag never degrades into an omitted one**, at either layer: a present-but-unusable param is
+  rejected with `-32602` rather than treated as absent; a glob is trimmed before use, since
+  `" tests/**"` is a valid GLOB matching no path and would hand back every covered PR as "not
+  touching"; the two `query` predicates cannot be supplied together (they do not compose, and
+  answering one silently would drop the other); and the CLI rejects `--not-touching` with a
+  missing, blank, or option-token value (`--not-touching --json` sends `"--json"` as the glob)
+  and `--since` with no duration, none of which the gateway can distinguish from a caller who
+  never asked. `people.list` also reports the CLAMPED limit in `meta`, so a caller comparing
+  `meta.total` against `meta.limit` to detect truncation cannot read a truncated answer as
+  complete. No schema migration
   (V55's PR changed-file index, #1258, is the substrate for the first predicate; the other two
   read graph edges that already exist), no new IPC method, no new HTTP route, no new invariant,
   `ALLOWED_METHODS` stays at **105**, and no `egress_ledger` row is appended — all three

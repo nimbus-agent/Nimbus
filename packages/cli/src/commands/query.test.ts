@@ -624,6 +624,31 @@ describe("runQuery — negation flags: scoping validation", () => {
     ).rejects.toThrow(/--no-downstream-incident requires --type deployment/);
   });
 
+  // A SUPPLIED flag must never become an OMITTED filter. Each of these three would otherwise
+  // answer "every PR" — or, for the option-token case, "every COVERED PR" — to a caller who asked
+  // "PRs not touching X", with no gap line and no refusal to signal the substitution. Rejected in
+  // the CLI because the gateway cannot see it: a param that never arrives is indistinguishable
+  // there from a caller who never asked for the predicate at all.
+  it("--not-touching with no value at all is rejected, never sent as an absent filter", async () => {
+    await expect(
+      runQuery(["--service", "github", "--type", "pr", "--not-touching"]),
+    ).rejects.toThrow(/--not-touching requires a glob pattern/);
+  });
+
+  it("--not-touching with a blank value is rejected", async () => {
+    await expect(
+      runQuery(["--service", "github", "--type", "pr", "--not-touching", "   "]),
+    ).rejects.toThrow(/--not-touching requires a glob pattern/);
+  });
+
+  it("--not-touching swallowing the next option is rejected, not sent as the glob '--json'", async () => {
+    // "--json" is a syntactically valid GLOB that matches no path, so without this guard every
+    // covered PR comes back as "not touching" — the confident-wrong answer, wearing a value.
+    await expect(
+      runQuery(["--service", "github", "--type", "pr", "--not-touching", "--json"]),
+    ).rejects.toThrow(/got the option "--json"/);
+  });
+
   it("rejects BEFORE any IPC call: no gateway state is required to observe the rejection", async () => {
     // No fixture set at all — if scoping were validated after the IPC call this would throw
     // "Gateway is not running" instead of the scoping message.

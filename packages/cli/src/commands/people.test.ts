@@ -516,6 +516,17 @@ describe("runPeople — list --not-reviewed", () => {
     });
   });
 
+  it("--since with no duration is rejected, never silently widened to the all-time window", async () => {
+    // The test above proves that OMITTING --since means all-time, deliberately and visibly. A
+    // --since that lost its value must not land in that same place: the caller asked for a
+    // window, and answering the wider question with no signal is the substitution this feature
+    // exists to prevent. No fixture is set — the rejection must precede any IPC call, so a
+    // "Gateway is not running" error here would mean the guard ran too late.
+    await expect(runPeople(["list", "--not-reviewed", "--since"])).rejects.toThrow(
+      /--since requires a duration/,
+    );
+  });
+
   it("makes the ALL-TIME window visible when --since is not given", async () => {
     const mock = createMockIpcClient([
       { people: [], meta: { limit: 100, total: 0 }, gaps: { excludedNoGraphEntity: 0 } },

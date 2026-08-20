@@ -382,7 +382,13 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
       throw new DiagnosticsRpcError(-32602, "notTouching must be a non-empty glob pattern");
     }
   }
-  const notTouching = typeof rawNotTouching === "string" ? rawNotTouching : undefined;
+  // TRIMMED, not raw: the guard above already treats surrounding whitespace as insignificant
+  // (it rejects `"   "` as blank), and passing the untrimmed value on would contradict that —
+  // `" tests/**"` is a perfectly valid GLOB that matches NO path, so every covered PR would come
+  // back as "not touching" with neither a gap nor a refusal to signal it. That is the
+  // confident-wrong answer this predicate exists to prevent, and the CLI cannot absorb it: the
+  // pattern arrives verbatim from `takeFlag`.
+  const notTouching = typeof rawNotTouching === "string" ? rawNotTouching.trim() : undefined;
   const rawNoDownstreamIncident = rec?.["noDownstreamIncident"];
   // Same reasoning, same failure: `noDownstreamIncident: "yes"` is a caller ASKING for the
   // negation, and `=== true` alone would hand them every deployment instead. `explain` gets no
@@ -393,6 +399,18 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
     }
   }
   const noDownstreamIncident = rawNoDownstreamIncident === true;
+  // The two predicates do not compose (spec § 8), so a request carrying BOTH is rejected rather
+  // than answered by whichever one wins a priority rule: silently dropping one hands the caller
+  // an answer to a question they did not ask, with nothing in the response saying so — the same
+  // failure the present-but-unusable checks above reject. The CLI cannot produce this pair (the
+  // `--type` scoping guards are mutually exclusive), but a raw JSON-RPC caller reaches it
+  // directly, which is exactly why the check lives here and not only there.
+  if (notTouching !== undefined && noDownstreamIncident) {
+    throw new DiagnosticsRpcError(
+      -32602,
+      "notTouching and noDownstreamIncident do not compose — supply exactly one",
+    );
+  }
   const explain = rec?.["explain"] === true;
 
   const baseParams = {
@@ -412,8 +430,8 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
   // --not-touching: probe the substrate FIRST. On an empty `pr_files_state`, every uncovered PR
   // would trivially satisfy "does not touch this path" — a confident false positive, not an
   // incomplete answer — so an empty substrate refuses rather than silently answering.
-  // Spec § 8: negation predicates do not compose in one query, so `notTouching` takes priority if
-  // both negation params are somehow supplied together.
+  // Only one negation predicate can be in play here: supplying both is rejected above (spec § 8 —
+  // they do not compose), so this branch never silently wins a race with the one below.
   if (notTouching !== undefined) {
     const probeResult = probePrFileCoverage(db);
     const predicate = buildNotTouchingSql(notTouching);

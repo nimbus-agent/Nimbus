@@ -781,9 +781,11 @@ git add packages/gateway/src/ipc/
 git commit -F - <<'EOF'
 feat(ipc): not-reviewed predicate on people.list
 
-Probe first, refuse on an empty reviewed edge set. Emits no gaps key:
-this predicate has no per-row partial state, and an always-zero gap
-count would imply a check that is not happening.
+Probe first, refuse on an empty reviewed edge set. Reports an
+excludedNoGraphEntity count: the predicate joins through graph_entity,
+so a person who was never graphed cannot be evaluated and is dropped -
+the fail-closed direction, but dropping them UNCOUNTED would be the
+silent shortfall this feature exists to make visible.
 EOF
 ```
 
@@ -909,9 +911,17 @@ shipped without deleting that correction — it records why the row's original c
 - [ ] **Step 2: Write the CHANGELOG entry**
 
 State plainly: the three predicates and their exact syntax (including `--service` and the `list`
-subcommand), `--explain`, and the **four** honesty bounds — refusal on empty substrate; per-row
-exclusion ONLY for `--not-touching`; the fixed 2-hour correlation window that no flag can widen;
-and that **B.2 (`nimbus ask` exposure) is NOT in this delivery**.
+subcommand), `--explain`, and the **four** honesty bounds — refusal on empty substrate; that **all
+three** predicates exclude and count their unverifiable rows, differing only in SHAPE (a PR can be
+fetched incompletely; a deployment or person can lack the `graph_entity` the predicate joins
+through); the fixed 2-hour correlation window that no flag can widen; and that **B.2 (`nimbus ask`
+exposure) is NOT in this delivery**.
+
+*(This bullet originally read "per-row exclusion ONLY for `--not-touching`" — the same claim Task 2
+disproved and Task 4 Step 4 above already corrects. It survived that round because the correction
+was applied where the claim was argued and not where it was restated, which is exactly how the
+spec's § 4.4 table and its own prose came apart one round earlier. Corrected here so the CHANGELOG
+written from this step cannot inherit it.)*
 
 - [ ] **Step 3: Update the roadmap row**
 

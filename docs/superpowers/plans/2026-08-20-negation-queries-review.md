@@ -51,7 +51,7 @@ The plan mentions matching the join in `packages/gateway/src/graph/relationship-
 
 ### B. Task 4 `people.list` envelope response verification
 
-* Note that [`people.list`](file:///C:/gitrep/Nimbus/packages/gateway/src/ipc/people-rpc.ts#L83) currently returns a bare JSON array (not a wrapper object like `{ people: ... }`).
+* Note that `people.list` (`packages/gateway/src/ipc/people-rpc.ts:83`) currently returns a bare JSON array (not a wrapper object like `{ people: ... }`).
 * Thus, in Task 4 Step 2's test assertions, mapping the response IDs should be done directly on the returned array:
 
   ```typescript

@@ -107,19 +107,23 @@ describe("buildItemListSql (additional branches)", () => {
   });
 
   test("idInSql embeds the given SELECT verbatim as a subquery, no per-row bind params", () => {
+    // The fixture binds its own value rather than inlining `'pr'`, matching what the real
+    // predicate builders hand in (`buildNotTouchingSql` and friends bind every value they take).
+    // The point of the case survives: the subquery contributes exactly ONE parameter here, not
+    // one per matched row, however many rows it goes on to match.
     const { sql, vals } = buildItemListSql({
       services: ["github"],
       types: [],
       idInSql: {
-        sql: "SELECT i.id FROM item i WHERE i.type = 'pr' AND NOT EXISTS (SELECT 1 WHERE 0)",
-        vals: [],
+        sql: "SELECT i.id FROM item i WHERE i.type = ? AND NOT EXISTS (SELECT 1 WHERE 0)",
+        vals: ["pr"],
       },
       limit: 10,
     });
     expect(sql).toContain(
-      "id IN (SELECT i.id FROM item i WHERE i.type = 'pr' AND NOT EXISTS (SELECT 1 WHERE 0))",
+      "id IN (SELECT i.id FROM item i WHERE i.type = ? AND NOT EXISTS (SELECT 1 WHERE 0))",
     );
-    expect(vals).toEqual(["github", 10]);
+    expect(vals).toEqual(["github", "pr", 10]);
   });
 
   test("idInSql's own vals splice in at the right position for a large id-matching set", () => {

@@ -453,6 +453,25 @@ describe("people.list — --not-reviewed", () => {
     expect(v.meta).toEqual({ limit: 2, total: 2 });
   });
 
+  // `meta.limit` must be the limit that RAN, not the one requested. `buildPersonListSql` clamps
+  // to 1..500, so an unclamped handler would advertise `limit: 10000` beside a result set capped
+  // at 500 — and the test above establishes exactly how `meta` is meant to be read: a caller
+  // comparing `total` against `limit` to detect truncation would call a truncated answer
+  // complete. Asserted on both ends of the clamp so a one-sided fix cannot pass.
+  test("meta.limit reports the CLAMPED limit that ran, not an out-of-range requested one", () => {
+    seedPersonWithReview(fixture.db, "eve", Date.now()); // non-empty substrate
+    seedPersonWithoutReview(fixture.db, "bob");
+    const high = call("people.list", { notReviewed: true, sinceMs: 1, limit: 10_000 });
+    expect(high.kind).toBe("hit");
+    if (high.kind !== "hit") return;
+    expect((high.value as { meta: { limit: number } }).meta.limit).toBe(500);
+
+    const low = call("people.list", { notReviewed: true, sinceMs: 1, limit: 0 });
+    expect(low.kind).toBe("hit");
+    if (low.kind !== "hit") return;
+    expect((low.value as { meta: { limit: number } }).meta.limit).toBe(1);
+  });
+
   // Important 1 (Task 4 fix round 1): `explain.sql` must be the COMPOSED statement that actually
   // shaped `people` — running it back against the same db must reproduce the SAME ids, never a
   // wider set that ignores `unlinkedOnly`/`limit`.

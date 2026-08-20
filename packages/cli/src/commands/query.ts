@@ -106,6 +106,25 @@ Output:
   if (notTouchingRequested && type !== "pr") {
     throw new Error("--not-touching requires --type pr");
   }
+  // A SUPPLIED flag must never become an OMITTED filter. `takeFlag` returns `args[i + 1]`
+  // verbatim, so `--not-touching` at the end of argv yields `undefined` and a blank one yields
+  // `""` — both would drop `notTouching` from the params below and answer "every PR" to a caller
+  // who asked "PRs not touching X". The gateway cannot catch that: an absent param is
+  // indistinguishable there from a caller who never asked. The option-token case is the same
+  // failure wearing a value — `--not-touching --json` sends `"--json"` as the glob, a pattern
+  // that matches no path, so EVERY covered PR comes back as "not touching" with no gap or
+  // refusal to signal it.
+  if (notTouchingRequested) {
+    if (notTouchingRaw === undefined || notTouchingRaw.trim() === "") {
+      throw new Error("--not-touching requires a glob pattern (e.g. --not-touching 'tests/**')");
+    }
+    if (notTouchingRaw.startsWith("--")) {
+      throw new Error(
+        `--not-touching requires a glob pattern, got the option "${notTouchingRaw}" ` +
+          "(quote the pattern if it really starts with --)",
+      );
+    }
+  }
   if (noDownstreamIncident && type !== "deployment") {
     throw new Error("--no-downstream-incident requires --type deployment");
   }
