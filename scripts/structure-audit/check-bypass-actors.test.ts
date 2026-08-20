@@ -86,15 +86,21 @@ describe("validateDeclaredBypass", () => {
 });
 
 describe("loadDeclaredBypass", () => {
-  test("the checked-in config is valid and covers all six active repos", () => {
+  test("the checked-in config is valid and covers all seven active repos", () => {
     const file = loadDeclaredBypass(process.cwd());
     expect(validateDeclaredBypass(file)).toEqual([]);
     // The count is deliberately exact rather than a floor: adding a repo to the
     // managed set must be a reviewed decision, not something that rides along.
     // create-nimbus-connector was the sixth — it publishes to npm and had been
-    // outside every drift gate.
-    expect(file.repos.length).toBe(6);
+    // outside every drift gate. nimbus-mcp is the seventh, added when
+    // packages/mcp-launcher was extracted to its own repo and began publishing
+    // @nimbus-dev/mcp; it is declared with an EMPTY bypass list, matching
+    // nimbus-sdk and nimbus-client rather than nimbus-vscode's OrganizationAdmin
+    // entry, because nothing about it needs a manual-publish escape hatch.
+    expect(file.repos.length).toBe(7);
     expect(file.repos).toContain("create-nimbus-connector");
+    expect(file.repos).toContain("nimbus-mcp");
+    expect(file.bypass.by_repo["nimbus-mcp"]).toEqual([]);
     expect(Object.keys(file.bypass.by_repo).sort()).toEqual([...file.repos].sort());
   });
 });
