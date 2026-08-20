@@ -452,18 +452,17 @@ export const INDEX_TOOL_SPECS: ToolSpec[] = [
       "findPrsNotTouching(pathGlob, service?, limit?) — pull requests with NO indexed changed-file path matching pathGlob (a GLOB such as 'tests/**'; required). Use this, never searchIndex, when the question is which PRs do NOT touch something: it proves its substrate first and REFUSES (status 'refused' in the returned JSON) when PR file coverage is not indexed, because an unfetched PR is indistinguishable from one that never touched the path — do not fall back to searchIndex on a refusal, and do not answer the negation from a ranked search instead. Always reports how many PRs were excluded as unverifiable; report that count to the caller. service is optional; omitting it searches every indexed forge. limit is optional (default 20, max 50).",
     schema: { pathGlob: z.string(), service: serviceArg, limit: limitArg },
     run: (deps, args) =>
-      runTool(deps, async (c) =>
-        jsonResult(
+      runTool(deps, async (c) => {
+        const service = optString(args, "service");
+        return jsonResult(
           await c.call("index.queryItems", {
             types: ["pr"],
             notTouching: optString(args, "pathGlob") ?? "",
-            ...(optString(args, "service") === undefined
-              ? {}
-              : { services: [optString(args, "service")] }),
+            ...(service === undefined ? {} : { services: [service] }),
             limit: clampLimit(optNumber(args, "limit")),
           }),
-        ),
-      ),
+        );
+      }),
   },
   {
     name: "findDeploymentsWithoutIncident",
@@ -471,18 +470,17 @@ export const INDEX_TOOL_SPECS: ToolSpec[] = [
       "findDeploymentsWithoutIncident(service?, limit?) — deployments with NO outgoing correlates_with edge to a downstream incident. Use this, never searchIndex, when the question is which deployments had NO incident: it proves its substrate first and REFUSES (status 'refused' in the returned JSON) when deployment-to-incident correlation is not indexed — do not fall back to searchIndex on a refusal, and do not answer the negation from a ranked search instead. The correlation window is fixed at the time the correlation edge was written, not at query time, so there is deliberately no window argument here. service is optional; omitting it searches every indexed service. limit is optional (default 20, max 50).",
     schema: { service: serviceArg, limit: limitArg },
     run: (deps, args) =>
-      runTool(deps, async (c) =>
-        jsonResult(
+      runTool(deps, async (c) => {
+        const service = optString(args, "service");
+        return jsonResult(
           await c.call("index.queryItems", {
             types: ["deployment"],
             noDownstreamIncident: true,
-            ...(optString(args, "service") === undefined
-              ? {}
-              : { services: [optString(args, "service")] }),
+            ...(service === undefined ? {} : { services: [service] }),
             limit: clampLimit(optNumber(args, "limit")),
           }),
-        ),
-      ),
+        );
+      }),
   },
   {
     name: "findPeopleWithoutReviews",
