@@ -728,7 +728,8 @@ Two different things live under the same command family, and picking the wrong o
 **Writing a connector** — something that indexes a service into your local index. Use
 [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector). Describe the
 service in a JSON spec and it emits the whole package: `src/server.ts`, the manifest, the
-tsconfig, the package.json and a test.
+tsconfig, the package.json, a README and `test/sandbox.test.ts` — plus `src/search-filter.ts` when
+the spec declares a search tool.
 
 ```bash
 bunx create-nimbus-connector --spec ./my-service.spec.json --standalone
@@ -741,6 +742,7 @@ generates is invisible to the connector gates because it has no `src/server.ts`.
 
 ```bash
 nimbus scaffold extension my-extension   # always created at ./my-extension/ in the cwd
+cd my-extension                          # the scaffold does NOT change your working directory
 nimbus extension install .               # Test locally
 npm publish --access public              # Publish to the community
 ```
