@@ -18,6 +18,7 @@ import {
   formatConnectorHealthCaveatForIndexSearch,
 } from "./connector-health-caveat.ts";
 import { buildContextWindow } from "./context-ranker.ts";
+import { createNegationTools } from "./negation-tools.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 
 const MAX_TOOL_STRING_LEN = 2000;
@@ -114,7 +115,7 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   const searchLocalIndex = createTool({
     id: "searchLocalIndex",
     description:
-      "Ranked search of the local SQLite index: FTS5 keywords plus optional semantic (vector) fusion when enabled. Set semantic false for keyword-only. Returns a context window (top full items) plus sourceSummary. When `service` is set, `connectorHealthCaveat` warns if that connector is unhealthy; when `service` is omitted, `connectorHealthCaveats` lists up to 5 warnings for services appearing in the window that are unhealthy — tell the user. Use fetchMoreIndexResults to page within a bucket.",
+      "Ranked search of the local SQLite index: FTS5 keywords plus optional semantic (vector) fusion when enabled. Set semantic false for keyword-only. Returns a context window (top full items) plus sourceSummary. When `service` is set, `connectorHealthCaveat` warns if that connector is unhealthy; when `service` is omitted, `connectorHealthCaveats` lists up to 5 warnings for services appearing in the window that are unhealthy — tell the user. Use fetchMoreIndexResults to page within a bucket. It ranks and returns items that MATCH; it cannot answer which items do NOT match. For a negation — PRs that don't touch a path, deployments with no downstream incident, people who haven't reviewed — use findPrsNotTouching, findDeploymentsWithoutIncident or findPeopleWithoutReviews, which prove their substrate before answering.",
     execute: async (inputData: unknown) => {
       const q =
         inputData !== null && typeof inputData === "object" && !Array.isArray(inputData)
@@ -414,7 +415,9 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   const consentGuidance =
     " For destructive or irreversible actions (send/draft email, move/delete files, modify connector data, etc.), call the tool directly. Nimbus's structural consent gate surfaces a separate HITL dialog to the user before the action executes — that dialog is the authoritative consent surface. Do not ask the user in chat for permission, do not say 'are you happy with this?', and do not require a verbal go-ahead before invoking a tool. Just invoke it; the consent gate handles the rest.";
 
-  const toolGuidance = `Use searchLocalIndex for ranked index search; it returns a window of full items plus sourceSummary for the rest—call fetchMoreIndexResults(service, indexedType, offset, limit) when the user needs more rows from a bucket. Use traverseGraph(entityId, depth?, relationTypes?) when the user asks what is linked to a PR, issue, repo, channel, or person already identified in the index. Use resolvePerson to map names to person ids before reasoning about authors. Use listConnectors and getAuditLog as needed. Do not claim you moved or deleted files unless the user already did so outside this chat.${consentGuidance}`;
+  const toolGuidance = `Use searchLocalIndex for ranked index search; it returns a window of full items plus sourceSummary for the rest—call fetchMoreIndexResults(service, indexedType, offset, limit) when the user needs more rows from a bucket. Use traverseGraph(entityId, depth?, relationTypes?) when the user asks what is linked to a PR, issue, repo, channel, or person already identified in the index. Use resolvePerson to map names to person ids before reasoning about authors. Use listConnectors and getAuditLog as needed. For a negative question ("which X did NOT ..."), use findPrsNotTouching(pathGlob, service?, limit?), findDeploymentsWithoutIncident(service?, limit?) or findPeopleWithoutReviews(sinceDays?, limit?) rather than searchLocalIndex: only they prove the underlying data exists, and only they can tell "nothing matched" apart from "nothing was indexed". If one of them refuses, say so and stop — do not substitute a ranked search. Do not claim you moved or deleted files unless the user already did so outside this chat.${consentGuidance}`;
+
+  const negationTools = createNegationTools({ localIndex: deps.localIndex });
 
   const baseTools = {
     searchLocalIndex: wrapToolForLlm("index", "searchLocalIndex", searchLocalIndex, deps.auditDb),
@@ -428,6 +431,24 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
     resolvePerson: wrapToolForLlm("people", "resolvePerson", resolvePerson, deps.auditDb),
     listConnectors: wrapToolForLlm("connectors", "listConnectors", listConnectors, deps.auditDb),
     getAuditLog: wrapToolForLlm("audit", "getAuditLog", getAuditLog, deps.auditDb),
+    findPrsNotTouching: wrapToolForLlm(
+      "index",
+      "findPrsNotTouching",
+      negationTools.findPrsNotTouching,
+      deps.auditDb,
+    ),
+    findDeploymentsWithoutIncident: wrapToolForLlm(
+      "index",
+      "findDeploymentsWithoutIncident",
+      negationTools.findDeploymentsWithoutIncident,
+      deps.auditDb,
+    ),
+    findPeopleWithoutReviews: wrapToolForLlm(
+      "people",
+      "findPeopleWithoutReviews",
+      negationTools.findPeopleWithoutReviews,
+      deps.auditDb,
+    ),
     ...(recallSessionMemory !== undefined && appendSessionMemory !== undefined
       ? {
           recallSessionMemory: wrapToolForLlm(
