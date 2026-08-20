@@ -241,10 +241,14 @@ When a substrate probe finds nothing:
 {
   "status": "refused",
   "reason": "missing_substrate",
-  "message": "no `reviewed` edges are indexed",
-  "remediation": "nimbus index regraph"
+  "message": "no `reviewed` edges are indexed within the --since window, so who has not reviewed anything in that window cannot be verified",
+  "remediation": "widen --since to include older reviews, or sync a connector that populates PR review activity and run nimbus index regraph"
 }
 ```
+
+(Illustrating `--not-reviewed`'s refusal specifically — see § 4.4's Task 4 fix round 1 correction:
+the probe, and therefore this message, is windowed by the SAME `--since` the query itself uses,
+not a global all-time check.)
 
 The stream split is deliberate. A refusal is not a result, so it must not land on stdout where a
 human's `--json`-less invocation might pipe it into something expecting rows; but under `--json`

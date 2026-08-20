@@ -291,7 +291,8 @@ export type PersonListQueryParams = {
    *
    * `sql` MUST use only plain, unnumbered `?` placeholders — never `?1`-style numbered ones, for
    * the same desynchronization reason documented there. A predicate built with numbered
-   * placeholders must be renumbered first (see `toPositionalSubquery` in `ipc/people-rpc.ts`).
+   * placeholders must be renumbered first (see `toPositionalSubquery` in
+   * `index/negation-predicates.ts`).
    */
   readonly idInSql?: { readonly sql: string; readonly vals: readonly (string | number)[] };
 };

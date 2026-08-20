@@ -435,7 +435,7 @@ describe("countNotReviewedExclusions scope", () => {
 // the window" and "no synced data for the window" are indistinguishable — and this predicate must
 // refuse on that ambiguity rather than return every graphed person as a false "clean" answer.
 describe("probeReviewed windowing", () => {
-  test("unwindowed (no sinceMs) passes on a STALE reviewed edge — the original, still-used default", () => {
+  test("unwindowed (no sinceMs) passes on a STALE reviewed edge — the original, test-only default", () => {
     const db = makeDb();
     seedPersonWithReview(db, "alice", 500);
     expect(probeReviewed(db).passed).toBe(true);
@@ -457,6 +457,21 @@ describe("probeReviewed windowing", () => {
     const windowed = probeReviewed(db, 1_000);
     expect(windowed.passed).toBe(true);
     expect(windowed.rowCount).toBe(1);
+    db.close();
+  });
+
+  // Task 4 fix round 2, Important 2: `probeSql` must be RUNNABLE AS PRINTED — a caller pasting it
+  // into sqlite3 gets the same count `rowCount` already reports, not a bind error from an unbound
+  // `?`. Proven here by literally running the returned `probeSql` back against the same db.
+  test("windowed probeSql is self-contained — running it directly reproduces rowCount", () => {
+    const db = makeDb();
+    seedPersonWithReview(db, "alice", 5_000);
+    seedPersonWithReview(db, "bob", 500); // outside the window — must not be counted
+    const windowed = probeReviewed(db, 1_000);
+    expect(windowed.probeSql).not.toContain("?");
+    const row = db.query(windowed.probeSql).get() as { n: number };
+    expect(row.n).toBe(windowed.rowCount);
+    expect(row.n).toBe(1);
     db.close();
   });
 });

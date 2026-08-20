@@ -105,10 +105,23 @@ export function toPositionalSubquery(predicate: {
  */
 export { CORRELATION_WINDOW_MS } from "../graph/graph-populator.ts";
 
-function probe(db: Database, probeSql: string): SubstrateProbe {
-  const row = db.query(probeSql).get() as { n?: number } | null;
+/**
+ * `executedSql` is what actually runs, bound against `params` — this is the only SQL execution
+ * path for every probe in this module (Task 4 fix round 2, Minor 7: collapsed from two
+ * byte-identical row-extraction copies). `displaySql`, when given, is what `SubstrateProbe.probeSql`
+ * REPORTS instead of `executedSql` — used only when a bound `?` would otherwise appear unbound in
+ * the printed/explain form (see `probeReviewed`'s windowed branch). Defaults to `executedSql`
+ * itself, which is already self-contained and runnable as printed for every parameterless probe.
+ */
+function probe(
+  db: Database,
+  executedSql: string,
+  params: ReadonlyArray<string | number> = [],
+  displaySql: string = executedSql,
+): SubstrateProbe {
+  const row = db.query(executedSql).get(...params) as { n?: number } | null;
   const rowCount = typeof row?.n === "number" ? row.n : 0;
-  return { probeSql, passed: rowCount > 0, rowCount };
+  return { probeSql: displaySql, passed: rowCount > 0, rowCount };
 }
 
 export function probePrFileCoverage(db: Database): SubstrateProbe {
@@ -127,18 +140,28 @@ export function probeCorrelatesWith(db: Database): SubstrateProbe {
  * where "nobody reviewed in the window" and "we have no synced data for the window" are
  * indistinguishable at the SQL level, and refusing on that ambiguity — rather than returning
  * every graphed person as a confident false "clean" answer — is this whole feature's thesis.
- * `sinceMs` omitted means the unwindowed, all-time check (the original behavior, still used by
- * every other existing caller of this probe).
+ *
+ * `sinceMs` omitted means the unwindowed, all-time check (the ORIGINAL behavior). There is no
+ * other PRODUCTION caller of that branch today — `ipc/people-rpc.ts`'s `rpcPeopleList` always
+ * passes `effectiveSinceMs` (defaulting to `0`, never `undefined`) — so the unwindowed branch is
+ * reached only from this module's own tests, kept because it is the correct behavior for any
+ * future caller that genuinely wants an all-time check.
  */
 export function probeReviewed(db: Database, sinceMs?: number): SubstrateProbe {
   if (sinceMs === undefined) {
     return probe(db, "SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'reviewed'");
   }
-  const probeSql =
+  const executedSql =
     "SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'reviewed' AND created_at >= ?";
-  const row = db.query(probeSql).get(sinceMs) as { n?: number } | null;
-  const rowCount = typeof row?.n === "number" ? row.n : 0;
-  return { probeSql, passed: rowCount > 0, rowCount };
+  // `probeSql` is reported for DISPLAY/`--explain` — a caller pasting it into sqlite3 must get a
+  // runnable statement, not an unbound `?` (Task 4 fix round 2, Important 2). The EXECUTED
+  // statement above stays fully parameterised via `probe()`'s `params` argument; this inlines
+  // `sinceMs` into a SEPARATE string used for display ONLY. Safe here because `sinceMs` is typed
+  // `number` (never a raw caller string) and is already `Math.floor`-ed by `rpcPeopleList` before
+  // it reaches this function — do not "fix" this by string-concatenating anything that is not
+  // already a known-safe number; that would turn a display convenience into an injection.
+  const displaySql = `SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'reviewed' AND created_at >= ${String(sinceMs)}`;
+  return probe(db, executedSql, [sinceMs], displaySql);
 }
 
 /**

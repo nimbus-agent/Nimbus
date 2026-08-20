@@ -378,6 +378,42 @@ describe("people.list — --not-reviewed", () => {
     expect(v.explain?.substrate).toBeDefined();
   });
 
+  // Task 4 fix round 2, finding 1 (the real one): the previous test above cannot fail — `typeof
+  // sql === "string"` and `Array.isArray(params)` are satisfied by the bare predicate SQL just as
+  // much as by the composed one, so it never noticed the refusal path skipping Important 1's
+  // fix. This test instead RUNS `explain.sql`/`explain.params` back against the fixture db and
+  // asserts the row set, exactly like the success-path "explain.sql is the composed statement"
+  // test above — the only way to prove the refusal path reports the COMPOSED statement
+  // (`unlinkedOnly`'s `linked = 0` filter included) rather than the bare predicate subquery
+  // (which would also return a LINKED person that could never appear in a real result).
+  test("refusal's explain.sql is the composed statement, not the bare predicate subquery", () => {
+    seedPersonWithoutReview(fixture.db, "bob");
+    fixture.db.run("UPDATE person SET linked = 0 WHERE id = 'bob'");
+    seedPersonWithoutReview(fixture.db, "carol"); // linked (default) — must be filtered OUT
+    const r = call("people.list", {
+      notReviewed: true,
+      sinceMs: 1,
+      unlinkedOnly: true,
+      explain: true,
+    });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as {
+      status?: string;
+      explain?: { sql: string; params: Array<string | number> };
+    };
+    expect(v.status).toBe("refused");
+    expect(v.explain).toBeDefined();
+    if (v.explain === undefined) return;
+    const rows = fixture.db.query(v.explain.sql).all(...v.explain.params) as Array<{
+      id: string;
+    }>;
+    // Both bob and carol trivially satisfy "not reviewed" (the substrate is empty), so the bare
+    // predicate subquery alone would return BOTH. Only the composed statement's `linked = 0`
+    // filter narrows this to bob.
+    expect(rows.map((row) => row.id)).toEqual(["bob"]);
+  });
+
   test("returns only people with no reviewed edge in the window, wrapped with gaps and meta", () => {
     seedPersonWithReview(fixture.db, "alice", Date.now());
     seedPersonWithoutReview(fixture.db, "bob");

@@ -26,7 +26,7 @@ export type ItemListQueryParams = {
    * here, in the order filters are appended; a numbered placeholder would desynchronize SQLite's
    * own auto-numbering from that array's order and misbind. Callers embedding a predicate built
    * with numbered placeholders must renumber them to plain `?` first (see
-   * `toUnnumberedPlaceholders` in `ipc/diagnostics-rpc.ts`).
+   * `toPositionalSubquery` in `index/negation-predicates.ts`).
    *
    * Mutually exclusive with `ids` in practice (a caller needing both would just AND two `id IN`
    * clauses, which this type does not prevent, but no current caller does).
