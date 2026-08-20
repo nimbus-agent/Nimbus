@@ -6,6 +6,7 @@ import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
 import { applyDevilAdvocate } from "./devil-advocate.ts";
 import { agentErrorFromCaughtError } from "./gateway-agent-error.ts";
+import { drainNegationDisclosures } from "./negation-disclosure.ts";
 import { applyPersona } from "./persona.ts";
 import { sanitizeExternalError } from "./sanitize-external-error.ts";
 
@@ -169,6 +170,57 @@ async function runViaAgent(
   return { reply: await streamOut.text };
 }
 
+/**
+ * The router-vs-agent fork, MOVED verbatim out of `runConversationalAgent` so the disclosure
+ * append below has exactly one return to wrap. If this function's body differs from what the
+ * caller used to contain by anything other than its signature, the change is wrong: a feature
+ * that appends a sentence must not alter which turns survive.
+ */
+async function runTurn(
+  p: RunConversationalAgentParams,
+  promptArg: PromptArg,
+  maxSteps: number,
+): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
+  const llmRouter = p.llmRouter;
+  if (llmRouter !== undefined && shouldUseLocalRouter(p)) {
+    try {
+      return await runViaLocalRouter(llmRouter, promptArg, p);
+    } catch (e) {
+      if (p.agent === undefined) {
+        throw e;
+      }
+      conversationalLog.warn({ err: e }, "local LLM router failed; falling back to agent");
+    }
+  }
+  if (p.agent === undefined) {
+    throw new Error("No conversational agent or local LLM router configured");
+  }
+  return await runViaAgent(p.agent, promptArg, p, maxSteps);
+}
+
+/**
+ * Drain the turn's negation disclosures and append them to BOTH the streamed output and the
+ * returned reply, so the desktop app cannot show less than the CLI. Identity when nothing was
+ * recorded — the default turn's reply must not move.
+ *
+ * The stream has already been sent by the time this runs, so the disclosure necessarily arrives
+ * last. That is deliberate: it qualifies an answer the user has already begun reading.
+ */
+function appendNegationDisclosures<T extends { reply: string }>(
+  res: T,
+  p: RunConversationalAgentParams,
+): T {
+  const lines = drainNegationDisclosures();
+  if (lines.length === 0) {
+    return res;
+  }
+  const text = `\n\n${lines.join("\n")}`;
+  if (p.stream) {
+    p.sendChunk(text);
+  }
+  return { ...res, reply: `${res.reply}${text}` };
+}
+
 export async function runConversationalAgent(
   p: RunConversationalAgentParams,
 ): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
@@ -193,23 +245,7 @@ export async function runConversationalAgent(
   const promptArg = buildPromptArg(promptWithContext, p.priorTurns ?? []);
 
   try {
-    const llmRouter = p.llmRouter;
-    if (llmRouter !== undefined && shouldUseLocalRouter(p)) {
-      try {
-        return await runViaLocalRouter(llmRouter, promptArg, p);
-      } catch (e) {
-        if (p.agent === undefined) {
-          throw e;
-        }
-        conversationalLog.warn({ err: e }, "local LLM router failed; falling back to agent");
-      }
-    }
-
-    if (p.agent === undefined) {
-      throw new Error("No conversational agent or local LLM router configured");
-    }
-
-    return await runViaAgent(p.agent, promptArg, p, maxSteps);
+    return appendNegationDisclosures(await runTurn(p, promptArg, maxSteps), p);
   } catch (e) {
     const typed = agentErrorFromCaughtError(e);
     if (typed !== null) {

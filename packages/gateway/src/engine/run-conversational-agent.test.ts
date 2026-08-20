@@ -2,8 +2,10 @@ import { describe, expect, mock, test } from "bun:test";
 import type { Agent } from "@mastra/core/agent";
 
 import type { LlmRouter } from "../llm/router.ts";
+import { agentRequestContext } from "./agent-request-context.ts";
 import { DEVIL_ADVOCATE_DIRECTIVE } from "./devil-advocate.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
+import { recordNegationDisclosure } from "./negation-disclosure.ts";
 import { TONE_DIRECTIVES, VOICE_DIRECTIVES } from "./persona.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 
@@ -425,5 +427,64 @@ describe("persona (A2) reaches BOTH execution paths and composes with --devil", 
     expect(personaAt).toBeGreaterThanOrEqual(0);
     expect(devilAt).toBeGreaterThanOrEqual(0);
     expect(personaAt).toBeLessThan(devilAt);
+  });
+});
+
+describe("negation disclosures", () => {
+  test("non-stream: the disclosure is appended to the reply", async () => {
+    const agent = { generate: mock(async () => ({ text: "ok" })) } as unknown as Agent;
+    const r = await agentRequestContext.run({}, async () => {
+      recordNegationDisclosure("findPrsNotTouching could not be verified: no data. sync it.");
+      return runConversationalAgent({ agent, input: "hi", stream: false, sendChunk: () => {} });
+    });
+    expect(r.reply).toContain("ok");
+    expect(r.reply).toContain("findPrsNotTouching could not be verified");
+  });
+
+  test("stream: the SAME text is streamed and returned — the UI cannot show less than the CLI", async () => {
+    const chunks: string[] = [];
+    const agent = {
+      stream: mock(async () => ({
+        fullStream: mockAgentTextDeltaStream(),
+        text: Promise.resolve("full"),
+      })),
+    } as unknown as Agent;
+    const r = await agentRequestContext.run({}, async () => {
+      recordNegationDisclosure("D1");
+      return runConversationalAgent({
+        agent,
+        input: "hi",
+        stream: true,
+        sendChunk: (t) => chunks.push(t),
+      });
+    });
+    expect(chunks.join("")).toContain("D1");
+    expect(r.reply).toContain("D1");
+  });
+
+  test("identity when nothing was recorded — a default turn's reply must not move", async () => {
+    const agent = { generate: mock(async () => ({ text: "ok" })) } as unknown as Agent;
+    const r = await agentRequestContext.run({}, async () =>
+      runConversationalAgent({ agent, input: "hi", stream: false, sendChunk: () => {} }),
+    );
+    expect(r.reply).toBe("ok");
+  });
+
+  test("the local-router fallback still fires — appending must not change which turns survive", async () => {
+    const llmRouter = {
+      prefersLocal: () => true,
+      generate: mock(async () => {
+        throw new Error("router down");
+      }),
+    } as unknown as LlmRouter;
+    const agent = { generate: mock(async () => ({ text: "from agent" })) } as unknown as Agent;
+    const r = await runConversationalAgent({
+      agent,
+      llmRouter,
+      input: "hi",
+      stream: false,
+      sendChunk: () => {},
+    });
+    expect(r.reply).toBe("from agent");
   });
 });
