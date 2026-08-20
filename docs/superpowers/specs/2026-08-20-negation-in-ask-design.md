@@ -1,7 +1,7 @@
 # Negation predicates on the model surfaces (W6-B.2) — design
 
 **Date:** 2026-08-20
-**Status:** Design approved in conversation, not yet implemented.
+**Status:** Design approved; review folded in 2026-08-20 (see `2026-08-20-negation-in-ask-design-review-response.md`). Not yet implemented.
 **Relationship to other work:** sub-project **B.2** of W6-B, the last open Wave 6 row. Built
 directly on **B.1** (shipped 2026-08-20 as #1277), which put three negation predicates on
 `nimbus query` / `nimbus people list`. B.1 is the precondition: there was nothing to expose until
@@ -13,11 +13,15 @@ the predicates and their fail-closed semantics existed.
 
 The same three predicates B.1 shipped, reachable by a model:
 
-| Tool | Answers | Scoped to |
-| --- | --- | --- |
-| `findPrsNotTouching` | PRs with no indexed changed-file path matching a glob | `item.type = 'pr'`, intrinsically |
-| `findDeploymentsWithoutIncident` | deployments with no outgoing `correlates_with` edge | `item.type = 'deployment'`, intrinsically |
-| `findPeopleWithoutReviews` | people with no outgoing `reviewed` edge newer than a cutoff | people |
+| Tool | Answers | Parameters | Scoped to |
+| --- | --- | --- | --- |
+| `findPrsNotTouching` | PRs with no indexed changed-file path matching a glob | `pathGlob` (required), `service?`, `limit?` | `item.type = 'pr'`, intrinsically |
+| `findDeploymentsWithoutIncident` | deployments with no outgoing `correlates_with` edge | `service?`, `limit?` | `item.type = 'deployment'`, intrinsically |
+| `findPeopleWithoutReviews` | people with no outgoing `reviewed` edge newer than a cutoff | `since?`, `limit?` | people |
+
+The parameter lists are exhaustive and deliberate. **No tool exposes `itemType`** — the type scope
+is intrinsic (D4), so there is no parameter to get wrong. `findPeopleWithoutReviews` exposes no
+`service`, matching `buildPersonListSql`, which has no service dimension (§ 10).
 
 On **two surfaces**, under the same three names, so there is one vocabulary rather than two:
 
@@ -134,10 +138,17 @@ Flow:
    Lazy creation matters: `ipc/server/inline-handlers.ts` builds that store in **two** places
    (`engine.ask` at :96 and the `engine.askStream` dispatcher at :350), and a field that had to be
    initialised at both would eventually be initialised at one.
-2. `runConversationalAgent` (`engine/run-conversational-agent.ts`) drains the array and appends the
-   sentences to the reply **at the single site above the router-vs-agent fork** — the mirror image
-   of where `applyDevilAdvocate` and `applyPersona` go in. Both paths return `{ reply }` through
-   that one function, so neither can be missed.
+2. `runConversationalAgent` (`engine/run-conversational-agent.ts`) **drains** the array — a
+   read-and-clear, never a read — and appends the sentences to the reply at the single site both
+   paths return through, the mirror image of where `applyDevilAdvocate` and `applyPersona` go in.
+   Draining rather than reading is what stops a store reused within one dispatch frame (a
+   sub-agent turn, a retry) from re-emitting a disclosure the user has already seen.
+
+   **The existing control flow moves unchanged.** The fork carries a local-router `try`/`catch`
+   that falls back to the Mastra agent on router failure, and an explicit `undefined` narrowing
+   that errors when neither is configured. The append wraps that block; it does not rewrite it. If
+   the implementation diff shows the fallback or the narrowing changing shape, the diff is wrong —
+   a feature that appends a sentence must not alter which turns survive.
 3. On the streaming path the model's text has already been sent to the client by then, so the same
    text is also emitted through `p.sendChunk` before returning. **The streamed answer and the
    returned answer must be byte-identical**; a disclosure present in `reply` and absent from the
@@ -221,10 +232,45 @@ open bound — not as a limitation implied by silence.
 - **No change to `nimbus query` / `nimbus people list`.** B.1's surface is untouched, including its
   mandatory `--service` (D5).
 
+### 7.1 The local-router path has no tools at all, so B.2 is inert there
+
+Found while pinning down where the disclosure is appended, and stated here because leaving it
+implicit would make the feature's name a lie for a specific, documented configuration.
+
+`shouldUseLocalRouter` (`packages/gateway/src/engine/run-conversational-agent.ts:57`) sends a turn
+through `runViaLocalRouter` whenever `llmRouter.prefersLocal()` — that is, whenever
+`[llm].prefer_local = true`, the documented Ollama setup. That path calls
+`llmRouter.generate({ prompt, systemPrompt, … })`, and the router has **no tool-calling support**:
+the string `tools` does not occur anywhere under `packages/gateway/src/llm/`.
+
+So on that path there are no engine tools — not the three new ones, and not `searchLocalIndex`
+either. This is pre-existing behaviour that B.2 neither causes nor can fix, but it bounds the
+claim precisely:
+
+> **"Negation in `nimbus ask`" holds for turns answered by the Mastra agent. For a
+> `prefer_local = true` user the tools are unreachable, and the predicates are available only
+> through `nimbus query` / `nimbus people list` (B.1) or an MCP client.**
+
+The CHANGELOG and the roadmap row carry that sentence too. This project has twice shipped a
+capability that was inert on a real path and believed to work — A0's synthesis seam, which had
+never once run in production, and A1's devil mode, inert on the UI dispatcher. Both were found by
+measuring rather than reasoning; this one is being recorded before it can join them.
+
 ---
 
 ## 8. Testing
 
+- **★ Retire the ALS risk FIRST, before anything is built on it.** The disclosure mechanism assumes
+  `agentRequestContext` reaches a tool that **Mastra** scheduled. Nothing in the tree proves that:
+  the closest test (`packages/gateway/src/engine/agent.test.ts:788`) calls `tool.execute(...)`
+  directly inside `agentRequestContext.run(...)`, which exercises the wrapper, not Mastra's
+  plumbing. The failure mode is silence — `getStore()` returns `undefined`, nothing is pushed,
+  nothing is drained, and the turn returns a normal-looking answer with no disclosure, which is
+  indistinguishable from a turn that had nothing to disclose. So the plan's first task is a probe
+  driving a real `agent.generate` with a tool that pushes a sentinel, asserting it arrives at the
+  caller. If the sentinel does not arrive, **stop**: the closure-held alternative is worse, because
+  `createNimbusEngineAgent` builds its tools once rather than per turn, so a shared collector would
+  leak one turn's disclosures into a concurrent turn's answer.
 - **The seam, not the ends.** The test that matters drives a real `ask` turn through **both**
   dispatchers and asserts the disclosure appears in `reply` **and** in the streamed chunks. A test
   per side proves two ends and can leave the wire dead — this codebase has shipped exactly that
@@ -267,11 +313,12 @@ open bound — not as a limitation implied by silence.
 
 ## 10. Open questions
 
-One recorded for the plan to answer against the tree rather than by assumption:
-
-1. **Where exactly the streamed disclosure chunk is emitted** — inside `runConversationalAgent`
-   after the fork returns, or by the caller. It must be one place that both dispatchers reach; the
-   plan should name the line rather than the function.
+**None open.** The one that was — where the streamed disclosure chunk is emitted — was answered by
+the design review and is now § 5.1: after the fork, inside the `try`, at the single site both
+paths return through, wrapping the existing control flow rather than restructuring it. The review's
+suggested code for it was rejected on three counts (it deleted the router-failure fallback, did not
+typecheck, and read where it should drain); see
+`2026-08-20-negation-in-ask-design-review-response.md`.
 
 **A second open question was closed while writing this section rather than deferred.** It asked
 whether `findPeopleWithoutReviews` needs a `service` parameter. It does not, and D5's optional
