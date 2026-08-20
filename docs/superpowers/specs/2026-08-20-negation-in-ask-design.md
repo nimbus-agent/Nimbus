@@ -160,6 +160,33 @@ Flow:
 count. B.1's gap line prints on every negation query precisely because exclusion accounting is part
 of the answer, not debug output.
 
+### 5.1.1 The ALS risk cannot be fully retired by a test, so it degrades loudly instead
+
+Recorded while writing the plan, correcting what the review response promised. The probe it called
+for — drive a real `agent.generate` and assert a tool-pushed sentinel arrives — **cannot run in
+CI**: `createNimbusEngineAgent` passes `model` as a string id through Mastra's provider registry
+(`toMastraModelId`), not a model object, so a Mastra tool-call loop needs a live model. The
+existing engine tests either call `tool.execute` directly or fake the whole `Agent`.
+
+What is provable in CI is that a tool retrieved **from a real Mastra `Agent`** sees the store when
+executed inside the request scope — the shape `agent.test.ts:788` already uses for `sessionId`,
+extended to the disclosure array. What is not provable is Mastra's internal scheduling between the
+model's tool-call decision and the `execute` call.
+
+So the design does not rest on that being fine. **Every negation tool also embeds its disclosure
+sentence in its own returned payload**, which the model always sees, and `recordNegationDisclosure`
+logs a warning when there is no store to push to. The guarantee therefore degrades in a named,
+visible way rather than silently:
+
+| ALS reaches the tool | User sees |
+| --- | --- |
+| yes (expected) | the sentence appended verbatim, outside the model's control |
+| no | the sentence in the tool payload only — the MCP-level guarantee (§ 5.2), plus a warning in the gateway log |
+
+The failure mode that made this the top risk — a disclosure that vanishes with no trace, looking
+exactly like a turn that had nothing to disclose — is closed either way. That is worth more than
+the test that cannot be written.
+
 **One precision this design must not overstate.** Unlike invariant I31, where reserved sections are
 withheld from the model entirely, here the refusal *is* also in the tool result the model sees — it
 has to be, or the model will answer anyway. The guarantee is therefore **not** "the model never saw
