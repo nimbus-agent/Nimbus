@@ -38,8 +38,11 @@ schemas), Biome.
   CI-Linux-authoritative).
 - **Red-prove every guard** by deleting it and confirming the test fails. A green suite proves
   nothing about a guard.
-- Before the first push: `grep -rnE "file:///|C:[\\/]gitrep" --include=*.md docs/ *.md` — an
-  absolute file link passes `audit:links` locally and fails CI. It has happened on three branches.
+- Before the first push: `grep -rn "file:///" --include=*.md docs/ *.md` — expected **no matches**.
+  An absolute `file:///` link passes `audit:links` locally (the path exists on the authoring
+  machine) and fails on the Linux runner; it has happened on three branches. Grep for `file:///`
+  specifically and not for the drive path — plain-text worktree paths appear in prose all over this
+  directory and are harmless, since lychee only follows links.
 
 ---
 
@@ -1290,7 +1293,7 @@ pipe's status, not lychee's.
 - `bun test packages/gateway` — quote pass/skip/fail
 - `bun test packages/cli` — quote pass/skip/fail
 - `bun run typecheck:tests` — quote the violation count, not the exit code
-- `grep -rnE "file:///|C:[\\/]gitrep" --include=*.md docs/ *.md` — expected: no matches
+- `grep -rn "file:///" --include=*.md docs/ *.md` — expected: no matches
 
 - [ ] **Step 6: Commit**
 
