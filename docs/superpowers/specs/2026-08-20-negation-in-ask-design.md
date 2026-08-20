@@ -326,8 +326,9 @@ measuring rather than reasoning; this one is being recorded before it can join t
 - `runConversationalAgent` returns `{ reply }` from both the local-router and Mastra-agent paths
   (`engine/run-conversational-agent.ts:172`), with `applyDevilAdvocate`/`applyPersona` applied at
   `:189` — the symmetric inbound site § 5.1 mirrors.
-- `agentRequestContext.run(...)` is established at `ipc/server/inline-handlers.ts:96` and `:350`
-  (two sites, hence the lazy array).
+- `agentRequestContext.run(...)` is established at `ipc/server/inline-handlers.ts:96`
+  (`agent.invoke`), `:215` (`workflow.run`), and `:350` (`engine.askStream`) — three sites,
+  hence the lazy array.
 - `INDEX_TOOL_SPECS` at `packages/cli/src/mcp/adapter.ts:377`; `TOOL_SPECS` at `:476`;
   `AGENT_CLASSIFIED_TOOL_SPECS` carries the "gateway-SYNTHESISED output ⇒ ledgered" rule that
   places the new tools in the index list.

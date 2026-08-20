@@ -70,15 +70,20 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   guarantee: `nimbus ask` (and the desktop/VS Code surfaces sharing its engine) cannot lose an
   exclusion count to a paraphrase; an MCP client can.
 
-  **The disclosure append is a tested guarantee, not a hope.** The design flagged a real risk that
-  the per-request `AsyncLocalStorage` store might not survive Mastra's internal tool-call
-  scheduling — a failure mode that would look identical to a turn with nothing to disclose, since
-  `getStore()` would return `undefined` and nothing would push, drain, or warn. That was probed
-  against a real `@mastra/core` `Agent` (not a hand-built fake) during implementation: a
-  `createTool`-registered probe tool retrieved through the Agent's own accessor, executed inside an
-  `agentRequestContext.run()` scope, and the pushed sentinel arrived on the first attempt. As a
-  fail-safe regardless, every negation tool also embeds its disclosure sentence in its own returned
-  payload — the MCP-level guarantee — and `recordNegationDisclosure` logs a warning on the rare
+  **What the disclosure append proves, and what it deliberately does not.** The design flagged a
+  real risk that the per-request `AsyncLocalStorage` store might not survive Mastra's internal
+  tool-call scheduling — a failure mode that would look identical to a turn with nothing to
+  disclose, since `getStore()` would return `undefined` and nothing would push, drain, or warn.
+  What was probed, against a real `@mastra/core` `Agent` (not a hand-built fake): a
+  `createTool`-registered probe tool retrieved through the Agent's own `listTools()` accessor, with
+  its `execute` then invoked directly inside an `agentRequestContext.run()` scope — proving the
+  store survives being *retrieved through* a real Agent. What that does **not** prove is Mastra's
+  own scheduling *between* the model's tool-call decision and its `execute` call actually landing
+  inside that same async context — the design's own § 5.1.1 names that gap as unprovable in CI,
+  because it would require a real model call. That gap is why every negation tool also embeds its
+  disclosure sentence in its own returned payload — the MCP-level guarantee — regardless of whether
+  the store round-trip holds on a given turn. As a further fail-safe, `recordNegationDisclosure`
+  logs a warning on the rare
   path where no store is present, so the guarantee degrades visibly rather than silently.
 
   **A model can still ignore the tool descriptions, and this delivery does not close that.**
