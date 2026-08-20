@@ -247,6 +247,11 @@ export async function runConversationalAgent(
   try {
     return appendNegationDisclosures(await runTurn(p, promptArg, maxSteps), p);
   } catch (e) {
+    // A step that recorded a disclosure and then threw must not leave it sitting in the
+    // (possibly shared, e.g. workflow.run's one-store-per-workflow) request store for the
+    // NEXT turn to drain and misattribute to its own reply. Discard rather than append: the
+    // turn that recorded it never produced an answer to qualify.
+    drainNegationDisclosures();
     const typed = agentErrorFromCaughtError(e);
     if (typed !== null) {
       throw typed;

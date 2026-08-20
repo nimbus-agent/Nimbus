@@ -487,4 +487,41 @@ describe("negation disclosures", () => {
     });
     expect(r.reply).toBe("from agent");
   });
+
+  test("a disclosure recorded before a throw is cleared, not left for the next turn in the same store (MINOR 6)", async () => {
+    // `workflow.run` shares ONE request store across every step of a workflow. If a step
+    // records a disclosure and then throws, the array must not survive into the next step's
+    // drain — else that step's reply would carry a disclosure that belongs to a DIFFERENT
+    // (and failed) turn.
+    const throwingAgent = {
+      generate: mock(async () => {
+        recordNegationDisclosure("from-the-failed-step");
+        throw new Error("boom");
+      }),
+    } as unknown as Agent;
+
+    await agentRequestContext.run({}, async () => {
+      await expect(
+        runConversationalAgent({
+          agent: throwingAgent,
+          input: "first",
+          stream: false,
+          sendChunk: () => {},
+        }),
+      ).rejects.toThrow();
+
+      // Same store, second (successful) turn: must not see the first turn's disclosure.
+      const okAgent = {
+        generate: mock(async () => ({ text: "second-reply" })),
+      } as unknown as Agent;
+      const r = await runConversationalAgent({
+        agent: okAgent,
+        input: "second",
+        stream: false,
+        sendChunk: () => {},
+      });
+      expect(r.reply).toBe("second-reply");
+      expect(r.reply).not.toContain("from-the-failed-step");
+    });
+  });
 });
