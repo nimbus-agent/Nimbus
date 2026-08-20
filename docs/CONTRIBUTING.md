@@ -175,20 +175,55 @@ If a file is genuinely untestable glue rather than logic, it can be excluded —
 
 Connectors live in `packages/mcp-connectors/`. They depend only on `@nimbus-dev/sdk`.
 
-Two generators exist. Use the one that matches how you are working:
+Use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector). It is
+published on npm and emits the whole connector package from a JSON spec — `src/server.ts`, the
+`nimbus.extension.json` manifest, a per-package TypeScript config, a `package.json` matching the
+connector convention, a `README.md`, and `test/sandbox.test.ts`, plus `src/search-filter.ts` when
+the spec declares a search tool.
 
-- **Inside this repo** (you have Nimbus checked out and built): `nimbus scaffold extension packages/mcp-connectors/your-service` — the id is a positional argument, not `--name`/`--output` flags, and it doubles as both the output directory (relative to your current working directory) and the `id` field written into the generated manifest, so pass the full repo-relative path you want.
-- **Standalone** (you want a connector outside the monorepo): [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector)
+```bash
+bunx create-nimbus-connector --spec ./your-service.spec.json
+```
 
-`nimbus scaffold extension` emits a generic extension shell, not a connector-shaped one: `nimbus.extension.json`, `package.json`, `dist/index.js`, and `smoke.test.ts` — no `src/server.ts`, no per-package TypeScript config, no README, and no `@nimbus-dev/sdk` dependency. Because every connector-specific gate (`audit:connector-registry-drift`, `audit:connector-entrypoints`, `audit:connector-deps`) keys off the presence of `src/server.ts`, a freshly scaffolded directory is invisible to all three of them — they report clean, which is not the same as done, and `bun run typecheck` silently skips it too (see step 5). None of this is automatic; do this by hand after scaffolding:
+**Run it from the repository root.** In monorepo mode it writes to `packages/mcp-connectors/<name>`
+relative to your current directory, so running it from inside `packages/mcp-connectors/` nests the
+output at `packages/mcp-connectors/packages/mcp-connectors/<name>`.
 
-1. Write `src/server.ts` implementing the MCP server against the service's API — copy the shape of an existing connector (e.g. `packages/mcp-connectors/github/src/server.ts`) rather than the scaffold's `dist/index.js` placeholder.
-2. Rewrite `package.json` to the real connector convention: `name: "nimbus-mcp-<service>"`, a `bin` entry, `dependencies` limited to the connector allow-list (`@modelcontextprotocol/sdk`, `@nimbus-dev/sdk`, `zod`, and a short list of others — see `ALLOWED_CONNECTOR_DEPS` in `scripts/structure-audit/check-connector-deps.ts`), and `build`/`typecheck`/`lint` scripts — the scaffold's `package.json` has only `test`.
-3. Add a per-package tsconfig.json next to your connector's `package.json` — every real connector has one; the scaffold does not generate one.
-4. Rewrite `nimbus.extension.json` to the real shape used by connectors: `id: "com.nimbus.<service>"`, `displayName` set to a human-readable name (not the scaffold path), `entrypoint: "dist/server.js"`, `permissions: { network: [...] }`, and `hitlRequired: ["write", "delete"]` — an array of the permission names your write/delete tools need gated, not a boolean; the Gateway enforces HITL automatically from that declaration. (The scaffold writes `id`/`entrypoint`/`permissions` in a generic-extension shape connectors don't use, and it writes the positional argument you passed verbatim into both `id` and `displayName`, so `displayName` needs fixing too — it will otherwise read as your scaffold path.)
-5. Add the new package path to the root `package.json`'s `workspaces` array. It is an explicit list, not a glob — `bun install` and `bun run typecheck` (which runs `--filter '*'` over workspace members) silently skip a connector directory that isn't listed there. Run `bun install` after adding it.
-6. Run the SDK contract tests against your manifest with `runContractTests(manifest)` from `@nimbus-dev/sdk` (validates mandatory tool surface, HITL declaration, item-ID format, `SyncResult` shape). If your connector declares `permissions.{network,filesystem}` for the T2 PR 1 sandbox, also run `runSandboxContractTests()`. Use `MockGateway` from `@nimbus-dev/sdk/testing` for in-process IPC stubbing in unit tests.
-7. Run `bun run gen:connector-registry` to register the connector in the generated `packages/gateway/src/connectors/bundled-connector-registry.ts`, and commit the result — `bun run audit:connector-registry-drift` fails until you do, and the shipped binary cannot start an unregistered connector.
+Model your spec on one of the generator's own fixtures — `fixtures/netlify.spec.json` is a good
+read-only example. Add `--standalone` if you want the connector outside this repo; that variant
+resolves its helpers from the published `@nimbus-dev/sdk` instead of relative `../../shared/*`
+paths.
+
+**`nimbus scaffold extension` is not the tool for this.** It emits a four-file generic extension
+shell with no `src/server.ts`, and every connector gate — `audit:connector-registry-drift`,
+`audit:connector-entrypoints`, `audit:connector-deps` — keys off that file, so its output is
+invisible to all three. They report clean, which is not the same as done.
+
+### After generating
+
+Two steps are still yours, and the gates enforce both:
+
+1. **Add the package path to the root `package.json` `workspaces` array.** It is an explicit list,
+   not a glob — `bun install` and `bun run typecheck` (which runs `--filter '*'` over workspace
+   members) silently skip a connector directory that is not listed. Run `bun install` afterwards.
+2. **Run `bun run gen:connector-registry`** and commit the result. The bundled registry is a
+   generated, committed file; `bun run audit:connector-registry-drift` fails until you regenerate
+   it, and the shipped binary cannot start an unregistered connector.
+
+Then verify:
+
+```bash
+bun run audit:connector-entrypoints
+bun run audit:connector-deps
+bun run audit:connector-registry-drift
+bun run typecheck
+```
+
+Run the SDK contract tests against your manifest with `runContractTests(manifest)` from
+`@nimbus-dev/sdk` — it validates the mandatory tool surface, the HITL declaration, the item-ID
+format and the `SyncResult` shape. If your connector declares `permissions.{network,filesystem}`
+for the sandbox, also run `runSandboxContractTests()`. `MockGateway` from `@nimbus-dev/sdk/testing`
+stubs IPC in unit tests.
 
 See the [architecture](./architecture.md) for connector mesh details.
 

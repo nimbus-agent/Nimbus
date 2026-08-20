@@ -723,17 +723,30 @@ Found a vulnerability? See [`SECURITY.md`](./SECURITY.md) and the [security mode
 
 ## Extensions
 
-Writing a new connector takes an afternoon, not a sprint. The `@nimbus-dev/sdk` handles scaffolding; the Gateway handles OAuth, credential storage, sync scheduling, and HITL enforcement. You write the service API integration.
+Two different things live under the same command family, and picking the wrong one costs an afternoon.
+
+**Writing a connector** — something that indexes a service into your local index. Use
+[`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector). Describe the
+service in a JSON spec and it emits the whole package: `src/server.ts`, the manifest, the
+tsconfig, the package.json and a test.
 
 ```bash
-nimbus scaffold extension my-connector   # always created at ./my-connector/ in the cwd
-cd my-connector && bun test              # scaffolded package.json defines only `test`; dist/index.js is written for you
-
-nimbus extension install .          # Test locally
-nimbus ask "search my-connector for quarterly review"
-
-npm publish --access public         # Publish to the community
+bunx create-nimbus-connector --spec ./my-service.spec.json --standalone
+cd my-service && bun run typecheck && bun test
 ```
+
+**Writing a generic extension** — anything that is not a connector. `nimbus scaffold extension`
+emits a four-file shell for that case; it does not produce a connector, and a package it
+generates is invisible to the connector gates because it has no `src/server.ts`.
+
+```bash
+nimbus scaffold extension my-extension   # always created at ./my-extension/ in the cwd
+nimbus extension install .               # Test locally
+npm publish --access public              # Publish to the community
+```
+
+The Gateway handles OAuth, credential storage, sync scheduling, and HITL enforcement either way.
+You write the service API integration.
 
 Extensions declare permissions in `nimbus.extension.json`. Write and delete tools must declare `hitlRequired` — the Gateway enforces HITL automatically for those tool calls regardless of how the extension implements them.
 
@@ -846,7 +859,7 @@ Architecture is stabilizing; not all interfaces are frozen.
 3. Check issues tagged `good first issue`.
 4. Open a discussion before large PRs.
 
-**Adding a connector is the easiest way in.** `nimbus scaffold extension packages/mcp-connectors/your-service` generates a starting shell you then shape into a connector, or use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) standalone. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
+**Adding a connector is the easiest way in.** Run [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) from the repository root — `bunx create-nimbus-connector --spec ./your-service.spec.json` — and it emits the whole connector package: the server, the manifest, the tsconfig, the package.json and a test. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
 
 For workflow, verification commands, and PR expectations, see [`CONTRIBUTING.md`](./CONTRIBUTING.md). Community standards are in [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 
