@@ -85,11 +85,30 @@ describe("documented negation examples parse", () => {
     // complete, but they must fail for a connection reason — never for "unknown subcommand"
     // or "missing --service", which would mean the documented syntax is wrong.
     const err = await captureError(cmd, [...args]);
+    // NEGATIVE: it must not fail on syntax.
     expect(err).not.toMatch(/Unknown people subcommand/i);
     expect(err).not.toMatch(/Missing --service/i);
+    // POSITIVE: it must have got PAST validation and reached the IPC layer. Without this the
+    // test passes vacuously if a command ever swallows a bad flag and returns early — two
+    // `not.toMatch` assertions are both satisfied by an empty string.
+    expect(err).toMatch(/gateway is not running|GatewayNotRunning/i);
   });
 });
 ```
+
+**Make the positive assertion deterministic, and do NOT match OS socket text.** The suggestion to
+assert `connect ENOENT` / `fetch failed` would couple this test to platform-specific error strings
+— Unix domain sockets and Windows named pipes fail differently, and this repo gates on all three
+OSes. Instead, `withGatewayIpc` (`packages/cli/src/lib/with-gateway-ipc.ts:64-66`) throws a
+code-owned `GatewayNotRunningError` when no gateway state file is found, which is stable across
+platforms.
+
+Force that state in the test rather than depending on the developer's machine: point
+`NIMBUS_CONFIG_DIR` (read by `packages/cli/src/paths.ts:51`) at a fresh empty temp dir for the
+duration of each case, so `readGatewayState` returns `undefined` whether or not a real gateway
+happens to be running. Restore the previous value afterwards. Without this the test passes in CI
+and fails on a developer machine with a live gateway — the worst kind of flake, because it looks
+like a real regression.
 
 You must write `captureError` yourself: invoke `runQuery` / `runPeople` inside a try/catch, capture
 both a thrown message and anything written to `console.error`, and return the combined string.
@@ -343,11 +362,74 @@ export function buildNotTouchingSql(pathGlob: string): {
 }
 ```
 
-Write `buildNoDownstreamIncidentSql` and `buildNotReviewedSql` in the same shape. The first is a
-`NOT EXISTS` over an outgoing `correlates_with` edge from the deployment's graph entity; the second
-a `NOT EXISTS` over an outgoing `reviewed` edge with `created_at >= ?`. **Read
-`packages/gateway/src/graph/relationship-graph.ts` for how an item maps to its graph entity id
-before writing either — do not guess the join.**
+The other two builders need a `graph_entity` BRIDGE — neither `item.id` nor `person.id` joins to
+`graph_relation.from_id` directly, and assuming they do is the trap here. Both joins below were
+verified against the tree, so use them as written:
+
+```ts
+/**
+ * Deployments with no outgoing `correlates_with` edge.
+ *
+ * The bridge is required: `syncTimelineEventGraph` (`graph/graph-populator.ts:854`) upserts the
+ * deployment's graph entity as `{ type: "deployment", externalId: row.id }`, so the item's id is
+ * the entity's EXTERNAL id, never its primary key. Joining `graph_relation.from_id = item.id`
+ * would match nothing and silently return every deployment as "clean" — the exact false positive
+ * this feature exists to prevent.
+ *
+ * No time filter, deliberately: `CORRELATION_WINDOW_MS` is applied at WRITE time by the populator
+ * and `graph_relation.created_at` is the write timestamp, not the event time. See spec § 4.2.
+ */
+export function buildNoDownstreamIncidentSql(): {
+  sql: string;
+  vals: Array<string | number>;
+} {
+  return {
+    sql: `SELECT i.id AS id
+            FROM item i
+            JOIN graph_entity e ON e.external_id = i.id AND e.type = 'deployment'
+           WHERE i.type = 'deployment'
+             AND NOT EXISTS (
+                   SELECT 1 FROM graph_relation r
+                    WHERE r.from_id = e.id AND r.type = 'correlates_with'
+                 )
+           ORDER BY i.id`,
+    vals: [],
+  };
+}
+
+/**
+ * People with no outgoing `reviewed` edge newer than `sinceMs`.
+ *
+ * Same bridge: `graph-populator.ts:341-349` upserts the person entity as
+ * `{ type: "person", externalId: row.authorId }` and emits `reviewed` FROM it, and `row.authorId`
+ * is the `person.id`. Unlike the deployment predicate this one DOES filter on `created_at`,
+ * because `--since` is meant to bound the review window and that is the timestamp available.
+ */
+export function buildNotReviewedSql(sinceMs: number): {
+  sql: string;
+  vals: Array<string | number>;
+} {
+  return {
+    sql: `SELECT p.id AS id
+            FROM person p
+            JOIN graph_entity e ON e.external_id = p.id AND e.type = 'person'
+           WHERE NOT EXISTS (
+                   SELECT 1 FROM graph_relation r
+                    WHERE r.from_id = e.id
+                      AND r.type = 'reviewed'
+                      AND r.created_at >= ?1
+                 )
+           ORDER BY p.id`,
+    vals: [sinceMs],
+  };
+}
+```
+
+**One caveat on `buildNotReviewedSql` you must verify, not assume:** `graph_relation.created_at` is
+the WRITE time, so `--since 7d` means "no reviewed edge WRITTEN in 7 days", not "no review
+performed in 7 days". If a re-graph rewrites edges, every edge's `created_at` moves. Check whether
+`regraph.ts` rewrites `reviewed` edges; if it does, say so in your report and record it as a stated
+bound in Task 6's docs rather than letting the flag imply event-time semantics it does not have.
 
 `countNotTouchingExclusions` returns the two counts separately: PRs of type `pr` with no
 `pr_files_state` row, and those with `truncated = 1`. They mean different things to a reader and
@@ -548,14 +630,29 @@ test("people.list returns only people with no reviewed edge in the window", () =
     params: { notReviewed: true, sinceMs: Date.now() - 7 * 86_400_000 },
     localIndex,
   });
-  const ids = (out as { value: { people: Array<{ id: string }> } }).value.people.map((p) => p.id);
+  // `people.list` returns a BARE ARRAY, not a wrapper object — verified at
+  // `people-rpc.ts:87-90`, which returns `value: rows.map(...)`.
+  const ids = (out as { value: Array<{ id: string }> }).value.map((p) => p.id);
   expect(ids).toEqual(["bob"]);
 });
 ```
 
 `dispatchPeopleRpc` is SYNCHRONOUS (it returns a value, not a promise), so these tests need no
-`async`. Adjust the response destructuring to whatever Step 1 found the real envelope to be — if
-`people.list` returns a bare array rather than `{ people }`, say so in your report.
+`async`.
+
+**The bare-array envelope is a genuine design problem for this task, not just a destructuring
+detail.** `index.queryItems` returns `{ items, meta }`, so Task 3 attaches `gaps` and `explain` as
+sibling keys. `people.list` has no wrapper to attach anything to. Resolve it this way, and record
+the choice in your report:
+
+- The REFUSAL document already replaces the whole payload, so it works unchanged — return the
+  refusal object in place of the array.
+- For `explain`, do NOT wrap the array in a new object. That would be a breaking change to
+  `people.list` for every existing caller, to serve an optional debug flag. Instead return the
+  wrapper ONLY when `explain === true` is requested — the caller asking for `explain` is the only
+  caller who can receive a different shape, and it opted in by asking.
+- Say plainly in your report that `people.list` therefore has two response shapes, gated on an
+  explicit request flag. That asymmetry is worth a reviewer seeing rather than discovering.
 
 - [ ] **Step 3: Run and confirm failure**
 
