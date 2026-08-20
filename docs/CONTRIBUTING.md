@@ -50,6 +50,7 @@ bun test              # All unit tests
 - Issues tagged [`good first issue`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) are the best starting point
 - Issues tagged [`help-wanted`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3Ahelp-wanted) are open for contributors
 - **Open a discussion before starting any large PR.** Architecture decisions belong in a discussion, not in a surprise diff
+- **Ask to be assigned before you start.** Comment on the issue and let a maintainer assign it to you first — it keeps two people from building the same thing. During Hacktoberfest and other high-traffic periods, an outside pull request is reviewed only for an issue the author was assigned first, to keep the review queue honest; outside those periods it's the courteous default, not a hard gate — if in doubt, comment on the issue and open the PR anyway.
 
 ---
 
@@ -156,22 +157,38 @@ The `scripts/` directory holds repository tooling — release packaging (`script
 - [ ] Platform-specific code is behind the `PlatformServices` abstraction
 - [ ] No credentials, tokens, or secret values appear in any log, IPC message, or config
 
+### The per-file coverage floor
+
+`audit:coverage-floor` enforces **≥85% line and ≥80% branch coverage on every non-exempt file**, including new ones. A new connector or script will be rejected by it unless its tests carry it over both floors.
+
+It is **CI-Linux-authoritative** — running it on Windows or macOS produces false violations, so do not trust a local pass or panic at a local failure. Reproduce what CI sees with:
+
+```bash
+bun run verify:docker --full
+```
+
+If a file is genuinely untestable glue rather than logic, it can be excluded — but excluding is a reviewed decision, not a default. Say why in the PR description.
+
 ---
 
 ## Adding a New MCP Connector
 
 Connectors live in `packages/mcp-connectors/`. They depend only on `@nimbus-dev/sdk`.
 
-1. Scaffold a new connector:
+Two generators exist. Use the one that matches how you are working:
 
-   ```bash
-   nimbus scaffold extension --name your-service --output packages/mcp-connectors/your-service
-   ```
+- **Inside this repo** (you have Nimbus checked out and built): `nimbus scaffold extension packages/mcp-connectors/your-service` — the id is a positional argument, not `--name`/`--output` flags, and it doubles as both the output directory (relative to your current working directory) and the `id` field written into the generated manifest, so pass the full repo-relative path you want.
+- **Standalone** (you want a connector outside the monorepo): [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector)
 
-2. Implement the MCP server against the service's API
-3. Declare write/delete tools with `hitlRequired: true` in the manifest — the Gateway enforces HITL automatically
-4. Run the SDK contract tests against your manifest with `runContractTests(manifest)` from `@nimbus-dev/sdk` (validates mandatory tool surface, HITL declaration, item-ID format, `SyncResult` shape). If your connector declares `permissions.{network,filesystem}` for the T2 PR 1 sandbox, also run `runSandboxContractTests()`. Use `MockGateway` from `@nimbus-dev/sdk/testing` for in-process IPC stubbing in unit tests
-5. Register the connector in `packages/gateway/src/connectors/`
+`nimbus scaffold extension` emits a generic extension shell, not a connector-shaped one: `nimbus.extension.json`, `package.json`, `dist/index.js`, and `smoke.test.ts` — no `src/server.ts`, no per-package TypeScript config, no README, and no `@nimbus-dev/sdk` dependency. Because every connector-specific gate (`audit:connector-registry-drift`, `audit:connector-entrypoints`, `audit:connector-deps`) keys off the presence of `src/server.ts`, a freshly scaffolded directory is invisible to all three of them — they report clean, which is not the same as done, and `bun run typecheck` silently skips it too (see step 5). None of this is automatic; do this by hand after scaffolding:
+
+1. Write `src/server.ts` implementing the MCP server against the service's API — copy the shape of an existing connector (e.g. `packages/mcp-connectors/github/src/server.ts`) rather than the scaffold's `dist/index.js` placeholder.
+2. Rewrite `package.json` to the real connector convention: `name: "nimbus-mcp-<service>"`, a `bin` entry, `dependencies` limited to the connector allow-list (`@modelcontextprotocol/sdk`, `@nimbus-dev/sdk`, `zod`, and a short list of others — see `ALLOWED_CONNECTOR_DEPS` in `scripts/structure-audit/check-connector-deps.ts`), and `build`/`typecheck`/`lint` scripts — the scaffold's `package.json` has only `test`.
+3. Add a per-package tsconfig.json next to your connector's `package.json` — every real connector has one; the scaffold does not generate one.
+4. Rewrite `nimbus.extension.json` to the real shape used by connectors: `id: "com.nimbus.<service>"`, `displayName` set to a human-readable name (not the scaffold path), `entrypoint: "dist/server.js"`, `permissions: { network: [...] }`, and `hitlRequired: ["write", "delete"]` — an array of the permission names your write/delete tools need gated, not a boolean; the Gateway enforces HITL automatically from that declaration. (The scaffold writes `id`/`entrypoint`/`permissions` in a generic-extension shape connectors don't use, and it writes the positional argument you passed verbatim into both `id` and `displayName`, so `displayName` needs fixing too — it will otherwise read as your scaffold path.)
+5. Add the new package path to the root `package.json`'s `workspaces` array. It is an explicit list, not a glob — `bun install` and `bun run typecheck` (which runs `--filter '*'` over workspace members) silently skip a connector directory that isn't listed there. Run `bun install` after adding it.
+6. Run the SDK contract tests against your manifest with `runContractTests(manifest)` from `@nimbus-dev/sdk` (validates mandatory tool surface, HITL declaration, item-ID format, `SyncResult` shape). If your connector declares `permissions.{network,filesystem}` for the T2 PR 1 sandbox, also run `runSandboxContractTests()`. Use `MockGateway` from `@nimbus-dev/sdk/testing` for in-process IPC stubbing in unit tests.
+7. Run `bun run gen:connector-registry` to register the connector in the generated `packages/gateway/src/connectors/bundled-connector-registry.ts`, and commit the result — `bun run audit:connector-registry-drift` fails until you do, and the shipped binary cannot start an unregistered connector.
 
 See the [architecture](./architecture.md) for connector mesh details.
 
@@ -210,6 +227,12 @@ Circular dependencies are forbidden. The linter will catch cross-package source 
 3. All CI checks must be green: `pr-quality` (Ubuntu) must pass before review begins. To run optional desktop E2E (Tauri + Playwright) on a PR, add the `ci:e2e-desktop` label (that retriggers CI so the E2E job can run).
 4. At least one maintainer approval is required before merge
 5. Squash-merge is preferred for feature branches; merge commits for release branches
+
+### What to expect from the maintainer
+
+**First response within 72 hours** on any new issue or pull request — a review, a question, or at minimum an acknowledgement that it is queued. Nimbus is maintained by one person, so a full review may take longer than the first response; if 72 hours pass with silence, a nudge on the thread is welcome and appropriate.
+
+Write access follows contribution: the switches that move this repository from single-maintainer to two-maintainer mode are already written down in `.github/rulesets/general-branch.json` under `$contributor_two`.
 
 ---
 

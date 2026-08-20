@@ -9,6 +9,14 @@
 Private, local-first agent for on-call & platform engineers — grounded in your
 own index, with a verifiable record of what it did off your machine.
 
+## The one thing (lead with this)
+
+> `nimbus why src/auth.ts:42` — who wrote this line, when, and in what commit, from your local git history. No LLM, no API key, no cloud account. Connect and sync GitHub, a ticket tracker and an incident tool, and the same command adds the pull request, the ticket, and the incident.
+
+Every post, listing and landing page leads with this and nothing else. The connector count, the agents and the egress ledger are depth — they belong on the second screen, once someone has a reason to keep reading. The pillars below describe what makes people *stay*; this line is what makes them *start*.
+
+**Why this one:** the local-git result's only prerequisites are a git repo and a running Gateway — no LLM, no API key, no cloud account. It is the only capability that is simultaneously unique and provable in under a minute, and it is the only path verified end-to-end on a machine the author does not own. The connector-backed lanes (pull request, ticket, incident) need a configured connector *and* a completed index sync before they populate — that "no LLM, no API key, no cloud account" claim describes the local-git result only, not the connector-backed one.
+
 ## The three pillars
 
 - **Banner — the `why` lens** (*habit*): hover any line for who/PR/ticket/incident/blast-radius. Built on the gateway and reachable through the client; the in-editor hover is next (**not yet shipped — never advertise it as present**).
@@ -17,7 +25,7 @@ own index, with a verifiable record of what it did off your machine.
 
 ## ICP vs generic (say the first, not the others)
 
-- ✅ *"Hover any line: who wrote it, what ticket, what incident, and what breaks if you change it."*
+- ✅ *"`nimbus why src/auth.ts:42` — who wrote this line, when, and in what commit, from your local git history. Connect and sync GitHub, a ticket tracker and an incident tool, and the same command adds the pull request, the ticket, and the incident."*
 - ✅ *"Verifiable proof of what your agent did off your machine."*
 - ⚠️ *"Give Copilot your private context"* — positions Nimbus as an accessory; avoid.
 

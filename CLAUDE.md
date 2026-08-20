@@ -7,7 +7,7 @@ Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that main
 **Runtime:** Bun v1.2+ / TypeScript 7.x strict · **Linter:** Biome · **License:** AGPL-3.0 (GNU Affero GPL; gateway/cli/mcp-connectors) + MIT (sdk)
 **Status:** Phase 6 (Team) ✅ complete (2026-06-18) — all 9 slices: 1 & 3 (2026-06-05), 2 & 4 (2026-06-07), 5 (2026-06-09), 6a (2026-06-11), 6b + 6c (2026-06-12), 7 Waves 7a–7c (2026-06-13/14), 8 Waves 8a–8d (2026-06-15 → 2026-06-18), and 9 — the deferred-from-Phase-5 backlog — across 2026-06-14 → 2026-07-19 (Mendeley; Workday; Apple Mail/iCloud Calendar; ArgoCD/Flux/MLflow writes; the web clipper: gateway surface + the Chrome/Firefox MV3 extension in the `nimbus-web-clipper` satellite repo). **Current build slot: Spine S1 (Local Brain)** — from here the build order is the Phase 7+ Sequencing Spine overlay (S1 → S5), not the phase numbers; S1's egress-ledger + `nimbus prove` primitive shipped 2026-06-20, and its research-briefs HTTP surface (`briefs/`, default-off `[briefs]`) shipped 2026-07-22. The fourteen built-in read-only agents closed out with `nimbus negotiate` (2026-08-12), and the Wave 6 answer-quality set followed: agent brief synthesis (A0, 2026-08-16 — `[agents] synthesis`, `"off"`/`"local"`/`"allow-remote"`, and invariant I31), `nimbus ask --devil` (A1, 2026-08-18), the `[persona]` `tone`/`voice` vocabulary (A2, 2026-08-18), and `nimbus stats` (2026-08-19 — the aggregation half of W6-B, disjoint buckets rather than a rolling window). First-class negation queries are the one Wave 6 row still open. Phases 1–5 ✅ (Phase 5: 2026-06-04). Invariants through I31 (I28 reserved); schema V54. Dated log (canonical): [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
-**Latest release:** `v2.7.0` <!-- x-release-please-version -->
+**Latest release:** `v2.7.1` <!-- x-release-please-version -->
 
 The version above is rewritten by release-please on every release (it is an
 `extra-files` entry in `.release-please-config.json`, the same mechanism that
@@ -87,7 +87,7 @@ Each live invariant (I1–I27, I29–I31) has a production wiring site + an enfo
 - `packages/mcp-connectors/*` — first-party MCP servers (AGPL)
 - `packages/docs` — Astro Starlight documentation site
 - `packages/admin-console` — dependency-free static admin console served at `/admin/*` (Phase 6 Slice 4)
-- `packages/mcp-launcher` — the published `@nimbus-dev/mcp` npm launcher (`nimbus-mcp` bin) that resolves and execs the local gateway MCP server
+- `packages/mcp-launcher` — the `@nimbus-dev/mcp` npm launcher (`nimbus-mcp` bin) that resolves and execs the local gateway MCP server. **Not yet published to npm** — publishing it is what unblocks the official MCP Registry listing (see `docs/superpowers/specs/2026-08-19-nimbus-distribution-program-design.md`).
 - `packages/github-actions/*` — first-party GitHub Actions (annotate-action, preflight-query); tracked but intentionally NOT workspace members
 
 Several surfaces live in their own standalone repos and release independently of the Gateway:

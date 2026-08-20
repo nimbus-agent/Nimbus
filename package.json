@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "private": true,
   "repository": {
     "type": "git",
@@ -167,6 +167,7 @@
     "audit:invariants": "bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only",
     "audit:connector-entrypoints": "bun scripts/structure-audit/check-connector-entrypoints.ts",
     "audit:connector-deps": "bun scripts/structure-audit/check-connector-deps.ts",
+    "audit:connector-registry-drift": "bun scripts/structure-audit/check-connector-registry-drift.ts",
     "audit:import-meta-dir": "bun scripts/structure-audit/check-import-meta-dir.ts",
     "gen:connector-registry": "bun scripts/gen-bundled-connector-registry.ts",
     "test:connector-boot": "bun scripts/connector-boot-smoke.ts dist/nimbus-gateway",

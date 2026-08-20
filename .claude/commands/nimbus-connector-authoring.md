@@ -114,7 +114,7 @@ MCP connectors: **≥ 85% line + ≥ 80% branch coverage** (the per-file floor; 
 Always start from:
 
 ```bash
-nimbus scaffold extension --name <name> --output ./packages/mcp-connectors/<name>
+nimbus scaffold extension packages/mcp-connectors/<name>
 ```
 
 Then add the sync handler and register in the connector registry at `packages/gateway/src/connectors/registry.ts`.

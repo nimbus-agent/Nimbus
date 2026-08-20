@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.7.1](https://github.com/nimbus-agent/Nimbus/compare/v2.7.0...v2.7.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* **ownership:** stop the symbol sync wiping owner counts from the graph ([#1255](https://github.com/nimbus-agent/Nimbus/issues/1255)) ([34a08e3](https://github.com/nimbus-agent/Nimbus/commit/34a08e3005e554e935135409ff1a64469b56d5c8))
+
 ## [2.7.0](https://github.com/nimbus-agent/Nimbus/compare/v2.6.0...v2.7.0) (2026-08-19)
 
 
