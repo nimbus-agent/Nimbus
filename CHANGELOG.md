@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.9.0](https://github.com/nimbus-agent/Nimbus/compare/v2.8.0...v2.9.0) (2026-08-20)
+
+
+### Features
+
+* **query:** first-class negation queries that refuse rather than answer from an empty index (W6-B.1) ([#1277](https://github.com/nimbus-agent/Nimbus/issues/1277)) ([10c20cb](https://github.com/nimbus-agent/Nimbus/commit/10c20cb0cbb2daaf83585ff81346acfdce7a247c))
+
 ## [2.8.0](https://github.com/nimbus-agent/Nimbus/compare/v2.7.1...v2.8.0) (2026-08-20)
 
 
