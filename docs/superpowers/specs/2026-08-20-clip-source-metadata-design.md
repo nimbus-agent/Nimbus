@@ -67,6 +67,10 @@ metadata: {
 }
 ```
 
+`input.source` here is the object **`validateClipInput` built**, never the one
+the caller sent — see the whitelist rule below. `ingestClip` stores what it is
+given without further filtering, so the filtering has to have already happened.
+
 ### Why `publishedAt` is a number, not a string
 
 `article:published_time` and JSON-LD `datePublished` carry whatever format the
@@ -98,6 +102,16 @@ existing field checks:
   carries `author: ""`.
 - **Every member absent or dropped** → `source` is omitted entirely rather than
   stored as `{}`.
+- **Unknown members are discarded.** `validateClipInput` **constructs a new
+  `ClipSource`** from the five fields named above; it never returns the caller's
+  object, spread or otherwise. This is not tidiness — it is the load-bearing
+  half of the bounds below. Every per-field cap is worthless if an unrecognised
+  sibling key rides along beside them: `ingestClip` stores whatever `source`
+  holds, `upsertIndexedItem` serialises the whole metadata object, and it
+  **throws** above 64 KB. A page that put 60 KB under `source.junk` would make
+  its own clip un-ingestable, which is precisely the denial the caps exist to
+  prevent. A whitelist, not a blocklist: the shape TypeScript describes and the
+  shape that reaches storage must be the same object, built here.
 
 Every field is bounded, because `upsertIndexedItem` throws outright when an
 item's serialised metadata exceeds 64 KB
@@ -118,8 +132,18 @@ still a byline and still tells you who wrote the thing. Half a URL is not a
 slightly-worse URL — it is a broken link, and storing it is worse than storing
 nothing, because a consumer cannot tell it was truncated. The same is true of a
 language tag: BCP-47 tags top out around 10 characters (`zh-Hans-CN`), so
-anything past 20 is not a long tag, it is garbage prose in the wrong field, and
-truncating it to `en-US`-shaped nonsense would be actively misleading.
+anything past 20 is, in practice, garbage prose in the wrong field rather than a
+tag, and truncating it to `en-US`-shaped nonsense would be actively misleading.
+
+To be precise about that bound, since the reasoning above reads like a fact
+about the standard and is not: **BCP 47 sets no maximum total tag length.**
+Private-use and extension subtags can repeat, so `en-x-abcdefgh-abcdefgh` is a
+perfectly valid 22-character tag. **20 is a product limit**, chosen because
+every tag this field will realistically carry — `en`, `en-US`, `zh-Hans-CN` —
+fits inside it with room to spare, and a longer value is far likelier to be a
+page's prose leaking into the wrong `<meta>` than a genuine private-use tag we
+would do anything with. Tags over the bound are dropped **deliberately**, not
+by accident of the standard.
 
 `leadImage`'s bound is 2048 rather than 200 for the same reason review raised
 it: CDN image URLs routinely carry resize, format and signature parameters, and
@@ -213,6 +237,14 @@ Against `clip-ingest.test.ts`'s existing style:
   gone, `siteName` is there (the drop-don't-throw rule, which is the one a
   reviewer will most want to see proven)
 - a 5,000-character `author` → truncated to 200, and the item still ingests
+- **a 60 KB unknown member** (`source: { author: "A", junk: "<60KB>" }`) → the
+  clip ingests, `metadata.source` carries `author` and **no `junk` key**. This
+  is the test that proves the whitelist: without it the item would exceed the
+  store's 64 KB metadata ceiling and `upsertIndexedItem` would throw, so a page
+  could deny ingestion of its own clip
+- a valid 22-character BCP 47 tag (`en-x-abcdefgh-abcdefgh`) → dropped, and the
+  clip still ingests — pinning that the 20-character bound is a product limit
+  applied deliberately, not a claim that longer tags are malformed
 - a 30-character `lang` → **dropped, not truncated** — with the stored metadata
   asserted to have no `lang` key at all, since "truncated to something
   plausible" is the failure this rule exists to prevent

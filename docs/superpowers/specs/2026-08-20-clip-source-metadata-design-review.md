@@ -2,7 +2,19 @@
 
 Below are comments, questions, and suggested improvements for the `2026-08-20-clip-source-metadata-design.md` specification.
 
-## Open Questions & Clarifications
+> **Status: closed.** Every item below was answered and the specification now
+> carries the outcome — so read this file as a record of how the contract was
+> argued, not as open questions. In summary:
+>
+> | Item | Outcome |
+> | --- | --- |
+> | `leadImage` 200-char cap corrupts CDN URLs | **Adopted, and generalised.** The bound is 2048 and over-bound values are **dropped, not truncated** — half a URL is a broken link rather than a shorter one. This produced the spec's prose-truncates / structured-values-drop rule. |
+> | `publishedAt` should be an integer | **Adopted.** `Number.isFinite` alone admits `1.5`; the validator now requires an integer within `Date`'s range. |
+> | Reject negative (pre-1970) dates | **Declined.** They are legitimate — an index holding papers and archived essays meets 1965 publication dates, and dropping them would fail exactly the library case the field serves. |
+> | Reject far-future dates | **Declined.** Embargoed and scheduled posts carry future dates honestly, and nothing sorts on `publishedAt` — `modified_at` still comes from `capturedAt`, so the sort-order concern does not arise. |
+> | Drop over-long `lang` rather than truncate | **Adopted**, and the justification corrected: BCP 47 sets no maximum tag length, so 20 is a stated product limit rather than a standards fact. |
+
+## Open Questions & Clarifications (as originally raised)
 
 1. **`leadImage` URL Length Restriction**
    * **Scenario:** Modern CDN images (such as Unsplash, Cloudinary, AWS S3, or Cloudfront) often carry query parameters for resizing, formatting, and access tokens, which easily exceed 200 characters.
