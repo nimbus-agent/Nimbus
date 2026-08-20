@@ -3,8 +3,10 @@ import type { LocalIndex } from "../index/local-index.ts";
 import {
   buildNotReviewedSql,
   countNotReviewedExclusions,
+  missingSubstrateRefusal,
+  type NegationExplain,
   probeReviewed,
-  type SubstrateProbe,
+  toPositionalSubquery,
 } from "../index/negation-predicates.ts";
 import { mergePeople } from "../people/linker.ts";
 import {
@@ -77,64 +79,14 @@ function personToJson(p: PersonRecord, itemCount: number): Record<string, unknow
 
 type Hit = { kind: "hit"; value: unknown };
 
-/**
- * Mirrors `QueryExplain` / `MissingSubstrateRefusal` in `ipc/diagnostics-rpc.ts` — same key set,
- * same reasoning: `explain` is attached to a refusal too (it is the only way to see WHY a query
- * refused), and the refusal document REPLACES the whole payload rather than nesting under a
- * wrapper, since `people.list`'s bare-array success shape has no wrapper to nest it in either.
- */
-type PeopleListExplain = {
-  readonly sql: string;
-  readonly params: ReadonlyArray<string | number>;
-  readonly substrate?: SubstrateProbe;
-};
-
-type MissingSubstrateRefusal = {
-  readonly status: "refused";
-  readonly reason: "missing_substrate";
-  readonly message: string;
-  readonly remediation: string;
-  readonly explain?: PeopleListExplain;
-};
-
-function missingSubstrateRefusal(
-  message: string,
-  remediation: string,
-  explainBlock: PeopleListExplain | undefined,
-): MissingSubstrateRefusal {
-  return {
-    status: "refused",
-    reason: "missing_substrate",
-    message,
-    remediation,
-    ...(explainBlock === undefined ? {} : { explain: explainBlock }),
-  };
-}
-
-/**
- * `buildNotReviewedSql` numbers its own placeholder `?1` for standalone use. Embedded as an
- * `id IN (<sql>)` subquery inside `buildPersonListSql`'s flat, positionally-bound filter list, a
- * numbered placeholder would desynchronize SQLite's own auto-numbering of the surrounding
- * unnumbered `?`s from that flat array's order and misbind. Renumbers to plain `?`, which SQLite
- * auto-numbers left-to-right — exactly the order the predicate's own `vals` is already in.
- *
- * Mirrors `toPositionalSubquery` in `ipc/diagnostics-rpc.ts`; see that copy's doc comment for why
- * the placeholder count is checked rather than assumed (a mismatch throws before any SQL runs,
- * rather than silently misbinding every subsequent parameter).
- */
-function toPositionalSubquery(predicate: { sql: string; vals: ReadonlyArray<string | number> }): {
-  sql: string;
-  vals: ReadonlyArray<string | number>;
-} {
-  const sql = predicate.sql.replace(/\?\d+/g, "?");
-  const placeholders = (sql.match(/\?/g) ?? []).length;
-  if (placeholders !== predicate.vals.length) {
-    throw new Error(
-      `negation predicate placeholder mismatch: ${placeholders} placeholders for ${predicate.vals.length} values`,
-    );
-  }
-  return { sql, vals: predicate.vals };
-}
+// `PeopleListExplain` / `MissingSubstrateRefusal` / `missingSubstrateRefusal` /
+// `toPositionalSubquery` used to be defined here, byte-identical to a second copy in
+// `ipc/diagnostics-rpc.ts`. Hoisted into `index/negation-predicates.ts` (Task 4 fix round 1) as
+// `NegationExplain` / `MissingSubstrateRefusal` / `missingSubstrateRefusal` /
+// `toPositionalSubquery` — see that module's doc comments — and imported above rather than
+// redefined, so the two IPC files cannot drift again. `PeopleListExplain` stays as a local type
+// ALIAS only so every existing reference in this file reads the same as before.
+type PeopleListExplain = NegationExplain;
 
 function rpcPeopleGet(rec: Record<string, unknown> | undefined, db: Database): Hit {
   const id = requireString(rec, "id");
@@ -197,30 +149,55 @@ function rpcPeopleList(rec: Record<string, unknown> | undefined, db: Database): 
     // window — a narrower, invented default would exclude fewer people than the caller asked
     // about without saying so.
     const effectiveSinceMs = sinceMs ?? 0;
-    const probeResult = probeReviewed(db);
+    // WINDOWED probe (Task 4 fix round 1, controller ruling): a global, all-time count of
+    // `reviewed` edges can pass on edges that are all older than `effectiveSinceMs`, while the
+    // query itself finds zero edges in its own window — "nobody reviewed in the window" and "no
+    // synced data for the window" are indistinguishable in that state, and refusing on the
+    // ambiguity, rather than returning every graphed person as a false "clean" answer, is this
+    // feature's whole thesis. See `probeReviewed`'s doc comment.
+    const probeResult = probeReviewed(db, effectiveSinceMs);
     const predicate = buildNotReviewedSql(effectiveSinceMs);
     const idIn = toPositionalSubquery(predicate);
+    // The COMPOSED statement that actually shapes (or, on refusal, would have shaped) the
+    // result — `id IN (<predicate>) AND ... ORDER BY id LIMIT ?` — never the bare predicate
+    // subquery alone: the bare subquery omits `unlinkedOnly`'s `linked = 0` filter and the
+    // `LIMIT`, so pasting it back into sqlite3 answers a DIFFERENT, wider question than the one
+    // that actually produced `people`. Mirrors `rpcIndexQueryItems`'s `composed` in
+    // `diagnostics-rpc.ts`.
+    const composed = buildPersonListSql({ unlinkedOnly, limit, idInSql: idIn });
     if (!probeResult.passed) {
       return {
         kind: "hit",
         value: missingSubstrateRefusal(
-          "no `reviewed` edges are indexed, so who has not reviewed anything cannot be verified",
-          "sync a connector that populates PR review activity, then run nimbus index regraph",
-          explain ? { sql: idIn.sql, params: idIn.vals, substrate: probeResult } : undefined,
+          "no `reviewed` edges are indexed within the --since window, so who has not reviewed " +
+            "anything in that window cannot be verified",
+          "widen --since to include older reviews, or sync a connector that populates PR " +
+            "review activity and run nimbus index regraph",
+          explain
+            ? { sql: composed.sql, params: composed.vals, substrate: probeResult }
+            : undefined,
         ),
       };
     }
     const rows = listPersons(db, { unlinkedOnly, limit, idInSql: idIn });
-    const gaps = countNotReviewedExclusions(db);
+    // The SAME `unlinkedOnly` the query itself used, so the count printed beside a
+    // `unlinkedOnly`-scoped result set describes THAT result set — an unscoped count would
+    // include a linked person who could never have appeared in `people` in the first place.
+    const gaps = countNotReviewedExclusions(db, { unlinkedOnly });
     const people = rows.map((p) => personToJson(p, countItemsByAuthor(db, p.id)));
     const explainBlock: PeopleListExplain = {
-      sql: idIn.sql,
-      params: idIn.vals,
+      sql: composed.sql,
+      params: composed.vals,
       substrate: probeResult,
     };
     return {
       kind: "hit",
-      value: { people, gaps, ...(explain ? { explain: explainBlock } : {}) },
+      value: {
+        people,
+        meta: { limit, total: people.length },
+        gaps,
+        ...(explain ? { explain: explainBlock } : {}),
+      },
     };
   }
 

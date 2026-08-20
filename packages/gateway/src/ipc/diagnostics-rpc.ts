@@ -28,9 +28,11 @@ import {
   buildNotTouchingSql,
   countNoDownstreamIncidentExclusions,
   countNotTouchingExclusions,
+  missingSubstrateRefusal,
+  type NegationExplain,
   probeCorrelatesWith,
   probePrFileCoverage,
-  type SubstrateProbe,
+  toPositionalSubquery,
 } from "../index/negation-predicates.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
@@ -332,79 +334,15 @@ function rpcDbSetMeta(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsR
   }
 }
 
-/**
- * `explain` shape pinned by the spec (`docs/superpowers/specs/2026-08-20-negation-queries-design.md`
- * § 5/9): `{ sql, params, substrate }`. `sql`/`params` are the COMPOSED statement that actually
- * shaped — or, on a refusal, would have shaped — `items`: for a negation query that is
- * `id IN (<predicate SELECT>) ... LIMIT ?`, never the bare predicate SQL alone, so the LIMIT and
- * the caller's own services/types/since/until filters are visible in explain too, not just the
- * negation clause. `substrate` is present only for a negation query — a plain query has no probe
- * to report.
- */
-type QueryExplain = {
-  readonly sql: string;
-  readonly params: ReadonlyArray<string | number>;
-  readonly substrate?: SubstrateProbe;
-};
-
-type MissingSubstrateRefusal = {
-  readonly status: "refused";
-  readonly reason: "missing_substrate";
-  readonly message: string;
-  readonly remediation: string;
-  readonly explain?: QueryExplain;
-};
-
-/**
- * `explainBlock` is attached to a refusal too, not only to a successful result: spec § 5 calls
- * the substrate probe "the only way to see WHY a query refused", which is exactly the case where
- * `--explain` matters most — a refused query has no `items`/`gaps` to inspect instead.
- */
-function missingSubstrateRefusal(
-  message: string,
-  remediation: string,
-  explainBlock: QueryExplain | undefined,
-): MissingSubstrateRefusal {
-  return {
-    status: "refused",
-    reason: "missing_substrate",
-    message,
-    remediation,
-    ...(explainBlock === undefined ? {} : { explain: explainBlock }),
-  };
-}
-
-/**
- * A negation predicate builder (`buildNotTouchingSql` / `buildNoDownstreamIncidentSql`) numbers
- * its own placeholders `?1`, `?2`, ... for standalone use. Embedded as an `id IN (<sql>)`
- * subquery inside `buildItemListSql`'s flat, positionally-bound filter list (see
- * `ItemListQueryParams.idInSql`'s doc comment), a numbered placeholder would desynchronize
- * SQLite's own auto-numbering of the surrounding unnumbered `?`s from that flat array's order and
- * misbind. This renumbers every placeholder to plain, unnumbered `?`, which SQLite auto-numbers
- * in left-to-right order — exactly the order each predicate's own `vals` array is already in, so
- * no reordering of `vals` is needed, only of the placeholder syntax.
- *
- * That equivalence holds only while each builder references every placeholder EXACTLY ONCE and
- * embeds no literal `?` in a string. Both hold today; neither is enforced by the type system, and
- * a future builder reusing `?1` twice would emit two `?` for one value and misbind EVERY
- * subsequent parameter — producing wrong rows rather than an error, the one failure mode a
- * negation query must not have. So the count is checked here rather than assumed: a mismatch
- * throws before any SQL runs. A literal `?` inside a string would trip it too; that is the
- * fail-closed direction, and the fix would be to bind that string instead.
- */
-function toPositionalSubquery(predicate: { sql: string; vals: ReadonlyArray<string | number> }): {
-  sql: string;
-  vals: ReadonlyArray<string | number>;
-} {
-  const sql = predicate.sql.replace(/\?\d+/g, "?");
-  const placeholders = (sql.match(/\?/g) ?? []).length;
-  if (placeholders !== predicate.vals.length) {
-    throw new Error(
-      `negation predicate placeholder mismatch: ${placeholders} placeholders for ${predicate.vals.length} values`,
-    );
-  }
-  return { sql, vals: predicate.vals };
-}
+// `QueryExplain` / `MissingSubstrateRefusal` / `missingSubstrateRefusal` / `toPositionalSubquery`
+// used to be defined here, byte-identical to a second copy in `ipc/people-rpc.ts`. Hoisted into
+// `index/negation-predicates.ts` (Task 4 fix round 1) as `NegationExplain` /
+// `MissingSubstrateRefusal` / `missingSubstrateRefusal` / `toPositionalSubquery` — see that
+// module's doc comments — and imported below rather than redefined, so the two IPC files cannot
+// drift again the way this pair already had (the identical duplication was itself Minor-1 review
+// feedback). `QueryExplain` stays as a local type ALIAS only so every existing reference in this
+// file reads the same as before.
+type QueryExplain = NegationExplain;
 
 function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
   const rec = asRecord(params);

@@ -145,7 +145,14 @@ duration parsers that disagree about `7d` would be a silent correctness bug acro
 | --- | --- | --- |
 | `--not-touching` | any `pr_files_state` row | per-PR: uncovered or truncated → excluded, counted separately |
 | `--no-downstream-incident` | any `correlates_with` edge | per-deployment: no `graph_entity` row → excluded, counted |
-| `--not-reviewed` | any `reviewed` edge | per-person: no `graph_entity` row → excluded, counted |
+| `--not-reviewed` | any `reviewed` edge WITHIN the query's own `--since` window | per-person: no `graph_entity` row → excluded, counted |
+
+**Corrected again during implementation (Task 4 fix round 1) — the probe for `--not-reviewed` must
+be windowed by the SAME `sinceMs` the query itself filters on, not a global all-time count: a
+global count can pass on `reviewed` edges that are all older than the window, which is exactly the
+state where "nobody reviewed in the window" and "no synced data for the window" are
+indistinguishable, and this predicate must refuse on that ambiguity rather than return every
+graphed person as a false "clean" answer.**
 
 **Corrected during implementation — this table originally claimed the second and third predicates
 had NO per-row partial state ("global fact, all-or-nothing"). That was wrong.** Both reach their

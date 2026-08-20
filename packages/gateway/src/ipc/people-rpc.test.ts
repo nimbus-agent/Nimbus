@@ -378,7 +378,7 @@ describe("people.list — --not-reviewed", () => {
     expect(v.explain?.substrate).toBeDefined();
   });
 
-  test("returns only people with no reviewed edge in the window, wrapped with gaps", () => {
+  test("returns only people with no reviewed edge in the window, wrapped with gaps and meta", () => {
     seedPersonWithReview(fixture.db, "alice", Date.now());
     seedPersonWithoutReview(fixture.db, "bob");
     const r = call("people.list", {
@@ -387,10 +387,77 @@ describe("people.list — --not-reviewed", () => {
     });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    const v = r.value as { people: Array<{ id: string }>; gaps: { excludedNoGraphEntity: number } };
+    const v = r.value as {
+      people: Array<{ id: string }>;
+      gaps: { excludedNoGraphEntity: number };
+      meta: { limit: number; total: number };
+    };
     expect(v.people.map((p) => p.id)).toEqual(["bob"]);
     expect(v.gaps).toEqual({ excludedNoGraphEntity: 0 });
+    // Important 4 (Task 4 fix round 1): the negation wrapper carries `meta`, matching the
+    // `index.queryItems` items path — omitting it left a LIMIT-truncated answer with no
+    // truncation signal beside it.
+    expect(v.meta).toEqual({ limit: 100, total: 1 });
     expect(v).not.toHaveProperty("explain");
+  });
+
+  test("meta.total reflects a LIMIT-truncated result, not the full matching count", () => {
+    seedPersonWithReview(fixture.db, "eve", Date.now()); // non-empty substrate
+    for (let i = 0; i < 5; i += 1) {
+      seedPersonWithoutReview(fixture.db, `p${String(i)}`);
+    }
+    const r = call("people.list", { notReviewed: true, sinceMs: 1, limit: 2 });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as {
+      people: Array<{ id: string }>;
+      meta: { limit: number; total: number };
+    };
+    expect(v.people).toHaveLength(2);
+    expect(v.meta).toEqual({ limit: 2, total: 2 });
+  });
+
+  // Important 1 (Task 4 fix round 1): `explain.sql` must be the COMPOSED statement that actually
+  // shaped `people` — running it back against the same db must reproduce the SAME ids, never a
+  // wider set that ignores `unlinkedOnly`/`limit`.
+  test("explain.sql is the composed statement — running it directly reproduces the same ids", () => {
+    seedPersonWithReview(fixture.db, "eve", Date.now()); // non-empty substrate, linked
+    seedPersonWithoutReview(fixture.db, "bob");
+    fixture.db.run("UPDATE person SET linked = 0 WHERE id = 'bob'");
+    seedPersonWithoutReview(fixture.db, "carol"); // linked, graphed, no review
+    const r = call("people.list", {
+      notReviewed: true,
+      sinceMs: 1,
+      unlinkedOnly: true,
+      limit: 5,
+      explain: true,
+    });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as {
+      people: Array<{ id: string }>;
+      explain: { sql: string; params: Array<string | number> };
+    };
+    expect(v.people.map((p) => p.id)).toEqual(["bob"]);
+    const rows = fixture.db.query(v.explain.sql).all(...v.explain.params) as Array<{
+      id: string;
+    }>;
+    expect(rows.map((row) => row.id)).toEqual(["bob"]);
+  });
+
+  // Important 3 (Task 4 fix round 1, controller ruling): a reviewed edge that exists but falls
+  // OUTSIDE the query's own `--since` window must not make the probe pass — the probe must be
+  // windowed the same way the query is, or a quiet recent window with only stale edges returns
+  // every graphed person as a false "clean" answer instead of refusing.
+  test("a reviewed edge OLDER than the window refuses rather than flooding false positives", () => {
+    seedPersonWithReview(fixture.db, "alice", 500); // reviewed, but before the window starts
+    seedPersonWithoutReview(fixture.db, "bob");
+    const r = call("people.list", { notReviewed: true, sinceMs: 1_000 });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as { status?: string; reason?: string };
+    expect(v.status).toBe("refused");
+    expect(v.reason).toBe("missing_substrate");
   });
 
   test("a person with no graph entity is dropped from results but counted in gaps", () => {
@@ -416,6 +483,25 @@ describe("people.list — --not-reviewed", () => {
     if (r.kind !== "hit") return;
     const v = r.value as { people: Array<{ id: string }> };
     expect(v.people.map((p) => p.id)).toEqual(["bob"]);
+  });
+
+  // Important 2 (Task 4 fix round 1): `gaps` must be scoped to the SAME `unlinkedOnly` the query
+  // used. Unscoped, this exact setup reports `dave` (linked, ungraphed) in the count even though
+  // `dave` could never have appeared in an `unlinkedOnly: true` result set.
+  test("gaps is scoped to unlinkedOnly — a LINKED person's exclusion is not counted", () => {
+    seedPersonWithReview(fixture.db, "eve", Date.now()); // non-empty substrate
+    seedPersonWithoutReview(fixture.db, "bob");
+    fixture.db.run("UPDATE person SET linked = 0 WHERE id = 'bob'");
+    seedPerson(fixture.db, { id: "carol" }); // no graph_entity row, linked (default)
+    seedPerson(fixture.db, { id: "dave" }); // no graph_entity row, unlinked
+    fixture.db.run("UPDATE person SET linked = 0 WHERE id = 'dave'");
+    const r = call("people.list", { notReviewed: true, sinceMs: 1, unlinkedOnly: true });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as { people: Array<{ id: string }>; gaps: { excludedNoGraphEntity: number } };
+    expect(v.people.map((p) => p.id)).toEqual(["bob"]);
+    // Only `dave` (unlinked, ungraphed) counts — `carol` (linked, ungraphed) is out of scope.
+    expect(v.gaps).toEqual({ excludedNoGraphEntity: 1 });
   });
 
   test("no --since supplied defaults to sinceMs 0, meaning 'reviewed ever'", () => {

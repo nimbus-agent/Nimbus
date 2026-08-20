@@ -402,6 +402,65 @@ describe("countNotReviewedExclusions", () => {
   });
 });
 
+// Task 4 fix round 1, Important 2: `person.linked` IS a real column, and `people.list`'s own
+// `unlinkedOnly` filter reads it — an earlier version of this predicate's doc comment denied this
+// in the same sentence it named `unlinkedOnly`, and the count shipped unscoped as a result.
+describe("countNotReviewedExclusions scope", () => {
+  const insertUnlinkedNoGraphEntity = (db: Database, id: string): void => {
+    db.query("INSERT INTO person (id, display_name, linked) VALUES (?1, ?1, 0)").run(id);
+  };
+
+  test("unlinkedOnly:true excludes an ungraphed LINKED person from the count", () => {
+    const db = makeDb();
+    seedPersonNoGraphEntity(db, "carol"); // linked (schema default), no graph_entity row.
+    insertUnlinkedNoGraphEntity(db, "dave"); // unlinked, no graph_entity row.
+    expect(countNotReviewedExclusions(db, { unlinkedOnly: true })).toEqual({
+      excludedNoGraphEntity: 1,
+    });
+    db.close();
+  });
+
+  test("no scope (undefined) matches the previous unscoped behavior", () => {
+    const db = makeDb();
+    seedPersonNoGraphEntity(db, "carol");
+    insertUnlinkedNoGraphEntity(db, "dave");
+    expect(countNotReviewedExclusions(db)).toEqual({ excludedNoGraphEntity: 2 });
+    db.close();
+  });
+});
+
+// Task 4 fix round 1, Important 3 (controller ruling): the probe must be WINDOWED to match the
+// exact filter the query applies, not a global all-time count. A global count can pass on edges
+// that are all older than the query's own `sinceMs`, which is the state where "nobody reviewed in
+// the window" and "no synced data for the window" are indistinguishable — and this predicate must
+// refuse on that ambiguity rather than return every graphed person as a false "clean" answer.
+describe("probeReviewed windowing", () => {
+  test("unwindowed (no sinceMs) passes on a STALE reviewed edge — the original, still-used default", () => {
+    const db = makeDb();
+    seedPersonWithReview(db, "alice", 500);
+    expect(probeReviewed(db).passed).toBe(true);
+    db.close();
+  });
+
+  test("windowed probe FAILS when the only reviewed edge is older than sinceMs", () => {
+    const db = makeDb();
+    seedPersonWithReview(db, "alice", 500);
+    const windowed = probeReviewed(db, 1_000);
+    expect(windowed.passed).toBe(false);
+    expect(windowed.rowCount).toBe(0);
+    db.close();
+  });
+
+  test("windowed probe passes when a reviewed edge falls within sinceMs", () => {
+    const db = makeDb();
+    seedPersonWithReview(db, "alice", 5_000);
+    const windowed = probeReviewed(db, 1_000);
+    expect(windowed.passed).toBe(true);
+    expect(windowed.rowCount).toBe(1);
+    db.close();
+  });
+});
+
 describe("countNoDownstreamIncidentExclusions scope", () => {
   const insertDeploymentNoGraphEntityForService = (
     db: Database,

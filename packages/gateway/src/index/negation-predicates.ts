@@ -12,6 +12,91 @@ export type NegationGaps = {
 };
 
 /**
+ * `explain` shape shared by every negation-query IPC handler: `{ sql, params, substrate }`.
+ * `sql`/`params` must be the COMPOSED statement that actually shaped — or, on a refusal, would
+ * have shaped — the answer (e.g. `id IN (<predicate SELECT>) ... LIMIT ?`), never the bare
+ * predicate SQL alone, so a caller's own filters (limit, unlinkedOnly, services/types/since/until)
+ * are visible in `explain` too, not just the negation clause. `substrate` is present only for a
+ * negation query — a plain query has no probe to report.
+ *
+ * Hoisted here (Task 4 fix round 1) from two independent, byte-identical copies in
+ * `ipc/diagnostics-rpc.ts` and `ipc/people-rpc.ts`: this shape and the `toPositionalSubquery`
+ * guard below are properties of the `?N`-placeholder convention `buildNotTouchingSql` /
+ * `buildNoDownstreamIncidentSql` / `buildNotReviewedSql` share, not of either IPC file, so a
+ * fix to one copy has no reason to reach the other. Precedent for hoisting a duplicated
+ * disclosure/guard rather than leaving two copies to drift: `agents/_lib/brief-disclosures.ts`
+ * (I31).
+ */
+export type NegationExplain = {
+  readonly sql: string;
+  readonly params: ReadonlyArray<string | number>;
+  readonly substrate?: SubstrateProbe;
+};
+
+export type MissingSubstrateRefusal = {
+  readonly status: "refused";
+  readonly reason: "missing_substrate";
+  readonly message: string;
+  readonly remediation: string;
+  readonly explain?: NegationExplain;
+};
+
+/**
+ * `explainBlock` is attached to a refusal too, not only to a successful result: the substrate
+ * probe is the only way to see WHY a query refused, which is exactly the case where `--explain`
+ * matters most — a refused query has no `items`/`people`/`gaps` to inspect instead.
+ */
+export function missingSubstrateRefusal(
+  message: string,
+  remediation: string,
+  explainBlock: NegationExplain | undefined,
+): MissingSubstrateRefusal {
+  return {
+    status: "refused",
+    reason: "missing_substrate",
+    message,
+    remediation,
+    ...(explainBlock === undefined ? {} : { explain: explainBlock }),
+  };
+}
+
+/**
+ * A negation predicate builder (`buildNotTouchingSql` / `buildNoDownstreamIncidentSql` /
+ * `buildNotReviewedSql`) numbers its own placeholders `?1`, `?2`, ... for standalone use. Embedded
+ * as an `id IN (<sql>)` subquery inside a caller's own flat, positionally-bound filter list (see
+ * `ItemListQueryParams.idInSql` / `PersonListQueryParams.idInSql`'s doc comments), a numbered
+ * placeholder would desynchronize SQLite's own auto-numbering of the surrounding unnumbered `?`s
+ * from that flat array's order and misbind. This renumbers every placeholder to plain, unnumbered
+ * `?`, which SQLite auto-numbers in left-to-right order — exactly the order each predicate's own
+ * `vals` array is already in, so no reordering of `vals` is needed, only of the placeholder
+ * syntax.
+ *
+ * That equivalence holds only while each builder references every placeholder EXACTLY ONCE and
+ * embeds no literal `?` in a string. All three hold today; neither is enforced by the type
+ * system, and a future builder reusing `?1` twice would emit two `?` for one value and misbind
+ * EVERY subsequent parameter — producing wrong rows rather than an error, the one failure mode a
+ * negation query must not have. So the count is checked here rather than assumed: a mismatch
+ * throws before any SQL runs. A literal `?` inside a string would trip it too; that is the
+ * fail-closed direction, and the fix would be to bind that string instead.
+ */
+export function toPositionalSubquery(predicate: {
+  sql: string;
+  vals: ReadonlyArray<string | number>;
+}): {
+  sql: string;
+  vals: ReadonlyArray<string | number>;
+} {
+  const sql = predicate.sql.replace(/\?\d+/g, "?");
+  const placeholders = (sql.match(/\?/g) ?? []).length;
+  if (placeholders !== predicate.vals.length) {
+    throw new Error(
+      `negation predicate placeholder mismatch: ${placeholders} placeholders for ${predicate.vals.length} values`,
+    );
+  }
+  return { sql, vals: predicate.vals };
+}
+
+/**
  * Re-exported so the CLI prints the REAL window rather than restating "2h" and drifting.
  *
  * `CORRELATION_WINDOW_MS` was module-PRIVATE in `graph/graph-populator.ts` — it is now
@@ -34,8 +119,26 @@ export function probeCorrelatesWith(db: Database): SubstrateProbe {
   return probe(db, "SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'correlates_with'");
 }
 
-export function probeReviewed(db: Database): SubstrateProbe {
-  return probe(db, "SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'reviewed'");
+/**
+ * Optionally WINDOWED by `sinceMs`, matching the exact filter `buildNotReviewedSql` applies to
+ * `reviewed` edges (`created_at >= sinceMs`). Windowing the probe itself — not just the query —
+ * is deliberate (Task 4 fix round 1, controller ruling): a GLOBAL count over all time can pass on
+ * year-old edges while the query's own window has zero edges in it. That is exactly the state
+ * where "nobody reviewed in the window" and "we have no synced data for the window" are
+ * indistinguishable at the SQL level, and refusing on that ambiguity — rather than returning
+ * every graphed person as a confident false "clean" answer — is this whole feature's thesis.
+ * `sinceMs` omitted means the unwindowed, all-time check (the original behavior, still used by
+ * every other existing caller of this probe).
+ */
+export function probeReviewed(db: Database, sinceMs?: number): SubstrateProbe {
+  if (sinceMs === undefined) {
+    return probe(db, "SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'reviewed'");
+  }
+  const probeSql =
+    "SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'reviewed' AND created_at >= ?";
+  const row = db.query(probeSql).get(sinceMs) as { n?: number } | null;
+  const rowCount = typeof row?.n === "number" ? row.n : 0;
+  return { probeSql, passed: rowCount > 0, rowCount };
 }
 
 /**
@@ -228,18 +331,32 @@ export type NotReviewedGaps = {
  * `UNIQUE(type, external_id)`, not uniqueness on `external_id` alone) — and the second is the
  * likelier case in practice. "Not graphed" would claim a precision this count does not have.
  *
- * No `scope` parameter, unlike its two siblings: `person` carries no `service`/`type` columns
- * (`people.list` has no service/type-like filter to scope against — it filters only on
- * `unlinkedOnly`/`limit`), so there is nothing to narrow this count against. Adding one would
- * invent a filter the underlying table cannot express.
+ * `scope`, when given, narrows the count to the caller's own `unlinkedOnly` filter — same
+ * reasoning as `countNoDownstreamIncidentExclusions`'s `scope` above: an unscoped count printed
+ * beside a scoped result set reads as belonging to it, and is not. `person` has no `service`/
+ * `type` columns, unlike `item`, so this predicate cannot be scoped the same way its two siblings
+ * are — but `person.linked` IS a real column, and it is exactly the column `people.list`'s own
+ * `unlinkedOnly` filter reads. (Corrected from an earlier version of this comment, which claimed
+ * `people.list` had "no service/type-like filter to scope against" and then, in the same
+ * sentence, named `unlinkedOnly` as one — that was self-contradictory and the count shipped
+ * unscoped as a result: an `unlinkedOnly: true` query could report an exclusion for a LINKED
+ * person who could never have appeared in that query's own result set.)
  */
-export function countNotReviewedExclusions(db: Database): NotReviewedGaps {
+export type NotReviewedScope = {
+  readonly unlinkedOnly?: boolean;
+};
+
+export function countNotReviewedExclusions(
+  db: Database,
+  scope?: NotReviewedScope,
+): NotReviewedGaps {
+  const linkedFilter = scope?.unlinkedOnly === true ? " AND p.linked = 0" : "";
   const row = db
     .query(
       `SELECT COUNT(*) AS n
          FROM person p
          LEFT JOIN graph_entity e ON e.external_id = p.id AND e.type = 'person'
-        WHERE e.id IS NULL`,
+        WHERE e.id IS NULL${linkedFilter}`,
     )
     .get() as { n: number };
   return { excludedNoGraphEntity: row.n };
