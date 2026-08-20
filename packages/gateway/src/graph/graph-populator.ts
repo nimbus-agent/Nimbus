@@ -699,7 +699,7 @@ function syncDataQualityTestGraph(db: Database, row: IndexedItemGraphInput, now:
 }
 
 /** An incident this long after a deploy of the same service is treated as related. */
-const CORRELATION_WINDOW_MS = 2 * 60 * 60 * 1000;
+export const CORRELATION_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 type TimelineRow = { id: string; occurred_at: number };
 
