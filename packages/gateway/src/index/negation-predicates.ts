@@ -42,10 +42,13 @@ export function probeReviewed(db: Database): SubstrateProbe {
  * PRs with no indexed changed-file path matching `pathGlob`.
  *
  * Fail-closed by TWO independent mechanisms, and both must stay: the INNER JOIN to
- * `pr_files_state` (an uncovered PR has no row to join), and `s.truncated = 0` (on an uncovered
- * PR that column is NULL, and `NULL = 0` is NULL, which WHERE treats as not-true). Either alone
- * excludes an unfetched PR, so swapping the JOIN for a LEFT JOIN does NOT by itself reintroduce
- * the bug — it takes losing both, e.g. a LEFT JOIN plus `COALESCE(s.truncated, 0) = 0`.
+ * `pr_files_state` (an uncovered PR has no row to join), and `s.truncated = 0` (under a LEFT
+ * JOIN, an uncovered PR has no matching row at all, so `s.truncated` reads as NULL from the
+ * ABSENT join side, not because the column itself is nullable — it is
+ * `NOT NULL DEFAULT 0 CHECK(truncated IN (0,1))` — and `NULL = 0` is NULL, which WHERE treats as
+ * not-true). Either alone excludes an unfetched PR, so swapping the JOIN for a LEFT JOIN does NOT
+ * by itself reintroduce the bug — it takes losing both, e.g. a LEFT JOIN plus
+ * `COALESCE(s.truncated, 0) = 0`.
  *
  * GLOB, never LIKE: LIKE is case-insensitive and treats `_` as a wildcard, both measured, both
  * wrong for paths.

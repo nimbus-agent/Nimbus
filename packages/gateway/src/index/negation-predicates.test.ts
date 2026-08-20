@@ -131,6 +131,31 @@ const seedDeploymentWithoutIncident = (db: Database, id: string): void => {
   insertGraphEntity(db, "deployment", id, id);
 };
 
+/**
+ * An incident item whose OWN graph_entity is deliberately given the SAME external_id text as an
+ * unrelated deployment's id. `graph_entity` only enforces `UNIQUE(type, external_id)`, never
+ * `UNIQUE(external_id)` alone, so this collision is legal data — it is exactly what
+ * `AND e.type = 'deployment'` on the bridge join exists to disambiguate. This is a constructed
+ * edge case to make removing that filter observably wrong; it is not a claim that the real
+ * populator ever produces this collision unprompted (an incident's own external_id is its own
+ * item id, and the `item` table's PRIMARY KEY already keeps that distinct from every deployment's).
+ */
+const seedIncidentEntityCollidingWithId = (
+  db: Database,
+  incidentItemId: string,
+  collidingExternalId: string,
+): void => {
+  insertItem(db, incidentItemId, "incident");
+  insertGraphEntity(db, "incident", collidingExternalId, incidentItemId);
+};
+
+const seedDeploymentWithUnrelatedEdge = (db: Database, id: string): void => {
+  insertItem(db, id, "deployment");
+  const deploymentEntityId = insertGraphEntity(db, "deployment", id, id);
+  const otherEntityId = insertGraphEntity(db, "incident", `other-${id}`, `other-${id}`);
+  insertGraphRelation(db, deploymentEntityId, otherEntityId, "triggers", 0);
+};
+
 const seedPersonWithReview = (db: Database, id: string, createdAt: number): void => {
   db.query(`INSERT INTO person (id, display_name) VALUES (?1, ?1)`).run(id);
   const personEntityId = insertGraphEntity(db, "person", id, id);
@@ -182,7 +207,10 @@ describe("buildNotTouchingSql", () => {
     seedCoveredPr(db, "p1", ["src/a.ts"]);
     seedUncoveredPr(db, "p2");
     expect(runIds(db, buildNotTouchingSql("tests/*"))).toEqual(["p1"]);
-    expect(countNotTouchingExclusions(db).excludedNoCoverage).toBe(1);
+    expect(countNotTouchingExclusions(db)).toEqual({
+      excludedNoCoverage: 1,
+      excludedTruncated: 0,
+    });
     db.close();
   });
 
@@ -190,7 +218,10 @@ describe("buildNotTouchingSql", () => {
     const db = makeDb();
     seedTruncatedPr(db, "p1", ["src/a.ts"]);
     expect(runIds(db, buildNotTouchingSql("tests/*"))).toEqual([]);
-    expect(countNotTouchingExclusions(db).excludedTruncated).toBe(1);
+    expect(countNotTouchingExclusions(db)).toEqual({
+      excludedNoCoverage: 0,
+      excludedTruncated: 1,
+    });
     db.close();
   });
 
@@ -217,8 +248,14 @@ describe("buildNotTouchingSql", () => {
 });
 
 // The graph_entity BRIDGE is the highest-consequence join in this plan, and a wrong one fails
-// SILENTLY in the dangerous direction: no edges found means every deployment looks clean, and
-// every person looks like they never reviewed. These tests exist to make a wrong join loud.
+// SILENTLY, but the direction measured by the Step-5 red-prove is under-inclusion, not
+// over-inclusion: the bridge is an INNER JOIN in the main query, so a broken join (e.g.
+// `e.id = i.id` instead of `e.external_id = i.id`) empties that join entirely, and the predicate
+// returns NOTHING rather than returning every deployment as "clean". That is the safer of the two
+// directions, but it is still silent: an empty result from a broken join is indistinguishable from
+// an empty result that is a real finding (every deployment genuinely has downstream coverage), and
+// no probe catches it — `probeCorrelatesWith` passes on a populated graph whether or not the
+// bridge actually joins to it. These tests exist to make a wrong join loud anyway.
 describe("buildNoDownstreamIncidentSql", () => {
   test("a deployment WITH a correlates_with edge is excluded", () => {
     const db = makeDb();
@@ -234,11 +271,18 @@ describe("buildNoDownstreamIncidentSql", () => {
     db.close();
   });
 
-  test("an incident's own edge does not make the incident look like a clean deployment", () => {
+  test("an incident entity colliding with a deployment's id does not corrupt its inclusion", () => {
     const db = makeDb();
-    seedDeploymentWithIncident(db, "d1");
-    // Only `type = 'deployment'` rows may ever appear, whatever else the graph holds.
-    expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual([]);
+    seedDeploymentWithoutIncident(db, "d3");
+    seedIncidentEntityCollidingWithId(db, "i1", "d3");
+    expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual(["d3"]);
+    db.close();
+  });
+
+  test("a deployment whose only outgoing edge is a different relation type is still returned", () => {
+    const db = makeDb();
+    seedDeploymentWithUnrelatedEdge(db, "d4");
+    expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual(["d4"]);
     db.close();
   });
 });
