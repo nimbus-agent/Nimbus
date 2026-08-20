@@ -14,10 +14,17 @@ Three negation predicates, one per example the roadmap row names, each on the co
 shape it already matches:
 
 ```text
-nimbus query       --type pr         --not-touching 'tests/**'
-nimbus query       --type deployment --no-downstream-incident
+nimbus query --service github --type pr         --not-touching 'tests/**'
+nimbus query --service github --type deployment --no-downstream-incident
 nimbus people list --not-reviewed --since 7d
 ```
+
+**`--service` is required on the first two, and that is existing behaviour, not a choice this spec
+makes.** `runQuery` throws `Missing --service (or use --sql for guarded SELECT)` when it is absent
+(`packages/cli/src/commands/query.ts:44-46`), and `params.services` is a single-element array.
+Cross-service negation ("PRs in ANY service that don't touch tests") would mean relaxing that
+requirement for every `query` invocation, which is a change to an existing surface and out of scope
+here — recorded as a follow-up rather than smuggled in.
 
 **Note the `list` on the third line — it is required, not stylistic.** `runPeople`
 (`packages/cli/src/commands/people.ts:152`) dispatches on `args[0]` as a SUBCOMMAND, so
@@ -267,12 +274,18 @@ folded into § 4.3 and § 6:
    `parseSinceDurationToMs` from `packages/cli/src/lib/parse-since.ts:1`, and the predicate
    parameters go on `people.list` / `runPeopleList`. See § 4.3.
 
-One item remains for the plan, and it is a shape decision rather than a lookup:
+**The last open item is now closed too.** `index.queryItems` returns
+`{ items, meta: { limit, total } }` (`ipc/diagnostics-rpc.ts:355`), so `explain` and the gap
+accounting sit BESIDE `items` as sibling keys — `{ items, meta, gaps?, explain? }` — rather than
+nested inside `meta`, which holds only counts today. The `explain` block itself keeps the reviewed
+shape: `{ sql, params, substrate: { probeSql, passed, rowCount } }`.
 
-1. The exact `explain` payload shape. The working shape is
-   `{ sql, params, substrate: { probeSql, passed, rowCount } }`, which is what the plan should
-   implement unless reading `index.queryItems`'s existing response envelope shows a house shape it
-   should match instead. The plan checks that envelope first.
+**A second syntax defect, found while writing the plan and fixed above.** The first two examples
+originally omitted `--service`, which `runQuery` requires. That is the same class of error as the
+`nimbus people` subcommand defect this spec's review caught — a command example that cannot run —
+and it went unnoticed through the first review because I checked the interesting claims and not
+the obvious one. Both are now corrected, and the plan's first task re-runs every example in this
+spec against the real argument parsers before anything else is built.
 
 **Verified against the tree while writing and reviewing this spec:** `correlates_with` is always
 directed deployment → incident (`graph-populator.ts:898,913`); `CORRELATION_WINDOW_MS` is
