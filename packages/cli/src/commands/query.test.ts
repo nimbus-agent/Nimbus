@@ -1,11 +1,17 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-
+// TEST-ONLY cross-package import: `.dependency-cruiser.cjs`'s `audit:boundaries`
+// (`cli-no-import-gateway`) excludes every `*.test.ts` file from the boundary check, so this
+// import is not reachable from `query.ts`'s own production dependency graph — only from here.
+// This is what makes `CORRELATION_WINDOW_MS_CLI_MIRROR` (`query.ts`) a PINNED mirror rather
+// than a plain restated literal: see "the correlation window is pinned to the real gateway
+// constant" below.
+import { CORRELATION_WINDOW_MS } from "../../../gateway/src/index/negation-predicates.ts";
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const queryMod = await import("./query.ts");
-const { runQuery } = queryMod;
+const { runQuery, CORRELATION_WINDOW_MS_CLI_MIRROR } = queryMod;
 
 const out = captureOutput();
 
@@ -583,5 +589,255 @@ describe("runQuery — printItemCard field-presence branches", () => {
     ]);
     await runQuery(["--sql", "SELECT title, service, body_preview FROM items", "--pretty"]);
     expect(out.stdout).toContain("Has empty body");
+  });
+});
+
+describe("runQuery — negation flags: scoping validation", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("--not-touching without --type pr is rejected", async () => {
+    await expect(runQuery(["--service", "github", "--not-touching", "tests/*"])).rejects.toThrow(
+      /--not-touching requires --type pr/,
+    );
+  });
+
+  it("--not-touching with a conflicting --type is rejected", async () => {
+    await expect(
+      runQuery(["--service", "github", "--type", "commit", "--not-touching", "tests/*"]),
+    ).rejects.toThrow(/--not-touching requires --type pr/);
+  });
+
+  it("--no-downstream-incident without --type deployment is rejected", async () => {
+    await expect(runQuery(["--service", "github", "--no-downstream-incident"])).rejects.toThrow(
+      /--no-downstream-incident requires --type deployment/,
+    );
+  });
+
+  it("--no-downstream-incident with a conflicting --type is rejected", async () => {
+    await expect(
+      runQuery(["--service", "github", "--type", "pr", "--no-downstream-incident"]),
+    ).rejects.toThrow(/--no-downstream-incident requires --type deployment/);
+  });
+
+  it("rejects BEFORE any IPC call: no gateway state is required to observe the rejection", async () => {
+    // No fixture set at all — if scoping were validated after the IPC call this would throw
+    // "Gateway is not running" instead of the scoping message.
+    await expect(runQuery(["--service", "github", "--not-touching", "tests/*"])).rejects.toThrow(
+      /--not-touching requires --type pr/,
+    );
+  });
+
+  it("a correctly-scoped --not-touching call passes validation and reaches the IPC layer", async () => {
+    const mock = setupMock([
+      {
+        items: [],
+        meta: { limit: 50, total: 0 },
+        gaps: { excludedNoCoverage: 0, excludedTruncated: 0 },
+      },
+    ]);
+    await runQuery(["--service", "github", "--type", "pr", "--not-touching", "tests/*"]);
+    expect(mock.calls[0]).toEqual({
+      method: "index.queryItems",
+      params: {
+        services: ["github"],
+        types: ["pr"],
+        limit: 50,
+        notTouching: "tests/*",
+      },
+    });
+  });
+});
+
+describe("runQuery — refusal contract", () => {
+  const refusal = {
+    status: "refused",
+    reason: "missing_substrate",
+    message:
+      "no PR file-coverage data is indexed, so which PRs do not touch a path cannot be verified",
+    remediation:
+      "sync a connector that populates PR changed-file coverage (GitHub/GitLab), then retry",
+  };
+
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("a refusal exits 1 and prints the message + remediation to stderr", async () => {
+    setupMock([refusal]);
+    await runQuery(["--service", "github", "--type", "pr", "--not-touching", "tests/*"]);
+    expect(process.exitCode).toBe(1);
+    expect(out.stderr).toMatch(/missing_substrate|no .* indexed/i);
+    expect(out.stderr).toContain(refusal.remediation);
+    // Never on stdout in human mode — that would make a refusal indistinguishable from a
+    // successful zero-row answer to anything reading stdout alone.
+    expect(out.stdout).not.toContain(refusal.message);
+  });
+
+  it("--json refusal is a SINGLE parseable document on stdout, never mixed with text", async () => {
+    setupMock([refusal]);
+    await runQuery(["--service", "github", "--type", "pr", "--not-touching", "tests/*", "--json"]);
+    expect(process.exitCode).toBe(1);
+    // Must PARSE, not merely string-match — printing the refusal alongside other text on
+    // stdout would break this even if every substring were individually present.
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    expect(parsed["status"]).toBe("refused");
+    expect(parsed["reason"]).toBe("missing_substrate");
+    expect(parsed["remediation"]).toBe(refusal.remediation);
+    // Nothing on stderr under --json — the document IS the answer the caller asked for.
+    expect(out.stderr).toBe("");
+  });
+});
+
+describe("runQuery — negation success output", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("--not-touching reports the two exclusion counts SEPARATELY, never summed", async () => {
+    setupMock([
+      {
+        items: [{ id: "pr-1", service: "github", name: "Fix" }],
+        meta: { limit: 50, total: 1 },
+        gaps: { excludedNoCoverage: 3, excludedTruncated: 5 },
+      },
+    ]);
+    await runQuery(["--service", "github", "--type", "pr", "--not-touching", "tests/*"]);
+    // Both counts visible individually.
+    expect(out.stdout).toContain("3");
+    expect(out.stdout).toContain("5");
+    // Never collapsed into one combined figure (8) presented as a single count.
+    expect(out.stdout).not.toMatch(/\b8\b/);
+  });
+
+  it("--no-downstream-incident reports excludedNoGraphEntity labelled 'no graph entity of the required type'", async () => {
+    setupMock([
+      {
+        items: [],
+        meta: { limit: 50, total: 0 },
+        gaps: { excludedNoGraphEntity: 4 },
+      },
+    ]);
+    await runQuery(["--service", "github", "--type", "deployment", "--no-downstream-incident"]);
+    expect(out.stdout).toContain("no graph entity of the required type");
+    expect(out.stdout).not.toContain("not graphed");
+  });
+
+  it("prints the correlation window derived from the pinned constant, never a literal '2h' comment-only claim", async () => {
+    setupMock([
+      {
+        items: [],
+        meta: { limit: 50, total: 0 },
+        gaps: { excludedNoGraphEntity: 0 },
+      },
+    ]);
+    await runQuery(["--service", "github", "--type", "deployment", "--no-downstream-incident"]);
+    expect(out.stdout).toContain("Correlation window:");
+    // CORRELATION_WINDOW_MS is 2 hours today; asserted via the formatted duration of the
+    // ACTUAL constant, not a hardcoded "2h" string, so this test does not itself restate the
+    // literal it is trying to prove isn't restated in production code.
+    const hours = CORRELATION_WINDOW_MS / (60 * 60 * 1000);
+    expect(out.stdout).toContain(`${String(hours)}h`);
+  });
+
+  it("the CLI's mirror constant is pinned to the real gateway CORRELATION_WINDOW_MS", () => {
+    expect(CORRELATION_WINDOW_MS_CLI_MIRROR).toBe(CORRELATION_WINDOW_MS);
+  });
+
+  it("--json wraps items+meta+gaps+correlationWindowMs in ONE parseable document", async () => {
+    setupMock([
+      {
+        items: [{ id: "d-1", service: "github", name: "Deploy 1" }],
+        meta: { limit: 50, total: 1 },
+        gaps: { excludedNoGraphEntity: 2 },
+      },
+    ]);
+    await runQuery([
+      "--service",
+      "github",
+      "--type",
+      "deployment",
+      "--no-downstream-incident",
+      "--json",
+    ]);
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    expect(Array.isArray(parsed["items"])).toBe(true);
+    expect(parsed["gaps"]).toEqual({ excludedNoGraphEntity: 2 });
+    expect(parsed["correlationWindowMs"]).toBe(CORRELATION_WINDOW_MS_CLI_MIRROR);
+  });
+
+  it("--explain prints the explain block in human mode", async () => {
+    setupMock([
+      {
+        items: [],
+        meta: { limit: 50, total: 0 },
+        gaps: { excludedNoCoverage: 0, excludedTruncated: 0 },
+        explain: {
+          sql: "SELECT i.id FROM item i WHERE ...",
+          params: ["tests/*"],
+          substrate: {
+            probeSql: "SELECT COUNT(*) AS n FROM pr_files_state",
+            passed: true,
+            rowCount: 10,
+          },
+        },
+      },
+    ]);
+    await runQuery([
+      "--service",
+      "github",
+      "--type",
+      "pr",
+      "--not-touching",
+      "tests/*",
+      "--explain",
+    ]);
+    expect(out.stdout).toContain("explain");
+    expect(out.stdout).toContain("SELECT i.id FROM item i WHERE ...");
+    expect(out.stdout).toContain("passed=true");
+  });
+
+  it("--explain --json puts explain as a field in the parseable document", async () => {
+    setupMock([
+      {
+        items: [],
+        meta: { limit: 50, total: 0 },
+        gaps: { excludedNoCoverage: 0, excludedTruncated: 0 },
+        explain: {
+          sql: "SELECT i.id FROM item i WHERE ...",
+          params: ["tests/*"],
+          substrate: {
+            probeSql: "SELECT COUNT(*) AS n FROM pr_files_state",
+            passed: true,
+            rowCount: 10,
+          },
+        },
+      },
+    ]);
+    await runQuery([
+      "--service",
+      "github",
+      "--type",
+      "pr",
+      "--not-touching",
+      "tests/*",
+      "--explain",
+      "--json",
+    ]);
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    const explain = parsed["explain"] as Record<string, unknown>;
+    expect(explain["sql"]).toBe("SELECT i.id FROM item i WHERE ...");
   });
 });

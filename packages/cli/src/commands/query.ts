@@ -1,3 +1,12 @@
+import {
+  formatBatchCaveat,
+  formatGapLine,
+  isMissingSubstrateRefusal,
+  type MissingSubstrateRefusal,
+  type NegationExplain,
+  printExplainBlock,
+  printRefusal,
+} from "../lib/negation-output.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
@@ -7,6 +16,31 @@ function takeFlag(args: string[], flag: string): string | undefined {
     return undefined;
   }
   return args[i + 1];
+}
+
+/**
+ * Mirrors `CORRELATION_WINDOW_MS` (`packages/gateway/src/graph/graph-populator.ts`,
+ * re-exported for exactly this purpose from `gateway/src/index/negation-predicates.ts`).
+ * The CLI cannot import gateway source — `cli-no-import-gateway` in `.dependency-cruiser.cjs`,
+ * enforced by `bun run audit:boundaries`, which is in `preflight:fast`'s fast tier — so this
+ * is a hand-maintained mirror rather than a live import, matching the same constraint's
+ * existing resolution in this codebase (`commands/prove.ts`'s `COVERAGE_CLASS_LABELS`,
+ * `commands/share.ts`'s inlined `formatAttributionChipInline`). Unlike those two, this value
+ * IS pinned against drift: `query.test.ts` imports the real gateway constant in a TEST file,
+ * which `.dependency-cruiser.cjs`'s `exclude` list exempts from the boundary check, and
+ * asserts the two are equal — so a change to the gateway constant with no matching update
+ * here fails that test rather than silently printing a stale window.
+ */
+export const CORRELATION_WINDOW_MS_CLI_MIRROR = 2 * 60 * 60 * 1000;
+
+function formatDurationMs(ms: number): string {
+  if (ms % (60 * 60 * 1000) === 0) {
+    return `${String(ms / (60 * 60 * 1000))}h`;
+  }
+  if (ms % (60 * 1000) === 0) {
+    return `${String(ms / (60 * 1000))}m`;
+  }
+  return `${String(ms)}ms`;
 }
 
 export async function runQuery(args: string[]): Promise<void> {
@@ -47,12 +81,23 @@ Output:
   const type = takeFlag(args, "--type");
   const sinceRaw = takeFlag(args, "--since");
   const limitRaw = takeFlag(args, "--limit");
-  // Negation-query flags (Task 5 wires the actual predicate behaviour): recognized here
-  // only so the documented examples don't look like unknown flags — not yet applied to
-  // `params`, and deliberately discarded rather than bound to an unused local.
-  void takeFlag(args, "--not-touching");
-  void args.includes("--no-downstream-incident");
+  const notTouchingRequested = args.includes("--not-touching");
+  const notTouchingRaw = takeFlag(args, "--not-touching");
+  const noDownstreamIncident = args.includes("--no-downstream-incident");
+  const explainRequested = args.includes("--explain");
   const limit = limitRaw === undefined ? Number.NaN : Number.parseInt(limitRaw, 10);
+
+  // Scoping validated BEFORE any IPC call (non-negotiable): unscoped, `--not-touching`
+  // would return every issue, message and commit — all of which trivially "do not touch"
+  // any path, because they cannot touch anything. Checked on the REQUEST (whether the flag
+  // was supplied), not on its parsed value, so a present-but-blank `--not-touching ''` still
+  // trips the guard rather than silently skipping it.
+  if (notTouchingRequested && type !== "pr") {
+    throw new Error("--not-touching requires --type pr");
+  }
+  if (noDownstreamIncident && type !== "deployment") {
+    throw new Error("--no-downstream-incident requires --type deployment");
+  }
 
   let sinceMs: number | undefined;
   if (sinceRaw !== undefined) {
@@ -64,6 +109,9 @@ Output:
     types?: string[];
     sinceMs?: number;
     limit: number;
+    notTouching?: string;
+    noDownstreamIncident?: boolean;
+    explain?: boolean;
   } = {
     services: [service],
     limit: Number.isFinite(limit) && limit > 0 ? Math.min(1000, limit) : 50,
@@ -74,15 +122,63 @@ Output:
   if (type !== undefined && type !== "") {
     params.types = [type];
   }
+  if (notTouchingRaw !== undefined && notTouchingRaw !== "") {
+    params.notTouching = notTouchingRaw;
+  }
+  if (noDownstreamIncident) {
+    params.noDownstreamIncident = true;
+  }
+  if (explainRequested) {
+    params.explain = true;
+  }
 
-  const r = await withGatewayIpc((c) =>
-    c.call<{
-      items: Array<Record<string, unknown>>;
-      meta: { limit: number; total: number };
-    }>("index.queryItems", params),
-  );
+  const r = await withGatewayIpc((c) => c.call<QueryItemsResult>("index.queryItems", params));
+
+  if (isMissingSubstrateRefusal(r)) {
+    printRefusal(r, wantJson);
+    process.exitCode = 1;
+    return;
+  }
+
+  const isNegationResult = r.gaps !== undefined || r.explain !== undefined;
+  if (wantJson && isNegationResult) {
+    const doc: Record<string, unknown> = { ...r };
+    if (noDownstreamIncident) {
+      doc["correlationWindowMs"] = CORRELATION_WINDOW_MS_CLI_MIRROR;
+    }
+    console.log(JSON.stringify(doc, null, 2));
+    return;
+  }
+
   printRows(r.items, wantJson, pretty);
+  if (!wantJson && r.gaps !== undefined) {
+    console.log(formatGapLine(r.gaps));
+    console.log(formatBatchCaveat(r.meta));
+  }
+  if (!wantJson && noDownstreamIncident) {
+    console.log(
+      `Correlation window: ${formatDurationMs(CORRELATION_WINDOW_MS_CLI_MIRROR)} (fixed at ` +
+        "write time by the deployment→incident correlator; not adjustable per-query — see " +
+        "the design doc § 4.2/D5)",
+    );
+  }
+  if (!wantJson && r.explain !== undefined) {
+    printExplainBlock(r.explain);
+  }
 }
+
+type QueryItemsGaps =
+  | { readonly excludedNoCoverage: number; readonly excludedTruncated: number }
+  | { readonly excludedNoGraphEntity: number };
+
+type QueryItemsSuccess = {
+  readonly items: Array<Record<string, unknown>>;
+  readonly meta: { readonly limit: number; readonly total: number };
+  readonly gaps?: QueryItemsGaps;
+  readonly explain?: NegationExplain;
+};
+
+type QueryItemsResult = QueryItemsSuccess | MissingSubstrateRefusal;
 
 function formatQueryCell(value: unknown): string {
   if (value === null || value === undefined) {

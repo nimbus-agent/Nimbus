@@ -1,3 +1,13 @@
+import {
+  formatBatchCaveat,
+  formatGapLine,
+  isMissingSubstrateRefusal,
+  type MissingSubstrateRefusal,
+  type NegationExplain,
+  printExplainBlock,
+  printRefusal,
+} from "../lib/negation-output.ts";
+import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 type PersonJson = {
@@ -37,7 +47,7 @@ function printPeopleHelp(): void {
   console.log(`nimbus people — local cross-service people graph
 
 Usage:
-  nimbus people list [--unlinked] [--limit N]
+  nimbus people list [--unlinked] [--limit N] [--not-reviewed [--since 7d]] [--explain] [--json]
   nimbus people search <query> [--limit N]
   nimbus people get <id>
   nimbus people items <id> [--limit N]
@@ -46,9 +56,22 @@ Usage:
 `);
 }
 
-function parseListFlags(args: string[]): { unlinkedOnly: boolean; limit: number } {
+interface ListFlags {
+  readonly unlinkedOnly: boolean;
+  readonly limit: number;
+  readonly notReviewed: boolean;
+  readonly sinceRaw: string | undefined;
+  readonly explain: boolean;
+  readonly wantJson: boolean;
+}
+
+function parseListFlags(args: string[]): ListFlags {
   let unlinkedOnly = false;
   let limit = 100;
+  let notReviewed = false;
+  let sinceRaw: string | undefined;
+  let explain = false;
+  let wantJson = false;
   for (let i = 1; i < args.length; i += 1) {
     const a = args[i];
     if (a === "--unlinked") {
@@ -59,16 +82,21 @@ function parseListFlags(args: string[]): { unlinkedOnly: boolean; limit: number 
         limit = Number.parseInt(limStr, 10);
         i += 1;
       }
-      // Negation-query flags (Task 5 wires the actual predicate behaviour): recognized
-      // here only so the documented examples don't look like unknown flags — not yet
-      // applied to the `people.list` params.
     } else if (a === "--not-reviewed") {
-      // accept-and-ignore
+      notReviewed = true;
     } else if (a === "--since") {
-      i += 1; // also consume its value argument, e.g. "7d"
+      const sinceStr = args[i + 1];
+      if (sinceStr !== undefined) {
+        sinceRaw = sinceStr;
+        i += 1; // also consume its value argument, e.g. "7d"
+      }
+    } else if (a === "--explain") {
+      explain = true;
+    } else if (a === "--json") {
+      wantJson = true;
     }
   }
-  return { unlinkedOnly, limit };
+  return { unlinkedOnly, limit, notReviewed, sinceRaw, explain, wantJson };
 }
 
 function parseLimitOnly(args: string[], startIndex: number, defaultLimit: number): number {
@@ -85,13 +113,97 @@ function parseLimitOnly(args: string[], startIndex: number, defaultLimit: number
   return limit;
 }
 
+type PeopleListGaps = { readonly excludedNoGraphEntity: number };
+
+type PeopleListDoc = {
+  readonly people: PersonJson[];
+  readonly meta?: { readonly limit: number; readonly total: number };
+  readonly gaps?: PeopleListGaps;
+  readonly explain?: NegationExplain;
+};
+
+// `people.list` has THREE response shapes (verified against `rpcPeopleList`,
+// `ipc/people-rpc.ts`): a bare array on a plain call, `{ people, gaps?, meta?, explain? }` on
+// a `--not-reviewed` or `--explain` call, or the refusal document. All three must be handled —
+// treating the array as the only shape would mean a negation call's `gaps`/`explain` never
+// render.
+type PeopleListResult = PersonJson[] | PeopleListDoc | MissingSubstrateRefusal;
+
 async function runPeopleList(args: string[]): Promise<void> {
-  const { unlinkedOnly, limit } = parseListFlags(args);
-  const rows = await withGatewayIpc((c) =>
-    c.call<PersonJson[]>("people.list", { unlinkedOnly, limit }),
-  );
-  for (const p of rows) {
+  const { unlinkedOnly, limit, notReviewed, sinceRaw, explain, wantJson } = parseListFlags(args);
+
+  let sinceMs: number | undefined;
+  if (sinceRaw !== undefined) {
+    sinceMs = Date.now() - parseSinceDurationToMs(sinceRaw);
+  }
+
+  const params: {
+    unlinkedOnly: boolean;
+    limit: number;
+    notReviewed?: boolean;
+    sinceMs?: number;
+    explain?: boolean;
+  } = { unlinkedOnly, limit };
+  if (notReviewed) {
+    params.notReviewed = true;
+  }
+  if (sinceMs !== undefined) {
+    params.sinceMs = sinceMs;
+  }
+  if (explain) {
+    params.explain = true;
+  }
+
+  const r = await withGatewayIpc((c) => c.call<PeopleListResult>("people.list", params));
+
+  if (isMissingSubstrateRefusal(r)) {
+    printRefusal(r, wantJson);
+    process.exitCode = 1;
+    return;
+  }
+
+  // `--not-reviewed` is WINDOWED (spec § 4.4): with no `--since` the window is ALL TIME
+  // ("has not reviewed EVER"), never a silently-narrowed recent window. That must be visible
+  // in what is printed, not just true of what was asked for — otherwise a caller reading the
+  // output has no way to tell an all-time answer from a recent one.
+  const windowLine = notReviewed
+    ? sinceRaw !== undefined
+      ? `Window: reviews since --since ${sinceRaw}`
+      : 'Window: ALL TIME — no --since given, so this reports "never reviewed, ever", not a recent window'
+    : undefined;
+
+  if (wantJson) {
+    if (Array.isArray(r)) {
+      console.log(JSON.stringify(r, null, 2));
+      return;
+    }
+    const doc: Record<string, unknown> = { ...r };
+    if (notReviewed) {
+      doc["window"] = { sinceMs: sinceMs ?? 0, allTime: sinceRaw === undefined };
+    }
+    console.log(JSON.stringify(doc, null, 2));
+    return;
+  }
+
+  const people = Array.isArray(r) ? r : r.people;
+  const gaps = Array.isArray(r) ? undefined : r.gaps;
+  const meta = Array.isArray(r) ? undefined : r.meta;
+  const explainBlock = Array.isArray(r) ? undefined : r.explain;
+
+  for (const p of people) {
     printPerson(p);
+  }
+  if (windowLine !== undefined) {
+    console.log(windowLine);
+  }
+  if (gaps !== undefined) {
+    console.log(formatGapLine(gaps));
+    if (meta !== undefined) {
+      console.log(formatBatchCaveat(meta));
+    }
+  }
+  if (explainBlock !== undefined) {
+    printExplainBlock(explainBlock);
   }
 }
 

@@ -467,3 +467,165 @@ describe("runPeople — list: trailing --limit with no value", () => {
     });
   });
 });
+
+describe("runPeople — list --not-reviewed", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("sends notReviewed + sinceMs derived via the EXISTING parseSinceDurationToMs", async () => {
+    const mock = createMockIpcClient([
+      {
+        people: [fakePerson()],
+        meta: { limit: 100, total: 1 },
+        gaps: { excludedNoGraphEntity: 0 },
+      },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    const before = Date.now();
+    await runPeople(["list", "--not-reviewed", "--since", "7d"]);
+    const params = mock.calls[0]?.params as Record<string, unknown>;
+    expect(params["notReviewed"]).toBe(true);
+    const sinceMs = params["sinceMs"] as number;
+    // 7d = 7 * 24 * 60 * 60 * 1000ms before "now" — same arithmetic query.ts already uses,
+    // via the same parse-since.ts function, so the two commands cannot disagree about "7d".
+    const expected = before - 7 * 24 * 60 * 60 * 1000;
+    expect(Math.abs(sinceMs - expected)).toBeLessThan(5000);
+  });
+
+  it("omits sinceMs when --since is not given (all-time window)", async () => {
+    const mock = createMockIpcClient([
+      { people: [], meta: { limit: 100, total: 0 }, gaps: { excludedNoGraphEntity: 0 } },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--not-reviewed"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.list",
+      params: { unlinkedOnly: false, limit: 100, notReviewed: true },
+    });
+  });
+
+  it("makes the ALL-TIME window visible when --since is not given", async () => {
+    const mock = createMockIpcClient([
+      { people: [], meta: { limit: 100, total: 0 }, gaps: { excludedNoGraphEntity: 0 } },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--not-reviewed"]);
+    expect(out.stdout).toMatch(/ALL TIME/);
+  });
+
+  it("makes the --since window visible (never lets an all-time answer read as recent)", async () => {
+    const mock = createMockIpcClient([
+      { people: [], meta: { limit: 100, total: 0 }, gaps: { excludedNoGraphEntity: 0 } },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--not-reviewed", "--since", "7d"]);
+    expect(out.stdout).toContain("7d");
+    expect(out.stdout).not.toMatch(/ALL TIME/);
+  });
+
+  it("prints the excludedNoGraphEntity gap labelled 'no graph entity of the required type'", async () => {
+    const mock = createMockIpcClient([
+      {
+        people: [],
+        meta: { limit: 100, total: 0 },
+        gaps: { excludedNoGraphEntity: 6 },
+      },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--not-reviewed"]);
+    expect(out.stdout).toContain("6");
+    expect(out.stdout).toContain("no graph entity of the required type");
+    expect(out.stdout).not.toContain("not graphed");
+  });
+
+  it("a refusal exits 1 and prints message + remediation to stderr, widening --since named in remediation", async () => {
+    const refusal = {
+      status: "refused",
+      reason: "missing_substrate",
+      message:
+        "no `reviewed` edges are indexed within the --since window, so who has not reviewed anything in that window cannot be verified",
+      remediation:
+        "widen --since to include older reviews, or sync a connector that populates PR review activity and run nimbus index regraph",
+    };
+    const mock = createMockIpcClient([refusal]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--not-reviewed", "--since", "1h"]);
+    expect(process.exitCode).toBe(1);
+    expect(out.stderr).toMatch(/missing_substrate|no .* indexed/i);
+    expect(out.stderr).toContain("widen --since");
+    expect(out.stdout).not.toContain(refusal.message);
+  });
+
+  it("--json refusal is a SINGLE parseable document on stdout", async () => {
+    const refusal = {
+      status: "refused",
+      reason: "missing_substrate",
+      message: "no `reviewed` edges are indexed within the --since window",
+      remediation: "widen --since to include older reviews",
+    };
+    const mock = createMockIpcClient([refusal]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--not-reviewed", "--json"]);
+    expect(process.exitCode).toBe(1);
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    expect(parsed["status"]).toBe("refused");
+    expect(out.stderr).toBe("");
+  });
+
+  it("--json wraps people+gaps+window in ONE parseable document", async () => {
+    const mock = createMockIpcClient([
+      {
+        people: [fakePerson()],
+        meta: { limit: 100, total: 1 },
+        gaps: { excludedNoGraphEntity: 2 },
+      },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--not-reviewed", "--since", "7d", "--json"]);
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    expect(Array.isArray(parsed["people"])).toBe(true);
+    expect(parsed["gaps"]).toEqual({ excludedNoGraphEntity: 2 });
+    expect(parsed["window"]).toMatchObject({ allTime: false });
+  });
+
+  it("a plain (non-negation) --json call prints the bare array, not a wrapped document", async () => {
+    const mock = createMockIpcClient([[fakePerson()]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--json"]);
+    const parsed: unknown = JSON.parse(out.stdout);
+    expect(Array.isArray(parsed)).toBe(true);
+  });
+});
