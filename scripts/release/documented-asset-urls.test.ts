@@ -58,6 +58,48 @@ describe("documentedAssetNames", () => {
     expect(got.get("install.sh")).toEqual(["README.md"]);
     expect(got.get("install.ps1")).toEqual(["docs/a.md", "docs/b.md"]);
   });
+
+  /**
+   * The docstring promises this checks "every URL WE publish", but the regex saw
+   * any repo's. A doc that tells a reader to install a third-party CLI from its
+   * own GitHub release was reported as a dead Nimbus asset — which is not a
+   * finding, it is noise, and noise in a release gate gets the gate ignored.
+   *
+   * Only an EXPLICIT foreign owner/repo is skipped. Bare and elided forms
+   * (`releases/latest/download/x`, `.../releases/latest/download/x`) still count
+   * as ours: unqualified, in this repo's docs, they mean Nimbus, and that is how
+   * `docs/CHANGELOG.md` actually writes them.
+   */
+  test("ignores a release URL that explicitly names a different repo", () => {
+    const got = documentedAssetNames([
+      {
+        path: "docs/plan.md",
+        text: "curl -L https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz",
+      },
+    ]);
+    expect([...got.keys()]).toEqual([]);
+  });
+
+  test("still collects our own fully-qualified URL", () => {
+    const got = documentedAssetNames([
+      {
+        path: "docs/README.md",
+        text: "curl https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh",
+      },
+    ]);
+    expect(got.get("install.sh")).toEqual(["docs/README.md"]);
+  });
+
+  test("still collects bare and elided forms, which carry no repo to check", () => {
+    // `docs/CHANGELOG.md` writes the bare form in prose; plan docs write the
+    // elided one. Both are references to OUR assets and must keep counting.
+    const got = documentedAssetNames([
+      { path: "docs/CHANGELOG.md", text: "`releases/latest/download/install.sh`" },
+      { path: "docs/plan.md", text: "curl .../releases/latest/download/install.ps1" },
+    ]);
+    expect(got.get("install.sh")).toEqual(["docs/CHANGELOG.md"]);
+    expect(got.get("install.ps1")).toEqual(["docs/plan.md"]);
+  });
 });
 
 describe("findDeadDocumentedUrls", () => {

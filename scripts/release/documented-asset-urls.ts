@@ -73,16 +73,39 @@ export function stagedAssetNames(releaseWorkflowYaml: string): Set<string> {
   return names;
 }
 
-/** Every distinct `releases/latest/download/<name>` filename referenced in docs. */
+/** This repository, as it appears in a `github.com/<owner>/<repo>/` download URL. */
+const OWN_REPO = "nimbus-agent/nimbus";
+
+/**
+ * Every distinct `releases/latest/download/<name>` filename referenced in docs.
+ *
+ * The owner/repo prefix is captured when present so a URL naming a DIFFERENT
+ * repository can be skipped. This checker is about assets *we* stage, and a doc
+ * that tells a reader to fetch a third-party CLI from its own GitHub release is
+ * not a dead Nimbus asset — it is noise, and noise in a release gate gets the
+ * gate ignored. (Found by exactly that: a plan doc quoting the MCP registry's
+ * `mcp-publisher` install command failed the suite.)
+ *
+ * A missing prefix still counts as ours. Bare (`releases/latest/download/x`, how
+ * `docs/CHANGELOG.md` writes it in prose) and elided (`.../releases/...`) forms
+ * carry no repo to check, and unqualified in this repo's docs they mean Nimbus —
+ * so the permissive default is the safe one. The consequence, accepted
+ * deliberately: a foreign URL written WITHOUT its `github.com/owner/repo/`
+ * prefix is still treated as ours. That is a false positive rather than a false
+ * negative, which is the direction this gate should err in.
+ */
 export function documentedAssetNames(
   docs: readonly { path: string; text: string }[],
 ): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  const re = /releases\/latest\/download\/([A-Za-z0-9._-]+)/g;
+  const re =
+    /(?:github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/)?releases\/latest\/download\/([A-Za-z0-9._-]+)/g;
   for (const d of docs) {
     for (const m of d.text.matchAll(re)) {
-      const name = m[1];
+      const repo = m[1];
+      const name = m[2];
       if (name === undefined) continue;
+      if (repo !== undefined && repo.toLowerCase() !== OWN_REPO) continue;
       const where = out.get(name) ?? [];
       if (!where.includes(d.path)) where.push(d.path);
       out.set(name, where);
