@@ -729,6 +729,54 @@ describe("getAuditLog", () => {
   });
 });
 
+describe("negation tools are registered through wrapToolForLlm", () => {
+  test("findPrsNotTouching output comes back enveloped, not raw", async () => {
+    const { localIndex } = setupIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "findPrsNotTouching");
+    const raw = await tool.execute({ pathGlob: "tests/**" });
+    // The envelope regex itself proves the wrap happened -- a raw (unwrapped) tool result would
+    // be a bare JSON object, not `<tool_output service="..." tool="...">...</tool_output>`, and
+    // parseEnvelope throws on anything else.
+    const env = parseEnvelope(raw);
+    expect(env.service).toBe("index");
+    expect(env.tool).toBe("findPrsNotTouching");
+    const p = env.payload as { refused?: boolean };
+    expect(p.refused).toBe(true);
+  });
+
+  test("findDeploymentsWithoutIncident output comes back enveloped, not raw", async () => {
+    const { localIndex } = setupIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "findDeploymentsWithoutIncident");
+    const env = parseEnvelope(await tool.execute({}));
+    expect(env.service).toBe("index");
+    expect(env.tool).toBe("findDeploymentsWithoutIncident");
+    const p = env.payload as { refused?: boolean };
+    expect(p.refused).toBe(true);
+  });
+
+  test("findPeopleWithoutReviews output comes back enveloped, not raw", async () => {
+    const { localIndex } = setupIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "findPeopleWithoutReviews");
+    const env = parseEnvelope(await tool.execute({}));
+    expect(env.service).toBe("people");
+    expect(env.tool).toBe("findPeopleWithoutReviews");
+    const p = env.payload as { refused?: boolean };
+    expect(p.refused).toBe(true);
+  });
+});
+
 function fakeMemoryStore(): SessionMemoryStore {
   const chunks: SessionChunk[] = [];
   const store = {

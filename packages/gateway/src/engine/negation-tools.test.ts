@@ -133,9 +133,13 @@ describe("findPrsNotTouching", () => {
       const out = (await tools["findPrsNotTouching"]?.execute?.({ pathGlob: "tests/**" })) as {
         refused?: boolean;
         disclosure?: string;
+        note?: string;
       };
       expect(out.refused).toBe(true);
       expect(out.disclosure).toContain("findPrsNotTouching could not be verified");
+      // `note` is the only thing telling the model not to fall back to ranked search when a
+      // negation refuses.
+      expect(out.note).toContain("Do not answer the question from ranked search instead");
       return drainNegationDisclosures();
     });
     expect(drained).toHaveLength(1);
@@ -149,7 +153,14 @@ describe("findPrsNotTouching", () => {
     seedUncoveredPr(db, "unfetched");
     const tools = mkTools(index);
     const drained = await agentRequestContext.run({}, async () => {
-      await tools["findPrsNotTouching"]?.execute?.({ pathGlob: "tests/**" });
+      const out = (await tools["findPrsNotTouching"]?.execute?.({ pathGlob: "tests/**" })) as {
+        disclosure?: string;
+      };
+      // Record AND embed, both, always: the recorded copy (asserted on `drained` below) is what
+      // reaches the user regardless of the model; the embedded copy on the return value itself is
+      // the fail-safe if the request store is missing. Deleting `disclosure: line` from
+      // `withExclusions`'s payload must fail THIS assertion, not just the one on `drained`.
+      expect(out.disclosure).toContain("1 excluded (no file coverage indexed)");
       return drainNegationDisclosures();
     });
     expect(drained).toHaveLength(1);
@@ -192,9 +203,11 @@ describe("findDeploymentsWithoutIncident", () => {
       const out = (await tools["findDeploymentsWithoutIncident"]?.execute?.({})) as {
         refused?: boolean;
         disclosure?: string;
+        note?: string;
       };
       expect(out.refused).toBe(true);
       expect(out.disclosure).toContain("findDeploymentsWithoutIncident could not be verified");
+      expect(out.note).toContain("Do not answer the question from ranked search instead");
       return drainNegationDisclosures();
     });
     expect(drained).toHaveLength(1);
@@ -210,7 +223,12 @@ describe("findDeploymentsWithoutIncident", () => {
     seedDeploymentNoGraphEntity(db, "dep-ungraphed");
     const tools = mkTools(index);
     const drained = await agentRequestContext.run({}, async () => {
-      await tools["findDeploymentsWithoutIncident"]?.execute?.({});
+      const out = (await tools["findDeploymentsWithoutIncident"]?.execute?.({})) as {
+        disclosure?: string;
+      };
+      // See `findPrsNotTouching`'s equivalent test for why both the embedded copy (here) and the
+      // recorded copy (asserted on `drained` below) must be checked.
+      expect(out.disclosure).toContain("1 excluded (no graph entity)");
       return drainNegationDisclosures();
     });
     expect(drained).toHaveLength(1);
@@ -255,12 +273,14 @@ describe("findPeopleWithoutReviews", () => {
         refused?: boolean;
         disclosure?: string;
         remediation?: string;
+        note?: string;
       };
       expect(out.refused).toBe(true);
       expect(out.disclosure).toContain("findPeopleWithoutReviews could not be verified");
       // The remediation string must not tell a model/MCP client to use a CLI flag that does not
       // exist where they are running (spec ruling 3).
       expect(out.remediation).toContain("widen the time window");
+      expect(out.note).toContain("Do not answer the question from ranked search instead");
       return drainNegationDisclosures();
     });
     expect(drained).toHaveLength(1);
@@ -277,10 +297,14 @@ describe("findPeopleWithoutReviews", () => {
     const drained = await agentRequestContext.run({}, async () => {
       const out = (await tools["findPeopleWithoutReviews"]?.execute?.({})) as {
         people?: Array<Record<string, unknown>>;
+        disclosure?: string;
       };
       expect(out.people).toHaveLength(1);
       const row = out.people?.[0];
       expect(row).toEqual({ id: "silent", displayName: null, canonicalEmail: null });
+      // See `findPrsNotTouching`'s equivalent test for why both the embedded copy (here) and the
+      // recorded copy (asserted on `drained` below) must be checked.
+      expect(out.disclosure).toContain("1 excluded (no graph entity)");
       return drainNegationDisclosures();
     });
     expect(drained).toHaveLength(1);
@@ -301,17 +325,26 @@ describe("findPeopleWithoutReviews", () => {
   test("sinceDays converts to an epoch-ms lower bound at the tool boundary", async () => {
     const { index, db } = freshIndex();
     const now = Date.now();
-    // Reviewed 30 days ago: outside a 7-day window, so within that window this person still
-    // counts as "has not reviewed" — the review is too old to satisfy the window.
-    seedPersonWithReview(db, "stale-reviewer", now - 30 * 86_400_000);
+    // Reviewed 3 days ago: INSIDE a 7-day window, so this person has reviewed recently and must
+    // NOT appear in the "without reviews" result.
+    seedPersonWithReview(db, "recent-reviewer", now - 3 * 86_400_000);
+    // Reviewed 20 days ago: OUTSIDE a 7-day window, so within that window this person counts as
+    // "has not reviewed" and must appear.
+    seedPersonWithReview(db, "stale-reviewer", now - 20 * 86_400_000);
     const tools = mkTools(index);
     const out = (await tools["findPeopleWithoutReviews"]?.execute?.({ sinceDays: 7 })) as {
       people?: Array<{ id: string }>;
       refused?: boolean;
     };
-    // The 7-day probe window has no reviews in it at all, so this call refuses rather than
-    // silently reporting everyone as unreviewed — proving the substrate is respected per-window.
-    expect(out.refused).toBe(true);
+    // A wrong day->ms conversion (e.g. a missing `* 86_400_000`) shrinks the window to
+    // milliseconds, so NEITHER review would satisfy a windowed substrate probe that tight and the
+    // call would wrongly refuse; a conversion that instead leaves the window effectively
+    // unbounded would wrongly include `recent-reviewer` below. Asserting on WHICH person comes
+    // back — not merely that the call refused or didn't — catches both failure modes; the
+    // now-removed predecessor of this test asserted only `refused === true`, which almost any
+    // multiplier (including a missing one) still satisfies near "now".
+    expect(out.refused).not.toBe(true);
+    expect(out.people?.map((p) => p.id)).toEqual(["stale-reviewer"]);
     db.close();
   });
 });
