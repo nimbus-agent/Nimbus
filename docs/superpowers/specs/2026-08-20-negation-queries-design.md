@@ -1,7 +1,7 @@
 # First-class negation queries (W6-B.1) — design
 
 **Date:** 2026-08-20
-**Status:** Design approved, not yet implemented.
+**Status:** ✅ Shipped 2026-08-20. Delivered as specified below, with two corrections made during implementation and recorded in place (§ 4.4 per-row partial state; the windowed `--not-reviewed` probe). Dated detail: [`docs/CHANGELOG.md`](../../CHANGELOG.md).
 **Relationship to other work:** sub-project **B.1** of W6-B, the last open Wave 6 row. Built on the
 PR changed-file index (**V55**, shipped 2026-08-20 as #1258). **B.2 — exposing these predicates to
 `nimbus ask`** is a separate spec built on this one; see § 8.

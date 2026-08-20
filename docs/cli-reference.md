@@ -238,8 +238,40 @@ nimbus query --service pagerduty --type alert --since 1d --json | jq '.[] | .tit
 | `--pretty` | Pretty-print table output |
 | `--json` | JSON array output |
 | `--limit <n>` | Max rows (default: 50, capped at 1000) |
+| `--not-touching <glob>` | **Negation.** PRs with no indexed changed-file path matching the glob. Requires `--type pr`. |
+| `--no-downstream-incident` | **Negation.** Deployments with no correlated downstream incident. Requires `--type deployment`. |
+| `--explain` | Print the SQL that ran, its bound parameters, and the substrate probe |
 
 `--service` is required unless `--sql` is used.
+
+#### Negation predicates
+
+```bash
+nimbus query --service github --type pr         --not-touching 'tests/**'
+nimbus query --service github --type deployment --no-downstream-incident
+```
+
+**A negation is not a filter with a NOT in it, and these flags are built around that.** For a positive query a missing row costs you a result. For a negation a missing row *produces* one — a PR whose file list was never fetched satisfies "no row matching `tests/**`" exactly as well as a PR that genuinely never touched tests, and the two are identical at the SQL level. An unpopulated index does not make a negation incomplete; it makes it **wrong**, and wrong in the direction that reads as a finding. Four consequences, all enforced rather than advisory:
+
+- **An empty substrate refuses.** Each predicate probes its substrate first (any `pr_files_state` row; any `correlates_with` edge). If nothing is there the command exits `1` and emits a refusal instead of rows — the message and remediation to **stderr**, or, under `--json`, a `{ "status": "refused", "reason": "missing_substrate", "message": …, "remediation": … }` document to **stdout** so a pipeline can parse it. *Refused* and *none matched* are opposite answers, and a non-zero exit alone does not distinguish a refusal from a crash.
+- **Unverifiable rows are excluded AND counted, on every call.** A `Gaps:` line prints whether or not you passed `--explain`, because the accounting is part of the answer: a short result set with no explanation is the false finding these flags exist to prevent. `--not-touching` reports its two exclusion reasons separately — PRs whose file coverage was never indexed, versus PRs whose coverage was truncated — because they mean different things to a reader deciding whether to trust the result. `--no-downstream-incident` reports deployments with no graph entity of the required type.
+- **Type scoping is mandatory.** `--not-touching` without `--type pr` (or `--no-downstream-incident` without `--type deployment`) is an error, checked before any Gateway call. Unscoped, `--not-touching 'tests/**'` would return every issue, message and commit in the index — none of which can touch a path at all.
+- **The correlation window is fixed at two hours and there is no flag to widen it.** `--no-downstream-incident` reads `correlates_with` edges that are written under a fixed window at *write* time, and the edge row's timestamp is when it was written, not when the deploy happened — so a query-time window cannot be reconstructed even in principle. The output names the window rather than offering a control that does not exist.
+
+The `meta.total` a negation query reports is the size of the returned batch, bounded by `--limit` — the human output says so explicitly rather than printing it as a match total.
+
+Exposing these predicates to `nimbus ask` is a separate, not-yet-built sub-project (W6-B.2); today they are `nimbus query` / `nimbus people list` flags only.
+
+#### `--explain`
+
+```bash
+nimbus query --service github --type deployment --no-downstream-incident --explain
+nimbus query --service github --type pr --since 7d --explain          # works on any query, not just negations
+```
+
+Prints the **composed** SQL that actually shaped the result (never the bare predicate subquery, which omits the limit and any other filter and would answer a wider question if pasted into `sqlite3`), its bound parameters, and — on a negation query — the substrate probe with its row count. The probe line is the only way to see *why* a query refused, or to confirm that a non-empty answer rested on real data; a plain query has no probe to report, so that line is absent.
+
+Under `--json`, `--explain` changes the shape of the document: instead of a bare array of rows you get `{ "items": [...], "meta": {...}, "explain": {...} }` (plus `"gaps"` on a negation query). The block is always a field in the document, never loose text printed alongside it — that would make the output unparseable.
 
 > **Unknown flags are ignored, not rejected.** `nimbus query` scans for the flags above and ignores anything else it finds, so a typo or an invented filter fails silently rather than erroring. (`nimbus search` behaves the opposite way — it throws on any flag it does not define.)
 >
@@ -2755,14 +2787,24 @@ Output is JSON in all forms.
 
 Query the cross-service people graph. Resolves identities across GitHub, GitLab, Slack, Linear, Jira, Notion, and more without a network call.
 
-### `nimbus people list [--unlinked] [--limit N]`
+### `nimbus people list [--unlinked] [--limit N] [--not-reviewed [--since 7d]] [--explain] [--json]`
 
 List people in the graph. `--unlinked` restricts the output to identities that have not yet been merged into a person; `--limit N` caps the rows (default 100).
 
 ```bash
 nimbus people list
 nimbus people list --unlinked --limit 50
+nimbus people list --not-reviewed --since 7d          # nobody with a review in the last 7 days
+nimbus people list --not-reviewed --since 7d --json
 ```
+
+**`--not-reviewed`** is the people-side negation predicate: people with no outgoing `reviewed` edge newer than the cutoff. Note the `list` — it is a subcommand, not decoration; `nimbus people --not-reviewed` exits with "Unknown people subcommand". It carries the same contract as the [`nimbus query` negation flags](#negation-predicates), with one difference worth knowing:
+
+- **`--since` here is a real window.** Unlike `--no-downstream-incident`'s fixed correlation window, this one filters the `reviewed` edges themselves, so it means what you expect. It is parsed by the same duration parser `nimbus query --since` uses, so `7d` / `24h` / `2w` behave identically across both commands. Omitting `--since` widens the predicate to "no `reviewed` edge ever" rather than silently narrowing to an unstated recent window.
+- **The substrate probe is windowed by that same `--since`.** A global, all-time count of `reviewed` edges would pass on edges that are all older than your window — the exact state in which "nobody reviewed this week" and "nothing synced for this week" are indistinguishable. So the command refuses on that ambiguity (exit `1`, message to stderr, or a `missing_substrate` document to stdout under `--json`) instead of returning every graphed person as a false clean answer. Widening `--since`, or syncing a connector that populates PR review activity and running `nimbus index regraph`, is the remediation it prints.
+- **People with no graph entity are excluded and counted.** The predicate joins through `graph_entity`, so a person who was never graphed cannot be evaluated; they are dropped (the fail-closed direction) and reported in the `Gaps:` line rather than silently vanishing from the count.
+
+A plain `nimbus people list` still returns exactly what it always did — a bare array under `--json`. Only a `--not-reviewed` or `--explain` call returns the wrapped `{ people, gaps?, explain? }` document.
 
 ---
 

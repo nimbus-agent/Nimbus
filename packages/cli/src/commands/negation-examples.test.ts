@@ -7,8 +7,12 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { runPeople } from "./people.ts";
 import { runQuery } from "./query.ts";
 
-// The three commands exactly as `docs/superpowers/specs/2026-08-20-negation-queries-design.md`
-// documents them. If a doc example stops parsing, this file fails — which is the point.
+// The three commands exactly as the docs give them — `docs/cli-reference.md` (§ `nimbus query` →
+// "Negation predicates" and § `nimbus people list`) and the design doc
+// `docs/superpowers/specs/2026-08-20-negation-queries-design.md`, which carry the SAME three
+// invocations verbatim so this pin covers both. If a doc example stops parsing, this file fails —
+// which is the point. Keep the arrays below and the doc examples identical; a doc example that
+// drifts out of this list is unpinned again.
 const DOCUMENTED = [
   ["query", ["--service", "github", "--type", "pr", "--not-touching", "tests/**"]],
   ["query", ["--service", "github", "--type", "deployment", "--no-downstream-incident"]],

@@ -8,6 +8,107 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-20 — First-class negation queries (W6-B.1): three named predicates that refuse rather
+  than answer from an unpopulated index.** The last open Wave 6 answer-quality row, shipped as
+  three flags on the two commands whose row shape each already matches — no predicate language, no
+  `--negate`, no composition:
+
+  ```bash
+  nimbus query --service github --type pr         --not-touching 'tests/**'
+  nimbus query --service github --type deployment --no-downstream-incident
+  nimbus people list --not-reviewed --since 7d
+  ```
+
+  **Both parts of that syntax that look optional are not.** `--service` is required on the first
+  two — existing `runQuery` behaviour, not a choice this delivery makes — and the `list` on the
+  third is a subcommand, since `runPeople` dispatches `args[0]`, so `nimbus people --not-reviewed`
+  exits with "Unknown people subcommand". Two spec examples shipped in the design doc missing
+  exactly those two tokens, which is why the first thing built was a test
+  (`cli/src/commands/negation-examples.test.ts`) that drives every documented example through the
+  real argument parsers: a doc example that cannot run now fails CI instead of waiting to be
+  noticed.
+
+  **Why a negation is not a filter with a NOT in it — the constraint the whole design is shaped
+  around.** For a positive query a missing row costs a result. For a negation a missing row
+  *produces* one: a PR whose file list was never fetched satisfies "no row matching that path"
+  exactly as well as a PR that genuinely never touched it, and the two are indistinguishable at
+  the SQL level. An unpopulated substrate therefore does not make a negation incomplete, it makes
+  it **wrong**, and wrong in the direction that reads as a finding — the emptier the index, the
+  MORE rows come back. Four bounds follow, and all four are enforced rather than documented:
+
+  1. **An empty substrate REFUSES.** Each predicate probes its own substrate before answering —
+     any `pr_files_state` row; any `correlates_with` edge; any `reviewed` edge **within the
+     query's own `--since` window**, not an all-time count, because edges that are all older than
+     the window are the exact state where "nobody reviewed" and "nothing synced" are
+     indistinguishable. A failed probe returns a `{ status: "refused", reason:
+     "missing_substrate", message, remediation }` document and exit code `1`: the human message
+     goes to **stderr** so it cannot be piped in as rows, the `--json` document goes to **stdout**
+     so a script can parse it. A caller asking "which deploys were clean?" must be able to tell
+     **refused** from **none matched** — those are opposite answers, and a non-zero exit alone
+     does not separate a refusal from a crash.
+  2. **All three predicates exclude and count unverifiable rows; only the SHAPE differs.**
+     `--not-touching` excludes PRs with no coverage row and PRs whose coverage was truncated, and
+     reports the two SEPARATELY — never-fetched and fetched-incompletely mean different things to
+     a reader deciding whether to trust the answer. The other two reach their edges through an
+     inner join to `graph_entity`, so an item or person with no entity of the required type is
+     excluded and counted as `excludedNoGraphEntity`. Dropping those rows is the fail-closed
+     direction and stays; dropping them *uncounted* was the real defect, and it was reachable —
+     `syncGraphFromIndexedItem` returns without writing below `user_version < 7`, which is why
+     `regraphAllItems` exists. The gap line prints on **every** negation query, `--explain` or
+     not: exclusion accounting is part of the answer, not debug output, because a short result set
+     with no explanation is precisely the false finding this feature exists to prevent. (The
+     implementation plan predicted per-row partial state for `--not-touching` only; building it
+     disproved that, and the correction is recorded in the design doc § 4.4 rather than quietly
+     dropped.)
+  3. **The correlation window is fixed at two hours and no flag can widen it.**
+     `--no-downstream-incident` reads `correlates_with` edges that `graph/graph-populator.ts`
+     writes under a fixed `CORRELATION_WINDOW_MS`, applied at WRITE time;
+     `graph_relation.created_at` is the write timestamp, not the event time, so a query-time
+     window cannot be reconstructed even in principle. A `--within 24h` flag would advertise a
+     control that does not exist, so there is none — the output names the window instead, and
+     DERIVES the printed number from the constant (pinned by a test that imports the real gateway
+     value) rather than restating "2h" in prose that can drift.
+  4. **Subject-type scoping is mandatory, and checked before any IPC call.** `--not-touching`
+     requires `--type pr`, `--no-downstream-incident` requires `--type deployment`; a conflicting
+     or absent `--type` errors rather than silently re-scoping. Unscoped, `--not-touching
+     'tests/**'` would return every issue, message and commit — all of which trivially "do not
+     touch tests/" because they cannot touch anything — a flood of confident false positives
+     emitted by the feature built to prevent them. The guard checks whether the flag was
+     SUPPLIED, not what it parsed to, so `--not-touching ''` trips it too.
+
+  **`--explain`** adds the composed SQL, its bound parameters, and the substrate probe with its
+  result — the only way to see WHY a query refused, or to confirm a non-empty answer rested on
+  real data. It works on ANY `nimbus query` / `nimbus people list` invocation, not only negation
+  ones, since the SQL is built on every call anyway. The SQL it prints is the COMPOSED statement
+  that actually shaped the result, never the bare predicate subquery, which omits `unlinkedOnly`
+  and the `LIMIT` and would answer a wider question if pasted back into sqlite3. Under `--json`
+  the explain block is a FIELD in the document and a refusal document is printed ALONE — either
+  one printed loose alongside the rows would make the output unparseable. One thing `--json`
+  deliberately does not do is claim a match total: `meta.total` is the size of the returned batch,
+  bounded by `--limit`, so the human output prints it with that caveat attached rather than as
+  "N matched".
+
+  **Delivered as fields on existing methods, not new ones.** `index.queryItems` and `people.list`
+  gain optional `notTouching` / `noDownstreamIncident` / `notReviewed` / `sinceMs` / `explain`
+  request params and sibling `gaps` / `explain` response keys; `people.list` keeps returning a
+  BARE ARRAY on a plain call, byte-for-byte as before, so no existing caller breaks. A
+  present-but-unusable param is rejected (`-32602`), never treated as absent — a caller who asked
+  to negate must never silently fall through to the full unfiltered list. No schema migration
+  (V55's PR changed-file index, #1258, is the substrate for the first predicate; the other two
+  read graph edges that already exist), no new IPC method, no new HTTP route, no new invariant,
+  `ALLOWED_METHODS` stays at **105**, and no `egress_ledger` row is appended — all three
+  predicates are local SQLite reads with no connector dispatch and no remote model call.
+
+  **Scope boundary — what this delivery does NOT do.** **B.2, exposing these predicates to
+  `nimbus ask`, is not in it.** That is a genuinely different problem (tool specs, which surface,
+  prompt wiring, and the failure mode where the model picks the wrong predicate and the answer
+  still reads authoritative) and gets its own spec; B.1 is its precondition either way, since
+  there was nothing to expose until the predicates and their fail-closed semantics existed. Also
+  out: any grammar, `--negate`, or composing two predicates in one query; and cross-service
+  negation, which would mean relaxing the existing `--service` requirement for every `query`
+  invocation. The aggregation half of W6-B shipped 2026-08-19 as `nimbus stats`, so the negation
+  half closes here and the W6-B row stays open on B.2 alone.
+
 - **2026-08-19 — `agents.why` answers a pull-request URL with no local checkout, and
   `agents.impact` moves onto the same resolver — fixing a live GitLab/self-hosted defect.**
   `agents.why` gains a second entry point, `{ prUrl }`, alongside `{ ref }`: `nimbus why

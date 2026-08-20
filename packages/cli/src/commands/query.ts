@@ -51,6 +51,17 @@ Usage:
   nimbus query --service <id> [--type <t>] [--since 7d] [--limit N] [--json | --pretty]
   nimbus query --sql "SELECT ..." [--json | --pretty]   (read-only guard)
 
+Negation predicates (each requires its --type; an empty substrate refuses with exit 1):
+  nimbus query --service <id> --type pr         --not-touching '<glob>'
+  nimbus query --service <id> --type deployment --no-downstream-incident
+
+  Excluded-but-unverifiable rows are always counted on a "Gaps:" line — that
+  accounting is part of the answer, not debug output. --no-downstream-incident's
+  correlation window is fixed at write time; there is deliberately no --within.
+
+  --explain   print the composed SQL, its bound params, and the substrate probe
+              (works on every query, not only a negation one)
+
 Output:
   TTY (default)  → human-readable cards
   piped (default)→ compact JSON, one row per array (jq-friendly)
