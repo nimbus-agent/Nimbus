@@ -22,10 +22,14 @@ function optTrimmed(q: Record<string, unknown>, k: string): string | undefined {
   return t === "" ? undefined : t;
 }
 
+// Capped at 100, matching the sibling tool on the same agent (`fetchMoreIndexResults`,
+// `engine/agent.ts:190`): these tools return raw, unprojected rows (including `metadata` and
+// `body_preview`), so a higher cap would hand the model far more context than the projected
+// search tools ever do for the same row count.
 function optLimit(q: Record<string, unknown>): number {
   const v = q["limit"];
   return typeof v === "number" && Number.isFinite(v)
-    ? Math.min(500, Math.max(1, Math.floor(v)))
+    ? Math.min(100, Math.max(1, Math.floor(v)))
     : 20;
 }
 
@@ -61,6 +65,10 @@ function refusalResult(
   if (line !== undefined) recordNegationDisclosure(line);
   return {
     refused: true,
+    // Matches `missingSubstrateRefusal` (`index/negation-predicates.ts:55`) and the MCP tool
+    // descriptions, which instruct the model to check `status === "refused"`: one refusal
+    // vocabulary across both surfaces, not `refused: true` on one and `status` on the other.
+    status: "refused",
     reason: refusal.reason,
     message: refusal.message,
     remediation: refusal.remediation,
@@ -95,7 +103,7 @@ export function createNegationTools(deps: { localIndex: LocalIndex }) {
   const findPrsNotTouching = createTool({
     id: "findPrsNotTouching",
     description:
-      "findPrsNotTouching(pathGlob, service?, limit?) — pull requests with NO indexed changed-file path matching pathGlob (a GLOB such as 'tests/**'; required). Use this, never searchLocalIndex, when the question is which PRs do NOT touch something: it proves its substrate first and refuses when PR file coverage is not indexed, because an unfetched PR is indistinguishable from one that genuinely never touched the path. Scoped to pull requests intrinsically — there is no itemType argument. service is optional; omitting it searches every indexed forge. limit is optional (default 20, max 500).",
+      "findPrsNotTouching(pathGlob, service?, limit?) — pull requests with NO indexed changed-file path matching pathGlob (a GLOB such as 'tests/**'; required). Use this, never searchLocalIndex, when the question is which PRs do NOT touch something: it proves its substrate first and refuses when PR file coverage is not indexed, because an unfetched PR is indistinguishable from one that genuinely never touched the path. Scoped to pull requests intrinsically — there is no itemType argument. service is optional; omitting it searches every indexed forge. limit is optional (default 20, max 100).",
     execute: async (inputData: unknown) => {
       const q = asRecord(inputData);
       const pathGlob = optTrimmed(q, "pathGlob");
@@ -127,7 +135,7 @@ export function createNegationTools(deps: { localIndex: LocalIndex }) {
   const findDeploymentsWithoutIncident = createTool({
     id: "findDeploymentsWithoutIncident",
     description:
-      "findDeploymentsWithoutIncident(service?, limit?) — deployments with NO outgoing correlates_with edge to a downstream incident. Use this, never searchLocalIndex, when the question is which deployments had NO incident: it proves its substrate first and refuses when deployment-to-incident correlation is not indexed. The correlation window is fixed at the time the edge was written and cannot be widened per query — there is deliberately no `within` argument, because the edge timestamp is a write time, not an event time, so a query-time window cannot be reconstructed even in principle. Scoped to deployments intrinsically — there is no itemType argument. service is optional; omitting it searches every indexed service. limit is optional (default 20, max 500).",
+      "findDeploymentsWithoutIncident(service?, limit?) — deployments with NO outgoing correlates_with edge to a downstream incident. Use this, never searchLocalIndex, when the question is which deployments had NO incident: it proves its substrate first and refuses when deployment-to-incident correlation is not indexed. The correlation window is fixed at the time the edge was written and cannot be widened per query — there is deliberately no `within` argument, because the edge timestamp is a write time, not an event time, so a query-time window cannot be reconstructed even in principle. Scoped to deployments intrinsically — there is no itemType argument. service is optional; omitting it searches every indexed service. limit is optional (default 20, max 100).",
     execute: async (inputData: unknown) => {
       const q = asRecord(inputData);
       const service = optTrimmed(q, "service");
@@ -142,7 +150,7 @@ export function createNegationTools(deps: { localIndex: LocalIndex }) {
       }
       return withExclusions(
         "findDeploymentsWithoutIncident",
-        [{ label: "no graph entity", n: outcome.gaps.excludedNoGraphEntity }],
+        [{ label: "no graph entity of the required type", n: outcome.gaps.excludedNoGraphEntity }],
         { items: outcome.rows, gaps: outcome.gaps },
       );
     },
@@ -151,7 +159,7 @@ export function createNegationTools(deps: { localIndex: LocalIndex }) {
   const findPeopleWithoutReviews = createTool({
     id: "findPeopleWithoutReviews",
     description:
-      "findPeopleWithoutReviews(sinceDays?, limit?) — people with NO outgoing reviewed edge newer than sinceDays days ago. Use this, never searchLocalIndex, when the question is who has NOT reviewed anything: it proves its substrate first and refuses when review activity is not indexed for the window, because an un-synced person is indistinguishable from one who genuinely reviewed nothing. sinceDays is a number of days back from now (e.g. 7 for the last week); omitting it means ever. limit is optional (default 20, max 500).",
+      "findPeopleWithoutReviews(sinceDays?, limit?) — people with NO outgoing reviewed edge newer than sinceDays days ago. Use this, never searchLocalIndex, when the question is who has NOT reviewed anything: it proves its substrate first and refuses when review activity is not indexed for the window, because an un-synced person is indistinguishable from one who genuinely reviewed nothing. sinceDays is a number of days back from now (e.g. 7 for the last week); omitting it means ever. limit is optional (default 20, max 100).",
     execute: async (inputData: unknown) => {
       const q = asRecord(inputData);
       const sinceMs = optSinceMsFromDays(q);
@@ -165,7 +173,7 @@ export function createNegationTools(deps: { localIndex: LocalIndex }) {
       }
       return withExclusions(
         "findPeopleWithoutReviews",
-        [{ label: "no graph entity", n: outcome.gaps.excludedNoGraphEntity }],
+        [{ label: "no graph entity of the required type", n: outcome.gaps.excludedNoGraphEntity }],
         { people: outcome.rows.map(personToToolRow), gaps: outcome.gaps },
       );
     },

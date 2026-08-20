@@ -132,10 +132,15 @@ describe("findPrsNotTouching", () => {
     const drained = await agentRequestContext.run({}, async () => {
       const out = (await tools["findPrsNotTouching"]?.execute?.({ pathGlob: "tests/**" })) as {
         refused?: boolean;
+        status?: string;
         disclosure?: string;
         note?: string;
       };
       expect(out.refused).toBe(true);
+      // Matches `missingSubstrateRefusal`'s shape (`index/negation-predicates.ts`) and the MCP
+      // tool descriptions, which instruct the model to check `status === "refused"` — one
+      // refusal vocabulary across both surfaces.
+      expect(out.status).toBe("refused");
       expect(out.disclosure).toContain("findPrsNotTouching could not be verified");
       // `note` is the only thing telling the model not to fall back to ranked search when a
       // negation refuses.
@@ -202,10 +207,12 @@ describe("findDeploymentsWithoutIncident", () => {
     const drained = await agentRequestContext.run({}, async () => {
       const out = (await tools["findDeploymentsWithoutIncident"]?.execute?.({})) as {
         refused?: boolean;
+        status?: string;
         disclosure?: string;
         note?: string;
       };
       expect(out.refused).toBe(true);
+      expect(out.status).toBe("refused");
       expect(out.disclosure).toContain("findDeploymentsWithoutIncident could not be verified");
       expect(out.note).toContain("Do not answer the question from ranked search instead");
       return drainNegationDisclosures();
@@ -228,11 +235,11 @@ describe("findDeploymentsWithoutIncident", () => {
       };
       // See `findPrsNotTouching`'s equivalent test for why both the embedded copy (here) and the
       // recorded copy (asserted on `drained` below) must be checked.
-      expect(out.disclosure).toContain("1 excluded (no graph entity)");
+      expect(out.disclosure).toContain("1 excluded (no graph entity of the required type)");
       return drainNegationDisclosures();
     });
     expect(drained).toHaveLength(1);
-    expect(drained[0]).toContain("1 excluded (no graph entity)");
+    expect(drained[0]).toContain("1 excluded (no graph entity of the required type)");
 
     const clean = freshIndex();
     seedDeploymentWithIncident(clean.db, "dep-with-incident");
@@ -271,11 +278,13 @@ describe("findPeopleWithoutReviews", () => {
     const drained = await agentRequestContext.run({}, async () => {
       const out = (await tools["findPeopleWithoutReviews"]?.execute?.({})) as {
         refused?: boolean;
+        status?: string;
         disclosure?: string;
         remediation?: string;
         note?: string;
       };
       expect(out.refused).toBe(true);
+      expect(out.status).toBe("refused");
       expect(out.disclosure).toContain("findPeopleWithoutReviews could not be verified");
       // The remediation string must not tell a model/MCP client to use a CLI flag that does not
       // exist where they are running (spec ruling 3).
@@ -304,11 +313,11 @@ describe("findPeopleWithoutReviews", () => {
       expect(row).toEqual({ id: "silent", displayName: null, canonicalEmail: null });
       // See `findPrsNotTouching`'s equivalent test for why both the embedded copy (here) and the
       // recorded copy (asserted on `drained` below) must be checked.
-      expect(out.disclosure).toContain("1 excluded (no graph entity)");
+      expect(out.disclosure).toContain("1 excluded (no graph entity of the required type)");
       return drainNegationDisclosures();
     });
     expect(drained).toHaveLength(1);
-    expect(drained[0]).toContain("1 excluded (no graph entity)");
+    expect(drained[0]).toContain("1 excluded (no graph entity of the required type)");
 
     const clean = freshIndex();
     seedPersonWithReview(clean.db, "only-reviewer", 1000);
