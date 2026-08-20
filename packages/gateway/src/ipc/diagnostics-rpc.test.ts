@@ -1040,9 +1040,67 @@ describe("index.queryItems", () => {
     try {
       const { ctx, db } = makeCtxWithIndex(dir);
       try {
-        expect(() =>
-          dispatchDiagnosticsRpc("index.queryItems", { notTouching: "   " }, ctx),
-        ).toThrow(DiagnosticsRpcError);
+        try {
+          dispatchDiagnosticsRpc("index.queryItems", { notTouching: "   " }, ctx);
+          throw new Error("expected a rejection");
+        } catch (e) {
+          expect(e).toBeInstanceOf(DiagnosticsRpcError);
+          expect((e as DiagnosticsRpcError).rpcCode).toBe(-32602);
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  // Residual from the Task 3 re-review, closed here. The blank-string guard above covers the
+  // CLI-reachable door; a JSON-RPC caller can also send a NON-STRING `notTouching` or a
+  // NON-BOOLEAN `noDownstreamIncident`. Both are the same confident-wrong-answer failure through
+  // a narrower door: each would fall back to "no negation requested" and return every item to a
+  // caller who asked which items DON'T match. `null` is the one present-but-absent spelling that
+  // must still pass, since JSON-RPC callers routinely spell an omitted optional that way — so it
+  // is asserted in the same test, or the guard could pass by rejecting everything.
+  test("a present-but-unusable negation param is rejected; null still reads as absent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-neg8b-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+           VALUES ('github:issue-1', 'github', 'issue', 'issue-1', 'not a pr', 1000, 1000)`,
+        );
+        for (const bad of [123, true, {}, ["tests/*"]]) {
+          try {
+            dispatchDiagnosticsRpc("index.queryItems", { notTouching: bad }, ctx);
+            throw new Error(`expected a rejection for notTouching: ${JSON.stringify(bad)}`);
+          } catch (e) {
+            expect(e).toBeInstanceOf(DiagnosticsRpcError);
+            expect((e as DiagnosticsRpcError).rpcCode).toBe(-32602);
+            expect((e as DiagnosticsRpcError).message).toContain("notTouching");
+          }
+        }
+        for (const bad of ["yes", 1, {}]) {
+          try {
+            dispatchDiagnosticsRpc("index.queryItems", { noDownstreamIncident: bad }, ctx);
+            throw new Error(
+              `expected a rejection for noDownstreamIncident: ${JSON.stringify(bad)}`,
+            );
+          } catch (e) {
+            expect(e).toBeInstanceOf(DiagnosticsRpcError);
+            expect((e as DiagnosticsRpcError).rpcCode).toBe(-32602);
+            expect((e as DiagnosticsRpcError).message).toContain("noDownstreamIncident");
+          }
+        }
+        const r = dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { notTouching: null, noDownstreamIncident: null },
+          ctx,
+        );
+        const v = (r as { value: { status?: string; items: Array<{ id: string }> } }).value;
+        expect(v.status).toBeUndefined();
+        expect(v.items.map((i) => i.id)).toEqual(["issue-1"]);
       } finally {
         db.close();
       }

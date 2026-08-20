@@ -383,9 +383,27 @@ function missingSubstrateRefusal(
  * misbind. This renumbers every placeholder to plain, unnumbered `?`, which SQLite auto-numbers
  * in left-to-right order — exactly the order each predicate's own `vals` array is already in, so
  * no reordering of `vals` is needed, only of the placeholder syntax.
+ *
+ * That equivalence holds only while each builder references every placeholder EXACTLY ONCE and
+ * embeds no literal `?` in a string. Both hold today; neither is enforced by the type system, and
+ * a future builder reusing `?1` twice would emit two `?` for one value and misbind EVERY
+ * subsequent parameter — producing wrong rows rather than an error, the one failure mode a
+ * negation query must not have. So the count is checked here rather than assumed: a mismatch
+ * throws before any SQL runs. A literal `?` inside a string would trip it too; that is the
+ * fail-closed direction, and the fix would be to bind that string instead.
  */
-function toUnnumberedPlaceholders(sql: string): string {
-  return sql.replace(/\?\d+/g, "?");
+function toPositionalSubquery(predicate: { sql: string; vals: ReadonlyArray<string | number> }): {
+  sql: string;
+  vals: ReadonlyArray<string | number>;
+} {
+  const sql = predicate.sql.replace(/\?\d+/g, "?");
+  const placeholders = (sql.match(/\?/g) ?? []).length;
+  if (placeholders !== predicate.vals.length) {
+    throw new Error(
+      `negation predicate placeholder mismatch: ${placeholders} placeholders for ${predicate.vals.length} values`,
+    );
+  }
+  return { sql, vals: predicate.vals };
 }
 
 function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
@@ -412,16 +430,31 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
     ? (rec["types"] as unknown[]).filter((x): x is string => typeof x === "string")
     : [];
   const rawNotTouching = rec?.["notTouching"];
-  // A present-but-blank `notTouching` must NEVER silently fall through to the plain path: that
+  // A PRESENT but unusable `notTouching` must NEVER silently fall through to the plain path: that
   // would answer a different question ("every item") than the one asked ("items not touching X"),
   // which is exactly the confident-wrong-answer failure this whole feature exists to prevent.
-  // Reachable from the documented CLI surface: `takeFlag` (cli/src/commands/serve.ts) returns
-  // `args[i + 1]` verbatim, so `--not-touching ''` reaches here as `""`.
-  if (typeof rawNotTouching === "string" && rawNotTouching.trim() === "") {
-    throw new DiagnosticsRpcError(-32602, "notTouching must be a non-empty glob pattern");
+  // Written as what MAY pass, not what may not, so a new unusable shape is rejected by default:
+  // a blank string is reachable from the documented CLI surface (`takeFlag`,
+  // cli/src/commands/serve.ts, returns `args[i + 1]` verbatim, so `--not-touching ''` arrives as
+  // `""`), and a non-string reaches here only over raw JSON-RPC — a narrower door onto the same
+  // failure, closed here because it costs one clause. `null` is treated as ABSENT, not as an
+  // error: JSON-RPC callers routinely spell an omitted optional that way.
+  if (rawNotTouching !== undefined && rawNotTouching !== null) {
+    if (typeof rawNotTouching !== "string" || rawNotTouching.trim() === "") {
+      throw new DiagnosticsRpcError(-32602, "notTouching must be a non-empty glob pattern");
+    }
   }
   const notTouching = typeof rawNotTouching === "string" ? rawNotTouching : undefined;
-  const noDownstreamIncident = rec?.["noDownstreamIncident"] === true;
+  const rawNoDownstreamIncident = rec?.["noDownstreamIncident"];
+  // Same reasoning, same failure: `noDownstreamIncident: "yes"` is a caller ASKING for the
+  // negation, and `=== true` alone would hand them every deployment instead. `explain` gets no
+  // such check on purpose — it is a debug flag, so falling back to off answers the same question.
+  if (rawNoDownstreamIncident !== undefined && rawNoDownstreamIncident !== null) {
+    if (typeof rawNoDownstreamIncident !== "boolean") {
+      throw new DiagnosticsRpcError(-32602, "noDownstreamIncident must be a boolean");
+    }
+  }
+  const noDownstreamIncident = rawNoDownstreamIncident === true;
   const explain = rec?.["explain"] === true;
 
   const baseParams = {
@@ -450,7 +483,7 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
     // has a ~65,535 bind-parameter ceiling per statement, so a large matching set would otherwise
     // throw instead of answering. The subquery costs exactly its own parameter count (one, here)
     // no matter how many rows it matches.
-    const idInSql = { sql: toUnnumberedPlaceholders(predicate.sql), vals: predicate.vals };
+    const idInSql = toPositionalSubquery(predicate);
     const composed = buildItemListSql({ ...baseParams, idInSql });
     if (!probeResult.passed) {
       return {
@@ -486,7 +519,7 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
   if (noDownstreamIncident) {
     const probeResult = probeCorrelatesWith(db);
     const predicate = buildNoDownstreamIncidentSql();
-    const idInSql = { sql: toUnnumberedPlaceholders(predicate.sql), vals: predicate.vals };
+    const idInSql = toPositionalSubquery(predicate);
     const composed = buildItemListSql({ ...baseParams, idInSql });
     if (!probeResult.passed) {
       return {

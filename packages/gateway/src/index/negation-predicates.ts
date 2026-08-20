@@ -170,6 +170,10 @@ function scopeFilter(
   return { sql: filters.length > 0 ? ` AND ${filters.join(" AND ")}` : "", vals };
 }
 
+export type NoDownstreamIncidentGaps = {
+  readonly excludedNoGraphEntity: number;
+};
+
 /**
  * Deployments `buildNoDownstreamIncidentSql` silently drops for having no graph entity of the
  * required type (`type = 'deployment'`) to join through at all — not because a downstream
@@ -190,10 +194,6 @@ function scopeFilter(
  * set beside it, rather than the whole index (a count silently wider than its query reads as
  * belonging to it, and is not).
  */
-export type NoDownstreamIncidentGaps = {
-  readonly excludedNoGraphEntity: number;
-};
-
 export function countNoDownstreamIncidentExclusions(
   db: Database,
   scope?: ExclusionScope,
