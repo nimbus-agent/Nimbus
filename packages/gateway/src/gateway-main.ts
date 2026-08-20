@@ -7,7 +7,8 @@ import { createConnectorDispatcher, type McpToolListingClient } from "./connecto
 import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
-import { runAsk } from "./engine/run-ask.ts";
+import { agentRequestContext } from "./engine/agent-request-context.ts";
+import { type RunAskParams, runAsk } from "./engine/run-ask.ts";
 import { armGatewayLifecycleDiagnostics } from "./platform/exit-diagnostics.ts";
 import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gateway-state-file.ts";
 import { createPlatformServices } from "./platform/index.ts";
@@ -36,6 +37,29 @@ function emitSandboxPostureBannerIfDegraded(runner: SandboxRunner): void {
         `\n`,
     );
   }
+}
+
+/**
+ * The ChatOps read path (Slice 5): `@nimbus <question>` answers run through the same `runAsk`
+ * pipeline as `agent.invoke` (I11 envelope, HITL gate on any planned action). Unlike the three
+ * `ipc/server/inline-handlers.ts` `runAsk`/handler callers (`:96`, `:215`, `:350`), nothing
+ * upstream of this binding establishes an `agentRequestContext` request store — ChatOps is not
+ * an IPC dispatch, it is a callback the `chatops` module invokes directly. Without a store here,
+ * a negation tool's refusal/exclusion disclosure has nowhere to land and is dropped (see
+ * `engine/negation-disclosure.ts`'s `store === undefined` branch): this wrapper is that store.
+ *
+ * `runAskFn` is injected (defaults to the real `runAsk`) so the wiring — does a disclosure
+ * recorded during the call reach the returned reply — is unit-testable without a real Gateway.
+ */
+export function createChatOpsAskEngine(
+  buildParams: (query: string) => RunAskParams,
+  runAskFn: (params: RunAskParams) => Promise<{ reply: string }> = runAsk,
+): (query: string, namespace: string) => Promise<string> {
+  return async (query, _namespace) =>
+    agentRequestContext.run({}, async () => {
+      const r = await runAskFn(buildParams(query));
+      return r.reply;
+    });
 }
 
 export async function main(): Promise<void> {
@@ -119,8 +143,12 @@ export async function main(): Promise<void> {
   // ChatOps read path (Slice 5): `@nimbus <question>` answers run through the same runAsk
   // pipeline as engine.ask (I11 envelope, HITL gate on any planned action). Per-namespace
   // content filtering of local reads remains the slice's documented deferral.
-  platform.chatops?.bindAskEngine(async (query, _namespace) => {
-    const r = await runAsk({
+  //
+  // See `createChatOpsAskEngine` above: this is the only runAsk caller not already inside
+  // `agentRequestContext.run` (the other three sites are `ipc/server/inline-handlers.ts` at
+  // :96, :215, :350), so the wrapper is applied here explicitly.
+  platform.chatops?.bindAskEngine(
+    createChatOpsAskEngine((query) => ({
       input: query,
       stream: false,
       clientId: "chatops",
@@ -136,9 +164,8 @@ export async function main(): Promise<void> {
         ? {}
         : { sessionMemoryStore: platform.sessionMemoryStore }),
       policyHitl: platform.policyHitl,
-    });
-    return r.reply;
-  });
+    })),
+  );
 
   platform.ipc.setWorkflowRunHandler(async (ctx) =>
     runWorkflowExecution({
