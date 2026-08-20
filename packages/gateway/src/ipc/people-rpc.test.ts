@@ -550,18 +550,31 @@ describe("people.list — --not-reviewed", () => {
     expect(v.people.map((p) => p.id)).toEqual(["bob"]);
   });
 
-  test("non-negation explain=true still returns the bare-array data, wrapped", () => {
+  // Round-2 re-review, red-proved: this test used to assert only `typeof sql === "string"` and
+  // `Array.isArray(params)`, and a plain path whose explain was hardcoded to `SELECT 1` passed all
+  // 51 tests in this file. The "no bare-vs-composed distinction on the plain path" reasoning is
+  // true and does not reach far enough — an explain that silently drops `unlinkedOnly`/`limit` is
+  // a defect class of its own, and only executing what was reported catches it. So this asserts
+  // the same way the negation paths do: run the returned statement back and compare row sets.
+  test("non-negation explain=true reports the statement that actually produced the rows", () => {
     seedPerson(fixture.db, { id: "p1" });
-    const r = call("people.list", { explain: true });
+    seedPerson(fixture.db, { id: "p2" });
+    fixture.db.run("UPDATE person SET linked = 0 WHERE id = 'p1'");
+    const r = call("people.list", { explain: true, unlinkedOnly: true, limit: 1 });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
     const v = r.value as {
       people: Array<{ id: string }>;
-      explain: { sql: string; params: unknown[] };
+      explain: { sql: string; params: Array<string | number> };
     };
     expect(v.people.map((p) => p.id)).toEqual(["p1"]);
-    expect(typeof v.explain.sql).toBe("string");
-    expect(Array.isArray(v.explain.params)).toBe(true);
+    const rows = fixture.db.query(v.explain.sql).all(...v.explain.params) as Array<{ id: string }>;
+    expect(rows.map((row) => row.id)).toEqual(["p1"]);
+    // The caller's own scoping must be visible in what is reported, not merely honoured in the
+    // answer: a reported statement missing them would re-run wider than the result it explains.
+    expect(v.explain.sql).toContain("linked = 0");
+    expect(v.explain.sql).toContain("LIMIT");
+    expect(v.explain.params).toContain(1);
     expect(v).not.toHaveProperty("gaps");
   });
 
