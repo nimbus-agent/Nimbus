@@ -210,6 +210,41 @@ export function countNoDownstreamIncidentExclusions(
   return { excludedNoGraphEntity: row.n };
 }
 
+export type NotReviewedGaps = {
+  readonly excludedNoGraphEntity: number;
+};
+
+/**
+ * People `buildNotReviewedSql` silently drops for having no graph entity of the required type
+ * (`type = 'person'`) to join through at all — not because a recent `reviewed` edge was found,
+ * but because the predicate's INNER JOIN to `graph_entity` has nothing to match. See that
+ * function's doc comment for why the join is required; see `countNoDownstreamIncidentExclusions`
+ * above for why dropping such rows is the fail-closed direction but dropping them UNCOUNTED is
+ * the silent shortfall this whole feature exists to prevent.
+ *
+ * Labelled "no graph entity of the required type", deliberately NOT "not graphed": this count
+ * conflates two different states — a person with no `graph_entity` row at all, and one graphed as
+ * some OTHER entity type (a real possibility, since `graph_entity` only enforces
+ * `UNIQUE(type, external_id)`, not uniqueness on `external_id` alone) — and the second is the
+ * likelier case in practice. "Not graphed" would claim a precision this count does not have.
+ *
+ * No `scope` parameter, unlike its two siblings: `person` carries no `service`/`type` columns
+ * (`people.list` has no service/type-like filter to scope against — it filters only on
+ * `unlinkedOnly`/`limit`), so there is nothing to narrow this count against. Adding one would
+ * invent a filter the underlying table cannot express.
+ */
+export function countNotReviewedExclusions(db: Database): NotReviewedGaps {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n
+         FROM person p
+         LEFT JOIN graph_entity e ON e.external_id = p.id AND e.type = 'person'
+        WHERE e.id IS NULL`,
+    )
+    .get() as { n: number };
+  return { excludedNoGraphEntity: row.n };
+}
+
 /**
  * The two `buildNotTouchingSql` exclusion counts, reported SEPARATELY: a PR the index never
  * fetched a file list for, and a PR whose file list is known-incomplete. They mean different

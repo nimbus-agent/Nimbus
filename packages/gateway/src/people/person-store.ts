@@ -279,15 +279,52 @@ export function updatePersonHandles(
   })();
 }
 
-export function listPersons(
-  db: Database,
-  options: { unlinkedOnly?: boolean; limit: number },
-): PersonRecord[] {
-  const lim = Math.min(500, Math.max(1, options.limit));
-  const where = options.unlinkedOnly === true ? "WHERE linked = 0" : "";
-  const rows = db
-    .query(`SELECT * FROM person ${where} ORDER BY id LIMIT ?`)
-    .all(lim) as PersonRow[];
+export type PersonListQueryParams = {
+  readonly unlinkedOnly?: boolean;
+  readonly limit: number;
+  /**
+   * Restrict via `id IN (<sql>)` where `<sql>` is a caller-supplied SELECT — e.g. a negation
+   * predicate's own query (`buildNotReviewedSql`), embedded as a subquery rather than
+   * materialised into a bind-parameter list. Mirrors `ItemListQueryParams.idInSql`
+   * (`index/item-list-query.ts`) for the same reason: a large matching set must not hit SQLite's
+   * per-statement bind-parameter ceiling.
+   *
+   * `sql` MUST use only plain, unnumbered `?` placeholders — never `?1`-style numbered ones, for
+   * the same desynchronization reason documented there. A predicate built with numbered
+   * placeholders must be renumbered first (see `toPositionalSubquery` in `ipc/people-rpc.ts`).
+   */
+  readonly idInSql?: { readonly sql: string; readonly vals: readonly (string | number)[] };
+};
+
+/**
+ * Builds the `listPersons` query without running it, so a caller (`ipc/people-rpc.ts`'s
+ * `--explain`) can report the exact SQL/params that shaped a result without a second, drifting
+ * copy of the query text. `listPersons` itself is this function plus execution — the same split
+ * `buildItemListSql` / `LocalIndex.listItems` uses for items.
+ */
+export function buildPersonListSql(params: PersonListQueryParams): {
+  sql: string;
+  vals: Array<string | number>;
+} {
+  const lim = Math.min(500, Math.max(1, params.limit));
+  const filters: string[] = [];
+  const vals: Array<string | number> = [];
+  if (params.unlinkedOnly === true) {
+    filters.push("linked = 0");
+  }
+  if (params.idInSql !== undefined) {
+    filters.push(`id IN (${params.idInSql.sql})`);
+    vals.push(...params.idInSql.vals);
+  }
+  const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+  const sql = `SELECT * FROM person ${where} ORDER BY id LIMIT ?`;
+  vals.push(lim);
+  return { sql, vals };
+}
+
+export function listPersons(db: Database, options: PersonListQueryParams): PersonRecord[] {
+  const { sql, vals } = buildPersonListSql(options);
+  const rows = db.query(sql).all(...vals) as PersonRow[];
   return rows.map(rowToRecord);
 }
 

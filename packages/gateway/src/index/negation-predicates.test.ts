@@ -7,6 +7,7 @@ import {
   buildNotReviewedSql,
   buildNotTouchingSql,
   countNoDownstreamIncidentExclusions,
+  countNotReviewedExclusions,
   countNotTouchingExclusions,
   probeCorrelatesWith,
   probePrFileCoverage,
@@ -172,6 +173,11 @@ const seedPersonWithReview = (db: Database, id: string, createdAt: number): void
 const seedPersonWithoutReview = (db: Database, id: string): void => {
   db.query(`INSERT INTO person (id, display_name) VALUES (?1, ?1)`).run(id);
   insertGraphEntity(db, "person", id, id);
+};
+
+/** No `graph_entity` row at all — distinct from `seedPersonWithoutReview`, which HAS one. */
+const seedPersonNoGraphEntity = (db: Database, id: string): void => {
+  db.query(`INSERT INTO person (id, display_name) VALUES (?1, ?1)`).run(id);
 };
 
 describe("substrate probes", () => {
@@ -365,6 +371,33 @@ describe("countNotTouchingExclusions scope", () => {
     insertUncoveredPrForService(db, "gh-1", "github");
     insertUncoveredPrForService(db, "gl-1", "gitlab");
     expect(countNotTouchingExclusions(db)).toEqual({ excludedNoCoverage: 2, excludedTruncated: 0 });
+    db.close();
+  });
+});
+
+// Same ruling as `countNoDownstreamIncidentExclusions`, over the person/reviewed bridge instead
+// of the deployment/correlates_with one: the predicate's INNER JOIN to `graph_entity` silently
+// drops a person with no graph entity of the required type, and it must not stay UNCOUNTED.
+describe("countNotReviewedExclusions", () => {
+  test("a person with no graph entity at all is absent from results and appears in the count", () => {
+    const db = makeDb();
+    seedPersonWithoutReview(db, "bob"); // HAS a person-typed graph entity, no reviewed edge.
+    seedPersonNoGraphEntity(db, "carol"); // no graph_entity row at all.
+    expect(runIds(db, buildNotReviewedSql(1_000))).toEqual(["bob"]);
+    expect(countNotReviewedExclusions(db)).toEqual({ excludedNoGraphEntity: 1 });
+    db.close();
+  });
+
+  test("a person WITH a person-typed graph entity is not counted, reviewed or not", () => {
+    const db = makeDb();
+    seedPersonWithReview(db, "alice", 5_000);
+    expect(countNotReviewedExclusions(db)).toEqual({ excludedNoGraphEntity: 0 });
+    db.close();
+  });
+
+  test("zero on an empty person table", () => {
+    const db = makeDb();
+    expect(countNotReviewedExclusions(db)).toEqual({ excludedNoGraphEntity: 0 });
     db.close();
   });
 });

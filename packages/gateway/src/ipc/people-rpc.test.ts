@@ -23,6 +23,53 @@ function seedItem(
   );
 }
 
+let graphEntitySeq = 0;
+const nextGraphEntityId = (): string => {
+  graphEntitySeq += 1;
+  return `entity-${String(graphEntitySeq)}`;
+};
+
+/**
+ * Neither `person.id` nor `item.id` joins to `graph_relation.from_id` directly — the real
+ * populator upserts a `graph_entity` whose `external_id` is the person/item id and emits edges
+ * FROM that entity's own primary key. Mirrors `index/negation-predicates.test.ts`'s seed helpers.
+ */
+function insertGraphEntity(db: Database, type: string, externalId: string, label: string): string {
+  const id = nextGraphEntityId();
+  db.query(`INSERT INTO graph_entity (id, type, external_id, label) VALUES (?1, ?2, ?3, ?4)`).run(
+    id,
+    type,
+    externalId,
+    label,
+  );
+  return id;
+}
+
+function insertGraphRelation(
+  db: Database,
+  fromEntityId: string,
+  toEntityId: string,
+  type: string,
+  createdAt: number,
+): void {
+  db.query(
+    `INSERT INTO graph_relation (from_id, to_id, type, weight, created_at)
+     VALUES (?1, ?2, ?3, 1.0, ?4)`,
+  ).run(fromEntityId, toEntityId, type, createdAt);
+}
+
+function seedPersonWithReview(db: Database, id: string, createdAt: number): void {
+  seedPerson(db, { id });
+  const personEntityId = insertGraphEntity(db, "person", id, id);
+  const prEntityId = insertGraphEntity(db, "pr", `pr-${id}`, `pr-${id}`);
+  insertGraphRelation(db, personEntityId, prEntityId, "reviewed", createdAt);
+}
+
+function seedPersonWithoutReview(db: Database, id: string): void {
+  seedPerson(db, { id });
+  insertGraphEntity(db, "person", id, id);
+}
+
 function seedPerson(
   db: Database,
   overrides: {
@@ -243,6 +290,168 @@ describe("people.list", () => {
     if (r.kind !== "hit") return;
     const list = r.value as Array<Record<string, unknown>>;
     expect(list[0]?.["metadata"]).toEqual({});
+  });
+});
+
+describe("people.list — notReviewed param validation", () => {
+  test("non-boolean notReviewed -> -32602, never silently ignored", () => {
+    try {
+      call("people.list", { notReviewed: "yes" });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(PeopleRpcError);
+      expect((e as PeopleRpcError).rpcCode).toBe(-32602);
+      expect((e as PeopleRpcError).message).toContain("notReviewed");
+    }
+  });
+
+  test("null notReviewed reads as ABSENT, not an error", () => {
+    seedPerson(fixture.db, { id: "p1" });
+    const r = call("people.list", { notReviewed: null });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    // Plain path: bare array, unchanged from today.
+    expect(Array.isArray(r.value)).toBe(true);
+  });
+
+  test("non-finite sinceMs -> -32602", () => {
+    try {
+      call("people.list", { notReviewed: true, sinceMs: Number.POSITIVE_INFINITY });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect((e as PeopleRpcError).rpcCode).toBe(-32602);
+      expect((e as PeopleRpcError).message).toContain("sinceMs");
+    }
+  });
+
+  test("non-number sinceMs -> -32602", () => {
+    try {
+      call("people.list", { notReviewed: true, sinceMs: "7d" });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect((e as PeopleRpcError).rpcCode).toBe(-32602);
+      expect((e as PeopleRpcError).message).toContain("sinceMs");
+    }
+  });
+
+  test("null sinceMs reads as ABSENT, not an error", () => {
+    // notReviewed true + no reviewed edges anywhere -> refusal, not a validation error.
+    const r = call("people.list", { notReviewed: true, sinceMs: null });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as { status?: string };
+    expect(v.status).toBe("refused");
+  });
+});
+
+describe("people.list — --not-reviewed", () => {
+  test("refuses when no reviewed edges exist anywhere (empty substrate)", () => {
+    seedPersonWithoutReview(fixture.db, "bob");
+    const r = call("people.list", { notReviewed: true, sinceMs: 1 });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as {
+      status?: string;
+      reason?: string;
+      message?: string;
+      remediation?: string;
+    };
+    expect(v.status).toBe("refused");
+    expect(v.reason).toBe("missing_substrate");
+    expect(typeof v.message).toBe("string");
+    expect(typeof v.remediation).toBe("string");
+    expect(v).not.toHaveProperty("explain");
+  });
+
+  test("refusal carries explain when requested", () => {
+    seedPersonWithoutReview(fixture.db, "bob");
+    const r = call("people.list", { notReviewed: true, sinceMs: 1, explain: true });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as {
+      status?: string;
+      explain?: { sql: string; params: unknown[]; substrate: unknown };
+    };
+    expect(v.status).toBe("refused");
+    expect(typeof v.explain?.sql).toBe("string");
+    expect(Array.isArray(v.explain?.params)).toBe(true);
+    expect(v.explain?.substrate).toBeDefined();
+  });
+
+  test("returns only people with no reviewed edge in the window, wrapped with gaps", () => {
+    seedPersonWithReview(fixture.db, "alice", Date.now());
+    seedPersonWithoutReview(fixture.db, "bob");
+    const r = call("people.list", {
+      notReviewed: true,
+      sinceMs: Date.now() - 7 * 86_400_000,
+    });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as { people: Array<{ id: string }>; gaps: { excludedNoGraphEntity: number } };
+    expect(v.people.map((p) => p.id)).toEqual(["bob"]);
+    expect(v.gaps).toEqual({ excludedNoGraphEntity: 0 });
+    expect(v).not.toHaveProperty("explain");
+  });
+
+  test("a person with no graph entity is dropped from results but counted in gaps", () => {
+    seedPersonWithReview(fixture.db, "alice", Date.now()); // non-empty substrate
+    seedPersonWithoutReview(fixture.db, "bob");
+    seedPerson(fixture.db, { id: "carol" }); // no graph_entity row at all
+    const r = call("people.list", { notReviewed: true, sinceMs: 1 });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as { people: Array<{ id: string }>; gaps: { excludedNoGraphEntity: number } };
+    expect(v.people.map((p) => p.id)).toEqual(["bob"]);
+    expect(v.gaps).toEqual({ excludedNoGraphEntity: 1 });
+  });
+
+  test("unlinkedOnly composes with notReviewed", () => {
+    seedPersonWithReview(fixture.db, "alice", Date.now()); // non-empty substrate
+    seedPersonWithoutReview(fixture.db, "bob");
+    fixture.db.run("UPDATE person SET linked = 0 WHERE id = 'bob'");
+    seedPersonWithoutReview(fixture.db, "carol");
+    fixture.db.run("UPDATE person SET linked = 1 WHERE id = 'carol'");
+    const r = call("people.list", { notReviewed: true, sinceMs: 1, unlinkedOnly: true });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as { people: Array<{ id: string }> };
+    expect(v.people.map((p) => p.id)).toEqual(["bob"]);
+  });
+
+  test("no --since supplied defaults to sinceMs 0, meaning 'reviewed ever'", () => {
+    seedPersonWithReview(fixture.db, "alice", 1); // reviewed at ts=1, long ago but > 0
+    seedPersonWithoutReview(fixture.db, "bob");
+    const r = call("people.list", { notReviewed: true });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as { people: Array<{ id: string }> };
+    expect(v.people.map((p) => p.id)).toEqual(["bob"]);
+  });
+
+  test("non-negation explain=true still returns the bare-array data, wrapped", () => {
+    seedPerson(fixture.db, { id: "p1" });
+    const r = call("people.list", { explain: true });
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    const v = r.value as {
+      people: Array<{ id: string }>;
+      explain: { sql: string; params: unknown[] };
+    };
+    expect(v.people.map((p) => p.id)).toEqual(["p1"]);
+    expect(typeof v.explain.sql).toBe("string");
+    expect(Array.isArray(v.explain.params)).toBe(true);
+    expect(v).not.toHaveProperty("gaps");
+  });
+
+  test("plain call with no negation params returns the SAME bare array as before", () => {
+    seedPerson(fixture.db, { id: "p1" });
+    seedPerson(fixture.db, { id: "p2" });
+    const r = call("people.list", {});
+    expect(r.kind).toBe("hit");
+    if (r.kind !== "hit") return;
+    expect(Array.isArray(r.value)).toBe(true);
+    const list = r.value as Array<{ id: string }>;
+    expect(list.map((p) => p.id)).toEqual(["p1", "p2"]);
   });
 });
 
