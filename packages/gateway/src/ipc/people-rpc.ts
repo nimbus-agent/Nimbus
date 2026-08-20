@@ -1,13 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { LocalIndex } from "../index/local-index.ts";
-import {
-  buildNotReviewedSql,
-  countNotReviewedExclusions,
-  missingSubstrateRefusal,
-  type NegationExplain,
-  probeReviewed,
-  toPositionalSubquery,
-} from "../index/negation-predicates.ts";
+import type { NegationExplain } from "../index/negation-predicates.ts";
+import { runNotReviewedQuery } from "../index/negation-query.ts";
 import { mergePeople } from "../people/linker.ts";
 import {
   buildPersonListSql,
@@ -151,59 +145,28 @@ function rpcPeopleList(rec: Record<string, unknown> | undefined, db: Database): 
   const explain = rec?.["explain"] === true;
 
   if (notReviewed) {
-    // No `--since` supplied: the widest safe default is "ever" (sinceMs = 0), so the predicate
-    // reads as "no reviewed edge at all" rather than silently narrowing to an unstated recent
-    // window — a narrower, invented default would exclude fewer people than the caller asked
-    // about without saying so.
-    const effectiveSinceMs = sinceMs ?? 0;
-    // WINDOWED probe (Task 4 fix round 1, controller ruling): a global, all-time count of
-    // `reviewed` edges can pass on edges that are all older than `effectiveSinceMs`, while the
-    // query itself finds zero edges in its own window — "nobody reviewed in the window" and "no
-    // synced data for the window" are indistinguishable in that state, and refusing on the
-    // ambiguity, rather than returning every graphed person as a false "clean" answer, is this
-    // feature's whole thesis. See `probeReviewed`'s doc comment.
-    const probeResult = probeReviewed(db, effectiveSinceMs);
-    const predicate = buildNotReviewedSql(effectiveSinceMs);
-    const idIn = toPositionalSubquery(predicate);
-    // The COMPOSED statement that actually shapes (or, on refusal, would have shaped) the
-    // result — `id IN (<predicate>) AND ... ORDER BY id LIMIT ?` — never the bare predicate
-    // subquery alone: the bare subquery omits `unlinkedOnly`'s `linked = 0` filter and the
-    // `LIMIT`, so pasting it back into sqlite3 answers a DIFFERENT, wider question than the one
-    // that actually produced `people`. Mirrors `rpcIndexQueryItems`'s `composed` in
-    // `diagnostics-rpc.ts`.
-    const composed = buildPersonListSql({ unlinkedOnly, limit, idInSql: idIn });
-    if (!probeResult.passed) {
-      return {
-        kind: "hit",
-        value: missingSubstrateRefusal(
-          "no `reviewed` edges are indexed within the --since window, so who has not reviewed " +
-            "anything in that window cannot be verified",
-          "widen --since to include older reviews, or sync a connector that populates PR " +
-            "review activity and run nimbus index regraph",
-          explain
-            ? { sql: composed.sql, params: composed.vals, substrate: probeResult }
-            : undefined,
-        ),
-      };
+    // Probe-refuse-count-explain now lives in `index/negation-query.ts`, shared with
+    // `index.queryItems`'s `notTouching`/`noDownstreamIncident` branches and with `nimbus ask`.
+    // No `--since` supplied: the widest safe default is "ever" (`runNotReviewedQuery` defaults
+    // `sinceMs` to `0`) — a narrower, invented default would exclude fewer people than the caller
+    // asked about without saying so.
+    const outcome = runNotReviewedQuery(db, {
+      unlinkedOnly,
+      ...(sinceMs === undefined ? {} : { sinceMs }),
+      limit,
+      explain,
+    });
+    if (outcome.kind === "refused") {
+      return { kind: "hit", value: outcome.refusal };
     }
-    const rows = listPersons(db, { unlinkedOnly, limit, idInSql: idIn });
-    // The SAME `unlinkedOnly` the query itself used, so the count printed beside a
-    // `unlinkedOnly`-scoped result set describes THAT result set — an unscoped count would
-    // include a linked person who could never have appeared in `people` in the first place.
-    const gaps = countNotReviewedExclusions(db, { unlinkedOnly });
-    const people = rows.map((p) => personToJson(p, countItemsByAuthor(db, p.id)));
-    const explainBlock: PeopleListExplain = {
-      sql: composed.sql,
-      params: composed.vals,
-      substrate: probeResult,
-    };
+    const people = outcome.rows.map((p) => personToJson(p, countItemsByAuthor(db, p.id)));
     return {
       kind: "hit",
       value: {
         people,
         meta: { limit, total: people.length },
-        gaps,
-        ...(explain ? { explain: explainBlock } : {}),
+        gaps: outcome.gaps,
+        ...(outcome.explain === undefined ? {} : { explain: outcome.explain }),
       },
     };
   }

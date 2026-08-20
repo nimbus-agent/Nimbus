@@ -23,17 +23,8 @@ import { preT2DisabledCount, signatureDisabledRegistry } from "../extensions/har
 import { buildItemListSql } from "../index/item-list-query.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { LocalIndex as LocalIndexClass } from "../index/local-index.ts";
-import {
-  buildNoDownstreamIncidentSql,
-  buildNotTouchingSql,
-  countNoDownstreamIncidentExclusions,
-  countNotTouchingExclusions,
-  missingSubstrateRefusal,
-  type NegationExplain,
-  probeCorrelatesWith,
-  probePrFileCoverage,
-  toPositionalSubquery,
-} from "../index/negation-predicates.ts";
+import type { NegationExplain } from "../index/negation-predicates.ts";
+import { runNoDownstreamIncidentQuery, runNotTouchingQuery } from "../index/negation-query.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
 import type { ConsentCoordinator } from "./consent.ts";
@@ -420,94 +411,55 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
     ...(sinceMs === undefined ? {} : { sinceMs }),
     ...(untilMs === undefined ? {} : { untilMs }),
   };
-  // The SAME services/types the query itself used, so a gap count printed beside a scoped result
-  // set describes THAT result set — an unscoped (index-global) count next to it would be read as
-  // belonging to it and would not.
-  const gapScope = { services, types };
 
   const db = requireDb(ctx);
 
-  // --not-touching: probe the substrate FIRST. On an empty `pr_files_state`, every uncovered PR
-  // would trivially satisfy "does not touch this path" — a confident false positive, not an
-  // incomplete answer — so an empty substrate refuses rather than silently answering.
-  // Only one negation predicate can be in play here: supplying both is rejected above (spec § 8 —
-  // they do not compose), so this branch never silently wins a race with the one below.
+  // --not-touching / --no-downstream-incident: probe-refuse-count-explain now lives in
+  // `index/negation-query.ts`, shared with `people.list`'s `notReviewed` branch and with
+  // `nimbus ask`. Only one predicate can be in play here: supplying both is rejected above
+  // (spec § 8 — they do not compose), so neither branch can silently win a race with the other.
   if (notTouching !== undefined) {
-    const probeResult = probePrFileCoverage(db);
-    const predicate = buildNotTouchingSql(notTouching);
-    // Embedded as a subquery, never materialised into one bind parameter per matching id: SQLite
-    // has a ~65,535 bind-parameter ceiling per statement, so a large matching set would otherwise
-    // throw instead of answering. The subquery costs exactly its own parameter count (one, here)
-    // no matter how many rows it matches.
-    const idInSql = toPositionalSubquery(predicate);
-    const composed = buildItemListSql({ ...baseParams, idInSql });
-    if (!probeResult.passed) {
-      return {
-        kind: "hit",
-        value: missingSubstrateRefusal(
-          "no PR file-coverage data is indexed, so which PRs do not touch a path cannot be verified",
-          "sync a connector that populates PR changed-file coverage (GitHub/GitLab), then retry",
-          explain
-            ? { sql: composed.sql, params: composed.vals, substrate: probeResult }
-            : undefined,
-        ),
-      };
+    const outcome = runNotTouchingQuery(db, requireLocalIndex(ctx), {
+      pathGlob: notTouching,
+      ...(services.length > 0 ? { services } : {}),
+      ...(sinceMs === undefined ? {} : { sinceMs }),
+      ...(untilMs === undefined ? {} : { untilMs }),
+      limit,
+      explain,
+    });
+    if (outcome.kind === "refused") {
+      return { kind: "hit", value: outcome.refusal };
     }
-    const items = requireLocalIndex(ctx).listItems({ ...baseParams, idInSql });
-    const gaps = countNotTouchingExclusions(db, gapScope);
-    const explainBlock: QueryExplain = {
-      sql: composed.sql,
-      params: composed.vals,
-      substrate: probeResult,
-    };
     return {
       kind: "hit",
       value: {
-        items,
-        meta: { limit, total: items.length },
-        gaps,
-        ...(explain ? { explain: explainBlock } : {}),
+        items: outcome.rows,
+        meta: { limit, total: outcome.rows.length },
+        gaps: outcome.gaps,
+        ...(outcome.explain === undefined ? {} : { explain: outcome.explain }),
       },
     };
   }
 
   // --no-downstream-incident: same probe-first shape, over the `correlates_with` substrate.
   if (noDownstreamIncident) {
-    const probeResult = probeCorrelatesWith(db);
-    const predicate = buildNoDownstreamIncidentSql();
-    const idInSql = toPositionalSubquery(predicate);
-    const composed = buildItemListSql({ ...baseParams, idInSql });
-    if (!probeResult.passed) {
-      return {
-        kind: "hit",
-        value: missingSubstrateRefusal(
-          "no `correlates_with` edges are indexed, so which deployments have no downstream " +
-            "incident cannot be verified",
-          "run a sync that populates deployment-to-incident correlation, then retry",
-          explain
-            ? { sql: composed.sql, params: composed.vals, substrate: probeResult }
-            : undefined,
-        ),
-      };
+    const outcome = runNoDownstreamIncidentQuery(db, requireLocalIndex(ctx), {
+      ...(services.length > 0 ? { services } : {}),
+      ...(sinceMs === undefined ? {} : { sinceMs }),
+      ...(untilMs === undefined ? {} : { untilMs }),
+      limit,
+      explain,
+    });
+    if (outcome.kind === "refused") {
+      return { kind: "hit", value: outcome.refusal };
     }
-    const items = requireLocalIndex(ctx).listItems({ ...baseParams, idInSql });
-    // The Task 2 -> Task 3 ruling: an ungraphed deployment is silently DROPPED by the predicate's
-    // INNER JOIN — fail-closed and correct — but must not be dropped UNCOUNTED. See
-    // `countNoDownstreamIncidentExclusions`'s doc comment for why it is labelled "no graph entity
-    // of the required type" rather than "not graphed".
-    const gaps = countNoDownstreamIncidentExclusions(db, gapScope);
-    const explainBlock: QueryExplain = {
-      sql: composed.sql,
-      params: composed.vals,
-      substrate: probeResult,
-    };
     return {
       kind: "hit",
       value: {
-        items,
-        meta: { limit, total: items.length },
-        gaps,
-        ...(explain ? { explain: explainBlock } : {}),
+        items: outcome.rows,
+        meta: { limit, total: outcome.rows.length },
+        gaps: outcome.gaps,
+        ...(outcome.explain === undefined ? {} : { explain: outcome.explain }),
       },
     };
   }

@@ -577,7 +577,7 @@ describe("runPeople — list --not-reviewed", () => {
       message:
         "no `reviewed` edges are indexed within the --since window, so who has not reviewed anything in that window cannot be verified",
       remediation:
-        "widen --since to include older reviews, or sync a connector that populates PR review activity and run nimbus index regraph",
+        "widen the time window (`--since` on the CLI, `sinceDays` on the tool surfaces) to include older reviews, or sync a connector that populates PR review activity and run nimbus index regraph",
     };
     const mock = createMockIpcClient([refusal]);
     setFixture({
@@ -587,7 +587,9 @@ describe("runPeople — list --not-reviewed", () => {
     await runPeople(["list", "--not-reviewed", "--since", "1h"]);
     expect(process.exitCode).toBe(1);
     expect(out.stderr).toMatch(/missing_substrate|no .* indexed/i);
-    expect(out.stderr).toContain("widen --since");
+    expect(out.stderr).toContain("widen the time window");
+    // The CLI's own advice must not be LOST while making the remediation surface-neutral.
+    expect(out.stderr).toContain("--since");
     expect(out.stdout).not.toContain(refusal.message);
   });
 
