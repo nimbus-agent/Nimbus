@@ -103,12 +103,22 @@ OSes. Instead, `withGatewayIpc` (`packages/cli/src/lib/with-gateway-ipc.ts:64-66
 code-owned `GatewayNotRunningError` when no gateway state file is found, which is stable across
 platforms.
 
-Force that state in the test rather than depending on the developer's machine: point
-`NIMBUS_CONFIG_DIR` (read by `packages/cli/src/paths.ts:51`) at a fresh empty temp dir for the
-duration of each case, so `readGatewayState` returns `undefined` whether or not a real gateway
-happens to be running. Restore the previous value afterwards. Without this the test passes in CI
-and fails on a developer machine with a live gateway — the worst kind of flake, because it looks
-like a real regression.
+Force that state in the test rather than depending on the developer's machine, so
+`readGatewayState` returns `undefined` whether or not a real gateway happens to be running.
+Without this the test passes in CI and fails on a developer machine with a live gateway — the
+worst kind of flake, because it looks like a real regression.
+
+**`NIMBUS_CONFIG_DIR` does NOT do this — verified, after this plan originally claimed it did.**
+`gatewayStatePath` reads `paths.dataDir` (`packages/cli/src/lib/gateway-process.ts:38-39`), and
+`packages/cli/src/paths.ts:46` states outright that "Only `configDir` moves — `dataDir`,
+`socketPath`, and `extensionsDir`" are unaffected by that variable. Setting it would leave the test
+reading the developer's real gateway state while appearing isolated.
+
+Override the platform variables that actually feed `dataDir` instead — `LOCALAPPDATA` / `APPDATA`
+on win32, `HOME` on darwin, `XDG_DATA_HOME` elsewhere — pointed at a fresh `mkdtempSync` directory
+per case, saved and restored around each. Confirm the override really controls resolution by
+probing both directions: no file present yields `GatewayNotRunningError`, and a fake `gateway.json`
+written under the overridden path makes the code attempt a real connection instead.
 
 You must write `captureError` yourself: invoke `runQuery` / `runPeople` inside a try/catch, capture
 both a thrown message and anything written to `console.error`, and return the combined string.
@@ -116,12 +126,25 @@ both a thrown message and anything written to `console.error`, and return the co
 this test pass vacuously for the people case. Restore `console.error` and `process.exitCode` after
 each case.
 
-- [ ] **Step 3: Run it and confirm it FAILS for the right reason**
+- [ ] **Step 3: Red-prove the test against the HISTORICAL broken examples**
 
-Run: `bun test packages/cli/src/commands/negation-examples.test.ts`
-Expected: FAIL — the flags do not exist yet, so `runQuery` rejects `--not-touching` as unknown or
-the people case errors. Read the failure and confirm it is about the NEW flags, not about
-`captureError` being broken.
+The obvious fail-first check does not work here, and it is worth knowing why: neither `runQuery`
+nor `runPeopleList` maintains a flag allowlist, so an unrecognised flag is silently ignored and the
+documented examples ALREADY parse before any source change. A "run it and watch it fail" step would
+find nothing, and passing it would prove nothing.
+
+Red-prove the test against the defect it actually exists to catch instead. Temporarily replace the
+`DOCUMENTED` entries with the two forms that shipped in the spec and could NOT run:
+
+```ts
+["people", ["--not-reviewed", "--since", "7d"]],            // missing the `list` subcommand
+["query", ["--type", "pr", "--not-touching", "tests/**"]],  // missing --service
+```
+
+Run the file and confirm BOTH cases FAIL — the first on `Unknown people subcommand`, the second on
+`Missing --service`. Then restore the correct entries and confirm green. Report both failure
+outputs. If either passes, the test does not catch the defect class this task exists for, and you
+should say so rather than proceeding.
 
 - [ ] **Step 4: Make the test pass by accepting-and-ignoring the flags**
 
