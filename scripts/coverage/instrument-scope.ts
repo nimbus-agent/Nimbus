@@ -1,18 +1,16 @@
 // Decides whether the istanbul preload should instrument a given module.
 // Scope-gate to FIRST-PARTY package src only — a broad filter lets Babel's own
 // node_modules re-enter the onLoad hook and crashes Babel internals.
-// `mcp-launcher` is a workspace package with its own tests, and build-lcov.sh
-// has run them since #1047 — but its source was never in this scope, so nothing
-// it loaded was instrumented and it produced no coverage records at all. The
-// comment in build-lcov.sh describing that as a closed "measurement gap" was
-// therefore only half true: the tests ran, the measurement still did not happen,
-// and Sonar went on reporting resolve-binary.ts and exit-status.ts at 0%.
-//
-// `sdk` and `client` are NOT listed: those packages were extracted to their own
-// repos (nimbus-sdk / nimbus-client) and no `packages/{sdk,client}/src/` path
-// exists here any more. Dead alternations in a scope regex read as coverage
-// that is being collected somewhere, which is exactly the confusion above.
-const FIRST_PARTY = /\/packages\/(?:gateway|cli|mcp-launcher)\/src\//;
+// `sdk`, `client` and `mcp-launcher` are NOT listed: all three were extracted to
+// their own repos (nimbus-sdk / nimbus-client / nimbus-mcp) and no
+// `packages/{sdk,client,mcp-launcher}/src/` path exists here any more. Dead
+// alternations in a scope regex read as coverage that is being collected
+// somewhere, and this file has already been bitten by that class of confusion
+// once: `mcp-launcher`'s tests ran under build-lcov.sh from #1047 while its
+// source sat outside this scope, so it produced no coverage records at all and
+// Sonar reported its files at 0% while a comment elsewhere called the gap closed.
+// Keep this regex to packages that actually live here.
+const FIRST_PARTY = /\/packages\/(?:gateway|cli)\/src\//;
 const CONNECTOR_SRC = /\/packages\/mcp-connectors\/(?:shared|[^/]+\/src)\//;
 const GHA_SRC = /\/packages\/github-actions\/(?:shared|[^/]+\/src)\//;
 

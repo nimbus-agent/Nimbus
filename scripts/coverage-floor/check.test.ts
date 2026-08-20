@@ -211,8 +211,6 @@ describe("discoverSourceFiles — structural exemptions", () => {
     const files = await discoverSourceFiles();
     expect(files.length).toBeGreaterThan(100);
     expect(files).toContain("packages/gateway/src/engine/executor.ts");
-    // The package this PR brought into scope.
-    expect(files).toContain("packages/mcp-launcher/src/resolve-binary.ts");
   });
 });
 

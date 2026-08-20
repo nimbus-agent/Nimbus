@@ -59,17 +59,13 @@ run_pkg () {
   ) || true  # tolerate failing tests; whatever coverage was collected still merges
 }
 
-# `mcp-launcher` is a published bin package with its own tests (resolve-binary,
-# exit-status). It was absent from this list while `sonar.sources=packages`
-# still scanned it, so Sonar reported its files at 0% coverage even though the
-# tests existed and passed — a measurement gap, not a testing gap.
-#
-# Adding it HERE only made its tests run. The gap stayed open until
-# `scripts/coverage/instrument-scope.ts` also claimed the package: running a
-# package's tests and instrumenting its source are separate switches, and only
-# this one was flipped. Sonar kept reporting 0% for both files afterwards. With
-# both in place the real numbers are exit-status 100% and resolve-binary 88%.
-for pkg in packages/gateway packages/cli packages/mcp-launcher; do
+# TWO SWITCHES, not one: running a package's tests (here) and instrumenting its
+# source (`scripts/coverage/instrument-scope.ts`) are independent. Flipping only
+# one produces a confident 0% for files that are actually tested — which is
+# exactly what happened to the former `packages/mcp-launcher` while it lived
+# here. That package has since moved to nimbus-agent/nimbus-mcp and carries its
+# own Sonar project; it is deliberately absent from both switches now.
+for pkg in packages/gateway packages/cli; do
   run_pkg "${pkg}"
 done
 
@@ -83,8 +79,8 @@ done
 # package.json loop. Both are relative-import folders with NO package.json, so
 # the loop above skips them, yet both carry their own `*.test.ts`.
 #
-# Omitting them is the same two-switch bug the `mcp-launcher` comment above
-# describes, pointed the other way: `scripts/coverage/instrument-scope.ts:16`
+# Omitting them is the same two-switch bug described above, pointed the other
+# way: `scripts/coverage/instrument-scope.ts:16`
 # DOES claim `packages/mcp-connectors/shared/`, so those 16 files are in scope
 # and expected to report coverage — but their tests never ran here, so the
 # merged lcov had no data for them and `audit:coverage-floor` failed them at 0%.

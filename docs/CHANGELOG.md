@@ -8,6 +8,28 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-20 — `@nimbus-dev/mcp` extracted to its own repo and published to npm.**
+  `packages/mcp-launcher` moved to
+  [nimbus-agent/nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp) and now publishes via
+  release-please + OIDC trusted publishing, matching `@nimbus-dev/sdk` and `@nimbus-dev/client`
+  — no `NPM_TOKEN` anywhere, and `0.2.0` carries both the npm publish attestation and a SLSA
+  provenance predicate (independently verified with `npm audit signatures`). This unblocks the
+  official MCP Registry listing, which was the point: any MCP client can now reach the local index
+  and the fourteen agents through `npx -y @nimbus-dev/mcp`. Branch B of
+  [`docs/superpowers/specs/2026-08-19-mcp-launcher-publish-route.md`](./superpowers/specs/2026-08-19-mcp-launcher-publish-route.md);
+  the executed plan and the verified publish precedent are
+  [`docs/superpowers/plans/2026-08-20-mcp-launcher-satellite-extraction.md`](./superpowers/plans/2026-08-20-mcp-launcher-satellite-extraction.md)
+  and
+  [`docs/superpowers/specs/2026-08-20-satellite-publish-precedent.md`](./superpowers/specs/2026-08-20-satellite-publish-precedent.md).
+  **`0.1.0` is the one exception to the provenance claim** and is documented as such in the
+  satellite's `SECURITY.md`: npm refuses to configure a trusted publisher until a package has at
+  least one published version, so it had to be published by hand and carries no attestation.
+  The installer-directory drift guard the launcher used to carry as a text read of
+  `scripts/install/lib/paths.ts` is replaced by vendored constants there plus
+  `scripts/structure-audit/check-launcher-installer-contract.ts` here, run by
+  `install-smoke.yml` at PR time and `org-drift-sweep.yml` on a schedule — the two directions
+  catch different changes and neither subsumes the other.
+
 - **2026-08-20 — First-class negation queries (W6-B.1): three named predicates that refuse rather
   than answer from an unpopulated index.** The last open Wave 6 answer-quality row, shipped as
   three flags on the two commands whose row shape each already matches — no predicate language, no

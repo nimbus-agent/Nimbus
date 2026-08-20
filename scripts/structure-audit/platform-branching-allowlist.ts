@@ -180,9 +180,4 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     gate: "none",
     why: "per-OS socket path + config/data/extensions dir resolution; no coverage-threshold gate targets packages/cli/src directly",
   },
-  {
-    file: "packages/mcp-launcher/src/index.ts",
-    gate: "none",
-    why: "reads process.platform to pick the resolver input; the coverage floor (scripts/coverage-floor/check.ts) scopes only packages/{gateway,cli}/src and packages/mcp-connectors/*/src, so no coverage-threshold gate covers packages/mcp-launcher. Its only import is ./resolve-binary.ts, which branches on the `platform` PARAMETER rather than process.platform/node:os, so the audit's static detector does not (and should not) flag it — nothing here reaches another gate's denominator through static imports",
-  },
 ];

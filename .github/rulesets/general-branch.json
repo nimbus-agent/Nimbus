@@ -32,6 +32,7 @@
       "Nimbus": [{ "actor_type": "OrganizationAdmin", "bypass_mode": "always" }],
       "nimbus-client": [],
       "nimbus-sdk": [],
+      "nimbus-mcp": [],
       "nimbus-vscode": [{ "actor_type": "OrganizationAdmin", "bypass_mode": "always" }],
       "nimbus-web-clipper": [{ "actor_type": "OrganizationAdmin", "bypass_mode": "always" }],
       "create-nimbus-connector": []
@@ -41,6 +42,7 @@
     "Nimbus",
     "nimbus-client",
     "nimbus-sdk",
+    "nimbus-mcp",
     "nimbus-vscode",
     "nimbus-web-clipper",
     "create-nimbus-connector"
