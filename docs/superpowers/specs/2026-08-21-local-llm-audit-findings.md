@@ -681,6 +681,40 @@ metadata"?'` correctly summarised PR #1288. So the failure is ranking under volu
 retrieval: a generic term matches thousands of near-identical run titles that crowd out the
 handful of real hits.
 
+### The sharpest instance: `microsoft/winget-pkgs`
+
+`nimbus ask 'What is happening in microsoft/winget-pkgs?'` answered:
+
+> GitHub Actions runs are being executed.
+> - Wingetbot PR Triage: skipped (2 runs)
+> - Manifest Validation Diagnosis: skipped (3 runs)
+
+What the index actually holds for that repo:
+
+| service / type | rows |
+|---|---|
+| `github` / `issue` | **0** — so 12a contributes nothing at all |
+| `github` / `pr` | **16**, incl. three Nimbus release PRs updated minutes earlier |
+| `github_actions` / `ci_run` mentioning winget | **10,671** |
+
+Both defects fire together and compound: the issues-only path returns zero rows, execution
+falls through to the generic ranked path, and 10,671 near-identical CI runs bury 16 PRs. The
+user's actual interest in that repo — are my release PRs merged? — is the one thing the answer
+cannot reach.
+
+### 12c — the internal `rank` field leaks and is misread as data
+
+`formatContextItem` attaches `{...item, rank: idx + 1}` (`run-ask.ts:161`) and the whole object
+is serialised into the `<tool_output>` envelope. Asked about PR status, the model answered:
+
+> - PR #414691 is ranked 1st.
+> - PR #422039 is ranked 6th.
+
+`rank` is relevance ordering, an internal artifact with no meaning to the user, and nothing in
+the envelope says so. The model presented it as if it were the answer — and because ranking is
+by relevance rather than recency, three-month-old PRs outranked the open ones. Either strip
+`rank` before serialising, or label the fields.
+
 ### Suggested fix
 
 1. Widen the repo path beyond `type = 'issue'` — at minimum include `pr`, ordered by
