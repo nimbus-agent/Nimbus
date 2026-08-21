@@ -397,3 +397,74 @@ describe("clip source metadata — storage", () => {
     expect(meta["clippedAt"]).toBe(1750000000000);
   });
 });
+
+// Three properties a future reader will assume this feature broke. Each is pinned
+// so that breaking it is a test failure rather than a silent behaviour change.
+describe("clip source metadata — what it must NOT change", () => {
+  const base = {
+    url: "https://ex.com/p",
+    title: "Hello",
+    mode: "article" as const,
+    body: "The body text",
+    tags: ["research"],
+    capturedAt: 1750000000000,
+  };
+
+  // 1. Clip identity is untouched. `externalIdFor` hashes the canonicalised URL,
+  //    plus the body for selections. Metadata is not in the hash and must not enter it.
+  test("re-clipping with different metadata is an update on the SAME id", () => {
+    const a = ingestClip(db, { ...base, source: { author: "Ada" } });
+    const b = ingestClip(db, { ...base, source: { author: "Grace", siteName: "Example" } });
+    expect(b.id).toBe(a.id);
+    expect(b.status).toBe("updated");
+    const rows = db.query("SELECT id FROM item").all() as Array<{ id: string }>;
+    expect(rows).toHaveLength(1);
+  });
+
+  test("adding source to a previously sourceless clip does not fork its id", () => {
+    const a = ingestClip(db, base);
+    const b = ingestClip(db, { ...base, source: { author: "Ada" } });
+    expect(b.id).toBe(a.id);
+    expect(b.status).toBe("updated");
+  });
+
+  test("a selection's id still turns on its body, not on its source", () => {
+    const sel = { ...base, mode: "selection" as const, body: "first highlight" };
+    const a = ingestClip(db, { ...sel, source: { author: "Ada" } });
+    const b = ingestClip(db, { ...sel, source: { author: "Grace" } });
+    const c = ingestClip(db, { ...sel, body: "second highlight" });
+    expect(b.id).toBe(a.id);
+    expect(c.id).not.toBe(a.id);
+  });
+
+  // 2. `modified_at` still comes from `capturedAt`. Letting `publishedAt` drive it
+  //    was considered and deliberately rejected for this slice — it would change
+  //    clip sort order on data already in every user's index.
+  test("modified_at comes from capturedAt, never from publishedAt", () => {
+    const res = ingestClip(db, { ...base, source: { publishedAt: -157766400000 } });
+    const row = getItem(res.id);
+    expect(row?.["modified_at"]).toBe(1750000000000);
+    expect(row?.["synced_at"]).toBe(1750000000000);
+    expect(metaOf(res.id)["source"]).toEqual({ publishedAt: -157766400000 });
+  });
+
+  // 3. `author_id` stays null. Resolving a byline string to a `person` row is fuzzy,
+  //    cross-connector, and a design of its own. `metadata.source.author` is a string
+  //    the clip carries, not an identity claim.
+  test("author_id stays null even when the clip carries an author", () => {
+    const res = ingestClip(db, { ...base, source: { author: "Ada Lovelace" } });
+    expect(getItem(res.id)?.["author_id"]).toBeNull();
+  });
+
+  // Inherited behaviour, DOCUMENTED rather than fixed: `upsertIndexedItem` replaces
+  // metadata wholesale, so a re-clip without `source` clears a stored one — exactly
+  // as `tags` already behave. Left silent, the first person to notice files it as a bug.
+  test("a re-clip without source clears a stored one, as tags already do", () => {
+    const a = ingestClip(db, { ...base, source: { author: "Ada" }, tags: ["research"] });
+    expect(metaOf(a.id)["source"]).toEqual({ author: "Ada" });
+    const b = ingestClip(db, { ...base, tags: [] });
+    expect(b.id).toBe(a.id);
+    expect("source" in metaOf(b.id)).toBe(false);
+    expect(metaOf(b.id)["tags"]).toEqual([]);
+  });
+});
