@@ -741,6 +741,17 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 - **Terse non-answers** (`"Missing context: egressRowToItem."`). Correct behaviour under the
   system prompt + `[persona] tone = "terse"` — given bad context (F1), this is the *desired*
   failure mode.
+- **Numeric relationships inverted in an otherwise correct answer.** Asked
+  `'In prose, what is the pull request about "clip source metadata"?'`, retrieval was
+  CORRECT (PRs #1287 + #1288) and the model got `RAW_META_MAX_BYTES = 65,536` right, then
+  reported: *"previously specified a 60 KB unknown member… this was incorrect… and the actual
+  value is 60 KB."* Ground truth is the inverse — 60 KB was the OLD value that never crossed
+  the ceiling; the test needs **70 KB** (70,112 bytes serialised). The correction was stated
+  backwards, and the same sentence calls 60 KB both "incorrect" and "the actual value".
+  Everything needed was in context; a frontier model would carry the relationship. Filed here
+  rather than as a finding because no Nimbus surface could have prevented it — but it is worth
+  knowing that a fluent, well-sourced brief can still invert a number.
+
 - **Glossary definition mismatches.** The consolidation LLM attached wrong definitions to
   terms. Stopwording/dedup (F5) is Nimbus's; definition quality is the model's.
 
