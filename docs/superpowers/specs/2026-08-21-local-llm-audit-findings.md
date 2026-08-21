@@ -1050,6 +1050,107 @@ download-on-demand cacheDir, and the download never happens when the worker cann
 
 ---
 
+## F16 — `nimbus vault set` and `vault delete` can NEVER succeed: the HITL prompt is never registered
+
+**Severity: critical.** Model-independent. Two documented commands that always time out.
+
+### Symptom
+
+```
+$ nimbus vault set azure.tenant_id "6875a760-…"
+IPC request timed out after 30000ms: vault.set
+
+real 0m30.198s
+```
+
+Reproducible every time, exactly 30 s, against a healthy responsive gateway
+(`nimbus status` returns instantly, uptime 1746 s). Nothing is stored —
+`nimbus vault list azure` stays empty afterwards.
+
+### Root cause — an IPC seam wired on one side only
+
+`vault.set` and `vault.delete` are both in the HITL frozen set
+(`engine/executor.ts:107-108`, invariant I2), so the gateway emits a `consent.request`
+notification and blocks until it is answered.
+
+The handler for that notification exists — `lib/interactive-ipc-handlers.ts:22`:
+
+```ts
+client.onNotification("consent.request", async (params: unknown) => { … })
+```
+
+`agent-cli-dispatcher.ts` registers it correctly:
+
+```ts
+await client.connect();
+registerInteractiveCliIpcHandlers(client);
+```
+
+`commands/vault.ts` does not — all four subcommands go through bare `withGatewayIpc`:
+
+```ts
+await withGatewayIpc((c) => runVaultSet(c, key, value));      // :47
+await withGatewayIpc((c) => runVaultGet(c, key));             // :55
+await withGatewayIpc((c) => runVaultDelete(c, key));          // :63
+await withGatewayIpc((c) => runVaultList(c, prefix));         // :68
+```
+
+and `withGatewayIpc` registers a handler only when the caller supplies one
+(`opts.onConnect?.(client)`). So the gateway asks for consent, nobody is listening, and the
+request dies at the client's 30 s timeout.
+
+`vault get` and `vault list` work because they are NOT HITL-gated. Exactly the two mutating
+subcommands are dead.
+
+### The docs actively route users into it
+
+- `ipc/index-reembed-rpc.ts:97` — *"openai.api_key missing in vault. Run `nimbus vault set
+  openai.api_key <key>`."*
+- `ipc/http-write-routes.ts:148` — *"set http_api.deployment_token via 'nimbus vault set
+  http_api.deployment_token <value>'"*
+- `nimbus help` lists `nimbus vault set <k> <v>   Store a secret`
+
+Every one of those instructions leads to a 30-second hang. Note this also means F15's
+suggested OpenAI-embedding workaround (`nimbus vault set openai.api_key`) is unreachable —
+two criticals compounding.
+
+### Why it survived review
+
+This is the shape the repo's own notes call out: both sides of an IPC seam exist and are
+individually tested, so a per-side test proves the ENDS and never the WIRE.
+`commands/vault.test.ts` injects `confirm` as a dependency and asserts
+*"prints the value when confirm returns true"* — testing the CLI half against a fake, while
+the gateway half is tested separately. No test connects a real CLI vault command to a real
+gateway and observes that consent is never requested of anyone.
+
+### Workaround
+
+`nimbus connector auth` writes vault keys through a different, non-gated RPC and works:
+
+```
+nimbus connector auth azure --azure-tenant-id <t> --azure-client-id <id> --azure-client-secret <secret>
+nimbus connector auth aws   --aws-profile default
+```
+
+(`commands/connector.ts:237-239`, `:233-236`.) Verified working for `aws.profile` on this
+machine while `vault.set` timed out.
+
+### Suggested fix
+
+1. Pass `onConnect: registerInteractiveCliIpcHandlers` from `commands/vault.ts` — one argument,
+   all four subcommands.
+2. Better: make `withGatewayIpc` register the interactive handlers by DEFAULT and require
+   opting out, so a new command cannot forget. A CLI connection that cannot answer
+   `consent.request` should be the exception, not the default.
+3. Add an e2e test that runs a real `nimbus vault set` against a real gateway subprocess and
+   asserts the key is stored — the layer the repo's own testing philosophy already prescribes
+   ("E2E CLI tests use a real Gateway subprocess").
+4. Fail fast rather than hanging: if a HITL-gated request gets no consent handler on the
+   connection, the gateway should reject immediately with an actionable error instead of
+   letting the caller burn 30 s.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -1098,6 +1199,7 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F11 | One dead Google credential disables all 4 Google connectors | high | yes | gmail, drive, photos, meet |
 | F10 | Google refresh token coerced to `""`; OAuth path logs nothing | med-high | yes | every OAuth connector |
 | **F15** | **Embedding worker unbundled — semantic search dead in every release** | **critical** | yes | all hybrid retrieval |
+| **F16** | **`vault set`/`vault delete` always time out — consent handler never registered** | **critical** | yes | every secret write via CLI |
 | F14 | `ask` truncates every enumeration at 8, undisclosed | high | yes | every `ask` list/count question |
 | F13 | `sync succeeded` recorded with no credentials (F6's mechanism) | high | yes | every connector's health |
 | F12 | Repo questions exclude PRs; `github_actions` swamps ranked search | medium | yes | `ask` on any repo |
