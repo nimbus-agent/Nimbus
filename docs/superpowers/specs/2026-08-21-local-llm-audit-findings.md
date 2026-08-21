@@ -34,7 +34,7 @@ identical (done for F1 and F2). Anything not so confirmed is marked ⚠️.
 
 ### Symptom
 
-```
+```text
 $ nimbus ask "what does egressRowToItem do?"
 Missing context for egressRowToItem.
 
@@ -79,7 +79,7 @@ match nothing. No document can satisfy the conjunction.
 
 Measured:
 
-```
+```text
 nimbus search "egressRowToItem"                                              → hit
 nimbus search "egressRowToItem function"                                     → hit
 nimbus search "From the local indexed context, what does egressRowToItem do?" → []
@@ -109,7 +109,7 @@ It is reasoning about arbitrary GitHub Actions rows, because that is what the fa
 `ftsTitleMatchQuery` emits `(title : "<tok>"* OR body : "<tok>"*)`. SQLite FTS5 prefix
 matching anchors at a token START, so a term appearing mid-token never matches:
 
-```
+```text
 nimbus search "Fargate"              -> []
 nimbus search "RequiemNexusFargate"  -> hits
 ```
@@ -252,10 +252,10 @@ emitted by the model is removed and the canonical `## Gaps` survives.
 > `sectionBody`'s `h.level === 2` rule is **correct as-is** and should not change — it locates
 > the *canonical* section, which the renderer always writes at level 2.
 
-> **Incomplete on its own — see F28.** A later run caught the model reproducing the reserved
-> section as a plain-text `Gaps:` label with no heading at all. That is not in `heads`, so neither
-> `=== 2` nor `> 2` sees it. This fix is still correct and still needed; it is not the whole guard,
-> and the "one-line fix, smallest diff" framing below should be read with F28 attached.
+**Incomplete on its own — see F28.** A later run caught the model reproducing the reserved
+section as a plain-text `Gaps:` label with no heading at all. That is not in `heads`, so neither
+`=== 2` nor `> 2` sees it. This fix is still correct and still needed; it is not the whole guard,
+and the "one-line fix, smallest diff" framing below should be read with F28 attached.
 
 ---
 
@@ -363,7 +363,7 @@ Dedup belongs in **reconcile**, stopwording in **discover/score** — neither is
 
 **Severity: medium.** UX/honesty. Model-independent.
 
-```
+```text
 $ nimbus doctor
   [ok] gitlab: healthy     [ok] bitbucket: healthy   [ok] slack: healthy
   [ok] linear: healthy     [ok] notion: healthy      [ok] jira: healthy
@@ -377,7 +377,7 @@ blobs, the web-clipper tokens and the policy keypair). `sync_state` shows
 `healthy` for "never attempted" is indistinguishable from `healthy` for "synced fine five
 minutes ago". Contrast the connectors that *did* try, which report honestly:
 
-```
+```text
 gmail: error err=Token exchange failed (invalid_grant: Token has been expired or revoked.)
 outlook: error err=Microsoft OAuth not configured; run: nimbus connector auth onedrive
 ```
@@ -396,7 +396,7 @@ A distinct `unconfigured` / `never-synced` state, separate from `healthy`.
 
 **Severity: low.** Data quality.
 
-```
+```text
 First Backer            newsletter@first-backer.com     items=1
 —                       egovpayments@ecom.gov.il        items=1
 LinkedIn                jobs-listings@linkedin.com      items=2
@@ -458,7 +458,7 @@ cannot fire is worse than no control.
 `ANTHROPIC_API_KEY` is set in the environment. Every `nimbus ask` attempts the **remote intent
 classifier** first:
 
-```
+```text
 run-ask: "remote intent classifier unavailable; falling back to local indexed-context answer"
          reason=invalid_api_key provider=anthropic
 ```
@@ -466,7 +466,7 @@ run-ask: "remote intent classifier unavailable; falling back to local indexed-co
 Four such outbound attempts to `api.anthropic.com` were made during this audit.
 `nimbus prove` afterwards:
 
-```
+```text
 outbound egress events during this query: 0
   (scope: agents.* briefs served over the local HTTP API, agents.* briefs served to MCP
    clients, remotely-synthesized agent briefs, configured connector sync runs and targeted
@@ -498,7 +498,7 @@ rather than a bare `0`.
 `nimbus connector auth gmail` reports success and writes fresh vault blobs, but every
 subsequent sync fails permanently:
 
-```
+```text
 $ nimbus connector sync gmail --force
 Token exchange failed (invalid_grant: Bad Request)
 ```
@@ -574,7 +574,7 @@ google_gmail.oauth` answers it — **run privately; it prints a live credential.
 
 `nimbus connector auth gmail` reports `Verified: gmail`. Every sync then fails:
 
-```
+```text
 $ nimbus connector sync gmail --force
 Token exchange failed (invalid_grant: Bad Request)
 ```
@@ -663,7 +663,7 @@ non-obvious workaround that no surface hints at.
 Re-auth EVERY Google service whose key Google rejects — not just the first one, and not the
 connector that reported the error. In this instance that was two:
 
-```
+```text
 nimbus connector auth google_drive     # fp 5b4502… (2026-05-10) -> a1b0d6… valid
 nimbus connector auth google_photos    # fp f4adfe… (2026-05-10) -> still dead
 ```
@@ -744,6 +744,7 @@ handful of real hits.
 `nimbus ask 'What is happening in microsoft/winget-pkgs?'` answered:
 
 > GitHub Actions runs are being executed.
+>
 > - Wingetbot PR Triage: skipped (2 runs)
 > - Manifest Validation Diagnosis: skipped (3 runs)
 
@@ -810,7 +811,7 @@ Use the structured surface for PRs, which is unaffected: `nimbus query --service
 
 The three AWS connectors, queried BEFORE any AWS credential existed on this machine:
 
-```
+```text
 == cloudwatch: 4 history rows
    2026-06-21 13:51:56  null    -> healthy | sync succeeded
    2026-06-21 14:01:56  healthy -> healthy | sync succeeded
@@ -849,7 +850,7 @@ F13 as its mechanism.
 
 After a real, successful CloudWatch sync that indexed 20 log groups:
 
-```
+```text
 sync_state row : {"connector_id":"cloudwatch","last_sync_at":null, ... ,"health_state":"healthy"}
 nimbus connector status : "lastSyncAt": 1787314151713, "itemCount": 20
 ```
@@ -871,7 +872,7 @@ reads it, but it is a column whose name promises something it never holds — an
 
 `nimbus connector auth aws --aws-profile default` prints:
 
-```
+```text
 Stored: aws (not verified)
 Credential: stored in the OS vault (no OAuth scopes).
 ```
@@ -892,7 +893,7 @@ model for how F11's should read.
 `nimbus ask 'In prose, list my "RequiemNexusFargate" log groups by name.'` returned a clean
 numbered list, 1 through 8, no ellipsis, no caveat:
 
-```
+```text
 1. RequiemNexus-Compute-Stack-…-HMttfm0DVr5z
 …
 8. RequiemNexus-Compute-Stack-…-dABA3PUbIW4G
@@ -900,7 +901,7 @@ numbered list, 1 through 8, no ellipsis, no caveat:
 
 The user has **16**. Exactly half were dropped, and nothing in the answer says so.
 
-```
+```text
 total cloudwatch log groups : 20
 matching RequiemNexusFargate: 16
 returned by `ask`           :  8
@@ -966,7 +967,7 @@ Every gateway heartbeat, once per minute, since boot:
 
 And at startup:
 
-```
+```text
 [gateway] starting embedding runtime (background)
 embedding worker error: BuildMessage: ModuleNotFound resolving "B:\~BUN\root\embedding-worker.ts" (entry point)
 embedding worker failed to initialize; semantic search disabled until the next gateway restart
@@ -1021,7 +1022,7 @@ is graceful in code (`new Worker` is try/caught, returns `null`) and silent in p
 
 `nimbus index reembed --model local --service cloudwatch --yes` fails, twice over:
 
-```
+```text
 ERROR: Cannot find module ... sharp (missing win32-x64 platform binary)
 ERROR: undefined is not an object (evaluating 'TASK_ALIASES[task]')
 ```
@@ -1068,7 +1069,7 @@ download-on-demand cacheDir, and the download never happens when the worker cann
 
 ### Symptom
 
-```
+```text
 $ nimbus vault set azure.tenant_id "6875a760-…"
 IPC request timed out after 30000ms: vault.set
 
@@ -1162,7 +1163,7 @@ gateway and observes that consent is never requested of anyone.
 
 `nimbus connector auth` writes vault keys through a different, non-gated RPC and works:
 
-```
+```text
 nimbus connector auth azure --azure-tenant-id <t> --azure-client-id <id> --azure-client-secret <secret>
 nimbus connector auth aws   --aws-profile default
 ```
@@ -1192,7 +1193,7 @@ machine while `vault.set` timed out.
 
 ### Symptom
 
-```
+```text
 $ nimbus connector auth onedrive --port 8765
 IPC request timed out after 30000ms: connector.auth
 ```
@@ -1243,7 +1244,7 @@ half-completes several flows has no way to know which attempt produced the store
 The app registration itself must be created with the right audience, or the browser fails
 before Nimbus is involved at all:
 
-```
+```text
 unauthorized_client: The client does not exist or is not enabled for consumers.
 ```
 
@@ -1338,7 +1339,7 @@ routes everything through `ask` — the one surface carrying F1, F12 and F14.
 alias, not a handler). `COMMAND_HANDLERS` in `packages/cli/src/index.ts` dispatches 65. The 27
 absent from the help text:
 
-```
+```text
 admin  bench  chatops  conflicts  data  decisions  egress  ghost  huddle  identity
 janitor  lan  mcp-server  negotiate  owners  policy  pre-mortem  preflight  prove
 scim  security  share  team  tribal  update  verify-share  why
@@ -1436,7 +1437,7 @@ from `Copy as path`, and from `path.join`. It silently disables the filter.
 
 ### The disclosure line reports nothing wrong
 
-```
+```text
 Gaps: 0 excluded (no file coverage indexed); 0 excluded (file coverage truncated)
 ```
 
@@ -1485,7 +1486,7 @@ It just probes the wrong thing: whether the **table** has rows, never whether th
 
 `nimbus people list --not-reviewed` gets this right, on the same feature, in the same release:
 
-```
+```text
 Window: ALL TIME — no --since given, so this reports "never reviewed, ever", not a recent window
 Gaps: 80 excluded (no graph entity of the required type)
 ```
@@ -1618,7 +1619,7 @@ sooner; a stronger one would produce a more plausible wrong answer.
 
 ### Symptom
 
-```
+```text
 $ nimbus query --sql "SELECT COUNT(*) AS prs FROM item WHERE type='pr'"
 BuildMessage: ModuleNotFound resolving "B:\~BUN\root\query-guard-worker.ts" (entry point)
 $ echo $?
@@ -1742,7 +1743,7 @@ that fails **open** on the single most likely misconfiguration, with a test pinn
 
 ### 24a — the pre-deploy gate
 
-```
+```text
 $ nimbus deploy preflight --service totally-made-up --target-ref main --mode block
 Deploy preflight — totally-made-up @ main  [ok]
 
@@ -1798,7 +1799,7 @@ change that test deliberately, which is the right place for the decision to be v
 
 **Severity: medium.** Same envelope, different consequence.
 
-```
+```text
 $ nimbus metrics dora --service github          # 'github' is NOT a configured service
 DORA metrics — github (since 30d)
   Deployment Frequency  — deploys_per_day  n=0  [no_repos]        ← exit 0
@@ -1857,7 +1858,7 @@ guarantees it is still *true*.
 
 `nimbus decisions --since 90d`, verbatim, on a 13,183-item index:
 
-```
+```text
 ## Gaps
 
 - Confidence tops out at 0.86, not 1.0. The corroboration term reserves its full score for
@@ -1868,7 +1869,7 @@ guarantees it is still *true*.
 
 The same gateway, in the same session, reports:
 
-```
+```text
 $ nimbus status
 PR file coverage: 173 / 173
 ```
@@ -1949,7 +1950,7 @@ the thing it most wants to avoid — and the disclosure built to prevent it cann
 
 ### Symptom
 
-```
+```text
 $ nimbus negotiate --since 90d
 # Negotiation brief
 **Subject:** you
@@ -1969,7 +1970,7 @@ subject. Only `## Ownership` comes back populated, with ~40 directories.
 
 ### Root cause — two person records for one human, and the resolver picks the empty one
 
-```
+```text
 $ nimbus people search asafgolombek
 5a5851f1-…  linked    Asaf Golombek  asafgolombek@gmail.com  items=36
 fa7d1753-…  unlinked  asafgolombek   —                       items=203
@@ -2049,7 +2050,7 @@ non-deterministic, so one was discarded and one was accepted.
 
 **Discarded run** (deterministic render — I31 worked):
 
-```
+```text
 _window: last 90d — items authored by the subject that were ACTIVE in this window; the index
 records last-modified, not created. Two lanes sit outside it: decisions windows on its recorded
 decision date, and ownership is not windowed at all (it is an all-time snapshot) · generated …_
@@ -2060,7 +2061,7 @@ required disclosure)._
 
 **Accepted run** (`_Synthesized by llama3.2 (local)._`):
 
-```
+```text
 _window: last 90d — items authored by the subject that were ACTIVE in this window; the index
 records last-modified, not created._
 ```
@@ -2133,7 +2134,7 @@ The design assumption is one sentence per entry; two entries break it.
 
 The same accepted `negotiate` synthesis as F27 carried this, ahead of the canonical sections:
 
-```
+```text
  deploys triggered
 Gaps:
 category: missing_relation_emit
@@ -2280,7 +2281,7 @@ being wrong: the diff is small either way, but a level-indexed rule can only eve
 
 ### Symptom
 
-```
+```text
 $ nimbus pre-mortem "S2"
 50946 |     client.onNotification(`${spec.kind}.briefError`, (params) => {
 50947 |       if (params === null || typeof params !== "object") {
@@ -2352,7 +2353,7 @@ gap that made the model's output look like a mistake it did not make.
 
 `nimbus glossary --limit 15` ships, in full:
 
-```
+```text
 The glossary includes terms related to the Nimbus SDK, code editor features, and machine types.
 Here's a breakdown of the terms and their frequencies:
 
@@ -2394,7 +2395,7 @@ brief's data with prose *about* the data, and for `glossary` in list mode the da
 
 The deterministic entry order, from `--json`:
 
-```
+```text
 main 21 · nimbus 13 · built-in 7 · KEY 4 · quick-ask 3 · read-only 3 · Quick Ask 3 · whyPeek 6 · nimbus-dev 4 · start 3
 ```
 
