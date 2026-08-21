@@ -946,6 +946,110 @@ I31 requires `negotiate` to carry an explicit **list-truncation clause**, define
 
 ---
 
+## F15 — semantic search is DEAD in every compiled release: the embedding worker is not bundled
+
+**Severity: critical.** Model-independent. Works in dev, broken in every shipped binary —
+which is exactly why it survived.
+
+### Symptom
+
+Every gateway heartbeat, once per minute, since boot:
+
+```json
+{"event":"heartbeat","uptimeSec":480,"embeddings":"unavailable","msg":"gateway alive"}
+```
+
+And at startup:
+
+```
+[gateway] starting embedding runtime (background)
+embedding worker error: BuildMessage: ModuleNotFound resolving "B:\~BUN\root\embedding-worker.ts" (entry point)
+embedding worker failed to initialize; semantic search disabled until the next gateway restart
+[gateway] embeddings: unavailable
+```
+
+### Root cause
+
+`embedding/worker-bridge.ts:46`:
+
+```ts
+worker = new Worker(new URL("./embedding-worker.ts", import.meta.url).href);
+```
+
+`grep -rn "embedding-worker" scripts/build-release.ts scripts/build-debug.ts` returns
+**nothing** — the worker is never passed to `bun build --compile` as an additional entry point.
+
+Inside a compiled binary `import.meta.url` resolves to Bun's virtual filesystem root,
+`B:\~BUN\root\`, where no `.ts` source exists. The URL is resolved at RUNTIME, so the bundler
+never sees the dependency and never includes it. Running from source works — the `.ts` file is
+really there — so dev, CI and every test pass while every packaged build ships a dead worker.
+
+### Measured consequences
+
+| observation | value |
+|---|---|
+| `embedding_chunk` rows, ALL services | **0** |
+| `vectorRank` on every `nimbus search` result | **`null`** |
+| heartbeat `embeddings` | `"unavailable"`, every 60 s |
+| `<dataDir>/models/` (the embedder cacheDir) | never created |
+
+The whole hybrid-retrieval subsystem is inert in shipped builds: `PROSE_HEAVY_TYPES` routing,
+the 384/1536 dual-table design, the V30 migration, `vectorSearchChunksDual`. `nimbus search`
+silently degrades to BM25-only. `buildLocalIndexedContext` requests
+`{ semantic: true, contextChunks: 2 }` and gets nothing.
+
+### No user-facing surface reports it
+
+The gateway KNOWS — it logs the failure at startup and republishes `embeddings: "unavailable"`
+in every heartbeat. But:
+
+- `nimbus doctor` prints `[ok] Index: 14630 items.` and says nothing about embeddings.
+- `nimbus status --verbose` carries an `embeddingBackfill` field that is `null` and prints
+  nothing when null.
+- `nimbus search` returns results with `vectorRank: null` and no note that the vector half
+  never ran.
+
+A user has no way to learn that half of the retrieval system is switched off. The degradation
+is graceful in code (`new Worker` is try/caught, returns `null`) and silent in product.
+
+### Recovery is also broken
+
+`nimbus index reembed --model local --service cloudwatch --yes` fails, twice over:
+
+```
+ERROR: Cannot find module ... sharp (missing win32-x64 platform binary)
+ERROR: undefined is not an object (evaluating 'TASK_ALIASES[task]')
+```
+
+So the documented repair path cannot rebuild what the worker failure left empty.
+
+Minor papercut found alongside: `reembed` accepts only `Xenova/all-MiniLM-L6-v2` or `local`
+(`ipc/index-reembed-rpc.ts:103`), while `[embedding] model`'s default value is
+`all-MiniLM-L6-v2` — copying the configured model name into `--model` is rejected as
+`Unsupported model`.
+
+### Suggested fix
+
+1. Add `embedding/embedding-worker.ts` as an explicit entry point in `build-release.ts` /
+   `build-debug.ts`, or replace the runtime-resolved `new URL(..., import.meta.url)` with a
+   statically analysable specifier the bundler can follow.
+2. **Add a smoke test that runs against the COMPILED artifact**, not the source tree. Every
+   existing test passes here; only the packaged binary is broken. Assert
+   `embeddings !== "unavailable"` after boot.
+3. Surface the state: `nimbus doctor` should report embeddings unavailable as a `[warn]`/`[fail]`
+   line, and `nimbus search` should disclose when the vector half did not run.
+4. Fix the `sharp` platform dependency so `reembed` can repair an empty index.
+5. Accept `all-MiniLM-L6-v2` as a `--model` alias.
+
+### Bearing on F1b
+
+This RESOLVES the bound recorded under F1b. Semantic search could not have rescued the
+mid-token `"Fargate"` query, because the vector path has never run on this machine — not
+because the model directory was deleted. The deletion was a red herring: `models/` is a
+download-on-demand cacheDir, and the download never happens when the worker cannot start.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -993,6 +1097,7 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F9 | `prove` headline vs scope | low-med | yes | `prove` |
 | F11 | One dead Google credential disables all 4 Google connectors | high | yes | gmail, drive, photos, meet |
 | F10 | Google refresh token coerced to `""`; OAuth path logs nothing | med-high | yes | every OAuth connector |
+| **F15** | **Embedding worker unbundled — semantic search dead in every release** | **critical** | yes | all hybrid retrieval |
 | F14 | `ask` truncates every enumeration at 8, undisclosed | high | yes | every `ask` list/count question |
 | F13 | `sync succeeded` recorded with no credentials (F6's mechanism) | high | yes | every connector's health |
 | F12 | Repo questions exclude PRs; `github_actions` swamps ranked search | medium | yes | `ask` on any repo |
