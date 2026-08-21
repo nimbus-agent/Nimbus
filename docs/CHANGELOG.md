@@ -8,6 +8,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-21 — A web clip can finally say who wrote it.**
+  `POST /v1/clips` gains one optional `source` object — `author`, `publishedAt` (epoch ms),
+  `siteName`, `lang`, `leadImage` — which lands at `metadata.source`. Until now a clip was the
+  one item type in the index that arrived without provenance: `validateClipInput` read exactly
+  seven fields and dropped the rest, so the `byline`, `siteName`, `publishedTime` and `lang`
+  Mozilla Readability already parses had nowhere on the wire to go. Every field is optional and
+  every field is bounded, because all of them are controlled by whatever page the user is looking
+  at and `upsertIndexedItem` throws above 64 KB of serialised metadata. **Three choices here are
+  deliberate and unlike the rest of this body.** A malformed *member* is **dropped, not rejected**
+  — `asString` throws because a clip without a title is not a clip, but a clip with a garbled
+  byline is still a perfectly good clip, and failing it would let one bad `<meta>` tag cost the
+  user their capture; a `source` that is not a JSON object is still a validation error, because
+  that is caller error rather than page noise. Prose **truncates** and structured values **drop**:
+  `author` and `siteName` are cut to 200 characters and are still useful, while an over-length
+  `lang` (20) or `leadImage` (2048) is discarded, since half a URL is a broken link rather than a
+  shorter one and a consumer cannot tell it was cut. And the validator **constructs** a new object
+  from the five known fields rather than passing the caller's through — a whitelist, not a
+  blocklist, because a single unrecognised sibling key holding 60 KB would push the item past the
+  store's ceiling and let a page deny ingestion of its own clip. `publishedAt` is normalised to
+  epoch ms by the client and checked here only for "an integer inside `Date`'s range"; pre-1970
+  and far-future values are valid and kept, because archived essays and embargoed posts carry them
+  honestly and nothing sorts on this field. Clip identity, `modified_at` and `author_id` are
+  unchanged and now pinned by tests: `externalIdFor` still hashes only the canonical URL (and the
+  body, for selections), so re-clipping a page whose byline changed is an `updated` on the same
+  id; `modified_at` still comes from `capturedAt`; and `author_id` stays null, since a byline
+  string is not an identity claim. One inherited behaviour is worth knowing rather than
+  discovering: a re-clip that sends no `source` **clears** a stored one, because
+  `upsertIndexedItem` replaces metadata wholesale — exactly as `tags` already behave.
+  Design: [clip source metadata](./superpowers/specs/2026-08-20-clip-source-metadata-design.md).
+
 - **2026-08-21 — Listed in the official MCP Registry, and the listing now maintains itself.**
   `io.github.nimbus-agent/nimbus@0.2.0` is live at
   [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io), pointing at
