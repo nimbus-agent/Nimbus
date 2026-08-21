@@ -41,31 +41,54 @@ profile creation **works** on this machine, not that a capability is **held**.
   So the grant is per-level, and the inheritance flag on each grant is deliberate, not
   incidental:
 
-  | What | Rights | Inheritance | Why |
+  | What | Rights | Inheritance | On grant failure |
   |---|---|---|---|
-  | `--cwd` (the leaf) | Read + Execute + Write | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | the child works inside it — an inheritable grant is correct because the leaf's whole subtree *is* the working directory |
-  | `--cwd`'s ancestors | Read + Execute | `NO_INHERITANCE` | listable **only that directory**, never its children. An inheritable grant here would hand the container every sibling subtree beneath each ancestor — the parent directory's entire contents, not just the path down to `--cwd` |
-  | `--grant-read` / `--grant-write` paths | Read+Execute, or Read+Execute+Write | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | a policy path means its whole subtree, so it inherits like the leaf |
-  | policy paths' ancestors | — (no grant at all) | n/a | Windows bypasses traverse checking by default, so a known full path opens without listing rights on the way down — confirmed by hand (see Verification below), not assumed. If a connector ever needs more, that is a deliberate, recorded widening, not a default |
+  | `--cwd` (the leaf) | Read + Execute + Write | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | **fail closed** — aborts the spawn with exit `66` |
+  | `--cwd`'s ancestors | Read + Execute | `NO_INHERITANCE` | **best-effort** — note on stderr, stop climbing, continue the spawn (see below) |
+  | `--grant-read` / `--grant-write` paths | Read+Execute, or Read+Execute+Write | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | **fail closed** — aborts the spawn with exit `66` |
+  | policy paths' ancestors | — (no grant at all) | n/a | n/a — never attempted; see below |
 
-  A path that cannot be granted (ACL write fails — including on a filesystem without ACL
-  support, such as FAT32/exFAT or some network shares) aborts the spawn with exit `66`.
-  The helper never falls back to spawning unconfined: a policy path the child cannot read
-  is a failure to enforce the policy, not a warning.
+  The leaf inherits because the leaf's whole subtree *is* the working directory. An
+  ancestor gets `NO_INHERITANCE` because it is being made listable **only as that one
+  directory**, never its children — an inheritable grant there would hand the container
+  every sibling subtree beneath each ancestor, not just the path down to `--cwd`. A
+  policy path (`--grant-read`/`--grant-write`) inherits like the leaf because it means its
+  whole subtree; its ancestors get **no grant at all**, because Windows bypasses traverse
+  checking by default, so a known full path opens without listing rights on the way down
+  — confirmed by hand (see Verification below), not assumed. If a connector ever needs
+  more, that is a deliberate, recorded widening, not a default.
 
-  **Caveat — `--cwd` under the real user profile.** The ancestor walk needs `WRITE_DAC`
-  (permission to modify the DACL) on every ancestor up to the volume root. On a default,
-  non-elevated Windows install, `C:\Users` itself denies `WRITE_DAC` to a standard user
-  token even for that user's own subtree beneath it — confirmed on this machine with a
-  real spawn attempt, which failed with exit `66` (`SetNamedSecurityInfoW(C:\Users):
-  5` / `ERROR_ACCESS_DENIED`) once the ancestor walk reached `C:\Users`. Any `--cwd`
-  nested under the user's real profile (`%TEMP%`, `%LOCALAPPDATA%`, `%APPDATA%`, the
-  user's home directory, …) hits this wall. A `--cwd` outside that tree — under a
-  directory the current user owns outright (verified here with a working directory
-  under a git-cloned repo root) — does not, and spawns succeed. Choosing where a
-  connector's working directory lives is outside this helper's scope (see Task 5's
-  `win32.ts`); this note exists so that scope, if it lands `--cwd` under the user's
-  own profile, does not rediscover this the hard way.
+  **The leaf and every explicit policy path are promises the policy made to the child —
+  they fail closed.** A path that cannot be granted there (ACL write fails — including on
+  a filesystem without ACL support, such as FAT32/exFAT or some network shares, or a
+  plain access-denied) aborts the spawn with exit `66`. The helper never falls back to
+  spawning unconfined: a policy path the child cannot read is a failure to enforce the
+  policy, not a warning.
+
+  **An ancestor grant is not a promise to anything — it only helps Bun's own upward
+  `package.json`/`bunfig.toml` enumeration list each level, so it is best-effort.** On the
+  first ancestor `grant_path` cannot modify, the helper logs why on stderr and **stops
+  climbing** rather than aborting the spawn or trying every remaining level — higher
+  ancestors are strictly less likely to be modifiable than the one that just failed. This
+  matters concretely: on a default, non-elevated Windows install, `C:\Users` itself denies
+  `WRITE_DAC` to a standard user token even for that same user's own subtree beneath it
+  (confirmed on this machine — `icacls C:\Users` shows only `SYSTEM`/`Administrators` with
+  Full, `BUILTIN\Users` with `(RX)` only, while `icacls C:\Users\<user>` shows that same
+  user with Full). Before this behavior existed, a `--cwd` nested under the user's real
+  profile (`%TEMP%`, `%LOCALAPPDATA%`, `%APPDATA%`, the user's home directory, …) made
+  the *helper* abort with exit `66` the moment the walk reached `C:\Users`. With the
+  best-effort walk, the helper no longer aborts there — but the underlying obstacle is
+  still real: Bun's own upward enumeration hits the same ungranted `C:\Users` and fails
+  from *inside the child* instead, with `error: An internal error occurred
+  (CouldntReadCurrentDirectory)` (confirmed by a real spawn attempt with `--cwd` under
+  `%TEMP%`; propagated as the child's own exit code, not one of this helper's `65`–`68`).
+  So a `--cwd` nested under the real user profile still does not work end to end — the
+  failure just moved from a clean helper-side exit `66` to a Bun-side runtime error. A
+  `--cwd` outside that tree — under a directory the current user owns outright (verified
+  here with a working directory under a git-cloned repo root) — hits neither problem, and
+  spawns succeed cleanly. Choosing where a connector's working directory lives is outside
+  this helper's scope (see Task 5's `win32.ts`); this note exists so that scope does not
+  rediscover this the hard way.
 
   ### Argv quoting
 

@@ -17,7 +17,13 @@
 #include <wchar.h>
 
 #define PROFILE_PREFIX L"nimbus-"
-#define MAPPINGS_KEY   L"Software\\Microsoft\\Windows\\CurrentVersion\\AppContainer\\Mappings"
+/* The real per-user AppContainer mapping key. Not the shorter, plausible-looking
+ * "Software\Microsoft\Windows\CurrentVersion\AppContainer\Mappings" — that key does not
+ * exist on a real install; CreateAppContainerProfile/DeriveAppContainerSidFromAppContainerName
+ * register profiles under this "Local Settings" path instead. Verified directly against the
+ * registry (171 subkeys here vs. 0 under the shorter path) rather than assumed. */
+#define MAPPINGS_KEY   L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\" \
+                       L"CurrentVersion\\AppContainer\\Mappings"
 
 static void err(const wchar_t *fmt, ...) {
     va_list ap;
@@ -140,10 +146,22 @@ static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit
 }
 
 /* Make every ancestor of `dir` listable (that directory ONLY — see grant_path on inheritance),
- * so Bun's upward package.json walk can enumerate each level. Stops below the volume root. */
-static int grant_cwd_ancestors(const wchar_t *dir, PSID sid) {
+ * so Bun's upward package.json walk can enumerate each level. Stops below the volume root.
+ *
+ * Best-effort, by design: an ancestor grant promises the policy nothing — it exists only so
+ * Bun's upward enumeration can list each level. The leaf `--cwd` and explicit
+ * --grant-read/--grant-write paths are policy promises and fail closed (grant_path's normal
+ * 66 return); an ancestor is not, so this function never aborts the spawn over one. On the
+ * first ancestor that cannot be granted, note it on stderr and stop climbing — higher
+ * ancestors are strictly less likely to be modifiable (e.g. C:\Users itself commonly denies
+ * WRITE_DAC to a non-elevated token even when everything below it, including the user's own
+ * profile directory, is owned by that user) — rather than retrying every remaining level. */
+static void grant_cwd_ancestors(const wchar_t *dir, PSID sid) {
     wchar_t path[MAX_PATH];
-    if (wcslen(dir) >= MAX_PATH) { err(L"cwd path too long: %s", dir); return 64; }
+    if (wcslen(dir) >= MAX_PATH) {
+        err(L"cwd path too long to list ancestors, continuing without it: %s", dir);
+        return;
+    }
     wcscpy_s(path, MAX_PATH, dir);
 
     for (;;) {
@@ -152,10 +170,12 @@ static int grant_cwd_ancestors(const wchar_t *dir, PSID sid) {
         *slash = L'\0';
         /* "C:" — the volume root. Stop; never grant it. */
         if (wcschr(path, L'\\') == NULL) break;
-        int rc = grant_path(path, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, NO_INHERITANCE);
-        if (rc != 0) return rc;
+        if (grant_path(path, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, NO_INHERITANCE) != 0) {
+            err(L"cannot list %s for the sandboxed child; module resolution above this "
+                L"level may be degraded, continuing without it", path);
+            break;
+        }
     }
-    return 0;
 }
 
 /*
@@ -221,9 +241,8 @@ static int mode_spawn(int argc, wchar_t **argv) {
     int rc = grant_path(cwd, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
                         SUB_CONTAINERS_AND_OBJECTS_INHERIT);
     if (rc != 0) { FreeSid(sid); return rc; }
-    /* Its ancestors: listable only, NOT inheritable. See grant_cwd_ancestors. */
-    rc = grant_cwd_ancestors(cwd, sid);
-    if (rc != 0) { FreeSid(sid); return rc; }
+    /* Its ancestors: listable only, NOT inheritable, best-effort. See grant_cwd_ancestors. */
+    grant_cwd_ancestors(cwd, sid);
 
     /* Policy paths are subtree grants, so they inherit. Their ancestors get NOTHING: Windows
      * bypasses traverse checking by default, so a known full path opens without listing rights on
