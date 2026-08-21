@@ -48,11 +48,45 @@ function seedUncoveredPr(db: Database, id: string): void {
   );
 }
 
+// Same as `seedCoveredPr`, but with a caller-chosen `service` column instead of the hardcoded
+// 'github' — needed to exercise the `service` tool argument, which `seedCoveredPr` cannot.
+function seedCoveredPrForService(
+  db: Database,
+  id: string,
+  service: string,
+  paths: readonly string[],
+): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES (?, ?, 'pr', ?, ?, 0, 0)`,
+    [id, service, id, id],
+  );
+  recordPrChangedFiles(db, {
+    itemId: id,
+    repoFull: "o/r",
+    files: paths.map((path) => ({ path, status: "modified", counterpartPath: null })),
+    apiFileCount: paths.length,
+    truncated: false,
+    nowMs: 1,
+  });
+}
+
 function seedDeploymentWithoutIncident(db: Database, id: string): void {
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
      VALUES (?, 'github', 'deployment', ?, ?, 0, 0)`,
     [id, id, id],
+  );
+  upsertGraphEntity(db, { type: "deployment", externalId: id, label: id });
+}
+
+// Same as `seedDeploymentWithoutIncident`, but with a caller-chosen `service` column — needed to
+// exercise the `service` tool argument, which the hardcoded-'github' helper cannot.
+function seedDeploymentWithoutIncidentForService(db: Database, id: string, service: string): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+     VALUES (?, ?, 'deployment', ?, ?, 0, 0)`,
+    [id, service, id, id],
   );
   upsertGraphEntity(db, { type: "deployment", externalId: id, label: id });
 }
@@ -198,6 +232,75 @@ describe("findPrsNotTouching", () => {
     expect(out.items?.map((i) => i.id)).toEqual(["p1"]);
     db.close();
   });
+
+  test("a non-object payload is treated as empty input, never crashes", async () => {
+    const { index, db } = freshIndex();
+    const tools = mkTools(index);
+    // `execute` is typed to take `unknown`, so a buggy MCP client can hand it anything: null, a
+    // bare string, or an array. `asRecord` must fall back to `{}` for all three rather than throw
+    // or read off a wrong property — asserted here by the SAME "pathGlob is required" error the
+    // omitted-argument test above gets, proving the malformed shapes are indistinguishable from
+    // an empty object rather than silently reading `pathGlob` off something unexpected.
+    for (const bad of [null, "not an object", ["array", "input"]]) {
+      const out = (await tools["findPrsNotTouching"]?.execute?.(bad)) as { error?: string };
+      expect(out.error).toContain("pathGlob is required");
+    }
+    db.close();
+  });
+
+  test("a whitespace-only pathGlob is treated as missing, not passed through as a literal glob", async () => {
+    const { index, db } = freshIndex();
+    const tools = mkTools(index);
+    const out = (await tools["findPrsNotTouching"]?.execute?.({ pathGlob: "   " })) as {
+      error?: string;
+    };
+    // If trimming-to-empty were skipped, "   " would flow into the SQL GLOB as a literal pattern
+    // (matching nothing) instead of tripping the required-field check — a silent behavior change,
+    // not a crash, which is why asserting the SAME required-field error matters here.
+    expect(out.error).toContain("pathGlob is required");
+    db.close();
+  });
+
+  test("service narrows results to the named forge; omitting it searches every forge", async () => {
+    const { index, db } = freshIndex();
+    seedCoveredPrForService(db, "gh-pr", "github", ["src/a.ts"]);
+    seedCoveredPrForService(db, "gl-pr", "gitlab", ["src/b.ts"]);
+    const tools = mkTools(index);
+    const scoped = (await tools["findPrsNotTouching"]?.execute?.({
+      pathGlob: "tests/**",
+      service: "gitlab",
+    })) as { items?: Array<{ id: string }> };
+    expect(scoped.items?.map((i) => i.id)).toEqual(["gl-pr"]);
+
+    const all = (await tools["findPrsNotTouching"]?.execute?.({
+      pathGlob: "tests/**",
+    })) as { items?: Array<{ id: string }> };
+    expect(all.items?.map((i) => i.id).sort()).toEqual(["gh-pr", "gl-pr"]);
+    db.close();
+  });
+
+  test("limit: a valid number narrows the result count; a non-finite number falls back to the default cap", async () => {
+    const { index, db } = freshIndex();
+    // 21 rows, none touching tests/** — one more than the documented default cap of 20, so an
+    // un-clamped `Infinity` reaching the query (rather than falling back to 20) is distinguishable
+    // from the correctly-clamped behavior.
+    for (let i = 0; i < 21; i++) {
+      seedCoveredPr(db, `p${i}`, ["src/a.ts"]);
+    }
+    const tools = mkTools(index);
+    const small = (await tools["findPrsNotTouching"]?.execute?.({
+      pathGlob: "tests/**",
+      limit: 3,
+    })) as { items?: Array<{ id: string }> };
+    expect(small.items).toHaveLength(3);
+
+    const nonFinite = (await tools["findPrsNotTouching"]?.execute?.({
+      pathGlob: "tests/**",
+      limit: Number.POSITIVE_INFINITY,
+    })) as { items?: Array<{ id: string }> };
+    expect(nonFinite.items).toHaveLength(20);
+    db.close();
+  });
 });
 
 describe("findDeploymentsWithoutIncident", () => {
@@ -267,6 +370,24 @@ describe("findDeploymentsWithoutIncident", () => {
       itemType: "issue", // ignored: not part of the schema
     })) as { items?: Array<{ id: string }> };
     expect(out.items?.map((i) => i.id)).toEqual(["d1"]);
+    db.close();
+  });
+
+  test("service narrows results to the named service; omitting it searches every service", async () => {
+    const { index, db } = freshIndex();
+    seedDeploymentWithIncident(db, "dep-with-incident"); // satisfies the substrate probe
+    seedDeploymentWithoutIncidentForService(db, "dep-jenkins", "jenkins");
+    seedDeploymentWithoutIncidentForService(db, "dep-circleci", "circleci");
+    const tools = mkTools(index);
+    const scoped = (await tools["findDeploymentsWithoutIncident"]?.execute?.({
+      service: "circleci",
+    })) as { items?: Array<{ id: string }> };
+    expect(scoped.items?.map((i) => i.id)).toEqual(["dep-circleci"]);
+
+    const all = (await tools["findDeploymentsWithoutIncident"]?.execute?.({})) as {
+      items?: Array<{ id: string }>;
+    };
+    expect(all.items?.map((i) => i.id).sort()).toEqual(["dep-circleci", "dep-jenkins"]);
     db.close();
   });
 });
