@@ -587,9 +587,32 @@ gmail's — it was Drive's, 148,181 minutes in the past.
   this direct mesh call. Verified: paused Drive, gmail still failed.
 - Nothing is logged (see F10), so none of the above is visible from the outside.
 
+### A PAUSED connector's dead credential still breaks the others
+
+The loop in `connector-spawns.ts:74-86` iterates a hardcoded `ids` array and never consults
+scheduler state. Measured: `google_photos` was `"status": "paused", "healthState": "paused"`
+throughout, and its dead credential still aborted the mesh boot for gmail.
+
+So the obvious user remedy — disable the broken connector — **does not work**. Neither does
+`nimbus connector pause google_drive` (verified separately: paused Drive, gmail still failed).
+There is no way to route around a dead Google credential short of re-authing it or clearing
+the vault key. Note the asymmetry that makes this avoidable: an ABSENT key is skipped by the
+`resolved === null` guard, so `vault delete <key>` would work where `pause` does not — a
+non-obvious workaround that no surface hints at.
+
 ### Fix for the user
 
-`nimbus connector auth google_drive` — then gmail, photos and meet all recover.
+Re-auth EVERY Google service whose key Google rejects — not just the first one, and not the
+connector that reported the error. In this instance that was two:
+
+```
+nimbus connector auth google_drive     # fp 5b4502… (2026-05-10) -> a1b0d6… valid
+nimbus connector auth google_photos    # fp f4adfe… (2026-05-10) -> still dead
+```
+
+Re-authing only `google_drive` left gmail failing with the identical message, because
+`google_photos` was still dead and sits in the same loop. `google_meet.oauth` is unset, so
+`resolveGoogleOAuthVaultKey` falls back to the shared `google.oauth` and needs nothing.
 
 ### Suggested fix
 

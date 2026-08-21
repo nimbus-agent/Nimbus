@@ -13,11 +13,12 @@
   outside Nimbus, with the same client credentials Nimbus would use. That
   separates two very different diagnoses:
 
-    GOOGLE REJECTS IT  -> the stored credential genuinely cannot refresh. The
-                          Nimbus bug is upstream: `connector auth` reported
-                          success for a token that was never usable.
-                          Remedy: revoke at https://myaccount.google.com/permissions
-                          then re-run `nimbus connector auth gmail`.
+    GOOGLE REJECTS IT  -> that stored credential genuinely cannot refresh.
+                          Re-auth the service that OWNS the rejected key, which is
+                          often not the connector that reported the error:
+                          gmail / google_photos / google_meet all boot through
+                          google_drive, so a dead google_drive credential makes all
+                          four fail with this identical message (finding F11).
 
     GOOGLE ACCEPTS IT  -> the credential is fine and Nimbus is sending something
                           different (wrong client_id, or resolving a different
@@ -62,6 +63,17 @@ $ALL_GOOGLE_KEYS = @(
   'google_photos.oauth',
   'google_meet.oauth'
 )
+
+function Get-ServiceIdForKey([string] $VaultKey) {
+  switch ($VaultKey) {
+    'google_drive.oauth'  { return 'google_drive' }
+    'google_gmail.oauth'  { return 'gmail' }
+    'google_photos.oauth' { return 'google_photos' }
+    'google_meet.oauth'   { return 'google_meet' }
+    'google.oauth'        { return 'google_drive' }
+    default               { return 'google_drive' }
+  }
+}
 
 function Write-Head([string] $Text) {
   Write-Host ''
@@ -294,14 +306,19 @@ if ($rejected.Count -gt 0) {
   Write-Host 'reported "Verified" for a token that was never usable — it validates the'
   Write-Host 'freshly-exchanged ACCESS token in memory and never exercises the refresh path.'
   Write-Host ''
-  Write-Host 'Remedy:' -ForegroundColor White
-  Write-Host '  1. https://myaccount.google.com/permissions  ->  Nimbus  ->  Remove access'
-  Write-Host '  2. nimbus connector auth gmail'
-  Write-Host '  3. nimbus connector sync gmail --force'
+  Write-Host 'Re-auth the service that owns EACH rejected key below — not the connector'  -ForegroundColor White
+  Write-Host 'that reported the error. gmail / google_photos / google_meet all boot through'
+  Write-Host 'google_drive (assemble-sync-registrations.ts:117-127), so a dead google_drive'
+  Write-Host 'credential makes all four fail with this exact message (audit finding F11).'
   Write-Host ''
-  Write-Host 'A plain re-auth without the revoke usually reuses the existing grant and'
-  Write-Host 'does not mint a fresh refresh token, which is why re-running auth alone'
-  Write-Host 'has not helped.'
+  foreach ($r in $rejected) {
+    $svc = Get-ServiceIdForKey $r.Key
+    Write-Host ("  {0,-22} -> nimbus connector auth {1}" -f $r.Key, $svc) -ForegroundColor Yellow
+  }
+  Write-Host ''
+  Write-Host 'If a re-auth does not clear it, revoke first — a plain re-auth usually reuses'
+  Write-Host 'the existing grant and does not mint a fresh refresh token:'
+  Write-Host '  https://myaccount.google.com/permissions  ->  Nimbus  ->  Remove access'
   exit 1
 }
 
