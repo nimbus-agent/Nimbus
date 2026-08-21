@@ -409,6 +409,36 @@ jobs:
         env:
           CI: "true"
 
+      # ── Platform-sensitive integration tests ────────────────────────────────
+      # The step above is scoped to `packages/<pkg>/src`, so it does NOT collect
+      # `packages/gateway/test/integration/`. On the PR gate that integration suite runs on
+      # UBUNTU ONLY, which is how a Windows- and macOS-broken sandbox spawn suite merged green
+      # (#1294): the suite added specifically to prove the wrapper spawns on all three platforms
+      # had never once run on two of them before it reached `main`, and the push matrix found it
+      # minutes after merge.
+      #
+      # This does NOT widen the PR gate to the whole integration suite — that would add minutes
+      # to every PR on two slow runners for tests that are not platform-sensitive. It runs the
+      # named suites whose whole purpose is per-platform behaviour, and nothing else. Add a suite
+      # here only when it genuinely branches on the OS; the Ubuntu integration job stays the
+      # place for everything else.
+      - name: Build sandbox helper (Windows, for the spawn suite below)
+        if: needs.filter.outputs.code-changed == 'true' && matrix.pkg == 'gateway' && runner.os == 'Windows'
+        shell: pwsh
+        run: bun run build:sandbox-helper:win32
+
+      - name: Platform-sensitive integration tests
+        if: needs.filter.outputs.code-changed == 'true' && matrix.pkg == 'gateway'
+        shell: bash
+        # No retry wrapper: these are seconds-long, and a sandbox spawn that fails intermittently
+        # is a finding, not a flake to paper over.
+        run: |
+          bun test \
+            packages/gateway/test/integration/platform/sandbox/ \
+            --timeout 60000
+        env:
+          CI: "true"
+
   # Code duplication scan — runs in parallel with the above two jobs.
   # Scans only packages/ for code duplication; docs-only PRs can't introduce
   # new code-duplication regressions, so we skip when code-changed is false.

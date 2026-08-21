@@ -138,14 +138,30 @@ interface WrapperRun {
 }
 
 /**
- * Substrings that mean THE SANDBOX LAUNCHER ITSELF failed, as opposed to the child running and
- * exiting non-zero. `bwrap:` prefixes every bubblewrap error (`No permissions to create new
- * namespace`, `execvp <path>: No such file or directory`); `nimbus-sandbox-wrapper:` prefixes
- * every `fatal()` in sandbox-wrapper.ts, on all three platforms. Neither is ever printed by a
- * successful launch, so this cannot fire merely because a test expects a non-zero child exit —
- * the exit-7 and denied-77 cases below print nothing.
+ * Should this invocation be dumped? Answered from the SHAPE of the run, never from a list of
+ * known error strings.
+ *
+ * The first version of this matched `["bwrap:", "nimbus-sandbox-wrapper:"]` against stderr — the
+ * Linux launcher and the cross-platform wrapper. It was blind on exactly the two platforms that
+ * then failed on the push matrix: macOS launches through `sandbox-exec` and Windows through
+ * `nimbus-sandbox-helper.exe`, and neither prefix was listed. Both runs reported a bare
+ * `Expected: "hello-from-sandbox" / Received: ""` with the reason nowhere in the log. An
+ * allow-list of failure signatures is the wrong shape for a diagnostic: it can only recognise
+ * failures someone already thought of, and it fails silent on the rest.
+ *
+ * So: dump on anything ANOMALOUS, and let the green path define normal.
+ *  - any stderr at all — no launcher on any platform prints on a clean launch;
+ *  - `status === null` — killed by a signal, which no case here expects;
+ *  - exit 0 with empty stdout — the shape of "the child never really ran". The two cases that
+ *    legitimately produce empty stdout exit 7 and 77, so neither trips this.
+ *
+ * Verified quiet: the five passing cases on this machine produce no dump.
  */
-const LAUNCHER_ERROR_MARKERS = ["bwrap:", "nimbus-sandbox-wrapper:"] as const;
+function isAnomalous(run: WrapperRun): boolean {
+  if (run.stderr.trim() !== "") return true;
+  if (run.status === null) return true;
+  return run.status === 0 && run.stdout === "";
+}
 
 /**
  * Dump everything about an invocation whose sandbox launcher errored.
@@ -163,13 +179,14 @@ const LAUNCHER_ERROR_MARKERS = ["bwrap:", "nimbus-sandbox-wrapper:"] as const;
  * Printing from here keeps every frame pointing at the assertion that failed.
  */
 function reportLauncherError(run: WrapperRun): void {
-  if (!LAUNCHER_ERROR_MARKERS.some((m) => run.stderr.includes(m))) return;
+  if (!isAnomalous(run)) return;
   console.error(
     [
       "",
-      "--- sandbox launcher error (diagnostics, not asserted) ---",
+      "--- sandbox launcher anomaly (diagnostics, not asserted) ---",
       `platform : ${process.platform}`,
       `execPath : ${process.execPath}`,
+      `tmpdir   : ${tmpdir()}`,
       `cwd      : ${run.cwd}`,
       `policy   : ${JSON.stringify(run.policy.permissions)}`,
       `argv     : ${JSON.stringify(run.argv)}`,
