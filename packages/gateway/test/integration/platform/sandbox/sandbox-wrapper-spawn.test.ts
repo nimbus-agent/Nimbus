@@ -113,6 +113,60 @@ function policy(): SandboxPolicy {
   };
 }
 
+interface WrapperRun {
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly policy: SandboxPolicy;
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * Substrings that mean THE SANDBOX LAUNCHER ITSELF failed, as opposed to the child running and
+ * exiting non-zero. `bwrap:` prefixes every bubblewrap error (`No permissions to create new
+ * namespace`, `execvp <path>: No such file or directory`); `nimbus-sandbox-wrapper:` prefixes
+ * every `fatal()` in sandbox-wrapper.ts, on all three platforms. Neither is ever printed by a
+ * successful launch, so this cannot fire merely because a test expects a non-zero child exit —
+ * the exit-7 and denied-77 cases below print nothing.
+ */
+const LAUNCHER_ERROR_MARKERS = ["bwrap:", "nimbus-sandbox-wrapper:"] as const;
+
+/**
+ * Dump everything about an invocation whose sandbox launcher errored.
+ *
+ * The launcher writes its diagnosis to STDERR, but every assertion below is about `status` or
+ * `stdout`, so without this the stderr is captured and then discarded: the first CI run of this
+ * suite reported only `Expected: 7 / Received: 1` and `JSON Parse error: Unexpected EOF`, and the
+ * one line that said WHY (`bwrap: No permissions to create new namespace`) never reached the log.
+ * A spawn test that cannot tell you why the spawn failed is close to undebuggable on a runner you
+ * cannot log into.
+ *
+ * Deliberately NOT implemented by wrapping each `it` in a try/catch that re-throws: Bun's reporter
+ * prints the code frame of the site that threw LAST, so any re-throw — even of the untouched
+ * error — replaces the failing assertion's line with the wrapper's (measured, not assumed).
+ * Printing from here keeps every frame pointing at the assertion that failed.
+ */
+function reportLauncherError(run: WrapperRun): void {
+  if (!LAUNCHER_ERROR_MARKERS.some((m) => run.stderr.includes(m))) return;
+  console.error(
+    [
+      "",
+      "--- sandbox launcher error (diagnostics, not asserted) ---",
+      `platform : ${process.platform}`,
+      `execPath : ${process.execPath}`,
+      `cwd      : ${run.cwd}`,
+      `policy   : ${JSON.stringify(run.policy.permissions)}`,
+      `argv     : ${JSON.stringify(run.argv)}`,
+      `status   : ${String(run.status)}`,
+      `stdout   : ${JSON.stringify(run.stdout)}`,
+      "stderr   :",
+      run.stderr.replace(/^/gm, "  ").trimEnd(),
+      "----------------------------------------------------------",
+    ].join("\n"),
+  );
+}
+
 function runThroughWrapper(
   p: SandboxPolicy,
   cwd: string,
@@ -127,7 +181,16 @@ function runThroughWrapper(
       ...(IS_WIN ? { NIMBUS_SANDBOX_HELPER_PATH: WIN_HELPER } : {}),
     },
   });
-  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  const run: WrapperRun = {
+    argv,
+    cwd,
+    policy: p,
+    status: r.status,
+    stdout: r.stdout ?? "",
+    stderr: r.stderr ?? "",
+  };
+  reportLauncherError(run);
+  return { status: run.status, stdout: run.stdout, stderr: run.stderr };
 }
 
 /**

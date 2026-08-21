@@ -203,6 +203,27 @@ jobs:
         shell: bash
         run: sudo bash scripts/linux/install-vault-deps.sh
 
+      # This job's test command is NOT scoped to `src/`: the Linux path runs `bun test` from
+      # inside each package (see `run_pkg` below) and the macOS/Windows path runs
+      # `bun test packages/gateway packages/cli ...`. Both therefore also collect
+      # `packages/gateway/test/integration/`, which includes sandbox-wrapper-spawn.test.ts — a
+      # real end-to-end spawn through the `__nimbus-sandbox` role. That suite deliberately goes
+      # RED rather than skipping when its platform dependency is missing on CI (a skip and a pass
+      # are indistinguishable in a CI summary, which is exactly how the original Windows spawn
+      # defect survived a green three-OS matrix), so every job that collects the file needs the
+      # dependency — not just the `integration` job. Same shape as `install-vault-deps.sh`
+      # above, which is duplicated across the jobs that collect the vault tests for the same
+      # reason.
+      - name: Linux — bubblewrap (sandbox spawn test, also collected by this job)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo bash scripts/linux/install-sandbox-deps.sh
+
+      - name: Build sandbox helper (Windows, sandbox spawn test)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: bun run build:sandbox-helper:win32
+
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
         shell: bash
