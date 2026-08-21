@@ -18,14 +18,44 @@ import type { SandboxPolicy } from "../../../../src/platform/sandbox/sandbox-pol
 
 const GATEWAY_ENTRY = resolve(import.meta.dir, "../../../../src/index.ts");
 
-/** On Windows the helper must exist for the spawn to be permitted at all (I15 fail-closed). */
-const WIN_HELPER = resolve(
-  import.meta.dir,
-  "../../../../src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe",
-);
-const LINUX_HELPER_DEP = process.platform !== "linux" || existsSync("/usr/bin/bwrap");
-const READY = process.platform === "win32" ? existsSync(WIN_HELPER) : LINUX_HELPER_DEP;
+/**
+ * On Windows the helper must exist for the spawn to be permitted at all (I15 fail-closed).
+ * Same override precedence `helperPath()` (win32.ts) uses in production, so this test's own
+ * readiness check and the child gateway process it spawns always agree on which binary is meant.
+ */
+const WIN_HELPER =
+  process.env["NIMBUS_SANDBOX_HELPER_PATH"] ??
+  resolve(import.meta.dir, "../../../../src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe");
+const BWRAP_PATH = "/usr/bin/bwrap";
 const IS_WIN = process.platform === "win32";
+
+/**
+ * True in every CI job (GitHub Actions sets `CI=true` on every hosted runner; the repo's own
+ * convention — see `reindex-vector-erasure.test.ts`, `item-list-query-latency.test.ts` — reads it
+ * the same way). Never true in a plain local `bun test` invocation.
+ */
+const IS_CI = process.env["CI"] === "true";
+
+/**
+ * `null` when this platform can actually run a real sandboxed spawn; otherwise the exact reason,
+ * named precisely enough to act on (never a bare "precondition unmet").
+ *
+ * This distinction is the whole point of Fix 2 below: a missing dependency must never be
+ * indistinguishable from "everything passed" in a CI summary — that indistinguishability is
+ * exactly what let the original Windows defect survive a green three-OS matrix.
+ */
+function missingPrerequisite(): string | null {
+  if (IS_WIN) {
+    return existsSync(WIN_HELPER) ? null : `Windows sandbox helper not found at ${WIN_HELPER}`;
+  }
+  if (process.platform === "linux") {
+    return existsSync(BWRAP_PATH) ? null : `bwrap not found at ${BWRAP_PATH}`;
+  }
+  return null; // macOS: sandbox-exec ships by default, nothing to install.
+}
+
+const MISSING = missingPrerequisite();
+const READY = MISSING === null;
 
 /**
  * Sandbox-denied exit code used by every out-of-policy child script below.
@@ -121,7 +151,28 @@ function childProcess(dir: string, name: string, body: string): { argv: string[]
   return { argv: [process.execPath, scriptPath] };
 }
 
-describe.skipIf(!READY)("sandbox wrapper: real spawn on every platform", () => {
+// A missing prerequisite is a local-dev convenience skip (a contributor without `bwrap` should
+// not be blocked) but a CI failure: `!READY && !IS_CI` only suppresses the whole suite off-CI.
+// On CI with a missing prerequisite, the describe block still runs — see the CI-fail-fast branch
+// immediately inside it, which registers one loud, named failure instead of the five real tests.
+describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform", () => {
+  if (IS_CI && !READY) {
+    // Fix 2 (fix round 1): a skip and a pass are indistinguishable in a CI summary — that
+    // indistinguishability is precisely how the original Windows defect survived a green
+    // three-OS matrix. So on CI, an unmet precondition must go RED with a named reason instead
+    // of silently skipping. This is the only test bun-test-registers on CI when the precondition
+    // is unmet; the five real spawn tests below are deliberately not registered in that case —
+    // running them anyway would only produce confusing secondary failures on top of this one.
+    it("fails loudly instead of silently skipping when its CI prerequisite is missing", () => {
+      throw new Error(
+        `sandbox-wrapper-spawn: CI precondition unmet — ${MISSING}. ` +
+          "This suite must never silently skip on CI: that is the exact hole it exists to " +
+          "close. Install the missing sandbox dependency for this platform's CI job and re-run.",
+      );
+    });
+    return;
+  }
+
   it("round-trips stdout through the sandbox — the property MCP stdio depends on", () => {
     const { argv } = childProcess(
       work,

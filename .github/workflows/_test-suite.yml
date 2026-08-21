@@ -596,6 +596,24 @@ jobs:
         shell: bash
         run: sudo bash scripts/linux/install-vault-deps.sh
 
+      # Fix round 1 (Task 6, Finding A): this job runs packages/gateway/test/integration/, which
+      # includes sandbox-wrapper-spawn.test.ts — a real end-to-end spawn through the
+      # `__nimbus-sandbox` role. Without bwrap the suite is not READY and silently skipped rather
+      # than exercising anything; only the separate `coverage-gates-pal` Sandbox gate installed
+      # this before. A skip and a pass look identical in a CI summary, which is exactly how the
+      # original Windows spawn defect survived a green three-OS matrix.
+      - name: Linux — bubblewrap (sandbox spawn integration test)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo bash scripts/linux/install-sandbox-deps.sh
+
+      # Same Finding A, Windows side: without the compiled helper, sandbox-wrapper-spawn.test.ts
+      # is not READY on Windows either.
+      - name: Build sandbox helper (Windows, sandbox spawn integration test)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: bun run build:sandbox-helper:win32
+
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
         shell: bash
