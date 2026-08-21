@@ -431,6 +431,83 @@ rather than a bare `0`.
 
 ---
 
+## F10 — a Google token response with no `refresh_token` is stored as `""` and reported as success
+
+**Severity: medium-high.** Fail-silent. Model-independent. Found while debugging a live gmail re-auth.
+
+### Symptom
+
+`nimbus connector auth gmail` reports success and writes fresh vault blobs, but every
+subsequent sync fails permanently:
+
+```
+$ nimbus connector sync gmail --force
+Token exchange failed (invalid_grant: Bad Request)
+```
+
+### Established facts
+
+- Re-auth **did** write fresh tokens: `google.oauth.enc` + `google_gmail.oauth.enc` rewritten
+  `2026-08-21 12:12:32`; `google_drive.oauth.enc` / `google_photos.oauth.enc` untouched since
+  `2026-05-10`.
+- The error **changed** with the re-auth: `invalid_grant: Token has been expired or revoked.`
+  → `invalid_grant: Bad Request`. `google_drive`, never re-authed, still reports the *old*
+  string. Two different failures, distinguishable by message.
+- `connector_health_history` records the new failure at `occurredAtMs: 1787303532428` — the
+  same second the vault blob was written. The failure is the *fresh* credential, not a stale row.
+- **Not** an in-memory cache: gateway stopped, restarted, synced again — identical error.
+
+### The Nimbus defect
+
+`auth/oauth-registry.ts:95-99`, `parseStandardTokenResponse`:
+
+```ts
+const refresh = o.refresh_token;
+…
+return {
+  accessToken: access,
+  refreshToken: typeof refresh === "string" ? refresh : "",   // ← silent coercion
+  …
+};
+```
+
+A token response carrying **no** `refresh_token` is accepted as a successful exchange and
+persisted with an empty refresh token. `access_token` and `expires_in` both throw when absent
+(lines 88-94); `refresh_token` alone degrades silently.
+
+The consequence is a credential that can never work: every later refresh sends an empty
+`refresh_token` and Google answers `invalid_grant: Bad Request` — the exact string observed —
+forever, with the user having been told auth succeeded.
+
+Google *should* return a refresh token here: the descriptor sets `access_type: "offline"` and
+`prompt: "consent"` (`oauth-registry.ts:241-242`). Whether the empty-token path is what fired
+in this specific case is **NOT established** — the stored blob was not decrypted, and its size
+(992 bytes, unchanged from the previously-working May 10 blob) is weak evidence *against* an
+absent refresh token. The fail-silent coercion is a real defect either way.
+
+### Secondary: the failure logs nothing
+
+`grep -i "gmail\|oauth\|token\|refresh"` over the gateway log for the whole day returns
+**zero lines**. A permanent credential failure produces no log record beyond the
+`sync_state.last_error` string — no client id used, no scopes requested, no response body.
+
+### Suggested fix
+
+1. Throw at exchange time when `refresh_token` is absent on a provider whose descriptor
+   requested offline access, with a remedy in the message (*"revoke access at
+   myaccount.google.com/permissions and re-run `nimbus connector auth gmail`"*). Never persist
+   an empty refresh token.
+2. Log the OAuth exchange outcome — provider, client-id **prefix**, scopes granted, error body.
+   No secrets.
+
+### Open question for the user
+
+Whether `google_gmail.oauth` currently holds a non-empty `refresh_token` decides if F10's
+coercion is the live cause or a latent bug alongside a different one. `nimbus vault get
+google_gmail.oauth` answers it — **run privately; it prints a live credential.**
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
