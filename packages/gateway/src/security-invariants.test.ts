@@ -684,6 +684,39 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
     expect(src).toMatch(/export function wrapServerSpec\b/);
   });
 
+  test("the policy wire has ONE definition, so the producer and the wrapper cannot drift", async () => {
+    // wrapServerSpec WRITES the policy env var; runSandboxWrapper READS it. They used to hardcode
+    // the same string literal independently, which is two copies of one contract — and the drift
+    // is silent in the worst direction: rename one side and the producer keeps setting a variable
+    // nobody reads, while the wrapper aborts with "<name> not set", which reads as a misconfigured
+    // environment rather than a broken build. Both now import the constant, so the mismatch is
+    // unrepresentable rather than merely untested. Assert the IMPORT and the USE, not the literal —
+    // matching the literal would pass on exactly the hardcoded copies this replaced.
+    const producer = await read("packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts");
+    const consumer = await read("packages/gateway/src/platform/sandbox/sandbox-wrapper.ts");
+    for (const src of [producer, consumer]) {
+      expect(src).toMatch(/SANDBOX_POLICY_ENV/);
+      expect(src).toMatch(/SANDBOX_CWD_ENV/);
+      expect(src).toMatch(/from "[^"]*sandbox-policy\.ts"/);
+      // Strip comments: both files legitimately NAME the variable in prose while explaining it.
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      expect(code).not.toMatch(/"NIMBUS_SANDBOX_(POLICY_JSON|CWD)"/);
+    }
+    expect(producer).toMatch(/\[SANDBOX_POLICY_ENV\]:\s*JSON\.stringify\(policyFromManifest\(/);
+    expect(consumer).toMatch(/process\.env\[SANDBOX_POLICY_ENV\]/);
+  });
+
+  test("the wrapper VALIDATES the policy it receives, never casts it", async () => {
+    // The payload crosses a process boundary, so it is `unknown` (non-negotiable 7) regardless of
+    // who set it. A bare `as SandboxPolicy` let a malformed permission field reach the runner and
+    // surface as a raw TypeError from inside decideNetworkMode — fail-closed, but diagnosing the
+    // wrong layer. The negative assertion is the load-bearing half: parseSandboxPolicy could be
+    // imported and then not used on this path.
+    const src = await read("packages/gateway/src/platform/sandbox/sandbox-wrapper.ts");
+    expect(src).toMatch(/parseSandboxPolicy\(policyJson\)/);
+    expect(src).not.toMatch(/JSON\.parse\([^)]*\)\s+as\s+SandboxPolicy/);
+  });
+
   test("wrapServerSpec routes the sandbox hop through selfSpawn, carrying the inner command", async () => {
     // The I15 wrapper used to be `process.execPath` + a path to sandbox-wrapper.ts, which does not
     // exist inside a compiled binary. It now re-executes the gateway in its `__nimbus-sandbox`

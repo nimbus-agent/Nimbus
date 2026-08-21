@@ -66,8 +66,11 @@ export async function reapAppContainersAtBoot(deps: {
       deleteProfile: async (name: string) => {
         try {
           await run(path, ["--delete-profile", name], { encoding: "utf8" });
+          return true;
         } catch {
-          // Best effort: one profile that will not delete must not abort the sweep.
+          // Best effort: one profile that will not delete must not abort the sweep. Reporting
+          // false keeps it out of `reaped`, so the log line names only profiles really gone.
+          return false;
         }
       },
       liveExtensionIds: liveExtensionIds(deps.db),

@@ -34,28 +34,41 @@ static void err(const wchar_t *fmt, ...) {
     va_end(ap);
 }
 
-/* Create the profile, or derive its SID if it already exists. Caller frees with FreeSid. */
-static HRESULT profile_sid(const wchar_t *name, PSID *out) {
+/* Create the profile, or derive its SID if it already exists. Caller frees with FreeSid.
+ * When `created` is non-NULL it reports which of the two happened — only --check-caps needs
+ * that, to avoid deleting a profile it did not make. */
+static HRESULT profile_sid_ex(const wchar_t *name, PSID *out, BOOL *created) {
     HRESULT hr = CreateAppContainerProfile(name, name, L"Nimbus sandbox", NULL, 0, out);
+    if (created) *created = SUCCEEDED(hr);
     if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)) {
         hr = DeriveAppContainerSidFromAppContainerName(name, out);
     }
     return hr;
 }
 
+static HRESULT profile_sid(const wchar_t *name, PSID *out) {
+    return profile_sid_ex(name, out, NULL);
+}
+
 static int mode_check_caps(void) {
     PSID sid = NULL;
+    BOOL created = FALSE;
     /* nimbus-ext- prefix (not nimbus-probe): the orphan reaper (Task 7) matches only that
      * prefix, so a probe profile whose deletion below ever failed is still collectible —
      * it reads as extension id "probe", which is never live. */
-    HRESULT hr = profile_sid(L"nimbus-ext-probe", &sid);
+    HRESULT hr = profile_sid_ex(L"nimbus-ext-probe", &sid, &created);
     if (FAILED(hr)) {
         err(L"cannot create an AppContainer profile: hr=0x%08lx", (unsigned long)hr);
         return 1;
     }
     FreeSid(sid);
-    /* The probe profile is transient state; do not leave it behind. */
-    DeleteAppContainerProfile(L"nimbus-ext-probe");
+    /* The probe profile is transient state; do not leave it behind — but delete it ONLY if this
+     * invocation created it. `SandboxPolicy.id` is an unconstrained string, so an extension
+     * literally named "probe" owns this exact profile name (profileNameFor -> nimbus-ext-probe),
+     * and an unconditional delete here would tear down live state a probe has no business
+     * touching. If it already existed, leave it: the reaper collects it when "probe" is not
+     * installed, and must not when it is. */
+    if (created) DeleteAppContainerProfile(L"nimbus-ext-probe");
     wprintf(L"OK\n");
     return 0;
 }

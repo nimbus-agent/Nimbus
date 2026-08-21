@@ -37,6 +37,24 @@ one-ACE recipe is not the whole recipe — Task 3's real helper needs to grant
 `(RX)` up the ancestor chain to whatever base directory Nimbus controls, and
 `Modify` (not read-only) on the leaf working directory.
 
+> **SUPERSEDED as a prescription; still valid as a measurement.** The ancestor
+> `(RX)` grants named in the paragraph above were built and then deliberately
+> deleted before this branch shipped: editing the DACL of a directory the helper
+> does not own is a persistent side effect outside Nimbus's control, and the walk
+> was separately measured to hang on a production-shaped tree. The shipped policy
+> is the leaf `--cwd` grant plus explicit `--grant-read`/`--grant-write` paths,
+> with **no** ancestor grant of any kind — see `grant_path` in
+> `packages/gateway/src-native/sandbox-helper-win32/main.c` and
+> `packages/gateway/src-native/sandbox-helper-win32/README.md`.
+>
+> The consequence is the one this spike measured, kept rather than fixed: a
+> `bun <script>` child cannot start under a profile-nested cwd, because Bun walks
+> upward looking for `package.json`/`bunfig.toml` and needs list rights it is not
+> granted. Nimbus's production Windows child is the compiled
+> `nimbus-gateway.exe __nimbus-connector`, which does no such walk, so the
+> limitation is documented in `docs/sandbox.md` rather than widened away. Anyone
+> reading this section as a to-do would be re-introducing a removed behaviour.
+
 Container SID for this run: `S-1-15-2-2090534939-2725333364-795783768-2702357211-2326289060-1809957255-1821817843`
 (profile name `nimbus-spike`, created fresh — `CreateAppContainerProfile` hit
 the happy path, not the `ERROR_ALREADY_EXISTS` fallback).

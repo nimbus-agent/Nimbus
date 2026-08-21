@@ -1,6 +1,10 @@
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { selfSpawn } from "../../platform/runtime-layout.ts";
-import { policyFromManifest } from "../../platform/sandbox/sandbox-policy.ts";
+import {
+  policyFromManifest,
+  SANDBOX_CWD_ENV,
+  SANDBOX_POLICY_ENV,
+} from "../../platform/sandbox/sandbox-policy.ts";
 import type { ServerSpec } from "./slot.ts";
 
 /**
@@ -19,8 +23,8 @@ export function wrapServerSpec(
     args,
     env: {
       ...spec.env,
-      NIMBUS_SANDBOX_POLICY_JSON: JSON.stringify(policyFromManifest(manifest)),
-      NIMBUS_SANDBOX_CWD: cwd,
+      [SANDBOX_POLICY_ENV]: JSON.stringify(policyFromManifest(manifest)),
+      [SANDBOX_CWD_ENV]: cwd,
     },
   };
 }

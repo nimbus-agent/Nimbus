@@ -32,8 +32,9 @@ describe("reapWith", () => {
     const deleted: string[] = [];
     const reaped = await reapWith({
       enumProfiles: async () => ["nimbus-ext-com.acme.gone", "nimbus-ext-com.nimbus.github"],
-      deleteProfile: async (n) => {
+      deleteProfile: async (n: string) => {
         deleted.push(n);
+        return true;
       },
       liveExtensionIds: new Set(["com.nimbus.github"]),
     });
@@ -45,8 +46,9 @@ describe("reapWith", () => {
     const deleted: string[] = [];
     await reapWith({
       enumProfiles: async () => ["some-other-app"],
-      deleteProfile: async (n) => {
+      deleteProfile: async (n: string) => {
         deleted.push(n);
+        return true;
       },
       liveExtensionIds: new Set(),
     });
@@ -183,12 +185,15 @@ describe("reapAppContainersAtBoot", () => {
     "keeps sweeping when one profile refuses to delete",
     async () => {
       pretendWindows();
+      // Records every --delete-profile ATTEMPT before refusing it, so "kept sweeping" is provable
+      // independently of the return value — which, correctly, no longer names either profile.
+      const attemptLog = join(tmp, "attempted.txt");
       installFakeHelper(
         [
           'case "$1" in',
           "  --list-profiles)",
           "    printf 'nimbus-ext-com.acme.one\\nnimbus-ext-com.acme.two\\n' ;;",
-          "  --delete-profile) exit 9 ;;",
+          `  --delete-profile) printf '%s\\n' "$2" >> "${attemptLog}"; exit 9 ;;`,
           "  *) exit 3 ;;",
           "esac",
           "exit 0",
@@ -198,7 +203,14 @@ describe("reapAppContainersAtBoot", () => {
       // Best effort: a delete that fails is swallowed, and the second profile is still attempted.
       const reaped = await reapAppContainersAtBoot({ db: emptyDb(), logger: logger() });
 
-      expect(reaped).toEqual(["nimbus-ext-com.acme.one", "nimbus-ext-com.acme.two"]);
+      // BOTH were attempted, and NEITHER is reported. `reaped` is what the info log prints, so a
+      // refusal listed there would claim a cleanup that did not happen — and the profile a reader
+      // most needs to know about is exactly the one that refused.
+      expect(readFileSync(attemptLog, "utf8")).toBe(
+        "nimbus-ext-com.acme.one\nnimbus-ext-com.acme.two\n",
+      );
+      expect(reaped).toEqual([]);
+      expect(infos).toHaveLength(0);
       expect(warns).toHaveLength(0);
     },
   );

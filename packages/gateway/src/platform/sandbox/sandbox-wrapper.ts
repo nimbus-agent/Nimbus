@@ -1,5 +1,10 @@
 import { constants as osConstants } from "node:os";
-import type { SandboxPolicy } from "./sandbox-policy.ts";
+import {
+  parseSandboxPolicy,
+  SANDBOX_CWD_ENV,
+  SANDBOX_POLICY_ENV,
+  type SandboxPolicy,
+} from "./sandbox-policy.ts";
 import { createSandboxRunner } from "./sandbox-runner.ts";
 
 function fatal(msg: string): never {
@@ -22,25 +27,25 @@ export async function runSandboxWrapper(args: readonly string[]): Promise<never>
   }
   const originalArgs = args.slice(1);
 
-  const policyJson = process.env["NIMBUS_SANDBOX_POLICY_JSON"];
+  const policyJson = process.env[SANDBOX_POLICY_ENV];
   if (policyJson === undefined || policyJson === "") {
-    fatal("NIMBUS_SANDBOX_POLICY_JSON not set");
+    fatal(`${SANDBOX_POLICY_ENV} not set`);
   }
-  const cwd = process.env["NIMBUS_SANDBOX_CWD"];
+  const cwd = process.env[SANDBOX_CWD_ENV];
   if (cwd === undefined || cwd === "") {
-    fatal("NIMBUS_SANDBOX_CWD not set");
+    fatal(`${SANDBOX_CWD_ENV} not set`);
   }
 
   let policy: SandboxPolicy;
   try {
-    policy = JSON.parse(policyJson) as SandboxPolicy;
+    policy = parseSandboxPolicy(policyJson);
   } catch (e) {
-    fatal(`invalid NIMBUS_SANDBOX_POLICY_JSON: ${(e as Error).message}`);
+    fatal(`invalid ${SANDBOX_POLICY_ENV}: ${(e as Error).message}`);
   }
 
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (k === "NIMBUS_SANDBOX_POLICY_JSON" || k === "NIMBUS_SANDBOX_CWD") continue;
+    if (k === SANDBOX_POLICY_ENV || k === SANDBOX_CWD_ENV) continue;
     if (v !== undefined) childEnv[k] = v;
   }
 

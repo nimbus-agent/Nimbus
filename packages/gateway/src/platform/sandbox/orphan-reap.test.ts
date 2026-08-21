@@ -7,6 +7,7 @@ describe("reapOrphanedAppContainers", () => {
     const deleted: string[] = [];
     const deleteProfile = async (name: string) => {
       deleted.push(name);
+      return true;
     };
 
     await reapOrphanedAppContainers({
@@ -23,6 +24,7 @@ describe("reapOrphanedAppContainers", () => {
     const deleted: string[] = [];
     const deleteProfile = async (name: string) => {
       deleted.push(name);
+      return true;
     };
 
     await reapOrphanedAppContainers({

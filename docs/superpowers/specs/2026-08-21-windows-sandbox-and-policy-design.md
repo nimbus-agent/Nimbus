@@ -7,7 +7,12 @@
 > This is the entry point to **Spine S2 (Local Compute Fleet)**. It is not an S2
 > feature. It is the repair and the widening that every S2 feature stands on.
 >
-> Status: designed 2026-08-21. Not yet planned, not yet built.
+> Status: a PRE-IMPLEMENTATION SNAPSHOT, frozen as designed on 2026-08-21. What it
+> proposes was subsequently planned and built on this branch, and two of its
+> prescriptions did NOT survive contact — see the plan's SUPERSEDED callout on
+> the ancestor-grant recipe, and `docs/sandbox.md` for the shipped behaviour. Read
+> this file for the reasoning that led to the work, never as a record of what
+> shipped.
 
 ## Context — the sandbox is two thirds implemented, and the missing third throws
 

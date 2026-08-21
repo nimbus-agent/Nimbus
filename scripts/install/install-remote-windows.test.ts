@@ -262,10 +262,20 @@ async function cleanupUserPathContaining(fragment: string): Promise<void> {
   }
 }
 
+/**
+ * A release payload shaped like the real one: the two binaries plus the sandbox helper.
+ *
+ * The helper is REQUIRED by install.ps1, not optional like `vec0.dll` — win32.ts resolves it
+ * beside the gateway and refuses to spawn any connector without it (fail-closed, I15), so an
+ * install that silently produced a Nimbus missing it would produce one that cannot run a single
+ * connector. Every fixture here must therefore carry it, or these tests assert the abort path
+ * rather than the install path.
+ */
 async function makePayload(content: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "nimbus-ps1-payload-"));
   await writeFile(join(dir, "nimbus.exe"), content);
   await writeFile(join(dir, "nimbus-gateway.exe"), content);
+  await writeFile(join(dir, "nimbus-sandbox-helper.exe"), content);
   return dir;
 }
 
@@ -473,6 +483,52 @@ test.skipIf(skip)(
       expect(exitCode).toBe(0);
       const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
       expect(await Bun.file(installed).exists()).toBe(true);
+    } finally {
+      server.stop(true);
+      await cleanupUserPathContaining(localAppData);
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+  PWSH_TEST_TIMEOUT_MS,
+);
+
+test.skipIf(skip)(
+  "install.ps1 aborts and installs nothing when the release omits the sandbox helper",
+  async () => {
+    // The abort path for the REQUIRED helper. Without this the check is untested in the only
+    // direction that matters: makePayload always carries the helper, so every other test in this
+    // file passes whether the check exists or not. What it protects against is a release artifact
+    // that silently drops the helper — the resulting install looks fine and then refuses every
+    // connector spawn at runtime (fail-closed, I15), which is a far worse failure to debug than
+    // an install that stops and says why.
+    const work = await mkdtemp(join(tmpdir(), "nimbus-ps1-nohelper-"));
+    const localAppData = await mkdtemp(join(work, "lad-"));
+
+    const payload = await makePayload("genuine-cli\n");
+    await rm(join(payload, "nimbus-sandbox-helper.exe"), { force: true });
+    const zipPath = join(work, ASSET_NAME);
+    await createZip(payload, zipPath);
+    const zipBytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex");
+
+    const server = serveFakeRelease(zipBytes, `${digest}  ${ASSET_NAME}\n`);
+    try {
+      const { stdout, stderr, exitCode } = await runInstallPs1(
+        ["-FromRelease", "2.2.0", "-Yes"],
+        envWithoutGpg({
+          LOCALAPPDATA: localAppData,
+          NIMBUS_INSTALL_BASE_URL: `http://127.0.0.1:${server.port}`,
+        }),
+      );
+      expect(exitCode).not.toBe(0);
+      // The GUARD's own message, not merely the filename: with the guard deleted the install
+      // dies anyway, on a Copy-Item whose error text also names the missing exe. Matching the
+      // filename alone would pass on exactly the regression this test exists to catch.
+      expect(stdout + stderr).toContain("Cannot locate 'nimbus-sandbox-helper.exe'");
+      // Nothing partially installed: the check runs before the first Copy-Item, so a rejected
+      // release must not leave a half-installed tree behind.
+      const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");
+      expect(await Bun.file(installed).exists()).toBe(false);
     } finally {
       server.stop(true);
       await cleanupUserPathContaining(localAppData);

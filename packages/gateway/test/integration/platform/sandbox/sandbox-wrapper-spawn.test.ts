@@ -4,7 +4,11 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import type { SandboxPolicy } from "../../../../src/platform/sandbox/sandbox-policy.ts";
+import {
+  SANDBOX_CWD_ENV,
+  SANDBOX_POLICY_ENV,
+  type SandboxPolicy,
+} from "../../../../src/platform/sandbox/sandbox-policy.ts";
 
 /**
  * Real, end-to-end spawns through the `__nimbus-sandbox` role, on every platform Nimbus ships on.
@@ -26,7 +30,18 @@ const GATEWAY_ENTRY = resolve(import.meta.dir, "../../../../src/index.ts");
 const WIN_HELPER =
   process.env["NIMBUS_SANDBOX_HELPER_PATH"] ??
   resolve(import.meta.dir, "../../../../src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe");
-const BWRAP_PATH = "/usr/bin/bwrap";
+/**
+ * Resolve `bwrap` the way the Linux runner does — through `PATH` — rather than at a fixed
+ * `/usr/bin/bwrap`. The guard must answer the same question production asks ("can this spawn
+ * find bwrap?"); a path check answers a narrower one, and on any distro that installs it
+ * elsewhere (`/usr/local/bin` on a source build, Nix, a container image with a different prefix)
+ * the two disagree — the guard would hard-fail CI on a machine where every case would have passed.
+ */
+function findBwrap(): string | null {
+  const r = spawnSync("sh", ["-c", "command -v bwrap"], { encoding: "utf8" });
+  const p = (r.stdout ?? "").trim();
+  return r.status === 0 && p !== "" ? p : null;
+}
 const IS_WIN = process.platform === "win32";
 
 /**
@@ -49,7 +64,7 @@ function missingPrerequisite(): string | null {
     return existsSync(WIN_HELPER) ? null : `Windows sandbox helper not found at ${WIN_HELPER}`;
   }
   if (process.platform === "linux") {
-    return existsSync(BWRAP_PATH) ? null : `bwrap not found at ${BWRAP_PATH}`;
+    return findBwrap() === null ? "bwrap not found on PATH" : null;
   }
   return null; // macOS: sandbox-exec ships by default, nothing to install.
 }
@@ -176,8 +191,8 @@ function runThroughWrapper(
     encoding: "utf8",
     env: {
       ...process.env,
-      NIMBUS_SANDBOX_POLICY_JSON: JSON.stringify(p),
-      NIMBUS_SANDBOX_CWD: cwd,
+      [SANDBOX_POLICY_ENV]: JSON.stringify(p),
+      [SANDBOX_CWD_ENV]: cwd,
       ...(IS_WIN ? { NIMBUS_SANDBOX_HELPER_PATH: WIN_HELPER } : {}),
     },
   });
@@ -321,9 +336,9 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
   it("rejects a spawn with no policy at all", () => {
     const r = spawnSync(process.execPath, [GATEWAY_ENTRY, "__nimbus-sandbox", "cmd"], {
       encoding: "utf8",
-      env: { ...process.env, NIMBUS_SANDBOX_CWD: work },
+      env: { ...process.env, [SANDBOX_CWD_ENV]: work },
     });
     expect(r.status).not.toBe(0);
-    expect(r.stderr).toContain("NIMBUS_SANDBOX_POLICY_JSON");
+    expect(r.stderr).toContain(SANDBOX_POLICY_ENV);
   });
 });
