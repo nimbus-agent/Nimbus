@@ -639,6 +639,64 @@ shows they hold the same credential; differing fingerprints localise which one i
 
 ---
 
+## F12 — a repo question silently excludes PRs, and `github_actions` swamps ranked search
+
+**Severity: medium.** Model-independent. Two separate defects that compound.
+
+### 12a — the repo path is issues-only
+
+`extractGithubRepoSlugs` (`run-ask.ts:329`) matches an `owner/repo` slug in the question and
+routes it to `githubIssueContextItemsForRepo`, whose SQL is hardcoded:
+
+```sql
+WHERE service = 'github' AND type = 'issue' AND (lower(external_id) LIKE ? OR lower(url) LIKE ?)
+```
+
+So a repo-scoped question can never see pull requests. Measured on `nimbus-agent/Nimbus`:
+
+| type | most recent in index |
+|---|---|
+| **PR** | **2026-08-21 10:42** — five merged that morning |
+| issue | 2026-08-13; three of the seven returned dated **2026-05-10** |
+
+`nimbus ask 'summarise recent activity in nimbus-agent/Nimbus'` answered with months-old docs
+issues and omitted every PR merged that morning. Nothing in the reply signals the type filter,
+so an incomplete answer reads as a complete one — the same honesty shape as F3.
+
+### 12b — `github_actions` volume swamps the generic ranked path
+
+Falling back to a quoted term does not reliably reach PRs either, because run items dominate
+the index by two orders of magnitude:
+
+| service | items |
+|---|---|
+| `github_actions` | 11,979 |
+| `github` | 214 |
+
+`nimbus ask 'In prose, summarise the recent "release" pull requests and what shipped.'`
+returned **workflow runs** ("run 32461836739 … was skipped"), not pull requests.
+
+A *distinctive* quoted term still works — `'what is the pull request about "clip source
+metadata"?'` correctly summarised PR #1288. So the failure is ranking under volume, not
+retrieval: a generic term matches thousands of near-identical run titles that crowd out the
+handful of real hits.
+
+### Suggested fix
+
+1. Widen the repo path beyond `type = 'issue'` — at minimum include `pr`, ordered by
+   `modified_at` across both, or disclose the filter in the reply.
+2. Weight or cap per-service representation in `buildLocalIndexedContext` so one high-volume
+   service cannot consume the whole `LOCAL_CONTEXT_ITEM_LIMIT` budget. A per-service cap is
+   the smaller change; relevance-weighting by service is the better one.
+3. Both are worth doing regardless of model — a frontier model receives the same crowded-out
+   context.
+
+### Workaround today
+
+Use the structured surface for PRs, which is unaffected: `nimbus query --service github --type pr`.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -667,6 +725,7 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F9 | `prove` headline vs scope | low-med | yes | `prove` |
 | F11 | One dead Google credential disables all 4 Google connectors | high | yes | gmail, drive, photos, meet |
 | F10 | Google refresh token coerced to `""`; OAuth path logs nothing | med-high | yes | every OAuth connector |
+| F12 | Repo questions exclude PRs; `github_actions` swamps ranked search | medium | yes | `ask` on any repo |
 | F7 | `people list` automated senders | low | yes | `people`, `expert` |
 | F8 | `min_reasoning_params` dead config | low | yes | `[llm]` config surface |
 
