@@ -72,9 +72,33 @@ smoke_argv=(--unshare-user --unshare-net --new-session
 if [ -d /lib64 ]; then
   smoke_argv+=(--ro-bind /lib64 /lib64)
 fi
+
+# Probe as the UNPRIVILEGED user, not as root.
+#
+# This script runs under `sudo bash` on CI, and root is exempt from the very gate
+# this probe exists to detect: `kernel.apparmor_restrict_unprivileged_userns`
+# restricts UNPRIVILEGED user-namespace creation, so root creates one whether or
+# not the `sysctl -w` above took effect. Both knob writes are `|| true`, so a
+# silent failure there is exactly the case the probe must catch — and a root-only
+# probe would pass through it and hand the false green straight to the test suite,
+# which then fails as the runner user with the diagnosis missing. That is the same
+# defect shape as a readiness check that asks a narrower question than production.
+#
+# `SUDO_USER` is set by sudo to the invoking account. Absent (already unprivileged,
+# or a genuine root shell with no sudo hop) there is no other principal to drop to,
+# so run in place and say so rather than inventing one.
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+  smoke_as="${SUDO_USER}"
+  smoke_cmd=(sudo -u "${SUDO_USER}" bwrap)
+else
+  smoke_as="$(id -un)"
+  smoke_cmd=(bwrap)
+fi
+
 smoke_err="$(mktemp)"
-if ! bwrap "${smoke_argv[@]}" /usr/bin/true 2> "${smoke_err}"; then
-  echo "install-sandbox-deps: bubblewrap is installed but cannot create a sandbox:" >&2
+if ! "${smoke_cmd[@]}" "${smoke_argv[@]}" /usr/bin/true 2> "${smoke_err}"; then
+  echo "install-sandbox-deps: bubblewrap is installed but cannot create a sandbox" >&2
+  echo "as user '${smoke_as}':" >&2
   cat "${smoke_err}" >&2
   echo "" >&2
   echo "Every sandboxed spawn (and sandbox-wrapper-spawn.test.ts) fails at bwrap" >&2
@@ -85,3 +109,4 @@ if ! bwrap "${smoke_argv[@]}" /usr/bin/true 2> "${smoke_err}"; then
   exit 1
 fi
 rm -f "${smoke_err}"
+echo "install-sandbox-deps: bwrap smoke test passed as user '${smoke_as}'."
