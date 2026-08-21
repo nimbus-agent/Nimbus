@@ -1,17 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { generateSbplProfile } from "../../../../src/platform/sandbox/darwin.ts";
 import {
   SANDBOX_CWD_ENV,
   SANDBOX_POLICY_ENV,
@@ -264,7 +257,7 @@ function darwinPermissiveProbe(run: WrapperRun): string {
       // Printed rather than acted on automatically: `trace` output is a superset (it records what
       // was touched, not what was required), so it is a candidate list for a human to narrow, in
       // the same spirit as `darwin.ts`'s "add exactly what it names, and nothing else".
-      r.status !== run.status ? traceNeededRules(run) : "",
+      r.status !== run.status ? reportedDenials(run) : "",
     ]
       .filter((l) => l !== "")
       .join("\n");
@@ -282,27 +275,73 @@ function darwinPermissiveProbe(run: WrapperRun): string {
  * whether the profile is at fault, this one asks what to put in it. Only worth running when the
  * first says yes.
  */
-function traceNeededRules(run: WrapperRun): string {
-  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-trace-"));
+/**
+ * Re-run the child under the REAL profile with `(deny default (with report))` substituted, then
+ * read the denial straight out of the unified log.
+ *
+ * This is the third mechanism tried and the first that can work. `(trace "<file>")` produced no
+ * output file at all on `macos-15` — sandbox-exec's trace mode is gone on modern macOS. The
+ * kernel-denial step in `ci.yml` reports nothing either, and the reason is the same one that makes
+ * this function necessary: a plain `(deny default)` logs NOTHING. Only `(with report)` emits a
+ * violation record, and that modifier has no business in a production profile — so it goes here,
+ * on a copy, for the length of one probe.
+ *
+ * The profile is regenerated from `generateSbplProfile` with the same inputs the wrapper used, so
+ * what is probed is what actually ran, not an approximation of it.
+ */
+function reportedDenials(run: WrapperRun): string {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-report-"));
   try {
-    const out = join(dir, "needed.sb");
-    const profilePath = join(dir, "trace.sb");
-    writeFileSync(profilePath, `(version 1)\n(trace "${out}")\n`);
-    const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
+    const real = generateSbplProfile({
+      cwd: run.cwd,
+      tmpdir: dir,
+      policy: run.policy,
+    });
+    const reporting = real.replace("(deny default)", "(deny default (with report))");
+    if (reporting === real)
+      return "report-probe: could not substitute (with report) — profile shape changed";
+    const profilePath = join(dir, "reporting.sb");
+    writeFileSync(profilePath, reporting);
+    const started = Date.now();
+    spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
       encoding: "utf8",
       cwd: run.cwd,
       env: process.env,
       timeout: 15_000,
     });
-    if (r.error !== undefined) return "trace-probe did not complete";
-    if (!existsSync(out)) return "trace-probe produced no output file";
-    const rules = readFileSync(out, "utf8").trim();
+    // Seconds, not minutes: the child just ran, and a narrow window keeps unrelated system
+    // chatter (the boot-time `auearlyboot` reports that swamped the 30-minute ci.yml window)
+    // out of the answer.
+    const elapsed = Math.max(2, Math.ceil((Date.now() - started) / 1000) + 2);
+    const logs = spawnSync(
+      "/usr/bin/log",
+      [
+        "show",
+        "--last",
+        `${String(elapsed)}s`,
+        "--style",
+        "compact",
+        "--info",
+        "--debug",
+        "--predicate",
+        'eventMessage CONTAINS "deny"',
+      ],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    const denials = (logs.stdout ?? "")
+      .split("\n")
+      .filter((l) => /deny\(?\d*\)?/.test(l) && !l.includes("auearlyboot"))
+      .slice(0, 25);
     return [
-      "trace-probe — rules SBPL recorded for this child (a SUPERSET; narrow before adopting):",
-      rules.replace(/^/gm, "  ").slice(0, 4000),
+      "report-probe — the SAME profile with `(with report)`, denials from the unified log:",
+      denials.length > 0
+        ? denials.map((l) => `  ${l.slice(0, 220)}`).join("\n")
+        : "  (none captured — the child may abort before the kernel records anything)",
+      "generated profile under test:",
+      real.replace(/^/gm, "  "),
     ].join("\n");
   } catch (e) {
-    return `trace-probe failed: ${e instanceof Error ? e.message : String(e)}`;
+    return `report-probe failed: ${e instanceof Error ? e.message : String(e)}`;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
