@@ -11,9 +11,20 @@
 # Usage:
 #   bun run verify:docker                     # fast-tier gates (default)
 #   bun run verify:docker --full               # fast + full tier (build, test:ci, coverage-floor)
+#   bun run verify:docker --changed             # ONLY the tests your branch touched, on Linux
 #   bun run verify:docker --rebuild             # force-rebuild the cached image first (stale bun
 #                                                # version, changed apt package set)
 #   bun run verify:docker --full --rebuild      # flags combine in any order
+#
+# --changed exists because "Unit tests (with coverage) — Linux" was the single largest real PR
+# failure category in the 2026-08-21 sample (6 of 15 identified step failures) and does not
+# reproduce on a Windows or macOS dev box at all — the only way to see one was to push and wait
+# ~12 minutes. It runs the changed test files, and the colocated `.test.ts` siblings of changed
+# source files, in the CI image.
+#
+# IT IS NOT A SUBSTITUTE FOR --full. A narrow run cannot reproduce `mock.module` contamination,
+# which is a CROSS-FILE effect that only appears in the combined `bun test packages/cli/src` run.
+# A green --changed is evidence about your files, never about the suite.
 set -euo pipefail
 
 # Git Bash / MSYS on Windows rewrites container-internal paths (/out, /src, /root/...) and
@@ -46,9 +57,10 @@ REBUILD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full) TIER="full" ;;
+    --changed) TIER="changed" ;;
     --rebuild) REBUILD=1 ;;
     *)
-      echo "verify-in-docker.sh: unknown flag '$1' (expected --full and/or --rebuild)" >&2
+      echo "verify-in-docker.sh: unknown flag '$1' (expected --full, --changed and/or --rebuild)" >&2
       exit 2
       ;;
   esac
@@ -97,7 +109,25 @@ RUN mkdir -p /src /home/bun/.bun/install/cache && chown -R bun:bun /src /home/bu
 DOCKERFILE
 fi
 
-echo "--- docker: running ${TIER}-tier manifest gates (${IMAGE}) ---"
+# Derived on the HOST: the tar below excludes .git, so nothing inside the container can resolve a
+# merge base. An empty target list is a hard stop, not an empty `bun test` — bare `bun test` runs
+# the ENTIRE suite, which is the opposite of what --changed was asked for and would look like a
+# very slow success.
+CHANGED_TARGETS=""
+if [[ "${TIER}" == "changed" ]]; then
+  CHANGED_TARGETS="$(bun scripts/ci/changed-test-targets.ts | tr '\n' ' ')"
+  if [[ -z "${CHANGED_TARGETS// /}" ]]; then
+    echo "verify:docker --changed: no changed test files, and no changed source file has a" >&2
+    echo "  colocated .test.ts sibling. Nothing to run — use --full for the whole suite." >&2
+    exit 0
+  fi
+  echo "--- docker: running CHANGED tests on Linux (${IMAGE}) ---"
+  echo "${CHANGED_TARGETS}" | tr ' ' '\n' | sed '/^$/d;s/^/    /'
+  echo "    NOTE: a narrow run cannot reproduce cross-file mock.module contamination."
+  echo "          A green result here is evidence about these files, not about the suite."
+else
+  echo "--- docker: running ${TIER}-tier manifest gates (${IMAGE}) ---"
+fi
 # Only .claude/worktrees/ is gitignored (project-local nested checkouts); everything else under
 # .claude/ (commands/, agents/, hooks/) is tracked and audit:doc-refs resolves links into it —
 # excluding the whole .claude/ directory (as reseed-docker.sh does, which never runs that audit)
@@ -105,7 +135,7 @@ echo "--- docker: running ${TIER}-tier manifest gates (${IMAGE}) ---"
 tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
     --exclude=.claude/worktrees -c -C "${REPO_ROOT}" . \
   | docker run --rm -i --name "${CONTAINER_NAME}" \
-      -e CI=true -e TIER="${TIER}" -e HOME=/home/bun \
+      -e CI=true -e TIER="${TIER}" -e CHANGED_TARGETS="${CHANGED_TARGETS}" -e HOME=/home/bun \
       -u bun \
       -v "${CACHE_VOL}:/home/bun/.bun/install/cache" \
       -w /src \
@@ -122,5 +152,12 @@ tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
         # subprocess hang until their 60s timeout — CI-faithful failures caused by a CI-unfaithful
         # invocation. Wrap the whole gate run in ONE D-Bus session (matching the per-unit-of-work
         # granularity CI wraps at) rather than re-opening one per gate.
-        bash scripts/ci/run-with-optional-dbus.sh bun scripts/ci/run-manifest-gates.ts "$TIER"
+        if [ "$TIER" = "changed" ]; then
+          # Unquoted on purpose: CHANGED_TARGETS is a space-separated path list that must word-split
+          # into separate arguments. The paths come from git, not from user input.
+          # shellcheck disable=SC2086
+          bash scripts/ci/run-with-optional-dbus.sh bun test $CHANGED_TARGETS --timeout 60000
+        else
+          bash scripts/ci/run-with-optional-dbus.sh bun scripts/ci/run-manifest-gates.ts "$TIER"
+        fi
       '

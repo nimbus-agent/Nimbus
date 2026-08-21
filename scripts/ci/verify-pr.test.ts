@@ -1,6 +1,6 @@
 // scripts/ci/verify-pr.test.ts
 import { describe, expect, test } from "bun:test";
-import { evaluatePrState, parseGhOutput } from "./verify-pr.ts";
+import { evaluatePrState, parseGhOutput, REQUIRED_GATE } from "./verify-pr.ts";
 
 describe("evaluatePrState", () => {
   test("CONFLICTING is reported as suppressed CI, not as passing checks", () => {
@@ -28,9 +28,37 @@ describe("evaluatePrState", () => {
     expect(v.reasons.join(" ")).toMatch(/pending/i);
   });
 
-  test("all pass + mergeable is green", () => {
-    const v = evaluatePrState({ mergeable: "MERGEABLE", checks: [{ name: "a", state: "pass" }] });
+  test("all pass + mergeable + the required gate reported is green", () => {
+    const v = evaluatePrState({
+      mergeable: "MERGEABLE",
+      checks: [
+        { name: "a", state: "pass" },
+        { name: REQUIRED_GATE, state: "pass" },
+      ],
+    });
     expect(v.green).toBe(true);
+  });
+
+  test("green checks are NOT green while the merge-gating check is absent (#1298)", () => {
+    // The exact shape at #1298's merge: some legs reported green, the aggregator had not been
+    // created yet, so a loop over reported checks sees nothing wrong.
+    const v = evaluatePrState({
+      mergeable: "MERGEABLE",
+      checks: [
+        { name: "PR quality — Cross-platform (cli, macos-15)", state: "pass" },
+        { name: "PR quality — Cross-platform (cli, windows-2025)", state: "pass" },
+      ],
+    });
+    expect(v.green).toBe(false);
+    expect(v.reasons.join(" ")).toMatch(/has not reported at all/);
+  });
+
+  test("the absent-gate reason names the gate, so the message is actionable", () => {
+    const v = evaluatePrState({
+      mergeable: "MERGEABLE",
+      checks: [{ name: "something-else", state: "pass" }],
+    });
+    expect(v.reasons.some((r) => r.includes(REQUIRED_GATE))).toBe(true);
   });
 
   test("a skipped check is not green — skipped is not passed", () => {

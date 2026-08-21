@@ -80,6 +80,61 @@ Both denominators are non-exempt files only. Neither is enforced by the `test:co
 
 ---
 
+## Test shapes that go red only in CI
+
+The CI runner is **~13–18× slower than a dev machine** at temp-dir SQLite work and shares a host
+with other tenants. Two shapes pass locally on every run and fail in CI on some runs. Both have a
+correct version — the fix is never to delete the test.
+
+### Wall-clock assertions: guard the numerator, not just the denominator
+
+Timing tests are the only thing that catches quadratic backtracking (a correctness test never
+will), so the pattern stays. But an assertion like this is not measuring what it claims:
+
+```ts
+// Flags a ReDoS regression — and also a GC pause, a noisy neighbour, or a cold JIT.
+expect(last / Math.max(first, 0.5)).toBeLessThan(16);
+```
+
+Flooring `first` protects against a *fast* baseline manufacturing a huge ratio. Nothing protects
+against a slow `last`: one 8 ms scheduling stall on an operation whose true cost is 0.5 ms blows a
+16× ceiling with the algorithm completely unchanged. That is a real macOS-leg failure
+(`decisions/cue-mining.test.ts`, 2026-08-21).
+
+- **Take the minimum of N repeats per size**, not a single sample. A stall inflates a measurement;
+  it never deflates one, so `min` is the noise-robust estimator here.
+- Floor **both** ends, and prefer a ceiling wide enough that only a complexity-class change trips
+  it — the signal you want is 100×, not 16×.
+- Assert the *shape* over ≥3 doublings rather than an endpoint ratio, so one bad sample can't
+  carry the verdict alone.
+
+### Sandboxed child processes get no ambient OS facilities
+
+Sandbox grants are **leaf-only and deliberate** — do not widen a policy to make a test pass. That
+means a child spawned through the wrapper cannot reach anything the policy did not name, including
+things that look like language built-ins:
+
+```ts
+// Windows leg: exits 0, writes nothing, and stderr says
+// "ConvertTo-Json is not recognized" — the cmdlet lives in Microsoft.PowerShell.Utility,
+// which PowerShell auto-loads from $PSHOME\Modules, a path the policy does not grant.
+IS_WIN ? "$args | ConvertTo-Json -Compress" : "process.stdout.write(JSON.stringify(...))"
+```
+
+The symptom is a **status 0 with empty stdout**, then a downstream `JSON.parse` failing with
+`Unexpected EOF` — the parse error names the wrong culprit entirely. Write sandboxed child programs
+against only what the policy grants, and assert on the child's `stderr` before parsing its `stdout`
+so the failure names itself.
+
+### A green cross-platform leg may have retried
+
+Both retry wrappers (`ci.yml`, `_test-suite.yml`) re-run the whole suite once and emit a
+`::warning title=Retry masked a failure::` annotation naming the failing test. A job that is green
+but mysteriously slow probably paid for two full suite runs. **Read the annotations on a green
+job**, not just the conclusion.
+
+---
+
 ## Patterns by Subsystem
 
 ### HITL Executor (unit)
@@ -292,8 +347,15 @@ NIMBUS_RUN_LOCAL_BENCH=1 bun test
 
 | Trigger | Jobs |
 |---|---|
-| PR opened/updated | `pr-quality` on Ubuntu only: lint (Biome), typecheck, unit + integration tests, `bun audit` |
+| PR opened/updated | `pr-quality` on Ubuntu: lint (Biome), typecheck, unit + integration tests, `bun audit` — **plus** `pr-quality-cross-platform`: `bun test packages/<pkg>/src` for `gateway` and `cli` on `macos-15` + `windows-2025`, narrowed to the packages the diff can affect, with the platform-sensitive sandbox integration tests on the gateway legs |
 | Push to `main` / `develop` | Full 3-platform matrix: `windows-2025`, `macos-15`, `ubuntu-24.04` |
 | Push to `main` + release tags | E2E Desktop (Playwright + Tauri WebDriver) on all three platforms |
+
+The PR cross-platform legs carry **no e2e, no coverage, no packaging**. A regression confined to
+`test/e2e/` is still a push-matrix discovery — i.e. found after merge.
+
+**Exactly one check gates the merge:** `PR quality — required gates`, an `if: always()` aggregator
+over every other PR job. See the `nimbus-preflight` skill § _Merging_ — the ruleset's org-admin
+bypass is silent, so merging before that check reports is the single largest source of red `main`.
 
 Security scans run on every PR: `bun audit`, `trivy`, CodeQL. HIGH/CRITICAL findings block the merge.

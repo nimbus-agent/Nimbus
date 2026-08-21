@@ -9,7 +9,64 @@
 branch**, so a red CI experiment never blocks a docs merge.
 
 **Scope note:** this is a measurement document with proposals attached, not an implementation
-plan. Nothing here has been applied.
+plan.
+
+---
+
+> ## ⚠ Re-measured 2026-08-21 (later the same day): §1's headline is now INVERTED
+>
+> **P1 and P2 shipped in #1291 and worked.** Re-measured on run
+> [`32509283449`](https://github.com/nimbus-agent/Nimbus/actions/runs/32509283449), a green PR run:
+>
+> | Job | Was (run 32452626344) | Now | Δ |
+> |---|---:|---:|---|
+> | Cross-platform (gateway, **windows-2025**) | 30m35s | **8m42s** | −22m |
+> | TS/Bun → **Unit + Coverage** (ubuntu) | 12m21s | **11m42s** | −39s |
+>
+> **Windows is no longer the critical path — `Unit + Coverage` is.** §1's "the obvious suspect is
+> the wrong one" was true when written and is now false. Do not start from it.
+>
+> Whole-run distribution over the last 152 PR runs of `ci.yml`: **p50 14.1 min, p90 18.4 min**
+> (n=66 successful).
+>
+> **This re-ranks the remaining proposals.** P4, P5 and P6 all target `Unit + Coverage` — they
+> were ranked 3rd, 4th and 6th *because* Windows dominated. They are now the whole game, and P3
+> (the Windows `node_modules` cache probe, ~3m20s of a job that is no longer the critical path)
+> drops to last. Current internal breakdown of the 11m42s:
+>
+> ```text
+> Unit tests (with coverage) — Linux    7.4m   ← P6 lives inside this
+> SonarQube Cloud analysis              1.9m   ← P4: 13 jobs `needs:` this job and wait it out
+> UI unit coverage                      1.0m
+> setup + libsecret/D-Bus + upload      1.4m
+> ```
+>
+> **P5's premise re-verified independently on Bun 1.3.14:** `bun test <file> --coverage
+> --coverage-threshold-lines=99.9` exits **0**, and `bunfig.toml` still sets `[test] coverage =
+> false`. The 13 `Coverage — <scope>` jobs enforce nothing. Note the cost P5 did not price:
+> `scripts/structure-audit/check-coverage-gate-pal.ts` has **six rules** asserting the structure
+> of `coverage-gates-pal` / `coverage-gates-linux` and 24 matrix entries carrying `pal:` fields,
+> so deleting those jobs means rewriting that audit in the same PR. P5 is a refactor, not a trim.
+>
+> **Separately — the reliability half, which this document does not address at all.** Over the
+> same 152 runs: 18 failures, 66 successes, **68 cancelled** (45% of runs are superseded by a
+> newer push). Failing-step frequency across those 18 failures:
+>
+> | Failing step | n | Locally catchable? |
+> |---|---:|---|
+> | Unit tests (with coverage) — Linux | 6 | only via `verify:docker` |
+> | Coverage floor — per-file 85/80 | 3 | via `audit:coverage-floor` (Docker) |
+> | Audit root overrides drift | 3 | **yes — `preflight:fast`** |
+> | Setup Bun and install dependencies (lockfile) | 2 | **yes — `preflight:fast`** |
+> | Audit release-please manifest drift | 1 | **yes — `preflight:fast`** |
+>
+> **6 of 15 identified step failures (40%) are gates `preflight:fast` runs locally in 2–3 min.**
+> The repo ships a pre-push hook that runs exactly that (`.githooks/pre-push`) and it was **not
+> installed** on the maintainer's machine (`core.hooksPath` unset) — installed 2026-08-21.
+>
+> **And the check count itself:** PR #1301 reports **56 checks**, 35 from `ci.yml`. Exactly one
+> (`PR quality — required gates`) plus the 6 Security, 2 CodeQL and `cla` contexts are required.
+> ~46 of 56 are non-gating, and 13 of those are the verified no-ops above.
 
 ---
 
