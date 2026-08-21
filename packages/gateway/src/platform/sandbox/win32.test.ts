@@ -7,13 +7,14 @@ import type { SandboxPolicy } from "./sandbox-policy.ts";
 import { capabilitiesForPolicy, createWin32SandboxRunner, profileNameFor } from "./win32.ts";
 
 // NO `describe.skipIf(process.platform !== "win32")` here — deliberately.
-// `win32.ts` contains no OS-dependent code and no FFI import: the AppContainer
-// profile name + capability list are pure string/array derivation, and the
-// runner returned by `createWin32SandboxRunner()` throws / returns constants
-// without touching Windows. Gating this file on the host platform made it read
-// 0% on the CI-Linux-authoritative coverage run, which is what put it on the
-// coverage-floor exclusion list. Re-add a skip ONLY for a case that genuinely
-// calls into Windows (i.e. when the CreateProcessAsUserW FFI binding lands).
+// `win32.ts` calls only cross-platform Node APIs (`existsSync`, `spawnSync`) to probe for the
+// helper binary, never a Windows-only FFI: on a non-Windows CI runner the probe simply finds no
+// `nimbus-sandbox-helper.exe` and takes the same "unavailable" branch a real Windows box takes
+// when the helper is missing. The AppContainer profile name + capability list are pure
+// string/array derivation. Gating this file on the host platform made it read 0% on the
+// CI-Linux-authoritative coverage run, which is what put it on the coverage-floor exclusion
+// list. Re-add a skip ONLY for a case that requires the helper to actually be present and
+// runnable (the `helper.available === true` branch), which no CI runner can exercise.
 
 // Real, unique temp root for the fake spawn cwd (S5443). `spawn` throws before
 // touching the filesystem — this path is never written to. It is still removed in
@@ -59,24 +60,37 @@ describe("createWin32SandboxRunner", () => {
     expect(createWin32SandboxRunner().platform).toBe("win32");
   });
 
-  it("fails closed: spawn throws instead of running the extension unsandboxed", () => {
-    const runner = createWin32SandboxRunner();
-    expect(() =>
-      runner.spawn("bun", ["x.js"], {
-        policy: policy(),
-        env: {},
-        cwd: join(TMP_ROOT, "ext-cwd"),
-      }),
-    ).toThrow(/CreateProcessAsUserW FFI binding lands/);
+  it("still fails closed when the helper is absent — never spawns unconfined", () => {
+    const prev = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+    process.env["NIMBUS_SANDBOX_HELPER_PATH"] = join(TMP_ROOT, "definitely-not-here.exe");
+    try {
+      const runner = createWin32SandboxRunner();
+      expect(runner.isFullyActive()).toBe(false);
+      expect(runner.degradedReason()).toContain("not found");
+      expect(() =>
+        runner.spawn("bun", ["x.js"], {
+          policy: policy(),
+          env: {},
+          cwd: join(TMP_ROOT, "ext-cwd"),
+        }),
+      ).toThrow(/refusing to spawn unsandboxed/);
+    } finally {
+      if (prev === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+      else process.env["NIMBUS_SANDBOX_HELPER_PATH"] = prev;
+    }
   });
 
-  it("reports itself as not fully active (I15 degradation must stay visible)", () => {
+  it("reports itself as not fully active when the default helper path has nothing at it", () => {
+    // No NIMBUS_SANDBOX_HELPER_PATH override here: the default is derived from
+    // process.execPath (the bun binary running this test), which never has
+    // nimbus-sandbox-helper.exe next to it, so this exercises the same "probe found nothing"
+    // path as CI without needing the override.
     expect(createWin32SandboxRunner().isFullyActive()).toBe(false);
   });
 
   it("explains the degradation instead of returning null", () => {
     const reason = createWin32SandboxRunner().degradedReason();
     expect(reason).not.toBeNull();
-    expect(reason).toContain("per-host network filtering is degraded");
+    expect(reason).toContain("not found");
   });
 });
