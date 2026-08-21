@@ -189,6 +189,49 @@ function isAnomalous(run: WrapperRun): boolean {
  * error — replaces the failing assertion's line with the wrapper's (measured, not assumed).
  * Printing from here keeps every frame pointing at the assertion that failed.
  */
+/**
+ * On darwin, re-run the identical spawn with the sandbox effectively OFF and report whether it
+ * then succeeds.
+ *
+ * This is the one question the existing diagnostics could not answer. A `status: 134` with EMPTY
+ * stderr says the child aborted before it could say anything, and that has two very different
+ * causes: the SBPL profile denied something the runtime needs at startup, or the runtime cannot
+ * run on this machine at all. The kernel-denial step in `ci.yml` was supposed to distinguish them
+ * and does not — on the failing run it printed only boot-time `(Sandbox)` kext lines, no denial.
+ *
+ * The comment in `darwin.ts` is explicit that the previous attempt at this failed by GUESSING at
+ * grants (`sysctl-read`, `/dev/urandom`, `/dev/null`), and that the fix must add exactly what a
+ * denial names and nothing else. This narrows the search without widening the real profile: the
+ * permissive profile is written to a throwaway file, used once for a diagnostic, and never
+ * reaches production code.
+ */
+function darwinPermissiveProbe(run: WrapperRun): string {
+  if (process.platform !== "darwin") return "";
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-probe-"));
+  try {
+    const profilePath = join(dir, "permissive.sb");
+    writeFileSync(profilePath, "(version 1)\n(allow default)\n");
+    const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
+      encoding: "utf8",
+      cwd: run.cwd,
+      env: process.env,
+    });
+    return [
+      "permissive-probe (same argv, `(allow default)` profile):",
+      `  status : ${String(r.status)}`,
+      `  stdout : ${JSON.stringify(r.stdout ?? "")}`,
+      `  stderr : ${JSON.stringify((r.stderr ?? "").slice(0, 400))}`,
+      r.status === 0
+        ? "  => the runtime is FINE here; the real profile is denying something it needs."
+        : "  => it fails unsandboxed too; this is NOT an SBPL grant problem.",
+    ].join("\n");
+  } catch (e) {
+    return `permissive-probe failed to run: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function reportLauncherError(run: WrapperRun): void {
   if (!isAnomalous(run)) return;
   console.error(
@@ -202,9 +245,13 @@ function reportLauncherError(run: WrapperRun): void {
       `policy   : ${JSON.stringify(run.policy.permissions)}`,
       `argv     : ${JSON.stringify(run.argv)}`,
       `status   : ${String(run.status)}`,
+      // 134 is SIGABRT, 139 SIGSEGV, 137 SIGKILL. Naming it saves the next reader the arithmetic
+      // and makes "the child aborted" legible as something other than an ordinary exit code.
+      `signal   : ${run.status !== null && run.status > 128 ? `SIG(${String(run.status - 128)})` : "none"}`,
       `stdout   : ${JSON.stringify(run.stdout)}`,
       "stderr   :",
       run.stderr.replace(/^/gm, "  ").trimEnd(),
+      darwinPermissiveProbe(run),
       "----------------------------------------------------------",
     ].join("\n"),
   );

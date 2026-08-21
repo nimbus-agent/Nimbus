@@ -445,14 +445,22 @@ jobs:
       # the Windows one was legible immediately: on Windows the launcher's own message is on
       # stderr, on macOS it is nowhere the test can see. This reads it from the one place it
       # exists. `|| true` so a log-query failure cannot mask the real test failure above.
+      # The predicate below was `senderImagePath CONTAINS "Sandbox" OR eventMessage CONTAINS
+      # "deny"` over `--last 5m`, and on the run that needed it, it printed only boot-time
+      # `(Sandbox)` kext chatter and not one denial — so `darwin.ts`'s instruction to "add exactly
+      # what that log names" had nothing to read. Two changes: `--last 30m` (the suite retries, so
+      # the interesting spawn can be well outside a 5-minute window by the time this runs), and
+      # `--info --debug`, without which sandbox denial records are not emitted by `log show` at
+      # all. The subsystem predicate is the one that actually matches a denial line.
       - name: macOS — sandbox denials from the kernel log (on failure only)
         if: failure() && runner.os == 'macOS' && matrix.pkg == 'gateway'
         shell: bash
         run: |
-          echo "Sandbox denials logged in the last 5 minutes:"
-          log show --last 5m --style compact \
-            --predicate 'senderImagePath CONTAINS "Sandbox" OR eventMessage CONTAINS "deny"' \
-            2>/dev/null | grep -iE "deny|sandbox" | head -60 || true
+          echo "Sandbox denials logged in the last 30 minutes:"
+          log show --last 30m --style compact --info --debug \
+            --predicate 'subsystem == "com.apple.sandbox" OR senderImagePath CONTAINS "Sandbox" OR eventMessage CONTAINS "deny("' \
+            2>/dev/null | grep -iE "deny\(|Sandbox:" | head -60 || true
+          echo "(empty above means the denial was not captured — see the permissive-probe line in the test output instead)"
 
   # Code duplication scan — runs in parallel with the above two jobs.
   # Scans only packages/ for code duplication; docs-only PRs can't introduce
