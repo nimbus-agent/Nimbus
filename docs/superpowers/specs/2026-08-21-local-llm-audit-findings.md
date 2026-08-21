@@ -1174,6 +1174,76 @@ machine while `vault.set` timed out.
 
 ---
 
+## F17 — interactive OAuth runs on the default 30 s IPC timeout
+
+**Severity: high.** Model-independent.
+
+### Symptom
+
+```
+$ nimbus connector auth onedrive --port 8765
+IPC request timed out after 30000ms: connector.auth
+```
+
+The browser had opened and the user was still on Microsoft's sign-in page when the CLI gave up.
+
+### Root cause
+
+`commands/connector.ts:908-915`:
+
+```ts
+const res = await withIpc((c) =>
+  c.call<{ ok: boolean; serviceId: string; scopesGranted: string[]; verified?: ... }>(
+    "connector.auth", params),
+);
+```
+
+No `requestTimeoutMs` — so the call inherits the client default of 30 000 ms. `withIpc` accepts
+the parameter (`connector.ts:84-92`) and forwards it to `withGatewayIpc`; the auth path just
+never supplies one.
+
+Every other IPC call is a local request that returns in milliseconds. `connector.auth` is the
+one method whose duration is bounded by **a human using a web browser** — locating the window,
+signing in, MFA, reading and granting a consent screen. 30 s is routinely too short.
+
+### Why this is worse than a slow command
+
+The gateway owns the PKCE callback server and continues the flow after the client gives up.
+So a completed sign-in AFTER the timeout can still store a credential while the user has been
+told the command timed out. The CLI's report and the vault's state can disagree, with no way
+for the user to tell which happened short of `nimbus vault list`.
+
+This compounds F11's diagnostic difficulty: a user who sees `timed out`, retries, and
+half-completes several flows has no way to know which attempt produced the stored token.
+
+### Suggested fix
+
+1. Pass an explicit, generous `requestTimeoutMs` for `connector.auth` — the flow is bounded by
+   the gateway's own PKCE server lifetime, which should be the real deadline.
+2. Better: make the OAuth flow a long-running job with progress notifications (the pattern
+   `index.reembedProgress` already uses), so the CLI can wait indefinitely, print "waiting for
+   browser sign-in…", and be cancellable.
+3. Until then the timeout message should say the flow may still complete in the background and
+   name `nimbus vault list` / `nimbus connector status <svc>` as the way to check.
+
+### Adjacent, observed the same session
+
+The app registration itself must be created with the right audience, or the browser fails
+before Nimbus is involved at all:
+
+```
+unauthorized_client: The client does not exist or is not enabled for consumers.
+```
+
+`az ad app create` defaults to `signInAudience: "AzureADMyOrg"` (single tenant), while Nimbus
+authorizes against `https://login.microsoftonline.com/common/`, which admits personal Microsoft
+accounts. A personal account against a `AzureADMyOrg` app is rejected by Microsoft. The app
+needs `--sign-in-audience AzureADandPersonalMicrosoftAccount`. Not a Nimbus defect, but
+`nimbus connector auth onedrive --help` documents the registration steps and omits this, which
+is where a user will get stuck. Worth adding to that help text.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -1223,6 +1293,7 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F10 | Google refresh token coerced to `""`; OAuth path logs nothing | med-high | yes | every OAuth connector |
 | **F15** | **Embedding worker unbundled — semantic search dead in every release** | **critical** | yes | all hybrid retrieval |
 | **F16** | **`vault set`/`vault delete` always time out — consent handler never registered** | **critical** | yes | every secret write via CLI |
+| F17 | Interactive OAuth on a 30 s IPC timeout | high | yes | every browser-based connector auth |
 | F14 | `ask` truncates every enumeration at 8, undisclosed | high | yes | every `ask` list/count question |
 | F13 | `sync succeeded` recorded with no credentials (F6's mechanism) | high | yes | every connector's health |
 | F12 | Repo questions exclude PRs; `github_actions` swamps ranked search | medium | yes | `ask` on any repo |
