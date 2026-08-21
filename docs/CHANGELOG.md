@@ -25,8 +25,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `lang` (20) or `leadImage` (2048) is discarded, since half a URL is a broken link rather than a
   shorter one and a consumer cannot tell it was cut. And the validator **constructs** a new object
   from the five known fields rather than passing the caller's through — a whitelist, not a
-  blocklist, because a single unrecognised sibling key holding 60 KB would push the item past the
-  store's ceiling and let a page deny ingestion of its own clip. `publishedAt` is normalised to
+  blocklist, because a single unrecognised sibling key, large enough to cross the store's 64 KB
+  ceiling, would let a page deny ingestion of its own clip. `publishedAt` is normalised to
   epoch ms by the client and checked here only for "an integer inside `Date`'s range"; pre-1970
   and far-future values are valid and kept, because archived essays and embargoed posts carry them
   honestly and nothing sorts on this field. Clip identity, `modified_at` and `author_id` are

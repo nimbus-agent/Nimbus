@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Whitelist, never blocklist.** `validateClipInput` builds a **new** `ClipSource` object literal from the five known fields. It must never return the caller's `source`, spread it, or `delete` keys from it. Every per-field cap is worthless if an unrecognised sibling key rides along: `upsertIndexedItem` serialises the whole metadata object and **throws** above 64 KB (`packages/gateway/src/index/item-store.ts:85`), so a page that put 60 KB under `source.junk` could deny ingestion of its own clip.
+- **Whitelist, never blocklist.** `validateClipInput` builds a **new** `ClipSource` object literal from the five known fields. It must never return the caller's `source`, spread it, or `delete` keys from it. Every per-field cap is worthless if an unrecognised sibling key rides along: `upsertIndexedItem` serialises the whole metadata object and **throws** above 64 KB (`packages/gateway/src/index/item-store.ts:85`), so a page that put a large enough blob under `source.junk` — one that crosses that 64 KB ceiling — could deny ingestion of its own clip.
 - **A malformed member is dropped, not thrown.** `asString` throws because a clip without a title is not a clip; a clip with a malformed byline is still a perfectly good clip. A `source` that is not a JSON object (a string, `null`, an array) is still a `ClipValidationError` with `field: "source"` — that is caller error, not page noise.
 - **Prose truncates; structured values drop.** `author` 200 chars → truncated. `siteName` 200 chars → truncated. `lang` 20 chars → **dropped**. `leadImage` 2048 chars → **dropped**. Half a URL is a broken link, not a shorter one, and a consumer cannot tell it was cut.
 - **The 20 for `lang` is a product limit, not a fact about the standard.** BCP 47 sets no maximum tag length; `en-x-abcdefgh-abcdefgh` is a valid 22-character tag and is dropped **deliberately**.
@@ -106,7 +106,7 @@ describe("clip source metadata — validateClipInput", () => {
   test("an unknown member is discarded — the whitelist, not a blocklist", () => {
     const out = validateClipInput({
       ...good,
-      source: { author: "A", junk: "x".repeat(60_000) },
+      source: { author: "A", junk: "x".repeat(70_000) },
     });
     expect(out.source).toEqual({ author: "A" });
     expect(Object.keys(out.source ?? {})).toEqual(["author"]);
@@ -285,8 +285,9 @@ function epochMs(v: unknown): number | undefined {
  * Builds a NEW `ClipSource` from the five known fields. It must never return the
  * caller's object, spread it, or delete keys from it: `ingestClip` stores what it
  * is given without further filtering, `upsertIndexedItem` serialises the whole
- * metadata object, and it throws above 64 KB. A page that put 60 KB under
- * `source.junk` would make its own clip un-ingestable — precisely the denial the
+ * metadata object, and it throws above 64 KB. A page that put a large enough
+ * blob under `source.junk` — one that crosses that 64 KB ceiling — would make
+ * its own clip un-ingestable — precisely the denial the
  * per-field caps exist to prevent. A whitelist, not a blocklist: the shape
  * TypeScript describes and the shape that reaches storage are the same object,
  * built here.
@@ -431,13 +432,15 @@ describe("clip source metadata — storage", () => {
     expect(metaOf(res.id)["source"]).toEqual({ author: "Ada Lovelace", siteName: "Example" });
   });
 
-  // Without the whitelist this item's metadata would exceed the store's 64 KB
-  // ceiling and `upsertIndexedItem` would THROW — a page could deny ingestion of
-  // its own clip. This test is the proof that the cap is load-bearing.
-  test("a 60 KB unknown member cannot deny ingestion of its own clip", () => {
+  // The store's ceiling is 64 KB (65,536 bytes, `RAW_META_MAX_BYTES`); a 70 KB
+  // `junk` sibling genuinely crosses it. Without the whitelist this item's
+  // metadata would exceed that ceiling and `upsertIndexedItem` would THROW — a
+  // page could deny ingestion of its own clip. This test is the proof that the
+  // cap is load-bearing.
+  test("a 70 KB unknown member cannot deny ingestion of its own clip", () => {
     const input = validateClipInput({
       ...base,
-      source: { author: "A", junk: "x".repeat(60_000) },
+      source: { author: "A", junk: "x".repeat(70_000) },
     });
     const res = ingestClip(db, input);
     expect(res.status).toBe("created");
@@ -655,8 +658,8 @@ In `docs/CHANGELOG.md`, insert this as the **first** bullet under the `## Post-P
   `lang` (20) or `leadImage` (2048) is discarded, since half a URL is a broken link rather than a
   shorter one and a consumer cannot tell it was cut. And the validator **constructs** a new object
   from the five known fields rather than passing the caller's through — a whitelist, not a
-  blocklist, because a single unrecognised sibling key holding 60 KB would push the item past the
-  store's ceiling and let a page deny ingestion of its own clip. `publishedAt` is normalised to
+  blocklist, because a single unrecognised sibling key, large enough to cross the store's 64 KB
+  ceiling, would let a page deny ingestion of its own clip. `publishedAt` is normalised to
   epoch ms by the client and checked here only for "an integer inside `Date`'s range"; pre-1970
   and far-future values are valid and kept, because archived essays and embargoed posts carry them
   honestly and nothing sorts on this field. Clip identity, `modified_at` and `author_id` are

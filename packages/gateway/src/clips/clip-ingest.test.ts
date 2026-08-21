@@ -252,7 +252,7 @@ describe("clip source metadata — validateClipInput", () => {
   test("an unknown member is discarded — the whitelist, not a blocklist", () => {
     const out = validateClipInput({
       ...good,
-      source: { author: "A", junk: "x".repeat(60_000) },
+      source: { author: "A", junk: "x".repeat(70_000) },
     });
     expect(out.source).toEqual({ author: "A" });
     expect(Object.keys(out.source ?? {})).toEqual(["author"]);
@@ -367,13 +367,15 @@ describe("clip source metadata — storage", () => {
     expect(metaOf(res.id)["source"]).toEqual({ author: "Ada Lovelace", siteName: "Example" });
   });
 
-  // Without the whitelist this item's metadata would exceed the store's 64 KB
-  // ceiling and `upsertIndexedItem` would THROW — a page could deny ingestion of
-  // its own clip. This test is the proof that the cap is load-bearing.
-  test("a 60 KB unknown member cannot deny ingestion of its own clip", () => {
+  // The store's ceiling is 64 KB (65,536 bytes, `RAW_META_MAX_BYTES`); a 70 KB
+  // `junk` sibling genuinely crosses it. Without the whitelist this item's
+  // metadata would exceed that ceiling and `upsertIndexedItem` would THROW — a
+  // page could deny ingestion of its own clip. This test is the proof that the
+  // cap is load-bearing.
+  test("a 70 KB unknown member cannot deny ingestion of its own clip", () => {
     const input = validateClipInput({
       ...base,
-      source: { author: "A", junk: "x".repeat(60_000) },
+      source: { author: "A", junk: "x".repeat(70_000) },
     });
     const res = ingestClip(db, input);
     expect(res.status).toBe("created");

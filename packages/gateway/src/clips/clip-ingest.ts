@@ -21,7 +21,16 @@ export interface ClipSource {
   readonly publishedAt?: number; // epoch ms, normalised by the client
   readonly siteName?: string;
   readonly lang?: string;
-  readonly leadImage?: string; // absolute http(s) URL, stored as a reference and never fetched
+  /**
+   * Page-supplied and UNVALIDATED beyond type and length: the scheme is not
+   * checked, so this can be any string a `<meta>` tag carried, including a
+   * `javascript:` URL. It is stored as an opaque reference and never fetched
+   * here, so it adds no egress surface — but any consumer that RENDERS it
+   * (an `<img src>`, a link) must scheme-check it first. Validating here was
+   * considered and rejected: dropping a URL that fails a regex but is
+   * otherwise good costs the user real lead images, and CDN URLs are strange.
+   */
+  readonly leadImage?: string;
 }
 
 export interface ClipInput {
@@ -74,7 +83,7 @@ const DATE_RANGE_MAX_MS = 8.64e15;
 function boundedProse(v: unknown, max: number): string | undefined {
   if (typeof v !== "string") return undefined;
   const trimmed = v.trim();
-  return trimmed === "" ? undefined : trimmed.slice(0, max);
+  return trimmed === "" ? undefined : trimmed.slice(0, max).trim();
 }
 
 /**
