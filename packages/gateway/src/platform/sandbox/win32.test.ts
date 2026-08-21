@@ -1,5 +1,5 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -93,4 +93,126 @@ describe("createWin32SandboxRunner", () => {
     expect(reason).not.toBeNull();
     expect(reason).toContain("not found");
   });
+});
+
+// The probe's "a helper IS present" arms. Same reasoning as the file-header comment: nothing here
+// needs Windows, only a file at NIMBUS_SANDBOX_HELPER_PATH that answers `--check-caps`. The cases
+// that need a real executable stand-in are `skipIf(win32)` — skipped on WINDOWS, not on Linux —
+// so they still run, and still count, on the CI-Linux-authoritative coverage run.
+describe("createWin32SandboxRunner — helper probe outcomes", () => {
+  let tmp: string;
+  let origHelperPath: string | undefined;
+
+  /** Executable POSIX stand-in for nimbus-sandbox-helper.exe. */
+  function installFakeHelper(body: string): string {
+    const helper = join(tmp, "fake-sandbox-helper");
+    writeFileSync(helper, `#!/bin/sh\n${body}`);
+    chmodSync(helper, 0o755);
+    process.env["NIMBUS_SANDBOX_HELPER_PATH"] = helper;
+    return helper;
+  }
+
+  beforeEach(() => {
+    // Fresh mkdtemp per test, removed by its own full path — never the Nimbus config/data dirs.
+    tmp = mkdtempSync(join(tmpdir(), "nimbus-sandbox-win32-probe-"));
+    origHelperPath = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+  });
+
+  afterEach(() => {
+    if (origHelperPath === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+    else process.env["NIMBUS_SANDBOX_HELPER_PATH"] = origHelperPath;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("refuses a helper that exits 0 but does not answer exactly OK", () => {
+    // process.execPath is the bun binary running this test: it exists, and it answers an
+    // unrecognised flag with its own help text on stdout and a 0 exit. Present-but-wrong is
+    // precisely the shape this arm has to reject — a truthy exit is not a capability check.
+    process.env["NIMBUS_SANDBOX_HELPER_PATH"] = process.execPath;
+    const runner = createWin32SandboxRunner();
+    expect(runner.isFullyActive()).toBe(false);
+    expect(runner.degradedReason()).toContain("cannot create an AppContainer profile");
+    expect(runner.degradedReason()).toContain("<no stderr>");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "surfaces the helper's own stderr when the capability check fails",
+    () => {
+      installFakeHelper('echo "AppContainer creation denied by policy" >&2\nexit 1\n');
+      const reason = createWin32SandboxRunner().degradedReason();
+      expect(reason).toContain("cannot create an AppContainer profile");
+      expect(reason).toContain("AppContainer creation denied by policy");
+      expect(reason).not.toContain("<no stderr>");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "reports <no stderr> when the helper cannot be executed at all",
+    () => {
+      // Exists, so the not-found arm is skipped, but is not executable: spawnSync comes back with
+      // an error and NULL stdio rather than a status, which the `?? \"\"` fallback has to absorb.
+      const helper = join(tmp, "not-executable");
+      writeFileSync(helper, "not a program");
+      chmodSync(helper, 0o644);
+      process.env["NIMBUS_SANDBOX_HELPER_PATH"] = helper;
+
+      const runner = createWin32SandboxRunner();
+      expect(runner.isFullyActive()).toBe(false);
+      expect(runner.degradedReason()).toContain("<no stderr>");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "goes fully active when the helper answers OK, and still discloses the network asymmetry",
+    () => {
+      installFakeHelper('[ "$1" = "--check-caps" ] && echo OK\nexit 0\n');
+      const runner = createWin32SandboxRunner();
+      expect(runner.isFullyActive()).toBe(true);
+      // Fully active is NOT undegraded: per-host network filtering stays all-or-nothing.
+      expect(runner.degradedReason()).toContain("per-host network filtering is all-or-nothing");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "spawns THROUGH the helper, passing the derived argv ahead of the child command",
+    async () => {
+      const argvOut = join(tmp, "argv.txt");
+      installFakeHelper(
+        [
+          'if [ "$1" = "--check-caps" ]; then',
+          "  echo OK",
+          "  exit 0",
+          "fi",
+          ': > "$ARGV_OUT"',
+          'for a in "$@"; do printf \'%s\\n\' "$a" >> "$ARGV_OUT"; done',
+          "exit 0",
+        ].join("\n"),
+      );
+      const cwd = join(tmp, "ext-cwd");
+      mkdirSync(cwd);
+
+      const runner = createWin32SandboxRunner();
+      const child = runner.spawn("child-cmd", ["--grant-read", "x"], {
+        policy: policy({ network: ["api.github.com"] }),
+        env: { ARGV_OUT: argvOut, PATH: process.env["PATH"] ?? "" },
+        cwd,
+      });
+      await new Promise<void>((res) => child.on("close", () => res()));
+
+      // The bare `--` is load-bearing: without it the child's own `--grant-read` would be
+      // re-parsed by the helper as one of ITS flags.
+      expect(readFileSync(argvOut, "utf8").split("\n").slice(0, -1)).toEqual([
+        "--profile",
+        "nimbus-ext-com.nimbus.test",
+        "--cwd",
+        cwd,
+        "--capability",
+        "internetClient",
+        "--",
+        "child-cmd",
+        "--grant-read",
+        "x",
+      ]);
+    },
+  );
 });
