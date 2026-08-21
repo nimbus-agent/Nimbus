@@ -121,6 +121,18 @@ Kubernetes objects — i.e. the infrastructure a user is least able to spell fro
 The quoting workaround for 1a does NOT rescue this: a quoted mid-token term routes through the
 same prefix matcher and returns the same zero rows.
 
+> ⚠️ **UNVERIFIED BOUND.** Every measurement above was taken on a machine where semantic search
+> was inert — `embedding_chunk` held ZERO rows for every service, and every `nimbus search`
+> result carried `vectorRank: null`. The data dir's `models/` directory (holding the MiniLM
+> model) was found deleted the same afternoon, so "embeddings never worked here" and "the model
+> was removed minutes earlier" cannot be separated from the evidence available.
+>
+> `buildLocalIndexedContext` DOES request `{ semantic: true, contextChunks: 2 }`, so a working
+> vector index might partially rescue a mid-token term that FTS cannot reach. Until this is
+> re-measured with embeddings present, 1b is confirmed only for the BM25 path — NOT as a claim
+> that a mid-token term is unreachable by every retrieval path. Re-run
+> `nimbus search "Fargate"` after `nimbus index reembed` before relying on it.
+
 ### The most damaging observed instance
 
 `nimbus ask 'In prose, list my "Fargate" log groups by name and what service each belongs to.'`
