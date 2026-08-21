@@ -2193,6 +2193,75 @@ happily emit a label, a bolded line, a list item, or a fenced block.
 
 ---
 
+## The MCP surface — which of these findings reach an AI agent
+
+**No new finding number.** The MCP server was probed directly over stdio (a real `initialize` /
+`tools/list` / `tools/call` session against `nimbus mcp-server --stdio`, 2.10.0). It works, all
+**21** tools are present and read-only as documented, and its structured results are in several
+respects *more* honest than the CLI's prose. Recorded here because four findings above change
+severity when the consumer is a model rather than a person, and because two things it gets right
+are the model for fixing them.
+
+Tools present: `searchIndex` `getConnectorStatus` `getRecentIncidents` `getRecentPullRequests`
+`getRecentDeployments` `getDoraMetrics` `findPrsNotTouching` `findDeploymentsWithoutIncident`
+`findPeopleWithoutReviews` `peekWhy` `explainWhy` `getCatchup` `findExpert` `assessImpact`
+`findConflicts` `findDecisions` `getGlossary` `findOwners` `checkResourceUsage` `getPeerContext`
+`getTeamHuddle`.
+
+### What it gets right
+
+- **`findPrsNotTouching` returns the exclusion counts as data**: `"gaps": { "excludedNoCoverage":
+  1, "excludedTruncated": 0 }`. A structured field, not a prose line a model has to parse. This is
+  the shape F20's and F21's fixes should aim at.
+- **Tool descriptions carry the caveat.** `getRecentPullRequests` says *"the index cannot pre-filter
+  by PR state"* and tells the caller to filter on `meta.state`; `findPrsNotTouching` says *"Use
+  this, never `searchIndex`, when the question is which PRs do NOT touch something."* That is
+  routing guidance written for the actual consumer, and it is better than what the CLI help gives a
+  human.
+
+### F20 reaches it, and is worse here
+
+`findPrsNotTouching(pathGlob: "packages/gateway")` — the no-wildcard form — returned PR **#1294**
+(*"feat(sandbox): a real Windows sandbox leg…"*, label `pkg:gateway`, 56 changed files) as a PR
+that does not touch `packages/gateway`. The `packages/gateway/**` form correctly excludes it.
+
+The `gaps` object is unchanged between the two calls, because it counts unverifiable rows, not
+unmatched patterns — so the extra honesty above does not help here. And a model choosing a glob
+heuristically from a natural-language question is *more* likely to produce one of the five failing
+forms than a human typing a path they can see, while having no way to notice: it gets a longer list
+and no signal. **F20's blast radius includes every agent using this tool.**
+
+### F24b reaches it
+
+`getDoraMetrics({ service: "totally-made-up" })` returns four `value: null` metrics with
+`gap: "no_repos"` and no error. An agent reads that as *"this service exists and has no
+repositories bound"* and will helpfully suggest binding repositories to a service that was never
+defined. The `stats` refusal has no MCP tool, so the honest sibling is not reachable here at all.
+
+### F6 / F13 reach it, and this is the worst of the four
+
+`getConnectorStatus` returns, for connectors with no credentials anywhere in `nimbus.toml`:
+
+```json
+{ "serviceId": "airflow", "status": "ok", "healthState": "healthy", "enabled": true,
+  "lastSyncAt": 1787326922791, "nextSyncAt": 1787327522791,
+  "itemCount": 0, "lastError": null, "consecutiveFailures": 0 }
+```
+
+— and the same for `apple`, `argocd`, `athena`, and onward through the roster. Every field a model
+would use to judge the claim agrees: `status: ok`, `healthState: healthy`, `enabled: true`, a
+recent `lastSyncAt`, a scheduled `nextSyncAt`, `lastError: null`, zero failures. The only
+contrary signal is `itemCount: 0`, which reads as *"nothing new"* rather than *"never
+configured"*.
+
+A human running `nimbus doctor` at least sees the connector names and knows which they set up. An
+agent has no such prior, and this is the tool it is told to call to establish connector health.
+F6's and F13's fixes should be specified against **this** payload, not against the `doctor` prose —
+a `healthState` of `"never_configured"` (or an explicit `configured: false`) is what makes the
+distinction reachable by the consumer that cannot infer it.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -2251,7 +2320,7 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F8 | `min_reasoning_params` dead config | low | yes | `[llm]` config surface |
 | **F22** | **`query --sql` dead in every release — the SECOND unbundled worker (2 of 2)** | **high** | yes | `--sql`, and every ground-truth check |
 | F21 | Under `prefer_local`, `ask` runs no negation predicate and discloses nothing — a fail-closed refusal becomes a confident assertion | high | yes | `ask`, desktop, VS Code |
-| F20 | `--not-touching` glob unvalidated — 5 natural path forms return EVERY PR as "not touching" | high | yes | `nimbus query`, MCP `query` tool |
+| F20 | `--not-touching` glob unvalidated — 5 natural path forms return EVERY PR as "not touching" | high | yes | `nimbus query`, and the MCP `findPrsNotTouching` tool |
 | F23 | `ask` counts its retrieved context, not the index (`3`, then `2.2`, vs 173) | high | yes | every `ask` count question |
 | F19 | `nimbus help` omits 27 of 65 commands, incl. 9 of 14 agents, `prove`, `mcp-server`, `update` | med-high | yes | discovery of the whole product |
 | **F24a** | **`deploy preflight --mode block` returns `ok` + exit 0 for a service that is not in config — a CI gate failing open, with a test pinning it** | **critical** | yes | every gated deploy, the first-party GitHub Action |
@@ -2298,6 +2367,12 @@ closes the finding on paper and leaves the observed leak reproducible; the pair 
 **F26 should land before F3.** F3 is `catchup` declaring no gap beside an empty involvement block;
 F26 is why the block is empty. Fixing F26 turns F3's disclosure from a permanent fixture into a
 rare one, which is the difference between an honest product and an apologetic one.
+
+**Specify the F6/F13 and F20/F24b fixes against the MCP payload, not the CLI prose.** See
+§ The MCP surface. A model consuming `getConnectorStatus` has no prior about which connectors the
+user set up, so `healthState: "healthy"` for a never-configured connector is a stronger claim there
+than in `nimbus doctor`. Fixing the structured field fixes both surfaces; fixing the prose fixes
+one.
 
 ---
 
@@ -2382,4 +2457,14 @@ nimbus negotiate --person <person-id> --since 90d
 #  accepted run  → that sentence is GONE (anchor is only "last-modified, not created"),
 #                  and a plain-text "Gaps:" block with raw category:/detail:/remediation:
 #                  rides above the canonical sections
+
+# MCP surface  (bash/Git-Bash, not PowerShell — see § The MCP surface)
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"a","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | nimbus mcp-server --stdio
+#   → 21 tools
+#   findPrsNotTouching pathGlob "packages/gateway"  → returns PR #1294, which touches it
+#   getDoraMetrics     service  "totally-made-up"   → 4 nulls, gap "no_repos", no error
+#   getConnectorStatus                              → airflow/apple/argocd/… all "healthy", never configured
 ```
