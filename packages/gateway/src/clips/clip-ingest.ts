@@ -270,6 +270,15 @@ export function ingestClip(
         ? {}
         : { sourceWordCount: extent.sourceWords, truncated: true }),
       clippedAt: input.capturedAt,
+      // `input.source` is the object `validateClipInput` BUILT, never the one the
+      // caller sent — see `validateClipSource`. Nothing filters it here, so the
+      // filtering has to have already happened.
+      //
+      // Note that a re-clip WITHOUT `source` clears a previously-stored one:
+      // `upsertIndexedItem` replaces metadata wholesale (`metadata = excluded.metadata`),
+      // so every metadata key is last-write-wins. `tags` already behave exactly this
+      // way. This is inherited behaviour, documented rather than changed here.
+      ...(input.source === undefined ? {} : { source: input.source }),
     },
   });
   scheduleEmbedding?.(id);

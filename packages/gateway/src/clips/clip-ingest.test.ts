@@ -16,6 +16,10 @@ function getItem(id: string): Record<string, unknown> | undefined {
   return db.query("SELECT * FROM item WHERE id = ?").get(id) as Record<string, unknown> | undefined;
 }
 
+function metaOf(id: string): Record<string, unknown> {
+  return JSON.parse(String(getItem(id)?.["metadata"])) as Record<string, unknown>;
+}
+
 describe("canonicalizeUrl", () => {
   test("strips tracking params and hash, drops trailing slash", () => {
     expect(canonicalizeUrl("https://ex.com/p/?utm_source=x&id=7#frag")).toBe(
@@ -316,5 +320,80 @@ describe("clip source metadata — validateClipInput", () => {
     });
     const past = validateClipInput({ ...good, source: { publishedAt: 8.64e15 + 1 } });
     expect(past.source).toBeUndefined();
+  });
+});
+
+describe("clip source metadata — storage", () => {
+  const base = {
+    url: "https://ex.com/p",
+    title: "Hello",
+    mode: "article" as const,
+    body: "The body text",
+    tags: ["research"],
+    capturedAt: 1750000000000,
+  };
+
+  // The no-regression fence: a clip with no source must produce EXACTLY the
+  // metadata it produced before this feature existed — no `source: {}`, no
+  // `source: null`, no reordering that a consumer could trip over.
+  test("no source → metadata is exactly what it was before", () => {
+    const res = ingestClip(db, base);
+    expect(metaOf(res.id)).toEqual({
+      tags: ["research"],
+      mode: "article",
+      wordCount: 3,
+      clippedAt: 1750000000000,
+    });
+  });
+
+  test("a full source lands under metadata.source", () => {
+    const source = {
+      author: "Ada Lovelace",
+      publishedAt: 1700000000000,
+      siteName: "Example",
+      lang: "en-US",
+      leadImage: "https://ex.com/hero.jpg",
+    };
+    const res = ingestClip(db, { ...base, source });
+    expect(metaOf(res.id)["source"]).toEqual(source);
+  });
+
+  test("source survives the round trip through validateClipInput", () => {
+    const input = validateClipInput({
+      ...base,
+      source: { author: "Ada Lovelace", siteName: "Example" },
+    });
+    const res = ingestClip(db, input);
+    expect(metaOf(res.id)["source"]).toEqual({ author: "Ada Lovelace", siteName: "Example" });
+  });
+
+  // Without the whitelist this item's metadata would exceed the store's 64 KB
+  // ceiling and `upsertIndexedItem` would THROW — a page could deny ingestion of
+  // its own clip. This test is the proof that the cap is load-bearing.
+  test("a 60 KB unknown member cannot deny ingestion of its own clip", () => {
+    const input = validateClipInput({
+      ...base,
+      source: { author: "A", junk: "x".repeat(60_000) },
+    });
+    const res = ingestClip(db, input);
+    expect(res.status).toBe("created");
+    const stored = metaOf(res.id)["source"] as Record<string, unknown>;
+    expect(stored).toEqual({ author: "A" });
+    expect(stored["junk"]).toBeUndefined();
+  });
+
+  test("a dropped-to-empty source stores no source key at all", () => {
+    const input = validateClipInput({ ...base, source: { lang: "e".repeat(30) } });
+    const res = ingestClip(db, input);
+    expect("source" in metaOf(res.id)).toBe(false);
+  });
+
+  test("the pre-existing metadata keys are untouched when source is present", () => {
+    const res = ingestClip(db, { ...base, source: { author: "Ada" } });
+    const meta = metaOf(res.id);
+    expect(meta["tags"]).toEqual(["research"]);
+    expect(meta["mode"]).toBe("article");
+    expect(meta["wordCount"]).toBe(3);
+    expect(meta["clippedAt"]).toBe(1750000000000);
   });
 });
