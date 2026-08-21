@@ -36,12 +36,9 @@ describe("WORKER_ENTRIES", () => {
   // agree. Add a row here, forget the export, and the worker is built but never embedded — back
   // to a `ModuleNotFound` in the binary with a green test suite, which is exactly the failure
   // mode F15 and F22 were.
-  it.each(WORKER_ENTRIES.map((e) => [e.name]))(
-    "%s is embedded by embedded-workers.ts",
-    (name) => {
-      expect(embeddedWorkersSource).toContain(`${WORKER_OUT_DIR}/${name}.js`);
-    },
-  );
+  it.each(WORKER_ENTRIES.map((e) => [e.name]))("%s is embedded by embedded-workers.ts", (name) => {
+    expect(embeddedWorkersSource).toContain(`${WORKER_OUT_DIR}/${name}.js`);
+  });
 
   it("embedded-workers.ts embeds nothing the manifest does not build", () => {
     const embedded = [...embeddedWorkersSource.matchAll(/dist\/workers\/([a-z0-9-]+)\.js/g)].map(
