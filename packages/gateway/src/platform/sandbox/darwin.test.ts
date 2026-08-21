@@ -68,3 +68,43 @@ describe("generateSbplProfile", () => {
     expect(profile).toContain(`(subpath "/home/u/docs")`);
   });
 });
+
+describe("SBPL runtime-startup grants", () => {
+  // These exist because the profile had never launched a process: `darwin.test.ts` asserts on
+  // generated TEXT and never spawns, and the one suite that spawns for real could not reach macOS
+  // (the job's earlier unit step failed first and skipped it). The first real spawn aborted with
+  // SIGABRT and an empty stderr.
+  //
+  // A previous attempt added a subset, saw the next run fail identically, and reverted. Pinning
+  // them here means the next person to see an unfamiliar `(allow ...)` line finds a test that says
+  // why it is there, rather than deleting it and re-opening a bug that costs a CI round-trip to
+  // even observe.
+  it.each([
+    ["file-read-metadata", "dyld and libc stat every ANCESTOR of a path they open"],
+    ["sysctl-read", "hw.ncpu / hw.memsize during allocator and thread-pool setup"],
+    ["process-info*", "proc_pidinfo against self"],
+    ["/dev/urandom", "JSC seeds its RNG at init"],
+    ["/private/var/db/dyld", "dyld closures kept outside /System on some versions"],
+  ])("grants %s — %s", (needle) => {
+    const profile = generateSbplProfile({
+      cwd: "/tmp/cwd",
+      tmpdir: "/tmp/sbx",
+      policy: policy(),
+    });
+    expect(profile).toContain(needle);
+  });
+
+  // The startup grants must not become a way around the policy. `file-read-metadata` is
+  // deliberately unscoped, so this pins that it is METADATA only — content is still governed by
+  // the `file-read*` block, and a path the policy never granted is still absent from it.
+  it("does not grant read CONTENT anywhere the policy did not name", () => {
+    const profile = generateSbplProfile({
+      cwd: "/tmp/cwd",
+      tmpdir: "/tmp/sbx",
+      policy: policy(),
+    });
+    const readBlock = profile.slice(profile.indexOf("(allow file-read*"));
+    expect(readBlock).not.toContain('(subpath "/Users")');
+    expect(readBlock).not.toContain('(subpath "/")');
+  });
+});
