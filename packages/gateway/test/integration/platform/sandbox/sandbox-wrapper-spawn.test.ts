@@ -237,6 +237,39 @@ function runThroughWrapper(
 }
 
 /**
+ * Windows child bodies use only PowerShell LANGUAGE features and .NET statics — never a cmdlet.
+ *
+ * Measured, not stylistic. Inside the AppContainer on the `windows-2025` runner, PowerShell
+ * starts and exits 0 but its command table is EMPTY: `Write-Output 'x'` fails with
+ * `CommandNotFoundException`, so the child produced no stdout and the round-trip assertion saw
+ * `""`. Command discovery has to read `$PSHOME`, which the container does not grant; type
+ * resolution and operators do not, because they are served by already-loaded assemblies.
+ *
+ * The third case matters most. `refuses a path the policy does not grant` used
+ * `Get-Content ... -ErrorAction Stop` inside a `try`, so a MISSING CMDLET threw and was caught by
+ * the same `catch` a denied read would hit — the test exited `DENIED_CODE` and passed without the
+ * sandbox denying anything. That is the one test which, by its own comment, makes this a sandbox
+ * suite rather than a spawn suite, and on CI it was passing vacuously.
+ * `[IO.File]::ReadAllBytes` throws on a real ACL denial and cannot be confused with a resolution
+ * failure.
+ *
+ * Keep it that way: a cmdlet added here re-opens both holes at once.
+ */
+const PS_WRITE = (s: string): string => `[Console]::Out.Write('${s}')`;
+
+/**
+ * Separator for the argv round-trip: U+0001, which no argument under test contains.
+ *
+ * Both platforms emit the same joined form so ONE assertion covers both. It replaces
+ * `$args | ConvertTo-Json -Compress` on Windows — another cmdlet, and one whose failure showed up
+ * as a JSON parse error in the assertion rather than as anything about argv. A join preserves
+ * quotes, spaces and trailing backslashes byte-for-byte, which is the property this pins.
+ */
+const ARGV_SEP = String.fromCharCode(1);
+const PS_WRITE_ARGV = "[Console]::Out.Write(($args -join [char]1))";
+const JS_WRITE_ARGV = "process.stdout.write(process.argv.slice(2).join(String.fromCharCode(1)))";
+
+/**
  * The child process the sandbox spawns, chosen per platform — this is the one place this file
  * deliberately departs from a uniform "spawn the same script everywhere" shape.
  *
@@ -305,7 +338,7 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
     const { argv } = childProcess(
       work,
       "hello",
-      IS_WIN ? "Write-Output 'hello-from-sandbox'" : 'process.stdout.write("hello-from-sandbox")',
+      IS_WIN ? PS_WRITE("hello-from-sandbox") : 'process.stdout.write("hello-from-sandbox")',
     );
     const r = runThroughWrapper(policy(), work, argv);
     expect(r.stdout).toContain("hello-from-sandbox");
@@ -325,7 +358,7 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
     const body = IS_WIN
       ? [
           "try {",
-          `  Get-Content -LiteralPath '${secretPath}' -ErrorAction Stop | Out-Null`,
+          `  $null = [IO.File]::ReadAllBytes('${secretPath}')`,
           `  exit ${UNEXPECTED_SUCCESS_CODE}`,
           "} catch {",
           `  exit ${DENIED_CODE}`,
@@ -350,15 +383,9 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
     // becomes the child argv. On Linux/macOS this passes trivially — that is the point, it pins
     // the property on every platform rather than only where it is easy to break.
     const passthroughArgs = ['{"k":"v"}', "C:\\dir\\", "a b", "plain"];
-    const { argv } = childProcess(
-      work,
-      "argv",
-      IS_WIN
-        ? "$args | ConvertTo-Json -Compress"
-        : "process.stdout.write(JSON.stringify(process.argv.slice(2)))",
-    );
+    const { argv } = childProcess(work, "argv", IS_WIN ? PS_WRITE_ARGV : JS_WRITE_ARGV);
     const r = runThroughWrapper(policy(), work, [...argv, ...passthroughArgs]);
-    expect(JSON.parse(r.stdout) as string[]).toEqual(passthroughArgs);
+    expect(r.stdout.split(ARGV_SEP)).toEqual(passthroughArgs);
   });
 
   it("rejects a spawn with no policy at all", () => {
