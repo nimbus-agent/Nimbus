@@ -21,6 +21,7 @@ Review + disposition: [`…-design-review.md`](../specs/2026-08-21-windows-sandb
 - **Never commit on `main`.** Work happens on `dev/asafgolombek/windows-sandbox-policy`, already checked out at `.claude/worktrees/dev+asafgolombek+windows-sandbox-policy`.
 - **`git commit -m` eats backticks** in this shell. Use `git commit -F -` with a heredoc, and keep backticks out of commit subjects.
 - **Verify before claiming.** `bun run preflight:fast` after every code change; the full `bun run preflight` before the PR.
+- **Test data never touches real user state.** `%LOCALAPPDATA%\Nimbus`, `%APPDATA%\Nimbus` and the config directory hold the live Gateway database and are READ-ONLY here. Scratch files go in the session scratchpad or a fresh `mkdtemp`; cleanup deletes only a directory this task created, by full path, never a parent. When a measurement needs a *path shape* — nesting depth, drive, profile-relative position — build an equivalent shape under the scratchpad rather than borrowing a real one. (Added after a task doing exactly that force-deleted inside the live data directory; the database survived, but only by luck.)
 
 ## Decisions taken in this plan
 
