@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.12.1](https://github.com/nimbus-agent/Nimbus/compare/v2.12.0...v2.12.1) (2026-08-21)
+
+
+### Performance Improvements
+
+* **test:** a migrated-once schema template and a deadline-bounded poll, for the Windows hot path ([#1291](https://github.com/nimbus-agent/Nimbus/issues/1291)) ([6e5fbfd](https://github.com/nimbus-agent/Nimbus/commit/6e5fbfdea1a3e095095aec665cc6e0f9d5d10711))
+
 ## [2.12.0](https://github.com/nimbus-agent/Nimbus/compare/v2.11.0...v2.12.0) (2026-08-21)
 
 
