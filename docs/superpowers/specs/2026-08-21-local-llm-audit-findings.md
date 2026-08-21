@@ -104,6 +104,47 @@ email bodies by default?"` returned:
 
 It is reasoning about arbitrary GitHub Actions rows, because that is what the fallback fed it.
 
+### 1b — FTS is PREFIX-only, so a mid-token term silently returns nothing
+
+`ftsTitleMatchQuery` emits `(title : "<tok>"* OR body : "<tok>"*)`. SQLite FTS5 prefix
+matching anchors at a token START, so a term appearing mid-token never matches:
+
+```
+nimbus search "Fargate"              -> []
+nimbus search "RequiemNexusFargate"  -> hits
+```
+
+The indexed token is `RequiemNexusFargateServiceTaskDefwebLogGroupECA0B21D-HMttfm0DVr5z`. This
+hits hardest exactly where names are machine-generated — CDK/CloudFormation resources, ARNs,
+Kubernetes objects — i.e. the infrastructure a user is least able to spell from memory.
+
+The quoting workaround for 1a does NOT rescue this: a quoted mid-token term routes through the
+same prefix matcher and returns the same zero rows.
+
+### The most damaging observed instance
+
+`nimbus ask 'In prose, list my "Fargate" log groups by name and what service each belongs to.'`
+answered:
+
+> Here are your Fargate log groups listed by name and the service each belongs to:
+> Manifest Validation Diagnosis — skipped (GitHub Actions)
+> Wingetbot PR Triage — skipped (GitHub Actions)
+> Missing Dependency Assist — skipped (GitHub Actions)
+> …
+
+Every row is a `microsoft/winget-pkgs` CI run. The user has 8 real Fargate log groups indexed.
+The chain: `"Fargate"` matches nothing (1b) -> `byId.size === 0` -> the no-name fallback
+returns arbitrary recent items (1a) -> `github_actions`, the highest-volume service, fills the
+context -> the model answers the question it was asked using the only data it was given.
+
+Note the model even TAGGED each row `(GitHub Actions)`. It reported its source honestly; the
+system had told it these were the answer. No prompt change fixes this — the retrieval layer
+asserted relevance it did not have.
+
+This is why 1a's second fix (return `undefined` instead of arbitrary items) matters more than
+its severity rating suggests: the failure mode is not an unhelpful answer, it is a confident,
+specific, false claim about the user's own production infrastructure.
+
 ### Why a frontier model does not fix this
 
 Claude / GPT / Gemini receive the **same** wrong context. Being more fluent, they are
@@ -845,6 +886,14 @@ Recorded so the fix list does not absorb them. **No action proposed.**
   Everything needed was in context; a frontier model would carry the relationship. Filed here
   rather than as a finding because no Nimbus surface could have prevented it — but it is worth
   knowing that a fluent, well-sourced brief can still invert a number.
+
+- **Environment classification invented from identical names.** Asked which `RequiemNexus` log
+  groups are staging versus dev, the model answered with two specific names — which are
+  byte-identical apart from their random CDK suffix (`…ECA0B21D-HTHw8WdmK1J4` vs
+  `…ECA0B21D-NquUSV4XQclj`) and contain neither `dev` nor `stag`. The real markers sit only on
+  the Lambda groups (3 `-dev-`, 1 `-stagi-`). Retrieval was correct and the names were present
+  verbatim; the model manufactured a distinction to satisfy the question's premise. Nimbus
+  cannot prevent this — but it is the reason a brief's confident specificity is not evidence.
 
 - **Glossary definition mismatches.** The consolidation LLM attached wrong definitions to
   terms. Stopwording/dedup (F5) is Nimbus's; definition quality is the model's.
