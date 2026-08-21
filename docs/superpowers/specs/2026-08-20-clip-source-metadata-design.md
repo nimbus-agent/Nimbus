@@ -108,10 +108,11 @@ existing field checks:
   half of the bounds below. Every per-field cap is worthless if an unrecognised
   sibling key rides along beside them: `ingestClip` stores whatever `source`
   holds, `upsertIndexedItem` serialises the whole metadata object, and it
-  **throws** above 64 KB. A page that put 60 KB under `source.junk` would make
-  its own clip un-ingestable, which is precisely the denial the caps exist to
-  prevent. A whitelist, not a blocklist: the shape TypeScript describes and the
-  shape that reaches storage must be the same object, built here.
+  **throws** above 64 KB (`RAW_META_MAX_BYTES`, 65,536 bytes). A page that put
+  enough under `source.junk` to cross that ceiling would make its own clip
+  un-ingestable, which is precisely the denial the caps exist to prevent. A
+  whitelist, not a blocklist: the shape TypeScript describes and the shape that
+  reaches storage must be the same object, built here.
 
 Every field is bounded, because `upsertIndexedItem` throws outright when an
 item's serialised metadata exceeds 64 KB
@@ -237,11 +238,18 @@ Against `clip-ingest.test.ts`'s existing style:
   gone, `siteName` is there (the drop-don't-throw rule, which is the one a
   reviewer will most want to see proven)
 - a 5,000-character `author` → truncated to 200, and the item still ingests
-- **a 60 KB unknown member** (`source: { author: "A", junk: "<60KB>" }`) → the
+- **a 70 KB unknown member** (`source: { author: "A", junk: "<70KB>" }`) → the
   clip ingests, `metadata.source` carries `author` and **no `junk` key**. This
   is the test that proves the whitelist: without it the item would exceed the
   store's 64 KB metadata ceiling and `upsertIndexedItem` would throw, so a page
-  could deny ingestion of its own clip
+  could deny ingestion of its own clip.
+  **The size has to be over the ceiling, not merely large.** This bullet said
+  60 KB when the spec was approved, and the implementation copied it before
+  review caught the arithmetic: that metadata serialises to 60,112 bytes against
+  `RAW_META_MAX_BYTES` of 65,536, so it never crossed, and the test passed on its
+  `toEqual` assertion while advertising itself as a denial-of-ingestion fence.
+  70 KB serialises to 70,112 bytes and genuinely crosses. Shipped that way in
+  #1285
 - a valid 22-character BCP 47 tag (`en-x-abcdefgh-abcdefgh`) → dropped, and the
   clip still ingests — pinning that the 20-character bound is a product limit
   applied deliberately, not a claim that longer tags are malformed
