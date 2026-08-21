@@ -7,6 +7,23 @@ import { canonicalizeUrl } from "../util/url-canonical.ts";
 const CLIP_SERVICE = "nimbus";
 const CLIP_TYPE = "web_clip";
 
+/**
+ * Provenance a clip carries from the page it was captured from.
+ *
+ * Every member is optional and every member is bounded, because all of these
+ * values are controlled by whatever page the user is looking at and
+ * `upsertIndexedItem` THROWS when an item's serialised metadata exceeds 64 KB
+ * (`../index/item-store.ts`). Without bounds a hostile page could make its own
+ * clip un-ingestable.
+ */
+export interface ClipSource {
+  readonly author?: string;
+  readonly publishedAt?: number; // epoch ms, normalised by the client
+  readonly siteName?: string;
+  readonly lang?: string;
+  readonly leadImage?: string; // absolute http(s) URL, stored as a reference and never fetched
+}
+
 export interface ClipInput {
   readonly url: string;
   readonly canonicalUrl?: string;
@@ -15,6 +32,7 @@ export interface ClipInput {
   readonly body: string;
   readonly tags: readonly string[];
   readonly capturedAt: number;
+  readonly source?: ClipSource;
 }
 
 export interface ClipResult {
@@ -41,6 +59,99 @@ function asString(o: Record<string, unknown>, key: string): string {
     throw new ClipValidationError(`${key} (non-empty string) is required`, key);
   }
   return v;
+}
+
+const SOURCE_PROSE_MAX = 200;
+const SOURCE_LANG_MAX = 20;
+const SOURCE_LEAD_IMAGE_MAX = 2048;
+/** The largest absolute epoch-ms value `Date` can represent. */
+const DATE_RANGE_MAX_MS = 8.64e15;
+
+/**
+ * Prose DEGRADES under a cap: a byline cut to 200 characters is still a byline
+ * and still tells you who wrote the thing.
+ */
+function boundedProse(v: unknown, max: number): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim();
+  return trimmed === "" ? undefined : trimmed.slice(0, max);
+}
+
+/**
+ * Structured values CORRUPT under a cap, so they are dropped instead. Half a URL
+ * is not a slightly-worse URL — it is a broken link, and a consumer cannot tell
+ * it was truncated. A language tag past 20 characters is, in practice, a page's
+ * prose leaking into the wrong `<meta>`, and `en-US`-shaped nonsense cut out of
+ * it would be actively misleading.
+ */
+function boundedExact(v: unknown, max: number): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim();
+  return trimmed === "" || trimmed.length > max ? undefined : trimmed;
+}
+
+/**
+ * `publishedAt` is bounded by TYPE, not by length. The only caller normalises
+ * through `Date.parse`, which yields integers, so a non-integer is garbage rather
+ * than legitimate data being narrowed. `Number.isInteger` rejects `NaN` and
+ * `Infinity` on its own.
+ *
+ * Pre-1970 and far-future values are deliberately VALID: archived essays carry
+ * 1965 publication dates and embargoed posts carry future ones. Nothing sorts on
+ * this field — `modified_at` still comes from `capturedAt` — so a wild value
+ * cannot disturb ordering. If a later change makes `publishedAt` drive ordering,
+ * that change owns the tighter bound.
+ *
+ * A UNIT error is therefore undetectable here and is the CLIENT's to prevent. A
+ * seconds-denominated timestamp (`1750000000`) is an integer inside the range and
+ * is accepted as ~1970-01-21. The gateway cannot distinguish it from a genuine
+ * January 1970 date, and the heuristic that would — "reject implausibly small
+ * magnitudes" — is exactly the rule the pre-1970 decision above rejects. So the
+ * scaling contract lives at the extraction site, next to the `Date.parse` that
+ * produces the value.
+ */
+function epochMs(v: unknown): number | undefined {
+  if (typeof v !== "number" || !Number.isInteger(v) || Math.abs(v) > DATE_RANGE_MAX_MS) {
+    return undefined;
+  }
+  return v;
+}
+
+/**
+ * Builds a NEW `ClipSource` from the five known fields. It must never return the
+ * caller's object, spread it, or delete keys from it: `ingestClip` stores what it
+ * is given without further filtering, `upsertIndexedItem` serialises the whole
+ * metadata object, and it throws above 64 KB. A page that put 60 KB under
+ * `source.junk` would make its own clip un-ingestable — precisely the denial the
+ * per-field caps exist to prevent. A whitelist, not a blocklist: the shape
+ * TypeScript describes and the shape that reaches storage are the same object,
+ * built here.
+ *
+ * Wrong-typed MEMBERS are dropped rather than thrown, unlike every other field on
+ * this body. `asString` throws because a clip without a title is not a clip; a
+ * clip with a malformed byline is still a perfectly good clip, and failing it
+ * would mean one bad `<meta>` tag costs the user the capture. A `source` that is
+ * not an object is different — that is caller error, and it throws.
+ */
+function validateClipSource(raw: unknown): ClipSource | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ClipValidationError("source must be a JSON object", "source");
+  }
+  const o = raw as Record<string, unknown>;
+  const author = boundedProse(o["author"], SOURCE_PROSE_MAX);
+  const publishedAt = epochMs(o["publishedAt"]);
+  const siteName = boundedProse(o["siteName"], SOURCE_PROSE_MAX);
+  const lang = boundedExact(o["lang"], SOURCE_LANG_MAX);
+  const leadImage = boundedExact(o["leadImage"], SOURCE_LEAD_IMAGE_MAX);
+  const source: ClipSource = {
+    ...(author === undefined ? {} : { author }),
+    ...(publishedAt === undefined ? {} : { publishedAt }),
+    ...(siteName === undefined ? {} : { siteName }),
+    ...(lang === undefined ? {} : { lang }),
+    ...(leadImage === undefined ? {} : { leadImage }),
+  };
+  return Object.keys(source).length === 0 ? undefined : source;
 }
 
 export function validateClipInput(parsed: unknown): ClipInput {
@@ -70,7 +181,17 @@ export function validateClipInput(parsed: unknown): ClipInput {
   }
   const canonicalUrl =
     typeof o["canonicalUrl"] === "string" ? (o["canonicalUrl"] as string) : undefined;
-  return { url, title, body, mode, capturedAt, tags, ...(canonicalUrl ? { canonicalUrl } : {}) };
+  const source = validateClipSource(o["source"]);
+  return {
+    url,
+    title,
+    body,
+    mode,
+    capturedAt,
+    tags,
+    ...(canonicalUrl ? { canonicalUrl } : {}),
+    ...(source === undefined ? {} : { source }),
+  };
 }
 
 function externalIdFor(input: ClipInput, canonical: string): string {

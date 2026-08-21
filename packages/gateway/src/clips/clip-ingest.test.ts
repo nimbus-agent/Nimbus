@@ -194,3 +194,127 @@ describe("ingestClip", () => {
     expect(row.resolve_key).toBe("https://example.com/post");
   });
 });
+
+describe("clip source metadata — validateClipInput", () => {
+  const good = {
+    url: "https://ex.com/p",
+    title: "Title",
+    mode: "article" as const,
+    body: "text",
+    capturedAt: 1750000000000,
+  };
+
+  test("source absent → the field is absent, not {}", () => {
+    expect(validateClipInput(good).source).toBeUndefined();
+    expect("source" in validateClipInput(good)).toBe(false);
+  });
+
+  test("a full source keeps all five fields", () => {
+    const source = {
+      author: "Ada Lovelace",
+      publishedAt: 1700000000000,
+      siteName: "Example",
+      lang: "en-US",
+      leadImage: "https://ex.com/hero.jpg",
+    };
+    expect(validateClipInput({ ...good, source }).source).toEqual(source);
+  });
+
+  test.each([
+    ["a string", "nope"],
+    ["null", null],
+    ["an array", []],
+  ])("source that is %s → ClipValidationError with field=source", (_label, source) => {
+    expect(() => validateClipInput({ ...good, source })).toThrow(ClipValidationError);
+    try {
+      validateClipInput({ ...good, source });
+    } catch (e) {
+      expect((e as ClipValidationError).field).toBe("source");
+    }
+  });
+
+  // The rule a reviewer will most want to see proven: one bad <meta> tag must not
+  // cost the user their capture, so a wrong-typed member is DROPPED, not thrown.
+  test("a wrong-typed member is dropped and its valid siblings survive", () => {
+    const out = validateClipInput({ ...good, source: { author: 42, siteName: "Example" } });
+    expect(out.source).toEqual({ siteName: "Example" });
+  });
+
+  test("a 5,000-character author is truncated to 200", () => {
+    const out = validateClipInput({ ...good, source: { author: "a".repeat(5_000) } });
+    expect(out.source?.author).toHaveLength(200);
+  });
+
+  test("an unknown member is discarded — the whitelist, not a blocklist", () => {
+    const out = validateClipInput({
+      ...good,
+      source: { author: "A", junk: "x".repeat(60_000) },
+    });
+    expect(out.source).toEqual({ author: "A" });
+    expect(Object.keys(out.source ?? {})).toEqual(["author"]);
+  });
+
+  test("a whitespace-only author is dropped, and source is omitted rather than {}", () => {
+    expect(validateClipInput({ ...good, source: { author: "   " } }).source).toBeUndefined();
+  });
+
+  test("an empty source object is omitted rather than stored as {}", () => {
+    expect(validateClipInput({ ...good, source: {} }).source).toBeUndefined();
+  });
+
+  test("a 30-character lang is DROPPED, not truncated", () => {
+    const out = validateClipInput({ ...good, source: { lang: "e".repeat(30) } });
+    expect(out.source).toBeUndefined();
+  });
+
+  // 20 is OUR product limit, not a BCP 47 maximum: the standard sets none, and
+  // `en-x-abcdefgh-abcdefgh` is a perfectly valid 22-character tag. We drop it anyway.
+  test("a valid 22-character BCP 47 tag is dropped — the bound is deliberate", () => {
+    const out = validateClipInput({ ...good, source: { lang: "en-x-abcdefgh-abcdefgh" } });
+    expect(out.source).toBeUndefined();
+  });
+
+  test("a 3,000-character leadImage is DROPPED, not truncated", () => {
+    const out = validateClipInput({
+      ...good,
+      source: { leadImage: `https://ex.com/${"q".repeat(3_000)}.jpg` },
+    });
+    expect(out.source).toBeUndefined();
+  });
+
+  // The case that motivated a 2048 bound rather than 200: CDN image URLs routinely
+  // carry resize, format and signature parameters.
+  test("a 900-character CDN leadImage is kept intact", () => {
+    const leadImage = `https://cdn.ex.com/i/hero.jpg?w=1200&h=630&fm=webp&sig=${"a".repeat(830)}`;
+    expect(leadImage.length).toBeGreaterThan(880);
+    expect(leadImage.length).toBeLessThan(2_048);
+    expect(validateClipInput({ ...good, source: { leadImage } }).source?.leadImage).toBe(leadImage);
+  });
+
+  test.each([
+    ["a date string", "2026-01-01"],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["a fractional ms", 1.5],
+    ["a value outside Date's range", 1e300],
+  ])("publishedAt that is %s is dropped", (_label, publishedAt) => {
+    const out = validateClipInput({ ...good, source: { author: "A", publishedAt } });
+    expect(out.source).toEqual({ author: "A" });
+  });
+
+  // Pre-1970 dates are LEGITIMATE. An index holding papers and archived essays will
+  // meet 1965 publication dates, and dropping them would be wrong in exactly the
+  // library case this field exists to serve.
+  test("a 1965 publication date is kept", () => {
+    const out = validateClipInput({ ...good, source: { publishedAt: -157766400000 } });
+    expect(out.source?.publishedAt).toBe(-157766400000);
+  });
+
+  test("the far edge of Date's range is kept, one past it is dropped", () => {
+    expect(validateClipInput({ ...good, source: { publishedAt: 8.64e15 } }).source).toEqual({
+      publishedAt: 8.64e15,
+    });
+    const past = validateClipInput({ ...good, source: { publishedAt: 8.64e15 + 1 } });
+    expect(past.source).toBeUndefined();
+  });
+});
