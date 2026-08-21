@@ -292,14 +292,7 @@ function darwinPermissiveProbe(run: WrapperRun): string {
 }
 
 /**
- * Run the same argv under `(trace)` and return the rules SBPL says it needed.
- *
- * Separate from the permissive probe because it answers a different question: that one asks
- * whether the profile is at fault, this one asks what to put in it. Only worth running when the
- * first says yes.
- */
-/**
- * Which single extra rule makes the REAL profile work?
+ * Which paths does the REAL profile still need? Root grant MINUS one path at a time.
  *
  * Three mechanisms for naming a Seatbelt denial have now failed on `macos-15`, each for its own
  * reason, and all three are recorded here so nobody spends a cycle re-trying them:
@@ -356,29 +349,56 @@ function bisectMissingRule(run: WrapperRun): string {
       tmpdir: canonicalPath(dir),
       policy: run.policy,
     });
-    const out: string[] = [
-      "bisect-probe — root read grant MINUS one path (REQUIRED = the child needs it):",
-    ];
-    for (const [rule, label] of CANDIDATES) {
+    /** What the child does when it is actually allowed to run. Every candidate is judged by this. */
+    const runOnce = (extra: string) => {
       const profilePath = join(dir, "candidate.sb");
-      // Root grant FIRST, then the deny. The ORDER is the mechanism: SBPL takes the last
-      // matching rule, so this composes to "everything except X".
-      writeFileSync(
-        profilePath,
-        `${base}
-(allow file-read* (subpath "/"))
-${rule}
-`,
-      );
-      const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
+      // Root grant FIRST, then the extra rule. The ORDER is the mechanism: SBPL takes the last
+      // matching rule, so `(allow ... "/")` followed by `(deny ... X)` composes to
+      // "everything except X".
+      writeFileSync(profilePath, `${base}\n(allow file-read* (subpath "/"))\n${extra}\n`);
+      return spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
         encoding: "utf8",
         cwd: run.cwd,
         env: process.env,
         timeout: 15_000,
       });
-      const fixed = r.error === undefined && r.status === 0;
+    };
+
+    const baselineRun = runOnce("");
+    const baseline = baselineRun.status;
+    const out: string[] = [
+      "bisect-probe — root read grant MINUS one path (REQUIRED = the child needs it):",
+      `  baseline with the root grant and no deny: status ${String(baseline)}`,
+    ];
+    if (baselineRun.error !== undefined || baseline === run.status) {
+      // Without a working baseline every candidate would compare against a broken reference and
+      // the whole table would be noise. Say so instead of printing ten meaningless rows.
+      return `${out[0] ?? ""}\n  ABORTED — the root grant does not repair this run either, so there is nothing to subtract from.`;
+    }
+
+    // One budget for the whole probe. 15s is PER candidate, so ten of them is a 150s worst case
+    // against a 60s suite timeout — and this runs once per failing wrapper run, not once overall.
+    const DEADLINE = Date.now() + 40_000;
+    for (const [rule, label] of CANDIDATES) {
+      if (Date.now() > DEADLINE) {
+        out.push("  (budget exhausted — remaining candidates not run)");
+        break;
+      }
+      const r = runOnce(rule);
+      // Compared against the ROOT-GRANT BASELINE measured just above, not against 0 and not
+      // against `run.status`.
+      //
+      // Against 0 was the original bug: on a run whose expected exit is non-zero (`exit 7`), it
+      // reports EVERY candidate as unchanged, including ones that repair the profile. Three rounds
+      // of this investigation were spent reading exactly that kind of output.
+      //
+      // Against `run.status` would be wrong too, and differently: in this SUBTRACTIVE form
+      // `run.status` is the FAILING status under the real profile, so matching it would mean the
+      // candidate broke things. "Still working" means matching what the child does when it is
+      // allowed to run, which is what `baseline` holds.
+      const stillWorks = r.error === undefined && r.status === baseline;
       // Inverted for the subtractive form: BREAKS IT means the denied path is required.
-      out.push(`  ${fixed ? "not needed" : "REQUIRED  "} ${rule}   (${label})`);
+      out.push(`  ${stillWorks ? "not needed" : "REQUIRED  "} ${rule}   (${label})`);
     }
     return out.join("\n");
   } catch (e) {

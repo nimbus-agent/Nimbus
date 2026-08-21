@@ -103,7 +103,19 @@ describe("SBPL runtime-startup grants", () => {
       tmpdir: "/tmp/sbx",
       policy: policy(),
     });
-    const readBlock = profile.slice(profile.indexOf("(allow file-read*"));
+    // The marker is asserted BEFORE it is used, and the slice is bounded to the block.
+    //
+    // As first written this could pass while enforcing nothing, twice over. `indexOf` returns -1
+    // if the marker text ever changes, and `slice(-1)` is then the profile's LAST CHARACTER, which
+    // trivially contains neither needle. And the first `(allow file-read*` in this profile is the
+    // `/dev` literal line, not the block header, so the slice ran to the end of the document and
+    // silently covered the `file-write*` and `network*` blocks too.
+    const start = profile.indexOf("(allow file-read*\n");
+    expect(start).toBeGreaterThan(-1);
+    const end = profile.indexOf("\n)", start);
+    expect(end).toBeGreaterThan(start);
+    const readBlock = profile.slice(start, end);
+    expect(readBlock).toContain('(subpath "/usr/lib")');
     expect(readBlock).not.toContain('(subpath "/Users")');
     expect(readBlock).not.toContain('(subpath "/")');
   });
