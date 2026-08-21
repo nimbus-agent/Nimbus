@@ -68,3 +68,33 @@ describe("generateSbplProfile", () => {
     expect(profile).toContain(`(subpath "/home/u/docs")`);
   });
 });
+
+describe("generateSbplProfile — startup prerequisites", () => {
+  const profile = generateSbplProfile({
+    cwd: "/tmp/cwd",
+    tmpdir: "/tmp/sbx",
+    policy: { id: "x", permissions: { network: [], filesystem: { read: [], write: [] } } },
+  });
+
+  // Regression guard. Without these the child dies with SIGABRT before it can say why —
+  // silent and total, and it took a post-merge push-matrix failure to find. See the comment
+  // block in darwin.ts for why each one is needed.
+  it("allows sysctl-read, which every runtime does at startup", () => {
+    expect(profile).toContain("(allow sysctl-read)");
+  });
+
+  it("allows the RNG seed and the null sink", () => {
+    expect(profile).toContain('(literal "/dev/urandom")');
+    expect(profile).toContain('(literal "/dev/random")');
+    expect(profile).toContain('(literal "/dev/null")');
+  });
+
+  it("grants /dev by LITERAL, never the whole device tree", () => {
+    // `(subpath "/dev")` would hand the sandbox every raw block device to fix three nodes.
+    expect(profile).not.toContain('(subpath "/dev")');
+  });
+
+  it("still denies by default — the additions are grants, not an opening", () => {
+    expect(profile).toContain("(deny default)");
+  });
+});

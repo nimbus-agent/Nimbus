@@ -158,6 +158,17 @@ interface WrapperRun {
  * Verified quiet: the five passing cases on this machine produce no dump.
  */
 function isAnomalous(run: WrapperRun): boolean {
+  // ON CI, DUMP EVERY RUN. Not a placeholder — a decision made after this predicate went blind
+  // TWICE on the same suite:
+  //   1. matching stderr against ["bwrap:", "nimbus-sandbox-wrapper:"] missed macOS's
+  //      `sandbox-exec` and Windows's `nimbus-sandbox-helper.exe` entirely;
+  //   2. the shape-based rewrite below still missed the real macOS failure, which is exit 134
+  //      (SIGABRT, translated by the wrapper's signal handler) with EMPTY stdout AND EMPTY
+  //      stderr — non-zero, non-null, and not exit-0, so it satisfied no clause.
+  // Every attempt to predict which runs are worth reporting has failed against a runner nobody
+  // can log into, and each failure cost a full merge-and-revert cycle. Five runs of ~12 lines is
+  // a trivial price for never paying that again. Local runs keep the quiet heuristic.
+  if (IS_CI) return true;
   if (run.stderr.trim() !== "") return true;
   if (run.status === null) return true;
   return run.status === 0 && run.stdout === "";

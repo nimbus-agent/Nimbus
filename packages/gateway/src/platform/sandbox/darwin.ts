@@ -25,6 +25,26 @@ export function generateSbplProfile(opts: SbplOpts): string {
     "(allow signal (target self))",
     "(allow mach-lookup)",
     "(allow iokit-open)",
+    // ── What a process needs merely to START ────────────────────────────────
+    // Under `(deny default)` these are denied, and the failure is silent and total: the child
+    // dies with SIGABRT (exit 134 through the wrapper's signal translation) having written
+    // nothing to stdout OR stderr, because it never got far enough to have a working stderr.
+    // That is what the first real macOS spawn through this profile did — every case in
+    // sandbox-wrapper-spawn.test.ts, including the trivial "print one line" one.
+    //
+    // `sysctl-read`: every runtime queries CPU count / page size / OS version at startup
+    // (`hw.ncpu`, `hw.memsize`, `kern.osversion`). It reads system SHAPE, never user data.
+    //
+    // `/dev/urandom` + `/dev/random`: the RNG seed. A runtime that cannot seed does not
+    // degrade, it aborts.
+    //
+    // `/dev/null`: the standard sink; a child whose stdio setup writes to it fails at startup.
+    //
+    // These are LITERALS, not `(subpath "/dev")` — the wider grant would hand the sandbox the
+    // whole device tree (`/dev/disk*` raw block devices among them) to fix a three-node problem.
+    "(allow sysctl-read)",
+    '(allow file-read* (literal "/dev/urandom") (literal "/dev/random") (literal "/dev/null"))',
+    '(allow file-write-data (literal "/dev/null"))',
     "(allow file-read*",
     `  (subpath "${opts.cwd}")`,
     `  (subpath "${opts.tmpdir}")`,
