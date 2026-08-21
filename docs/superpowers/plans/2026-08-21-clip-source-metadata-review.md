@@ -19,7 +19,7 @@ function epochMs(v: unknown): number | undefined {
 }
 ```
 
-* **Pros**: Using `Math.abs(v)` correctly bounds-checks both future and past dates (up to approx. April 20, 275760 BCE / CE). Rejects `NaN` and `Infinity` safely since they are not integers.
+* **Pros**: Using `Math.abs(v)` correctly bounds-checks both future and past dates. The inclusive range is April 20, 271821 BCE to September 13, 275760 CE — the millisecond bound is symmetric, the calendar endpoints are not. Rejects `NaN` and `Infinity` safely since they are not integers.
 * **Suggestion**: Ensure that callers from client-side normalise properly to milliseconds, as a standard Unix epoch timestamp in seconds (e.g., `1750000000`) is technically a valid integer within the millisecond-range but would point to January 1970 if not scaled. The client-side normalization must handle this, which is outside the scope of the server validator but worth documenting.
 
 ### B. Object Construction Style
@@ -40,7 +40,7 @@ In `validateClipSource`:
 * **Improvement**: Although the spread pattern works perfectly, an alternative clean construction pattern that avoids multiple object allocations (especially since this executes on every clip ingestion) is:
 
   ```ts
-  const source: Record<string, any> = {};
+  const source: { -readonly [K in keyof ClipSource]: ClipSource[K] } = {};
   if (author !== undefined) source.author = author;
   if (publishedAt !== undefined) source.publishedAt = publishedAt;
   if (siteName !== undefined) source.siteName = siteName;
@@ -49,6 +49,18 @@ In `validateClipSource`:
   ```
 
   Both styles are acceptable, but the direct assignment is slightly more performant and avoids intermediate object allocation.
+
+  **Outcome: this suggestion was NOT adopted; the spread construction shipped.** Recorded here
+  so the rejection is not re-litigated. The accumulator was first drafted as
+  `Record<string, any>`, which fails two repository rules outright — Biome sets
+  `noExplicitAny: "error"`, and an open index signature admits keys outside the five-field
+  `ClipSource` shape, which is exactly the whitelist property this validator exists to hold. The
+  mutable-mapped-type form above fixes both and is what a corrected version of the suggestion
+  looks like, but it was still declined: the object literal is the form a reader can compare
+  against `ClipSource` at a glance, and a mutable accumulator is the shape that invites a later
+  `source[key] = value` loop — which would reintroduce the hole. The allocation cost is
+  unmeasurable beside the `sha256`, two SQLite statements and full-metadata `JSON.stringify`
+  already on this path.
 
 ---
 
