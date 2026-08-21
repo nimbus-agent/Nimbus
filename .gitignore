@@ -171,3 +171,6 @@ packages/docs/src/assets/architecture-*.svg
 packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
 packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe
 packages/gateway/src-native/sandbox-helper-win32/*.obj
+
+# Bun leaves these behind when a build is interrupted; they are never source.
+*.bun-build
