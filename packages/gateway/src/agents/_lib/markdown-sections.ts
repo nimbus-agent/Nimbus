@@ -1,3 +1,5 @@
+import type { GapCategory } from "@nimbus-dev/sdk";
+
 /**
  * The ONE Markdown section scanner in the agents tree.
  *
@@ -89,6 +91,28 @@ function headingTextOf(heading: string): string {
  * not eliminate, the bound recorded on `stripSections`: an UNfenced echoed heading is still
  * indistinguishable from one the model authored.
  */
+/**
+ * Per-line "is this inside a fenced block" flags, from the same `FENCE_RE` `headingLines` uses.
+ *
+ * Hoisted so the heading scan and `stripSerializedGapEnvelope` cannot disagree about where a
+ * fence starts: two copies of fence tracking is exactly the drift shape `brief-disclosures.ts`
+ * exists to prevent one level up. The fence lines themselves are marked `true` — a fence
+ * delimiter is not brief prose, and neither caller wants to match on one.
+ */
+function fencedLineFlags(lines: readonly string[]): boolean[] {
+  const flags: boolean[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (FENCE_RE.test(line)) {
+      inFence = !inFence;
+      flags.push(true);
+      continue;
+    }
+    flags.push(inFence);
+  }
+  return flags;
+}
+
 function headingLines(lines: readonly string[]): { index: number; level: number; text: string }[] {
   const out: { index: number; level: number; text: string }[] = [];
   let inFence = false;
@@ -167,25 +191,41 @@ export function preambleBody(markdown: string): string {
 }
 
 /**
- * Every level-2 section whose heading matches one of `headings`, removed along with its
- * body — including any deeper sub-headings nested inside it, which end at the next
- * same-or-higher heading exactly as `sectionBody` defines it.
+ * Every section whose heading matches one of `headings`, at ANY level, removed along with its
+ * body — where the body ends at the next heading of the same level or higher, exactly as
+ * `sectionBody` defines it.
  *
- * Used on the MODEL's output, which is untrusted markdown: a rewrite that invents a
- * `## Gaps` section must not end up beside the canonical one. Matching is the same
- * normalized prefix `sectionBody` uses, so `## Gaps:` and `## Gaps & Caveats` are caught
- * too — an end-anchored equality would leave those near-misses standing.
+ * Used on the MODEL's output, which is untrusted markdown: a rewrite that invents a `Gaps`
+ * section must not end up beside the canonical one. Matching is the same normalized prefix
+ * `sectionBody` uses, so `## Gaps:` and `## Gaps & Caveats` are caught too — an end-anchored
+ * equality would leave those near-misses standing.
  *
- * DEMOTED headings are deliberately NOT stripped. Only `##` opens a section here, matching
- * the rule `sectionBody` enforces for the contract guard, and for the same asymmetry: a
- * `### Gaps` the model nested under some other section is fabrication of the general kind
- * (which the synthesis instructions address), whereas widening the strip to deeper levels
- * would start deleting the sub-structure the end-of-section rule exists to permit.
+ * LEVEL-AGNOSTIC, and that is the whole point (F29). This used to strip level 2 only, on the
+ * reasoning that "a `### Gaps` the model nested under some other section is fabrication of the
+ * general kind, whereas widening the strip to deeper levels would start deleting the
+ * sub-structure the end-of-section rule exists to permit." Sound in general; wrong for a
+ * RESERVED name. The renderer writes each reserved section exactly ONCE, at level 2, and
+ * `reservedBlocksFor` re-attaches it verbatim — so any occurrence the model produces is
+ * fabrication by construction, whatever level it carries. A survey of eight briefs found six
+ * leaking a duplicated `Gaps` block in three different spellings: promoted `# Gaps`
+ * (`impact`/`conflicts`/`expert`/`huddle`/`janitor`), demoted `### Gaps` under a fabricated
+ * `# Deterministic Findings` (`why`), and a non-heading label (`negotiate`/`janitor` — that one
+ * is not a heading at all and is handled by `stripSerializedGapEnvelope`, not here).
+ *
+ * A level-indexed rule can only ever chase spellings. Keying on the reserved NAME closes all of
+ * them at once, and is why `h.level` no longer appears in the loop below.
+ *
+ * `sectionBody`'s own `h.level === 2` rule is CORRECT as-is and must not follow this change: it
+ * locates the CANONICAL section, which the renderer always writes at level 2. Finding the
+ * canonical block and deleting a fabricated one are opposite jobs.
  *
  * BOUND: this cannot distinguish a heading the model invented from one it faithfully echoed
  * out of quoted brief content. Fence tracking in `headingLines` removes the fenced case; an
  * unfenced echo is still stripped, so a synthesized brief may lose a fragment of a quoted
  * definition. It can never lose a disclosure — the canonical block is re-attached either way.
+ * Widening from level 2 to all levels widens that bound too: an unfenced `### Gaps` quoted
+ * inside a definition now goes as well. The trade is deliberate — losing a fragment of a quote
+ * is recoverable, shipping a second Gaps block full of raw field names is not.
  */
 export function stripSections(markdown: string, headings: readonly string[]): string {
   if (headings.length === 0) return markdown;
@@ -194,11 +234,100 @@ export function stripSections(markdown: string, headings: readonly string[]): st
   const heads = headingLines(lines);
   const drop = new Set<number>();
   for (const h of heads) {
-    if (h.level !== 2) continue;
     if (!targets.some((t) => h.text.startsWith(t))) continue;
-    const end = heads.find((x) => x.index > h.index && x.level <= 2);
+    const end = heads.find((x) => x.index > h.index && x.level <= h.level);
     for (let i = h.index; i < (end?.index ?? lines.length); i++) drop.add(i);
   }
+  return lines
+    .filter((_, i) => !drop.has(i))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+}
+
+/**
+ * The five `GapCategory` values, as they appear in a serialized envelope.
+ *
+ * Derived from the SDK union rather than restated, so a sixth category cannot leave this guard
+ * silently narrower than the type it is about. `satisfies` makes a divergence a compile error.
+ */
+const GAP_CATEGORY_VALUES = [
+  "missing_entity_type",
+  "missing_relation_emit",
+  "missing_connector",
+  "missing_user_identity",
+  "empty_index",
+] as const satisfies readonly GapCategory[];
+
+/** `category: missing_connector`, with an optional list marker and leading indent. */
+const CATEGORY_LINE = new RegExp(
+  `^\\s*(?:[-*+]\\s*)?category:\\s*\`?(?:${GAP_CATEGORY_VALUES.join("|")})\`?\\s*$`,
+);
+
+/** `detail:` / `remediation:` / a repeat `category:`, in any of the same spellings. */
+const ENVELOPE_FIELD_LINE = /^\s*(?:[-*+]\s*)?(?:category|detail|remediation):/;
+
+/** A bare `Gaps` or `Gaps:` label the model wrote as body text rather than a heading. */
+const BARE_GAPS_LABEL = /^\s*(?:[-*+]\s*)?\*{0,2}gaps\*{0,2}:?\s*$/i;
+
+/**
+ * Remove a serialized gap envelope the model reproduced as BODY TEXT rather than as a section.
+ *
+ * `stripSections` works on parsed headings, so it cannot see this at any level — which is why
+ * neither F2's `h.level > 2` nor F29's level-agnostic strip closes it. Observed on `negotiate`
+ * as a plain `Gaps:` paragraph label followed by raw `category:` / `detail:` / `remediation:`
+ * lines, and on `janitor` as a bare `Gaps` line above the same fields, in both cases sitting
+ * above the canonical `## Gaps` that was re-attached correctly. The disclosure was never lost;
+ * what shipped was a second copy of it in internal syntax.
+ *
+ * Keyed on the FIELD NAMES, not on the label, because the label is the optional part: the model
+ * sometimes omits it. `category:`/`detail:`/`remediation:` are envelope internals and the
+ * renderer never emits them — it writes `- <detail> (<remediation>)`.
+ *
+ * Fail-closed in the other direction, deliberately: a run is only an envelope when it contains a
+ * `category:` line carrying a KNOWN `GapCategory`. Prose can legitimately contain a line starting
+ * `detail:` — a definition quoted verbatim out of a Notion page, for instance — and deleting that
+ * would be a real loss with no matching gain. Requiring the category value makes a false positive
+ * take a deliberate coincidence.
+ *
+ * Fence-aware through the shared `headingLines` scan's sibling logic: a fenced YAML example
+ * containing `category:` is documentation, not fabrication.
+ */
+export function stripSerializedGapEnvelope(markdown: string): string {
+  const lines = markdown.split("\n");
+  const fenced = fencedLineFlags(lines);
+  const drop = new Set<number>();
+
+  for (let i = 0; i < lines.length; i++) {
+    if (fenced[i] || drop.has(i)) continue;
+    if (!CATEGORY_LINE.test(lines[i] ?? "")) continue;
+
+    // Walk back over contiguous field lines, then over a single label line if present.
+    let start = i;
+    while (start > 0 && !fenced[start - 1] && ENVELOPE_FIELD_LINE.test(lines[start - 1] ?? "")) {
+      start--;
+    }
+    if (start > 0 && !fenced[start - 1] && BARE_GAPS_LABEL.test(lines[start - 1] ?? "")) {
+      start--;
+    }
+
+    // Walk forward over field lines and the blank lines between them.
+    let end = i;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (fenced[j]) break;
+      const line = lines[j] ?? "";
+      if (ENVELOPE_FIELD_LINE.test(line)) {
+        end = j;
+        continue;
+      }
+      if (line.trim() === "") continue;
+      break;
+    }
+
+    for (let j = start; j <= end; j++) drop.add(j);
+  }
+
+  if (drop.size === 0) return markdown;
   return lines
     .filter((_, i) => !drop.has(i))
     .join("\n")
