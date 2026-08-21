@@ -1114,6 +1114,29 @@ Every one of those instructions leads to a 30-second hang. Note this also means 
 suggested OpenAI-embedding workaround (`nimbus vault set openai.api_key`) is unreachable —
 two criticals compounding.
 
+### The failure mode is DOCUMENTED, beside the helper that prevents it
+
+`lib/interactive-ipc-handlers.ts:43-45`, the doc comment on
+`registerAutoApproveConsentHandler`:
+
+> *"Registering this handler on a client is what turns an otherwise-hanging HITL call into a
+> completed one — without a `consent.request` handler the Gateway's gate never receives
+> `consent.respond` and the request dies on the client's 30s timeout."*
+
+That is F16, described exactly, in the repo, as a warning. TWO working patterns exist beside it:
+
+| pattern | helper | used by |
+|---|---|---|
+| interactive prompt | `registerInteractiveCliIpcHandlers` | `agent-cli-dispatcher.ts` (all agent commands) |
+| flag-driven auto-approve | `registerAutoApproveConsentHandler` | `connector remove --yes` |
+
+Verified live: `nimbus connector remove azure --yes` prints
+`[--yes] auto-approving HITL request: Action requires your approval / Type: connector.remove`
+and completes — same gate, same gateway, same second. `commands/vault.ts` uses NEITHER helper.
+
+So this is not an unknown hazard. It is a known hazard with two shipped mitigations, and the
+two vault mutation commands are wired to neither.
+
 ### Why it survived review
 
 This is the shape the repo's own notes call out: both sides of an IPC seam exist and are
