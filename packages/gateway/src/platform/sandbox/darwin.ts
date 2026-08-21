@@ -72,6 +72,21 @@ export function generateSbplProfile(opts: SbplOpts): string {
     `  (subpath "/private/var/db/dyld")`,
     // `zoneinfo` and ICU data — read by any runtime that can format a date.
     `  (subpath "/usr/share")`,
+    // The rest of the SYSTEM tree, and the reason it is broad. The Linux runner binds `/usr`,
+    // `/etc`, `/lib`, `/lib64` and `/dev` WHOLESALE (`buildBwrapArgv`); macOS was granting a
+    // hand-picked subset of the same territory and denying the remainder, which is not a
+    // stricter policy so much as an inconsistent one. A bisect showed no SINGLE added path fixes
+    // the startup abort while `(subpath "/")` does — the child needs several of these at once,
+    // which is exactly what an additive search cannot report.
+    //
+    // What stays narrow is the part that carries user data: `/private/var` keeps only its
+    // `db/dyld` grant plus the sandbox scratch dir, and `/Users` is reachable only through the
+    // policy paths an extension declared. Those two are what the "refuses a path the policy does
+    // not grant" test actually exercises, and granting either broadly would make it vacuous.
+    `  (subpath "/Library")`,
+    `  (subpath "/dev")`,
+    `  (subpath "/sbin")`,
+    `  (subpath "/opt")`,
     ...fsRead.map((p) => `  (subpath "${p}")`),
     ")",
     "(allow file-write*",

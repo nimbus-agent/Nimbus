@@ -320,24 +320,30 @@ function darwinPermissiveProbe(run: WrapperRun): string {
  * probed is the profile that actually ran.
  */
 function bisectMissingRule(run: WrapperRun): string {
-  // Round 3. Round 1 established the CLASS -- only `(allow file-read* (subpath "/"))` flips it,
-  // and write/ioctl/mach/shm/sysctl/process/system all change nothing, so it is a file READ.
-  // Round 2 then ruled out every obvious path: the cwd's parent, the temp root above it, HOME,
-  // /dev, /private/var, /usr, /Library and /opt ALL changed nothing while `/` still worked.
+  // Round 4, and a correction to how rounds 1-3 asked the question.
   //
-  // So the needed path is something the root grant covers and none of those do. These are what is
-  // left at the top of a macOS filesystem, plus `/System/Volumes/Data` -- on a sealed system
-  // volume user data is firmlinked there, so a path the profile names as `/Users/...` can reach
-  // the kernel as `/System/Volumes/Data/Users/...` and match neither.
+  // Rounds 2 and 3 tested "base profile PLUS one path" across sixteen candidates and every single
+  // one came back `no change`, while `(subpath "/")` kept working. That is not a mystery about
+  // macOS -- it is an ADDITIVE bisect being the wrong instrument. If the child needs two paths
+  // that are both missing, no single addition can ever flip the result, and the probe reports
+  // sixteen dead ends while the answer is any pair of them.
+  //
+  // So invert it: start from the grant that WORKS and take one path away. SBPL evaluates in
+  // order with the last matching rule winning, so an `(allow ... (subpath "/"))` followed by a
+  // `(deny ... (subpath X))` is exactly "everything except X". Whichever deny BREAKS it is a path
+  // the child genuinely needs, and unlike the additive form this finds every member of the set,
+  // not just a lone sufficient one.
   const CANDIDATES: ReadonlyArray<readonly [string, string]> = [
-    ['(allow file-read* (subpath "/private"))', "all of /private"],
-    ['(allow file-read* (subpath "/private/tmp"))', "/private/tmp (what /tmp resolves to)"],
-    ['(allow file-read* (subpath "/System/Volumes/Data"))', "the firmlink target for user data"],
-    ['(allow file-read* (subpath "/Users"))', "all of /Users, not just HOME"],
-    ['(allow file-read* (subpath "/sbin"))', "/sbin"],
-    ['(allow file-read* (subpath "/Volumes"))', "/Volumes"],
-    ['(allow file-read* (subpath "/Applications"))', "/Applications"],
-    ['(allow file-read* (literal "/"))', "the root directory itself"],
+    ['(deny file-read* (subpath "/private/var"))', "deny /private/var"],
+    ['(deny file-read* (subpath "/private/tmp"))', "deny /private/tmp"],
+    ['(deny file-read* (subpath "/private/etc"))', "deny /private/etc"],
+    ['(deny file-read* (subpath "/usr"))', "deny /usr"],
+    ['(deny file-read* (subpath "/System"))', "deny /System"],
+    ['(deny file-read* (subpath "/dev"))', "deny /dev"],
+    ['(deny file-read* (subpath "/Users"))', "deny /Users"],
+    ['(deny file-read* (subpath "/Library"))', "deny /Library"],
+    ['(deny file-read* (subpath "/bin"))', "deny /bin"],
+    ['(deny file-read* (subpath "/opt"))', "deny /opt"],
   ];
   const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-bisect-"));
   try {
@@ -350,10 +356,20 @@ function bisectMissingRule(run: WrapperRun): string {
       tmpdir: canonicalPath(dir),
       policy: run.policy,
     });
-    const out: string[] = ["bisect-probe — real profile PLUS one candidate rule:"];
+    const out: string[] = [
+      "bisect-probe — root read grant MINUS one path (REQUIRED = the child needs it):",
+    ];
     for (const [rule, label] of CANDIDATES) {
       const profilePath = join(dir, "candidate.sb");
-      writeFileSync(profilePath, `${base}\n${rule}\n`);
+      // Root grant FIRST, then the deny. The ORDER is the mechanism: SBPL takes the last
+      // matching rule, so this composes to "everything except X".
+      writeFileSync(
+        profilePath,
+        `${base}
+(allow file-read* (subpath "/"))
+${rule}
+`,
+      );
       const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
         encoding: "utf8",
         cwd: run.cwd,
@@ -361,7 +377,8 @@ function bisectMissingRule(run: WrapperRun): string {
         timeout: 15_000,
       });
       const fixed = r.error === undefined && r.status === 0;
-      out.push(`  ${fixed ? "FIXES IT  " : "no change "} ${rule}   (${label})`);
+      // Inverted for the subtractive form: BREAKS IT means the denied path is required.
+      out.push(`  ${fixed ? "not needed" : "REQUIRED  "} ${rule}   (${label})`);
     }
     return out.join("\n");
   } catch (e) {

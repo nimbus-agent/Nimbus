@@ -108,3 +108,24 @@ describe("SBPL runtime-startup grants", () => {
     expect(readBlock).not.toContain('(subpath "/")');
   });
 });
+
+describe("system-tree read grants stay clear of user data", () => {
+  const profile = (): string =>
+    generateSbplProfile({ cwd: "/tmp/cwd", tmpdir: "/tmp/sbx", policy: policy() });
+
+  // The system tree is granted broadly, matching what the Linux runner binds wholesale. These
+  // pin the two trees that must NOT follow it: `/private/var` carries the per-user temp
+  // directories and `/Users` carries home directories. Granting either as a subpath would make
+  // "refuses a path the policy does not grant" pass vacuously — the denied secret in that test
+  // lives under the temp tree.
+  it.each([['(subpath "/private/var")'], ['(subpath "/Users")'], ['(subpath "/")']])(
+    "never grants read on %s",
+    (needle) => {
+      expect(profile()).not.toContain(needle);
+    },
+  );
+
+  it("still grants /private/var/db/dyld specifically, which is not the same thing", () => {
+    expect(profile()).toContain('(subpath "/private/var/db/dyld")');
+  });
+});
