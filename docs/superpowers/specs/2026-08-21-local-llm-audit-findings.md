@@ -866,6 +866,74 @@ model for how F11's should read.
 
 ---
 
+## F14 — `ask` silently truncates every enumeration at 8 items
+
+**Severity: high.** Model-independent. The most likely of all findings to mislead a careful user.
+
+### Symptom
+
+`nimbus ask 'In prose, list my "RequiemNexusFargate" log groups by name.'` returned a clean
+numbered list, 1 through 8, no ellipsis, no caveat:
+
+```
+1. RequiemNexus-Compute-Stack-…-HMttfm0DVr5z
+…
+8. RequiemNexus-Compute-Stack-…-dABA3PUbIW4G
+```
+
+The user has **16**. Exactly half were dropped, and nothing in the answer says so.
+
+```
+total cloudwatch log groups : 20
+matching RequiemNexusFargate: 16
+returned by `ask`           :  8
+```
+
+### Root cause
+
+`engine/run-ask.ts:287`:
+
+```ts
+const LOCAL_CONTEXT_ITEM_LIMIT = 8;
+```
+
+`buildLocalIndexedContext` slices to that limit before serialising, so the model never sees
+items 9-16 and cannot know they exist. It is not the model omitting them — it is answering
+completely over the half it was handed.
+
+8 is a defensible context budget. Serving it as a complete answer to "list my X" is not.
+
+### Why this is worse than F3 and F12a
+
+The same undisclosed-incompleteness family, but the earlier two are detectable in principle —
+a stale `catchup` looks stale; a repo summary missing PRs looks thin. Here the answer is
+**indistinguishable from a correct one**: a well-formed, numbered, confident enumeration
+answering exactly the question asked. A careful reader has no signal. The only way to discover
+it is to already know the true count, which is precisely what the user asked the tool for.
+
+It also silently invalidates any counting or completeness question — "how many X do I have",
+"list all Y", "which Z are missing" — across every connector. With `github_actions` at 11,979
+items, an enumeration question there returns 0.07% of the data, presented as an answer.
+
+### The precedent is already in this codebase
+
+I31 requires `negotiate` to carry an explicit **list-truncation clause**, defined once in
+`agents/_lib/brief-disclosures.ts` and enforced by anchor phrase. The briefs already treat
+"the list you are reading is not the whole list" as a disclosure that must survive a rewrite.
+`ask` has no equivalent, and its truncation is far more aggressive.
+
+### Suggested fix
+
+1. When `byId.size` exceeds `LOCAL_CONTEXT_ITEM_LIMIT`, append the true count to the context
+   and require its disclosure — reuse the `brief-disclosures.ts` pattern rather than inventing
+   a second one. "Showing 8 of 16" is the whole fix.
+2. Consider raising the limit for short-title item types; 8 titles of ~70 chars is a trivial
+   token cost next to 8 full email bodies. A per-type budget beats one global constant.
+3. Until fixed, treat every `ask` enumeration as a sample, never a list. `nimbus query` and
+   `nimbus search` are unaffected and return the full set.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -913,6 +981,7 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F9 | `prove` headline vs scope | low-med | yes | `prove` |
 | F11 | One dead Google credential disables all 4 Google connectors | high | yes | gmail, drive, photos, meet |
 | F10 | Google refresh token coerced to `""`; OAuth path logs nothing | med-high | yes | every OAuth connector |
+| F14 | `ask` truncates every enumeration at 8, undisclosed | high | yes | every `ask` list/count question |
 | F13 | `sync succeeded` recorded with no credentials (F6's mechanism) | high | yes | every connector's health |
 | F12 | Repo questions exclude PRs; `github_actions` swamps ranked search | medium | yes | `ask` on any repo |
 | F7 | `people list` automated senders | low | yes | `people`, `expert` |
