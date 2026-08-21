@@ -31,9 +31,18 @@
   Vault key to test. Defaults to google_gmail.oauth (what `gmail` resolves to
   via GOOGLE_SERVICE_VAULT_KEYS in connectors/connector-vault.ts).
 
-.PARAMETER RefreshToken
-  Supply the refresh token directly and skip reading the vault. Use when the
+.PARAMETER PromptRefreshToken
+  Read the refresh token from a masked prompt instead of the vault. Use when the
   `nimbus vault get` confirm prompt cannot be automated.
+
+.PARAMETER RefreshTokenFromStdin
+  Read the refresh token from stdin instead of the vault, for a non-interactive
+  run. Pipe it in: `Get-Secret … | ./test-google-oauth-refresh.ps1 -RefreshTokenFromStdin`.
+
+  There is deliberately NO plaintext `-RefreshToken <value>` parameter: an
+  argument lands in shell history and in the process command line, where any
+  local user or diagnostic tool can read it. This script exists to diagnose a
+  credential problem, not to create one.
 
 .PARAMETER All
   Test every Google OAuth vault key, not just one. Useful because the shared
@@ -44,17 +53,45 @@
 .EXAMPLE
   ./test-google-oauth-refresh.ps1 -All
 .EXAMPLE
-  ./test-google-oauth-refresh.ps1 -RefreshToken '1//0g...'
+  ./test-google-oauth-refresh.ps1 -PromptRefreshToken
 #>
 [CmdletBinding()]
 param(
   [string] $Key = 'google_gmail.oauth',
-  [string] $RefreshToken,
+  [switch] $PromptRefreshToken,
+  [switch] $RefreshTokenFromStdin,
   [switch] $All
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# The refresh token, when supplied by the caller rather than read from the vault.
+#
+# Both inputs keep it off the command line: a `-RefreshToken <value>` argument lands in shell
+# history and in the process argument list, readable by any local user or diagnostic tool. A
+# script whose whole purpose is to diagnose a leaked-or-broken credential must not create a
+# second exposure to do it.
+#
+# `Read-Host -AsSecureString` masks the echo; the value is converted back to plaintext only
+# because the token has to go into a form-encoded POST body, and the plaintext copy never
+# leaves this process.
+$SuppliedRefreshToken = ''
+if ($PromptRefreshToken -and $RefreshTokenFromStdin) {
+  Write-Host 'Pass only one of -PromptRefreshToken / -RefreshTokenFromStdin.' -ForegroundColor Red
+  exit 2
+}
+if ($PromptRefreshToken) {
+  $secure = Read-Host -Prompt 'Refresh token (input hidden)' -AsSecureString
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try {
+    $SuppliedRefreshToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+  }
+} elseif ($RefreshTokenFromStdin) {
+  $SuppliedRefreshToken = ([Console]::In.ReadToEnd()).Trim()
+}
 
 $ALL_GOOGLE_KEYS = @(
   'google.oauth',
@@ -97,7 +134,7 @@ function Get-Fingerprint([string] $Value) {
 # `nimbus vault get` gates on a @clack/prompts confirm ("Secrets echo to this
 # terminal. Continue?") with no --yes flag, so feed it a keypress. Clack reads
 # raw input and a pipe does not always satisfy it; the caller can fall back to
-# -RefreshToken. Returns $null rather than throwing so -All can continue.
+# a caller-supplied token. Returns $null rather than throwing so -All can continue.
 function Read-VaultPayload([string] $VaultKey) {
   try {
     $raw = 'y' | & nimbus vault get $VaultKey 2>&1 | Out-String
@@ -243,9 +280,9 @@ foreach ($k in $keysToTest) {
   Write-Head ("Vault payload: {0}" -f $k)
 
   $refresh = ''
-  if (-not [string]::IsNullOrEmpty($RefreshToken)) {
-    Write-Host '  (using -RefreshToken; vault not read)' -ForegroundColor DarkGray
-    $refresh = $RefreshToken
+  if (-not [string]::IsNullOrEmpty($SuppliedRefreshToken)) {
+    Write-Host '  (using the supplied refresh token; vault not read)' -ForegroundColor DarkGray
+    $refresh = $SuppliedRefreshToken
     Write-Host ("  refreshToken     : present (len {0}, fp {1})" -f $refresh.Length, (Get-Fingerprint $refresh)) -ForegroundColor Green
   } else {
     $payload = Read-VaultPayload $k
@@ -270,13 +307,27 @@ foreach ($k in $keysToTest) {
   if ($r.Ok) {
     Write-Host ("  GOOGLE ACCEPTS IT — new access token issued (expires_in {0}s)" -f $r.ExpiresIn) -ForegroundColor Green
     $results += [pscustomobject]@{ Key = $k; Verdict = 'google-accepts'; Detail = "expires_in $($r.ExpiresIn)" }
-  } else {
+  } elseif ($r.Error -eq 'invalid_grant') {
+    # `invalid_grant` is the ONLY code that means "this refresh token is dead" — expired,
+    # revoked, or issued to a different client. Everything else is a failure of the PROBE,
+    # not a verdict on the credential, and must not be reported as one: `invalid_client`
+    # means the client_id/secret in this environment is wrong, `unauthorized_client` means
+    # the grant type is not enabled for that client, and a network or proxy failure lands
+    # here as `unknown` with no response body at all. Collapsing all of those into
+    # "Google REJECTS the stored refresh token" would tell the user to re-auth a credential
+    # that is fine — a confident conclusion from a signal that does not support it, which is
+    # the exact defect class this script was written to investigate.
     $msg = if ([string]::IsNullOrWhiteSpace($r.Description)) { $r.Error } else { "$($r.Error): $($r.Description)" }
     Write-Host ("  GOOGLE REJECTS IT — {0}" -f $msg) -ForegroundColor Red
     $results += [pscustomobject]@{ Key = $k; Verdict = 'google-rejects'; Detail = $msg }
+  } else {
+    $msg = if ([string]::IsNullOrWhiteSpace($r.Description)) { $r.Error } else { "$($r.Error): $($r.Description)" }
+    Write-Host ("  PROBE FAILED — {0}" -f $msg) -ForegroundColor Yellow
+    Write-Host '    (not a verdict on the stored token: this is the probe failing, not Google' -ForegroundColor DarkGray
+    Write-Host '     rejecting the credential. Check client_id/client_secret and network first.)' -ForegroundColor DarkGray
+    $results += [pscustomobject]@{ Key = $k; Verdict = 'probe-failed'; Detail = $msg }
   }
-
-  if (-not [string]::IsNullOrEmpty($RefreshToken)) { break }
+  if (-not [string]::IsNullOrEmpty($SuppliedRefreshToken)) { break }
 }
 
 Write-Head 'Verdict'
@@ -284,23 +335,46 @@ $results | Format-Table -AutoSize | Out-String | Write-Host
 
 $accepted = @($results | Where-Object { $_.Verdict -eq 'google-accepts' })
 $rejected = @($results | Where-Object { $_.Verdict -eq 'google-rejects' })
+$probeFailed = @($results | Where-Object { $_.Verdict -eq 'probe-failed' })
+
+# Every non-empty bucket is reported, and the exit code is decided AFTER all of them.
+#
+# This block used to `exit 0` inside the accepted branch. Under `-All` that was actively
+# misleading: one healthy key short-circuited the report and the rejected keys — with their
+# per-key `nimbus connector auth <service>` remediation — were never printed at all. A mixed
+# result is the NORMAL shape of the F11 failure, where google_drive is dead and the sibling
+# Google keys are fine, so the one case the script exists to diagnose was the one it hid.
+#
+# Exit codes: 0 = nothing rejected and nothing failed to probe; 1 = at least one key rejected;
+# 3 = nothing conclusive. A rejected key outranks a probe failure, which outranks success.
 
 if ($accepted.Count -gt 0) {
-  Write-Host 'Google ACCEPTS the stored refresh token.' -ForegroundColor Green
+  Write-Host 'Google ACCEPTS these refresh tokens:' -ForegroundColor Green
+  foreach ($a in $accepted) { Write-Host ("  {0}" -f $a.Key) -ForegroundColor Green }
   Write-Host ''
-  Write-Host 'The credential is fine — so Nimbus is sending something different:' -ForegroundColor White
+  Write-Host 'For those keys the credential is fine — so Nimbus is sending something different:' -ForegroundColor White
   Write-Host '  * a different client_id than the one in this environment, or'
   Write-Host '  * a different vault key than the one probed here, or'
   Write-Host '  * a refresh it should not be running at all (a valid expiresAt should'
   Write-Host '    short-circuit at oauth-registry.ts:615).'
   Write-Host ''
-  Write-Host 'This is a Nimbus bug. Next step is to instrument the refresh call —' -ForegroundColor White
+  Write-Host 'That is a Nimbus bug. Next step is to instrument the refresh call —' -ForegroundColor White
   Write-Host 'the OAuth path currently logs nothing (audit finding F10).'
-  exit 0
+  Write-Host ''
+}
+
+if ($probeFailed.Count -gt 0) {
+  Write-Host 'The probe could not reach a verdict for these keys:' -ForegroundColor Yellow
+  foreach ($p in $probeFailed) { Write-Host ("  {0,-22} {1}" -f $p.Key, $p.Detail) -ForegroundColor Yellow }
+  Write-Host ''
+  Write-Host 'These say nothing about the stored token. `invalid_client` means the client_id or' -ForegroundColor White
+  Write-Host 'client_secret in THIS environment is wrong; `unknown` with no detail is usually a'
+  Write-Host 'network or proxy failure. Fix the probe before concluding anything about the vault.'
+  Write-Host ''
 }
 
 if ($rejected.Count -gt 0) {
-  Write-Host 'Google REJECTS the stored refresh token.' -ForegroundColor Red
+  Write-Host 'Google REJECTS these refresh tokens (invalid_grant):' -ForegroundColor Red
   Write-Host ''
   Write-Host 'The stored credential genuinely cannot refresh. `nimbus connector auth`' -ForegroundColor White
   Write-Host 'reported "Verified" for a token that was never usable — it validates the'
@@ -322,11 +396,14 @@ if ($rejected.Count -gt 0) {
   exit 1
 }
 
+if ($probeFailed.Count -gt 0) { exit 3 }
+if ($accepted.Count -gt 0) { exit 0 }
+
 Write-Host 'Inconclusive — no payload could be read.' -ForegroundColor Yellow
 Write-Host ''
 Write-Host 'The `nimbus vault get` confirm prompt likely was not satisfied by the piped'
 Write-Host 'keypress. Read it manually and pass the token in:'
 Write-Host ''
 Write-Host '  nimbus vault get google_gmail.oauth'
-Write-Host "  ./test-google-oauth-refresh.ps1 -RefreshToken '<refreshToken value>'"
+Write-Host "  ./test-google-oauth-refresh.ps1 -PromptRefreshToken"
 exit 3
