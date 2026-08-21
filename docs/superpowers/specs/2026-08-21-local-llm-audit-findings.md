@@ -252,6 +252,11 @@ emitted by the model is removed and the canonical `## Gaps` survives.
 > `sectionBody`'s `h.level === 2` rule is **correct as-is** and should not change — it locates
 > the *canonical* section, which the renderer always writes at level 2.
 
+> **Incomplete on its own — see F28.** A later run caught the model reproducing the reserved
+> section as a plain-text `Gaps:` label with no heading at all. That is not in `heads`, so neither
+> `=== 2` nor `> 2` sees it. This fix is still correct and still needed; it is not the whole guard,
+> and the "one-line fix, smallest diff" framing below should be read with F28 attached.
+
 ---
 
 ## F3 — `catchup` claims personalisation it has no signal for, and declares no gap
@@ -1937,6 +1942,257 @@ next reader does not have to re-derive it.
 
 ---
 
+## F26 — `negotiate` reports 0 PRs authored for the person who authored 160 of the 173 indexed PRs, because "you" resolves to the wrong half of a split identity
+
+**Severity: high.** Model-independent. The brief's own source comment names this exact outcome as
+the thing it most wants to avoid — and the disclosure built to prevent it cannot fire here.
+
+### Symptom
+
+```
+$ nimbus negotiate --since 90d
+# Negotiation brief
+**Subject:** you
+## PRs authored
+- 0 PR(s), 0 merged
+## PRs reviewed
+- 0 review(s): 0 approved, 0 changes requested, 0 other/unknown
+## Tickets      → 0 opened, 0 closed
+## Decisions    → 0 attributed to you
+## Writing      → 0 doc(s), 0 note(s), 0 message(s)
+```
+
+Ground truth on the same index: of the 173 indexed PRs, **160 carry `user: asafgolombek`** — the
+subject. Only `## Ownership` comes back populated, with ~40 directories.
+
+`--person <the person id>` gives the identical result, so this is not a `you`-only path.
+
+### Root cause — two person records for one human, and the resolver picks the empty one
+
+```
+$ nimbus people search asafgolombek
+5a5851f1-…  linked    Asaf Golombek  asafgolombek@gmail.com  items=36
+fa7d1753-…  unlinked  asafgolombek   —                       items=203
+   github=asafgolombek
+```
+
+`agents/_lib/self-person.ts` `resolveSelfPerson` tries, in order: an explicit override, then
+**`git config user.email`**, then the OS username. Here `git config user.email` is
+`asafgolombek@gmail.com`, which matches the 36-item Gmail/Drive record. The 203-item GitHub
+identity is a separate, **unlinked** record that the resolver never reaches — `authored` edges hang
+off it, and every graph-traversing lane in the brief walks from the person the resolver returned.
+
+So the counts are *true of the record measured* and wildly false about the human. `nimbus people
+link <a> <b>` exists and would fix it. Nothing anywhere tells the user that.
+
+### The disclosure that exists cannot fire here
+
+`agents/negotiate.ts` is unusually careful about exactly this class. Its own comment:
+
+> *"an explicit `--person <id>` that resolves to nothing is NOT `personId === null` … Six lanes
+> then each honestly return `0` and the document reads as a person who shipped nothing, **which in
+> a compensation conversation is the worst possible failure**. A structural zero is not a
+> measurement, so it must be labelled as one."*
+
+`explicitSubjectGap()` implements that with two carefully distinguished arms — `none` and
+`graph-only`. But its first line is:
+
+```ts
+if (match === "person") return null;   // "the ordinary case, which needs no disclosure"
+```
+
+`5a5851f1-…` **is** a `person` row. The id resolves. So the guard returns `null`, and the brief
+renders six zeros with no note at all. The anticipated failure was *"the id matched nothing"*; the
+one that happened is *"the id matched a real person who is only half of this human"* — which is
+strictly more likely, because identity splitting is the normal state of a fresh index (email from
+one connector, login from another) and is precisely what `nimbus people link` exists to repair.
+
+### It is not confined to `negotiate`
+
+`agents/catchup.ts` calls the same `resolveSelfPerson`. This is the upstream cause of **F3** —
+`catchup`'s all-empty involvement block was recorded there as an honesty defect (it claims
+personalisation it has no signal for), and this is *why* it has no signal. F3's fix (declare the
+gap) stays correct; this finding is the defect underneath it, and fixing this one makes F3's
+disclosure rare instead of universal.
+
+### Why a frontier model does not fix this
+
+Nothing here reaches a model. Six SQL lanes return 0 because the `from` id has no edges.
+
+### Suggested fix
+
+1. **Disclose a zero-edge subject.** Before rendering, count the subject's outgoing
+   `authored`/`opened`/`reviewed` edges. Zero across all of them, for a person who *does* exist, is
+   the same "structural zero, not a measurement" case the two existing arms handle — add a third
+   arm rather than a new mechanism.
+2. **Name the likely cause and the repair**, since both are knowable: if another `person` row or
+   an unlinked identity shares this person's display name or a normalized handle, say so and point
+   at `nimbus people link`. The remediation string already has the right shape — it tells users to
+   run `nimbus people search <name>`; that is the command that surfaces the duplicate.
+3. **Widen `resolveSelfPerson`.** Git email is one identity among several. Consider resolving to a
+   *set* — git email, OS username, and any identity linked to either — and either union the lanes
+   or refuse with the ambiguity named. Silently picking the first match is what produced this.
+4. Red-prove: a fixture with two unlinked person rows for one human, one holding the `authored`
+   edges, asserting the brief does not render a bare zero.
+
+---
+
+## F27 — an I31 anchor guards only the first sentence of a two-sentence disclosure, and the second was observed being dropped
+
+**Severity: medium-high.** A real, narrow hole in a defense that otherwise works. Observed live,
+not reasoned about.
+
+### Symptom
+
+Two consecutive `nimbus negotiate --person <id>` runs on an unchanged index. The synthesis is
+non-deterministic, so one was discarded and one was accepted.
+
+**Discarded run** (deterministic render — I31 worked):
+
+```
+_window: last 90d — items authored by the subject that were ACTIVE in this window; the index
+records last-modified, not created. Two lanes sit outside it: decisions windows on its recorded
+decision date, and ownership is not windowed at all (it is an all-time snapshot) · generated …_
+
+_Rendered deterministically — a synthesis was attempted and discarded (the rewrite dropped a
+required disclosure)._
+```
+
+**Accepted run** (`_Synthesized by llama3.2 (local)._`):
+
+```
+_window: last 90d — items authored by the subject that were ACTIVE in this window; the index
+records last-modified, not created._
+```
+
+The second sentence is gone, and the brief shipped.
+
+### Root cause
+
+`agents/_lib/brief-disclosures.ts:119`:
+
+```ts
+line:
+  `_window: last ${negotiateWindowLabel(sinceMs)} — items authored by the subject that ` +
+  "were ACTIVE in this window; the index records last-modified, not created. Two lanes " +
+  "sit outside it: decisions windows on its recorded decision date, and ownership is not " +
+  `windowed at all (it is an all-time snapshot) · generated ${…}`,
+anchor: "last-modified, not created",
+```
+
+One `line`, **two independent disclosures**, one `anchor` — and the anchor is a fragment of the
+first sentence only. A rewrite that keeps sentence 1 and drops sentence 2 satisfies
+`contractViolations` and ships.
+
+Sentence 2 is not decorative. It says two of the brief's own sections — `## Decisions` and
+`## Ownership` — are **not filtered by the window in the header above them**. Without it, a reader
+applies "last 90d" to an all-time ownership snapshot. That is the same class of overstatement the
+comment above the entry says the window clause exists to prevent.
+
+`nimbus-security-invariants`' triple rule is satisfied here — wiring, docs and test all exist. The
+gap is in the granularity of the check, not its presence.
+
+### It is not the only entry with this shape
+
+Of the nine anchors in the module, a second guards two sentences too —
+`negotiateOwnershipDisclosure` (`:159`):
+
+- sentence 1: *"this is authorship-derived ownership — who wrote the lines, not who is formally accountable."* → anchored on `"authorship-derived"`
+- sentence 2: *"There is no CODEOWNERS and no on-call rotation in the index, and reviewer data (`reviewed` edges from GitHub PR reviews) is not factored into this ranking."* → **unanchored**
+
+Sentence 2 again carries the substantive facts. The remaining seven anchors are single-sentence and
+are fine.
+
+`CLAUDE.md`'s own I31 text describes the anchor as *"the sentence's factual fragment"* — singular.
+The design assumption is one sentence per entry; two entries break it.
+
+### Suggested fix
+
+1. **Make the unit of the contract a disclosure, not a `line`.** Split a two-sentence entry into
+   two `Disclosure` records with their own anchors, or let one record carry `anchors: string[]`
+   and require all of them. The former is cleaner and matches how the other seven already read.
+2. Add an audit that fails when a `Disclosure.line` contains more than one sentence and only one
+   anchor. This is checkable statically and is exactly the class of guard the module already
+   exists to provide — `brief-disclosures.ts` was created because two *copies* drifted; this is
+   two *halves* of one copy being unequally protected.
+3. Red-prove by feeding `contractViolations` a rewrite with sentence 2 removed; it must fail.
+   Today it passes.
+
+> Scope note, stated because the doc's I31 entry already concedes a weaker version of it: the
+> recorded bound is *"a phrase check proves a fragment survived, not that its sentence still means
+> the same thing."* This is sharper — the surviving fragment is not in the dropped sentence at all,
+> so no reading of "the same sentence" covers it.
+
+---
+
+## F28 — a reserved section reproduced WITHOUT a heading evades every heading-based strip, so F2's proposed one-line fix does not close the observed case
+
+**Severity: high.** A correction to a recommendation made earlier in this document.
+
+### Symptom
+
+The same accepted `negotiate` synthesis as F27 carried this, ahead of the canonical sections:
+
+```
+ deploys triggered
+Gaps:
+category: missing_relation_emit
+detail: No PagerDuty incident in the index is attributed to a person — either none carry an
+        assignee or resolver, or their actor payloads carry no usable email.
+remediation: Run `nimbus connector sync pagerduty`. …
+category: missing_relation_emit
+detail: No Sentry issue in the index is assigned to a resolvable person — …
+
+## Sources                                    ← canonical, re-attached verbatim ✅
+## Evidence not available from the index      ← canonical ✅
+## Gaps                                       ← canonical ✅
+```
+
+Same leak as F2 — raw `category:` / `detail:` / `remediation:` field names in user-facing output,
+duplicating a reserved section — with one difference that matters: **`Gaps:` here is not a
+heading.** It is a plain paragraph line. So is the duplicated "deploys triggered" above it.
+
+### Why this breaks F2's fix
+
+F2 diagnosed `stripSections` correctly (`if (h.level !== 2) continue;` misses a *promoted* `# Gaps`)
+and proposed `if (h.level > 2) continue;` — strip level ≤ 2 rather than exactly 2. That fix is
+right for what it targets and should still land.
+
+But it operates over `heads`, the parsed heading list. A model that writes `Gaps:` as body text
+produces **no heading at all**, so it is not in `heads` under either the current rule or the
+proposed one. The observed leak survives the proposed fix untouched.
+
+This is worth stating plainly because F2 is described in this document's own priority section as a
+*"one-line guard fix"* with the *"smallest diff"*. That framing is now wrong: it is a correct
+one-line fix for one of at least two shapes, and shipping it alone would close the finding on paper
+while the leak stays reproducible.
+
+### The general form
+
+The reserved-section defense is structured as *"the model never sees the canonical section, and any
+section it invents under that heading is stripped."* The first half is airtight — it is
+construction, not checking, which is exactly why I31 is strong. The second half assumes fabrication
+arrives **as a heading**. It does not have to. A model reproducing remembered structure will
+happily emit a label, a bolded line, a list item, or a fenced block.
+
+### Suggested fix
+
+1. Land F2's `h.level > 2` change — it is correct and independently needed.
+2. Add a **content-shaped** strip alongside the heading-shaped one: the raw envelope field names
+   (`category:`, `detail:`, `remediation:`) are internal and have no legitimate reason to appear in
+   any rendered brief. A line matching them at the start of a line is fabrication by construction,
+   whatever heading it sits under. That is a guard written as *what cannot pass*, which is the
+   shape this codebase already prefers.
+3. Better still, **keep them out of the model's reach.** The leak is of field names from the gap
+   objects; if the synthesis prompt never contains the serialized envelope — only the rendered
+   prose — the model cannot reproduce a field name it never saw. Check what the prompt actually
+   carries before adding a stripper; F4 (the synthesis prompt leaking into output) suggests the
+   prompt is the more productive place to look.
+4. Red-prove with a fixture whose model output contains a non-heading `Gaps:` block. F2's test as
+   proposed would pass this case while the leak ships.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -2001,6 +2257,9 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | **F24a** | **`deploy preflight --mode block` returns `ok` + exit 0 for a service that is not in config — a CI gate failing open, with a test pinning it** | **critical** | yes | every gated deploy, the first-party GitHub Action |
 | F25 | A standing brief disclosure is I31-protected and false since V55 ("no connector indexes changed-file paths") | med-high | yes | `decisions`, and the disclosure contract generally |
 | F24b | `metrics dora` reports `no_repos` for a service that does not exist, while `stats` refuses | medium | yes | `metrics dora` |
+| F26 | `negotiate` (and `catchup`) resolve "you" by git email to the empty half of a split identity — six lanes render 0, no disclosure fires | high | yes | `negotiate`, `catchup` |
+| F28 | A reserved section reproduced as plain text evades every heading-based strip — **F2's fix is incomplete** | high | yes | all 14 brief kinds |
+| F27 | An I31 anchor guards only the first of two sentences; the second was observed dropped (2 of 9 entries) | med-high | yes | `negotiate` disclosures |
 
 **Suggested first PR** (superseded by F24a — see below)**:** F2 — one-line guard fix (`h.level > 2`), a red-prove test, smallest
 diff, closes a live output defect on all fourteen brief kinds.
@@ -2032,6 +2291,13 @@ same "smallest correct diff" reasoning.
 0.86 ceiling in place is the one outcome that makes the brief less useful than it is today: it
 would swap a stale explanation for an accurate description of a gap nobody is on the hook to
 close.
+
+**F2 and F28 are one PR, not two.** F28 is the reason F2's diff is not one line. Landing F2 alone
+closes the finding on paper and leaves the observed leak reproducible; the pair is still small.
+
+**F26 should land before F3.** F3 is `catchup` declaring no gap beside an empty involvement block;
+F26 is why the block is empty. Fixing F26 turns F3's disclosure from a permanent fixture into a
+rare one, which is the difference between an honest product and an apologetic one.
 
 ---
 
@@ -2102,4 +2368,18 @@ nimbus stats pr-merges --service github    # "unknown service 'github' — add [
 # F25
 nimbus status                             # "PR file coverage: 173 / 173"
 nimbus decisions --since 90d              # "...no connector indexes changed-file paths..."
+
+# F26
+nimbus people search asafgolombek   # TWO records: gmail (items=36) + github (items=203, unlinked)
+git config user.email               # asafgolombek@gmail.com → resolveSelfPerson picks the 36
+nimbus negotiate --since 90d        # 0 PRs authored, 0 reviewed, 0 tickets, 0 decisions, no gap note
+nimbus query --service github --type pr --limit 500   # 160 of 173 have user: asafgolombek
+
+# F27 / F28  (synthesis is non-deterministic — run until one is ACCEPTED)
+nimbus negotiate --person <person-id> --since 90d
+#  discarded run → preamble keeps "Two lanes sit outside it…", footer says
+#                  "a synthesis was attempted and discarded"
+#  accepted run  → that sentence is GONE (anchor is only "last-modified, not created"),
+#                  and a plain-text "Gaps:" block with raw category:/detail:/remediation:
+#                  rides above the canonical sections
 ```
