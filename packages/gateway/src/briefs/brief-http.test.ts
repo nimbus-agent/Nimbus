@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { BriefSynthesizerLlm } from "./brief-synthesis.ts";
 import { startBriefTestServer } from "./brief-test-server.ts";
+import { pollBriefUntilTerminal } from "./poll-until-terminal.ts";
 
 const OK_LLM: BriefSynthesizerLlm = {
   generateJson: async () =>
@@ -50,23 +51,6 @@ async function createAndFeedRun(base: string, token: string): Promise<{ id: stri
   return { id: created.id };
 }
 
-async function pollUntilTerminal(
-  base: string,
-  token: string,
-  id: string,
-): Promise<{ status: string; report?: unknown; failureReason?: string }> {
-  for (let i = 0; i < 50; i++) {
-    const res = await fetch(`${base}/v1/briefs/${id}`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string; report?: unknown; failureReason?: string };
-    if (body.status === "done" || body.status === "failed") return body;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error("brief run never reached a terminal state");
-}
-
 describe("GET /v1/briefs/{id} auth", () => {
   test("a tokenless GET is 401, proving briefs are not in the unauthenticated read table", async () => {
     const s = await startBriefTestServer();
@@ -104,7 +88,7 @@ describe("GET /v1/briefs/{id} lifecycle", () => {
       });
       expect(runRes.status).toBe(200);
 
-      const body = await pollUntilTerminal(base, s.token, id);
+      const body = await pollBriefUntilTerminal(base, s.token, id);
       expect(body.status).toBe("done");
       expect(body.report).toBeDefined();
       expect("failureReason" in body).toBe(false);
@@ -142,7 +126,7 @@ describe("GET /v1/briefs/{id} lifecycle", () => {
       });
       expect(runRes.status).toBe(200);
 
-      const body = await pollUntilTerminal(base, s.token, id);
+      const body = await pollBriefUntilTerminal(base, s.token, id);
       expect(body.status).toBe("failed");
       expect(typeof body.failureReason).toBe("string");
       expect((body as Record<string, unknown>)["error"]).toBeUndefined();

@@ -65,6 +65,15 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/agent-runs/agent-test-server.ts" },
   // `http-api-test-server.ts` is the third harness of this shape — same reason.
   { kind: "exact", path: "packages/gateway/src/ipc/http-api-test-server.ts" },
+  // `poll-until-terminal.ts` is the fourth: test-only, not `.test.ts`-suffixed, imported by the
+  // brief suites rather than redefined in each. Its uncovered branches are exactly the ones a
+  // harness exists to have — the non-200 bail-out and the budget-exhausted throw fire only when
+  // the surface under test is already broken, so exercising them would mean asserting on a
+  // deliberately broken server. Its SIBLING `migrated-db-template.ts` is deliberately NOT
+  // exempted: that one carries a load-bearing claim (a copied template is schema-identical to a
+  // freshly migrated database) and is tested directly, so it earns its coverage rather than an
+  // exemption.
+  { kind: "exact", path: "packages/gateway/src/briefs/poll-until-terminal.ts" },
   // `test-token-vault.ts` is the in-memory seeded Vault those harnesses share. It was extracted
   // from `brief-test-server.ts` + `agent-test-server.ts` (both already excluded here) when their
   // byte-identical copies were deduplicated, so it inherits their exemption rather than earning a

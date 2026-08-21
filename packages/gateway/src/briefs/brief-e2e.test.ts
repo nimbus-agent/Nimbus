@@ -11,6 +11,7 @@ import { MAX_RUN_BYTES, MAX_SOURCE_BYTES, MAX_SOURCES_PER_RUN } from "./brief-co
 import type { BriefSynthesizerLlm } from "./brief-synthesis.ts";
 import { runBriefWithIndexHits, startBriefTestServer } from "./brief-test-server.ts";
 import type { Report } from "./brief-types.ts";
+import { pollBriefUntilTerminal } from "./poll-until-terminal.ts";
 
 type CreateOk = { id: string; status: string; expected: number };
 type SourceOk = { accepted: boolean; received: number; expected: number };
@@ -37,16 +38,7 @@ async function postNoBody(url: string, token: string): Promise<Response> {
 }
 
 async function pollUntilTerminal(base: string, token: string, id: string): Promise<GetOk> {
-  for (let i = 0; i < 200; i++) {
-    const res = await fetch(`${base}/v1/briefs/${id}`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (res.status !== 200) throw new Error(`unexpected GET status ${res.status}`);
-    const body = (await res.json()) as GetOk;
-    if (body.status === "done" || body.status === "failed") return body;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error("brief run never reached a terminal state within the poll budget");
+  return (await pollBriefUntilTerminal(base, token, id)) as GetOk;
 }
 
 /**
@@ -612,8 +604,14 @@ test("leak check: the bearer token, the fed source body, and its URL never appea
 
     await captureJson<RunOk>(await postNoBody(`${base}/v1/briefs/${created.id}/run`, s.token), 200);
 
+    // This loop cannot use `pollBriefUntilTerminal`: the assertion below inspects EVERY response
+    // body this test saw, so each poll's raw text has to go through `captureJson` into `bodies`.
+    // The budget is wall-clock for the same reason the shared helper's is — see
+    // `poll-until-terminal.ts`. This test is the one that hit the 60 s harness timeout inside
+    // its old 200-iteration budget on a slow Windows runner.
     let done: GetOk | undefined;
-    for (let i = 0; i < 200; i++) {
+    const pollDeadline = Date.now() + 20_000;
+    while (done === undefined && Date.now() < pollDeadline) {
       const body = await captureJson<GetOk>(
         await fetch(`${base}/v1/briefs/${created.id}`, {
           headers: { authorization: `Bearer ${s.token}` },
@@ -624,9 +622,9 @@ test("leak check: the bearer token, the fed source body, and its URL never appea
         done = body;
         break;
       }
-      await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 25));
     }
-    const finished = must(done, "a terminal GET body within the poll budget");
+    const finished = must(done, "a terminal GET body within the 20 s poll budget");
     expect(finished.status).toBe("done");
     // The stub deliberately cites nothing, so the report legitimately carries zero citations —
     // there is no legitimate path for the fed URL to appear in the report either.

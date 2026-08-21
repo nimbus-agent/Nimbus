@@ -1,10 +1,11 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { openMigratedDb } from "../index/migrated-db-template.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
 import type { DiagnosticsRpcContext } from "./diagnostics-rpc.ts";
@@ -45,8 +46,9 @@ function makeCtxWithIndex(dataDir: string): {
   db: Database;
   localIndex: LocalIndex;
 } {
-  const db = new Database(join(dataDir, "nimbus.db"));
-  LocalIndex.ensureSchema(db);
+  // Copies a migrated template rather than replaying 55 migrations per test — this helper is
+  // called by 68 tests in this file, which made it the single slowest file in the Windows suite.
+  const db = openMigratedDb(join(dataDir, "nimbus.db"));
   const localIndex = new LocalIndex(db);
   const ctx: DiagnosticsRpcContext = {
     dataDir,

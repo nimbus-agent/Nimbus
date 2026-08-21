@@ -353,12 +353,27 @@ jobs:
         # to absorb that variance while still bounding a true hang well under the
         # job ceiling. Re-check this number if a healthy run ever exceeds ~700 s;
         # the durable fix is making the suite faster, not raising the cap again.
+        # A SILENT retry is the expensive kind. Attempt 1 costs a full suite run — on
+        # windows-2025 that was 882 s in run 32452626344, where ONE test
+        # (`briefs/brief-e2e.test.ts`'s leak check) timed out and the retry passed, so the job
+        # went green having burned ~11 extra minutes with nothing in the summary to investigate.
+        # Attempt 1's output is therefore captured to a file, echoed to the log unchanged, and
+        # its `(fail)` lines surfaced as annotations plus a job-summary block.
+        #
+        # Redirect-then-cat, NOT a pipe into `tee`: a pipeline makes `$?` the exit code of the
+        # LAST command, which would silently turn every failure into a success here. The
+        # redirect leaves `$?` as the test run's own code, which is what both branches below
+        # depend on.
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 900 bun test "packages/${{ matrix.pkg }}/src" --timeout 60000
+            bun scripts/run-with-timeout.ts 900 bun test "packages/${{ matrix.pkg }}/src" --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
+            cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
+              if [ "$attempt" -eq 2 ]; then
+                echo "::warning title=Retry masked a failure::${{ matrix.pkg }} on ${{ matrix.os }} FAILED on attempt 1 and passed on attempt 2. The job is green but paid for two full suite runs — see the annotations naming the failing test(s)."
+              fi
               exit 0
             fi
             if [ "$attempt" -eq 2 ]; then
@@ -366,6 +381,29 @@ jobs:
               exit "$code"
             fi
             echo "Attempt $attempt failed (exit $code), retrying in 5 s..."
+            # `|| true` so a no-match grep (a timeout/crash with no `(fail)` line) does not end
+            # the step under a future `set -e`, and does not skip the retry.
+            failed=$(grep -E '^\(fail\)' "${RUNNER_TEMP}/attempt-${attempt}.log" | head -20 || true)
+            if [ -n "$failed" ]; then
+              while IFS= read -r line; do
+                echo "::warning title=Flaky test::${line}"
+              done <<< "$failed"
+            else
+              echo "::warning title=Attempt 1 failed with no (fail) line::exit ${code} — a timeout, crash or hang rather than an assertion. See the attempt-1 output above."
+            fi
+            {
+              echo "### ⚠ ${{ matrix.pkg }} on ${{ matrix.os }} needed a retry"
+              echo ""
+              echo "Attempt 1 exited \`${code}\`; attempt 2 follows. A retry costs a full suite run."
+              echo ""
+              if [ -n "$failed" ]; then
+                echo '```text'
+                echo "$failed"
+                echo '```'
+              else
+                echo "No \`(fail)\` line — attempt 1 timed out, crashed or hung."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
             sleep 5
           done
         env:

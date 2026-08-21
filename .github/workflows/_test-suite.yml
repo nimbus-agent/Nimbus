@@ -315,9 +315,17 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun test packages/gateway packages/cli packages/mcp-connectors scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml
+            # Redirect-then-cat, NOT a pipe: a pipeline would make `$?` the exit code of the
+            # last command and silently mask every failure. Same shape as `ci.yml`'s
+            # cross-platform retry, and for the same reason — a silent retry costs a full
+            # suite run and leaves nothing in the summary to investigate.
+            bun test packages/gateway packages/cli packages/mcp-connectors scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
+            cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
+              if [ "$attempt" -eq 2 ]; then
+                echo "::warning title=Retry masked a failure::The unit suite FAILED on attempt 1 and passed on attempt 2 (${{ inputs.runner }}). Green, but two full suite runs were paid for — see the annotations naming the failing test(s)."
+              fi
               exit 0
             fi
             if [ "$attempt" -eq 2 ]; then
@@ -325,6 +333,14 @@ jobs:
               exit "$code"
             fi
             echo "Attempt $attempt failed (exit $code), retrying in 5 s..."
+            failed=$(grep -E '^\(fail\)' "${RUNNER_TEMP}/attempt-${attempt}.log" | head -20 || true)
+            if [ -n "$failed" ]; then
+              while IFS= read -r line; do
+                echo "::warning title=Flaky test::${line}"
+              done <<< "$failed"
+            else
+              echo "::warning title=Attempt 1 failed with no (fail) line::exit ${code} — a timeout, crash or hang rather than an assertion. See the attempt-1 output above."
+            fi
             sleep 5
           done
         env:

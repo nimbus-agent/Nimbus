@@ -14,8 +14,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { materializeMigratedDb } from "../index/migrated-db-template.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createSeededTokenVault } from "../ipc/test-token-vault.ts";
@@ -115,11 +114,12 @@ export async function startBriefTestServer(opts?: {
   const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-brief-e2e-"));
   const dbPath = join(tmpDir, "nimbus.db");
 
-  // Migrate + close (same pattern as clip-e2e.test.ts / http-server.test.ts): the server opens
-  // its own readonly + writable handles on `dbPath`, so the setup connection must not linger.
-  const setupDb = new Database(dbPath);
-  runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);
-  setupDb.close();
+  // Materialize a migrated database at `dbPath` and hold no handle on it: the server opens its
+  // own readonly + writable handles, so a lingering setup connection would be a second writer.
+  // This copies a template migrated once per process rather than replaying every migration per
+  // harness — `materializeMigratedDb` closes its builder connection before copying, so the file
+  // it leaves is complete and unowned, which is exactly what the old migrate-then-close did.
+  materializeMigratedDb(dbPath);
 
   // A separate writable handle, held only by this harness, for `save` (saveBriefReport) and for
   // the `db` field callers use to assert on saved items — distinct from the server's own handles.

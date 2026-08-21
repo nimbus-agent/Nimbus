@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   existsSync,
@@ -18,8 +18,7 @@ import { writeConnectorSecret } from "../connectors/connector-vault.ts";
 import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { appendEgressEntry } from "../egress/egress-ledger.ts";
 import { coverageForWindow } from "../egress/egress-verify.ts";
-import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import type { Syncable } from "../sync/types.ts";
 import {
   appendBootMarkerOrWarn,
@@ -47,8 +46,10 @@ describe("assemblePlatformServices (smoke)", () => {
 describe("appendBootMarkerOrWarn", () => {
   let db: Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    // Rehydrates a template migrated once per process instead of replaying every migration for
+    // each of this block's tests — see `migrated-db-template.ts`. Still a private in-memory
+    // database per test; `deserialize` builds a new one from the image, it does not share it.
+    db = openMigratedMemoryDb();
   });
   afterEach(() => db.close());
 

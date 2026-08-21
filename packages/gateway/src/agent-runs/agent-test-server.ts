@@ -12,8 +12,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { materializeMigratedDb } from "../index/migrated-db-template.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createSeededTokenVault } from "../ipc/test-token-vault.ts";
@@ -58,11 +57,11 @@ export async function startAgentTestServer(opts?: {
   const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-agent-e2e-"));
   const dbPath = join(tmpDir, "nimbus.db");
 
-  // Migrate + close (same pattern as brief-test-server.ts): the server opens its own readonly +
-  // writable handles on `dbPath`, so the setup connection must not linger.
-  const setupDb = new Database(dbPath);
-  runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);
-  setupDb.close();
+  // Materialize + hold no handle (same pattern as brief-test-server.ts): the server opens its own
+  // readonly + writable handles on `dbPath`, so a lingering setup connection would be a second
+  // writer. The copy comes from a template migrated once per process; `materializeMigratedDb`
+  // closes its builder connection first, so the file it leaves is complete and unowned.
+  materializeMigratedDb(dbPath);
 
   // A separate writable handle held only by this harness, for asserting on ledger rows — distinct
   // from the server's own handles.
