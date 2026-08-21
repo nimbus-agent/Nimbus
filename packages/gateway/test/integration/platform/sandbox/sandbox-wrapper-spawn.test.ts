@@ -115,6 +115,28 @@ writeFileSync(join(outside, "secret.txt"), "do-not-read-me");
  */
 const childBinaryDir = dirname(process.execPath);
 
+/**
+ * The runtime's own home tree — `~/.bun`, one level above `~/.bun/bin`.
+ *
+ * Bun reads its global config and cache at startup (`bunfig.toml`, `install/cache`), not only the
+ * binary out of `bin/`. Granting the binary's directory alone leaves those denied, and on macOS
+ * the result is an abort with no stderr rather than a diagnosable error.
+ *
+ * Declared in the POLICY rather than baked into the SBPL profile on purpose: this is a statement
+ * about what this particular child needs, which is exactly what a policy is for. The production
+ * macOS child is a compiled binary with no such tree, so putting it in the profile would grant
+ * every extension a path only this test's child uses.
+ */
+const childRuntimeHome = dirname(childBinaryDir);
+
+/**
+ * darwin ONLY. On Windows the helper writes an ACE per granted path, and `~/.bun` carries
+ * `install/cache` — thousands of entries. Granting it there made every spawn hang until the test
+ * timeout killed it (`status: null`, no output), turning a macOS fix into a Windows regression.
+ * The Windows child is `powershell.exe` and needs nothing from the Bun tree anyway.
+ */
+const RUNTIME_HOME_GRANT = process.platform === "darwin" ? [childRuntimeHome] : [];
+
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
@@ -124,7 +146,7 @@ function policy(): SandboxPolicy {
     id: "com.nimbus.wrapper-test",
     permissions: {
       network: [],
-      filesystem: { read: [work, childBinaryDir], write: [work] },
+      filesystem: { read: [work, childBinaryDir, ...RUNTIME_HOME_GRANT], write: [work] },
     },
   };
 }

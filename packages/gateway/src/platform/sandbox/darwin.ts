@@ -114,7 +114,17 @@ export function createDarwinSandboxRunner(): SandboxRunner {
       // Absolute path to the SIP-protected system binary — never resolve via
       // PATH, which could be attacker-influenced (Sonar S4036 hardening).
       const child = spawn("/usr/bin/sandbox-exec", ["-f", profilePath, cmd, ...args], {
-        env: opts.env,
+        // TMPDIR is redirected into `sandboxDir`, which the profile already grants read AND
+        // write. A runtime writes to its temp directory during startup, and on macOS that is
+        // the per-user `/private/var/folders/<hash>/T` -- a tree this profile deliberately does
+        // not grant, since it holds every other application's scratch files too. Granting it
+        // would be the obvious fix and the wrong one; pointing the child at a directory it may
+        // already use is strictly tighter, and matches what the Linux runner gets for free from
+        // its private tmpfs `/tmp` bind.
+        //
+        // All three spellings, because which one is honoured is libc- and runtime-dependent and
+        // leaving one pointing at the denied tree defeats the other two.
+        env: { ...opts.env, TMPDIR: sandboxDir, TMP: sandboxDir, TEMP: sandboxDir },
         // The CANONICAL cwd, matching what the profile granted. Spawning into `opts.cwd` here
         // while granting `cwd` above would reintroduce the mismatch this whole change removes.
         cwd,
