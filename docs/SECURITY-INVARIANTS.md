@@ -676,6 +676,24 @@ An anchor is the FACTUAL fragment of its sentence, never its full text — requi
 
 ---
 
+## I32 — clip source metadata is whitelist-constructed, so a page cannot deny ingestion of its own clip
+
+**Statement:** `POST /v1/clips` accepts an optional `source` object of page-supplied provenance. `validateClipInput` **constructs a new `ClipSource`** from exactly five whitelisted fields — `author`, `publishedAt`, `siteName`, `lang`, `leadImage` — and never returns the caller's object, spreads it, or deletes keys from it. Unknown members are discarded rather than carried. Each retained field is bounded, and **how** it is bounded depends on what it is: prose degrades usefully under a cap (`author`, `siteName` truncate at 200), structured values do not (`lang` over 20 and `leadImage` over 2048 are **dropped**, because half a URL is a broken link a consumer cannot tell was cut). `publishedAt` is bounded by type — an integer within `Date`'s range — not by length.
+
+The whitelist is the load-bearing half, and the reason this is an invariant rather than tidiness: `ingestClip` stores whatever `source` holds **without further filtering, by design**, `upsertIndexedItem` serialises the whole metadata object, and it **throws** above `RAW_META_MAX_BYTES` (65,536 bytes, `index/constants.ts`). Every per-field cap is worthless if an unrecognised sibling key rides along beside them. Absent the whitelist, a page that put enough under `source.junk` would make **its own clip un-ingestable** — the page being captured denying the user the capture.
+
+**Scope, stated plainly rather than inflated.** This is the file's first bounds/resource-limit invariant; every other entry here is a consent, authentication, egress or integrity gate. The loss it prevents is narrower than theirs and deliberately so: a hostile page can block ingestion of **only its own clip**. It reads no data, crosses no trust boundary, escalates nothing, affects no other item, and persists nothing. It is registered because it is a structural defense sitting on a fully page-controlled input path — the shape the TRIPLE RULE exists to keep from silently rotting — not because it is comparable in severity to I27 or I30. An auditor reading this row should calibrate accordingly.
+
+**Wiring site:** `packages/gateway/src/clips/clip-ingest.ts` — `validateClipSource` builds the object from five named locals and is called by `validateClipInput`; `ingestClip` spreads the already-validated `input.source` into the metadata it composes. The single production caller is `packages/gateway/src/ipc/http-server.ts`, which validates inline: `ingestClip(writeDb, validateClipInput(input), scheduleEmbedding)`. The ceiling itself is enforced in `packages/gateway/src/index/item-store.ts` against `RAW_META_MAX_BYTES`.
+
+**Filtering lives in exactly one place, and that is the design.** `ingestClip` deliberately does **not** re-validate — a second filtering site is a second place that must agree about the bounds, which is the drift this single-chokepoint shape avoids. That makes `ClipInput`'s types the weak edge: `leadImage` is typed `string`, so the type does not encode the length limit, and a future caller reaching `ingestClip` without going through `validateClipInput` could hand it an over-cap value. The consequence is a loud throw from `upsertIndexedItem`, not silent corruption — but if a second production caller is ever added, it either routes through `validateClipInput` or this invariant grows a `D`-rule confining `ingestClip`'s callers, in that same commit.
+
+**Anti-pattern:** returning, spreading (`...o`, `...raw`) or `delete`-ing from the caller's `source` object; casting a `Record<string, unknown>` to `ClipSource` (which stops TypeScript verifying the keys match, and is the "type narrow, runtime wide" shape this tree has been bitten by before); adding a sixth `ClipSource` field without a bound; moving or duplicating the filtering into `ingestClip`; throwing on a malformed **member** rather than dropping it (one bad `<meta>` tag must not cost the user their capture — a non-object `source` is different, and does throw); and — the one that actually shipped and was caught in review — **an enforcement test whose oversized payload is still UNDER `RAW_META_MAX_BYTES`**, which passes on its shape assertion while proving nothing about the denial.
+
+**How to comply:** a new `ClipSource` field is read by name inside `validateClipSource` and bounded by one of the three helpers — `boundedProse` (trim, drop-if-empty, truncate) for prose, `boundedExact` (trim, drop-if-empty, drop-if-over) for anything structured, `epochMs` for an instant. Never widen the construction to a loop or an accumulator over caller keys. When changing the size fence, assert the counterfactual: that the payload the whitelist withheld genuinely exceeds `RAW_META_MAX_BYTES`, rather than trusting a round number.
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.
@@ -696,7 +714,7 @@ function dispatchToolCall(toolId: string, scope: ReadonlySet<string>) {
 }
 ```
 
-**2. Entry in this file** — a new `## I32 — Sub-agent tool scope enforcement` section (the next free number after the current ceiling `I31`; note `I28` is reserved, not free) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
+**2. Entry in this file** — a new `## I33 — Sub-agent tool scope enforcement` section (the next free number after the current ceiling `I32`; note `I28` is reserved, not free) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
 
 **3. Enforcement test** — in `packages/gateway/src/security-invariants.test.ts`:
 
