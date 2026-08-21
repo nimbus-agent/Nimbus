@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { canonicalPath } from "../../../../src/platform/sandbox/canonical-path.ts";
@@ -320,20 +320,24 @@ function darwinPermissiveProbe(run: WrapperRun): string {
  * probed is the profile that actually ran.
  */
 function bisectMissingRule(run: WrapperRun): string {
-  // Round 2. Round 1 established the CLASS: `(allow file-read* (subpath "/"))` fixed it and all
-  // seven other operation classes -- write, ioctl, mach, shm, sysctl, process, system -- changed
-  // nothing. So the child is being denied a file READ, and these narrow that to a path.
-  const cwdParent = dirname(run.cwd);
-  const cwdGrandparent = dirname(cwdParent);
+  // Round 3. Round 1 established the CLASS -- only `(allow file-read* (subpath "/"))` flips it,
+  // and write/ioctl/mach/shm/sysctl/process/system all change nothing, so it is a file READ.
+  // Round 2 then ruled out every obvious path: the cwd's parent, the temp root above it, HOME,
+  // /dev, /private/var, /usr, /Library and /opt ALL changed nothing while `/` still worked.
+  //
+  // So the needed path is something the root grant covers and none of those do. These are what is
+  // left at the top of a macOS filesystem, plus `/System/Volumes/Data` -- on a sealed system
+  // volume user data is firmlinked there, so a path the profile names as `/Users/...` can reach
+  // the kernel as `/System/Volumes/Data/Users/...` and match neither.
   const CANDIDATES: ReadonlyArray<readonly [string, string]> = [
-    [`(allow file-read* (subpath "${cwdParent}"))`, "the cwd's own parent"],
-    [`(allow file-read* (subpath "${cwdGrandparent}"))`, "the temp root above the cwd"],
-    [`(allow file-read* (subpath "${homedir()}"))`, "HOME"],
-    ['(allow file-read* (subpath "/dev"))', "all of /dev"],
-    ['(allow file-read* (subpath "/private/var"))', "all of /private/var"],
-    ['(allow file-read* (subpath "/usr"))', "all of /usr"],
-    ['(allow file-read* (subpath "/Library"))', "/Library"],
-    ['(allow file-read* (subpath "/opt"))', "/opt"],
+    ['(allow file-read* (subpath "/private"))', "all of /private"],
+    ['(allow file-read* (subpath "/private/tmp"))', "/private/tmp (what /tmp resolves to)"],
+    ['(allow file-read* (subpath "/System/Volumes/Data"))', "the firmlink target for user data"],
+    ['(allow file-read* (subpath "/Users"))', "all of /Users, not just HOME"],
+    ['(allow file-read* (subpath "/sbin"))', "/sbin"],
+    ['(allow file-read* (subpath "/Volumes"))', "/Volumes"],
+    ['(allow file-read* (subpath "/Applications"))', "/Applications"],
+    ['(allow file-read* (literal "/"))', "the root directory itself"],
   ];
   const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-bisect-"));
   try {
