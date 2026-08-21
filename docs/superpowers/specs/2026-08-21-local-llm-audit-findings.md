@@ -715,6 +715,19 @@ the envelope says so. The model presented it as if it were the answer — and be
 by relevance rather than recency, three-month-old PRs outranked the open ones. Either strip
 `rank` before serialising, or label the fields.
 
+**Confirmed twice, on unrelated data.** Asked about AWS CloudWatch log groups, the same field
+resurfaced as invented infrastructure semantics:
+
+> *"The log groups also contain a 'rank' value, which suggests that they may be related to a
+> specific ordering or priority within the RequiemNexus infrastructure. However, the exact
+> meaning of this rank value is not clear without further context."*
+
+Two independent datasets (GitHub PRs, CloudWatch log groups), two different misreadings, same
+cause. The model is behaving reasonably — it is handed a field named `rank` inside a
+`<tool_output>` envelope with no schema, so it explains it. Stripping the field is a smaller
+and more reliable fix than any prompt instruction, and unlike prompt guidance it works for
+every model.
+
 ### Suggested fix
 
 1. Widen the repo path beyond `type = 'issue'` — at minimum include `pr`, ordered by
