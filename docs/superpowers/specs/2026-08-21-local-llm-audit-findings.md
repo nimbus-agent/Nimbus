@@ -1730,6 +1730,213 @@ instantly, and no model should be asked to estimate it. The guard is missing on 
 
 ---
 
+## F24 — an unknown `--service` gets a soft all-null envelope, so `deploy preflight --mode block` returns `ok` for a service that does not exist
+
+**Severity: critical (24a).** Model-independent — no LLM anywhere on this path. A CI deploy gate
+that fails **open** on the single most likely misconfiguration, with a test pinning the behaviour.
+
+### 24a — the pre-deploy gate
+
+```
+$ nimbus deploy preflight --service totally-made-up --target-ref main --mode block
+Deploy preflight — totally-made-up @ main  [ok]
+
+  Active P1 incidents             0  [no_pagerduty_mapping]
+  Failing CI runs                 0  [no_repos]
+  Open PR merge conflicts         0  [no_repos]
+$ echo $?
+0
+```
+
+`totally-made-up` appears nowhere in `nimbus.toml`. The gate passes.
+
+`--mode block` exists to stop a deploy, and the mechanism is the exit code
+(`commands/deploy.ts:167`):
+
+```ts
+if (parsed.mode === "block" && result.verdict === "warn") process.exit(1);
+```
+
+The verdict vocabulary is `"ok" | "warn"` — there is no third value for *"I could not evaluate
+this"*. `ipc/preflight-rpc.ts` answers an unknown service from `unconfiguredEnvelope()`, which
+hard-codes `verdict: "ok"` and three zero-count checks. So:
+
+- a service that is healthy, and
+- a service that **does not exist**
+
+are byte-identical apart from the gap labels, and both exit 0.
+
+The same dispatcher serves `GET /v1/preflight/deploy`, which is the route the first-party
+`packages/github-actions/preflight-query` action calls. Its `service` input is documented as
+*"matches `[metrics.dora.<id>]` or `[ci.service.<id>]` in nimbus.toml"* — so a stale or typo'd id
+is precisely the expected failure — and `render.ts:71` emits **no annotations at all** when the
+verdict is `ok`. A workflow whose service id drifts out of `nimbus.toml` goes green and silent.
+
+The contrast that makes this a defect rather than a choice: the same action has
+`allow-gateway-failure: "false"` by default, so an **unreachable gateway** fails the workflow. The
+transport is fail-closed. The configuration is fail-open.
+
+### The behaviour is tested in, not merely untested
+
+`packages/gateway/test/unit/ipc/preflight-rpc.test.ts:49`:
+
+```ts
+it("returns an unconfigured envelope (all checks gapped) when service has no config", …)
+  expect(out.value.verdict).toBe("ok");
+  expect(out.value.checks.failing_ci_runs.gap).toBe("no_repos");
+```
+
+So this is not a coverage hole — the fail-open verdict is asserted as the contract. Any fix has to
+change that test deliberately, which is the right place for the decision to be visible.
+
+### 24b — `metrics dora` reports the wrong reason, while `stats` refuses
+
+**Severity: medium.** Same envelope, different consequence.
+
+```
+$ nimbus metrics dora --service github          # 'github' is NOT a configured service
+DORA metrics — github (since 30d)
+  Deployment Frequency  — deploys_per_day  n=0  [no_repos]        ← exit 0
+$ nimbus stats pr-merges --service github
+unknown service 'github' — add [metrics.dora.github] or [ci.service.github] to nimbus.toml
+                                                                   ← exit 1
+```
+
+`no_repos` states that the service exists and has no repositories bound — a different, and much
+more fixable-looking, problem than *"this service key was never defined"*. `DoraGap`
+(`metrics/dora.ts:5`) has six members and no `unknown_service`.
+
+The divergence is **deliberate and recorded** in `ipc/metrics-rpc.ts:145`:
+
+> *"Deliberate asymmetry with `metrics.dora` below… `dora` returns a FIXED set of four metric
+> slots that can be filled with `no_repos` placeholders, while `stats` returns a series whose
+> shape depends on config it does not have — so there is nothing honest to place-hold, and a
+> typo'd `--service` must say so rather than render 13 empty buckets that look like real thin
+> data. Behaviour kept as-is; recorded, not fixed."*
+
+The reasoning is about **shape**, and it holds: `dora` can place-hold, `stats` cannot. But the
+sentence that justifies `stats`' refusal — *"a typo'd `--service` must say so rather than render
+… data"* — applies to `dora` word for word. Four `no_repos` nulls under a header naming the
+service also look like real thin data. The defect is not that `dora` answers softly; it is that it
+answers with the **wrong reason**, and the gap vocabulary that exists to carry exactly this
+information has no member for it.
+
+### Suggested fix
+
+1. **24a: add a third verdict.** `"unknown_service"` (or reuse `"warn"`) must make
+   `--mode block` exit non-zero. A gate cannot have a pass-by-default branch for *"I do not know
+   what you asked me about"*. Update `preflight-rpc.test.ts:49` in the same commit, and say in the
+   message that the assertion is being inverted on purpose.
+2. **24a: make the action loud.** `render.ts` should annotate an unknown service even in `warn`
+   mode — a silent green is worse than a warning nobody reads.
+3. **24b: add `unknown_service` to `DoraGap`** and use it in `unconfiguredEnvelope`. One enum
+   member; the render already prints whatever gap it is handed. This keeps the recorded
+   shape-based asymmetry intact while removing the misattribution — the decision the comment
+   defends is not the one this changes.
+4. Red-prove (1) with a test that `--mode block` on an unconfigured service exits 1. That test
+   cannot pass today.
+
+> The `stats` refusal is the in-codebase precedent and it is the right one — same as F13's
+> `Stored: aws (not verified)` and F20's `people list --not-reviewed`. This is the third finding in
+> this audit where one surface gets the honesty right and its sibling, over the same config, does
+> not.
+
+---
+
+## F25 — a brief's standing disclosure is perfectly protected by I31 and factually false
+
+**Severity: medium-high.** Model-independent. I31 guarantees a disclosure *survives*; nothing
+guarantees it is still *true*.
+
+### Symptom
+
+`nimbus decisions --since 90d`, verbatim, on a 13,183-item index:
+
+```
+## Gaps
+
+- Confidence tops out at 0.86, not 1.0. The corroboration term reserves its full score for
+  migration/iac evidence — derived from a corroborating change's file paths — and **no connector
+  indexes changed-file paths**, so that evidence is specified but never emitted. …
+  (Read scores against a 0.86 ceiling, not a full-marks scale.)
+```
+
+The same gateway, in the same session, reports:
+
+```
+$ nimbus status
+PR file coverage: 173 / 173
+```
+
+Changed-file paths are indexed — `pr_changed_file` / `pr_files_state` shipped at **V55**, 100%
+covered for every indexed PR on this machine, and `nimbus query --not-touching` queries those very
+rows (F20). The premise of the disclosure was true when written and is not true now.
+
+### What is still true, and what is not
+
+Both halves have to be stated separately, because only one is stale:
+
+| claim | status |
+|---|---|
+| confidence cannot exceed 0.86 | **true** |
+| `migration`/`iac` evidence is never emitted | **true** |
+| *the reason* is that no connector indexes changed-file paths | **false since V55** |
+| therefore: read 0.86 as full marks | **misleading** — it presents a closable gap as a permanent scale |
+
+Verified by grep: the literals `"migration"` and `"iac"` as an `EvidenceKind` appear in exactly
+three places — the union (`decisions/decision-types.ts:3`), the scoring read
+(`decision-confidence.ts:33`) and the V47 `CHECK` constraint. **No site writes either kind.** The
+kinds emitted by `decision-corroborate.ts` are `source`, `pr`, `commit` and `adr`. And
+`packages/gateway/src/decisions/` contains no reference to `pr_changed_file` at all.
+
+So the ceiling is real, but its cause is now *"the extraction pass was never wired to the
+changed-file substrate"*, not *"the substrate does not exist"*. Those call for opposite actions:
+the first is a small wiring task, the second is a permanent fact a reader should stop expecting to
+change. The brief tells the user the second.
+
+Sharpening it: an **`iac` connector also exists** (`connectors/iac-sync.ts`, registered in
+`connector-catalog.ts`). The disclosure's premise is stale twice over.
+
+### Why this is worth a finding rather than a typo fix
+
+This is the complement of I31 and it is the reason to file it here. I31 does its job perfectly on
+this exact sentence — the `## Gaps` section is constructed by the renderer, withheld from the
+model, re-attached verbatim, and anchor-checked through `brief-disclosures.ts`. Every one of those
+mechanisms operated correctly on a false statement, and each one made it *more* durable: it cannot
+be paraphrased away, cannot be dropped by a rewrite, and reads with the authority of a
+machine-generated disclosure.
+
+A disclosure is load-bearing precisely because users cannot check it. Its correctness therefore has
+to be maintained like a wiring site, not like prose — which is what the invariant triple rule
+already says about every other defense in this codebase.
+
+### Related, not claimed as a defect
+
+`adr` evidence **is** emitted, but `corroboration()` counts only `pr`/`commit` (as `hasCode`) and
+`migration`/`iac` (as `hasArtifact`). ADR presence is stored separately as `has_adr` and rendered
+as a `⚠ no ADR found` marker. So the one artifact kind that is actually produced does not feed the
+term that reserves its top score for artifacts. That may well be intended — recorded here so the
+next reader does not have to re-derive it.
+
+### Suggested fix
+
+1. **Decide which way to close it, then say so.** Either wire `decision-corroborate.ts` to
+   `pr_changed_file` so `migration`/`iac` become reachable and 1.0 is a real score, or drop the two
+   kinds from `corroboration()` and rescale so the ceiling is 1.0. Leaving the ceiling with a
+   corrected explanation is the worst of the three.
+2. **Correct the sentence wherever it is restated** — `agents/decisions.ts:151` is the definition,
+   and the `0.86` figure should be derived from `corroboration()`'s reachable maximum rather than
+   written as a literal in prose, so the two cannot drift again.
+3. **Give standing disclosures an expiry check.** A disclosure whose premise is a capability
+   statement ("no connector indexes X") should have a test that fails when X becomes true — the
+   same shape as the invariant tests. `pr_files_state` existing is a one-line assertion.
+
+> Precedent for the mechanism, not the content: `brief-disclosures.ts` exists because two copies of
+> a disclosure sentence drifted. This is the same failure one level up — the sentence and the
+> world drifted instead.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -1791,8 +1998,11 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F20 | `--not-touching` glob unvalidated — 5 natural path forms return EVERY PR as "not touching" | high | yes | `nimbus query`, MCP `query` tool |
 | F23 | `ask` counts its retrieved context, not the index (`3`, then `2.2`, vs 173) | high | yes | every `ask` count question |
 | F19 | `nimbus help` omits 27 of 65 commands, incl. 9 of 14 agents, `prove`, `mcp-server`, `update` | med-high | yes | discovery of the whole product |
+| **F24a** | **`deploy preflight --mode block` returns `ok` + exit 0 for a service that is not in config — a CI gate failing open, with a test pinning it** | **critical** | yes | every gated deploy, the first-party GitHub Action |
+| F25 | A standing brief disclosure is I31-protected and false since V55 ("no connector indexes changed-file paths") | med-high | yes | `decisions`, and the disclosure contract generally |
+| F24b | `metrics dora` reports `no_repos` for a service that does not exist, while `stats` refuses | medium | yes | `metrics dora` |
 
-**Suggested first PR:** F2 — one-line guard fix (`h.level > 2`), a red-prove test, smallest
+**Suggested first PR** (superseded by F24a — see below)**:** F2 — one-line guard fix (`h.level > 2`), a red-prove test, smallest
 diff, closes a live output defect on all fourteen brief kinds.
 
 **Suggested second PR:** F1 steps 1–2 (term extraction + honest empty context). Highest user
@@ -1812,6 +2022,16 @@ model surface answering with no predicate at all. Both are cheap relative to the
 **F19 is the one to do while waiting on a review.** Zero risk, no runtime behaviour, and it is
 what stops a user from routing every question into `ask` — which is where five of these findings
 live.
+
+**F24a now displaces F2 as the first PR.** It is a CI deploy gate that passes on a typo, it is the
+only finding here with a *security-gate* shape rather than an honesty shape, and its fix is one
+enum member plus an inverted assertion in an existing test. F2 remains the best *second* PR on the
+same "smallest correct diff" reasoning.
+
+**F25 should be closed by deciding, not by rewording.** Correcting the sentence and leaving the
+0.86 ceiling in place is the one outcome that makes the brief less useful than it is today: it
+would swap a stale explanation for an accurate description of a gap nobody is on the hook to
+close.
 
 ---
 
@@ -1870,4 +2090,16 @@ nimbus query --sql "SELECT 1"             # ModuleNotFound B:\~BUN\root\query-gu
 # F23
 nimbus ask "how many PRs are in the index?"                        # "3", then "2.2 PRs", then empty
 nimbus query --service github --type pr --limit 1000               # 173
+
+# F24a  (a CI deploy gate passing on a service that does not exist)
+nimbus deploy preflight --service totally-made-up --target-ref main --mode block
+$LASTEXITCODE                             # 0, verdict [ok], zero annotations
+
+# F24b
+nimbus metrics dora  --service github     # header + 4 nulls, gap "no_repos", exit 0
+nimbus stats pr-merges --service github    # "unknown service 'github' — add [metrics.dora...]", exit 1
+
+# F25
+nimbus status                             # "PR file coverage: 173 / 173"
+nimbus decisions --since 90d              # "...no connector indexes changed-file paths..."
 ```
