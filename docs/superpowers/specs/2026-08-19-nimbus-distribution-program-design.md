@@ -47,11 +47,15 @@ they are not re-litigated:
   guarded by `env.SONAR_TOKEN != ''`, and `ci.yml` documents the skip on fork
   PRs explicitly. An outside contributor's CI will not go red on a job they
   cannot fix.
-- **`@nimbus-dev/mcp` is not published to npm** (404 as of 2026-08-19, while
-  `@nimbus-dev/sdk` 1.18.0 and `@nimbus-dev/client` 0.17.3 both are). The
-  directory-listings spec calls the official MCP Registry blocked for want of a
-  package on a supported registry. That blocker is real, and it is one publish
-  away from being gone.
+- **`@nimbus-dev/mcp` is published — resolved 2026-08-20.** It was 404 when this
+  spec was written, which is what made the official MCP Registry blocked for want
+  of a package on a supported registry. Branch B of the publish-route spec was
+  taken: `packages/mcp-launcher` moved to
+  [nimbus-agent/nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp) and now
+  publishes via release-please + OIDC trusted publishing, matching
+  `@nimbus-dev/sdk` and `@nimbus-dev/client`. `0.2.0` carries both the npm publish
+  attestation and a SLSA provenance predicate. The registry listing followed the
+  same day — see the § Directory listings table below.
 
 ## Goal and non-goals
 
@@ -251,7 +255,7 @@ records real progress on 2026-07-30 and nothing since:
 | `punkpeye/awesome-mcp-servers` | PR open (#11216), gated on a passing Glama check |
 | PulseMCP | email sent |
 | `modelcontextprotocol/docs` | dead — list retired |
-| Official MCP Registry | blocked — needs a packaging decision |
+| Official MCP Registry | **listed 2026-08-20** — `io.github.nimbus-agent/nimbus@0.2.0` |
 | mcp.so, wong2/appcypher, Smithery, Tiers 2–4 | not started |
 
 So the work here is **finishing**, not starting: chase the two open PRs to a
@@ -261,30 +265,42 @@ available, and it suits a few-hours-a-week budget better than anything else here
 
 Three additions to that spec:
 
-1. **Publish `@nimbus-dev/mcp` and take the official MCP Registry off the
-   blocked list.** It is the highest-intent discovery surface that exists for
-   this product, and the packaging decision it is blocked on is exactly this
-   publish. The launcher package exists, is MIT, and has a `bin`.
-   **This is not a one-command task, and the spec should not pretend it is.**
-   `NPM_TOKEN` is `state: "forbidden"` in `scripts/release/credential-registry.ts`
-   (revoked 2026-07-19); publishing is OIDC-only with `mfa=publish`, and the
-   monorepo contains no `npm publish` path at all — `@nimbus-dev/sdk` and
-   `@nimbus-dev/client` publish from their own satellite repositories, which is
-   precisely why they are live and this one is not. So the first step is a
-   decision: configure npm trusted publishing (OIDC) for a third package and add
-   a publish path here, **or** move `packages/mcp-launcher` into its own
-   satellite repo, matching the pattern that already works.
-   **Related documentation defect — corrected.** `CLAUDE.md` and `GEMINI.md`
-   used to describe `packages/mcp-launcher` as "the published `@nimbus-dev/mcp`
-   npm launcher" while it was not published — an unpublished package described
-   as published is the same honesty class the launch guardrails exist to
-   prevent. Both files now read "Not yet published to npm," matching the
-   verified state. **Remaining follow-up:** the publish route itself is still
-   undecided — costed in
-   [`2026-08-19-mcp-launcher-publish-route.md`](./2026-08-19-mcp-launcher-publish-route.md),
-   which recommends Branch B (satellite repo) but leaves the choice to the
-   repository owner. The package stays unpublished, and both files' wording
-   stays accurate, until that decision is made and implemented.
+1. **~~Publish `@nimbus-dev/mcp` and take the official MCP Registry off the
+   blocked list.~~ DONE 2026-08-20.** Branch B of
+   [`2026-08-19-mcp-launcher-publish-route.md`](./2026-08-19-mcp-launcher-publish-route.md)
+   was chosen and executed: `packages/mcp-launcher` became
+   [nimbus-agent/nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp),
+   publishing `@nimbus-dev/mcp` through release-please + OIDC trusted publishing —
+   so `NPM_TOKEN` stayed `forbidden` and the monorepo still contains no
+   `npm publish` path. `0.2.0` is live with both attestations, and
+   `io.github.nimbus-agent/nimbus@0.2.0` is listed in the official registry.
+   The plan and the verified precedent it was executed against are
+   [`../plans/2026-08-20-mcp-launcher-satellite-extraction.md`](../plans/2026-08-20-mcp-launcher-satellite-extraction.md)
+   and
+   [`2026-08-20-satellite-publish-precedent.md`](./2026-08-20-satellite-publish-precedent.md).
+
+   **Two caveats this spec should carry, because both bit during execution.**
+
+   `0.1.0` has **no provenance** and should not be used. npm refuses to configure
+   a trusted publisher until a package has at least one published version, so the
+   bootstrap version had to be published by hand. The satellite's `SECURITY.md`
+   states that exception rather than claiming every release is attested.
+
+   **Org-namespace publishing to the MCP Registry cannot be done interactively
+   without a PAT.** The registry's login app ("MCP Registry Login (Prod)", client
+   `Iv23liUydBbI7Z2Q9bOZ`) is a **private GitHub App**, so it cannot be installed
+   on `nimbus-agent`, so a device-flow user token can never read the org role.
+   The CLI's error text on that path — "make your organization membership public"
+   — points at the wrong thing; public membership is not the requirement.
+   `0.2.0` was listed by hand that way; nothing after it needs to be, because the
+   satellite's `release.yml` now publishes the registry entry from CI via
+   `login github-oidc`, where the namespace follows from the repo's owner.
+   **Related documentation defect — corrected and now settled.** `CLAUDE.md` and
+   `GEMINI.md` described `packages/mcp-launcher` as "the published
+   `@nimbus-dev/mcp` npm launcher" while it was not published, then as "Not yet
+   published to npm" once corrected. Both now carry the satellite-repo bullet
+   with no published/unpublished framing at all, matching how the sdk and client
+   entries read.
 2. **List the first-party GitHub Actions.** `packages/github-actions/`
    (`annotate-action`, `preflight-query`) is built and unlisted on the Actions
    Marketplace.

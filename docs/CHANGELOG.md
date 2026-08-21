@@ -8,6 +8,29 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-21 — Listed in the official MCP Registry, and the listing now maintains itself.**
+  `io.github.nimbus-agent/nimbus@0.2.0` is live at
+  [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io), pointing at
+  `npm:@nimbus-dev/mcp@0.2.0` — the last blocker in
+  [the distribution program](./superpowers/specs/2026-08-19-nimbus-distribution-program-design.md),
+  which had carried it as "blocked — needs a packaging decision" since 2026-08-19. Any MCP client
+  can now discover and run the local index and the fourteen agents via `npx -y @nimbus-dev/mcp`.
+  The satellite's `release.yml` gained a third job that republishes the registry entry from CI on
+  every release via `mcp-publisher login github-oidc`, with `server.json`'s two version fields
+  driven by release-please `extra-files` and **asserted** against the version npm accepted rather
+  than rewritten — a rewrite would mask a broken config and ship an entry pointing at a version
+  nobody can install. It is a job inside the existing release workflow rather than the
+  tag-triggered workflow the registry's own docs suggest, because that shape races: release-please
+  pushes the tag BEFORE the npm publish job runs, and the registry entry is metadata pointing at
+  the package. **Two things worth knowing before anyone repeats this.** Interactive org-namespace
+  publishing requires a `read:org` PAT — the registry's login app is a PRIVATE GitHub App, so it
+  cannot be installed on the org and a device-flow token can never read the org role; the CLI's
+  error text ("make your organization membership public") points at the wrong requirement
+  entirely. And `@nimbus-dev/mcp@0.1.0` carries **no provenance**: npm will not configure a trusted
+  publisher until a package has one published version, so the bootstrap had to be hand-published.
+  Both are recorded in the satellite's `SECURITY.md` and its `nimbus-mcp-boundaries` skill rather
+  than left for rediscovery.
+
 - **2026-08-20 — `@nimbus-dev/mcp` extracted to its own repo and published to npm.**
   `packages/mcp-launcher` moved to
   [nimbus-agent/nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp) and now publishes via
