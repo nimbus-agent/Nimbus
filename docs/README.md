@@ -55,7 +55,7 @@ The non-negotiables in [Contributing](#contributing) follow from that question �
 
 - **local** — the SQLite index, the Vault, and the audit log all live on your machine. The cloud is a connector, not the source of truth. Telemetry is opt-in and off by default (`[telemetry] enabled = false`).
 - **consent-gated** — every destructive or outbound action is intercepted by a human-in-the-loop gate *before* it runs. It lives in the executor, not the prompt, so it cannot be jailbroken away.
-- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server, and hosts any third-party server you register with `nimbus connector add --mcp`. As an **MCP server**, it exposes your local index *and* its built-in agents to any MCP client through 18 read-only tools — 7 index tools plus 11 agent tools (`explainWhy`, `findExpert`, `assessImpact`, `getCatchup`, …). Install it with `npx -y @nimbus-dev/mcp`, or run `nimbus mcp-server --stdio` directly from a checkout. The engine never calls a cloud API directly.
+- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server, and hosts any third-party server you register with `nimbus connector add --mcp`. As an **MCP server**, it exposes your local index *and* its built-in agents to any MCP client through 21 read-only tools — 9 index tools plus 12 agent tools (`explainWhy`, `findExpert`, `assessImpact`, `getCatchup`, …). Install it with `npx -y @nimbus-dev/mcp`, or run `nimbus mcp-server --stdio` directly from a checkout. The engine never calls a cloud API directly.
 
 ---
 
