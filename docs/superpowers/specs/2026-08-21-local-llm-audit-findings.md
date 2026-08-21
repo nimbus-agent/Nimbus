@@ -2193,6 +2193,243 @@ happily emit a label, a bolded line, a list item, or a fenced block.
 
 ---
 
+## F29 — the reserved-section leak is systemic: 6 of 8 briefs probed, in 3 distinct shapes, and the guard is keyed on the wrong property
+
+**Severity: high.** Supersedes the scope of F2 and F28, which are two of the three shapes below.
+Every one of these was captured in a single session's runs, on the same machine, with no attempt
+to provoke them.
+
+### The census
+
+Eight briefs were run with `[agents] synthesis = "local"`. Six shipped a **duplicated `Gaps`
+block** above the canonical `## Gaps` — the same content twice, once in raw internal syntax:
+
+| brief | leaked as | level | F2's `h.level > 2` fix |
+|---|---|---|---|
+| `impact` | `# Gaps` | 1 (promoted) | **catches** |
+| `conflicts` | `# Gaps` | 1 | **catches** |
+| `expert` | `# Gaps` | 1 | **catches** |
+| `huddle` | `# Gaps` | 1 | **catches** |
+| `janitor` | `Gaps` (bare line) + `# Gaps` | none + 1 | catches the H1, **misses** the bare line |
+| `why` | `# Deterministic Findings` → `### Gaps` | 3 (demoted) | **misses** |
+| `negotiate` | `Gaps:` (paragraph label) | none | **misses** |
+| `decisions` | *(clean)* | — | — |
+| `ghost` | fabricated `# Findings` / `## Nimbus Agent` / `### Deterministic Fallback Rendering` wrapper — no reserved name | — | n/a |
+
+Five of the six leaks carried raw envelope field names into user-facing output — `category:`,
+`detail:`, `remediation:`, and the internal category values (`missing_relation_emit`,
+`missing_entity_type`, `missing_connector`).
+
+`ghost` is listed because it shows the adjacent failure: the model wrapped the entire real brief
+inside an invented heading hierarchy and leaked render-internal vocabulary
+(*"Deterministic Fallback Rendering"*) without touching a reserved name at all — outside the
+strip's remit under any level rule.
+
+### The three shapes
+
+1. **Promoted** — `# Gaps` at level 1. F2's original finding. F2's fix closes it.
+2. **Demoted under a fabricated parent** — `why` produced `# Deterministic Findings` and nested
+   `### Gaps` beneath it. F2's fix deliberately excludes deeper levels, and the doc comment's
+   reason is sound *as written*:
+
+   > *"widening the strip to deeper levels would start deleting the sub-structure the end-of-section
+   > rule exists to permit."*
+
+   But that reasoning assumes the parent section is legitimate. Here the `###` is nested under an
+   H1 the model invented, so it is not sub-structure of anything the renderer wrote. The rationale
+   protects real sub-structure; it does not, on its own terms, protect this.
+3. **Not a heading at all** — `negotiate`'s `Gaps:` paragraph and `janitor`'s bare `Gaps` line.
+   F28. Invisible to any rule over parsed headings.
+
+### The guard is keyed on the wrong property
+
+Every version of the rule so far — `h.level !== 2`, `h.level > 2` — asks *"what level is this
+heading?"*. The fact that actually distinguishes fabrication from the canonical section is not the
+level and not even the headingness:
+
+> **The renderer writes each reserved section exactly once, at level 2. Therefore any second
+> occurrence of a reserved section's name, at any level or none, is fabrication.**
+
+That is checkable, it is written as what cannot pass, and it closes all three shapes with one
+rule instead of three patches. It also explains why the "one-line fix, smallest diff" framing kept
+being wrong: the diff is small either way, but a level-indexed rule can only ever chase shapes.
+
+### Suggested fix
+
+1. Strip by **reserved-section name and occurrence count**, not by heading level: after the
+   canonical section is re-attached, no other occurrence of that name may remain — heading, label,
+   or bolded line.
+2. Keep F2's `h.level > 2` change; it is a strict improvement and is subsumed rather than replaced.
+3. Strip the internal field vocabulary independently (F28 step 2) — `category:` / `detail:` /
+   `remediation:` and the `missing_*` category values have no legitimate appearance in any rendered
+   brief, whatever heading they sit under. Better still, check whether the synthesis prompt carries
+   the serialized envelope at all; a field name the model never saw cannot be reproduced (see F4).
+4. **Red-prove against all three shapes.** A test fixture per shape, drawn from the table above —
+   these are real captured outputs, not hypotheticals. A fix that passes only shape 1 is what
+   shipping F2 alone would produce.
+
+> Rate note, because it bears on how the fix is prioritised: this is **6 of 8** briefs on a single
+> unremarkable session with a 3B model. It is not a rare model slip that a stronger model makes
+> rarer — at this rate the guard is load-bearing, and it is currently one shape wide.
+
+---
+
+## F30 — a fast `briefError` prints Bun's unhandled-rejection stack, with bundled source frames, before the clean message
+
+**Severity: medium.** Model-independent. Affects all ten commands built on `runAgentBriefCli`.
+
+### Symptom
+
+```
+$ nimbus pre-mortem "S2"
+50946 |     client.onNotification(`${spec.kind}.briefError`, (params) => {
+50947 |       if (params === null || typeof params !== "object") {
+50948 |         reject(new Error("Agent failed"));
+…
+error: pre-mortem: 'S2' was not found in the local Jira index
+      at <anonymous> (B:/~BUN/root/nimbus-cli-windows-x64.exe:50951:14)
+      at dispatchNotificationLine (B:/~BUN/root/nimbus-cli-windows-x64.exe:49356:9)
+      …
+      at data (node:net:281:72)
+pre-mortem: 'S2' was not found in the local Jira index      ← the intended output
+$ echo $?
+2
+```
+
+The error itself is correct, expected and well-worded; the handler that prints it works. It is
+preceded by a code frame from the compiled binary and a ten-frame stack, printed by Bun, because
+the rejection had no handler attached at the moment it occurred.
+
+### Root cause — the handler is attached one `await` too late
+
+`commands/_agent-brief-cli.ts:100`:
+
+```ts
+const briefPromise = awaitBrief(client, spec, (t) => { timeout = t; });
+await client.call(`agents.${spec.kind}`, spec.params);   // ← nothing is watching briefPromise here
+const { brief, findings } = await briefPromise;          // ← handler attached only now
+```
+
+`awaitBrief` registers the `briefError` notification handler, which calls `reject`. Between the two
+awaits the promise has no `.then`/`.catch`, so a rejection arriving in that window is an unhandled
+rejection at that instant. The gateway's fastest possible rejection — a ref that resolves to
+nothing, needing no work — lands squarely there.
+
+The outer `try/catch` still runs afterwards and does the right thing (`err.message` to stderr, exit
+2, exactly as the source comment describes). So the clean path is intact; the noise is printed
+*before* it by the runtime.
+
+### Why the other agents did not show it
+
+`nimbus why does-not-exist-anywhere.ts`, `nimbus janitor bogus/ref/xyz` and
+`nimbus impact no-such-file.ts` were all checked and print **no** stack. They do not error on an
+unresolvable ref — they render a brief with gap notes. `pre-mortem` is the one agent that rejects
+outright on a bad ref, and its ref (a Jira epic key) is the one most likely to be mistyped. So the
+race is in shared code but reachable today mainly through `pre-mortem`; any agent that starts
+rejecting fast inherits it.
+
+### Suggested fix
+
+1. Attach the handler immediately: `briefPromise.catch(() => {})` right after creation (the real
+   rejection is still delivered at the later `await`), or `await Promise.all([...])` /
+   `Promise.race` so both are watched from the start.
+2. Red-prove with a test that a rejecting `briefError` delivered before the RPC resolves produces
+   exactly one line on stderr. The current tests exercise the catch, which already works — the
+   defect is what the runtime prints beside it.
+3. Consider whether exit **2** is right for a user-input error. The source comment treats "print
+   message, exit 2" as the standard path, and `nimbus stats`' unknown-service refusal exits **1**
+   for the same class of mistake. Not a defect on its own; noted because the two conventions differ
+   and F24b already turns on exactly this kind of sibling divergence.
+
+---
+
+## F31 — `glossary` synthesis drops every definition, and the list is ranked by a score it never shows
+
+**Severity: medium-high.** Part (a) is a guard gap I31 permits by design; part (b) is an honesty
+gap that made the model's output look like a mistake it did not make.
+
+### (a) The synthesized brief keeps the counts and discards the definitions
+
+`nimbus glossary --limit 15` ships, in full:
+
+```
+The glossary includes terms related to the Nimbus SDK, code editor features, and machine types.
+Here's a breakdown of the terms and their frequencies:
+
+1. **main**: 21 mentions
+2. **nimbus**: 13 mentions
+…
+These terms are related to the Nimbus SDK, code editor features, and machine types. The most
+frequent terms are related to the Nimbus SDK and code editor features.
+
+## Gaps
+- 1 candidate term(s) are still awaiting consolidation. …
+- 105 of 110 glossary source(s) are indexed with a truncated body …
+```
+
+`--json` on the same query shows what the brief was built from. Every entry carries:
+
+```json
+{ "term": "main", "definition": "A main release of a software project, typically denoted by a
+  version number.", "definitionSource": "llm", "docFreq": 21, "serviceSpread": 2,
+  "firstSeenAt": …, "lastSeenAt": …, "topSources": [ {…}, {…}, {…}, {…}, {…} ] }
+```
+
+The synthesis kept `term` and `docFreq` — the counts are faithful, not fabricated — and dropped
+**the definition, its provenance, the service spread, the date range and all five cited sources**,
+for every entry. A glossary without definitions is a word-frequency table. The two framing
+sentences that replaced them are content-free, are repeated almost verbatim, and are wrong on the
+one claim they make (*"machine types"* — `main` here is a git branch appearing in
+`chore(main): release …` commit titles).
+
+I31 permits this, correctly and by construction: the reserved sections survived, and `## Gaps` came
+through verbatim. `CLAUDE.md` records the relevant bound precisely — `glossary` *"requires a phrase
+only in `term` mode for `entries[0]`, exactly mirroring its renderer"*. This run is `mode: "list"`,
+so **no phrase was required at all** and the body was entirely at the model's discretion.
+
+The finding is not that I31 failed. It is that nothing else constrains a rewrite from replacing the
+brief's data with prose *about* the data, and for `glossary` in list mode the data **is** the brief.
+
+### (b) The list is ranked by `score`, and only `docFreq` is shown
+
+The deterministic entry order, from `--json`:
+
+```
+main 21 · nimbus 13 · built-in 7 · KEY 4 · quick-ask 3 · read-only 3 · Quick Ask 3 · whyPeek 6 · nimbus-dev 4 · start 3
+```
+
+Non-monotonic: `whyPeek` (6) sits below three terms with 3. That is not the model reordering — the
+model reproduced the order faithfully and merely numbered it. `glossary-store.ts:362`:
+
+```sql
+SELECT * FROM glossary_term WHERE status = 'consolidated'
+ORDER BY (definition_source = 'manual') DESC, score DESC LIMIT ?
+```
+
+The ranking is by `score` (with manual definitions first), which is deliberate and defensible.
+`score` is never rendered. So the brief presents a ranked list in which the only visible number
+contradicts the visible order, and states no sort key — which is what invites both a model and a
+reader to label it "by frequency".
+
+### F5 re-confirmed on the way past
+
+The same output re-demonstrates F5 on a larger index: stopwords (`main`, `KEY`, `start`,
+`built-in`, `read-only`) and the case-variant duplicate `quick-ask` (3) / `Quick Ask` (3) at
+positions 5 and 7 of ten.
+
+### Suggested fix
+
+1. **Give list mode a required phrase, or exempt its entry table from rewriting.** The
+   `reserved-sections` mechanism already knows how to withhold-and-re-attach; the entry list is a
+   better candidate for that treatment than for a phrase check, since it is structured data with no
+   prose to preserve.
+2. **Render `score`, or rank by what is rendered.** Either shows the reader why `whyPeek` outranks
+   `read-only`. Silently ranking on a hidden field is the same shape as F20's undisclosed glob
+   semantics and F24b's misattributed gap: the surface is correct and unreadable.
+3. F5's stopword and case-fold work is unchanged and still wanted.
+
+---
+
 ## The MCP surface — which of these findings reach an AI agent
 
 **No new finding number.** The MCP server was probed directly over stdio (a real `initialize` /
@@ -2329,6 +2566,9 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F26 | `negotiate` (and `catchup`) resolve "you" by git email to the empty half of a split identity — six lanes render 0, no disclosure fires | high | yes | `negotiate`, `catchup` |
 | F28 | A reserved section reproduced as plain text evades every heading-based strip — **F2's fix is incomplete** | high | yes | all 14 brief kinds |
 | F27 | An I31 anchor guards only the first of two sentences; the second was observed dropped (2 of 9 entries) | med-high | yes | `negotiate` disclosures |
+| **F29** | **The reserved-section leak is systemic — 6 of 8 briefs, 3 shapes; the strip is keyed on heading level, which is the wrong property** | **high** | yes | all 14 brief kinds |
+| F31 | `glossary` synthesis drops every definition (list mode requires no phrase); list ranked by an unrendered `score` | med-high | yes | `glossary` |
+| F30 | A fast `briefError` prints Bun's unhandled-rejection stack with bundled source frames | medium | yes | the 10 `runAgentBriefCli` commands |
 
 **Suggested first PR** (superseded by F24a — see below)**:** F2 — one-line guard fix (`h.level > 2`), a red-prove test, smallest
 diff, closes a live output defect on all fourteen brief kinds.
@@ -2361,8 +2601,10 @@ same "smallest correct diff" reasoning.
 would swap a stale explanation for an accurate description of a gap nobody is on the hook to
 close.
 
-**F2 and F28 are one PR, not two.** F28 is the reason F2's diff is not one line. Landing F2 alone
-closes the finding on paper and leaves the observed leak reproducible; the pair is still small.
+**F2, F28 and F29 are one PR, not three.** F29 is the census that shows why: 6 of 8 briefs leak, in
+3 shapes, and a level-indexed rule can only chase them. Land the name-and-occurrence rule once.
+Landing F2 alone closes four of the six observed leaks and half of a fifth, leaving `why` and
+`negotiate` reproducible and `janitor`'s bare `Gaps` line intact; the combined diff is still small.
 
 **F26 should land before F3.** F3 is `catchup` declaring no gap beside an empty involvement block;
 F26 is why the block is empty. Fixing F26 turns F3's disclosure from a permanent fixture into a
@@ -2467,4 +2709,27 @@ printf '%s\n' \
 #   findPrsNotTouching pathGlob "packages/gateway"  → returns PR #1294, which touches it
 #   getDoraMetrics     service  "totally-made-up"   → 4 nulls, gap "no_repos", no error
 #   getConnectorStatus                              → airflow/apple/argocd/… all "healthy", never configured
+
+# F29  (run each; six of the eight ship a duplicated Gaps block)
+nimbus impact src/sidebar/egress.ts   # "# Gaps"      (H1)
+nimbus conflicts src/sidebar/egress.ts ; nimbus expert "egress ledger" ; nimbus huddle   # "# Gaps"
+nimbus janitor nimbus-agent/Nimbus    # bare "Gaps" line AND "# Gaps"
+nimbus why src/sidebar/egress.ts      # "# Deterministic Findings" → "### Gaps"  (H3, demoted)
+nimbus negotiate --since 90d          # "Gaps:" paragraph label   (no heading)
+nimbus decisions --since 90d          # clean
+nimbus ghost src/sidebar/egress.ts    # invented "# Findings"/"## Nimbus Agent" wrapper, no reserved name
+
+# F30
+nimbus pre-mortem "S2" ; $LASTEXITCODE  # Bun stack + code frame, THEN the clean message; exit 2
+
+# F31
+nimbus glossary --limit 15             # a bare frequency list, no definitions
+nimbus glossary --limit 15 --json      # every entry has definition/definitionSource/topSources
+#   deterministic order: 21 13 7 4 3 3 3 6 4 3 — ranked by `score`, which is never rendered
 ```
+
+## Not probed
+
+`[briefs]` is absent from this machine's `nimbus.toml` and the surface is default-off, so the
+research-briefs HTTP endpoints were **not** exercised — reaching them needs both `nimbus serve` and
+a config change to a live install. Recorded as untested rather than assumed working.
