@@ -301,12 +301,32 @@ Three additions to that spec:
    published to npm" once corrected. Both now carry the satellite-repo bullet
    with no published/unpublished framing at all, matching how the sdk and client
    entries read.
-2. **List the first-party GitHub Actions.** `packages/github-actions/`
-   (`annotate-action`, `preflight-query`) is built and unlisted on the Actions
-   Marketplace.
-3. **Wake the satellites.** Cross-link `awesome-nimbus`, `nimbus-raycast` and
-   `create-nimbus-connector` from the main README. It costs nothing and makes
-   the project read as an ecosystem rather than a single repository.
+2. **~~List the first-party GitHub Actions.~~ Not a listing task — it is an
+   extraction decision.** `packages/github-actions/` (`annotate-action`,
+   `preflight-query`) is built and unlisted, and this spec described publishing
+   it as a quick win. It is not one, and the constraint is structural: the
+   **Actions Marketplace requires `action.yml` at the repository ROOT.** Both
+   actions live at `packages/github-actions/<name>/action.yml`, and there is no
+   root `action.yml` — verified 2026-08-21. GitHub cannot list an action from a
+   monorepo subdirectory at all.
+
+   So the real choice is the same one the launcher faced: extract each action to
+   its own repo, or accept that they stay unlisted and are consumed by path
+   (`nimbus-agent/Nimbus/packages/github-actions/annotate-action@<sha>`), which
+   works today and needs no listing. The precedent and the cost model are in
+   [`2026-08-19-mcp-launcher-publish-route.md`](./2026-08-19-mcp-launcher-publish-route.md)
+   and the executed
+   [`../plans/2026-08-20-mcp-launcher-satellite-extraction.md`](../plans/2026-08-20-mcp-launcher-satellite-extraction.md)
+   — note that extraction there cost six org enumeration sites, a full scaffold
+   and a severed cross-repo guard, for a package with far stronger distribution
+   upside than a CI action nobody is searching the Marketplace for. **Do not
+   pick this up expecting an afternoon.**
+3. **~~Wake the satellites.~~ Done — this item was already stale when written.**
+   `awesome-nimbus`, `nimbus-raycast` and `create-nimbus-connector` are all
+   cross-linked from `docs/README.md` (#1276, 2026-08-20). `nimbus-mcp` was
+   added on 2026-08-21 once it existed. The satellite table there now lists all
+   eight: sdk, client, mcp, create-nimbus-connector, vscode, web-clipper,
+   raycast, awesome-nimbus.
 
 The directory spec's honesty guardrails carry over unchanged, and the
 connector-verification audit (Task 2 of the launch plan) still gates any

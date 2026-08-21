@@ -55,7 +55,7 @@ The non-negotiables in [Contributing](#contributing) follow from that question �
 
 - **local** — the SQLite index, the Vault, and the audit log all live on your machine. The cloud is a connector, not the source of truth. Telemetry is opt-in and off by default (`[telemetry] enabled = false`).
 - **consent-gated** — every destructive or outbound action is intercepted by a human-in-the-loop gate *before* it runs. It lives in the executor, not the prompt, so it cannot be jailbroken away.
-- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server, and hosts any third-party server you register with `nimbus connector add --mcp`. As an **MCP server**, `nimbus mcp-server --stdio` exposes your local index to editor AIs through six read-only tools. The engine never calls a cloud API directly.
+- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server, and hosts any third-party server you register with `nimbus connector add --mcp`. As an **MCP server**, it exposes your local index *and* its built-in agents to any MCP client through 18 read-only tools — 7 index tools plus 11 agent tools (`explainWhy`, `findExpert`, `assessImpact`, `getCatchup`, …). Install it with `npx -y @nimbus-dev/mcp`, or run `nimbus mcp-server --stdio` directly from a checkout. The engine never calls a cloud API directly.
 
 ---
 
@@ -841,6 +841,7 @@ Nimbus is a gateway plus a set of surfaces that talk to it. All of these are sep
 |---|---|
 | [nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) | The extension-authoring contract (npm, MIT) — what a connector is written against |
 | [nimbus-client](https://github.com/nimbus-agent/nimbus-client) | Typed IPC wrapper (npm, MIT) — how a client talks to the gateway; consumed by `packages/cli` and the VS Code extension |
+| [nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp) | `@nimbus-dev/mcp` (npm, MIT) — the launcher that exposes your local index and agents to any MCP client; listed in the official MCP Registry as `io.github.nimbus-agent/nimbus` |
 | [create-nimbus-connector](https://github.com/nimbus-agent/create-nimbus-connector) | Scaffolding generator for a new connector |
 | [nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) | VS Code / Open VSX extension |
 | [nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) | Chrome + Firefox MV3 web clipper; the gateway-side surface stays in this repo |
