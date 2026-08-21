@@ -77,10 +77,12 @@ MSVC is preinstalled on `windows-2025` runners. There is no `make`, so the build
 The spec names one real unknown: an AppContainer process can only open files whose ACL names its package SID or `ALL_APPLICATION_PACKAGES`. `System32` qualifies; a Bun binary in a user-profile directory does not. If that cannot be solved, the whole approach changes.
 
 **Files:**
+
 - Create (throwaway): `%TEMP%\acl-spike\spike.c`
 - Create (committed): `docs/superpowers/specs/2026-08-21-appcontainer-spike-findings.md`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: a go / no-go decision for Tasks 3–6. No code.
 
@@ -233,6 +235,7 @@ EOF
 Platform-independent, so it lands before any Windows work and the Windows runner is then written against the final interface. Windows behaviour is unchanged by this task — it still throws.
 
 **Files:**
+
 - Create: `packages/gateway/src/platform/sandbox/sandbox-policy.ts`
 - Create: `packages/gateway/src/platform/sandbox/sandbox-policy.test.ts`
 - Modify: `packages/gateway/src/platform/sandbox/sandbox-runner.ts`
@@ -243,6 +246,7 @@ Platform-independent, so it lands before any Windows work and the Windows runner
 - Modify: `docs/SECURITY-INVARIANTS.md`, `.claude/commands/nimbus-security-invariants.md`
 
 **Interfaces:**
+
 - Consumes: `SandboxPermissions` from `extensions/permissions-validator.ts`; `ExtensionManifest` from `extensions/manifest.ts`.
 - Produces:
   - `interface SandboxPolicy { readonly id: string; readonly permissions: SandboxPermissions; readonly limits?: { readonly wallClockMs?: number } }`
@@ -407,6 +411,7 @@ bun test packages/gateway/src/platform/sandbox packages/gateway/src/connectors/l
 bun test packages/gateway/test/unit/connectors/lazy-mesh
 bun run preflight:fast
 ```
+
 Expected: all pass. `preflight:fast` includes `audit:structure`, which enforces `D10`.
 
 - [ ] **Step 10: Commit**
@@ -432,6 +437,7 @@ EOF
 Build the helper with its non-spawning modes first: they are independently testable on a Windows runner without touching AppContainer spawn, and Task 7's reaper needs them.
 
 **Files:**
+
 - Create: `packages/gateway/src-native/sandbox-helper-win32/main.c`
 - Create: `packages/gateway/src-native/sandbox-helper-win32/README.md`
 - Create: `scripts/build-sandbox-helper-win32.ps1`
@@ -439,6 +445,7 @@ Build the helper with its non-spawning modes first: they are independently testa
 - Modify: `.github/workflows/_test-suite.yml`
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks.
 - Produces: `nimbus-sandbox-helper.exe` supporting
   - `--check-caps` → prints `OK` to stdout, exit 0; else a reason to stderr, exit 1
@@ -446,7 +453,7 @@ Build the helper with its non-spawning modes first: they are independently testa
   - `--delete-profile <name>` → exit 0 on success or already-absent, 1 otherwise
   - Exit-code contract (below), consumed by Task 5.
 
-**Exit-code contract.** The helper cannot `execv` — it must wait and propagate the child's code — so helper-originated failures share the code space with the child. Resolve it the way `sandbox-wrapper.ts` already does: **stderr is authoritative**, every helper-originated line is prefixed `nimbus-sandbox-helper: `, and codes are a hint. Reserved:
+**Exit-code contract.** The helper cannot `execv` — it must wait and propagate the child's code — so helper-originated failures share the code space with the child. Resolve it the way `sandbox-wrapper.ts` already does: **stderr is authoritative**, every helper-originated line is prefixed `nimbus-sandbox-helper:`, and codes are a hint. Reserved:
 
 | Code | Meaning |
 |---|---|
@@ -666,10 +673,12 @@ EOF
 ### Task 4: The helper — the spawn path
 
 **Files:**
+
 - Modify: `packages/gateway/src-native/sandbox-helper-win32/main.c`
 - Modify: `packages/gateway/src-native/sandbox-helper-win32/README.md`
 
 **Interfaces:**
+
 - Consumes: `profile_sid()` and `err()` from Task 3.
 - Produces: `--profile <name> --cwd <path> [--capability internetClient] [--grant-read <path>]… [--grant-write <path>]… -- <argv…>`, honouring the Task 3 exit-code contract. `--cwd` is mandatory and is NOT a policy grant — the helper treats it differently from `--grant-*` paths (see Step 2).
 
@@ -1049,12 +1058,14 @@ EOF
 ### Task 5: The win32 runner stops throwing
 
 **Files:**
+
 - Create: `packages/gateway/src/platform/sandbox/win32-argv.ts`
 - Create: `packages/gateway/src/platform/sandbox/win32-argv.test.ts`
 - Modify: `packages/gateway/src/platform/sandbox/win32.ts`
 - Modify: `packages/gateway/src/platform/sandbox/win32.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SandboxPolicy` (Task 2); the helper CLI (Tasks 3–4).
 - Produces: `function buildHelperArgv(policy: SandboxPolicy, opts: { cwd: string }): string[]`; a `createWin32SandboxRunner()` whose `spawn` returns a real `ChildProcess`.
 
@@ -1306,9 +1317,11 @@ EOF
 The deliverable this whole plan turns on. Nothing in CI currently spawns through `__nimbus-sandbox` on any OS but Linux, which is what let the defect survive a green three-OS matrix.
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/platform/sandbox/sandbox-wrapper-spawn.test.ts`
 
 **Interfaces:**
+
 - Consumes: the `__nimbus-sandbox` role of `packages/gateway/src/index.ts`; `NIMBUS_SANDBOX_POLICY_JSON` (Task 2).
 - Produces: nothing consumed by later tasks.
 
@@ -1455,6 +1468,7 @@ EOF
 `reapOrphanedAppContainers` has existed with zero production callers. Two documents describe it as running. Shipping real profile creation without it manufactures the registry leak the spec's Section 1 warns about.
 
 **Files:**
+
 - Create: `packages/gateway/src/platform/sandbox/win32-reap.ts`
 - Create: `packages/gateway/src/platform/sandbox/win32-reap.test.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts` (at the `createSandboxRunner()` call, line ~2256)
@@ -1462,6 +1476,7 @@ EOF
 - Modify: `.claude/commands/nimbus-file-map.md` (line ~47)
 
 **Interfaces:**
+
 - Consumes: `reapOrphanedAppContainers` from `orphan-reap.ts`; `helperPath()` from `win32.ts` (Task 5); `FIRST_PARTY_MANIFESTS`.
 - Produces: `function reapAppContainersAtBoot(deps: { db: Database; logger: Logger }): Promise<readonly string[]>`.
 
@@ -1613,7 +1628,7 @@ at this call site.
 
 `.claude/commands/nimbus-file-map.md` (~line 47) says "Windows AppContainer orphan-reap at Gateway startup". Same: true as of this commit. Add the wiring site so the claim is checkable:
 
-```
+```text
 | `packages/gateway/src/platform/sandbox/{orphan-reap,win32-reap}.ts` | Windows AppContainer orphan-reap, wired at `platform/assemble.ts` boot |
 ```
 
@@ -1640,6 +1655,7 @@ EOF
 ### Task 8: Ship it — packaging, and the docs that must match
 
 **Files:**
+
 - Modify: `.github/workflows/release.yml` (Windows zip staging ~line 540; MSI staging ~line 318)
 - Modify: `scripts/package-windows-installer.ps1`
 - Modify: `scripts/release/nimbus.wxs`
@@ -1647,6 +1663,7 @@ EOF
 - Modify: `packages/gateway/src/platform/sandbox/win32.ts` (the "tracked follow-up" comment)
 
 **Interfaces:**
+
 - Consumes: `nimbus-sandbox-helper.exe` from Tasks 3–4.
 - Produces: nothing consumed by later tasks.
 

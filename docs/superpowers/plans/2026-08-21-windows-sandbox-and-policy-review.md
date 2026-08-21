@@ -9,6 +9,7 @@ This document collects feedback, suggestions, and open questions on the [Windows
 ### Q1: Command Line Escaping in Child Argv Reconstruction
 
 In **Task 4 Step 2**, the plan reconstructs the command line by wrapping each argument in double quotes:
+
 ```c
 for (int k = i; k < argc; k++) {
     if (k > i) wcscat_s(cmdline, 32768, L" ");
@@ -26,6 +27,7 @@ for (int k = i; k < argc; k++) {
 ### Q2: Event Loop Blocking via `spawnSync` in Boot Reaper
 
 In **Task 7 Step 3**, the boot-time reaper `reapAppContainersAtBoot` uses `spawnSync` inside its callbacks:
+
 ```ts
 const reaped = await reapWith({
   enumProfiles: async () => {
@@ -45,6 +47,7 @@ const reaped = await reapWith({
 ### Q3: Handle Clean-up on Job Assignment Failure
 
 In **Task 4 Step 2**, on job assignment failure, the process is terminated and the helper exits immediately with code 67:
+
 ```c
 if (!AssignProcessToJobObject(job, pi.hProcess)) {
     TerminateProcess(pi.hProcess, 1);

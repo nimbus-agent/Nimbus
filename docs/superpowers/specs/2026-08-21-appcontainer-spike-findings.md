@@ -53,14 +53,14 @@ Environment: MSVC Build Tools 18 (`vcvars64.bat` + `cl /W4 /nologo`), Bun
 
 **Command (as specified in the brief, leaf-only ACL grant):**
 
-```
+```text
 spike.exe C:\Temp\acl-spike\work C:\Temp\acl-spike\work\bun.exe C:\Temp\acl-spike\work\hello.js
 ```
 
 **Actual output (first attempt, leaf dir granted `GENERIC_READ|GENERIC_EXECUTE`
 only, no ancestor grants):**
 
-```
+```text
 container SID: S-1-15-2-2090534939-2725333364-795783768-2702357211-2326289060-1809957255-1821817843
 error loading current directory
 error: An internal error occurred (CouldntReadCurrentDirectory)
@@ -97,11 +97,11 @@ file reads in general.
 
 **Final command + output, with the full recipe applied:**
 
-```
+```text
 spike.exe C:\Temp\acl-spike\work C:\Temp\acl-spike\work\bun.exe C:\Temp\acl-spike\work\hello.js
 ```
 
-```
+```text
 container SID: S-1-15-2-2090534939-2725333364-795783768-2702357211-2326289060-1809957255-1821817843
 hello
 child exit: 0
@@ -116,7 +116,7 @@ literal single-ACE grant).
 
 **Command:**
 
-```
+```text
 echo x | spike.exe C:\Temp\acl-spike\work C:\Temp\acl-spike\work\bun.exe C:\Temp\acl-spike\work\stdintest.js
 ```
 
@@ -126,7 +126,7 @@ process.stdout.write('got:' + d));`)
 
 **Actual output (with the full ACL recipe already applied from Probe A):**
 
-```
+```text
 container SID: S-1-15-2-2090534939-2725333364-795783768-2702357211-2326289060-1809957255-1821817843
 got:x
 child exit: 0
@@ -142,7 +142,7 @@ console buffer.
 
 **Command:**
 
-```
+```text
 spike.exe C:\Temp\acl-spike\work C:\Temp\acl-spike\work\bun.exe C:\Temp\acl-spike\work\probec.js
 ```
 
@@ -151,7 +151,7 @@ spike.exe C:\Temp\acl-spike\work C:\Temp\acl-spike\work\bun.exe C:\Temp\acl-spik
 
 **Actual output:**
 
-```
+```text
 container SID: S-1-15-2-2090534939-2725333364-795783768-2702357211-2326289060-1809957255-1821817843
 1 | require("fs").readFileSync(process.env.USERPROFILE + "/.gitconfig");
                   ^
@@ -182,13 +182,13 @@ deterministic substitute available on any machine.
 
 **Command (controller-specified substitute path):**
 
-```
+```text
 spike.exe C:\Windows\System32\config C:\Temp\acl-spike\work\bun.exe C:\Temp\acl-spike\work\hello.js
 ```
 
 **Actual output:**
 
-```
+```text
 container SID: S-1-15-2-2090534939-2725333364-795783768-2702357211-2326289060-1809957255-1821817843
 GetNamedSecurityInfoW: 5
 ```
@@ -202,11 +202,11 @@ failure.
 A second, less-restrictive protected path — `C:\Windows\System32` itself —
 reaches the exact step the brief describes:
 
-```
+```text
 spike.exe C:\Windows\System32 C:\Windows\System32\cmd.exe /c echo hello-from-system32
 ```
 
-```
+```text
 container SID: S-1-15-2-2090534939-2725333364-795783768-2702357211-2326289060-1809957255-1821817843
 SetNamedSecurityInfoW: 5 (NON-NTFS?)
 ```
