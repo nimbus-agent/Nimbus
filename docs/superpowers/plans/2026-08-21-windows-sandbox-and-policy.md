@@ -715,7 +715,58 @@ static int grant_path(const wchar_t *path, PSID sid, DWORD rights) {
 }
 ```
 
-- [ ] **Step 2: Add the spawn mode**
+- [ ] **Step 2: Add the argv quoter**
+
+The child's command line has to be rebuilt from `argv`, and Windows quoting is not "wrap it in
+quotes". Both failure cases are reachable here, not hypothetical:
+
+- **An argument containing a double quote.** `connector.addMcp` stores a user-supplied
+  `args_json` string array (`packages/gateway/src/connectors/lazy-mesh/user-mcp-store.ts`) that
+  becomes the child argv verbatim. A server registered with a JSON config argument carries `"`.
+- **An argument ending in a backslash.** Any Windows directory path. `"C:\dir\"` ends with an
+  escaped quote, so the closing quote is consumed and the next argument is swallowed into this one.
+
+Implement the inverse of `CommandLineToArgvW`. Append with a cursor rather than repeated
+`wcscat_s`, which rescans from the start each call and turns this into a quadratic walk over a
+32 KB buffer:
+
+```c
+/*
+ * Append `arg` to `dst` using the quoting rules CommandLineToArgvW and the MSVC runtime startup
+ * code invert. Returns 0, or 64 if the buffer would overflow.
+ *
+ * Rules: a run of backslashes is literal UNLESS it precedes a double quote or the closing quote,
+ * in which case each backslash doubles; a literal double quote is escaped as \".
+ */
+static int append_quoted(wchar_t *dst, size_t cap, size_t *len, const wchar_t *arg) {
+#define PUT(ch) do { if (*len + 2 > cap) return 64; dst[(*len)++] = (ch); dst[*len] = L'\0'; } while (0)
+    if (*arg != L'\0' && wcspbrk(arg, L" \t\n\v\"") == NULL) {
+        for (const wchar_t *p = arg; *p; p++) PUT(*p);
+        return 0;
+    }
+    PUT(L'"');
+    for (const wchar_t *p = arg;; p++) {
+        unsigned nbs = 0;
+        while (*p == L'\\') { nbs++; p++; }
+        if (*p == L'\0') {
+            /* Trailing backslashes precede the closing quote, so they double. */
+            for (unsigned k = 0; k < nbs * 2; k++) PUT(L'\\');
+            break;
+        }
+        if (*p == L'"') {
+            for (unsigned k = 0; k < nbs * 2 + 1; k++) PUT(L'\\');
+        } else {
+            for (unsigned k = 0; k < nbs; k++) PUT(L'\\');
+        }
+        PUT(*p);
+    }
+    PUT(L'"');
+    return 0;
+#undef PUT
+}
+```
+
+- [ ] **Step 3: Add the spawn mode**
 
 ```c
 static int mode_spawn(int argc, wchar_t **argv) {
@@ -790,19 +841,25 @@ static int mode_spawn(int argc, wchar_t **argv) {
     if (attrs == NULL || !InitializeProcThreadAttributeList(attrs, 1, 0, &sz) ||
         !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
                                    &caps, sizeof(caps), NULL, NULL)) {
+        DWORD e = GetLastError();
+        if (attrs != NULL) HeapFree(GetProcessHeap(), 0, attrs);
         CloseHandle(job); FreeSid(sid);
-        err(L"proc-thread attribute list: %lu", GetLastError());
+        err(L"proc-thread attribute list: %lu", e);
         return 68;
     }
 
-    /* Rebuild a command line from the child argv, quoting each element. */
+    /* Rebuild a command line from the child argv. See append_quoted — naive quoting corrupts
+     * any argument containing a double quote or ending in a backslash, and both are reachable. */
     wchar_t cmdline[32768];
+    size_t clen = 0;
     cmdline[0] = L'\0';
     for (int k = i; k < argc; k++) {
-        if (k > i) wcscat_s(cmdline, 32768, L" ");
-        wcscat_s(cmdline, 32768, L"\"");
-        wcscat_s(cmdline, 32768, argv[k]);
-        wcscat_s(cmdline, 32768, L"\"");
+        if (k > i) { if (clen + 2 > 32768) { err(L"child command line too long"); return 64; }
+                     cmdline[clen++] = L' '; cmdline[clen] = L'\0'; }
+        if (append_quoted(cmdline, 32768, &clen, argv[k]) != 0) {
+            err(L"child command line too long");
+            return 64;
+        }
     }
 
     STARTUPINFOEXW si;
@@ -819,14 +876,26 @@ static int mode_spawn(int argc, wchar_t **argv) {
     if (!CreateProcessW(NULL, cmdline, NULL, NULL, TRUE,
                         EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
                         NULL, NULL, &si.StartupInfo, &pi)) {
-        DeleteProcThreadAttributeList(attrs); CloseHandle(job); FreeSid(sid);
-        err(L"CreateProcessW: %lu", GetLastError());
+        DWORD e = GetLastError();
+        DeleteProcThreadAttributeList(attrs);
+        HeapFree(GetProcessHeap(), 0, attrs);
+        CloseHandle(job); FreeSid(sid);
+        err(L"CreateProcessW: %lu", e);
         return 68;
     }
     /* Assign BEFORE resuming, so the child can never run outside the job. */
     if (!AssignProcessToJobObject(job, pi.hProcess)) {
+        DWORD e = GetLastError();
         TerminateProcess(pi.hProcess, 1);
-        err(L"AssignProcessToJobObject: %lu", GetLastError());
+        /* Close every failure-path handle explicitly. The OS would reclaim them at exit, but a
+         * self-contained failure path is what lets this function be reused or moved later. */
+        DeleteProcThreadAttributeList(attrs);
+        HeapFree(GetProcessHeap(), 0, attrs);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        CloseHandle(job);
+        FreeSid(sid);
+        err(L"AssignProcessToJobObject: %lu", e);
         return 67;
     }
     ResumeThread(pi.hThread);
@@ -836,6 +905,7 @@ static int mode_spawn(int argc, wchar_t **argv) {
     GetExitCodeProcess(pi.hProcess, &code);
 
     DeleteProcThreadAttributeList(attrs);
+    HeapFree(GetProcessHeap(), 0, attrs);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     FreeSid(sid);
@@ -847,7 +917,7 @@ static int mode_spawn(int argc, wchar_t **argv) {
 
 Wire it into `wmain`: if `argv[1]` is `--profile`, call `mode_spawn(argc, argv)`.
 
-- [ ] **Step 3: Build and exercise it by hand**
+- [ ] **Step 4: Build and exercise it by hand**
 
 ```powershell
 bun run build:sandbox-helper:win32
@@ -865,11 +935,18 @@ Set-Content $env:TEMP\nimbus-helper-check\hello.js 'process.stdout.write("hello\
 
 & $h --profile nimbus-ext-com.nimbus.test --grant-read E:\somewhere-on-exfat -- cmd /c echo x
 # expect: exit 66 with the non-ACL-filesystem message on stderr
+
+# Argv fidelity — the two cases naive quoting corrupts. Both must round-trip verbatim.
+& $h --profile nimbus-ext-com.nimbus.test --grant-read $env:TEMP\nimbus-helper-check `
+     -- $env:TEMP\nimbus-helper-check\bun.exe -e "console.log(JSON.stringify(process.argv.slice(2)))" `
+        '{"k":"v"}' 'C:\dir\' 'plain'
+# expect exactly: ["{\"k\":\"v\"}","C:\\dir\\","plain"]
 ```
 
-- [ ] **Step 4: Update the README** with the spawn mode and the ACL-grant semantics.
+- [ ] **Step 5: Update the README** with the spawn mode, the ACL-grant semantics, and the argv
+      quoting rules.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/gateway/src-native/sandbox-helper-win32
@@ -883,6 +960,11 @@ spawns suspended-then-assigned so the child never runs outside the job.
 A path on a filesystem without ACL support fails closed with a dedicated
 exit code and a stderr reason, rather than spawning a child that silently
 cannot read what the policy granted it.
+
+Child argv is rebuilt with the quoting rules CommandLineToArgvW inverts,
+not by wrapping each argument in quotes. A user-registered MCP server's
+args_json is arbitrary user input, so an argument carrying a double quote
+is reachable, and any Windows path can end in a backslash.
 EOF
 ```
 
@@ -1221,6 +1303,18 @@ describe.skipIf(!READY)("sandbox wrapper: real spawn on every platform", () => {
     expect(r.status).not.toBe(0);
   });
 
+  it("passes child argv through verbatim, quotes and trailing backslashes included", () => {
+    // The Windows helper rebuilds a command line from argv, and naive quoting corrupts both of
+    // these. Reachable, not hypothetical: connector.addMcp stores a user-supplied args_json that
+    // becomes the child argv. On Linux/macOS this passes trivially — that is the point, it pins
+    // the property on every platform rather than only where it is easy to break.
+    const script = join(work, "argv.js");
+    writeFileSync(script, "process.stdout.write(JSON.stringify(process.argv.slice(2)))");
+    const args = ['{"k":"v"}', "C:\\dir\\", "a b", "plain"];
+    const r = runThroughWrapper(policy(), work, [process.execPath, script, ...args]);
+    expect(JSON.parse(r.stdout) as string[]).toEqual(args);
+  });
+
   it("rejects a spawn with no policy at all", () => {
     const r = spawnSync(process.execPath, [GATEWAY_ENTRY, "__nimbus-sandbox", "cmd"], {
       encoding: "utf8",
@@ -1237,7 +1331,7 @@ Before the assertions run, create `work` and `outside` and write `outside/secret
 - [ ] **Step 2: Run it on Windows**
 
 Run: `bun test packages/gateway/test/integration/platform/sandbox/sandbox-wrapper-spawn.test.ts`
-Expected: PASS, 4 tests.
+Expected: PASS, 5 tests.
 
 - [ ] **Step 3: Red-prove it**
 
@@ -1343,7 +1437,8 @@ Expected: FAIL — cannot resolve `./win32-reap.ts`.
 - [ ] **Step 3: Write the implementation**
 
 ```ts
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
 
@@ -1365,9 +1460,17 @@ export function reapWith(opts: ReapOpts): Promise<string[]> {
   return reapOrphanedAppContainers(opts);
 }
 
+const run = promisify(execFile);
+
 /**
  * Boot-time reap. Windows-only and best-effort: a failure here leaks registry state, which is
  * untidy, and must never prevent the gateway from starting.
+ *
+ * Every helper invocation is ASYNCHRONOUS on purpose. `spawnSync` would block the single JS
+ * thread for the duration of each call, and the caller's `void` does not change that — an async
+ * function's body runs synchronously up to its first real await, so a sync spawn inside it stalls
+ * boot exactly as much as awaiting would. With `execFile` the first await yields immediately and
+ * the reap genuinely proceeds in the background.
  */
 export async function reapAppContainersAtBoot(deps: {
   db: Database;
@@ -1378,12 +1481,19 @@ export async function reapAppContainersAtBoot(deps: {
   try {
     const reaped = await reapWith({
       enumProfiles: async () => {
-        const r = spawnSync(path, ["--list-profiles"], { encoding: "utf8" });
-        if (r.status !== 0) return [];
-        return r.stdout.split(/\r?\n/).filter((l) => l.trim() !== "");
+        try {
+          const { stdout } = await run(path, ["--list-profiles"], { encoding: "utf8" });
+          return stdout.split(/\r?\n/).filter((l) => l.trim() !== "");
+        } catch {
+          return [];
+        }
       },
       deleteProfile: async (name: string) => {
-        spawnSync(path, ["--delete-profile", name], { encoding: "utf8" });
+        try {
+          await run(path, ["--delete-profile", name], { encoding: "utf8" });
+        } catch {
+          // Best effort: one profile that will not delete must not abort the sweep.
+        }
       },
       liveExtensionIds: liveExtensionIds(deps.db),
     });
@@ -1412,7 +1522,11 @@ In `assemble.ts`, `db` is opened immediately after `createSandboxRunner()`. Add 
 void reapAppContainersAtBoot({ db, logger: syncLogger });
 ```
 
-`void` rather than `await`: this must not add latency to boot, and it cannot fail the boot.
+`void` rather than `await` keeps the reap off the boot critical path — but only because every
+helper call inside it is asynchronous. `void` alone would not have done it: an async function's
+body runs synchronously until its first real await, so a `spawnSync` in there would block boot
+just as much as awaiting the whole thing. The non-blocking property lives in `win32-reap.ts`, not
+at this call site.
 
 - [ ] **Step 6: Correct the two false statements**
 
