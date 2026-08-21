@@ -32,63 +32,60 @@ profile creation **works** on this machine, not that a capability is **held**.
   child's own exit code (see the exit-code contract below — `65`–`68` are reserved for
   helper-originated failures that occur before the child ever runs).
 
-  ### ACL grants — per level, not uniform
+  ### ACL grants — leaf and explicit policy paths only, nothing else
 
-  A Task 1 spike measured, rather than assumed, that a Bun child cannot load a script
-  from a leaf-only read grant: Bun walks **upward** from the working directory looking
-  for `package.json` / `bunfig.toml` at every ancestor level, which needs *list* rights
-  (not merely traverse) at each level, plus *write* on the leaf for its own housekeeping.
-  So the grant is per-level, and the inheritance flag on each grant is deliberate, not
-  incidental:
+  The helper grants exactly two kinds of path, both fail-closed, and **nothing above
+  them**:
 
   | What | Rights | Inheritance | On grant failure |
   |---|---|---|---|
   | `--cwd` (the leaf) | Read + Execute + Write | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | **fail closed** — aborts the spawn with exit `66` |
-  | `--cwd`'s ancestors | Read + Execute | `NO_INHERITANCE` | **best-effort** — note on stderr, stop climbing, continue the spawn (see below) |
   | `--grant-read` / `--grant-write` paths | Read+Execute, or Read+Execute+Write | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | **fail closed** — aborts the spawn with exit `66` |
-  | policy paths' ancestors | — (no grant at all) | n/a | n/a — never attempted; see below |
+  | anything else (`--cwd`'s ancestors, policy paths' ancestors) | — (no grant, ever) | n/a | n/a |
 
-  The leaf inherits because the leaf's whole subtree *is* the working directory. An
-  ancestor gets `NO_INHERITANCE` because it is being made listable **only as that one
-  directory**, never its children — an inheritable grant there would hand the container
-  every sibling subtree beneath each ancestor, not just the path down to `--cwd`. A
-  policy path (`--grant-read`/`--grant-write`) inherits like the leaf because it means its
-  whole subtree; its ancestors get **no grant at all**, because Windows bypasses traverse
-  checking by default, so a known full path opens without listing rights on the way down
-  — confirmed by hand (see Verification below), not assumed. If a connector ever needs
-  more, that is a deliberate, recorded widening, not a default.
+  The leaf and a policy path both inherit because each one's whole subtree is what it
+  promises — the leaf is the working directory, a policy path means its subtree. Both are
+  promises the policy made to the child, so a grant failure there (ACL write fails —
+  including on a filesystem without ACL support such as FAT32/exFAT or a network share,
+  or a plain access-denied) aborts the spawn with exit `66`. The helper never falls back
+  to spawning unconfined: a policy path the child cannot read is a failure to enforce the
+  policy, not a warning. A policy path's own ancestors get no grant either, because
+  Windows bypasses traverse checking by default, so a known full path opens without
+  listing rights on the way down — confirmed by hand (see Verification below), not
+  assumed.
 
-  **The leaf and every explicit policy path are promises the policy made to the child —
-  they fail closed.** A path that cannot be granted there (ACL write fails — including on
-  a filesystem without ACL support, such as FAT32/exFAT or some network shares, or a
-  plain access-denied) aborts the spawn with exit `66`. The helper never falls back to
-  spawning unconfined: a policy path the child cannot read is a failure to enforce the
-  policy, not a warning.
+  **There used to be a third category — granting each ancestor of `--cwd` read/list
+  rights, so Bun's upward `package.json`/`bunfig.toml` search could enumerate each level —
+  and it has been removed entirely, not merely made best-effort.** Two independent
+  problems, not one: modifying the DACL of directories the helper does not own (a
+  connector's `%LOCALAPPDATA%`, `AppData`, or the user's home directory) is itself a
+  persistent, user-visible side effect on paths outside Nimbus's control, wrong on its own
+  terms regardless of speed; separately, on at least one production-shaped tree that walk
+  was measured to hang indefinitely (`icacls.exe` reproduced the same hang independently
+  of this helper's code — root cause unconfirmed, not chased, since the removal makes it
+  moot). The grant policy is now exactly the leaf plus explicit `--grant-read`/
+  `--grant-write` paths; ancestors of `--cwd` are never touched.
 
-  **An ancestor grant is not a promise to anything — it only helps Bun's own upward
-  `package.json`/`bunfig.toml` enumeration list each level, so it is best-effort.** On the
-  first ancestor `grant_path` cannot modify, the helper logs why on stderr and **stops
-  climbing** rather than aborting the spawn or trying every remaining level — higher
-  ancestors are strictly less likely to be modifiable than the one that just failed. This
-  matters concretely: on a default, non-elevated Windows install, `C:\Users` itself denies
-  `WRITE_DAC` to a standard user token even for that same user's own subtree beneath it
-  (confirmed on this machine — `icacls C:\Users` shows only `SYSTEM`/`Administrators` with
-  Full, `BUILTIN\Users` with `(RX)` only, while `icacls C:\Users\<user>` shows that same
-  user with Full). Before this behavior existed, a `--cwd` nested under the user's real
-  profile (`%TEMP%`, `%LOCALAPPDATA%`, `%APPDATA%`, the user's home directory, …) made
-  the *helper* abort with exit `66` the moment the walk reached `C:\Users`. With the
-  best-effort walk, the helper no longer aborts there — but the underlying obstacle is
-  still real: Bun's own upward enumeration hits the same ungranted `C:\Users` and fails
-  from *inside the child* instead, with `error: An internal error occurred
-  (CouldntReadCurrentDirectory)` (confirmed by a real spawn attempt with `--cwd` under
-  `%TEMP%`; propagated as the child's own exit code, not one of this helper's `65`–`68`).
-  So a `--cwd` nested under the real user profile still does not work end to end — the
-  failure just moved from a clean helper-side exit `66` to a Bun-side runtime error. A
-  `--cwd` outside that tree — under a directory the current user owns outright (verified
-  here with a working directory under a git-cloned repo root) — hits neither problem, and
-  spawns succeed cleanly. Choosing where a connector's working directory lives is outside
-  this helper's scope (see Task 5's `win32.ts`); this note exists so that scope does not
-  rediscover this the hard way.
+  **Consequence, measured rather than assumed: Bun cannot currently run as a sandboxed
+  child through this helper at all**, independent of where `--cwd` lives or whether a
+  `package.json` sits in the leaf. A `--cwd` nested under `%LOCALAPPDATA%`
+  (`...\Nimbus\extensions\<ext>\workdir`, the production shape — not a shallow path, which
+  hid this from an earlier design spike), with a minimal `package.json` placed directly in
+  that leaf and zero ancestor grants, produced this from a real spawn:
+  ```
+  error loading current directory
+  error: An internal error occurred (CouldntReadCurrentDirectory)
+  ```
+  exit `1` — Bun's own exit code, not one of this helper's `65`–`68`, so the helper itself
+  spawned the child successfully; Bun's own startup is what fails. A `package.json` at the
+  leaf does not let Bun's search stop there — whatever Bun does at startup needs more than
+  the leaf regardless. A plain Win32 console app with no such upward-search behavior (e.g.
+  `powershell.exe`) spawns and runs fine through the identical helper invocation at the
+  identical `%LOCALAPPDATA%` path with the identical zero ancestor grants, which isolates
+  this to Bun's own startup requirement, not a generic AppContainer or Windows limitation.
+  Relocating `--cwd` to work around this is out of this helper's scope (it belongs with
+  whatever chooses the working directory — `assemble.ts`, the installer, or Task 5's
+  `win32.ts`) and is deliberately not attempted here.
 
   ### Argv quoting
 

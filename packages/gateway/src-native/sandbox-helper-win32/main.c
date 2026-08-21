@@ -145,39 +145,6 @@ static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit
     return 0;
 }
 
-/* Make every ancestor of `dir` listable (that directory ONLY — see grant_path on inheritance),
- * so Bun's upward package.json walk can enumerate each level. Stops below the volume root.
- *
- * Best-effort, by design: an ancestor grant promises the policy nothing — it exists only so
- * Bun's upward enumeration can list each level. The leaf `--cwd` and explicit
- * --grant-read/--grant-write paths are policy promises and fail closed (grant_path's normal
- * 66 return); an ancestor is not, so this function never aborts the spawn over one. On the
- * first ancestor that cannot be granted, note it on stderr and stop climbing — higher
- * ancestors are strictly less likely to be modifiable (e.g. C:\Users itself commonly denies
- * WRITE_DAC to a non-elevated token even when everything below it, including the user's own
- * profile directory, is owned by that user) — rather than retrying every remaining level. */
-static void grant_cwd_ancestors(const wchar_t *dir, PSID sid) {
-    wchar_t path[MAX_PATH];
-    if (wcslen(dir) >= MAX_PATH) {
-        err(L"cwd path too long to list ancestors, continuing without it: %s", dir);
-        return;
-    }
-    wcscpy_s(path, MAX_PATH, dir);
-
-    for (;;) {
-        wchar_t *slash = wcsrchr(path, L'\\');
-        if (slash == NULL) break;
-        *slash = L'\0';
-        /* "C:" — the volume root. Stop; never grant it. */
-        if (wcschr(path, L'\\') == NULL) break;
-        if (grant_path(path, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, NO_INHERITANCE) != 0) {
-            err(L"cannot list %s for the sandboxed child; module resolution above this "
-                L"level may be degraded, continuing without it", path);
-            break;
-        }
-    }
-}
-
 /*
  * Append `arg` to `dst` using the quoting rules CommandLineToArgvW and the MSVC runtime startup
  * code invert. Returns 0, or 64 if the buffer would overflow.
@@ -241,8 +208,6 @@ static int mode_spawn(int argc, wchar_t **argv) {
     int rc = grant_path(cwd, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
                         SUB_CONTAINERS_AND_OBJECTS_INHERIT);
     if (rc != 0) { FreeSid(sid); return rc; }
-    /* Its ancestors: listable only, NOT inheritable, best-effort. See grant_cwd_ancestors. */
-    grant_cwd_ancestors(cwd, sid);
 
     /* Policy paths are subtree grants, so they inherit. Their ancestors get NOTHING: Windows
      * bypasses traverse checking by default, so a known full path opens without listing rights on
