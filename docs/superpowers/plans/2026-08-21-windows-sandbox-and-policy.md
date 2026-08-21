@@ -671,18 +671,28 @@ EOF
 
 **Interfaces:**
 - Consumes: `profile_sid()` and `err()` from Task 3.
-- Produces: `--profile <name> [--capability internetClient] [--grant-read <path>]… [--grant-write <path>]… -- <argv…>`, honouring the Task 3 exit-code contract.
+- Produces: `--profile <name> --cwd <path> [--capability internetClient] [--grant-read <path>]… [--grant-write <path>]… -- <argv…>`, honouring the Task 3 exit-code contract. `--cwd` is mandatory and is NOT a policy grant — the helper treats it differently from `--grant-*` paths (see Step 2).
 
 - [ ] **Step 1: Add the ACL grant helper**
 
 Append to `main.c`:
 
 ```c
-/* Grant `sid` the requested rights on `path`, inheritable. Returns 0, or 66 on failure —
- * which is also what a non-ACL filesystem (FAT32/exFAT, some network shares) produces, since
- * SetNamedSecurityInfoW cannot write a DACL there. The caller must not fall back to spawning
- * unconfined: a policy path the child cannot read is a failure to enforce, not a warning. */
-static int grant_path(const wchar_t *path, PSID sid, DWORD rights) {
+/*
+ * Grant `sid` the requested rights on `path`. Returns 0, or 66 on failure — which is also what a
+ * non-ACL filesystem (FAT32/exFAT, some network shares) produces, since SetNamedSecurityInfoW
+ * cannot write a DACL there. The caller must not fall back to spawning unconfined: a policy path
+ * the child cannot read is a failure to enforce, not a warning.
+ *
+ * `inherit` is load-bearing, not a detail. SUB_CONTAINERS_AND_OBJECTS_INHERIT propagates the ACE
+ * to everything beneath `path`, which is right for a policy path (it means its subtree) and WRONG
+ * for a directory we are only making listable on the way to somewhere else — an inheritable grant
+ * on a working directory's parent would hand the container every sibling subtree under it.
+ * Ancestors therefore pass NO_INHERITANCE. Task 6's out-of-policy-read test is the guard: its
+ * `outside` directory is a sibling of the granted cwd, so an inheritable ancestor grant makes that
+ * test fail. Do not widen the grant to make it pass.
+ */
+static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
     PACL old_acl = NULL, new_acl = NULL;
     PSECURITY_DESCRIPTOR sd = NULL;
     DWORD rc = GetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
@@ -693,7 +703,7 @@ static int grant_path(const wchar_t *path, PSID sid, DWORD rights) {
     ZeroMemory(&ea, sizeof(ea));
     ea.grfAccessPermissions = rights;
     ea.grfAccessMode        = GRANT_ACCESS;
-    ea.grfInheritance       = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    ea.grfInheritance       = inherit;
     ea.Trustee.TrusteeForm  = TRUSTEE_IS_SID;
     ea.Trustee.TrusteeType  = TRUSTEE_IS_GROUP;
     ea.Trustee.ptstrName    = (LPWSTR)sid;
@@ -715,7 +725,40 @@ static int grant_path(const wchar_t *path, PSID sid, DWORD rights) {
 }
 ```
 
-- [ ] **Step 2: Add the argv quoter**
+- [ ] **Step 2: Add the cwd ancestor walk**
+
+Measured in the Task 1 spike, not assumed: a Bun child could not load a script from a leaf-only
+grant, failing with `CouldntReadCurrentDirectory`. Bun walks **upward** from the working directory
+enumerating each ancestor for `package.json` / `bunfig.toml`, which needs list rights on each
+level — traverse alone is not enough — and it needs write on the leaf for its own housekeeping.
+
+Grant each ancestor `FILE_GENERIC_READ | FILE_GENERIC_EXECUTE` with **`NO_INHERITANCE`**, so the
+directory itself becomes listable while its other children stay unreachable. Stop below the volume
+root and never grant the root: `C:\Windows` and `C:\Windows\System32` already carry
+`ALL APPLICATION PACKAGES` natively, and the spike needed nothing above its own chain.
+
+```c
+/* Make every ancestor of `dir` listable (that directory ONLY — see grant_path on inheritance),
+ * so Bun's upward package.json walk can enumerate each level. Stops below the volume root. */
+static int grant_cwd_ancestors(const wchar_t *dir, PSID sid) {
+    wchar_t path[MAX_PATH];
+    if (wcslen(dir) >= MAX_PATH) { err(L"cwd path too long: %s", dir); return 64; }
+    wcscpy_s(path, MAX_PATH, dir);
+
+    for (;;) {
+        wchar_t *slash = wcsrchr(path, L'\\');
+        if (slash == NULL) break;
+        *slash = L'\0';
+        /* "C:" — the volume root. Stop; never grant it. */
+        if (wcschr(path, L'\\') == NULL) break;
+        int rc = grant_path(path, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, NO_INHERITANCE);
+        if (rc != 0) return rc;
+    }
+    return 0;
+}
+```
+
+- [ ] **Step 3: Add the argv quoter**
 
 The child's command line has to be rebuilt from `argv`, and Windows quoting is not "wrap it in
 quotes". Both failure cases are reachable here, not hypothetical:
@@ -766,11 +809,12 @@ static int append_quoted(wchar_t *dst, size_t cap, size_t *len, const wchar_t *a
 }
 ```
 
-- [ ] **Step 3: Add the spawn mode**
+- [ ] **Step 4: Add the spawn mode**
 
 ```c
 static int mode_spawn(int argc, wchar_t **argv) {
     const wchar_t *profile = NULL;
+    const wchar_t *cwd = NULL;
     BOOL want_net = FALSE;
     const wchar_t *reads[64];  int nread = 0;
     const wchar_t *writes[64]; int nwrite = 0;
@@ -779,24 +823,41 @@ static int mode_spawn(int argc, wchar_t **argv) {
     for (; i < argc; i++) {
         if (wcscmp(argv[i], L"--") == 0) { i++; break; }
         if (wcscmp(argv[i], L"--profile") == 0 && i + 1 < argc)          { profile = argv[++i]; }
+        else if (wcscmp(argv[i], L"--cwd") == 0 && i + 1 < argc)         { cwd = argv[++i]; }
         else if (wcscmp(argv[i], L"--capability") == 0 && i + 1 < argc)  { i++; if (wcscmp(argv[i], L"internetClient") == 0) want_net = TRUE; }
         else if (wcscmp(argv[i], L"--grant-read") == 0 && i + 1 < argc)  { if (nread  >= 64) { err(L"too many --grant-read");  return 64; } reads[nread++]   = argv[++i]; }
         else if (wcscmp(argv[i], L"--grant-write") == 0 && i + 1 < argc) { if (nwrite >= 64) { err(L"too many --grant-write"); return 64; } writes[nwrite++] = argv[++i]; }
         else { err(L"unexpected arg: %s", argv[i]); return 64; }
     }
     if (profile == NULL) { err(L"--profile is required"); return 64; }
+    if (cwd == NULL)     { err(L"--cwd is required"); return 64; }
     if (i >= argc)       { err(L"expected -- followed by child argv"); return 64; }
 
     PSID sid = NULL;
     HRESULT hr = profile_sid(profile, &sid);
     if (FAILED(hr)) { err(L"profile %s: hr=0x%08lx", profile, (unsigned long)hr); return 65; }
 
+    /* The working directory: Modify, inheritable — the child works inside it. */
+    int rc = grant_path(cwd, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
+                        SUB_CONTAINERS_AND_OBJECTS_INHERIT);
+    if (rc != 0) { FreeSid(sid); return rc; }
+    /* Its ancestors: listable only, NOT inheritable. See grant_cwd_ancestors. */
+    rc = grant_cwd_ancestors(cwd, sid);
+    if (rc != 0) { FreeSid(sid); return rc; }
+
+    /* Policy paths are subtree grants, so they inherit. Their ancestors get NOTHING: Windows
+     * bypasses traverse checking by default, so a known full path opens without listing rights on
+     * the way down — the spike's failure was on ENUMERATION, not traversal. If a connector turns
+     * out to need more than this, widen it deliberately and record why; do not widen on a hunch. */
     for (int k = 0; k < nread; k++) {
-        int rc = grant_path(reads[k], sid, GENERIC_READ | GENERIC_EXECUTE);
+        rc = grant_path(reads[k], sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+                        SUB_CONTAINERS_AND_OBJECTS_INHERIT);
         if (rc != 0) { FreeSid(sid); return rc; }
     }
     for (int k = 0; k < nwrite; k++) {
-        int rc = grant_path(writes[k], sid, GENERIC_READ | GENERIC_EXECUTE | GENERIC_WRITE);
+        rc = grant_path(writes[k], sid,
+                        FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
+                        SUB_CONTAINERS_AND_OBJECTS_INHERIT);
         if (rc != 0) { FreeSid(sid); return rc; }
     }
 
@@ -875,7 +936,7 @@ static int mode_spawn(int argc, wchar_t **argv) {
     ZeroMemory(&pi, sizeof(pi));
     if (!CreateProcessW(NULL, cmdline, NULL, NULL, TRUE,
                         EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
-                        NULL, NULL, &si.StartupInfo, &pi)) {
+                        NULL, cwd, &si.StartupInfo, &pi)) {
         DWORD e = GetLastError();
         DeleteProcThreadAttributeList(attrs);
         HeapFree(GetProcessHeap(), 0, attrs);
@@ -917,36 +978,51 @@ static int mode_spawn(int argc, wchar_t **argv) {
 
 Wire it into `wmain`: if `argv[1]` is `--profile`, call `mode_spawn(argc, argv)`.
 
-- [ ] **Step 4: Build and exercise it by hand**
+- [ ] **Step 5: Build and exercise it by hand**
 
 ```powershell
 bun run build:sandbox-helper:win32
 $h = "packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe"
-mkdir $env:TEMP\nimbus-helper-check
-Copy-Item (Get-Command bun).Source $env:TEMP\nimbus-helper-check\bun.exe
-Set-Content $env:TEMP\nimbus-helper-check\hello.js 'process.stdout.write("hello\n")'
+$w = "$env:TEMP\nimbus-helper-check"
+mkdir $w
+Copy-Item (Get-Command bun).Source $w\bun.exe
+Set-Content $w\hello.js 'process.stdout.write("hello\n")'
 
-& $h --profile nimbus-ext-com.nimbus.test --grant-read $env:TEMP\nimbus-helper-check `
-     -- $env:TEMP\nimbus-helper-check\bun.exe $env:TEMP\nimbus-helper-check\hello.js
+# A real Bun child loading a script file — the case the Task 1 spike found a leaf-only
+# grant could NOT satisfy. If this fails with CouldntReadCurrentDirectory, the ancestor
+# walk is wrong.
+& $h --profile nimbus-ext-com.nimbus.test --cwd $w -- $w\bun.exe $w\hello.js
 # expect: hello, exit 0
 
-& $h --profile nimbus-ext-com.nimbus.test -- cmd /c exit 42
+& $h --profile nimbus-ext-com.nimbus.test --cwd $w -- cmd /c exit 42
 # expect: exit 42 — the CHILD's code, propagated
 
-& $h --profile nimbus-ext-com.nimbus.test --grant-read E:\somewhere-on-exfat -- cmd /c echo x
-# expect: exit 66 with the non-ACL-filesystem message on stderr
+# Sibling isolation: an ancestor of the cwd is granted, so its OTHER children must stay
+# unreachable. A non-zero exit here is the pass.
+mkdir $env:TEMP\nimbus-helper-secret
+Set-Content $env:TEMP\nimbus-helper-secret\s.txt 'secret'
+& $h --profile nimbus-ext-com.nimbus.test --cwd $w `
+     -- $w\bun.exe -e "require('fs').readFileSync('$env:TEMP\nimbus-helper-secret\s.txt')"
+# expect: NON-ZERO exit. A zero exit means an ancestor grant is inheriting into siblings.
+
+# Ruling 1 substitute for the non-NTFS case: a directory whose DACL we cannot rewrite.
+# This proves exit 66 and the stderr reason; it does NOT exercise the non-NTFS trigger.
+& $h --profile nimbus-ext-com.nimbus.test --cwd $w --grant-read C:\Windows\System32\config `
+     -- cmd /c echo x
+# expect: exit 66 with the ACL-grant-failed message on stderr
 
 # Argv fidelity — the two cases naive quoting corrupts. Both must round-trip verbatim.
-& $h --profile nimbus-ext-com.nimbus.test --grant-read $env:TEMP\nimbus-helper-check `
-     -- $env:TEMP\nimbus-helper-check\bun.exe -e "console.log(JSON.stringify(process.argv.slice(2)))" `
+& $h --profile nimbus-ext-com.nimbus.test --cwd $w `
+     -- $w\bun.exe -e "console.log(JSON.stringify(process.argv.slice(2)))" `
         '{"k":"v"}' 'C:\dir\' 'plain'
 # expect exactly: ["{\"k\":\"v\"}","C:\\dir\\","plain"]
 ```
 
-- [ ] **Step 5: Update the README** with the spawn mode, the ACL-grant semantics, and the argv
-      quoting rules.
+- [ ] **Step 6: Update the README** with the spawn mode, the per-level ACL-grant semantics
+      (inheritable on the leaf and on policy paths, NOT inheritable on cwd ancestors, and why),
+      and the argv quoting rules.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add packages/gateway/src-native/sandbox-helper-win32
@@ -1005,10 +1081,14 @@ describe("buildHelperArgv", () => {
     expect(argv.slice(0, 2)).toEqual(["--profile", "nimbus-ext-com.nimbus.github"]);
   });
 
-  it("always grants write on the cwd — the child must be able to work there", () => {
+  it("passes the cwd under its own flag, not as a policy grant", () => {
+    // The helper treats the cwd differently from a policy path: Modify + inheritable on the
+    // leaf, listable-but-NOT-inheritable on each ancestor, so Bun's upward package.json walk
+    // works without exposing sibling subtrees. That split is only possible if it knows which
+    // path is the cwd, so it travels under --cwd rather than folded into --grant-write.
     const argv = buildHelperArgv(policy(), { cwd: "C:\\data" });
-    expect(argv).toContain("--grant-write");
-    expect(argv).toContain("C:\\data");
+    expect(argv).toEqual(expect.arrayContaining(["--cwd", "C:\\data"]));
+    expect(argv).not.toContain("--grant-write");
   });
 
   it("requests internetClient only when the policy declares a network host", () => {
@@ -1064,11 +1144,10 @@ export function profileNameFor(policy: { id: string }): string {
  * be parsed by the helper as a flag.
  */
 export function buildHelperArgv(policy: SandboxPolicy, opts: { cwd: string }): string[] {
-  const argv: string[] = ["--profile", profileNameFor(policy)];
+  const argv: string[] = ["--profile", profileNameFor(policy), "--cwd", opts.cwd];
   if (policy.permissions.network.length > 0) {
     argv.push("--capability", "internetClient");
   }
-  argv.push("--grant-write", opts.cwd);
   for (const p of policy.permissions.filesystem.read) {
     argv.push("--grant-read", p);
   }
