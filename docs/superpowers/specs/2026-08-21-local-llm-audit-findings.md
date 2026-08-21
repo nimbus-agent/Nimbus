@@ -731,6 +731,87 @@ Use the structured surface for PRs, which is unaffected: `nimbus query --service
 
 ---
 
+## F13 — `connector_health_history` records `sync succeeded` for a connector with no credentials
+
+**Severity: high.** Model-independent. The unfixed half of a defect whose sibling I29 already closed.
+
+### Measured
+
+The three AWS connectors, queried BEFORE any AWS credential existed on this machine:
+
+```
+== cloudwatch: 4 history rows
+   2026-06-21 13:51:56  null    -> healthy | sync succeeded
+   2026-06-21 14:01:56  healthy -> healthy | sync succeeded
+   2026-06-21 14:11:56  healthy -> healthy | sync succeeded
+   2026-06-21 14:21:56  healthy -> healthy | sync succeeded
+```
+
+Identical rows for `athena` and `sagemaker`. The reason string is not "skipped" or "not
+configured" — it is **`sync succeeded`**, recorded four times each on the 10-minute schedule.
+
+No AWS credential existed at that date. The vault held exactly eight blobs
+(`github.pat`, four Google OAuth, `http_api.web_clipper_tokens`, and the policy keypair);
+`aws.profile` was first written on 2026-08-21 by `nimbus connector auth aws`. The AWS CLI
+spawn could not have authenticated, and no outbound call was made.
+
+### Why this is the sibling of a known bug
+
+`sync/connector-configured.ts:70-76` documents the egress half in its own words:
+
+> *"before this map existed the function below fell through to 'no signal, no gate' and returned
+> `true` unconditionally — `sync/scheduler.ts`'s `runJob` then ledgered an 'authorized' `sync`
+> egress row for every run even though each connector's own `sync()` made ZERO outbound network
+> calls. Proven against a real `assemblePlatformServices` boot with an empty Vault: 0 network
+> attempts, 15 fabricated rows."*
+
+`DERIVED_CONFIGURED_CHECKS` fixed that for the **egress ledger**. It did not fix it for
+**connector health**: `isConnectorConfigured` gates the ledger append only, so the same
+zero-work run still writes a `sync succeeded` health-history row and a `healthy` state.
+
+The fabricated-success problem was diagnosed, fixed in one consumer, and left standing in the
+other. That is why `nimbus doctor` shows `[ok] gitlab: healthy`, `[ok] slack: healthy`,
+`[ok] jira: healthy` for connectors that have never held a credential — F6's symptom, with
+F13 as its mechanism.
+
+### Related: `sync_state.last_sync_at` is never populated
+
+After a real, successful CloudWatch sync that indexed 20 log groups:
+
+```
+sync_state row : {"connector_id":"cloudwatch","last_sync_at":null, ... ,"health_state":"healthy"}
+nimbus connector status : "lastSyncAt": 1787314151713, "itemCount": 20
+```
+
+The CLI's `lastSyncAt` is derived elsewhere; the `sync_state` column stays `null` even on
+success. Same for `gmail` and every other connector inspected. Harmless today because nothing
+reads it, but it is a column whose name promises something it never holds — and a future
+"when did this last sync?" check that reaches for the obvious field would silently read `null`.
+
+### Suggested fix
+
+1. Gate the health-history write on the same `isConnectorConfigured` signal the egress append
+   already uses. A run that makes no outbound call must not record `sync succeeded`.
+2. Add an `unconfigured` / `never-attempted` state distinct from `healthy` (F6's fix; F13 is
+   the mechanism that makes it necessary).
+3. Either populate `sync_state.last_sync_at` or delete the column.
+
+### Precedent worth copying: `Stored: aws (not verified)`
+
+`nimbus connector auth aws --aws-profile default` prints:
+
+```
+Stored: aws (not verified)
+Credential: stored in the OS vault (no OAuth scopes).
+```
+
+That is the honest wording. It stores, says it stored, and explicitly declines to claim
+verification. Compare `Verified: gmail`, which claims a validation that never exercised the
+refresh path and misdirected the entire F11 investigation. The AWS message is the in-repo
+model for how F11's should read.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -770,6 +851,7 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F9 | `prove` headline vs scope | low-med | yes | `prove` |
 | F11 | One dead Google credential disables all 4 Google connectors | high | yes | gmail, drive, photos, meet |
 | F10 | Google refresh token coerced to `""`; OAuth path logs nothing | med-high | yes | every OAuth connector |
+| F13 | `sync succeeded` recorded with no credentials (F6's mechanism) | high | yes | every connector's health |
 | F12 | Repo questions exclude PRs; `github_actions` swamps ranked search | medium | yes | `ask` on any repo |
 | F7 | `people list` automated senders | low | yes | `people`, `expert` |
 | F8 | `min_reasoning_params` dead config | low | yes | `[llm]` config surface |
