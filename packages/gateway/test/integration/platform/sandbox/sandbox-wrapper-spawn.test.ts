@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { canonicalPath } from "../../../../src/platform/sandbox/canonical-path.ts";
 import { generateSbplProfile } from "../../../../src/platform/sandbox/darwin.ts";
 import {
   SANDBOX_CWD_ENV,
@@ -279,7 +280,7 @@ function darwinPermissiveProbe(run: WrapperRun): string {
       // Printed rather than acted on automatically: `trace` output is a superset (it records what
       // was touched, not what was required), so it is a candidate list for a human to narrow, in
       // the same spirit as `darwin.ts`'s "add exactly what it names, and nothing else".
-      r.status !== run.status ? reportedDenials(run) : "",
+      r.status !== run.status ? bisectMissingRule(run) : "",
     ]
       .filter((l) => l !== "")
       .join("\n");
@@ -298,72 +299,64 @@ function darwinPermissiveProbe(run: WrapperRun): string {
  * first says yes.
  */
 /**
- * Re-run the child under the REAL profile with `(deny default (with report))` substituted, then
- * read the denial straight out of the unified log.
+ * Which single extra rule makes the REAL profile work?
  *
- * This is the third mechanism tried and the first that can work. `(trace "<file>")` produced no
- * output file at all on `macos-15` — sandbox-exec's trace mode is gone on modern macOS. The
- * kernel-denial step in `ci.yml` reports nothing either, and the reason is the same one that makes
- * this function necessary: a plain `(deny default)` logs NOTHING. Only `(with report)` emits a
- * violation record, and that modifier has no business in a production profile — so it goes here,
- * on a copy, for the length of one probe.
+ * Three mechanisms for naming a Seatbelt denial have now failed on `macos-15`, each for its own
+ * reason, and all three are recorded here so nobody spends a cycle re-trying them:
  *
- * The profile is regenerated from `generateSbplProfile` with the same inputs the wrapper used, so
- * what is probed is what actually ran, not an approximation of it.
+ *  - `ci.yml`'s kernel-log step: a plain `(deny default)` logs nothing at all.
+ *  - `(trace "<file>")`: produced no output file. Trace mode is gone on modern macOS.
+ *  - `(deny default (with report))`: rejected at compile time —
+ *    "report modifier does not apply to deny action".
+ *
+ * So instead of asking the kernel what it denied, ask the profile what it is missing: run the real
+ * profile once per candidate rule and report which candidates flip the outcome. The candidates are
+ * deliberately BROAD (a whole operation class, `(subpath "/")`), because the goal here is to
+ * identify the CLASS in one CI round-trip, not to propose the grant — a broad candidate that
+ * works tells you where to look, and the narrow rule is then written by hand.
+ *
+ * Nothing here reaches production: every profile is built in a temp dir, used for one spawn, and
+ * deleted. `generateSbplProfile` is called with the same inputs the wrapper used, so what is
+ * probed is the profile that actually ran.
  */
-function reportedDenials(run: WrapperRun): string {
-  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-report-"));
+function bisectMissingRule(run: WrapperRun): string {
+  const CANDIDATES: ReadonlyArray<readonly [string, string]> = [
+    ['(allow file-read* (subpath "/"))', "read anywhere"],
+    ['(allow file-write* (subpath "/private/var/folders"))', "write to the user temp tree"],
+    ["(allow file-ioctl)", "ioctl (stdio / isatty)"],
+    ["(allow mach*)", "any mach operation"],
+    ["(allow ipc-posix-shm*)", "POSIX shared memory"],
+    ["(allow sysctl*)", "any sysctl (not just read)"],
+    ["(allow process*)", "any process operation"],
+    ["(allow system*)", "any system operation"],
+  ];
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-bisect-"));
   try {
-    const real = generateSbplProfile({
+    // canonicalPath, exactly as the runner does. The previous probe passed the raw mkdtemp path
+    // and printed a profile granting `/var/folders/...` while the kernel sees
+    // `/private/var/folders/...` — a misleading diagnostic, and the very bug canonical-path.ts
+    // exists to prevent.
+    const base = generateSbplProfile({
       cwd: run.cwd,
-      tmpdir: dir,
+      tmpdir: canonicalPath(dir),
       policy: run.policy,
     });
-    const reporting = real.replace("(deny default)", "(deny default (with report))");
-    if (reporting === real)
-      return "report-probe: could not substitute (with report) — profile shape changed";
-    const profilePath = join(dir, "reporting.sb");
-    writeFileSync(profilePath, reporting);
-    const started = Date.now();
-    spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
-      encoding: "utf8",
-      cwd: run.cwd,
-      env: process.env,
-      timeout: 15_000,
-    });
-    // Seconds, not minutes: the child just ran, and a narrow window keeps unrelated system
-    // chatter (the boot-time `auearlyboot` reports that swamped the 30-minute ci.yml window)
-    // out of the answer.
-    const elapsed = Math.max(2, Math.ceil((Date.now() - started) / 1000) + 2);
-    const logs = spawnSync(
-      "/usr/bin/log",
-      [
-        "show",
-        "--last",
-        `${String(elapsed)}s`,
-        "--style",
-        "compact",
-        "--info",
-        "--debug",
-        "--predicate",
-        'eventMessage CONTAINS "deny"',
-      ],
-      { encoding: "utf8", timeout: 30_000 },
-    );
-    const denials = (logs.stdout ?? "")
-      .split("\n")
-      .filter((l) => /deny\(?\d*\)?/.test(l) && !l.includes("auearlyboot"))
-      .slice(0, 25);
-    return [
-      "report-probe — the SAME profile with `(with report)`, denials from the unified log:",
-      denials.length > 0
-        ? denials.map((l) => `  ${l.slice(0, 220)}`).join("\n")
-        : "  (none captured — the child may abort before the kernel records anything)",
-      "generated profile under test:",
-      real.replace(/^/gm, "  "),
-    ].join("\n");
+    const out: string[] = ["bisect-probe — real profile PLUS one candidate rule:"];
+    for (const [rule, label] of CANDIDATES) {
+      const profilePath = join(dir, "candidate.sb");
+      writeFileSync(profilePath, `${base}\n${rule}\n`);
+      const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
+        encoding: "utf8",
+        cwd: run.cwd,
+        env: process.env,
+        timeout: 15_000,
+      });
+      const fixed = r.error === undefined && r.status === 0;
+      out.push(`  ${fixed ? "FIXES IT  " : "no change "} ${rule}   (${label})`);
+    }
+    return out.join("\n");
   } catch (e) {
-    return `report-probe failed: ${e instanceof Error ? e.message : String(e)}`;
+    return `bisect-probe failed: ${e instanceof Error ? e.message : String(e)}`;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
