@@ -166,3 +166,8 @@ packages/docs/src/assets/architecture-*.svg
 # and review packages for a plan in flight. Working notes — the commits they
 # name are the durable record.
 .superpowers/
+
+# --- Sandbox helper build outputs (native, per-OS; not product source) ---
+packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
+packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe
+packages/gateway/src-native/sandbox-helper-win32/*.obj

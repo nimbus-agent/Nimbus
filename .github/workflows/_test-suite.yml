@@ -1021,6 +1021,19 @@ jobs:
         shell: bash
         run: sudo setcap cap_net_admin+ep packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
 
+      - name: Build sandbox helper (Windows only, sandbox gate)
+        if: runner.os == 'Windows' && matrix.gate.name == 'Sandbox'
+        shell: pwsh
+        run: bun run build:sandbox-helper:win32
+
+      - name: Probe sandbox helper (Windows only, sandbox gate)
+        if: runner.os == 'Windows' && matrix.gate.name == 'Sandbox'
+        shell: pwsh
+        run: |
+          $h = "packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe"
+          $out = & $h --check-caps
+          if ($LASTEXITCODE -ne 0 -or $out.Trim() -ne "OK") { throw "check-caps failed: $out" }
+
       - name: Run coverage gate
         shell: bash
         run: |

@@ -233,6 +233,7 @@
     "test:coverage:sandbox": "bun test packages/gateway/src/platform/sandbox --coverage --coverage-threshold-lines=80 --timeout 30000",
     "test:coverage:security": "bun test packages/gateway/src/security/ packages/gateway/src/ipc/security-rpc.test.ts packages/gateway/test/e2e/scenarios/security-scan.e2e.test.ts --coverage --coverage-threshold-lines=80 --timeout 30000",
     "build:sandbox-helper": "make -C packages/gateway/src-native/sandbox-helper",
+    "build:sandbox-helper:win32": "pwsh -NoProfile -File scripts/build-sandbox-helper-win32.ps1",
     "test:coverage:config": "bun test packages/gateway/src/config --coverage --coverage-threshold-lines=80 --timeout 30000",
     "test:coverage:telemetry": "bun test packages/gateway/src/config/telemetry-toml.test.ts packages/gateway/test/unit/telemetry --coverage --coverage-threshold-lines=85 --timeout 30000",
     "test:coverage:db": "bun test packages/gateway/test/unit/db --coverage --coverage-threshold-lines=85 --timeout 30000",
