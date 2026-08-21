@@ -32,6 +32,7 @@ const FAST: readonly Gate[] = [
   { name: "audit:openapi-drift", cmd: ["bun", "run", "audit:openapi-drift"], tier: "fast" },
   { name: "audit:boundaries", cmd: ["bun", "run", "audit:boundaries"], tier: "fast" },
   { name: "audit:invariants", cmd: ["bun", "run", "audit:invariants"], tier: "fast" },
+  { name: "audit:worker-entries", cmd: ["bun", "run", "audit:worker-entries"], tier: "fast" },
   {
     // A connector that guards startup with `import.meta.main` is invisible to the bundled
     // registry: the guard is false under an import, so it loads, starts nothing and exits 0.

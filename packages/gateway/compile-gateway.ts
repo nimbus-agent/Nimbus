@@ -68,6 +68,23 @@ async function main(): Promise<void> {
     process.exit(consoleBuild.status ?? 1);
   }
 
+  // The workers are pre-bundled to JS and embedded with `{ type: "file" }` by
+  // `src/workers/embedded-workers.ts`; `bun build --compile` cannot follow a `new Worker(new
+  // URL(..., import.meta.url))` because that resolves at runtime. Both of the gateway's workers
+  // were dead in every packaged release before this step existed (F15, F22), so it is built here
+  // immediately before the compile rather than trusted to be fresh from `prepare`.
+  const workersBuild = spawnSync(process.execPath, ["run", "build:workers"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    env: process.env,
+  });
+  if ((workersBuild.status ?? 1) !== 0) {
+    process.stderr.write(
+      "compile-gateway: worker bundling failed; the gateway embeds the built workers and cannot compile without them.\n",
+    );
+    process.exit(workersBuild.status ?? 1);
+  }
+
   const r = spawnSync(
     process.execPath,
     [

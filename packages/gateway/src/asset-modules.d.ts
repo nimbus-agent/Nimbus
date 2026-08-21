@@ -28,3 +28,21 @@ declare module "*/dist/main.js" {
   const path: string;
   export default path;
 }
+
+/**
+ * The pre-bundled gateway workers, embedded by `workers/embedded-workers.ts`. Same `{ type:
+ * "file" }` shape and the same TS7016 cause as `*​/dist/main.js` above: TypeScript resolves the
+ * real `.js` and, with `allowJs` off, reports an implicit `any`.
+ *
+ * Scoped to `dist/workers/` so it cannot shadow an ordinary `.js` import, and so it wins the
+ * ambient-wildcard match against the shorter `*​/dist/main.js` pattern.
+ */
+declare module "*/dist/workers/embedding-worker.js" {
+  const path: string;
+  export default path;
+}
+
+declare module "*/dist/workers/query-guard-worker.js" {
+  const path: string;
+  export default path;
+}

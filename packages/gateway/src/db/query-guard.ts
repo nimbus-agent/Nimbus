@@ -1,3 +1,5 @@
+import { QUERY_GUARD_WORKER_PATH } from "../workers/embedded-workers.ts";
+
 const FORBIDDEN =
   /\b(INSERT|UPDATE|DELETE|DROP|ALTER|ATTACH|DETACH|REPLACE|CREATE|TRUNCATE|VACUUM)\b/i;
 
@@ -51,8 +53,11 @@ export async function runReadOnlySelect(
 ): Promise<Record<string, unknown>[]> {
   assertReadOnlySelectSql(sql);
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const workerUrl = new URL("./query-guard-worker.ts", import.meta.url);
-  const worker = new Worker(workerUrl);
+  // The path comes from `workers/embedded-workers.ts`, never from `new URL(..., import.meta.url)`:
+  // that form resolves at runtime, so the bundler never sees the worker and `--compile` ships a
+  // binary where this call throws `ModuleNotFound resolving "B:\~BUN\root\query-guard-worker.ts"`.
+  // `nimbus query --sql` was dead in every packaged release for exactly that reason (F22).
+  const worker = new Worker(QUERY_GUARD_WORKER_PATH);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await new Promise<Record<string, unknown>[]>((resolve, reject) => {

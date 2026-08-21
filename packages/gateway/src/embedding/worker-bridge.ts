@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { processEnvGet } from "../platform/env-access.ts";
+import { EMBEDDING_WORKER_PATH } from "../workers/embedded-workers.ts";
 import {
   downloadPercent,
   type EmbeddingModelDownload,
@@ -43,7 +44,12 @@ export function tryCreateEmbeddingWorkerBridge(
 ): EmbeddingRuntime | null {
   let worker: Worker;
   try {
-    worker = new Worker(new URL("./embedding-worker.ts", import.meta.url).href);
+    // Path from `workers/embedded-workers.ts`, never `new URL(..., import.meta.url)`. That form
+    // resolves at RUNTIME, so `bun build --compile` never sees the worker and the spawn throws
+    // `ModuleNotFound resolving "B:\~BUN\root\embedding-worker.ts"` inside the binary. The catch
+    // below then swallowed it and returned null, which is why semantic search was silently dead in
+    // every packaged release while every source-tree test passed (F15).
+    worker = new Worker(EMBEDDING_WORKER_PATH);
   } catch (err) {
     logger.warn({ err }, "could not spawn embedding worker");
     return null;
