@@ -1041,6 +1041,13 @@ Minor papercut found alongside: `reembed` accepts only `Xenova/all-MiniLM-L6-v2`
 4. Fix the `sharp` platform dependency so `reembed` can repair an empty index.
 5. Accept `all-MiniLM-L6-v2` as a `--model` alias.
 
+### Scope is wider than this section's title — see F22
+
+The same runtime-resolved-`new Worker` pattern breaks `db/query-guard-worker.ts` too, so
+`nimbus query --sql` is dead in every release as well. Both of the codebase's two `new Worker()`
+sites are affected — 2 of 2 — and neither build script mentions a worker at all. Fix the class,
+not this instance.
+
 ### Bearing on F1b
 
 This RESOLVES the bound recorded under F1b. Semantic search could not have rescued the
@@ -1314,6 +1321,415 @@ through Nimbus's callback instead is flattened to "denied".
 
 ---
 
+## F19 — `nimbus help` omits 27 of the 65 dispatchable commands, including 9 of the 14 agents
+
+**Severity: medium-high.** Model-independent. Pure discoverability, but it is the reason a user
+routes everything through `ask` — the one surface carrying F1, F12 and F14.
+
+### Measured
+
+`nimbus help` is what a user gets on `nimbus`, `nimbus --help`, and on **every unknown command**
+(`dispatchCommand` prints it before exiting 1). It names 38 of them (plus `version`, which is an
+alias, not a handler). `COMMAND_HANDLERS` in `packages/cli/src/index.ts` dispatches 65. The 27
+absent from the help text:
+
+```
+admin  bench  chatops  conflicts  data  decisions  egress  ghost  huddle  identity
+janitor  lan  mcp-server  negotiate  owners  policy  pre-mortem  preflight  prove
+scim  security  share  team  tribal  update  verify-share  why
+```
+
+Every one of the 27 is documented in `docs/cli-reference.md` — none is deliberately hidden.
+Among them:
+
+| omitted | what it is |
+|---|---|
+| `why` `ghost` `conflicts` `huddle` `janitor` `decisions` `pre-mortem` `negotiate` `owners` | **9 of the 14 built-in read-only agents** |
+| `prove` | the S1 flagship primitive — the whole point of the egress ledger |
+| `mcp-server` | the ecosystem entry point (`@nimbus-dev/mcp` execs it) |
+| `update` | self-update — a user cannot discover how to upgrade |
+| `share` `team` `identity` `scim` `policy` `tribal` `chatops` | the entire Phase 6 Team surface |
+
+Verified on the 2.10.0 binary command-by-command (each of the 27 runs and prints its own usage),
+and re-derived from `origin/main` (`9b905f16`, post-2.12) source — the gap is unchanged.
+
+### Root cause
+
+Nothing checks help-text coverage against the dispatch map. `COMMAND_NAMES` in
+`commands/registry.ts` is now in sync with `COMMAND_HANDLERS` (65 = 65, zero diff both ways —
+the drift recorded on 2026-07-19 has been paid off), but the only gate that reads it,
+`audit:readme-cli`, runs in the direction that cannot catch this:
+
+```ts
+// scripts/audit/readme-cli-commands.ts
+const missing = readmeCommands.filter((c) => !registered.has(c));
+```
+
+README → registry. A command that exists and is documented but never mentioned in
+`docs/README.md` is invisible to the gate — and `docs/README.md` names **none** of the 27.
+
+The gap is already known, and was patched pointwise rather than closed. From
+`commands/help.test.ts:50`:
+
+> *"`audit:readme-cli` only validates README→registry, so nothing else catches a command that is
+> registered and documented but missing from `nimbus help`. `nimbus stats` was."*
+
+So one command was noticed, hard-coded into an assertion, and the other 27 left in place.
+
+### Why a frontier model does not fix this
+
+No model is involved. It is worth filing in a local-LLM audit for one reason: a user who cannot
+see `nimbus why`, `nimbus ghost` or `nimbus decisions` asks `nimbus ask` instead, and `ask` is
+where F1 (raw-sentence FTS), F12 (`github_actions` swamping), F14 (silent truncation at 8) and
+F21/F23 live. The discoverability defect *feeds* the retrieval defects.
+
+### Suggested fix
+
+1. Add the missing commands to `help.ts`, grouped — the list is long enough that flat is unusable.
+   A `nimbus help <topic>` split (`agents`, `team`, `index`, …) is the better shape if the top-level
+   list is to stay readable.
+2. Replace the per-command `expect(out.stdout).toContain(...)` assertions in `help.test.ts` with a
+   **set-difference test over `COMMAND_HANDLERS`**, with an explicit, justified `HIDDEN` allow-list
+   for anything genuinely internal (`bench`, `admin`, `data` are the plausible candidates). Written
+   as what cannot pass, not as a sample of what may.
+3. Add the reverse direction to `audit:readme-cli` — or accept that README coverage is a product
+   decision and put the enforcement solely in (2).
+
+> Do not fix this by adding 27 lines and no test. The `nimbus stats` precedent is exactly that fix,
+> applied once, and the list drifted 27 wide behind it.
+
+---
+
+## F20 — `--not-touching` accepts any string as a glob, and a non-matching pattern returns EVERY PR as satisfying the negation
+
+**Severity: high.** Model-independent — no LLM is involved anywhere in this path. This is the
+failure mode the whole negation feature exists to prevent: for a negation, a row the filter fails
+to exclude is not a *missing* answer, it is a *wrong* one.
+
+### Symptom
+
+Measured against the live index (`github`, 173 PRs, all 173 with indexed file coverage):
+
+| `--not-touching <pattern>` | rows returned | excluded |
+|---|---|---|
+| *(no predicate — baseline)* | 173 | — |
+| `packages/gateway/**` | 124 | 49 ✅ |
+| `packages/gateway/*` | 124 | 49 |
+| `packages/gateway` | **173** | **0** ❌ |
+| `Packages/Gateway/**` | **173** | **0** ❌ |
+| `packages\gateway\**` | **173** | **0** ❌ |
+| `/packages/gateway/**` | **173** | **0** ❌ |
+| `./packages/gateway/**` | **173** | **0** ❌ |
+| `**/*.ts` | 77 | 96 |
+| `*.ts` | 77 | 96 |
+
+Five of the most natural ways to write that path return every single PR — including all 49 that
+do touch `packages/gateway/` — as an answer to *"which PRs did not touch packages/gateway?"*.
+
+On Windows, where this was measured, the backslash form is what a user gets from Explorer,
+from `Copy as path`, and from `path.join`. It silently disables the filter.
+
+### The disclosure line reports nothing wrong
+
+```
+Gaps: 0 excluded (no file coverage indexed); 0 excluded (file coverage truncated)
+```
+
+Identical output for a correct pattern that legitimately excludes nothing and for a pattern that
+is simply wrong. The Gaps accounting — which exists specifically to make a negation honest, and
+which is described in `nimbus query --help` as *"part of the answer, not debug output"* — covers
+**unverifiable rows only**. It has no notion of *"your pattern matched zero indexed paths"*, which
+is the case where the answer is not merely incomplete but inverted.
+
+### Root cause
+
+`index/negation-predicates.ts:182` `buildNotTouchingSql` binds the caller's string straight into
+SQLite `GLOB` with no validation:
+
+```ts
+AND NOT EXISTS (
+      SELECT 1 FROM pr_changed_file f
+       WHERE f.item_id = i.id AND f.path GLOB ?1
+    )
+```
+
+Two properties of SQLite `GLOB` the surface never states:
+
+- **It is case-sensitive.** This is *deliberate* and correct — the doc comment says so
+  (*"GLOB, never LIKE: LIKE is case-insensitive and treats `_` as a wildcard, both measured, both
+  wrong for paths"*). The defect is not the choice; it is that a case mismatch fails **open** and
+  silently, on the two platforms whose filesystems are case-insensitive.
+- **`*` crosses `/`.** So `**` and `*` are the same pattern (124 = 124, and 77 = 77 above), and a
+  user's minimatch/gitignore intuition — `*` is one segment, `**` is recursive — does not hold in
+  either direction. `--not-touching 'src/*'` excludes `src/a/b/c.ts` too.
+
+And a pattern with no wildcard at all is not a prefix — `GLOB 'packages/gateway'` requires the
+whole path to equal that string, so it matches no file, excludes no PR, and the negation degrades
+to "return everything".
+
+### Why the substrate probe does not catch it
+
+The feature already refuses when it has nothing to answer from — `--explain` shows
+`substrate probe: SELECT COUNT(*) AS n FROM pr_files_state / passed=true rowCount=173`, and on an
+empty substrate the query refuses with exit 1 (verified: `--no-downstream-incident` on this index,
+which has no `correlates_with` edges, exits **1** with *"cannot be verified"* and a remediation
+line). So the design plainly accepts the principle *"do not answer a negation you cannot verify"*.
+It just probes the wrong thing: whether the **table** has rows, never whether the **pattern** does.
+
+### The precedent is already in this codebase
+
+`nimbus people list --not-reviewed` gets this right, on the same feature, in the same release:
+
+```
+Window: ALL TIME — no --since given, so this reports "never reviewed, ever", not a recent window
+Gaps: 80 excluded (no graph entity of the required type)
+```
+
+It states the window it actually used, and it reports a non-zero exclusion count. `--not-touching`
+should be held to that.
+
+### Suggested fix
+
+1. **Probe the pattern, not just the table.** Before composing the answer, run
+   `SELECT COUNT(*) FROM pr_changed_file WHERE path GLOB ?`. Zero is the interesting case, and it
+   has exactly two readings — "genuinely nothing touches this" and "your pattern is wrong" — which
+   is why it must be *disclosed*, not silently resolved either way. A line on the order of
+   `Gaps: pattern matched 0 of N indexed paths — every PR below is unfiltered` is enough; a
+   refusal is defensible too, and is consistent with the empty-substrate behaviour.
+2. **Reject the forms that cannot be right.** A pattern containing `\` is not a repo path
+   (`pr_changed_file.path` is always POSIX-separated); a leading `/` or `./` likewise. Fail these
+   with a message naming the corrected form, rather than accepting them into a silent no-match.
+3. **State the semantics in `--help`**: case-sensitive, and `*` crosses `/` so `**` adds nothing.
+   Users will read `<glob>` as minimatch otherwise — that is what `**` means everywhere else.
+4. Red-prove each with a test that a wrong-case / backslash / no-wildcard pattern does **not**
+   return a PR that touches the path.
+
+> `nimbus query --help` promises *"an empty substrate refuses with exit 1"*. That promise is kept.
+> The gap is that a pattern matching nothing is not an empty substrate, and produces a confident
+> wrong answer where an empty substrate produces an honest refusal.
+
+---
+
+## F21 — under `prefer_local`, `ask` answers a negation question with no predicate, no disclosure, and no refusal — turning a fail-closed refusal into a confident assertion
+
+**Severity: high.** The *inertness* is a known, documented bound. The **silence** is the finding.
+
+### Symptom — the same question, two Nimbus surfaces, opposite answers
+
+| question | `nimbus query` / `nimbus people` | `nimbus ask` |
+|---|---|---|
+| people who have never reviewed anything | 3 rows (`Asaf Golombek`, `nimbus-release-bot[bot]`, …) + `Gaps: 80 excluded (no graph entity of the required type)` | **"No one."** |
+| deployments with no downstream incident | **refuses, exit 1** — *"no `correlates_with` edges are indexed, so which deployments have no downstream incident cannot be verified"* + a remediation line | **"No downstream incidents found for any deployment."** |
+| PRs that did not touch `packages/gateway` | 124 of 173, with a Gaps line | `Missing Dependency Assist — skipped (rank 2, 6, 7)` / `Wingetbot PR Triage — skipped (rank 3, 8)` |
+
+Row 2 is the sharpest. The structured surface **refuses to answer** because the substrate to
+answer it does not exist. The model surface answers anyway, in the affirmative, in a sentence a
+user would reasonably read as *"I checked; there were none."* Nothing in the output says a
+predicate was unavailable.
+
+Row 3 is F12c recurring — the internal `rank` field leaking into prose — on top of a
+non-responsive answer.
+
+### The bound is documented; the silence is not
+
+`CLAUDE.md` records W6-B.2 accurately:
+
+> *"…plus the MCP server, with exclusion-count disclosure guaranteed only on the engine surface
+> and — the local-router (`[llm].prefer_local = true`) path having no tool-calling support at all
+> — inert there."*
+
+So "the predicates do not run under `prefer_local`" is known and written down. What is neither
+recorded nor implemented is that **the user is never told**. A documented limitation that the
+product does not surface is, from the user's chair, a wrong answer.
+
+### Root cause
+
+`engine/run-conversational-agent.ts` `runTurn` forks:
+
+```ts
+if (llmRouter !== undefined && shouldUseLocalRouter(p)) {
+  try { return await runViaLocalRouter(llmRouter, promptArg, p); }   // ← no tools, ever
+  catch (e) { … fall back to agent … }
+}
+return await runViaAgent(p.agent, promptArg, p, maxSteps);           // ← the only path with tools
+```
+
+`runViaLocalRouter` calls `llmRouter.generate({ task, prompt, systemPrompt, maxTokens, … })`.
+There is no `tools` argument in the shape at all. The three negation tools
+(`engine/negation-tools.ts`) are registered on the Mastra agent only.
+
+The disclosure machinery is downstream of the tools, so it fails silently with them:
+
+- `negation-disclosure.ts` `recordNegationDisclosure` is called **by a tool**. No tool call, no
+  record.
+- `drainNegationDisclosures()` returns `[]`.
+- `appendNegationDisclosures` is documented as *"Identity when nothing was recorded"* — and that
+  is exactly right for its own contract. It cannot distinguish "nothing to disclose" from "the
+  disclosing component never ran".
+
+The design is careful about the adjacent case and gets it right: `negationDisclosureLine` returns
+`undefined` for an all-zero exclusion set, reasoning that *"a line claiming '0 excluded' would
+imply a shortfall that did not happen."* The same care was not applied one level up, where the
+absent line means the predicate never existed.
+
+Note the fail-closed refusal is genuinely built and genuinely works — `missingSubstrateRefusal`
+carries a message, a remediation, and an `explain` block, and the CLI honours it with exit 1. Under
+`prefer_local` that refusal is simply never reached, because nothing consults the substrate.
+
+### Why a frontier model does not fix this
+
+It does not — and that is the point. Route the same question to a tool-capable provider and the
+predicate runs, so the defect *appears* to be about model capability. It is not: the gap is that
+the engine silently degrades from "verified answer or honest refusal" to "unconstrained
+generation over F1's context", with no marker at either end. A weaker model makes it visible
+sooner; a stronger one would produce a more plausible wrong answer.
+
+### Suggested fix
+
+1. **Detect the question, not the answer.** When a turn takes the local-router branch, the tools
+   are known to be unavailable — that fact is available *before* generation, from
+   `shouldUseLocalRouter(p)` alone. Append a disclosure whenever the branch is taken and the
+   prompt is negation-shaped, on the order of:
+   `Negation predicates were not consulted — the local model has no tool access. Run the same
+   question through nimbus query/people for a verified answer.`
+2. **Or give the local router tools.** `llama3.2` advertises `"capabilities": ["completion",
+   "tools"]` and Ollama supports tool calling; `runViaLocalRouter` simply never passes any. This is
+   the larger fix and the better one, and it would make the whole W6-B.2 apparatus real on the
+   local path rather than nominal.
+3. Either way, **red-prove it**: a test that asks a negation question with `preferLocal: true` and
+   asserts the reply is not a bare confident negative. Today's suite cannot fail here — the
+   disclosure tests exercise the tool path, which this branch never enters.
+
+> Sequencing note: (1) is honest and small; (2) makes the feature work. (1) should not be treated
+> as closing the finding if (2) is the intent — a disclosure that permanently explains why a
+> shipped feature does nothing is a worse resting place than either end state.
+
+---
+
+## F22 — the SECOND unbundled worker: `nimbus query --sql` is dead in every compiled release
+
+**Severity: high.** Same root cause as F15, different subsystem. Both of the codebase's two
+`new Worker()` sites are broken in shipped binaries — **2 of 2**.
+
+### Symptom
+
+```
+$ nimbus query --sql "SELECT COUNT(*) AS prs FROM item WHERE type='pr'"
+BuildMessage: ModuleNotFound resolving "B:\~BUN\root\query-guard-worker.ts" (entry point)
+$ echo $?
+1
+```
+
+`--sql` is documented in `nimbus help` (*"read-only guard"*), in `nimbus query --help`, and in
+`docs/cli-reference.md`. `git log -S worker -- scripts/build-release.ts scripts/build-debug.ts`
+returns no commits — the string has never appeared in either script — so this has been broken in
+every packaged build there has ever been, not merely since some regression.
+
+As with F16, the docs actively route users into it. `docs/cli-reference.md:213`, on `nimbus
+search`'s hard-rejected flags:
+
+> *"Time, state and assignee filtering are not available here; use `nimbus query` for `--since`,
+> or raw SQL via `nimbus query --sql`."*
+
+### Root cause — F15's, verbatim
+
+`db/query-guard.ts:54`:
+
+```ts
+const workerUrl = new URL("./query-guard-worker.ts", import.meta.url);
+const worker = new Worker(workerUrl);
+```
+
+Resolved at runtime, so the bundler never sees the dependency; inside the compiled binary
+`import.meta.url` is Bun's virtual root `B:\~BUN\root\`, where no `.ts` exists. Identical to
+`embedding/worker-bridge.ts:46`.
+
+`grep -rn "new Worker(" packages/*/src --include=*.ts` (excluding tests) returns exactly two
+sites. Neither appears in `scripts/build-release.ts` or `scripts/build-debug.ts` — `grep -rn "worker"`
+over both build scripts returns **nothing**. So the correct statement of F15's scope is not "the
+embedding worker was forgotten" but **"no worker is ever passed to `bun build --compile`, and every
+worker-backed feature is dead in every release."**
+
+### Why this one is worse than it looks
+
+`--sql` is the documented escape hatch for exactly the situations the rest of this audit is about:
+when `ask` gives a wrong count (F23), when `search` misses (F1), when a Gaps line is
+uninterpretable (F20), `--sql` is what a user reaches for to establish ground truth. It is the
+first thing that fails.
+
+It also fails *loudly and legibly* where F15 fails silently — the error names the missing module —
+which is the only reason both are now attributable to one cause.
+
+### Suggested fix
+
+Fold into F15's fix rather than fixing separately:
+
+1. A single list of worker entry points consumed by both build scripts, with
+   `db/query-guard-worker.ts` and `embedding/embedding-worker.ts` in it.
+2. A **static guard**: a `new Worker(` site whose entry file is not in that list fails the
+   structure audit. Written as what cannot pass — two sites out of two were wrong, so the sample
+   is not the exception.
+3. F15's compiled-artifact smoke test should assert `nimbus query --sql "SELECT 1"` exits 0, in
+   the same run that asserts `embeddings !== "unavailable"`. Both defects are invisible to every
+   source-tree test and to CI.
+
+---
+
+## F23 — `ask` answers an index-wide COUNT from its retrieved context, and the number is not even an integer
+
+**Severity: high.** F14's sibling: F14 truncates enumerations at 8, this miscounts by two orders of
+magnitude. Model-independent guard gap — no surface asserts that a count must come from the index.
+
+### Measured
+
+`nimbus ask "how many PRs are in the index?"`, three runs on an unchanged index:
+
+| run | answer |
+|---|---|
+| 1 | `There are 3 PRs in the index.` |
+| 2 | `2.2 PRs: Wingetbot PR Triage (queued) and Wingetbot PR Triage (pending).` |
+| 3 | *(empty)* |
+
+Ground truth, from `nimbus query --service github --type pr --limit 1000`: **173**.
+
+Two things beyond the wrong number:
+
+- **`2.2 PRs`.** A count that is not an integer is proof the model is not counting anything — it is
+  producing a plausible-looking token. No arithmetic over any set yields 2.2.
+- **The two named "PRs" are not PRs.** `Wingetbot PR Triage` is a `github_actions` workflow run —
+  F12b's swamping (11,361 `github_actions` items against 213 `github`) delivering non-PR items into
+  the context of a question explicitly about PRs, where the model then counted them *as* PRs.
+
+### Root cause
+
+The same shape as F1 and F14: `buildLocalIndexedContext` retrieves a handful of ranked items,
+those items become the prompt, and the model answers about **the context** while the user asked
+about **the index**. Nothing distinguishes the two. For an enumeration this shows up as F14's
+silent truncation; for a count it shows up as a fabricated integer — or here, a fabricated
+non-integer.
+
+A count is the worst case of the family: a truncated list at least *looks* partial, and F14's fix
+is a disclosure line. A bare number carries no signal that it was derived from 3 items out of 173,
+and users trust numbers more than lists.
+
+### Why a frontier model does not fix this
+
+A frontier model would say "based on the 3 items I can see" or decline — which is better, but it
+is still an answer about the context. The index count is a `SELECT COUNT(*)`, available exactly and
+instantly, and no model should be asked to estimate it. The guard is missing on Nimbus's side.
+
+### Suggested fix
+
+1. **Route count questions to the index, not the model.** A count/"how many" question over an
+   indexed type is a structured query; answer it from `item` and let the model phrase the result.
+2. Failing that, apply F14's disclosure at minimum — every answer built from a retrieved context
+   must state the retrieved-item count and that it is not the index total. F14's fix, applied to
+   counts as well as enumerations, closes the worst of this.
+3. Fix the F12b type filter first: a question naming `PRs` should not retrieve `github_actions`
+   items at all. That alone would have made run 2 impossible.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -1370,6 +1786,11 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F12 | Repo questions exclude PRs; `github_actions` swamps ranked search | medium | yes | `ask` on any repo |
 | F7 | `people list` automated senders | low | yes | `people`, `expert` |
 | F8 | `min_reasoning_params` dead config | low | yes | `[llm]` config surface |
+| **F22** | **`query --sql` dead in every release — the SECOND unbundled worker (2 of 2)** | **high** | yes | `--sql`, and every ground-truth check |
+| F21 | Under `prefer_local`, `ask` runs no negation predicate and discloses nothing — a fail-closed refusal becomes a confident assertion | high | yes | `ask`, desktop, VS Code |
+| F20 | `--not-touching` glob unvalidated — 5 natural path forms return EVERY PR as "not touching" | high | yes | `nimbus query`, MCP `query` tool |
+| F23 | `ask` counts its retrieved context, not the index (`3`, then `2.2`, vs 173) | high | yes | every `ask` count question |
+| F19 | `nimbus help` omits 27 of 65 commands, incl. 9 of 14 agents, `prove`, `mcp-server`, `update` | med-high | yes | discovery of the whole product |
 
 **Suggested first PR:** F2 — one-line guard fix (`h.level > 2`), a red-prove test, smallest
 diff, closes a live output defect on all fourteen brief kinds.
@@ -1380,6 +1801,17 @@ impact. F1 step 3 (`ftsTitleMatchQuery`) is deliberately deferred to its own PR 
 
 F3 and F6 are the same shape as each other (a surface asserting more confidence than its data
 supports) and could reasonably land together.
+
+**F22 does not get its own PR** — it is F15's fix with a second entry point and a static guard.
+Landing F15 without it would fix one of two broken workers and leave the guard unwritten.
+
+**F20 and F21 belong together** if only one is done: they are the two halves of the negation
+feature's honesty story — the structured surface answering a wrong pattern confidently, and the
+model surface answering with no predicate at all. Both are cheap relative to their severity.
+
+**F19 is the one to do while waiting on a review.** Zero risk, no runtime behaviour, and it is
+what stops a user from routing every question into `ask` — which is where five of these findings
+live.
 
 ---
 
@@ -1414,4 +1846,28 @@ nimbus doctor                              # healthy for connectors with no cred
 
 # F9
 nimbus prove ; nimbus egress verify        # 0 during-query vs 4007 rows in chain
+
+# F19
+nimbus help                               # names 38 of the 65 dispatched by COMMAND_HANDLERS
+nimbus why ; nimbus prove ; nimbus ghost  # all run and print usage; none appear in the help above
+
+# F20  (baseline 173 PRs, 49 of which touch packages/gateway)
+nimbus query --service github --type pr --not-touching 'packages/gateway/**' --limit 500  # 124
+nimbus query --service github --type pr --not-touching 'packages/gateway'    --limit 500  # 173 ❌
+nimbus query --service github --type pr --not-touching 'Packages/Gateway/**' --limit 500  # 173 ❌
+nimbus query --service github --type pr --not-touching 'packages\gateway\**' --limit 500  # 173 ❌
+# every one of them prints: Gaps: 0 excluded ...; 0 excluded ...
+
+# F21
+nimbus people list --not-reviewed                  # 3 rows + "Gaps: 80 excluded"
+nimbus ask "which people have not reviewed anything?"        # "No one."
+nimbus query --service github --type deployment --no-downstream-incident ; $LASTEXITCODE  # refuses, 1
+nimbus ask "which deployments had no downstream incident?"   # asserts none, exit 0
+
+# F22
+nimbus query --sql "SELECT 1"             # ModuleNotFound B:\~BUN\root\query-guard-worker.ts
+
+# F23
+nimbus ask "how many PRs are in the index?"                        # "3", then "2.2 PRs", then empty
+nimbus query --service github --type pr --limit 1000               # 173
 ```
