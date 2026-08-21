@@ -366,7 +366,12 @@ to whatever actually shipped.
 
 ## Open questions for the plan
 
-1. Rust + the `windows` crate, or C + MSVC? Decide from the ACL spike.
+1. ~~Rust + the `windows` crate, or C + MSVC?~~ **Settled in the plan: C99 + MSVC.**
+   The helper is security-critical and the `windows` crate is a binding over
+   exactly these C APIs, so the crate buys a dependency tree rather than
+   capability; the repo's only Rust is the Tauri workspace, so a second crate
+   would extend `cargo-deny`/`cargo-audit` onto the release path; and C mirrors
+   `main.c`. See the plan's *Decisions taken in this plan*.
 2. For connectors the profile is created once per extension id and derived
    thereafter — the stable id makes that straightforward, and the reaper
    collects it. The open half is one-shot executions, whose id scheme trades
