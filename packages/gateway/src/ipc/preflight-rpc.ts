@@ -80,6 +80,25 @@ function requireParams(params: unknown): {
   return { service, targetRef, maxFindings };
 }
 
+/**
+ * The service id is in neither `[metrics.dora.<id>]` nor `[ci.service.<id>]`, so not one of the
+ * three checks could run.
+ *
+ * Verdict is `warn`, NOT `ok` (F24a). `--mode block` is a deploy gate and its only mechanism is
+ * the exit code: `commands/deploy.ts` exits 1 when `mode === "block" && verdict === "warn"`, and
+ * the first-party Action's `decideExitCode` does the same. Returning `ok` here made a typo'd or
+ * renamed service id pass the gate silently — a healthy service and a nonexistent one produced
+ * byte-identical envelopes apart from their gap labels.
+ *
+ * `warn` rather than a new third verdict, deliberately: the published Action's `safeVerdict`
+ * coerces every value it does not recognise, so a `"unknown_service"` VERDICT would arrive at an
+ * already-deployed Action as `ok` and reintroduce the same fail-open one layer out. `warn` is the
+ * only value that fails closed in every consumer, old and new. The reason travels in the gap
+ * instead, which is a free-form string on the wire and degrades to a printed label.
+ *
+ * Counts stay 0 with no findings: this is "could not evaluate", not "found three problems", and
+ * the gap is what distinguishes them.
+ */
 function unconfiguredEnvelope(
   service: string,
   targetRef: string,
@@ -89,15 +108,11 @@ function unconfiguredEnvelope(
     service,
     target_ref: targetRef,
     computed_at: new Date(nowMs).toISOString(),
-    verdict: "ok",
+    verdict: "warn",
     checks: {
-      active_p1_incidents: {
-        count: 0,
-        findings: [],
-        gap: "no_pagerduty_mapping",
-      },
-      failing_ci_runs: { count: 0, findings: [], gap: "no_repos" },
-      merge_conflicts: { count: 0, findings: [], gap: "no_repos" },
+      active_p1_incidents: { count: 0, findings: [], gap: "unknown_service" },
+      failing_ci_runs: { count: 0, findings: [], gap: "unknown_service" },
+      merge_conflicts: { count: 0, findings: [], gap: "unknown_service" },
     },
   };
 }

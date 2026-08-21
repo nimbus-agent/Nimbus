@@ -312,7 +312,19 @@ components:
         gap:
           nullable: true
           type: string
-          enum: [no_pagerduty_mapping, no_repos, no_deployment_data, low_sample, approximate_lead_time]
+          # Mirrors `DoraGap` in src/metrics/dora.ts. `unknown_service` (F24b) means the id is in
+          # neither [metrics.dora.<id>] nor [ci.service.<id>]; `no_repos` means it exists with no
+          # repos bound. `mixed_source` was already missing here — synced in the same pass.
+          enum:
+            [
+              unknown_service,
+              no_pagerduty_mapping,
+              no_repos,
+              no_deployment_data,
+              low_sample,
+              approximate_lead_time,
+              mixed_source,
+            ]
     DeployPreflightResult:
       type: object
       required: [service, target_ref, computed_at, verdict, checks]
@@ -363,7 +375,16 @@ components:
     PreflightGap:
       nullable: true
       type: string
-      enum: [no_pagerduty_mapping, no_repos, unknown_mergeable_state]
+      # Mirrors `PreflightGap` in src/preflight/preflight.ts. `pagerduty_urgency_without_priority`
+      # was already missing here — synced in the same pass as `unknown_service` (F24a).
+      enum:
+        [
+          unknown_service,
+          no_pagerduty_mapping,
+          no_repos,
+          unknown_mergeable_state,
+          pagerduty_urgency_without_priority,
+        ]
     IncidentFinding:
       type: object
       required: [id, title, status, severity, opened_at_ms, pagerduty_service_id, url]

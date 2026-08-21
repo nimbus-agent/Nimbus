@@ -19,8 +19,20 @@ import {
 // Re-exported so this package's unit tests can import the pure helpers from main.ts.
 export { getBooleanInput, getInput, getIntInput, safeString };
 
+/**
+ * Fails CLOSED: only the literal `"ok"` yields `"ok"`.
+ *
+ * This previously read `raw === "warn" ? "warn" : "ok"`, so every value it did not recognise —
+ * a verdict the gateway adds later, a typo, a truncated body, `undefined` — became `ok`, and
+ * `decideExitCode` then let a `--mode block` run pass. An unrecognised verdict is precisely the
+ * case where this Action cannot tell whether it is safe to deploy, so the safe default is the one
+ * that blocks. See F24a.
+ *
+ * Keep the direction of this test when adding a verdict value: widen the `"ok"` arm only for
+ * values that genuinely mean "nothing wrong", never by re-inverting the default.
+ */
 function safeVerdict(raw: unknown): "ok" | "warn" {
-  return raw === "warn" ? "warn" : "ok";
+  return raw === "ok" ? "ok" : "warn";
 }
 
 type SanitizedFinding = {

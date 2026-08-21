@@ -99,9 +99,21 @@ function requireStatsParams(params: unknown): {
   };
 }
 
+/**
+ * `metrics.dora` answers an unconfigured service softly, with a fixed set of four all-null metric
+ * slots, where `metrics.stats` refuses (see the comment in `dispatchMetricsRpc` below). That
+ * asymmetry is about SHAPE and is kept: `dora` has four fixed slots it can place-hold, `stats`
+ * has a series whose bucket count and unit depend on config it does not have.
+ *
+ * What changed (F24b) is the gap LABEL. These slots used to report `no_repos`, which states that
+ * the service exists and has no repositories bound — a different and much more fixable-looking
+ * problem than "this service key was never defined". A reader, or an agent calling the
+ * `getDoraMetrics` MCP tool, would go looking for repos to bind to a service that does not exist.
+ * `DoraGap` now carries `unknown_service`, and the renderer prints whatever gap it is handed.
+ */
 function unconfiguredEnvelope(service: string, sinceMs: number, nowMs: number): DoraMetricsResult {
   const placeholder = (unit: string) =>
-    ({ value: null, unit, sample: 0, gap: "no_repos" as const }) as const;
+    ({ value: null, unit, sample: 0, gap: "unknown_service" as const }) as const;
   return {
     service,
     since_ms: sinceMs,

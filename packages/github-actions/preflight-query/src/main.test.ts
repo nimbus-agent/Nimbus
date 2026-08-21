@@ -167,7 +167,10 @@ function check(count: unknown, findings: unknown, gap: unknown) {
 }
 
 describe("sanitizeEnvelope", () => {
-  test("sanitizes strings, coerces counts, normalizes verdict, and maps findings", () => {
+  // The `verdict: "danger"` input below previously normalized to `"ok"`. That assertion pinned
+  // the fail-open (F24a): an unrecognised verdict became a passing gate. It now normalizes to
+  // `"warn"`, and the change is deliberate.
+  test("sanitizes strings, coerces counts, fails an unrecognised verdict CLOSED, and maps findings", () => {
     const raw = {
       service: "che\x00ckout",
       target_ref: "main",
@@ -182,7 +185,7 @@ describe("sanitizeEnvelope", () => {
 
     const out = sanitizeEnvelope(raw);
     expect(out.service).toBe("checkout");
-    expect(out.verdict).toBe("ok");
+    expect(out.verdict).toBe("warn");
     expect(out.checks.active_p1_incidents.count).toBe(3);
     expect(out.checks.active_p1_incidents.findings[0]).toEqual({
       id: "p1",
@@ -209,5 +212,43 @@ describe("sanitizeEnvelope", () => {
       },
     } as unknown as Envelope;
     expect(sanitizeEnvelope(raw).verdict).toBe("warn");
+  });
+
+  // F24a: `safeVerdict` previously read `raw === "warn" ? "warn" : "ok"`, so EVERY value it did
+  // not recognise — a future third verdict, a typo, a truncated body, `undefined` — became `ok`,
+  // and `decideExitCode` then let a `--mode block` run pass. An unrecognised verdict is exactly
+  // the case where the Action does not know whether it is safe to deploy, so it must fail
+  // CLOSED. Written as what cannot pass: only the literal "ok" yields "ok".
+  it.each([["unknown_service"], ["block"], ["OK"], [""], [undefined], [null], [42]])(
+    "coerces an unrecognised verdict %p to warn, never ok",
+    (verdict) => {
+      const raw = {
+        service: "s",
+        target_ref: "r",
+        computed_at: "c",
+        verdict,
+        checks: {
+          active_p1_incidents: check(0, [], null),
+          failing_ci_runs: check(0, [], null),
+          merge_conflicts: check(0, [], null),
+        },
+      } as unknown as Envelope;
+      expect(sanitizeEnvelope(raw).verdict).toBe("warn");
+    },
+  );
+
+  it("still passes a literal ok through as ok", () => {
+    const raw = {
+      service: "s",
+      target_ref: "r",
+      computed_at: "c",
+      verdict: "ok",
+      checks: {
+        active_p1_incidents: check(0, [], null),
+        failing_ci_runs: check(0, [], null),
+        merge_conflicts: check(0, [], null),
+      },
+    } as unknown as Envelope;
+    expect(sanitizeEnvelope(raw).verdict).toBe("ok");
   });
 });

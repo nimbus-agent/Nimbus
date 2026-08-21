@@ -46,7 +46,16 @@ describe("preflight-rpc: deploy.preflight", () => {
     expect(out.value.verdict).toBe("warn");
   });
 
-  it("returns an unconfigured envelope (all checks gapped) when service has no config", async () => {
+  // F24a: an unknown service must NOT verdict `ok`. `nimbus deploy preflight --mode block`
+  // blocks on `warn` alone (`commands/deploy.ts`), and the first-party Action's `safeVerdict`
+  // coerces every value that is not literally "warn" to "ok" — so a third verdict value would
+  // be silently downgraded by an already-published Action. "warn" is therefore the only value
+  // that fails closed in every consumer, old and new; the `unknown_service` gap on all three
+  // checks carries the reason.
+  //
+  // This assertion is the INVERSE of the one it replaces, which pinned `verdict: "ok"` for an
+  // unconfigured service. That was the fail-open contract, asserted; it is changed on purpose.
+  it("verdicts `warn` with an unknown_service gap when the service has no config", async () => {
     const out = await dispatchPreflightRpc(
       "deploy.preflight",
       { service: "unknown", target_ref: "main" },
@@ -57,10 +66,24 @@ describe("preflight-rpc: deploy.preflight", () => {
       },
     );
     if (out.kind !== "hit") throw new Error("expected hit");
-    expect(out.value.verdict).toBe("ok");
-    expect(out.value.checks.active_p1_incidents.gap).toBe("no_pagerduty_mapping");
-    expect(out.value.checks.failing_ci_runs.gap).toBe("no_repos");
-    expect(out.value.checks.merge_conflicts.gap).toBe("no_repos");
+    expect(out.value.verdict).toBe("warn");
+    expect(out.value.checks.active_p1_incidents.gap).toBe("unknown_service");
+    expect(out.value.checks.failing_ci_runs.gap).toBe("unknown_service");
+    expect(out.value.checks.merge_conflicts.gap).toBe("unknown_service");
+  });
+
+  // The count half: a `warn` from an unknown service must still carry zero findings, so a
+  // reader cannot mistake "could not evaluate" for "found three problems".
+  it("reports zero counts and no findings for an unknown service", async () => {
+    const out = await dispatchPreflightRpc(
+      "deploy.preflight",
+      { service: "unknown", target_ref: "main" },
+      { db, loadConfig: () => new Map(), nowMs: () => PREFLIGHT_FIXTURE_NOW_MS },
+    );
+    if (out.kind !== "hit") throw new Error("expected hit");
+    expect(out.value.checks.active_p1_incidents.count).toBe(0);
+    expect(out.value.checks.failing_ci_runs.findings).toEqual([]);
+    expect(out.value.checks.merge_conflicts.count).toBe(0);
   });
 
   it("rejects array params with -32602", async () => {
