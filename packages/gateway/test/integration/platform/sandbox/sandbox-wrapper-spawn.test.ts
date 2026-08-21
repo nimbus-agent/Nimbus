@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { canonicalPath } from "../../../../src/platform/sandbox/canonical-path.ts";
@@ -320,15 +320,20 @@ function darwinPermissiveProbe(run: WrapperRun): string {
  * probed is the profile that actually ran.
  */
 function bisectMissingRule(run: WrapperRun): string {
+  // Round 2. Round 1 established the CLASS: `(allow file-read* (subpath "/"))` fixed it and all
+  // seven other operation classes -- write, ioctl, mach, shm, sysctl, process, system -- changed
+  // nothing. So the child is being denied a file READ, and these narrow that to a path.
+  const cwdParent = dirname(run.cwd);
+  const cwdGrandparent = dirname(cwdParent);
   const CANDIDATES: ReadonlyArray<readonly [string, string]> = [
-    ['(allow file-read* (subpath "/"))', "read anywhere"],
-    ['(allow file-write* (subpath "/private/var/folders"))', "write to the user temp tree"],
-    ["(allow file-ioctl)", "ioctl (stdio / isatty)"],
-    ["(allow mach*)", "any mach operation"],
-    ["(allow ipc-posix-shm*)", "POSIX shared memory"],
-    ["(allow sysctl*)", "any sysctl (not just read)"],
-    ["(allow process*)", "any process operation"],
-    ["(allow system*)", "any system operation"],
+    [`(allow file-read* (subpath "${cwdParent}"))`, "the cwd's own parent"],
+    [`(allow file-read* (subpath "${cwdGrandparent}"))`, "the temp root above the cwd"],
+    [`(allow file-read* (subpath "${homedir()}"))`, "HOME"],
+    ['(allow file-read* (subpath "/dev"))', "all of /dev"],
+    ['(allow file-read* (subpath "/private/var"))', "all of /private/var"],
+    ['(allow file-read* (subpath "/usr"))', "all of /usr"],
+    ['(allow file-read* (subpath "/Library"))', "/Library"],
+    ['(allow file-read* (subpath "/opt"))', "/opt"],
   ];
   const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-bisect-"));
   try {
