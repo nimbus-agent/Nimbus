@@ -1244,6 +1244,76 @@ is where a user will get stuck. Worth adding to that help text.
 
 ---
 
+## F18 — the OAuth provider's error code is captured, then discarded at every layer
+
+**Severity: high.** Model-independent. Makes every OAuth failure undiagnosable.
+
+### Symptom
+
+A OneDrive sign-in fails. The user is told, in full:
+
+| layer | message |
+|---|---|
+| browser | `Authorization was denied. You can close this window.` |
+| gateway log | *(nothing — no OAuth line is ever written)* |
+| CLI | `OAuth authorization did not complete` |
+
+Microsoft returned a specific machine-readable reason. None of the three surfaces carries it,
+so the user cannot tell "you clicked Deny" from "admin consent required" from "invalid scope".
+
+### The code is captured and then dropped, twice
+
+`auth/pkce.ts:125-131` — the callback stores the real code, then renders a message that
+asserts one specific cause for ALL of them:
+
+```ts
+const err = u.searchParams.get("error");
+if (err !== null && err !== "") {
+  sink.value = { error: err };                                  // captured
+  return new Response("Authorization was denied. You can close this window.", { … });
+}
+```
+
+`access_denied`, `consent_required`, `interaction_required`, `invalid_scope`,
+`unauthorized_client` and `server_error` all render as "denied". Only the first is actually a
+denial; the message is wrong for the rest.
+
+`auth/pkce.ts:183-185` — the value survives all the way to the throw and is dropped there:
+
+```ts
+const done = completion.value;
+if ("error" in done) {
+  throw new Error("OAuth authorization did not complete");      // `done.error` in scope, unused
+}
+```
+
+`error_description`, which providers populate with a human-readable sentence, is never read at
+all — not even into `sink.value`.
+
+### Why it matters beyond tidiness
+
+This is the third consecutive OAuth defect on one flow (F11 misattribution, F17 timeout, F18
+opacity) and it is the one that makes the other two expensive. F11 took roughly an hour of
+black-box probing — vault-blob timestamps, health-history rows, a bespoke PowerShell prober —
+to establish a fact the provider had already stated in a field Nimbus had in hand.
+
+Contrast the SAME session: `unauthorized_client: The client does not exist or is not enabled
+for consumers` reached the user verbatim, because Microsoft rendered it on its own page before
+redirecting. That error was diagnosed and fixed in one round trip. Every error that arrives
+through Nimbus's callback instead is flattened to "denied".
+
+### Suggested fix
+
+1. `throw new Error(\`OAuth authorization did not complete: ${done.error}\`)` — one line,
+   restores the code to the CLI.
+2. Capture `error_description` alongside `error` in `sink.value` and include it.
+3. Make the browser page state the actual code rather than asserting denial; reserve
+   "Authorization was denied" for `error=access_denied`.
+4. Log the failure server-side — `auth/*` currently writes no OAuth line at any level, which is
+   also F10's secondary finding. One `logger.warn({ provider, error, description })` closes both.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -1293,6 +1363,7 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F10 | Google refresh token coerced to `""`; OAuth path logs nothing | med-high | yes | every OAuth connector |
 | **F15** | **Embedding worker unbundled — semantic search dead in every release** | **critical** | yes | all hybrid retrieval |
 | **F16** | **`vault set`/`vault delete` always time out — consent handler never registered** | **critical** | yes | every secret write via CLI |
+| F18 | OAuth provider error code captured then discarded at all 3 layers | high | yes | every OAuth failure |
 | F17 | Interactive OAuth on a 30 s IPC timeout | high | yes | every browser-based connector auth |
 | F14 | `ask` truncates every enumeration at 8, undisclosed | high | yes | every `ask` list/count question |
 | F13 | `sync succeeded` recorded with no credentials (F6's mechanism) | high | yes | every connector's health |
