@@ -2,6 +2,15 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.13.1](https://github.com/nimbus-agent/Nimbus/compare/v2.13.0...v2.13.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **build:** bundle the gateway workers so they exist in a compiled binary ([#1299](https://github.com/nimbus-agent/Nimbus/issues/1299)) ([934779b](https://github.com/nimbus-agent/Nimbus/commit/934779b29fcab02a7d234402e949a14b80264a92))
+* **ci:** make the sandbox spawn suite report why it failed, and gate it on the platforms it is about ([#1298](https://github.com/nimbus-agent/Nimbus/issues/1298)) ([344e217](https://github.com/nimbus-agent/Nimbus/commit/344e2173300bec92886d7f329ba6fe220360c234))
+* **preflight:** an unknown service must not pass the deploy gate ([#1297](https://github.com/nimbus-agent/Nimbus/issues/1297)) ([6ae5a53](https://github.com/nimbus-agent/Nimbus/commit/6ae5a53fd3ca911373ca511dafa5ad48e29f1d69))
+
 ## [2.13.0](https://github.com/nimbus-agent/Nimbus/compare/v2.12.1...v2.13.0) (2026-08-21)
 
 
