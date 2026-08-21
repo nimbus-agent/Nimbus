@@ -356,4 +356,32 @@ describe("findPeopleWithoutReviews", () => {
     expect(out.people?.map((p) => p.id)).toEqual(["stale-reviewer"]);
     db.close();
   });
+
+  test("a pathologically large sinceDays never hands the query a non-finite bound", async () => {
+    // Verified: `Date.now() - Math.floor(1e308) * 86_400_000 === -Infinity` with no clamp.
+    // A day count this large means "ever" (same as omitting `sinceDays`), so the call must
+    // behave like the unbounded case — refuse only because there is no `reviewed` substrate at
+    // all, never because a non-finite bound reached the query.
+    const { index, db } = freshIndex();
+    const tools = mkTools(index);
+    const out = (await tools["findPeopleWithoutReviews"]?.execute?.({
+      sinceDays: 1e308,
+    })) as { refused?: boolean; status?: string };
+    expect(out.refused).toBe(true);
+    expect(out.status).toBe("refused");
+    db.close();
+
+    const { index: index2, db: db2 } = freshIndex();
+    seedPersonWithReview(db2, "reviewer", 1000);
+    const tools2 = mkTools(index2);
+    const out2 = (await tools2["findPeopleWithoutReviews"]?.execute?.({
+      sinceDays: 1e308,
+    })) as { refused?: boolean; people?: Array<{ id: string }> };
+    // With a `reviewed` substrate present, a finite (clamped) bound behaves like "ever": the
+    // reviewer from 1000ms after the epoch is well inside it, so the call must not refuse and
+    // must not include them in the "without reviews" result.
+    expect(out2.refused).not.toBe(true);
+    expect(out2.people?.map((p) => p.id)).toEqual([]);
+    db2.close();
+  });
 });

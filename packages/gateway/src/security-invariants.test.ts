@@ -525,6 +525,46 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
     expect(src).toMatch(/export function writeToolCallLog/);
     expect(src).toMatch(/export function readToolCallLog/);
   });
+
+  test("every tool registered in agent.ts's baseTools goes through wrapToolForLlm", async () => {
+    // The two tests above assert `wrapToolOutput(` / `wrapToolForLlm` appear SOMEWHERE in
+    // agent.ts — a per-FILE check that cannot detect a missing (or typo'd) wrap on ONE of
+    // several registered tools, since the file as a whole still matches. This derives the tool
+    // list from the `baseTools` object literal itself, so a future tool added without a wrap
+    // fails here rather than passing by virtue of its siblings being wrapped correctly.
+    const src = stripComments(await read("packages/gateway/src/engine/agent.ts"));
+    const startMarker = "const baseTools = {";
+    const startIdx = src.indexOf(startMarker);
+    expect(startIdx).toBeGreaterThanOrEqual(0);
+    const braceStart = src.indexOf("{", startIdx);
+    let depth = 0;
+    let braceEnd = -1;
+    for (let i = braceStart; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          braceEnd = i;
+          break;
+        }
+      }
+    }
+    expect(braceEnd).toBeGreaterThan(braceStart);
+    const block = src.slice(braceStart, braceEnd + 1);
+
+    // Every top-level (or conditionally-spread) property key in the `baseTools` literal — a map
+    // of tool name -> Mastra tool def, nothing else lives in it — is a registered tool and MUST
+    // be wrapped.
+    const keyPattern = /^\s*(\w+):\s*/gm;
+    const registeredTools = [...block.matchAll(keyPattern)].map((m) => m[1] as string);
+    expect(registeredTools.length).toBeGreaterThan(0);
+
+    const unwrapped = registeredTools.filter(
+      (key) => !new RegExp(`\\b${key}:\\s*wrapToolForLlm\\(`).test(block),
+    );
+    expect(unwrapped).toEqual([]);
+  });
 });
 
 describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {

@@ -43,8 +43,14 @@ function optLimit(q: Record<string, unknown>): number {
 function optSinceMsFromDays(q: Record<string, unknown>): number | undefined {
   const v = q["sinceDays"];
   if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
-  const sinceDays = Math.max(0, Math.floor(v));
-  return Date.now() - sinceDays * 86_400_000;
+  // A day count large enough that `sinceDays * 86_400_000` would overflow to a non-finite
+  // number (e.g. `1e308`) means "ever" — which is exactly what an absent `sinceDays` already
+  // means — so clamp to the largest day count the multiplication can carry without overflowing,
+  // rather than let a non-finite bound flow into the query.
+  const MAX_SINCE_DAYS = Number.MAX_SAFE_INTEGER / 86_400_000;
+  const sinceDays = Math.max(0, Math.min(MAX_SINCE_DAYS, Math.floor(v)));
+  const sinceMs = Date.now() - sinceDays * 86_400_000;
+  return Number.isFinite(sinceMs) ? sinceMs : undefined;
 }
 
 /**
