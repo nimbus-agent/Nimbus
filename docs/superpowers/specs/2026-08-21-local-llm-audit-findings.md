@@ -508,6 +508,114 @@ google_gmail.oauth` answers it — **run privately; it prints a live credential.
 
 ---
 
+## F11 — one dead Google credential disables ALL four Google connectors
+
+**Severity: high.** Model-independent. **Root cause of the live gmail failure.** Confirmed end-to-end.
+
+### Symptom
+
+`nimbus connector auth gmail` reports `Verified: gmail`. Every sync then fails:
+
+```
+$ nimbus connector sync gmail --force
+Token exchange failed (invalid_grant: Bad Request)
+```
+
+Re-authing gmail — repeatedly — never helps, because gmail's credential was never the problem.
+
+### Measured
+
+`scripts/diagnostics/test-google-oauth-refresh.ps1 -All` presents each stored refresh token to
+Google directly, outside Nimbus:
+
+| vault key | refresh token | `expiresAt` | Google's verdict |
+|---|---|---|---|
+| `google.oauth` | `2e74c5…` | valid (+43 min) | **ACCEPTS** (`expires_in 3599`) |
+| `google_gmail.oauth` | `2e74c5…` | valid (+43 min) | **ACCEPTS** (`expires_in 3599`) |
+| `google_drive.oauth` | `5b4502…` | 2026-05-10 (−148,181 min) | **REJECTS — `invalid_grant: Bad Request`** |
+| `google_photos.oauth` | `f4adfe…` | 2026-05-10 (−148,181 min) | **REJECTS — `invalid_grant: Bad Request`** |
+| `google_meet.oauth` | — | not set | — |
+
+Gmail's own credential is valid and Google accepts it. Drive's and Photos' are dead and
+produce **the exact error string the user sees**.
+
+### Root cause
+
+`connectors/gmail-sync.ts:42-44` — the first thing gmail's `sync()` does, before touching its
+own token:
+
+```ts
+async sync(ctx, cursor) {
+  await ensure();                                              // ← runs first
+  const accessToken = await getValidGoogleAccessToken(ctx.vault, "gmail");
+```
+
+`platform/assemble-sync-registrations.ts:117-127` wires that `ensure` for **gmail, photos and
+meet** to Drive's mesh boot:
+
+```ts
+createGmailSyncable({        ensureGoogleMcpRunning: () => connectorMesh.ensureGoogleDriveRunning() })
+createGooglePhotosSyncable({ ensureGoogleMcpRunning: () => connectorMesh.ensureGoogleDriveRunning() })
+createGoogleMeetSyncable({   ensureGoogleMcpRunning: () => connectorMesh.ensureGoogleDriveRunning() })
+```
+
+And `connectors/lazy-mesh/connector-spawns.ts:74-86` resolves a token for **every** Google
+service in one unguarded loop:
+
+```ts
+const ids: GoogleConnectorOAuthServiceId[] = ["google_drive", "gmail", "google_photos", "google_meet"];
+for (const id of ids) {
+  const resolved = await resolveGoogleOAuthVaultKey(ctx.vault, id);
+  if (resolved === null) continue;                    // absent  -> skipped
+  const token = await getValidGoogleAccessToken(ctx.vault, id);   // present-but-dead -> THROWS
+```
+
+An **absent** credential is skipped. A **present-but-expired** one throws and aborts the whole
+mesh boot — and with it every Google connector's sync. `google_drive` is first in the list.
+
+This also resolves the puzzle that blocked diagnosis for an hour: a refresh fired despite
+gmail's `expiresAt` being an hour in the future, because the expiry being checked was never
+gmail's — it was Drive's, 148,181 minutes in the past.
+
+### Why the surface misleads
+
+- **`Verified: gmail` is meaningless here.** It validates the freshly-exchanged *access* token
+  in memory; it never boots the mesh and never touches Drive.
+- **The error is attributed to `gmail`** in `sync_state.last_error` and
+  `connector_health_history`, naming the one Google connector whose credential is fine.
+- **`nimbus connector pause google_drive` does not help** — pause gates the *scheduler*, not
+  this direct mesh call. Verified: paused Drive, gmail still failed.
+- Nothing is logged (see F10), so none of the above is visible from the outside.
+
+### Fix for the user
+
+`nimbus connector auth google_drive` — then gmail, photos and meet all recover.
+
+### Suggested fix
+
+1. Make the loop fault-isolating: catch per `id`, register the servers whose credential
+   resolves, and skip the ones that don't. One dead credential must not disable three healthy
+   connectors.
+2. Attribute the failure to the service that actually owns the credential. `gmail` should
+   never report an error caused by `google_drive.oauth`.
+3. Treat a **present-but-unrefreshable** credential the same way as an absent one at boot
+   (skip + report), rather than as a fatal error for the whole provider.
+
+### Reproduction
+
+`scripts/diagnostics/test-google-oauth-refresh.ps1` (added on this branch). Presents each
+stored refresh token to Google directly and prints which key Google rejects. Prints no secret —
+only lengths, SHA-256 fingerprint prefixes, and Google's verdict.
+
+```powershell
+./scripts/diagnostics/test-google-oauth-refresh.ps1 -All
+```
+
+A same-fingerprint pair across two keys (as with `google.oauth` / `google_gmail.oauth` above)
+shows they hold the same credential; differing fingerprints localise which one is dead.
+
+---
+
 ## Not a Nimbus bug — genuine local-model weakness
 
 Recorded so the fix list does not absorb them. **No action proposed.**
@@ -534,6 +642,8 @@ Recorded so the fix list does not absorb them. **No action proposed.**
 | F5 | Glossary stopwords + case-variant dupes | medium | yes | `glossary` |
 | F6 | `healthy` for never-configured connectors | medium | yes | `doctor`, `status` |
 | F9 | `prove` headline vs scope | low-med | yes | `prove` |
+| F11 | One dead Google credential disables all 4 Google connectors | high | yes | gmail, drive, photos, meet |
+| F10 | Google refresh token coerced to `""`; OAuth path logs nothing | med-high | yes | every OAuth connector |
 | F7 | `people list` automated senders | low | yes | `people`, `expert` |
 | F8 | `min_reasoning_params` dead config | low | yes | `[llm]` config surface |
 
