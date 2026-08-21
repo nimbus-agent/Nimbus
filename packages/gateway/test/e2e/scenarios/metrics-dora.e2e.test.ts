@@ -49,7 +49,10 @@ describe("nimbus metrics dora (e2e, in-process)", () => {
     db.close();
   });
 
-  test("returns null-everywhere envelope with gap='no_repos' when the service is not configured", async () => {
+  // F24b: was `gap='no_repos'`. An id in neither [metrics.dora.<id>] nor [ci.service.<id>] is
+  // `unknown_service`; `no_repos` means the service EXISTS with no repos bound, which is what the
+  // other tests in this suite cover. The soft all-null envelope shape is unchanged.
+  test("returns null-everywhere envelope with gap='unknown_service' when the service is not configured", async () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, TARGET_SCHEMA_VERSION);
 
@@ -69,25 +72,25 @@ describe("nimbus metrics dora (e2e, in-process)", () => {
       value: null,
       unit: "deploys_per_day",
       sample: 0,
-      gap: "no_repos",
+      gap: "unknown_service",
     });
     expect(metrics.lead_time_for_changes).toEqual({
       value: null,
       unit: "seconds_median",
       sample: 0,
-      gap: "no_repos",
+      gap: "unknown_service",
     });
     expect(metrics.change_failure_rate).toEqual({
       value: null,
       unit: "ratio",
       sample: 0,
-      gap: "no_repos",
+      gap: "unknown_service",
     });
     expect(metrics.mttr).toEqual({
       value: null,
       unit: "seconds_median",
       sample: 0,
-      gap: "no_repos",
+      gap: "unknown_service",
     });
 
     db.close();

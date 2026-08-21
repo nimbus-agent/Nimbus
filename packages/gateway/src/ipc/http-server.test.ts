@@ -544,14 +544,16 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
     expect(typeof body.error).toBe("string");
   });
 
-  it("GET /v1/preflight/deploy returns a 200 unconfigured envelope for an unknown service", async () => {
+  it("GET /v1/preflight/deploy returns a 200 unconfigured envelope that verdicts warn for an unknown service", async () => {
     const res = await fetch(
       `http://127.0.0.1:${handle!.port}/v1/preflight/deploy?service=github&target_ref=main&max_findings=5`,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { service: string; verdict: string };
     expect(body.service).toBe("github");
-    expect(body.verdict).toBe("ok");
+    // F24a: the HTTP route shares `dispatchPreflightRpc`, so an unknown service verdicts `warn`
+    // here too. This is the route the first-party GitHub Action calls.
+    expect(body.verdict).toBe("warn");
   });
 });
 

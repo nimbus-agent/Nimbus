@@ -4,6 +4,10 @@ import { distinctCiServiceColumns, distinctPrServiceColumns } from "./dora-confi
 
 export type DoraGap =
   | null
+  // The service id is in neither `[metrics.dora.<id>]` nor `[ci.service.<id>]`. Distinct from
+  // `no_repos`, which means the service EXISTS with no repos bound — a different and much more
+  // fixable-looking problem, and the one `unconfiguredEnvelope` used to report for BOTH. See F24b.
+  | "unknown_service"
   | "no_pagerduty_mapping"
   | "no_repos"
   | "no_deployment_data"

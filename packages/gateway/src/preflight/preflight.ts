@@ -4,6 +4,10 @@ import { distinctCiServiceColumns, distinctPrServiceColumns } from "../metrics/d
 
 export type PreflightGap =
   | null
+  // The service id is not in `[metrics.dora.<id>]` or `[ci.service.<id>]` at all, so no check
+  // could run. Distinct from `no_repos`, which means the service EXISTS and has no repos bound
+  // — a different, and much more fixable-looking, problem. See F24.
+  | "unknown_service"
   | "no_pagerduty_mapping"
   | "no_repos"
   | "unknown_mergeable_state"

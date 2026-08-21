@@ -183,6 +183,41 @@ describe("runDeployCli — dispatcher", () => {
     expect(out).toContain('"service": "svc"');
   });
 
+  // F24a, end to end: the exact shape the gateway now returns for a service that is not in
+  // nimbus.toml — verdict `warn`, zero counts, `unknown_service` on all three checks — must
+  // BLOCK. Before the fix this envelope carried `verdict: "ok"` and the gate exited 0, so a
+  // typo'd or renamed service id let a deploy through silently. This is the assertion that
+  // fails if the fail-open is ever reintroduced at either end.
+  it("blocks on an unknown service: --mode block exits non-zero on an unknown_service warn", async () => {
+    const envelope = {
+      service: "totally-made-up",
+      target_ref: "main",
+      verdict: "warn" as const,
+      computed_at: "2026-05-22T00:00:00Z",
+      checks: {
+        active_p1_incidents: { count: 0, findings: [], gap: "unknown_service" },
+        failing_ci_runs: { count: 0, findings: [], gap: "unknown_service" },
+        merge_conflicts: { count: 0, findings: [], gap: "unknown_service" },
+      },
+    };
+    const mock = createMockIpcClient([envelope]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await expect(
+      runDeployCli([
+        "preflight",
+        "--service",
+        "totally-made-up",
+        "--target-ref",
+        "main",
+        "--mode",
+        "block",
+      ]),
+    ).rejects.toThrow(/process\.exit/);
+    const out = stdoutChunks.join("");
+    expect(out).toContain("[warn]");
+    expect(out).toContain("unknown_service");
+  });
+
   it("triggers the block-exit branch when --mode block AND verdict warn", async () => {
     const envelope = {
       service: "svc",

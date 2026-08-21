@@ -52,7 +52,9 @@ describe("E2E (in-process): deploy.preflight", () => {
     expect(out.value.checks.merge_conflicts.count).toBe(1);
   });
 
-  it("returns ok+gaps envelope when the service has no config", async () => {
+  // F24a: was "returns ok+gaps envelope". An unknown service verdicts `warn` so `--mode block`
+  // blocks; see `unconfiguredEnvelope` in `ipc/preflight-rpc.ts`.
+  it("returns a warn+unknown_service envelope when the service has no config", async () => {
     const out = await dispatchPreflightRpc(
       "deploy.preflight",
       { service: "unknown-service", target_ref: "main" },
@@ -63,7 +65,7 @@ describe("E2E (in-process): deploy.preflight", () => {
       },
     );
     if (out.kind !== "hit") throw new Error("expected hit");
-    expect(out.value.verdict).toBe("ok");
-    expect(out.value.checks.active_p1_incidents.gap).toBe("no_pagerduty_mapping");
+    expect(out.value.verdict).toBe("warn");
+    expect(out.value.checks.active_p1_incidents.gap).toBe("unknown_service");
   });
 });

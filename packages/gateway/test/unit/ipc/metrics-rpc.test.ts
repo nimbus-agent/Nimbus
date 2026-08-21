@@ -42,7 +42,10 @@ describe("metrics-rpc", () => {
     expect(result.service).toBe("payment-service");
   });
 
-  it("returns null-everywhere envelope when service id has no config", async () => {
+  // F24b: these four slots reported `no_repos` — "the service exists and has no repos bound" —
+  // for a service that was never defined at all. `unknown_service` is the fact. The soft-envelope
+  // SHAPE is unchanged and still deliberate; only the label moved.
+  it("gaps unknown_service, not no_repos, when the service id has no config", async () => {
     const out = await dispatchMetricsRpc(
       "metrics.dora",
       { service: "unknown", since: "30d" },
@@ -54,25 +57,25 @@ describe("metrics-rpc", () => {
       value: null,
       unit: "deploys_per_day",
       sample: 0,
-      gap: "no_repos",
+      gap: "unknown_service",
     });
     expect(m.lead_time_for_changes).toEqual({
       value: null,
       unit: "seconds_median",
       sample: 0,
-      gap: "no_repos",
+      gap: "unknown_service",
     });
     expect(m.change_failure_rate).toEqual({
       value: null,
       unit: "ratio",
       sample: 0,
-      gap: "no_repos",
+      gap: "unknown_service",
     });
     expect(m.mttr).toEqual({
       value: null,
       unit: "seconds_median",
       sample: 0,
-      gap: "no_repos",
+      gap: "unknown_service",
     });
   });
 

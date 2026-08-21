@@ -118,6 +118,15 @@ The function itself is trivial; the heavy lifting is in the SQL the RPC handler 
 
 Verdict is `ok` if all three counts are zero, `warn` otherwise. The CLI's `--mode block` flag flips a `warn` verdict into exit code 1; the calculator itself does not know about modes.
 
+That rule is for a service the gateway could actually evaluate. An **unknown service** — an id in
+neither `[metrics.dora.<id>]` nor `[ci.service.<id>]` — never reaches `computeDeployPreflight` at
+all: `ipc/preflight-rpc.ts`'s `unconfiguredEnvelope` answers it with `verdict: "warn"`, zero counts
+and `gap: "unknown_service"` on all three checks, so `--mode block` blocks. It returned `ok` until
+F24a. **Do not "simplify" that back to `ok` on the grounds that the counts are zero** — zero counts
+there mean nothing was checked. And do not close it by adding a third `verdict` value: the
+first-party Action's `safeVerdict` coerces any value it does not recognise, so a new verdict would
+arrive at an already-published Action as `ok`.
+
 ## Deployment Annotation
 
 `annotateDeployment` validates the input, derives the `external_id` (`<provider>:<sha>:<env>`), and writes three rows in one transaction via `dbRun` (invariant I14):

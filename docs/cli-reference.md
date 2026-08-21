@@ -957,6 +957,13 @@ nimbus deploy preflight --service payment-service --target-ref release/v2.14 --m
 
 **Exit codes:** `0` = ok (or `warn` mode with findings); `1` = `block` mode triggered or usage error; `2` = infrastructure failure (gateway not running, IPC error, malformed envelope).
 
+**An unknown service does not pass the gate.** If `--service <id>` matches neither
+`[metrics.dora.<id>]` nor `[ci.service.<id>]` in `nimbus.toml`, none of the three checks can run,
+so the verdict is **`warn`** with `unknown_service` on every check — `--mode block` exits 1. It is
+deliberately not `ok`: a typo'd or renamed service id is the most likely misconfiguration of a
+deploy gate, and the counts being zero means "nothing was checked", not "nothing was found". The
+same envelope is served over `GET /v1/preflight/deploy`, so the GitHub Action blocks too.
+
 A first-party GitHub Action wraps `GET /v1/preflight/deploy` for use directly in workflows — see [`packages/github-actions/preflight-query/`](../packages/github-actions/preflight-query/).
 
 Read-only; no HITL.
