@@ -1,6 +1,14 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -237,12 +245,64 @@ function darwinPermissiveProbe(run: WrapperRun): string {
       `  status : ${String(r.status)}`,
       `  stdout : ${JSON.stringify(r.stdout ?? "")}`,
       `  stderr : ${JSON.stringify((r.stderr ?? "").slice(0, 400))}`,
-      r.status === 0
-        ? "  => the runtime is FINE here; the real profile is denying something it needs."
-        : "  => it fails unsandboxed too; this is NOT an SBPL grant problem.",
-    ].join("\n");
+      // Compared against the SANDBOXED status, not against 0. The first version asked
+      // `r.status === 0`, which mislabelled every case whose expected exit is non-zero: the
+      // `exit 7` test came back "it fails unsandboxed too" when 7 was exactly right. What
+      // actually distinguishes the two causes is whether removing the sandbox CHANGES the
+      // outcome.
+      r.status !== run.status
+        ? `  => the runtime is FINE here (unsandboxed status ${String(r.status)} vs sandboxed ${String(run.status)}); the profile is denying something it needs.`
+        : "  => identical outcome without the sandbox; this is NOT an SBPL grant problem.",
+      // When the permissive run SUCCEEDS, the profile is the problem and the only useful next
+      // question is "which rule". SBPL answers it directly: `(trace "<file>")` runs the process
+      // unconfined and writes out the rules it actually exercised. That is the mechanism this
+      // whole investigation needed and did not have — the kernel denial log in `ci.yml` reports
+      // nothing for a `(deny default)` profile, because denials are only logged under
+      // `(deny default (with report))`, which is not something to add to a production profile
+      // just to read it.
+      //
+      // Printed rather than acted on automatically: `trace` output is a superset (it records what
+      // was touched, not what was required), so it is a candidate list for a human to narrow, in
+      // the same spirit as `darwin.ts`'s "add exactly what it names, and nothing else".
+      r.status !== run.status ? traceNeededRules(run) : "",
+    ]
+      .filter((l) => l !== "")
+      .join("\n");
   } catch (e) {
     return `permissive-probe failed to run: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Run the same argv under `(trace)` and return the rules SBPL says it needed.
+ *
+ * Separate from the permissive probe because it answers a different question: that one asks
+ * whether the profile is at fault, this one asks what to put in it. Only worth running when the
+ * first says yes.
+ */
+function traceNeededRules(run: WrapperRun): string {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-trace-"));
+  try {
+    const out = join(dir, "needed.sb");
+    const profilePath = join(dir, "trace.sb");
+    writeFileSync(profilePath, `(version 1)\n(trace "${out}")\n`);
+    const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
+      encoding: "utf8",
+      cwd: run.cwd,
+      env: process.env,
+      timeout: 15_000,
+    });
+    if (r.error !== undefined) return "trace-probe did not complete";
+    if (!existsSync(out)) return "trace-probe produced no output file";
+    const rules = readFileSync(out, "utf8").trim();
+    return [
+      "trace-probe — rules SBPL recorded for this child (a SUPERSET; narrow before adopting):",
+      rules.replace(/^/gm, "  ").slice(0, 4000),
+    ].join("\n");
+  } catch (e) {
+    return `trace-probe failed: ${e instanceof Error ? e.message : String(e)}`;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
