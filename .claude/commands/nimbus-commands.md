@@ -304,7 +304,35 @@ The `USAGE` constant in each command file (`packages/cli/src/commands/{glossary,
 nimbus owners [<path>] [--service <name>] [--json] [--refresh]    # IPC: agents.ownership; pass via ownership.refresh
 ```
 
-The `USAGE` constant in `packages/cli/src/commands/owners.ts` is canonical. `nimbus owners` also **hard-rejects** an unrecognised flag, and `<path>`/`--service` are mutually exclusive. `--refresh` drives a long-running, write-class derivation pass (`ownership.refresh`) — unlike glossary/decisions there is **no** `--rebuild` counterpart (the pass already clears and re-emits every edge wholesale each run, so a rebuild would be a synonym for refresh) and the RPC takes **no parameters at all**. The `ownership` namespace is LAN-forbidden and not Tauri-exposed; the read-only `agents.ownership` is exposed on both, like every other agent.
+The `USAGE` constant in `packages/cli/src/commands/owners.ts` is canonical. `nimbus owners` also **hard-rejects** an unrecognised flag, and `<path>`/`--service` are mutually exclusive. See the note below on why the hard-reject matters for this family. `--refresh` drives a long-running, write-class derivation pass (`ownership.refresh`) — unlike glossary/decisions there is **no** `--rebuild` counterpart (the pass already clears and re-emits every edge wholesale each run, so a rebuild would be a synonym for refresh) and the RPC takes **no parameters at all**. The `ownership` namespace is LAN-forbidden and not Tauri-exposed; the read-only `agents.ownership` is exposed on both, like every other agent.
+
+### Spine S1 — risk and contribution briefs
+
+```bash
+nimbus pre-mortem <epic-ref> [--service <name>]... [--json] [--refresh] [--repropose]   # IPC: agents.premortem
+nimbus negotiate [--since <duration>] [--person <id>] [--json]                          # IPC: agents.negotiate
+```
+
+`USAGE` in `packages/cli/src/commands/{pre-mortem,negotiate}.ts` is canonical. Both **hard-reject** an unrecognised flag, for the same reason `owners`/`glossary` do and it matters more here: a dropped `--persn` returns *your own* contribution brief in answer to a question about someone else, and a dropped `--srevice` silently re-derives the affected-service set — wrong answers that look like right ones. `<epic-ref>` is **Jira-only** (`PROJ-120` or `jira:PROJ-120`); `--since` on `negotiate` defaults to `90d` and caps at `365d`.
+
+### Spine S1 — bucketed time series
+
+```bash
+nimbus stats <metric> --service <id> [--window 90d] [--bucket 1w] [--json]   # IPC: metrics.stats
+```
+
+Metrics: `deployment-frequency`, `lead-time`, `change-failure-rate`, `mttr`, `pr-merges`, `incidents-opened`. This is the **disjoint-bucket** counterpart to `nimbus metrics dora`, which returns one scalar over one window — not a rolling window. Durations accept `w d h m s ms` and are parsed **CLI-side**: `metrics.stats` receives resolved integers, deliberately, because both gateway-side parsers are narrower than this command's own `1w` default (`ipc/metrics-rpc.ts` takes `d|h` only; `index/item-list-query.ts` has no `w`). Do not "simplify" by forwarding the raw string.
+
+### Spine S1 — negation predicates and devil's advocate
+
+```bash
+nimbus query --service github --type pr         --not-touching '<glob>' [--explain]
+nimbus query --service github --type deployment --no-downstream-incident  [--explain]
+nimbus people list --not-reviewed --since 7d                              [--explain]
+nimbus ask "<question>" --devil        # argue against the answer before giving it
+```
+
+Each predicate **refuses** — exit `1` with a structured `missing_substrate` document — rather than answering from an unpopulated substrate, because for a negation a *missing* row produces a result instead of costing one. The same three predicates exist on the gateway engine (reached by `nimbus ask`, and by the desktop/VS Code surfaces sharing its engine) and on the MCP server, but **the guarantee is unequal on purpose**: refusals are structural on both, exclusion counts are appended only on the engine surface. Two bounds worth knowing before you rely on them: an external MCP client's model can report rows and silently drop "12 excluded", and with `[llm].prefer_local = true` the local router has **no tool-calling support at all**, so the predicates are unreachable on that path — a local-only user gets them through the CLI or an MCP client, never through `nimbus ask`.
 
 ### Index maintenance
 

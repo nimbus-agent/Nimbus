@@ -8,9 +8,9 @@ import { runPeople } from "./people.ts";
 import { runQuery } from "./query.ts";
 
 // The three commands exactly as the docs give them — `docs/cli-reference.md` (§ `nimbus query` →
-// "Negation predicates" and § `nimbus people list`) and the design doc
-// `docs/superpowers/specs/2026-08-20-negation-queries-design.md`, which carry the SAME three
-// invocations verbatim so this pin covers both. If a doc example stops parsing, this file fails —
+// "Negation predicates" and § `nimbus people list`). The design spec that also carried these three
+// invocations verbatim was deleted once the work shipped, so `cli-reference.md` is now the single
+// documented source this pin covers. If a doc example stops parsing, this file fails —
 // which is the point. Keep the arrays below and the doc examples identical; a doc example that
 // drifts out of this list is unpinned again.
 const DOCUMENTED = [

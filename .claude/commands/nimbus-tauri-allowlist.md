@@ -32,10 +32,10 @@ This skill is the rule a contributor consults **before** editing the allowlist.
 
 ### `ALLOWED_METHODS`
 
-Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 106 entries (the count grows with each renderer-exposed surface — verify the live `ALLOWED_METHODS.len()` constant in `gateway_bridge.rs` rather than trusting this number). The list is:
+Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 105 entries (the count grows with each renderer-exposed surface — verify the live `ALLOWED_METHODS.len()` constant in `gateway_bridge.rs` rather than trusting this number). The list is:
 
 - **Alphabetized** — enforced by `allowlist_is_alphabetized`. Insert in order; do not append at the end.
-- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 106`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
+- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 105`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
 - **Deduplicated** — `allowlist_has_no_duplicates` covers copy-paste mistakes.
 - **Free of forbidden namespaces** — `allowlist_rejects_vault_and_raw_db_writes` asserts that `vault.*`, `db.put` / `db.delete`, `config.set`, `index.rebuild`, and `index.querySql` are absent. Add to this test if you introduce a new forbidden namespace.
 

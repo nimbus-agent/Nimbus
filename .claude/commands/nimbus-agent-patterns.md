@@ -2,8 +2,8 @@
 name: nimbus-agent-patterns
 description: >
   Authoring built-in Nimbus agents (catchup, expert, impact, ghost, conflicts, huddle,
-  janitor, preflight, why, glossary, decisions, ownership, pre-mortem): file location, the
-  read-only/HITL-free shape invariant (and pre-mortem's narrowly-bounded exception to it),
+  janitor, preflight, why, glossary, decisions, ownership, pre-mortem, negotiate): file location,
+  the read-only/HITL-free shape invariant (and pre-mortem's narrowly-bounded exception to it),
   parallel sub-agent decomposition via AgentCoordinator, tool-scope restriction, the briefReady
   IPC notification contract, the matching CLI entry point, the e2e test pattern, and the
   latency budget. Use when adding/modifying a built-in agent, deciding sequential-vs-parallel
@@ -16,7 +16,7 @@ description: >
 
 ## Built-in Agent Location
 
-Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`, `ownership.ts`, `premortem.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`, `ownership.ts`, `premortem.ts`, `negotiate.ts` — **fourteen** agent kinds across fifteen files (`why-peek.ts` is a lightweight companion to `why.ts`, not a kind of its own). Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
 
 ### Implicit-knowledge agents (Spine S1 — Local Brain)
 

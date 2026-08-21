@@ -182,7 +182,7 @@ Nimbus maintains a local SQLite metadata index. Searching across 50,000 indexed 
 - **The HITL consent gate** is implemented in the executor, not the prompt. A model that generates a plan to skip confirmation produces a plan that simply does not execute.
 - **Extensions** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors.
 - **Prompt injection** is mitigated by injecting file content and API responses as typed `<tool_output>` data blocks, never as instructions.
-- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the thirty LIVE invariants — `I1`–`I27` and `I29`–`I31` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
+- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the thirty-one LIVE invariants — `I1`–`I27` and `I29`–`I32` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
 
 ### True Cross-Platform
 
@@ -405,11 +405,14 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 | 4 | Presence (local LLM, multi-agent, voice, VS Code extension, TUI; desktop UI code-complete) | ✅ Complete |
 | 5 | The Extended Surface | ✅ Complete |
 | 6 | Team (federation, Team Vault, SSO/SCIM, ChatOps, Share) | ✅ Complete |
-| **S1** | **Local Brain — egress ledger, implicit knowledge, the built-in agent set** | **◐ Current build slot** |
-| S2–S5 | Sequencing Spine overlay — see the roadmap | Planned |
+| S1 | Local Brain — egress ledger, implicit knowledge, the built-in agent set | ✅ Complete |
+| **S2** | **Local Compute Fleet — sandboxed code execution, local computer-use, agent fleets** | **◐ Current build slot** |
+| S3–S5 | Sequencing Spine overlay — see the roadmap | Planned |
 | 13 | Desktop Distribution (*ships `desktop-v0.1.0`* Tauri signed installers + auto-update) | Planned |
 
-**Shipped in the current slot (S1)** — the always-on egress ledger and `nimbus prove` (invariant `I29`), the research-briefs HTTP surface, and the fourteen built-in read-only agents: `expert`, `impact`, `catchup`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `why`, `glossary`, `decisions`, `ownership`, `pre-mortem` and `negotiate`. The Wave 6 answer-quality set followed: agent brief synthesis (`[agents] synthesis`), `nimbus ask --devil`, the `[persona]` `tone`/`voice` vocabulary, and `nimbus stats` for bucketed time series over the index. First-class negation queries are the one Wave 6 row still open.
+**S1 (Local Brain) shipped and closed** on 2026-08-20 — the always-on egress ledger and `nimbus prove` (invariant `I29`), the research-briefs HTTP surface, the full-body store that made briefs answerable at all, zero-config onboarding, and the fourteen built-in read-only agents: `expert`, `impact`, `catchup`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `why`, `glossary`, `decisions`, `ownership`, `pre-mortem` and `negotiate`. The Wave 6 answer-quality set followed and closed it out: agent brief synthesis (`[agents] synthesis`, invariant `I31`), `nimbus ask --devil`, the `[persona]` `tone`/`voice` vocabulary, `nimbus stats` for bucketed time series over the index, and first-class negation queries.
+
+**Now building (S2 — Local Compute Fleet)**, opened 2026-08-21 with nothing shipped in it yet: sandboxed code execution, a HITL-gated local computer-use loop where screenshots never leave the machine, runtime tool generation, multimodal I/O, overnight sub-agent fleets on compute you already own, and bring-your-own-frontier-model routing with local fallback. S1 made the local index answerable; S2 makes local compute usable.
 
 The dated delivery log is [`CHANGELOG.md`](./CHANGELOG.md) — it is the single source for what landed when. [`roadmap.md`](./roadmap.md) carries the acceptance criteria, sequencing, and per-phase summaries. Command-level detail for everything above is in [`cli-reference.md`](./cli-reference.md).
 
@@ -712,7 +715,7 @@ The complete command reference — every subcommand, flag, exit code, and the fu
 - **Extension isolation** — third-party extensions run as sandboxed child processes (bwrap + seccomp on Linux, `sandbox-exec` on macOS, AppContainer on Windows), receive only their declared service's credentials, and cannot reach the Vault or other connectors. Publisher manifests are Ed25519-verified at install and on every Gateway startup.
 - **Full audit log** — every action, including every HITL decision, is recorded in a local BLAKE3-chained SQLite table before the action executes; `nimbus audit verify` proves the chain.
 - **Egress ledger** — every authorized outbound action is appended to an append-only, BLAKE3-chained ledger before dispatch, and a failed append aborts the action. `nimbus prove` reports what left the machine.
-- **Thirty enumerated invariants** — `I1`–`I27` and `I29`–`I31`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the thirty. A static audit runs before the test suite; the runtime tests stay authoritative.
+- **Thirty-one enumerated invariants** — `I1`–`I27` and `I29`–`I32`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the thirty-one. A static audit runs before the test suite; the runtime tests stay authoritative.
 - **Internal security audit (B1, 2026-04-25)** — 8 trust surfaces reviewed; 78 unique findings filed (0 Critical); all High and Medium items closed pre-`v0.1.0`. One Low item (`S6-F1`) closed in `v0.1.0`, and the two Tauri-specific Low items (`S4-F6`, `S4-F8`) are deferred to Phase 13 (`desktop-v0.1.0`); see [SECURITY.md](./SECURITY.md#security-audits) for the full record. A formal third-party penetration test is scheduled for Phase 12.
 
 > **Note:** Nimbus's guarantees hold at the process boundary. It is not a firewall, antivirus, or VPN application; endpoint protection (AV/EDR), network security (VPN/Firewall), and OS-level hardening are your responsibility. See [SECURITY.md](./SECURITY.md) for the full boundary definition.

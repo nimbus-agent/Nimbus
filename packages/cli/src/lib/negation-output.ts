@@ -1,7 +1,7 @@
 /**
  * Shared rendering for the negation-query surface (`nimbus query --not-touching` /
- * `--no-downstream-incident`, `nimbus people list --not-reviewed`) — spec
- * `docs/superpowers/specs/2026-08-20-negation-queries-design.md` §§ 5-6.
+ * `--no-downstream-incident`, `nimbus people list --not-reviewed`) — documented in
+ * `docs/cli-reference.md` § `nimbus query` → "Negation predicates".
  *
  * Hoisted out of `commands/query.ts` and `commands/people.ts` rather than left as two
  * independent copies: both commands hit the exact same refusal document shape
