@@ -246,18 +246,29 @@ export function stripSections(markdown: string, headings: readonly string[]): st
 }
 
 /**
- * The five `GapCategory` values, as they appear in a serialized envelope.
+ * Every `GapCategory`, as the value appears in a serialized envelope.
  *
- * Derived from the SDK union rather than restated, so a sixth category cannot leave this guard
- * silently narrower than the type it is about. `satisfies` makes a divergence a compile error.
+ * A `Record<GapCategory, true>` rather than an array, because EXHAUSTIVENESS is the property that
+ * matters and an array cannot express it. This was
+ * `[...] as const satisfies readonly GapCategory[]`, with a comment claiming a sixth category
+ * "cannot leave this guard silently narrower than the type it is about". That was false, and
+ * measurably so: `satisfies` checks that every element IS a `GapCategory`, never that every
+ * `GapCategory` is present, so dropping a member compiles clean. A `Record` keyed by the union
+ * makes a missing key a compile error at this line.
+ *
+ * The direction of the failure is what makes it worth the stricter form: a category absent here
+ * is a category `CATEGORY_LINE` does not recognise, so an envelope carrying it is not stripped and
+ * ships into the brief — an I31-adjacent leak that nothing else would catch.
  */
-const GAP_CATEGORY_VALUES = [
-  "missing_entity_type",
-  "missing_relation_emit",
-  "missing_connector",
-  "missing_user_identity",
-  "empty_index",
-] as const satisfies readonly GapCategory[];
+const GAP_CATEGORY_REGISTRY: Record<GapCategory, true> = {
+  missing_entity_type: true,
+  missing_relation_emit: true,
+  missing_connector: true,
+  missing_user_identity: true,
+  empty_index: true,
+};
+
+const GAP_CATEGORY_VALUES: readonly string[] = Object.keys(GAP_CATEGORY_REGISTRY);
 
 /** `category: missing_connector`, with an optional list marker and leading indent. */
 const CATEGORY_LINE = new RegExp(

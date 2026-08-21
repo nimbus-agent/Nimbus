@@ -211,11 +211,27 @@ function darwinPermissiveProbe(run: WrapperRun): string {
   try {
     const profilePath = join(dir, "permissive.sb");
     writeFileSync(profilePath, "(version 1)\n(allow default)\n");
+    // BOUNDED. This is a diagnostic that runs inside an already-failing test, so a child that
+    // hangs would turn one assertion failure into a suite-wide stall and bury the very thing the
+    // probe was added to explain. 15s is far above a startup abort and far below the 60s suite
+    // timeout.
     const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
       encoding: "utf8",
       cwd: run.cwd,
       env: process.env,
+      timeout: 15_000,
     });
+    if (r.error !== undefined) {
+      // A timeout is NOT "it fails unsandboxed too" — the child was still running when we killed
+      // it, which says nothing about the profile. Reporting it as a failure would point the next
+      // reader away from the profile, the opposite of what this probe is for.
+      const code = (r.error as NodeJS.ErrnoException).code ?? "";
+      const why =
+        code === "ETIMEDOUT"
+          ? "TIMED OUT after 15s — the child was still running, so this is INCONCLUSIVE, not an unsandboxed failure"
+          : r.error.message;
+      return `permissive-probe did not complete: ${why}`;
+    }
     return [
       "permissive-probe (same argv, `(allow default)` profile):",
       `  status : ${String(r.status)}`,
@@ -302,6 +318,22 @@ function runThroughWrapper(
  *
  * Keep it that way: a cmdlet added here re-opens both holes at once.
  */
+/**
+ * A PowerShell single-quoted literal, with embedded apostrophes doubled.
+ *
+ * Reachable, not hypothetical: every path interpolated below is derived from `os.tmpdir()`, which
+ * on Windows is `C:\Users\<user>\AppData\Local\Temp`. A user named `O'Connor` ends the literal
+ * early and the script fails to parse — the child would then exit non-zero for a parse error while
+ * the denial test asserts the DENIED code, so it would fail with a misleading reason on exactly
+ * one developer's machine and nowhere else.
+ *
+ * Doubling is the escape PowerShell defines for a single-quoted string; there are no others to
+ * handle, because a single-quoted literal interpolates nothing.
+ */
+function psQuote(s: string): string {
+  return s.replace(/'/g, "''");
+}
+
 const PS_WRITE = (s: string): string => `[Console]::Out.Write('${s}')`;
 
 /**
@@ -405,7 +437,7 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
     const body = IS_WIN
       ? [
           "try {",
-          `  $null = [IO.File]::ReadAllBytes('${secretPath}')`,
+          `  $null = [IO.File]::ReadAllBytes('${psQuote(secretPath)}')`,
           `  exit ${UNEXPECTED_SUCCESS_CODE}`,
           "} catch {",
           `  exit ${DENIED_CODE}`,
