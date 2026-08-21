@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { parseNetworkEntry } from "../../extensions/permissions-validator.ts";
 import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
@@ -12,6 +12,27 @@ interface SbplOpts {
   cwd: string;
   tmpdir: string;
   policy: SandboxPolicy;
+}
+
+/**
+ * The per-user DARWIN cache directory, `/private/var/folders/<hash>/<hash>/C`.
+ *
+ * A bisect over the macOS profile named `/private/var` as the ONE required read outside the
+ * system tree -- denying it from an otherwise-total grant was the single change that broke a
+ * working child, while denying /usr, /System, /dev, /Users, /Library, /bin, /opt, /private/tmp
+ * and /private/etc each changed nothing.
+ *
+ * It cannot be granted as a subpath. `/private/var/folders/<hash>/<hash>/T` is the per-user TEMP
+ * directory, which is where this suite puts the file the "refuses a path the policy does not
+ * grant" test expects to be DENIED -- and, in production, where a caller's own scratch data
+ * lives. Granting `/private/var` would make that test pass while proving nothing.
+ *
+ * `C` is the sibling of `T` and holds the runtime's cache, not user data. `os.tmpdir()` returns
+ * the `T` leaf, so the container is its parent and `C` sits beside it. Derived rather than
+ * hardcoded because the hash pair is per-user and per-boot.
+ */
+function darwinUserCacheDir(): string {
+  return join(dirname(canonicalPath(tmpdir())), "C");
 }
 
 export function generateSbplProfile(opts: SbplOpts): string {
@@ -68,8 +89,17 @@ export function generateSbplProfile(opts: SbplOpts): string {
     // Symmetry with `/usr/bin`, which was already granted: system executables live in both, and
     // a child resolved out of `/bin` was unreachable while the identical one in `/usr/bin` was not.
     `  (subpath "/bin")`,
-    // dyld closures on the macOS versions that keep them outside `/System`.
-    `  (subpath "/private/var/db/dyld")`,
+    // dyld closures on the macOS versions that keep them outside `/System` — subsumed by the
+    // `/private/var/db` grant below, kept here as the reason that grant is not merely incidental.
+    // `/private/var` is the one required read outside the system tree, and it is granted PIECEWISE
+    // for the reason `darwinUserCacheDir` documents: its `folders/<hash>/<hash>/T` leaf is the
+    // per-user temp directory, and granting the parent would hand an extension every other
+    // process's scratch data — including, in this repo's own suite, the file a test expects to be
+    // refused. These carry runtime and system state instead.
+    `  (subpath "/private/var/db")`,
+    `  (subpath "/private/var/select")`,
+    `  (subpath "/private/var/run")`,
+    `  (subpath "${darwinUserCacheDir()}")`,
     // `zoneinfo` and ICU data — read by any runtime that can format a date.
     `  (subpath "/usr/share")`,
     // The rest of the SYSTEM tree, and the reason it is broad. The Linux runner binds `/usr`,

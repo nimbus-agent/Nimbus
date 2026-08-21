@@ -84,7 +84,7 @@ describe("SBPL runtime-startup grants", () => {
     ["sysctl-read", "hw.ncpu / hw.memsize during allocator and thread-pool setup"],
     ["process-info*", "proc_pidinfo against self"],
     ["/dev/urandom", "JSC seeds its RNG at init"],
-    ["/private/var/db/dyld", "dyld closures kept outside /System on some versions"],
+    ["/private/var/db", "dyld closures, and the rest of the system state under db"],
   ])("grants %s — %s", (needle) => {
     const profile = generateSbplProfile({
       cwd: "/tmp/cwd",
@@ -137,7 +137,15 @@ describe("system-tree read grants stay clear of user data", () => {
     },
   );
 
-  it("still grants /private/var/db/dyld specifically, which is not the same thing", () => {
-    expect(profile()).toContain('(subpath "/private/var/db/dyld")');
+  it("grants the /private/var pieces that carry no user data, and only those", () => {
+    for (const p of ["/private/var/db", "/private/var/select", "/private/var/run"]) {
+      expect(profile()).toContain(`(subpath "${p}")`);
+    }
+    // `folders` is the one that must never appear. A bisect named `/private/var` as the single
+    // required read outside the system tree, but its `folders/<hash>/<hash>/T` leaf is the
+    // per-user TEMP directory — a caller's scratch data in production, and in this repo's own
+    // suite the file the denial test expects to be refused. Granting the parent to satisfy the
+    // startup requirement would make that test pass while proving nothing.
+    expect(profile()).not.toContain('(subpath "/private/var/folders")');
   });
 });
