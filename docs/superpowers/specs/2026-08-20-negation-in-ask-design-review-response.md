@@ -110,7 +110,7 @@ impossible to reason about later if left as "read".
 cannot invent them.** This restates D4 and D5 rather than changing them: `findPrsNotTouching` takes
 `pathGlob` (required), `service` (optional) and `limit`, and deliberately exposes **no** `itemType`
 — the type scope is intrinsic to the tool, which is D4's whole point. `findPeopleWithoutReviews`
-takes `since` and `limit` and no `service`, matching `buildPersonListSql`, which has no service
+takes `sinceDays` and `limit` and no `service`, matching `buildPersonListSql`, which has no service
 dimension.
 
 ---

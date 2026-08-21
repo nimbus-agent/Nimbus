@@ -38,11 +38,16 @@ The citation is right: `fakeConversationalAgent` exists at
 agents that way and passes in CI with no key.
 
 **But a fake `Agent` is the one fallback this step must never take.** Task 1 Step 6 exists to prove
-that a tool *retrieved through a real Mastra `Agent`* still sees the request store. Substituting a
-hand-built agent object removes the only thing under test and leaves a green test that proves
-nothing — the "tests that cannot fail" shape this codebase keeps finding. `fakeConversationalAgent`
-is right for `run-ask.test.ts`, whose subject is the caller, and wrong here, whose subject is
-Mastra.
+that a tool *retrieved through a real Mastra `Agent`* still sees the request store when its
+`execute` is called directly. That is a narrower claim than proving the whole
+`agent.generate` scheduling seam: whether the store survives Mastra's OWN scheduling of `execute`
+from inside a live tool-call loop needs a real model and cannot run in CI, so it stays residual
+risk regardless of how this step is built — the payload-embedded disclosure sentence plus the
+`recordNegationDisclosure` warn-log is what makes that residual survivable rather than silent (spec
+§ 5.1.1). Substituting a hand-built agent object would remove even the narrower thing this step CAN
+prove, leaving a green test that proves nothing — the "tests that cannot fail" shape this codebase
+keeps finding. `fakeConversationalAgent` is right for `run-ask.test.ts`, whose subject is the
+caller, and wrong here, whose subject is Mastra's tool retrieval.
 
 So the fallback ladder in the plan is now explicit: (1) real `Agent`, as drafted; (2) if
 construction ever throws, a mock **model provider** passed to a real `Agent`; (3) if neither is

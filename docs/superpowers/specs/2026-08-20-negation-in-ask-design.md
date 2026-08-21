@@ -1,7 +1,7 @@
 # Negation predicates on the model surfaces (W6-B.2) — design
 
 **Date:** 2026-08-20
-**Status:** Design approved; review folded in 2026-08-20 (see `2026-08-20-negation-in-ask-design-review-response.md`). Not yet implemented.
+**Status:** ✅ Shipped 2026-08-20 (W6-B.2). Design approved; review folded in 2026-08-20 (see `2026-08-20-negation-in-ask-design-review-response.md`). Dated detail: [`docs/CHANGELOG.md`](../../CHANGELOG.md).
 **Relationship to other work:** sub-project **B.2** of W6-B, the last open Wave 6 row. Built
 directly on **B.1** (shipped 2026-08-20 as #1277), which put three negation predicates on
 `nimbus query` / `nimbus people list`. B.1 is the precondition: there was nothing to expose until
@@ -17,7 +17,7 @@ The same three predicates B.1 shipped, reachable by a model:
 | --- | --- | --- | --- |
 | `findPrsNotTouching` | PRs with no indexed changed-file path matching a glob | `pathGlob` (required), `service?`, `limit?` | `item.type = 'pr'`, intrinsically |
 | `findDeploymentsWithoutIncident` | deployments with no outgoing `correlates_with` edge | `service?`, `limit?` | `item.type = 'deployment'`, intrinsically |
-| `findPeopleWithoutReviews` | people with no outgoing `reviewed` edge newer than a cutoff | `since?`, `limit?` | people |
+| `findPeopleWithoutReviews` | people with no outgoing `reviewed` edge newer than a cutoff | `sinceDays?`, `limit?` | people |
 
 The parameter lists are exhaustive and deliberate. **No tool exposes `itemType`** — the type scope
 is intrinsic (D4), so there is no parameter to get wrong. `findPeopleWithoutReviews` exposes no
@@ -151,11 +151,15 @@ Flow:
    that errors when neither is configured. The append wraps that block; it does not rewrite it. If
    the implementation diff shows the fallback or the narrowing changing shape, the diff is wrong —
    a feature that appends a sentence must not alter which turns survive.
-3. On the streaming path the model's text has already been sent to the client by then, so the same
-   text is also emitted through `p.sendChunk` before returning. **The streamed answer and the
-   returned answer must be byte-identical**; a disclosure present in `reply` and absent from the
-   stream would mean the desktop app shows a different answer from the CLI. This is the two-
-   dispatcher trap that made `--devil` inert on the UI path until it was caught.
+3. On the streaming path the model's text has already been sent to the client by then, so the
+   disclosure text is also emitted through `p.sendChunk` before returning. **The guarantee is that
+   the disclosure reaches both the stream and the returned reply**, not that the two are
+   byte-identical overall: on the Mastra path the reply is `await streamOut.text` while the chunks
+   are text deltas, and on the router path a non-streaming provider emits the whole text in one
+   late chunk — those normally agree in aggregate, but nothing enforces it and this design does not
+   make it true. A disclosure missing from either surface would mean the desktop app or the CLI
+   could show an answer with no caveat attached. This is the two-dispatcher trap that made
+   `--devil` inert on the UI path until it was caught.
 4. When nothing fired, the function is the identity. A default turn's reply must not move.
 
 **Fires on two conditions, matching what the CLI prints:** a refusal, and a non-zero exclusion
@@ -354,6 +358,8 @@ typecheck, and read where it should drain); see
 whether `findPeopleWithoutReviews` needs a `service` parameter. It does not, and D5's optional
 `service` does not apply to it: `buildPersonListSql` (`packages/gateway/src/people/person-store.ts:306`) filters only on
 `linked` and the injected `idInSql`, and takes no service dimension — a `person` row spans services
-by construction, which is the point of the people graph. The tool therefore takes `since` and
-`limit` only. Recorded here rather than silently dropped, because a reader comparing the three
-tools will notice the asymmetry and should find the reason.
+by construction, which is the point of the people graph. The tool therefore takes `sinceDays` and
+`limit` only — a whole number of days back, converted to the epoch-ms bound `buildPersonListSql`
+expects at the tool boundary, since the gateway has no duration-string parser. Recorded here rather
+than silently dropped, because a reader comparing the three tools will notice the asymmetry and
+should find the reason.

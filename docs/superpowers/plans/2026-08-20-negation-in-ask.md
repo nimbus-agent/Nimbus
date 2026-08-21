@@ -291,7 +291,16 @@ Expected: PASS, 7 tests.
 
 - [ ] **Step 6: Prove ALS reaches a tool retrieved from a REAL Mastra agent**
 
-This is the part of the risk that CI **can** retire (spec § 5.1.1). Append to
+This is the part of the risk that CI **can** retire (spec § 5.1.1) — and only that part. What this
+step proves is that a tool **retrieved through a real Mastra `Agent`** still sees the request store
+when its `execute` is called directly inside `agentRequestContext.run(...)`. What it does **not**
+prove, and cannot: whether the store survives Mastra's own internal scheduling between the model's
+tool-call decision inside `agent.generate` and the moment `execute` actually runs — that seam needs
+a live model and cannot run in CI. That boundary is named here as residual risk, not closed by this
+step, and it is the reason § 5.1.1 exists: every negation tool also embeds its disclosure sentence
+in its own returned payload (which the model always sees regardless of ALS), and
+`recordNegationDisclosure` warns when there is no store to push to — that payload-embedded sentence
+plus the warn-log is the fallback that makes the residual survivable rather than silent. Append to
 `packages/gateway/src/engine/negation-disclosure.test.ts`:
 
 ```ts
@@ -314,7 +323,7 @@ test("a tool retrieved from a real Mastra Agent sees the request store", async (
     model: "openai/gpt-4o-mini",
     tools: { alsProbe: probe },
   });
-  const tools = (await agent.getTools()) as Record<string, { execute: (i: unknown) => Promise<unknown> }>;
+  const tools = (await agent.listTools()) as Record<string, { execute: (i: unknown) => Promise<unknown> }>;
   const fromAgent = tools["alsProbe"];
   expect(fromAgent).toBeDefined();
 
@@ -326,10 +335,12 @@ test("a tool retrieved from a real Mastra Agent sees the request store", async (
 });
 ```
 
-If `agent.getTools()` is not the accessor on `@mastra/core` 1.59, copy the retrieval used by
-`getTool` in `packages/gateway/src/engine/agent.test.ts:47` (`listAgentTools`) rather than
-inventing one. **No live model is called** — the tool is executed directly after being retrieved
-through the Agent, which is the part Mastra mediates and CI can reach. Constructing an `Agent` with
+`agent.listTools()` is the accessor that actually exists on `@mastra/core` 1.59 (verified against
+the shipped test) — not `agent.getTools()`. **No live model is called** — the tool is retrieved
+through the Agent and then executed directly, which is the part Mastra mediates and CI can reach;
+whether that same store would survive Mastra's OWN scheduling of `execute` from inside
+`agent.generate` is exactly the residual risk named above, and this step does not touch it.
+Constructing an `Agent` with
 `model: "openai/gpt-4o-mini"` touches no network and needs no `OPENAI_API_KEY`; `agent.test.ts`
 already does it throughout and passes in CI.
 
@@ -523,6 +534,15 @@ type ItemLister = { listItems(params: ItemListQueryParams): IndexedItem[] };
 export type NotTouchingParams = {
   readonly pathGlob: string;
   readonly services?: readonly string[];
+  /**
+   * The CALLER's own type filter (e.g. an RPC-level `types` param), ANDed with the predicate's
+   * own `id IN (<pr-subquery>)` restriction — NOT a replacement for it. `buildNotTouchingSql`
+   * still hardcodes `i.type = 'pr'` inside its own predicate SQL unconditionally, so a caller
+   * passing a type disjoint from `'pr'` (e.g. `["issue"]`) gets zero rows, never every PR — the
+   * two filters intersect, reproducing the pre-refactor composed SQL exactly. Omitted or empty
+   * means unrestricted (the pre-refactor default).
+   */
+  readonly types?: readonly string[];
   readonly sinceMs?: number;
   readonly untilMs?: number;
   readonly limit: number;
@@ -534,7 +554,9 @@ export function runNotTouchingQuery(
   index: ItemLister,
   params: NotTouchingParams,
 ): NegationOutcome<IndexedItem, { excludedNoCoverage: number; excludedTruncated: number }> {
-  const types = ["pr"] as const;
+  // Thread the CALLER's filter through rather than hardcoding `["pr"]` here — the predicate's
+  // own `i.type = 'pr'` restriction inside `buildNotTouchingSql` stays unconditional either way.
+  const types = params.types ?? [];
   const baseParams: ItemListQueryParams = {
     ...(params.services === undefined ? {} : { services: params.services }),
     types,
@@ -573,8 +595,10 @@ export function runNotTouchingQuery(
 }
 ```
 
-Write `runNoDownstreamIncidentQuery` the same way (types `["deployment"]`,
-`probeCorrelatesWith`, `buildNoDownstreamIncidentSql()`, `countNoDownstreamIncidentExclusions`,
+Write `runNoDownstreamIncidentQuery` the same way — `params.types ?? []` threaded through exactly
+as above (the predicate's own `i.type = 'deployment'` restriction inside
+`buildNoDownstreamIncidentSql` stays unconditional), `probeCorrelatesWith`,
+`buildNoDownstreamIncidentSql()`, `countNoDownstreamIncidentExclusions`,
 refusal text *"no `correlates_with` edges are indexed, so which deployments have no downstream
 incident cannot be verified"* / *"run a sync that populates deployment-to-incident correlation,
 then retry"*), and `runNotReviewedQuery` (`probeReviewed(db, sinceMs ?? 0)`, `buildNotReviewedSql`,
@@ -624,6 +648,9 @@ if (notTouching !== undefined) {
   const outcome = runNotTouchingQuery(db, requireLocalIndex(ctx), {
     pathGlob: notTouching,
     ...(services.length > 0 ? { services } : {}),
+    // The caller's own `types` filter, reproducing the pre-refactor composed SQL exactly —
+    // ANDed with the predicate's own `i.type = 'pr'` restriction, never a replacement for it.
+    types,
     ...(sinceMs === undefined ? {} : { sinceMs }),
     ...(untilMs === undefined ? {} : { untilMs }),
     limit,
@@ -1399,8 +1426,14 @@ wins. `runNotTouchingQuery(db, index, params)` is called with that argument orde
 `negationDisclosureLine` returns `string | undefined` in Task 1 and every caller in Task 3 checks
 for `undefined`. `createNegationTools({ localIndex })` is the shape `agent.ts` uses in Task 3 Step 5.
 
-**One risk carried into execution.** Task 1 Step 6 may find that `@mastra/core` 1.59 exposes tools
-under a different accessor than `agent.getTools()`; the step names the fallback
-(`listAgentTools` in `agent.test.ts:47`) rather than leaving the executor to guess. If the sentinel
-genuinely does not arrive, Step 7 says stop — the append half of the design is dead and only the
-payload half survives, which is a decision for the human, not a workaround for the executor.
+**One risk carried into execution, and what it resolved to.** Task 1 Step 6 might have found that
+`@mastra/core` 1.59 exposes tools under a different accessor than expected; it named a fallback
+(`listAgentTools` in `agent.test.ts:47`) rather than leaving the executor to guess. It resolved to
+`agent.listTools()` — the accessor `@mastra/core` 1.59 actually exposes — and the sentinel arrived,
+so Step 7 did not stop. **What that step proves, precisely:** a tool retrieved through a real Mastra
+`Agent` sees the request store when its `execute` is called directly. **What it does not prove, and
+what remains residual risk:** whether the store survives Mastra's own scheduling of `execute` from
+inside a live `agent.generate` tool-call loop — that seam needs a real model and cannot run in CI.
+The fallback that makes that residual survivable, rather than silent, is the payload-embedded
+disclosure sentence every negation tool also returns (which the model always sees regardless of
+ALS) plus the warn-log `recordNegationDisclosure` emits when there is no store to push to.
