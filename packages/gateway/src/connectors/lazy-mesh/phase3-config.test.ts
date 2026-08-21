@@ -80,7 +80,7 @@ afterAll(() => {
   if (SANDBOX_CWD) rmSync(SANDBOX_CWD, { recursive: true, force: true });
 });
 
-function readManifest(spec: ServerSpec): {
+function readSandboxPolicy(spec: ServerSpec): {
   permissions: { network: string[]; filesystem: { read: string[]; write: string[] } };
 } {
   const raw = spec.env?.["NIMBUS_SANDBOX_POLICY_JSON"];
@@ -95,7 +95,7 @@ function expectSandboxed(spec: ServerSpec, expectedHost?: string): void {
   expect(spec.env?.["NIMBUS_SANDBOX_POLICY_JSON"]).toBeDefined();
   expect(spec.env?.["NIMBUS_SANDBOX_CWD"]).toBe(SANDBOX_CWD);
   if (expectedHost !== undefined) {
-    const manifest = readManifest(spec);
+    const manifest = readSandboxPolicy(spec);
     expect(manifest.permissions.network).toContain(expectedHost);
   }
 }
@@ -1121,7 +1121,7 @@ describe("phase3AddPowerBiMcp", () => {
     expect(spec).toBeDefined();
     if (spec === undefined) return;
     expectSandboxed(spec, "login.microsoftonline.com");
-    const manifest = readManifest(spec);
+    const manifest = readSandboxPolicy(spec);
     expect(manifest.permissions.network).toContain("login.microsoftonline.com");
     expect(manifest.permissions.network).toContain("api.powerbi.com");
     expect(spec.env?.["POWERBI_TENANT_ID"]).toBe("my-tenant-id");
@@ -2257,7 +2257,7 @@ describe("dir-manifest connectors (addDirManifestServer)", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["LOCALDB_SCRIPTS_DIR"]).toBe("/data/sql");
-    expect(readManifest(spec).permissions.filesystem.read).toContain("/data/sql");
+    expect(readSandboxPolicy(spec).permissions.filesystem.read).toContain("/data/sql");
   });
 
   test("phase3AddDataprofileMcp spawns with the configured dir", async () => {
@@ -2270,7 +2270,7 @@ describe("dir-manifest connectors (addDirManifestServer)", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["DATAPROFILE_DIR"]).toBe("/data/profiles");
-    expect(readManifest(spec).permissions.filesystem.read).toContain("/data/profiles");
+    expect(readSandboxPolicy(spec).permissions.filesystem.read).toContain("/data/profiles");
   });
 
   test("phase3AddStorybookMcp spawns with the configured dir", async () => {
@@ -2344,7 +2344,7 @@ describe("phase3AddMonteCarloMcp", () => {
     await phase3AddMonteCarloMcp(vault, servers, SANDBOX_CWD);
     const spec = servers["montecarlo"];
     if (spec === undefined) return;
-    const manifest = readManifest(spec);
+    const manifest = readSandboxPolicy(spec);
     expect(manifest.permissions.network).toContain("api.getmontecarlo.com");
   });
 });
@@ -2395,7 +2395,7 @@ describe("phase3AddBigeyeMcp", () => {
     await phase3AddBigeyeMcp(vault, servers, SANDBOX_CWD);
     const spec = servers["bigeye"];
     if (spec === undefined) return;
-    const manifest = readManifest(spec);
+    const manifest = readSandboxPolicy(spec);
     expect(manifest.permissions.network).toContain("app.bigeye.com");
   });
 
@@ -2655,7 +2655,7 @@ describe("phase3AddImapMcp", () => {
     const spec = servers["imap"];
     expect(spec).toBeDefined();
     if (spec === undefined) return;
-    const manifest = readManifest(spec);
+    const manifest = readSandboxPolicy(spec);
     expect(manifest.permissions.network).toContain("imap.example.com:143");
     expect(manifest.permissions.network).toContain("smtp.example.com:587");
     expect(spec.env?.["IMAP_PORT"]).toBe("143");
@@ -2745,7 +2745,7 @@ describe("phase3AddProtonmailMcp", () => {
     const spec = servers["protonmail"];
     expect(spec).toBeDefined();
     if (spec === undefined) return;
-    const manifest = readManifest(spec);
+    const manifest = readSandboxPolicy(spec);
     expect(manifest.permissions.network).toContain("127.0.0.2:2143");
     expect(manifest.permissions.network).toContain("127.0.0.3:2025");
     expect(spec.env?.["PROTONMAIL_HOST"]).toBe("127.0.0.2");
@@ -2877,7 +2877,7 @@ describe("AWS-family regional connectors (athena / cloudwatch / sagemaker)", () 
     const spec = servers["athena"];
     expect(spec).toBeDefined();
     if (spec === undefined) return;
-    const manifest = readManifest(spec);
+    const manifest = readSandboxPolicy(spec);
     expect(manifest.permissions.network.some((h) => h.startsWith("athena."))).toBe(false);
   });
 
@@ -2902,7 +2902,7 @@ describe("AWS-family regional connectors (athena / cloudwatch / sagemaker)", () 
     const spec1 = s1["cloudwatch"];
     expect(spec1).toBeDefined();
     if (spec1 !== undefined) {
-      const m1 = readManifest(spec1);
+      const m1 = readSandboxPolicy(spec1);
       expect(m1.permissions.network.some((h) => h.startsWith("logs."))).toBe(false);
     }
 
@@ -2926,7 +2926,7 @@ describe("AWS-family regional connectors (athena / cloudwatch / sagemaker)", () 
     const spec1 = s1["sagemaker"];
     expect(spec1).toBeDefined();
     if (spec1 !== undefined) {
-      const m1 = readManifest(spec1);
+      const m1 = readSandboxPolicy(spec1);
       expect(m1.permissions.network.some((h) => h.startsWith("api.sagemaker."))).toBe(false);
     }
 

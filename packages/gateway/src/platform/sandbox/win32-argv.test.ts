@@ -28,9 +28,9 @@ describe("buildHelperArgv", () => {
     // would only risk exposing sibling subtrees for no benefit. That distinction (cwd vs. policy
     // path) is only possible if the helper knows which path is the cwd, so it travels under
     // --cwd rather than folded into --grant-write. See docs/sandbox.md for the one case this
-    // still fails: a `bun <script>` child under a cwd nested inside the user profile, where
-    // Bun's own upward package.json walk hits an ancestor Windows would not let a non-elevated
-    // token re-ACL (e.g. C:\Users itself) — a plain Win32 binary at the same path is unaffected.
+    // still fails: a `bun <script>` child under a cwd nested inside the user profile fails at
+    // Bun's own startup (measured, mechanism not fully pinned down — a leaf `package.json` does
+    // not stop it) — a plain Win32 binary at the same path with the same grants is unaffected.
     const argv = buildHelperArgv(policy(), { cwd: "C:\\data" });
     expect(argv).toEqual(expect.arrayContaining(["--cwd", "C:\\data"]));
     expect(argv).not.toContain("--grant-write");

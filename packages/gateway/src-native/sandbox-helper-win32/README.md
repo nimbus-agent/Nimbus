@@ -51,8 +51,8 @@ profile creation **works** on this machine, not that a capability is **held**.
   to spawning unconfined: a policy path the child cannot read is a failure to enforce the
   policy, not a warning. A policy path's own ancestors get no grant either, because
   Windows bypasses traverse checking by default, so a known full path opens without
-  listing rights on the way down — confirmed by hand (see Verification below), not
-  assumed.
+  listing rights on the way down — confirmed by hand against a real AppContainer
+  spawn, not assumed.
 
   **There used to be a third category — granting each ancestor of `--cwd` read/list
   rights, so Bun's upward `package.json`/`bunfig.toml` search could enumerate each level —
@@ -111,10 +111,10 @@ child's own exit codes. Resolve this the way `sandbox-wrapper.ts` already does:
 | Code | Meaning |
 |---|---|
 | 64 | usage error |
-| 65 | AppContainer profile create/derive failed |
+| 65 | AppContainer profile create/derive failed, or the `internetClient` capability SID could not be allocated (`AllocateAndInitializeSid`) |
 | 66 | ACL grant failed — path is on a filesystem without ACL support, or access denied |
-| 67 | Job Object creation/assignment failed |
-| 68 | `CreateProcessW` failed |
+| 67 | Job Object creation or assignment failed |
+| 68 | process-thread attribute list setup failed, or `CreateProcessW` itself failed |
 | other | the child's own exit code |
 
 ## Build
@@ -126,6 +126,18 @@ bun run build:sandbox-helper:win32
 Compiles with MSVC (`cl.exe`) via `scripts/build-sandbox-helper-win32.ps1`, which
 locates the toolchain through `vswhere.exe` — no Developer Command Prompt
 required. `/W4 /WX` mirrors the Linux helper's `-Wall -Wextra -Werror`.
+
+The build above writes `nimbus-sandbox-helper.exe` into this directory
+(`src-native/sandbox-helper-win32/`), **not** beside `process.execPath` — that is where
+`win32.ts`'s `helperPath()` resolves it by default in a packaged install
+(`join(dirname(process.execPath), "nimbus-sandbox-helper.exe")`), which for a
+contributor running `bun run` from source is nowhere near this directory. Set
+`NIMBUS_SANDBOX_HELPER_PATH` to the built binary's path (`helperPath()` checks it first,
+before the default) to point a locally-run Gateway at a helper you just built without
+installing anything — e.g.
+`$env:NIMBUS_SANDBOX_HELPER_PATH = (Resolve-Path .\nimbus-sandbox-helper.exe)`. CI uses
+the same override (`sandbox-wrapper-spawn.test.ts`'s `WIN_HELPER`); the Linux helper
+honors the analogous env var the same way (`linux.ts`'s `HELPER_PATH`).
 
 ## Design
 

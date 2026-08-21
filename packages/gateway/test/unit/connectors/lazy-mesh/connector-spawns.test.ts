@@ -584,11 +584,11 @@ describe("ensureAppleMcp (iCloud Mail+Calendar, two-key gate)", () => {
     expect(spec?.args[5]).toBe("apple");
     expect(spec?.env["APPLE_ICLOUD_EMAIL"]).toBe("me@icloud.com");
     expect(spec?.env["APPLE_ICLOUD_APP_PASSWORD"]).toBe("abcd-efgh-ijkl-mnop");
-    // The fixed iCloud IMAP/SMTP host:port endpoints are folded into the sandbox manifest.
-    const manifestJson = spec?.env["NIMBUS_SANDBOX_POLICY_JSON"] ?? "";
-    expect(manifestJson).toContain("imap.mail.me.com:993");
-    expect(manifestJson).toContain("smtp.mail.me.com:587");
-    expect(manifestJson).toContain("caldav.icloud.com");
+    // The fixed iCloud IMAP/SMTP host:port endpoints are folded into the sandbox policy.
+    const policyJson = spec?.env["NIMBUS_SANDBOX_POLICY_JSON"] ?? "";
+    expect(policyJson).toContain("imap.mail.me.com:993");
+    expect(policyJson).toContain("smtp.mail.me.com:587");
+    expect(policyJson).toContain("caldav.icloud.com");
     expectNoProcessEnvLeak(spec?.env ?? {});
   });
 
@@ -1286,7 +1286,7 @@ describe("ensureSalesforceMcp (Tier-2 OAuth + per-tenant instance host)", () => 
     expect(spec?.args[5]).toBe("salesforce");
     expect(spec?.env["SALESFORCE_ACCESS_TOKEN"]).toBe("fake-salesforce-access-token");
     expect(spec?.env["SALESFORCE_INSTANCE_URL"]).toBe("https://acme.my.salesforce.com");
-    // The per-tenant instance host is folded into the sandbox manifest.
+    // The per-tenant instance host is folded into the sandbox policy.
     expect(spec?.env["NIMBUS_SANDBOX_POLICY_JSON"]).toContain("acme.my.salesforce.com");
     expectNoProcessEnvLeak(spec?.env ?? {});
   });
@@ -1353,7 +1353,7 @@ describe("ensureWorkdayMcp (Tier-2 OAuth + per-tenant host sandbox allowlisting)
     expect(spec?.env["WORKDAY_ACCESS_TOKEN"]).toBe("fake-workday-access-token");
     expect(spec?.env["WORKDAY_TENANT_HOST"]).toBe("https://acme.workday.com");
     expect(spec?.env["WORKDAY_TENANT"]).toBe("acme");
-    // The per-tenant host is folded into the sandbox manifest.
+    // The per-tenant host is folded into the sandbox policy.
     expect(spec?.env["NIMBUS_SANDBOX_POLICY_JSON"]).toContain("acme.workday.com");
     expectNoProcessEnvLeak(spec?.env ?? {});
     expectBaselineHostEnv(spec?.env ?? {});

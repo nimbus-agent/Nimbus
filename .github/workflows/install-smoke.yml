@@ -151,6 +151,18 @@ jobs:
       - name: Copy sqlite-vec sidecar
         run: bun scripts/copy-vec0-sidecar.ts --dest dist
 
+      # nimbus-sandbox-helper.exe (I15): win32.ts resolves it from dirname(process.execPath), the
+      # same way tryLoadFromSidecar() resolves vec0.dll above, so it has to travel beside the
+      # gateway binary into every archive and installer — mirrors release.yml's own
+      # "Build sandbox helper (Windows)" step. Unlike vec0.dll, install.ps1 now REQUIRES this
+      # file to be present (C1): without it every connector spawn refuses to run unsandboxed.
+      - name: Build sandbox helper (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          bun run build:sandbox-helper:win32
+          Copy-Item packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe dist/
+
       - name: Stage a fake release dir (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -586,6 +598,7 @@ jobs:
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
           Copy-Item packages\cli\dist\nimbus.exe             $stage\
           Copy-Item dist\nimbus-gateway.exe                  $stage\
+          Copy-Item dist\nimbus-sandbox-helper.exe           $stage\
           Copy-Item scripts\install\windows\install.ps1      $stage\
           Copy-Item scripts\install\windows\uninstall.ps1    $stage\
           "STAGE=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -714,8 +727,9 @@ jobs:
 
           # Reuse the binaries this job already built and staged — do not
           # rebuild, do not use stand-ins.
-          Copy-Item (Join-Path $env:STAGE "nimbus.exe")         (Join-Path $payload "nimbus.exe")
-          Copy-Item (Join-Path $env:STAGE "nimbus-gateway.exe") (Join-Path $payload "nimbus-gateway.exe")
+          Copy-Item (Join-Path $env:STAGE "nimbus.exe")                 (Join-Path $payload "nimbus.exe")
+          Copy-Item (Join-Path $env:STAGE "nimbus-gateway.exe")         (Join-Path $payload "nimbus-gateway.exe")
+          Copy-Item (Join-Path $env:STAGE "nimbus-sandbox-helper.exe")  (Join-Path $payload "nimbus-sandbox-helper.exe")
 
           # sqlite-vec sidecar — the real Windows zip ships vec0.dll at TOP LEVEL,
           # alongside the two .exe files (release.yml's `Stage Windows archive` step).
@@ -792,6 +806,14 @@ jobs:
           $installedVec0 = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\vec0.dll"
           if (-not (Test-Path $installedVec0)) {
             Write-Error "remote install did not place the sqlite-vec sidecar (vec0.dll) — the sidecar-copy path in install.ps1 did not run"; exit 1
+          }
+
+          # Proves install.ps1's REQUIRED helper-copy block actually ran: unlike vec0.dll, a
+          # missing nimbus-sandbox-helper.exe means every connector spawn refuses to run
+          # unsandboxed (fail-closed, I15) — a silent regression here disables the whole sandbox.
+          $installedHelper = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\nimbus-sandbox-helper.exe"
+          if (-not (Test-Path $installedHelper)) {
+            Write-Error "remote install did not place the sandbox helper (nimbus-sandbox-helper.exe) — the helper-copy path in install.ps1 did not run"; exit 1
           }
 
           $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"
@@ -955,6 +977,12 @@ jobs:
           $installedVec0 = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\vec0.dll"
           if (-not (Test-Path $installedVec0)) {
             Write-Error "remote install (PowerShell 5.1) did not place the sqlite-vec sidecar (vec0.dll) -- the sidecar-copy path in install.ps1 did not run"; exit 1
+          }
+
+          # Same proof as the PS7 leg above, on PowerShell 5.1's own Copy-Item behaviour.
+          $installedHelper = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin\nimbus-sandbox-helper.exe"
+          if (-not (Test-Path $installedHelper)) {
+            Write-Error "remote install (PowerShell 5.1) did not place the sandbox helper (nimbus-sandbox-helper.exe) -- the helper-copy path in install.ps1 did not run"; exit 1
           }
 
           $env:PATH = "$(Split-Path $installedNimbus);$env:PATH"

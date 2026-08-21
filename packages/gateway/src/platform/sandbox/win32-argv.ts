@@ -1,6 +1,10 @@
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 
-/** AppContainer profile name for a policy. The `nimbus-` prefix is what the reaper matches on. */
+/**
+ * AppContainer profile name for a policy. The `nimbus-ext-` prefix is what the reaper matches on
+ * (`orphan-reap.ts`'s `PREFIX`); the bare `nimbus-` namespace is only what `--delete-profile`
+ * refuses to delete outside of.
+ */
 export function profileNameFor(policy: { id: string }): string {
   return `nimbus-ext-${policy.id}`;
 }

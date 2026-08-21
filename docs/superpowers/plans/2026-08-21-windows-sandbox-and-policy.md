@@ -737,6 +737,18 @@ static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit
 
 - [ ] **Step 2: Add the cwd ancestor walk**
 
+> **SUPERSEDED.** `grant_cwd_ancestors()` and its `NO_INHERITANCE` ancestor grants, as prescribed
+> below, were built and then deliberately deleted mid-branch: modifying the DACL of a directory
+> the helper does not own is itself an unwanted, persistent side effect, and — independently — the
+> walk was measured to hang indefinitely on at least one production-shaped tree. The shipped grant
+> policy is exactly the leaf (`--cwd`) plus explicit `--grant-read`/`--grant-write` paths, with
+> **no** ancestor grant of any kind; a `bun <script>` child still cannot start under a
+> profile-nested cwd, a known, documented limitation rather than something this walk was fixing.
+> See `main.c`'s `grant_path()` (the "used to be a third category" comment) and
+> `packages/gateway/src-native/sandbox-helper-win32/README.md` ("Consequence, measured rather than
+> assumed") for the current, load-bearing design. The rest of this section is retained as a
+> record of what was tried, not as the shipped mechanism.
+
 Measured in the Task 1 spike, not assumed: a Bun child could not load a script from a leaf-only
 grant, failing with `CouldntReadCurrentDirectory`. Bun walks **upward** from the working directory
 enumerating each ancestor for `package.json` / `bunfig.toml`, which needs list rights on each

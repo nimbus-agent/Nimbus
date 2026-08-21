@@ -137,13 +137,18 @@ real production shape). It fails with:
     error loading current directory
     error: An internal error occurred (CouldntReadCurrentDirectory)
 
-The cause is Bun's own startup, not the sandbox: Bun walks upward from
-the cwd enumerating ancestors looking for `package.json`/`bunfig.toml`,
-and that walk reaches `C:\Users`, whose DACL a non-elevated token
-cannot rewrite. A plain Win32 binary (e.g. `powershell.exe`) spawned
-through the identical helper invocation, at the identical path, with
-the identical grants, runs fine — which is what pins the failure on
-Bun's ancestor walk rather than on AppContainer or Windows itself. The
+The cause is Bun's own startup, not the sandbox — but what exactly Bun
+does at startup is not fully pinned down: what was measured is that
+Bun fails this way under a profile-nested cwd, and that a `package.json`
+placed directly at the leaf does not stop the failure (so "Bun walks
+upward looking for `package.json`/`bunfig.toml` and reaches `C:\Users`,
+whose DACL a non-elevated token cannot rewrite" was an earlier
+explanation for this, tried and disproved by that leaf-`package.json`
+experiment — see the "Consequence, measured rather than assumed" note
+in the helper's own README). A plain Win32 binary (e.g. `powershell.exe`)
+spawned through the identical helper invocation, at the identical path,
+with the identical grants, runs fine — which is what pins the failure
+on Bun's own startup rather than on AppContainer or Windows itself. The
 helper does not grant ancestor directories anything to work around
 this: an earlier revision did, and removed it — see the "used to be a
 third category" note in the helper's own README for why (a modified

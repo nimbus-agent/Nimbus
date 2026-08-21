@@ -37,6 +37,31 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   discovering: a re-clip that sends no `source` **clears** a stored one, because
   `upsertIndexedItem` replaces metadata wholesale — exactly as `tags` already behave.
   Design: [clip source metadata](./superpowers/specs/2026-08-20-clip-source-metadata-design.md).
+- **2026-08-21 — The Windows extension sandbox is real: an unprivileged native helper replaces
+  the permanently-throwing stub.** `nimbus-sandbox-helper.exe` — AppContainer profile
+  creation/derivation, per-spawn ACL grants (leaf `--cwd` plus explicit policy
+  `--grant-read`/`--grant-write` paths only, never any ancestor), the `internetClient` capability
+  SID when `permissions.network` is non-empty, a Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so a crashed helper can't orphan the child, and
+  `CreateProcessW` — replaces the fail-closed "unavailable" stub `win32.ts` shipped with before
+  this branch. The startup probe (`--check-caps`) still refuses to spawn unconfined when the
+  helper is missing or fails, so the fail-closed posture carries over unchanged, now conditional
+  on a measured fact instead of permanent. An orphan reaper runs at Gateway boot, deleting stale
+  `nimbus-ext-*` AppContainer profiles left behind by a prior crash (I15). Windows network policy
+  stays all-or-nothing (per-host filtering would need WFP callout drivers — kernel-mode signing,
+  Windows hardware program enrollment — tracked as a follow-up, not FFI, which was never built and
+  isn't the design); Linux/macOS keep per-host + per-port enforcement. Full contract, the ACL-grant
+  rationale, and the exit-code table: `packages/gateway/src-native/sandbox-helper-win32/README.md`
+  and [`docs/sandbox.md`](./sandbox.md#windows-platform-status). One measured, load-bearing
+  limitation carries into production: a `bun <script>` child cannot start when its working
+  directory is nested inside the user profile (`CouldntReadCurrentDirectory` at Bun's own
+  startup, not a sandbox failure — a plain Win32 binary at the identical path with identical
+  grants runs fine) — moot for a packaged install, which spawns the compiled
+  `nimbus-gateway.exe __nimbus-connector <id>` with no script path, but visible to a Windows
+  contributor running a dev tree. The zip installer (`install.ps1`) now copies the helper into
+  the install directory as a **required** artifact (a missing helper aborts the install rather
+  than producing one that silently refuses every connector spawn) — mirroring the MSI installer,
+  which already carried it as a required payload.
 
 - **2026-08-21 — Listed in the official MCP Registry, and the listing now maintains itself.**
   `io.github.nimbus-agent/nimbus@0.2.0` is live at

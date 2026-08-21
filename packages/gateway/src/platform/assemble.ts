@@ -2254,6 +2254,11 @@ export async function assemblePlatformServices(
   // Built before `db` so a boot-marker append failure (below) has somewhere to log a warning.
   const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
   const vault = customVault ?? (await createNimbusVault(paths));
+  // Ordering is load-bearing on Windows: this constructs the runner, which synchronously probes
+  // the helper via `--check-caps` (creating, then deleting, a throwaway `nimbus-ext-probe`
+  // AppContainer profile) — BEFORE `reapAppContainersAtBoot` runs below. So if that probe's own
+  // delete ever fails and leaves `nimbus-ext-probe` behind, the reaper that runs right after on
+  // this same boot is what cleans it up, not a later restart.
   const sandboxRunner = await createSandboxRunner();
   const db = openGatewaySqlite(paths.dataDir, sidecarStops);
   // I29: record what THIS binary is built to observe, before anything can emit egress. Without a

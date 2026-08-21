@@ -521,8 +521,25 @@ try {
     throw "Cannot locate 'nimbus.exe' or 'nimbus-gateway.exe' beside this script, and no release could be fetched."
   }
 
+  # Windows sandbox helper (AppContainer + ACL grants + Job Object + CreateProcessW). Unlike
+  # vec0.dll below, this one is REQUIRED, not optional: win32.ts resolves it at
+  # join(dirname(process.execPath), "nimbus-sandbox-helper.exe"), and the runner refuses to spawn
+  # any connector unconfined when it is missing (fail-closed, I15) -- a missing vec0.dll only
+  # disables semantic memory, but a missing helper disables every connector. Fail the install
+  # loudly here rather than silently producing a Nimbus that can never run a connector.
+  $HelperSrc = @(
+    (Join-Path $BinaryRoot "nimbus-sandbox-helper.exe"),
+    (Join-Path $BinaryRoot "bin\nimbus-sandbox-helper.exe")
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $HelperSrc) {
+    throw ("Cannot locate 'nimbus-sandbox-helper.exe' beside the Nimbus binaries. The sandbox " +
+      "helper is REQUIRED -- without it every connector spawn refuses to run unsandboxed " +
+      "(fail-closed, I15). This release artifact is missing it; aborting the install rather " +
+      "than producing one that cannot run any connector.")
+  }
+
   Write-Host "About to install Nimbus:"
-  Write-Host "  Binaries: $NimbusSrc, $GatewaySrc"
+  Write-Host "  Binaries: $NimbusSrc, $GatewaySrc, $HelperSrc"
   Write-Host "  -> into:  $InstallDir"
   Write-Host "  Update User PATH (registry: HKCU\Environment)"
 
@@ -547,6 +564,7 @@ try {
 
   Copy-Item -Path $NimbusSrc  -Destination (Join-Path $InstallDir "nimbus.exe")  -Force
   Copy-Item -Path $GatewaySrc -Destination (Join-Path $InstallDir "nimbus-gateway.exe") -Force
+  Copy-Item -Path $HelperSrc  -Destination (Join-Path $InstallDir "nimbus-sandbox-helper.exe") -Force
 
   # sqlite-vec loadable extension. The gateway looks for it beside its own executable, so it has to
   # be installed into the same directory. Optional: absent on an unsupported platform, which

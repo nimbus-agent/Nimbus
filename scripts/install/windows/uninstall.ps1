@@ -10,6 +10,7 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\Nimbus\bin"
 Write-Host "About to uninstall Nimbus:"
 Write-Host "  Remove: $InstallDir\nimbus.exe"
 Write-Host "  Remove: $InstallDir\nimbus-gateway.exe"
+Write-Host "  Remove: $InstallDir\nimbus-sandbox-helper.exe"
 Write-Host "  Remove $InstallDir from User PATH (registry: HKCU\Environment)"
 
 if (-not $Yes) {
@@ -17,8 +18,9 @@ if (-not $Yes) {
   if ($answer -notmatch '^(y|yes)$') { Write-Host "Aborted."; exit 1 }
 }
 
-Remove-Item -Path (Join-Path $InstallDir "nimbus.exe")         -Force -ErrorAction SilentlyContinue
-Remove-Item -Path (Join-Path $InstallDir "nimbus-gateway.exe") -Force -ErrorAction SilentlyContinue
+Remove-Item -Path (Join-Path $InstallDir "nimbus.exe")                 -Force -ErrorAction SilentlyContinue
+Remove-Item -Path (Join-Path $InstallDir "nimbus-gateway.exe")         -Force -ErrorAction SilentlyContinue
+Remove-Item -Path (Join-Path $InstallDir "nimbus-sandbox-helper.exe")  -Force -ErrorAction SilentlyContinue
 
 $pathChanged = $false
 $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")

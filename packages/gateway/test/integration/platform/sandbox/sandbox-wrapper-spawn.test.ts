@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import type { SandboxPolicy } from "../../../../src/platform/sandbox/sandbox-policy.ts";
 
@@ -74,12 +74,30 @@ const UNEXPECTED_SUCCESS_CODE = 0;
 // Real, unique temp root — never a subdirectory of the live Gateway data dir
 // (%LOCALAPPDATA%\Nimbus / %APPDATA%\Nimbus), which is read-only test-data territory. Removed in
 // afterAll by its own full path only (see the temp-dir leak audit, #972/#973).
-const root = mkdtempSync(join(tmpdir(), "nimbus-wrapper-spawn-"));
+//
+// realpathSync'd immediately: on macOS, mkdtempSync(tmpdir()) returns a `/var/folders/...` path,
+// but the SBPL profile's `subpath` matching (darwin.ts) sees the kernel-resolved
+// `/private/var/folders/...` — `/var` is itself a symlink to `/private/var`. Granting the
+// unresolved path and then using it as both the SBPL subpath AND the child's actual cwd leaves
+// the two disagreeing, so the sandbox denies a spawn this policy is supposed to allow. Resolving
+// once here keeps every derived path (`work`, `outside`) consistent with what the kernel sees.
+const root = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-wrapper-spawn-")));
 const work = join(root, "work");
 const outside = join(root, "outside");
 mkdirSync(work, { recursive: true });
 mkdirSync(outside, { recursive: true });
 writeFileSync(join(outside, "secret.txt"), "do-not-read-me");
+
+/**
+ * Directory containing the Linux/macOS sandboxed child binary (`process.execPath`, i.e. the Bun
+ * binary itself — see `childProcess()` below). Not bound by any of `buildBwrapArgv`'s fixed
+ * binds (`/usr`, `/etc`, `/lib`[64], `/dev`, tmpfs `/tmp`, cwd) on a GitHub-hosted runner, where
+ * `oven-sh/setup-bun` installs Bun under `~/.bun` — outside all of them. Reachability has to come
+ * from the policy itself, which is the mechanism this suite exists to exercise, so the policy
+ * below grants read access to this directory explicitly rather than the test being made to pass
+ * only inside a container image that happens to place Bun under `/usr/local/bin`.
+ */
+const childBinaryDir = dirname(process.execPath);
 
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
@@ -88,7 +106,10 @@ afterAll(() => {
 function policy(): SandboxPolicy {
   return {
     id: "com.nimbus.wrapper-test",
-    permissions: { network: [], filesystem: { read: [work], write: [work] } },
+    permissions: {
+      network: [],
+      filesystem: { read: [work, childBinaryDir], write: [work] },
+    },
   };
 }
 
@@ -119,16 +140,17 @@ function runThroughWrapper(
  * On Windows the child is a plain Win32 binary (`powershell.exe -File <script>.ps1`) — NOT Bun.
  * Measured (see `src-native/sandbox-helper-win32/README.md`, "Consequence, measured rather than
  * assumed"): a `bun <script>` child cannot start under a cwd nested inside the user profile — it
- * fails at startup with `CouldntReadCurrentDirectory`, because Bun walks upward enumerating
- * ancestors looking for `package.json`/`bunfig.toml`, and the Windows helper deliberately never
- * grants ACL access to `--cwd`'s ancestors (a non-elevated token cannot rewrite `C:\Users`'s DACL
- * regardless). A plain Win32 console app has no such upward search and runs fine through the
- * identical helper invocation at the identical path with identical grants — which is what
- * attributes the failure to Bun's own startup, not to the sandbox. Using `powershell.exe` here is
- * also the faithful choice for what this test is meant to stand in for: the production Windows
- * child is the compiled `nimbus-gateway.exe __nimbus-connector <id>`, which likewise has no
- * script path and behaves like this Win32 case — Bun-running-a-script is the unfaithful shape on
- * Windows, not the other way around.
+ * fails at startup with `CouldntReadCurrentDirectory`. What exactly Bun does at startup to
+ * trigger this is NOT fully pinned down — a `package.json` placed at the leaf does not stop the
+ * failure, which is what the README's measurement disproves about the naive "walks upward to
+ * `C:\Users`, whose DACL can't be rewritten" explanation. A plain Win32 console app has no such
+ * startup requirement and runs fine through the identical helper invocation at the identical
+ * path with identical grants — which is what attributes the failure to Bun's own startup, not to
+ * the sandbox. Using `powershell.exe` here is also the faithful choice for what this test is
+ * meant to stand in for: the production Windows child is the compiled
+ * `nimbus-gateway.exe __nimbus-connector <id>`, which likewise has no script path and behaves
+ * like this Win32 case — Bun-running-a-script is the unfaithful shape on Windows, not the other
+ * way around.
  */
 function childProcess(dir: string, name: string, body: string): { argv: string[] } {
   if (IS_WIN) {
