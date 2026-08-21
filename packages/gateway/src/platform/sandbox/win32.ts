@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-
+import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 import { buildHelperArgv } from "./win32-argv.ts";
@@ -56,8 +56,13 @@ export function createWin32SandboxRunner(): SandboxRunner {
           `refusing to spawn unsandboxed on Windows: ${helper.reason ?? "helper unavailable"}`,
         );
       }
-      const argv = [...buildHelperArgv(opts.policy, { cwd: opts.cwd }), cmd, ...args];
-      return spawn(path, argv, { env: opts.env, cwd: opts.cwd, stdio: opts.stdio });
+      // Canonicalise before BOTH the grant and the spawn, and to the SAME value — an ACL applied
+      // to one spelling of a directory while the child runs in another is the failure this
+      // prevents. See canonical-path.ts for the 8.3 short-name case that made it real.
+      const cwd = canonicalPath(opts.cwd);
+      const policy = canonicalPolicyPaths(opts.policy);
+      const argv = [...buildHelperArgv(policy, { cwd }), cmd, ...args];
+      return spawn(path, argv, { env: opts.env, cwd, stdio: opts.stdio });
     },
     isFullyActive(): boolean {
       return helper.available;

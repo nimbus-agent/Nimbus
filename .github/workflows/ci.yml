@@ -439,6 +439,21 @@ jobs:
         env:
           CI: "true"
 
+      # macOS denials never reach the child's stderr — the kernel logs them, and the process just
+      # dies (SIGABRT -> exit 134 through the wrapper's signal translation) with both streams
+      # empty. That is why two rounds of in-test diagnostics could not name the macOS cause while
+      # the Windows one was legible immediately: on Windows the launcher's own message is on
+      # stderr, on macOS it is nowhere the test can see. This reads it from the one place it
+      # exists. `|| true` so a log-query failure cannot mask the real test failure above.
+      - name: macOS — sandbox denials from the kernel log (on failure only)
+        if: failure() && runner.os == 'macOS' && matrix.pkg == 'gateway'
+        shell: bash
+        run: |
+          echo "Sandbox denials logged in the last 5 minutes:"
+          log show --last 5m --style compact \
+            --predicate 'senderImagePath CONTAINS "Sandbox" OR eventMessage CONTAINS "deny"' \
+            2>/dev/null | grep -iE "deny|sandbox" | head -60 || true
+
   # Code duplication scan — runs in parallel with the above two jobs.
   # Scans only packages/ for code duplication; docs-only PRs can't introduce
   # new code-duplication regressions, so we skip when code-changed is false.

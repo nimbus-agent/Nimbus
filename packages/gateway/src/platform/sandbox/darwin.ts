@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { parseNetworkEntry } from "../../extensions/permissions-validator.ts";
+import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 
@@ -78,19 +79,26 @@ export function createDarwinSandboxRunner(): SandboxRunner {
   return {
     platform: "darwin",
     spawn(cmd: string, args: string[], opts: SandboxSpawnOptions): ChildProcess {
-      const sandboxDir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-"));
+      // `/var` is a symlink to `/private/var`, so `mkdtempSync(tmpdir())` hands back a path the
+      // kernel never sees. An SBPL `(subpath "/var/folders/…")` grant therefore matches nothing,
+      // and the child is denied the scratch directory its own profile grants it. Canonicalise
+      // the cwd and every policy path for the same reason. See canonical-path.ts.
+      const sandboxDir = canonicalPath(mkdtempSync(join(tmpdir(), "nimbus-sandbox-")));
+      const cwd = canonicalPath(opts.cwd);
       const profilePath = join(sandboxDir, "profile.sb");
       const profile = generateSbplProfile({
-        cwd: opts.cwd,
+        cwd,
         tmpdir: sandboxDir,
-        policy: opts.policy,
+        policy: canonicalPolicyPaths(opts.policy),
       });
       writeFileSync(profilePath, profile);
       // Absolute path to the SIP-protected system binary — never resolve via
       // PATH, which could be attacker-influenced (Sonar S4036 hardening).
       const child = spawn("/usr/bin/sandbox-exec", ["-f", profilePath, cmd, ...args], {
         env: opts.env,
-        cwd: opts.cwd,
+        // The CANONICAL cwd, matching what the profile granted. Spawning into `opts.cwd` here
+        // while granting `cwd` above would reintroduce the mismatch this whole change removes.
+        cwd,
         stdio: opts.stdio,
       });
       child.once("exit", () => {
