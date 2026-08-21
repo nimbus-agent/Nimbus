@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.13.0](https://github.com/nimbus-agent/Nimbus/compare/v2.12.1...v2.13.0) (2026-08-21)
+
+
+### Features
+
+* **sandbox:** a real Windows sandbox leg, and a policy-shaped runner interface ([#1294](https://github.com/nimbus-agent/Nimbus/issues/1294)) ([54c20c9](https://github.com/nimbus-agent/Nimbus/commit/54c20c98714a85b1a57d5166938c4cd2bedcc457))
+
 ## [2.12.1](https://github.com/nimbus-agent/Nimbus/compare/v2.12.0...v2.12.1) (2026-08-21)
 
 
