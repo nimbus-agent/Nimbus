@@ -60,6 +60,11 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     why: "Windows job-object sandbox",
   },
   {
+    file: "packages/gateway/src/platform/sandbox/win32-reap.ts",
+    gate: "Sandbox",
+    why: "boot-time AppContainer orphan reap, Windows-only (process.platform !== 'win32' short-circuit)",
+  },
+  {
     file: "packages/gateway/src/platform/sandbox/darwin.ts",
     gate: "Sandbox",
     why: "sandbox-exec profile",

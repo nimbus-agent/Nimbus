@@ -251,6 +251,7 @@ import { createGatewayPinoLogger } from "./gateway-log-file.ts";
 import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
+import { reapAppContainersAtBoot } from "./sandbox/win32-reap.ts";
 import type { AutostartManager, NotificationService, PlatformServices } from "./types.ts";
 
 function createStubAutostart(): AutostartManager {
@@ -2261,6 +2262,10 @@ export async function assemblePlatformServices(
   // so egress_ledger (V44) exists. Non-fatal on failure (see `appendBootMarkerOrWarn`) — a corrupted
   // or locked ledger degrades proofs to `indeterminate`, it does not stop the gateway from booting.
   appendBootMarkerOrWarn(db, THIS_BINARY_COVERAGE, Date.now(), syncLogger);
+  // The AppContainer profiles the Windows sandbox creates are per-user registry state. Reap the
+  // ones whose extension is gone, or they accumulate across every install/uninstall cycle and
+  // leave orphaned SIDs on paths they were granted. Non-fatal by construction: see the function.
+  void reapAppContainersAtBoot({ db, logger: syncLogger });
   const notifications = createUnimplementedNotifications(syncLogger);
   const rateLimiter = new ProviderRateLimiter();
   const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
