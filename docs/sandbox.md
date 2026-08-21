@@ -88,17 +88,80 @@ client (deferred to a follow-up).
 
 ### Windows {#windows-platform-status}
 
-`AppContainer` profiles isolate each extension by SID. The
-`internetClient` capability is granted iff `permissions.network` is
-non-empty. **Per-host network filtering is not enforced on Windows in
-PR 1** — see [#platform-asymmetry](#platform-asymmetry) below.
+`AppContainer` profiles isolate each extension by SID, enforced through
+a native, **unprivileged** helper — `nimbus-sandbox-helper.exe` — that
+ships beside `nimbus-gateway.exe` in every Windows release artifact
+(zip and MSI) and is resolved by `dirname(process.execPath)` at
+startup. `CreateAppContainerProfile` is a per-user API: ACL edits
+inside the user's own profile need no elevation, so there is no
+install-time `setcap`-equivalent step, unlike the Linux helper.
 
-**Windows FFI status.** The AppContainer profile creation + capability
-SID derivation are wired in PR 1. The `CreateProcessAsUserW` FFI
-surface that actually spawns the connector inside the AppContainer is
-a work-in-progress in PR 1; if you see a "Windows sandbox spawn FFI is
-a work-in-progress" error, the gap is tracked as a follow-up sub-issue.
-Linux and macOS connectors are unaffected.
+On every spawn the helper:
+
+- creates or derives the extension's per-profile AppContainer SID
+  (`nimbus-ext-<extension id>`);
+- grants that SID an inheritable ACL — Read+Execute+Write on the
+  working directory, Read+Execute (or +Write) on each declared
+  `permissions.filesystem.read` / `write` path — and grants **nothing**
+  to any ancestor directory. A grant failure aborts the spawn (exit
+  `66`) rather than falling back to running unconfined; the same code
+  covers a target on a filesystem without DACL support (FAT32/exFAT,
+  some network shares), since `SetNamedSecurityInfoW` cannot write an
+  ACL there either;
+- grants the `internetClient` capability SID iff `permissions.network`
+  is non-empty — see [#platform-asymmetry](#platform-asymmetry) below;
+  per-host filtering is still not enforced on Windows, unchanged by
+  this work;
+- assigns the (suspended) child to a Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` **before** resuming it, so a
+  crashed or killed helper cannot orphan the child — the Windows
+  analogue of bwrap's `--die-with-parent`; and
+- `CreateProcessW`s the child, waits, and propagates its exit code.
+  Helper-originated failures (profile, ACL, Job Object, or
+  `CreateProcessW` failures) use reserved exit codes `65`–`68`; stderr
+  is the authoritative failure channel. Full contract:
+  `packages/gateway/src-native/sandbox-helper-win32/README.md`.
+
+Startup probes the helper (`--check-caps`); if it is missing or fails,
+the runner **refuses to spawn unconfined** and the extension does not
+start — the same fail-closed posture the pre-implementation stub had,
+now conditional on a measured fact instead of permanent.
+
+#### Known limitation: `bun <script>` under a profile-nested cwd
+
+Measured on this branch, not theoretical: **a `bun <script>` child
+cannot start when its working directory is nested inside the user
+profile** (e.g. `%LOCALAPPDATA%\Nimbus\extensions\<ext>\workdir`, the
+real production shape). It fails with:
+
+    error loading current directory
+    error: An internal error occurred (CouldntReadCurrentDirectory)
+
+The cause is Bun's own startup, not the sandbox: Bun walks upward from
+the cwd enumerating ancestors looking for `package.json`/`bunfig.toml`,
+and that walk reaches `C:\Users`, whose DACL a non-elevated token
+cannot rewrite. A plain Win32 binary (e.g. `powershell.exe`) spawned
+through the identical helper invocation, at the identical path, with
+the identical grants, runs fine — which is what pins the failure on
+Bun's ancestor walk rather than on AppContainer or Windows itself. The
+helper does not grant ancestor directories anything to work around
+this: an earlier revision did, and removed it — see the "used to be a
+third category" note in the helper's own README for why (a modified
+DACL on a directory the helper does not own is itself an unwanted side
+effect, independent of a separate hang one such walk produced on a
+production-shaped tree).
+
+**What this means in practice.** The shipped product spawns the
+**compiled** `nimbus-gateway.exe __nimbus-connector <id>` — no script
+path, so Bun's own startup walk never runs, and the failure above does
+not occur. A **dev tree** spawns `bun <entry> __nimbus-connector <id>`
+instead, which does hit the walk, so a Windows contributor running
+from source with a profile-nested cwd will see this error where a
+packaged install would not. If you hit
+`CouldntReadCurrentDirectory` while developing on Windows, that is
+this limitation, not a regression — relocate the sandboxed cwd out
+from under the user profile, or run against a built `nimbus-gateway.exe`
+instead of `bun run`.
 
 ## Platform asymmetry {#platform-asymmetry}
 

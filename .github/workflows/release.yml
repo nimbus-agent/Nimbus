@@ -159,6 +159,17 @@ jobs:
       - name: Copy sqlite-vec sidecar
         run: bun scripts/copy-vec0-sidecar.ts --dest dist
 
+      # nimbus-sandbox-helper.exe (I15): the Windows AppContainer helper the sandbox runner
+      # spawns through. helperPath() resolves it the same way tryLoadFromSidecar() resolves
+      # vec0.dll — dirname(process.execPath) — so it has to travel beside the gateway binary
+      # into every archive and installer, same as the sidecar above.
+      - name: Build sandbox helper (Windows)
+        if: matrix.target.os == 'windows'
+        shell: pwsh
+        run: |
+          bun run build:sandbox-helper:win32
+          Copy-Item packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe dist/
+
       - name: Sign binary (Linux GPG)
         if: matrix.target.os == 'linux'
         timeout-minutes: 15
@@ -181,12 +192,16 @@ jobs:
       # + <bin>.sig per target — without the sidecars, build-update-manifest.ts
       # fails with ENOENT and the v0.1.0 latest.json was never produced.
       #
-      # vec0.* is a SECOND path entry rather than part of the glob above, which is anchored on the
-      # binary's name. Both live under dist/, so the least-common-ancestor stays dist/ and every
-      # file still lands at the artifact root. The downstream `Stage release assets`,
-      # `Compute SHA256SUMS` and `Flatten artifact dir` steps all glob on the nimbus-gateway-*
-      # prefix, so the sidecar never becomes a loose release asset — it ships inside the archives
-      # and installers, which is where a user's binary can actually find it.
+      # vec0.* and nimbus-sandbox-helper.exe are SECOND/THIRD path entries rather than part of the
+      # glob above, which is anchored on the binary's name. All live under dist/, so the
+      # least-common-ancestor stays dist/ and every file still lands at the artifact root. The
+      # downstream `Stage release assets`, `Compute SHA256SUMS` and `Flatten artifact dir` steps
+      # all glob on the nimbus-gateway-* prefix, so neither sidecar ever becomes a loose release
+      # asset — both ship inside the archives and installers, which is where a user's binary can
+      # actually find them. nimbus-sandbox-helper.exe only exists on the windows leg of this
+      # matrix; upload-artifact's `if-no-files-found: error` triggers only when NONE of the listed
+      # paths resolve to a file, so its absence on Linux/macOS is silently a no-op for that one
+      # line rather than a failure — the binary and vec0.* entries always match.
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -194,6 +209,7 @@ jobs:
           path: |
             dist/${{ matrix.target.artifact }}${{ matrix.target.ext }}*
             dist/vec0.*
+            dist/nimbus-sandbox-helper.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -319,6 +335,7 @@ jobs:
           Copy-Item dist/nimbus-gateway-windows-x64/nimbus-gateway-windows-x64.exe dist/msi-bin/nimbus-gateway.exe
           Copy-Item dist/nimbus-cli-windows-x64/nimbus-cli-windows-x64.exe          dist/msi-bin/nimbus.exe
           Copy-Item dist/nimbus-gateway-windows-x64/vec0.dll                        dist/msi-bin/vec0.dll
+          Copy-Item dist/nimbus-gateway-windows-x64/nimbus-sandbox-helper.exe       dist/msi-bin/nimbus-sandbox-helper.exe
 
       - name: Install WiX v5 (pinned)
         shell: pwsh
@@ -542,6 +559,7 @@ jobs:
           cp dist/nimbus-gateway-windows-x64/nimbus-gateway-windows-x64.exe dist/stage-windows-x64/nimbus-gateway.exe
           cp dist/nimbus-cli-windows-x64/nimbus-cli-windows-x64.exe         dist/stage-windows-x64/nimbus.exe
           cp dist/nimbus-gateway-windows-x64/vec0.dll                       dist/stage-windows-x64/vec0.dll
+          cp dist/nimbus-gateway-windows-x64/nimbus-sandbox-helper.exe      dist/stage-windows-x64/nimbus-sandbox-helper.exe
           cp scripts/release/archive-contents/README-QUICKSTART.txt         dist/stage-windows-x64/
           cp scripts/release/archive-contents/LICENSE-AGPL.txt              dist/stage-windows-x64/
           cp scripts/install/windows/install.ps1                             dist/stage-windows-x64/

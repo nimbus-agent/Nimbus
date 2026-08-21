@@ -3,8 +3,9 @@
 .SYNOPSIS
   Build the per-user Nimbus .msi with WiX v5. Run on a Windows runner.
 .PARAMETER BinDir
-  Directory containing nimbus.exe + nimbus-gateway.exe + vec0.dll (the sqlite-vec sidecar,
-  a required MSI payload — nimbus.wxs installs it beside the gateway).
+  Directory containing nimbus.exe + nimbus-gateway.exe + vec0.dll (the sqlite-vec sidecar) +
+  nimbus-sandbox-helper.exe (the Windows AppContainer sandbox helper, I15) — both sidecars are
+  required MSI payloads; nimbus.wxs installs each beside the gateway.
 .PARAMETER Version
   Release version (tag with/without leading 'v'; prerelease suffix is stripped --
   MSI ProductVersion must be numeric x.y.z).
@@ -23,9 +24,11 @@ $ErrorActionPreference = "Stop"
 $pv = ($Version -replace '^v', '') -replace '-.*$', ''
 if ($pv -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid MSI version '$Version' -> '$pv' (need x.y.z)." }
 
-# vec0.dll is a required MSI payload (nimbus.wxs has a Component for it), so a missing sidecar
-# must fail here with a readable message rather than as a WiX file-not-found.
-foreach ($f in @("nimbus.exe", "nimbus-gateway.exe", "vec0.dll")) {
+# vec0.dll and nimbus-sandbox-helper.exe are required MSI payloads (nimbus.wxs has a Component
+# for each), so a missing sidecar must fail here with a readable message rather than as a WiX
+# file-not-found — and, for the helper, rather than shipping an installer whose sandbox runner
+# refuses to spawn anything at all (fail-closed, I15) on every machine it's installed to.
+foreach ($f in @("nimbus.exe", "nimbus-gateway.exe", "vec0.dll", "nimbus-sandbox-helper.exe")) {
   if (-not (Test-Path (Join-Path $BinDir $f))) { throw "Missing $f in $BinDir" }
 }
 

@@ -40,6 +40,13 @@
       <Component Id="NimbusVec0" Bitness="always64">
         <File Id="Vec0Dll" Source="$(BinDir)\vec0.dll" KeyPath="yes" />
       </Component>
+      <!-- Windows AppContainer sandbox helper (I15). helperPath() resolves it from -->
+      <!-- dirname(process.execPath), so it must install into this same bin dir. -->
+      <!-- Without it the sandbox runner refuses to spawn (fail-closed), disabling -->
+      <!-- every extension connector, not silently. -->
+      <Component Id="NimbusSandboxHelper" Bitness="always64">
+        <File Id="NimbusSandboxHelperExe" Source="$(BinDir)\nimbus-sandbox-helper.exe" KeyPath="yes" />
+      </Component>
       <!-- PATH append to HKCU\Environment (same target as install.ps1's -->
       <!-- [Environment]::SetEnvironmentVariable(..,"User")); removed on uninstall. -->
       <Component Id="NimbusPath" Guid="3F1A8C6B-9D2E-4A7F-8B5C-6E0D2A4F1C9B">

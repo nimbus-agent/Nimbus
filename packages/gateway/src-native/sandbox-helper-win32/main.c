@@ -104,13 +104,16 @@ static int mode_delete_profile(const wchar_t *name) {
  * cannot write a DACL there. The caller must not fall back to spawning unconfined: a policy path
  * the child cannot read is a failure to enforce, not a warning.
  *
- * `inherit` is load-bearing, not a detail. SUB_CONTAINERS_AND_OBJECTS_INHERIT propagates the ACE
- * to everything beneath `path`, which is right for a policy path (it means its subtree) and WRONG
- * for a directory we are only making listable on the way to somewhere else — an inheritable grant
- * on a working directory's parent would hand the container every sibling subtree under it.
- * Ancestors therefore pass NO_INHERITANCE. Task 6's out-of-policy-read test is the guard: its
- * `outside` directory is a sibling of the granted cwd, so an inheritable ancestor grant makes that
- * test fail. Do not widen the grant to make it pass.
+ * `inherit` is load-bearing, not a detail. Every call site today passes
+ * SUB_CONTAINERS_AND_OBJECTS_INHERIT, which propagates the ACE to everything beneath `path` — the
+ * cwd and every policy read/write path are each meant as their own subtree grant. There is no
+ * ancestor-directory grant call anywhere: an earlier revision granted ancestors a non-inheritable
+ * listing right so the container could traverse down to a nested cwd/policy path, but that
+ * mechanism was removed — Windows bypasses traverse checking by default, so a known full path
+ * opens without listing rights on the way down, and the ancestor grants were dead weight. Task 6's
+ * out-of-policy-read test is the guard against reintroducing an inheritable grant that leaks a
+ * sibling subtree: its `outside` directory sits next to the granted cwd, so a widened inheritance
+ * on the wrong path makes that test fail. Do not widen a grant to make it pass.
  */
 static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
     PACL old_acl = NULL, new_acl = NULL;

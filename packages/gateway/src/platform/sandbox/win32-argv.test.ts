@@ -23,9 +23,14 @@ describe("buildHelperArgv", () => {
 
   it("passes the cwd under its own flag, not as a policy grant", () => {
     // The helper treats the cwd differently from a policy path: Modify + inheritable on the
-    // leaf, listable-but-NOT-inheritable on each ancestor, so Bun's upward package.json walk
-    // works without exposing sibling subtrees. That split is only possible if it knows which
-    // path is the cwd, so it travels under --cwd rather than folded into --grant-write.
+    // leaf, and NOTHING granted on any ancestor — Windows bypasses traverse checking by default,
+    // so a known full path opens without listing rights on the way down, and an ancestor grant
+    // would only risk exposing sibling subtrees for no benefit. That distinction (cwd vs. policy
+    // path) is only possible if the helper knows which path is the cwd, so it travels under
+    // --cwd rather than folded into --grant-write. See docs/sandbox.md for the one case this
+    // still fails: a `bun <script>` child under a cwd nested inside the user profile, where
+    // Bun's own upward package.json walk hits an ancestor Windows would not let a non-elevated
+    // token re-ACL (e.g. C:\Users itself) — a plain Win32 binary at the same path is unaffected.
     const argv = buildHelperArgv(policy(), { cwd: "C:\\data" });
     expect(argv).toEqual(expect.arrayContaining(["--cwd", "C:\\data"]));
     expect(argv).not.toContain("--grant-write");
