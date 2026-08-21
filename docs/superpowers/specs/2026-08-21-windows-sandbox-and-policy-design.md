@@ -134,6 +134,66 @@ only tested.
 `degradedReason()` keeps explaining the per-host network gap, because that gap
 is still there.
 
+### Profile lifecycle, process lifetime, and privilege
+
+**The helper is unprivileged.** Unlike the Linux helper — which carries
+`cap_net_admin+ep` granted by a `setcap` postinst — nothing on this leg needs
+elevation. `CreateAppContainerProfile` is a per-user API, and adding ACEs to
+paths inside the user's own profile is an ordinary user operation. So the
+Windows leg adds **no install-time privilege step**, and `--check-caps` is a
+borrowed name rather than an accurate one here: it probes that profile creation
+*works*, not that a capability is *held*. Confirm against Windows 11 and Server
+2025 during the spike — a local group policy could in principle restrict
+profile creation, and that would show up as a `--check-caps` failure with a
+useful reason rather than a mystery spawn error.
+
+**Profiles are registry state, so they must be reaped — and the reaper already
+exists and is inert.** `platform/sandbox/orphan-reap.ts` deletes AppContainer
+profiles whose `nimbus-ext-<id>` name has no live extension. It has **zero
+production callers**: only its own test. Two documents already describe it as
+running — `.claude/commands/nimbus-file-map.md` says "orphan-reap **at Gateway
+startup**", and `docs/architecture.md`'s threat table lists "AppContainer +
+orphan-reap on Windows" as the mitigation for *Extension sandbox escape*. Both
+halves of that mitigation are currently inert. Wiring the reaper belongs in this
+piece: shipping real profile creation without it manufactures exactly the
+registry leak the naming question below is about.
+
+**One-shot executions need a deliberate id scheme, and it is not free.** A
+connector has a stable extension id, so its profile SID is stable and its ACEs
+resolve. A one-shot execution has no such id. Minting a fresh profile per spawn
+leaks a registry key per run and leaves orphaned SIDs on every path it touched
+(the `S-1-15-…` / *Account Unknown* entries in Explorer). But the obvious
+alternative — one static profile for all one-shot executions — means every
+execution shares one SID, so a path ACL'd for one run is reachable by any
+concurrent run. That is a real isolation downgrade between executions, not a
+free win, and a fixed pool only bounds it rather than removing it.
+
+This spec does not settle that choice, because the execution surface is a
+non-goal. It sets two constraints the execution piece must satisfy:
+
+1. Whatever scheme is chosen, `reapOrphanedAppContainers` must recognise it —
+   today it matches on the `nimbus-ext-` prefix only.
+2. The cross-execution isolation property of the chosen scheme must be stated
+   in `docs/sandbox.md`, not left to be inferred from the naming.
+
+**Process lifetime: a Job Object.** Linux gets `--die-with-parent` from bwrap;
+Windows has no analogue in the current design, so a crashed gateway would leave
+sandboxed children running. Assign the child to a Job Object with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the OS terminates it when the helper's
+handle closes. This is lifetime hygiene needed by connectors today, not a
+resource limit, and it is complementary to AppContainer rather than an
+alternative to it.
+
+**Non-NTFS paths fail closed.** AppContainer filesystem isolation is NTFS ACLs
+and nothing else. On FAT32/exFAT, or a network share with different semantics,
+the ACE cannot be applied and the child would silently be unable to read a path
+the policy grants. The helper must fail with a distinguishable exit code so the
+runner reports *why* rather than surfacing a generic spawn failure. This is not
+hypothetical: connector `permissions.filesystem.read` paths include the
+filesystem connector's `[filesystem.roots]`, which a user can point at a
+removable exFAT drive. The sandbox cwd is under the config directory and is not
+at risk.
+
 ### Build and ship
 
 - A `build:sandbox-helper:win32` package script, beside the existing
@@ -173,7 +233,10 @@ export interface SandboxPolicy {
 `limits.wallClockMs` is declared here and enforced by the runners in the
 execution piece. It exists in this spec so the shape is right, not so the
 timeout ships — a declared-but-unenforced field must be documented as such and
-must not be read as a guarantee by anything.
+must not be read as a guarantee by anything. The mechanism is named even though
+the enforcement is deferred: on Windows it is the same Job Object that
+Section 1 assigns for lifetime hygiene, so the execution piece adds a limit to
+an object that already exists rather than introducing one.
 
 **What this unlocks.** A one-shot execution builds a `SandboxPolicy` from
 per-execution capability flags directly. Today the only way to reach the
@@ -234,9 +297,11 @@ Bun process inside it with working stdio pipes. Probe before building, not
 after.
 
 **If it proves unworkable**, the fallback is a restricted token
-(`CreateRestrictedToken`, dropping admin and deny-only SIDs) plus a Job Object
-for limits, spawning normally. That is a genuine OS-enforced reduction with no
-ACL problem, but it has no network capability model at all: `internetClient`
+(`CreateRestrictedToken`, dropping admin and deny-only SIDs), spawning normally.
+The Job Object is not part of that trade — it is assigned either way, for
+lifetime hygiene — so the fallback swaps only the isolation mechanism. That is a
+genuine OS-enforced reduction with no ACL problem, but it has no network
+capability model at all: `internetClient`
 stops meaning anything and `capabilitiesForManifest()` becomes dead code. Taking
 that fallback requires rewriting `docs/sandbox.md`'s Windows row **downward**,
 not leaving it as-is. The guarantee documented must be the guarantee shipped.
@@ -249,11 +314,20 @@ not leaving it as-is. The guarantee documented must be the guarantee shipped.
   `degradedReason()` path needs to say something useful when it happens.
 - The all-or-nothing `internetClient` asymmetry remains open and documented.
 
-### One honesty item that is not code
+### Two honesty items that are not code
 
 The `win32.ts` comment calls the FFI binding "the tracked follow-up" and no such
 issue exists. Whatever ships, either the issue gets opened or the comment gets
 corrected. A claim like that should not outlive its referent.
+
+The larger one: **the Windows sandbox is documented as a mitigation that does
+not run.** `docs/architecture.md`'s threat table answers *Extension sandbox
+escape* with "AppContainer + orphan-reap on Windows", and
+`.claude/commands/nimbus-file-map.md` places orphan-reap "at Gateway startup".
+Neither half executes — `spawn()` throws and `reapOrphanedAppContainers` has no
+production caller. Both statements get corrected in the same commit that makes
+them true, and if the fallback of Section 4 is taken instead, they get corrected
+to whatever actually shipped.
 
 ## Acceptance criteria
 
@@ -268,7 +342,20 @@ corrected. A claim like that should not outlive its referent.
       the single manifest→policy derivation; `wrapServerSpec` is its only
       caller.
 - [ ] `NIMBUS_SANDBOX_POLICY_JSON` replaces `NIMBUS_SANDBOX_MANIFEST_JSON`
-      throughout, with no remaining references to the old name.
+      everywhere it is named — not only the ~15 test call sites, but
+      `docs/SECURITY-INVARIANTS.md` (three places, including the `D10` wiring
+      table row) and `.claude/commands/nimbus-security-invariants.md` (two),
+      all in the same commit per the invariant triple rule.
+- [ ] `reapOrphanedAppContainers` has a production caller, and recognises every
+      profile-name scheme this leg can create.
+- [ ] The sandboxed child is assigned to a Job Object with
+      `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; killing the gateway leaves no
+      surviving sandboxed process.
+- [ ] A policy path on a non-ACL filesystem fails closed with a cause the
+      runner can report, not a generic spawn error.
+- [ ] `docs/architecture.md`'s threat-table row and
+      `.claude/commands/nimbus-file-map.md`'s orphan-reap line describe what
+      actually runs.
 - [ ] The helper builds in CI on `windows-2025` and ships in both the Windows
       zip and the MSI.
 - [ ] `docs/sandbox.md`'s Windows section describes what actually shipped —
@@ -280,9 +367,12 @@ corrected. A claim like that should not outlive its referent.
 ## Open questions for the plan
 
 1. Rust + the `windows` crate, or C + MSVC? Decide from the ACL spike.
-2. Does the helper create the AppContainer profile per spawn, or create once and
-   derive the SID thereafter? Profile creation persists in the registry, so
-   per-spawn creation leaks state across runs.
+2. For connectors the profile is created once per extension id and derived
+   thereafter — the stable id makes that straightforward, and the reaper
+   collects it. The open half is one-shot executions, whose id scheme trades
+   registry/ACL hygiene against cross-execution isolation; see Section 1. That
+   choice belongs to the execution piece, under the two constraints stated
+   there.
 3. Should macOS get a real-spawn integration test in this piece, or does the
    cross-platform test cover it by construction? (It should be the latter, but
    confirm macOS actually exercises it in CI rather than skipping.)
