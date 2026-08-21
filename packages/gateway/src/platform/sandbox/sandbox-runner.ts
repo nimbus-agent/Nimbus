@@ -1,9 +1,9 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { platform } from "node:os";
-import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import type { SandboxPolicy } from "./sandbox-policy.ts";
 
 export interface SandboxSpawnOptions {
-  manifest: ExtensionManifest;
+  policy: SandboxPolicy;
   env: Record<string, string>;
   cwd: string;
   stdio?: SpawnOptions["stdio"];

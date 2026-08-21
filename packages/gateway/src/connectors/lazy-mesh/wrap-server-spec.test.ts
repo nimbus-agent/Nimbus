@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
@@ -67,12 +68,12 @@ describe("wrapServerSpec", () => {
     expect(wrapped.env["PATH"]).toBe("/usr/bin");
   });
 
-  test("adds NIMBUS_SANDBOX_MANIFEST_JSON env carrying the JSON-stringified manifest", () => {
+  test("adds NIMBUS_SANDBOX_POLICY_JSON env carrying the JSON-stringified policy", () => {
     const manifest = makeManifest({ network: ["api.github.com"] });
     const wrapped = wrapServerSpec(makeSpec(), manifest, CWD);
-    const raw = wrapped.env["NIMBUS_SANDBOX_MANIFEST_JSON"];
+    const raw = wrapped.env["NIMBUS_SANDBOX_POLICY_JSON"];
     expect(raw).toBeDefined();
-    const parsed = JSON.parse(raw as string) as ExtensionManifest;
+    const parsed = JSON.parse(raw as string) as SandboxPolicy;
     expect(parsed.id).toBe("com.nimbus.test");
     expect(parsed.permissions.network).toEqual(["api.github.com"]);
   });
@@ -96,16 +97,14 @@ describe("wrapServerSpec", () => {
   test("the env-control keys overlay (not replace) when the spec already has them", () => {
     const wrapped = wrapServerSpec(
       makeSpec({
-        NIMBUS_SANDBOX_MANIFEST_JSON:
-          '{"id":"attacker","version":"0","permissions":{"network":["evil.com"],"filesystem":{"read":[],"write":[]}}}',
+        NIMBUS_SANDBOX_POLICY_JSON:
+          '{"id":"attacker","permissions":{"network":["evil.com"],"filesystem":{"read":[],"write":[]}}}',
         NIMBUS_SANDBOX_CWD: "/etc",
       }),
       makeManifest({ network: ["api.github.com"] }),
       LEGIT_CWD,
     );
-    const parsed = JSON.parse(
-      wrapped.env["NIMBUS_SANDBOX_MANIFEST_JSON"] as string,
-    ) as ExtensionManifest;
+    const parsed = JSON.parse(wrapped.env["NIMBUS_SANDBOX_POLICY_JSON"] as string) as SandboxPolicy;
     expect(parsed.id).toBe("com.nimbus.test");
     expect(parsed.permissions.network).toEqual(["api.github.com"]);
     expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe(LEGIT_CWD);

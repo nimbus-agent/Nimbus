@@ -1,8 +1,11 @@
 import type { ChildProcess } from "node:child_process";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import type { PreflightCommandConfig } from "../config/nimbus-toml.ts";
-import type { ExtensionManifest } from "../extensions/manifest.ts";
-import { createSandboxRunner, type SandboxRunner } from "../platform/sandbox/index.ts";
+import {
+  createSandboxRunner,
+  type SandboxPolicy,
+  type SandboxRunner,
+} from "../platform/sandbox/index.ts";
 
 export interface PreflightRunParams {
   readonly ref: string;
@@ -19,13 +22,10 @@ export interface PreflightRunnerDeps {
   readonly now?: () => number;
 }
 
-/** Minimal manifest that grants the sandbox ONLY the configured cwd (no network, no other roots). */
-function preflightManifest(cwd: string): ExtensionManifest {
+/** Minimal policy that grants the sandbox ONLY the configured cwd (no network, no other roots). */
+function preflightPolicy(cwd: string): SandboxPolicy {
   return {
     id: "nimbus.preflight",
-    name: "preflight",
-    version: "1.0.0",
-    updateChannel: "stable",
     permissions: { network: [], filesystem: { read: [cwd], write: [cwd] } },
   };
 }
@@ -62,7 +62,7 @@ export async function runPreflightCommand(
   try {
     const runner = await (deps.createRunner ?? createSandboxRunner)();
     // cwd is OWNER-controlled local config (never caller-supplied), so this is a foot-gun guard,
-    // not a caller boundary: normalize to an absolute path so the sandbox manifest grants a
+    // not a caller boundary: normalize to an absolute path so the sandbox policy grants a
     // concrete root, never the gateway process's incidental cwd or a surprising relative path.
     const cwd = isAbsolute(cfg.cwd) ? cfg.cwd : resolvePath(cfg.cwd);
     const env: Record<string, string> = {
@@ -70,7 +70,7 @@ export async function runPreflightCommand(
       NIMBUS_PREFLIGHT_SURFACE: params.changedSurface.join(","),
     };
     const child = runner.spawn(cfg.command, [...cfg.args], {
-      manifest: preflightManifest(cwd),
+      policy: preflightPolicy(cwd),
       env,
       cwd,
       stdio: "ignore",

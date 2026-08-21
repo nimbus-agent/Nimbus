@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ExtensionManifest } from "../../extensions/manifest.ts";
-import { capabilitiesForManifest, createWin32SandboxRunner, profileNameFor } from "./win32.ts";
+import type { SandboxPolicy } from "./sandbox-policy.ts";
+import { capabilitiesForPolicy, createWin32SandboxRunner, profileNameFor } from "./win32.ts";
 
 // NO `describe.skipIf(process.platform !== "win32")` here — deliberately.
 // `win32.ts` contains no OS-dependent code and no FFI import: the AppContainer
@@ -24,15 +24,11 @@ afterAll(() => {
   rmSync(TMP_ROOT, { recursive: true, force: true });
 });
 
-function manifest(perms: Partial<ExtensionManifest["permissions"]> = {}): ExtensionManifest {
+function policy(perms: Partial<SandboxPolicy["permissions"]> = {}): SandboxPolicy {
   return {
     id: "com.nimbus.test",
-    version: "1.0.0",
-    entrypoint: "x.js",
-    runtime: "bun",
     permissions: { network: [], filesystem: { read: [], write: [] }, ...perms },
-    updateChannel: "stable",
-  } as ExtensionManifest;
+  };
 }
 
 describe("win32 sandbox", () => {
@@ -41,18 +37,18 @@ describe("win32 sandbox", () => {
   });
 
   it("returns internetClient capability when permissions.network is non-empty", () => {
-    const caps = capabilitiesForManifest(manifest({ network: ["api.github.com"] }));
+    const caps = capabilitiesForPolicy(policy({ network: ["api.github.com"] }));
     expect(caps).toContain("internetClient");
   });
 
   it("returns empty capability list when permissions.network is empty", () => {
-    const caps = capabilitiesForManifest(manifest());
+    const caps = capabilitiesForPolicy(policy());
     expect(caps).toEqual([]);
   });
 
   it("grants internetClient exactly once regardless of how many hosts are declared", () => {
-    const caps = capabilitiesForManifest(
-      manifest({ network: ["api.github.com", "gitlab.com", "slack.com"] }),
+    const caps = capabilitiesForPolicy(
+      policy({ network: ["api.github.com", "gitlab.com", "slack.com"] }),
     );
     expect(caps).toEqual(["internetClient"]);
   });
@@ -67,7 +63,7 @@ describe("createWin32SandboxRunner", () => {
     const runner = createWin32SandboxRunner();
     expect(() =>
       runner.spawn("bun", ["x.js"], {
-        manifest: manifest(),
+        policy: policy(),
         env: {},
         cwd: join(TMP_ROOT, "ext-cwd"),
       }),

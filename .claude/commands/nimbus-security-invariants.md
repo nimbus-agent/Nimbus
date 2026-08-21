@@ -43,7 +43,7 @@ The Phase 4 internal audit found three defenses (`extensionProcessEnv`, `checkLa
 
 Manifest SHA-256 is verified **once, at Gateway startup**, via `verifyExtensionsBestEffort` (wired from `platform/assemble.ts`). It hashes every enabled extension and compares against the stored `manifest_hash`/`entry_hash`, hard-disabling any mismatch. For `publisher` extensions it also runs the Ed25519 signature pass (`I16`).
 
-When a connector is later spawned, the verified manifest is serialized into the `NIMBUS_SANDBOX_MANIFEST_JSON` env var by `wrapServerSpec()` (see `I15` below) — there is **no** separate re-verification step immediately before spawn in production. (`verifyOneExtensionStrict` exists in `verify-extensions.ts` but currently has test-only callers.)
+When a connector is later spawned, the verified manifest is reduced to a `SandboxPolicy` (`policyFromManifest`) and serialized into the `NIMBUS_SANDBOX_POLICY_JSON` env var by `wrapServerSpec()` (see `I15` below) — there is **no** separate re-verification step immediately before spawn in production. (`verifyOneExtensionStrict` exists in `verify-extensions.ts` but currently has test-only callers.)
 
 When auditing, confirm the startup call site exists and that the per-extension hash check is reached; deleting it breaks the invariant.
 
@@ -70,8 +70,8 @@ When adding new IPC methods accessible from the UI:
 Every connector child process under `packages/gateway/src/connectors/lazy-mesh/` is executed inside a per-OS sandbox. The architecture is **Option A wrapper-shim**:
 
 1. Every `ServerSpec` literal in lazy-mesh (`mesh.ts`, `connector-spawns.ts`, `phase3-config.ts`, `user-mcp.ts`) is constructed and then immediately routed through `wrapServerSpec(...)` from `connectors/lazy-mesh/wrap-server-spec.ts` before being handed to MCPClient.
-2. `wrapServerSpec` rewrites `ServerSpec.command` to invoke `bun packages/gateway/src/platform/sandbox/sandbox-wrapper.ts`, preserves the original command/args as wrapper arguments, and serializes the per-connector sandbox manifest into the `NIMBUS_SANDBOX_MANIFEST_JSON` env var.
-3. The wrapper process reads the manifest from env, calls `createSandboxRunner()` (which selects `linux.ts` / `darwin.ts` / `win32.ts`), and invokes `runner.spawn(originalCmd, originalArgs, opts)`. **This is the single sandbox-execution boundary** — every extension child process passes through this exact call site.
+2. `wrapServerSpec` rewrites `ServerSpec.command` to invoke `bun packages/gateway/src/platform/sandbox/sandbox-wrapper.ts`, preserves the original command/args as wrapper arguments, and serializes the manifest-derived `SandboxPolicy` (`policyFromManifest`) into the `NIMBUS_SANDBOX_POLICY_JSON` env var.
+3. The wrapper process reads the policy from env, calls `createSandboxRunner()` (which selects `linux.ts` / `darwin.ts` / `win32.ts`), and invokes `runner.spawn(originalCmd, originalArgs, opts)`. **This is the single sandbox-execution boundary** — every extension child process passes through this exact call site.
 
 The rule a contributor follows is the same as the other "intrinsic" invariants (`I2`/`I5`/`I14`): **never construct an MCPClient `ServerSpec` under `connectors/lazy-mesh/` without immediately routing it through `wrapServerSpec(...)`**. Bypassing the wrapper means landlock/seccomp on Linux, seatbelt on macOS, and Job Objects on Windows are all skipped for that child.
 

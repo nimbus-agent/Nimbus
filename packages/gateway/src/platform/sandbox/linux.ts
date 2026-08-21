@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 
-import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import type { SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 import { buildDefaultSeccompFilter } from "./seccomp-filter.ts";
 
@@ -35,15 +35,15 @@ const log = pino(
 );
 
 export function decideNetworkMode(
-  manifest: ExtensionManifest,
+  policy: SandboxPolicy,
   helper: { helperAvailable: boolean },
 ): NetworkMode {
-  const hosts = manifest.permissions.network;
+  const hosts = policy.permissions.network;
   if (hosts.length === 0) return "no-net";
   return helper.helperAvailable ? "per-host" : "fallback";
 }
 
-export function buildBwrapArgv(manifest: ExtensionManifest, opts: BuildArgvOpts): string[] {
+export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): string[] {
   const argv: string[] = [
     "--unshare-pid",
     "--unshare-uts",
@@ -74,10 +74,10 @@ export function buildBwrapArgv(manifest: ExtensionManifest, opts: BuildArgvOpts)
   if (existsSync("/lib64")) {
     argv.push("--ro-bind", "/lib64", "/lib64");
   }
-  for (const p of manifest.permissions.filesystem.read) {
+  for (const p of policy.permissions.filesystem.read) {
     argv.push("--ro-bind", p, p);
   }
-  for (const p of manifest.permissions.filesystem.write) {
+  for (const p of policy.permissions.filesystem.write) {
     argv.push("--bind", p, p);
   }
   return argv;
@@ -138,8 +138,8 @@ export function createLinuxSandboxRunner(): SandboxRunner {
   return {
     platform: "linux",
     spawn(cmd: string, args: string[], opts: SandboxSpawnOptions): ChildProcess {
-      const mode = decideNetworkMode(opts.manifest, { helperAvailable: helper.available });
-      const bwrapArgv = buildBwrapArgv(opts.manifest, { mode, cwd: opts.cwd });
+      const mode = decideNetworkMode(opts.policy, { helperAvailable: helper.available });
+      const bwrapArgv = buildBwrapArgv(opts.policy, { mode, cwd: opts.cwd });
       bwrapArgv.push("--seccomp", "3", cmd, ...args);
 
       let spawnCmd: string;
@@ -147,7 +147,7 @@ export function createLinuxSandboxRunner(): SandboxRunner {
 
       if (mode === "per-host") {
         const helperArgs: string[] = [];
-        for (const host of opts.manifest.permissions.network) {
+        for (const host of opts.policy.permissions.network) {
           helperArgs.push("--allow", host);
         }
         helperArgs.push("--", "bwrap", ...bwrapArgv);

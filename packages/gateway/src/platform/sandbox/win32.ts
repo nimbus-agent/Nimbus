@@ -1,14 +1,14 @@
 import type { ChildProcess } from "node:child_process";
-import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import type { SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 
 export function profileNameFor(manifest: { id: string }): string {
   return `nimbus-ext-${manifest.id}`;
 }
 
-export function capabilitiesForManifest(manifest: ExtensionManifest): string[] {
+export function capabilitiesForPolicy(policy: SandboxPolicy): string[] {
   const caps: string[] = [];
-  if (manifest.permissions.network.length > 0) {
+  if (policy.permissions.network.length > 0) {
     caps.push("internetClient");
   }
   return caps;

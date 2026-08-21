@@ -40,7 +40,7 @@ describe("chatopsSlackBotServers (I1/I15 bot-token spawn spec)", () => {
     expect(spec?.env["SLACK_BOT_TOKEN"]).toBe("xoxb-1");
     expect(spec?.env["SLACK_APP_TOKEN"]).toBe("xapp-1");
     // I15: the spec must be sandbox-wrapped (wrapServerSpec adds the manifest + cwd env).
-    expect(spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
+    expect(spec?.env["NIMBUS_SANDBOX_POLICY_JSON"]).toBeDefined();
     expect(spec?.env["NIMBUS_SANDBOX_CWD"]).toBe("/cwd");
     expect(spec?.args.join(" ")).toContain("slack");
   });
@@ -63,7 +63,7 @@ describe("chatopsTeamsBotServers (I1/I15 bot-credential spawn spec)", () => {
     expect(spec).toBeDefined();
     expect(spec?.env["TEAMS_BOT_APP_ID"]).toBe("app-1");
     expect(spec?.env["TEAMS_BOT_APP_PASSWORD"]).toBe("pw-1");
-    expect(spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
+    expect(spec?.env["NIMBUS_SANDBOX_POLICY_JSON"]).toBeDefined();
     // No serviceUrl given → no TEAMS_BOT_SERVICE_URL key.
     expect(spec?.env["TEAMS_BOT_SERVICE_URL"]).toBeUndefined();
     // No microsoft.oauth in the bot vault entry → no Graph token injected (teams_user_info will

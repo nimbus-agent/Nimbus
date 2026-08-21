@@ -3,20 +3,20 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { parseNetworkEntry } from "../../extensions/permissions-validator.ts";
+import type { SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 
 interface SbplOpts {
   cwd: string;
   tmpdir: string;
-  manifest: ExtensionManifest;
+  policy: SandboxPolicy;
 }
 
 export function generateSbplProfile(opts: SbplOpts): string {
-  const hosts = opts.manifest.permissions.network;
-  const fsRead = opts.manifest.permissions.filesystem.read;
-  const fsWrite = opts.manifest.permissions.filesystem.write;
+  const hosts = opts.policy.permissions.network;
+  const fsRead = opts.policy.permissions.filesystem.read;
+  const fsWrite = opts.policy.permissions.filesystem.write;
 
   const lines: string[] = [
     "(version 1)",
@@ -63,7 +63,7 @@ export function createDarwinSandboxRunner(): SandboxRunner {
       const profile = generateSbplProfile({
         cwd: opts.cwd,
         tmpdir: sandboxDir,
-        manifest: opts.manifest,
+        policy: opts.policy,
       });
       writeFileSync(profilePath, profile);
       // Absolute path to the SIP-protected system binary — never resolve via

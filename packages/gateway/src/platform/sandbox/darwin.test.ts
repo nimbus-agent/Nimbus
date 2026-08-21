@@ -2,9 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { generateSbplProfile } from "./darwin.ts";
+import type { SandboxPolicy } from "./sandbox-policy.ts";
 
 // Real, unique temp root for the fake sandbox cwd/tmpdir strings (S5443). The
 // SBPL profile is pure string generation — these paths are never written to.
@@ -12,15 +11,11 @@ const TMP_ROOT = mkdtempSync(join(tmpdir(), "nimbus-sandbox-darwin-test-"));
 const CWD = join(TMP_ROOT, "cwd");
 const CWD_TMP = join(TMP_ROOT, "cwd-tmp");
 
-function manifest(perms: Partial<ExtensionManifest["permissions"]> = {}): ExtensionManifest {
+function policy(perms: Partial<SandboxPolicy["permissions"]> = {}): SandboxPolicy {
   return {
     id: "test.ext",
-    version: "1.0.0",
-    entrypoint: "x.js",
-    runtime: "bun",
     permissions: { network: [], filesystem: { read: [], write: [] }, ...perms },
-    updateChannel: "stable",
-  } as ExtensionManifest;
+  };
 }
 
 describe("generateSbplProfile", () => {
@@ -28,7 +23,7 @@ describe("generateSbplProfile", () => {
     const profile = generateSbplProfile({
       cwd: CWD,
       tmpdir: CWD_TMP,
-      manifest: manifest(),
+      policy: policy(),
     });
     expect(profile).toContain("(deny default)");
     expect(profile).toContain("(allow process-fork process-exec)");
@@ -38,7 +33,7 @@ describe("generateSbplProfile", () => {
     const profile = generateSbplProfile({
       cwd: CWD,
       tmpdir: CWD_TMP,
-      manifest: manifest({ network: ["api.github.com"] }),
+      policy: policy({ network: ["api.github.com"] }),
     });
     expect(profile).toMatch(/\(remote tcp "\*:443" \(host "api\.github\.com"\)\)/);
   });
@@ -47,7 +42,7 @@ describe("generateSbplProfile", () => {
     const profile = generateSbplProfile({
       cwd: CWD,
       tmpdir: CWD_TMP,
-      manifest: manifest({ network: ["imap.fastmail.com:993", "smtp.fastmail.com:465"] }),
+      policy: policy({ network: ["imap.fastmail.com:993", "smtp.fastmail.com:465"] }),
     });
     expect(profile).toMatch(/\(remote tcp "\*:993" \(host "imap\.fastmail\.com"\)\)/);
     expect(profile).toMatch(/\(remote tcp "\*:465" \(host "smtp\.fastmail\.com"\)\)/);
@@ -59,7 +54,7 @@ describe("generateSbplProfile", () => {
     const profile = generateSbplProfile({
       cwd: CWD,
       tmpdir: CWD_TMP,
-      manifest: manifest(),
+      policy: policy(),
     });
     expect(profile).not.toMatch(/\(allow network\*/);
   });
@@ -68,7 +63,7 @@ describe("generateSbplProfile", () => {
     const profile = generateSbplProfile({
       cwd: CWD,
       tmpdir: CWD_TMP,
-      manifest: manifest({ filesystem: { read: ["/home/u/docs"], write: [] } }),
+      policy: policy({ filesystem: { read: ["/home/u/docs"], write: [] } }),
     });
     expect(profile).toContain(`(subpath "/home/u/docs")`);
   });

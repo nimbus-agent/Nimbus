@@ -83,7 +83,7 @@ afterAll(() => {
 function readManifest(spec: ServerSpec): {
   permissions: { network: string[]; filesystem: { read: string[]; write: string[] } };
 } {
-  const raw = spec.env?.["NIMBUS_SANDBOX_MANIFEST_JSON"];
+  const raw = spec.env?.["NIMBUS_SANDBOX_POLICY_JSON"];
   expect(typeof raw).toBe("string");
   return JSON.parse(raw ?? "{}") as {
     permissions: { network: string[]; filesystem: { read: string[]; write: string[] } };
@@ -92,7 +92,7 @@ function readManifest(spec: ServerSpec): {
 
 function expectSandboxed(spec: ServerSpec, expectedHost?: string): void {
   expect(spec.command).toBe(process.execPath);
-  expect(spec.env?.["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
+  expect(spec.env?.["NIMBUS_SANDBOX_POLICY_JSON"]).toBeDefined();
   expect(spec.env?.["NIMBUS_SANDBOX_CWD"]).toBe(SANDBOX_CWD);
   if (expectedHost !== undefined) {
     const manifest = readManifest(spec);

@@ -1,6 +1,5 @@
 import { constants as osConstants } from "node:os";
-
-import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import type { SandboxPolicy } from "./sandbox-policy.ts";
 import { createSandboxRunner } from "./sandbox-runner.ts";
 
 function fatal(msg: string): never {
@@ -23,31 +22,31 @@ export async function runSandboxWrapper(args: readonly string[]): Promise<never>
   }
   const originalArgs = args.slice(1);
 
-  const manifestJson = process.env["NIMBUS_SANDBOX_MANIFEST_JSON"];
-  if (manifestJson === undefined || manifestJson === "") {
-    fatal("NIMBUS_SANDBOX_MANIFEST_JSON not set");
+  const policyJson = process.env["NIMBUS_SANDBOX_POLICY_JSON"];
+  if (policyJson === undefined || policyJson === "") {
+    fatal("NIMBUS_SANDBOX_POLICY_JSON not set");
   }
   const cwd = process.env["NIMBUS_SANDBOX_CWD"];
   if (cwd === undefined || cwd === "") {
     fatal("NIMBUS_SANDBOX_CWD not set");
   }
 
-  let manifest: ExtensionManifest;
+  let policy: SandboxPolicy;
   try {
-    manifest = JSON.parse(manifestJson) as ExtensionManifest;
+    policy = JSON.parse(policyJson) as SandboxPolicy;
   } catch (e) {
-    fatal(`invalid NIMBUS_SANDBOX_MANIFEST_JSON: ${(e as Error).message}`);
+    fatal(`invalid NIMBUS_SANDBOX_POLICY_JSON: ${(e as Error).message}`);
   }
 
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (k === "NIMBUS_SANDBOX_MANIFEST_JSON" || k === "NIMBUS_SANDBOX_CWD") continue;
+    if (k === "NIMBUS_SANDBOX_POLICY_JSON" || k === "NIMBUS_SANDBOX_CWD") continue;
     if (v !== undefined) childEnv[k] = v;
   }
 
   const runner = await createSandboxRunner();
   const child = runner.spawn(originalCmd, originalArgs, {
-    manifest,
+    policy,
     env: childEnv,
     cwd,
     stdio: "inherit",
