@@ -34,6 +34,7 @@ import {
   loadNimbusAutomationFromPath,
   loadNimbusBriefsFromPath,
   loadNimbusChatopsFromConfigDir,
+  loadNimbusCodeExecutionFromConfigDir,
   loadNimbusEmbeddingFromConfigDir,
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
@@ -60,6 +61,7 @@ import {
   loadNimbusVoiceFromConfigDir,
   parseNimbusAuditToml,
   parseNimbusAutomationToml,
+  parseNimbusCodeExecutionToml,
   parseNimbusFederationToml,
   parseNimbusIdentityToml,
   parseNimbusLanToml,
@@ -1692,5 +1694,55 @@ describe("loadNimbusNegotiateFromConfigDir", () => {
 
   test("a missing file yields the default (empty list)", () => {
     expect(loadNimbusNegotiateFromConfigDir(dir).personalSources).toEqual([]);
+  });
+});
+
+describe("[code_execution] config", () => {
+  test("defaults are off with the documented caps", () => {
+    const c = parseNimbusCodeExecutionToml("");
+    expect(c.enabled).toBe(false);
+    expect(c.maxWallClockMs).toBe(30_000);
+    expect(c.maxOutputBytes).toBe(1_048_576);
+    expect(c.allowedRuntimes).toEqual(["bun"]);
+  });
+
+  test("parses an explicit block", () => {
+    const c = parseNimbusCodeExecutionToml(
+      '[code_execution]\nenabled = true\nmax_wall_clock_ms = 5000\nmax_output_bytes = 2048\nallowed_runtimes = ["bun"]\n',
+    );
+    expect(c.enabled).toBe(true);
+    expect(c.maxWallClockMs).toBe(5000);
+    expect(c.maxOutputBytes).toBe(2048);
+  });
+
+  test("rejects non-positive limits rather than accepting them", () => {
+    const c = parseNimbusCodeExecutionToml(
+      "[code_execution]\nmax_wall_clock_ms = 0\nmax_output_bytes = -1\n",
+    );
+    expect(c.maxWallClockMs).toBe(30_000);
+    expect(c.maxOutputBytes).toBe(1_048_576);
+  });
+
+  test("an unknown runtime name in allowed_runtimes is dropped, not carried", () => {
+    const c = parseNimbusCodeExecutionToml(
+      '[code_execution]\nallowed_runtimes = ["bun", "cobol"]\n',
+    );
+    expect(c.allowedRuntimes).toEqual(["bun"]);
+  });
+
+  test("allowed_runtimes is normalised to lowercase", () => {
+    // The gate compares this array against the registry's own lowercase id. If either side stopped
+    // normalising, `allowed_runtimes = ["Bun"]` would silently refuse every execution.
+    const c = parseNimbusCodeExecutionToml('[code_execution]\nallowed_runtimes = ["BUN"]\n');
+    expect(c.allowedRuntimes).toEqual(["bun"]);
+  });
+
+  test("a missing file yields the defaults", () => {
+    const d = mkdtempSync(join(tmpdir(), "nimbus-cfg-"));
+    try {
+      expect(loadNimbusCodeExecutionFromConfigDir(d).enabled).toBe(false);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });

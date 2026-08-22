@@ -537,6 +537,107 @@ export function loadNimbusLanFromConfigDir(configDir: string): NimbusLanToml {
   return loadNimbusLanFromPath(join(configDir, "nimbus.toml"));
 }
 
+/**
+ * Runtime ids this build can actually execute. Config naming an unknown id drops it, rather than
+ * carrying a name no registry can resolve all the way to a spawn attempt.
+ */
+export const KNOWN_EXEC_RUNTIMES = ["bun"] as const;
+
+export type NimbusCodeExecutionToml = {
+  enabled: boolean;
+  maxWallClockMs: number;
+  maxOutputBytes: number;
+  allowedRuntimes: string[];
+};
+
+/**
+ * DEFAULT OFF. With `enabled = false` the exec gate refuses before it ever reaches consent, so a
+ * fresh install has no arbitrary-code-execution path at all and the capability's existence cannot
+ * be probed by triggering a consent prompt.
+ */
+export const DEFAULT_NIMBUS_CODE_EXECUTION_TOML: NimbusCodeExecutionToml = {
+  enabled: false,
+  maxWallClockMs: 30_000,
+  maxOutputBytes: 1_048_576,
+  allowedRuntimes: ["bun"],
+};
+
+/**
+ * Normalise to lowercase and drop unknown ids.
+ *
+ * The lowercasing is load-bearing, not cosmetic: the exec gate compares this array against the
+ * runtime registry's own lowercase id, so if this stopped normalising, `allowed_runtimes = ["Bun"]`
+ * would silently refuse every execution.
+ */
+function parseAllowedRuntimes(valRaw: string): string[] {
+  const known = new Set<string>(KNOWN_EXEC_RUNTIMES);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of parseStringArray(valRaw)) {
+    const id = v.trim().toLowerCase();
+    if (id === "" || seen.has(id) || !known.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+function applyNimbusCodeExecutionKey(
+  out: Partial<NimbusCodeExecutionToml>,
+  key: string,
+  valRaw: string,
+): void {
+  switch (key) {
+    case "enabled": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.enabled = b;
+      break;
+    }
+    case "max_wall_clock_ms": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n > 0) out.maxWallClockMs = n;
+      break;
+    }
+    case "max_output_bytes": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n > 0) out.maxOutputBytes = n;
+      break;
+    }
+    case "allowed_runtimes":
+      out.allowedRuntimes = parseAllowedRuntimes(valRaw);
+      break;
+    default:
+      break;
+  }
+}
+
+function parseNimbusTomlCodeExecutionSection(source: string): Partial<NimbusCodeExecutionToml> {
+  const out: Partial<NimbusCodeExecutionToml> = {};
+  forEachSectionEntry(source, "[code_execution]", (key, valRaw) => {
+    applyNimbusCodeExecutionKey(out, key, valRaw);
+  });
+  return out;
+}
+
+export function parseNimbusCodeExecutionToml(
+  raw: string,
+  defaults: NimbusCodeExecutionToml = DEFAULT_NIMBUS_CODE_EXECUTION_TOML,
+): NimbusCodeExecutionToml {
+  return { ...defaults, ...parseNimbusTomlCodeExecutionSection(raw) };
+}
+
+export function loadNimbusCodeExecutionFromPath(tomlPath: string): NimbusCodeExecutionToml {
+  return loadTomlSection(
+    tomlPath,
+    DEFAULT_NIMBUS_CODE_EXECUTION_TOML,
+    parseNimbusCodeExecutionToml,
+  );
+}
+
+export function loadNimbusCodeExecutionFromConfigDir(configDir: string): NimbusCodeExecutionToml {
+  return loadNimbusCodeExecutionFromPath(join(configDir, "nimbus.toml"));
+}
+
 export type NimbusFederationToml = {
   enabled: boolean;
   consentTimeoutSeconds: number;
