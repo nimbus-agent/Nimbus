@@ -90,6 +90,15 @@ describe("[code_execution] config", () => {
     );
     expect(c.allowedRuntimes).toEqual(["bun"]);
   });
+
+  test("allowed_runtimes is normalised to lowercase", () => {
+    // The gate compares this array against the registry's own lowercase id. If either side stopped
+    // normalising, `allowed_runtimes = ["Bun"]` would silently refuse every execution.
+    const c = parseNimbusCodeExecutionToml(
+      `[code_execution]\nallowed_runtimes = ["BUN"]\n`,
+    );
+    expect(c.allowedRuntimes).toEqual(["bun"]);
+  });
 });
 ```
 
@@ -751,6 +760,39 @@ describe("runConfined", () => {
     expect(child.killed.length).toBeGreaterThan(0);
   });
 
+  test("the cap counts BYTES, not UTF-16 code units", async () => {
+    const child = fakeChild();
+    // 4 emoji = 16 UTF-8 bytes but only 8 code units. A code-unit cap of 10 would let all four
+    // through; a byte cap of 10 must not.
+    const p = runConfined(fakeRunner(child), "bun", [], {
+      policy: POLICY,
+      cwd: "/tmp",
+      maxOutputBytes: 10,
+      maxWallClockMs: 5000,
+    });
+    child.stdout.write(Buffer.from("😀😀😀😀", "utf8"));
+    const r = await p;
+    expect(r.truncated).toBe(true);
+    expect(Buffer.byteLength(r.stdout, "utf8")).toBeLessThanOrEqual(10);
+  });
+
+  test("a multi-byte character split across two chunks decodes intact", async () => {
+    const child = fakeChild();
+    const p = runConfined(fakeRunner(child), "bun", [], {
+      policy: POLICY,
+      cwd: "/tmp",
+      maxOutputBytes: 1024,
+      maxWallClockMs: 5000,
+    });
+    const emoji = Buffer.from("😀", "utf8"); // 4 bytes
+    child.stdout.write(emoji.subarray(0, 2));
+    child.stdout.write(emoji.subarray(2));
+    child.emit("close", 0);
+    const r = await p;
+    // Decoding each chunk on arrival would give two U+FFFD here instead.
+    expect(r.stdout).toBe("😀");
+  });
+
   test("KILLS the process when the wall clock expires", async () => {
     const child = fakeChild();
     const r = await runConfined(fakeRunner(child), "bun", [], {
@@ -844,8 +886,8 @@ export function runConfined(
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    let out = "";
-    let err = "";
+    const outChunks: Uint8Array[] = [];
+    const errChunks: Uint8Array[] = [];
     let bytes = 0;
     let truncated = false;
     let reason: TerminationReason = "exited";
@@ -873,31 +915,45 @@ export function runConfined(
       if (escalation !== undefined) clearTimeout(escalation);
       resolve({
         exitCode,
-        stdout: out,
-        stderr: err,
+        stdout: decode(outChunks),
+        stderr: decode(errChunks),
         durationMs: now() - started,
         truncated,
         terminationReason: reason,
       });
     }
 
-    function absorb(chunk: unknown, into: "out" | "err"): void {
-      const text = String(chunk);
+    /**
+     * Accumulate raw BYTES, never decoded strings.
+     *
+     * Two separate reasons, both of which bite on non-ASCII output. `maxOutputBytes` is a byte
+     * budget, but a decoded string's `.length` counts UTF-16 code units -- one emoji is 4 bytes and
+     * 2 code units, so a 1 MiB cap measured that way admits up to ~4 MiB. And decoding per chunk is
+     * wrong on its own terms: a multi-byte character split across a chunk boundary decodes to
+     * U+FFFD, silently corrupting output that was never truncated at all. Buffer bytes, decode once.
+     */
+    function absorb(chunk: unknown, into: Uint8Array[]): void {
+      const buf =
+        chunk instanceof Uint8Array ? chunk : new TextEncoder().encode(String(chunk));
       const room = opts.maxOutputBytes - bytes;
       if (room <= 0) return;
-      const slice = text.length > room ? text.slice(0, room) : text;
-      bytes += slice.length;
-      if (into === "out") out += slice;
-      else err += slice;
-      if (text.length > room) {
+      const slice = buf.byteLength > room ? buf.subarray(0, room) : buf;
+      bytes += slice.byteLength;
+      into.push(slice);
+      if (buf.byteLength > room) {
         truncated = true;
         if (reason === "exited") reason = "output_cap";
         stop();
       }
     }
 
-    child.stdout?.on("data", (c: unknown) => absorb(c, "out"));
-    child.stderr?.on("data", (c: unknown) => absorb(c, "err"));
+    // Cutting at a byte boundary can split the final multi-byte character; a non-fatal TextDecoder
+    // renders that tail as U+FFFD. Acceptable, and never silent -- `truncated: true` says why.
+    const decode = (chunks: Uint8Array[]): string =>
+      new TextDecoder().decode(Buffer.concat(chunks));
+
+    child.stdout?.on("data", (c: unknown) => absorb(c, outChunks));
+    child.stderr?.on("data", (c: unknown) => absorb(c, errChunks));
     child.on("error", () => settle(null));
     child.on("close", (code: number | null) => settle(code));
   });
@@ -1246,6 +1302,14 @@ describe("runExecution (I33)", () => {
     expect(reads).toBe(1);
   });
 
+  test("a DENIED inline execution leaves no scratch file behind", async () => {
+    const before = readdirSync(tmpdir()).filter((d) => d.startsWith("nimbus-exec-"));
+    const { d } = deps({ requestApproval: async () => false });
+    await runExecution(REQ, d as never);
+    const after = readdirSync(tmpdir()).filter((d) => d.startsWith("nimbus-exec-"));
+    expect(after.length).toBe(before.length);
+  });
+
   test("appends exactly one code.execute audit row per outcome", async () => {
     const { d } = deps({ requestApproval: async () => false });
     await runExecution(REQ, d as never);
@@ -1383,6 +1447,11 @@ export async function runExecution(
         : req.filePath !== undefined
           ? resolveRuntimeForFile(req.filePath)
           : resolveRuntimeById("bun");
+    // Both sides of this comparison are already canonical lowercase -- `parseAllowedRuntimes`
+    // (Task 1) lowercases config entries, and `resolveRuntimeById` (Task 2) lowercases the lookup
+    // key, so `runtime.id` is the registry's own literal. Neither site knows the other depends on
+    // it, so the case-insensitivity test in Task 2 is what keeps this comparison honest; do not
+    // "simplify" either lowercase away.
     if (!deps.config.allowedRuntimes.includes(runtime.id)) {
       throw new ExecGateError("ERR_EXEC_RUNTIME_NOT_ALLOWED", `runtime not allowed: ${runtime.id}`);
     }
@@ -1508,7 +1577,39 @@ Because the scratch directory must be readable by the sandboxed child, it has to
 
 and drop the `writeScratchScript` call from step 7, which now only needs `runtime.argvFor(scriptPath)`.
 
-Note the ordering consequence worth keeping: the scratch file is written **before** consent, so a denied execution leaves a temp file behind. Delete it in a `finally` block — a rejected body sitting in `tmpdir()` is code the owner explicitly refused to run.
+The scratch file is written **before** consent, so a denied execution would leave a temp file behind — a body the owner explicitly refused to run, sitting in `tmpdir()`. It must be cleaned up on *every* path, which means hoisting the handle above the `try` so `finally` can see it:
+
+```ts
+export async function runExecution(
+  req: RunExecutionRequest,
+  deps: ExecGateDeps,
+): Promise<ExecGateOutcome> {
+  const executionId = deps.newId();
+  // Hoisted: `finally` must be able to clean up a scratch dir created deep inside `try`.
+  let scratch: { dir: string; file: string } | undefined;
+
+  try {
+    /* ... steps 1-7 exactly as below, assigning `scratch = writeScratchScript(...)` ... */
+  } catch (e) {
+    /* ... refusal audit as below ... */
+  } finally {
+    // Runs after `await runConfined(...)` has settled, so the child is gone and its stdout/stderr
+    // are already captured -- deleting earlier would pull the script out from under a live process.
+    // `force: true` keeps a already-removed dir from masking the real error on the catch path.
+    if (scratch !== undefined) {
+      try {
+        rmSync(scratch.dir, { recursive: true, force: true });
+      } catch {
+        // A leaked temp dir must never turn a successful execution into a failure.
+      }
+    }
+  }
+}
+```
+
+Import `rmSync` from `node:fs` alongside `mkdtempSync`/`writeFileSync`.
+
+Two properties this ordering gives, both worth asserting in the tests: the directory is gone after a **denied** execution, and it is still present *while* the child runs (implicitly proven by the integration test in Task 10, which executes a real scratch script successfully — that test fails outright if cleanup races the spawn).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1671,6 +1772,28 @@ const HANDLERS: RpcMethodHandlerMap<ExecRpcCtx> = {
 ```
 
 Every field crossing the IPC boundary is `unknown` until validated — no `as` casts on `params`.
+
+**`requireString` and `stringArray` must be defined locally in `exec-rpc.ts`.** There is no shared IPC validation module: `asRecord` comes from `../connectors/unknown-record.ts`, but `requireString` is a module-private helper redefined in **nine** files under `packages/gateway/src/ipc/`, with three different signatures across them. Copy share-rpc's variant (`share-rpc.ts:108`), which takes `unknown`:
+
+```ts
+function requireString(params: unknown, key: string): string {
+  const rec = asRecord(params);
+  const v = rec === undefined ? undefined : rec[key];
+  if (typeof v !== "string" || v.length === 0) {
+    throw new ExecRpcError(-32602, `ERR_INVALID_PARAMS: ${key} (non-empty string) required`);
+  }
+  return v;
+}
+
+/** Every element must be a string; a non-array or a mixed array yields an empty grant, never a
+ *  partial one -- a half-parsed grant list is a grant the caller did not ask for. */
+function stringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
+}
+```
+
+Do **not** extract a shared helper as part of this slice. Consolidating nine copies with three signatures is a real cleanup, but it touches nine unrelated RPC modules and would put most of this PR's diff outside the feature — out of scope here, and better as its own change.
 
 - [ ] **Step 4: Register the dispatcher**
 
@@ -2123,3 +2246,20 @@ Title must carry the conventional-commit type — it is what release-please pars
 The description becomes the permanent commit body; include the §9 known bounds from the spec verbatim, so the slice's limits are recorded where they cannot be lost.
 
 Then: **wait for `PR quality — required gates` to report green before merging**, or use `gh pr merge --squash --auto`. Merging before green is this repo's most common cause of a red `main`.
+
+---
+
+## Review disposition (2026-08-22)
+
+All four items from [the plan review](./2026-08-22-s2-sandboxed-code-execution-review.md) were accepted. One carried a suggested fix that pointed at a file which does not exist; one deferred item is recorded below.
+
+| # | Item | Disposition |
+|---|---|---|
+| Q1 | Output cap counts code units, not bytes | **Fixed, strengthened** (Task 5) — accumulate raw bytes and decode once, which also fixes per-chunk decoding of a split multi-byte character. Two tests added. |
+| Q2 | Scratch-dir cleanup shown only in prose | **Fixed** (Task 7) — `scratch` hoisted above the `try`; `finally` with `rmSync(..., {recursive, force})`; swallowed so a leaked temp dir cannot fail a good run. Test added. |
+| Q3 | Undefined validation helpers | **Fixed, with a different answer** (Task 8) — `ipc/_lib/validation.ts` does not exist; `requireString` is module-private in **nine** IPC files across three signatures. Defined locally, copying `share-rpc.ts:108`. |
+| Q4 | Runtime-id case sensitivity | **Already correct; made explicit** (Tasks 1, 7) — both sides already lowercase. Comment + test added so the coupling is stated rather than coincidental. |
+
+**Deferred:** extracting a shared `requireString`/`stringArray` into a real IPC validation module. Nine duplicated definitions with three signatures is a genuine cleanup, but doing it here would put most of this PR's diff in unrelated RPC modules. It belongs in its own change.
+
+**Q1 was the substantive find.** `text.length` counts UTF-16 code units against a byte budget, so a 1 MiB cap would admit roughly 4 MiB of emoji or CJK output. Writing the fix surfaced a second defect the review did not name: decoding each chunk on arrival corrupts any multi-byte character that straddles a chunk boundary, turning it into U+FFFD — silent corruption of output that was never truncated. Buffering bytes and decoding once fixes both.
