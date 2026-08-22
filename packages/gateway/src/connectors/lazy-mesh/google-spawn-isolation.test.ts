@@ -7,7 +7,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { getConnectorHealth } from "../health.ts";
 import { ensureGoogleDriveMcp } from "./connector-spawns.ts";
 import { LAZY_MESH } from "./keys.ts";
-import type { MeshSpawnContext, ServerSpec } from "./slot.ts";
+import type { MeshSpawnContext } from "./slot.ts";
 
 /**
  * F11 — one dead Google credential must not disable the other three Google connectors.
@@ -56,17 +56,16 @@ function healthDb(): Database {
 interface Harness {
   readonly ctx: MeshSpawnContext;
   readonly warnings: Array<{ bindings: Record<string, unknown>; msg?: string }>;
-  serverIds(): string[];
   clientWasSet(): boolean;
 }
 
 function harness(vault: NimbusVault, db?: Database): Harness {
   const warnings: Array<{ bindings: Record<string, unknown>; msg?: string }> = [];
-  // `MCPClient` exposes the map it was constructed with as `serverConfigs`. Reading an
-  // internal is the trade for observing WHICH connectors booted without spawning any of
-  // them; the alternative — asserting only on the health/log side effects — would leave the
-  // central claim of this file, "the other three still start", untested.
-  const clients = new Map<string, { serverConfigs: Record<string, ServerSpec> }>();
+  // Only WHETHER a client was built is read from the map — WHICH connectors it holds comes
+  // from `ensureGoogleDriveMcp`'s return value. An earlier draft read `MCPClient`'s
+  // `serverConfigs`, which passed alone and failed in the full suite: another file
+  // `mock.module`s `@mastra/mcp`, and the stub has no such property.
+  const clients = new Map<string, unknown>();
   const ctx: MeshSpawnContext = {
     vault,
     logger: {
@@ -79,7 +78,7 @@ function harness(vault: NimbusVault, db?: Database): Harness {
     clearLazyIdle: (): void => {},
     getLazyClient: (): undefined => undefined,
     setLazyClient: (key, client): void => {
-      clients.set(key, client as unknown as { serverConfigs: Record<string, ServerSpec> });
+      clients.set(key, client);
     },
     bumpToolsEpoch: (): void => {},
     scheduleLazyDisconnect: (): void => {},
@@ -87,10 +86,6 @@ function harness(vault: NimbusVault, db?: Database): Harness {
   return {
     ctx,
     warnings,
-    serverIds: (): string[] => {
-      const c = clients.get(LAZY_MESH.googleBundle);
-      return c === undefined ? [] : Object.keys(c.serverConfigs).sort();
-    },
     clientWasSet: (): boolean => clients.has(LAZY_MESH.googleBundle),
   };
 }
@@ -102,9 +97,9 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     await vault.set("google_gmail.oauth", VALID_TOKEN);
     const h = harness(vault);
 
-    await ensureGoogleDriveMcp(h.ctx);
+    const registered = await ensureGoogleDriveMcp(h.ctx);
 
-    expect(h.serverIds()).toEqual(["gmail"]);
+    expect(registered).toEqual(["gmail"]);
   });
 
   test("two dead credentials still leave the one healthy connector running", async () => {
@@ -116,9 +111,9 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     await vault.set("google_gmail.oauth", VALID_TOKEN);
     const h = harness(vault);
 
-    await ensureGoogleDriveMcp(h.ctx);
+    const registered = await ensureGoogleDriveMcp(h.ctx);
 
-    expect(h.serverIds()).toEqual(["gmail"]);
+    expect(registered).toEqual(["gmail"]);
   });
 
   test("the failure is attributed to the service that owns the credential", async () => {
@@ -169,8 +164,8 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     await vault.set("google.oauth", VALID_TOKEN);
     const h = harness(vault);
 
-    await ensureGoogleDriveMcp(h.ctx);
+    const registered = await ensureGoogleDriveMcp(h.ctx);
 
-    expect(h.serverIds()).toEqual(["gmail", "google_drive", "google_meet", "google_photos"]);
+    expect(registered).toEqual(["gmail", "google_drive", "google_meet", "google_photos"]);
   });
 });

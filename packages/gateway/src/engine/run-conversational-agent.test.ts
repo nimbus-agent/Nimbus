@@ -525,3 +525,68 @@ describe("negation disclosures", () => {
     });
   });
 });
+
+describe("context-truncation disclosure reaches the reply (F14)", () => {
+  /**
+   * The line builder is unit-tested next door; what is asserted here is the WIRE. `ask` served
+   * a numbered list of 8 CloudWatch log groups to a user who has 16, with no ellipsis and no
+   * caveat — an answer no reader can distinguish from a correct one. The disclosure is only
+   * worth anything if it survives the same path the model's text takes.
+   */
+  const agentReplying = (text: string): Agent =>
+    ({ generate: mock(async () => ({ text })) }) as unknown as Agent;
+
+  test("a truncated context appends the note to the returned reply", async () => {
+    const r = await runConversationalAgent({
+      agent: agentReplying("1. alpha\n2. beta"),
+      input: "list my log groups",
+      stream: false,
+      sendChunk: () => {},
+      localContext: "Indexed Nimbus context: ...",
+      localContextTruncation: { shown: 8, total: 16, atLeast: false },
+    });
+    expect(r.reply).toContain("1. alpha");
+    expect(r.reply).toContain("8 indexed items");
+    expect(r.reply).toContain("16 match");
+  });
+
+  test("a streaming turn gets the note as a chunk, not only in the return value", async () => {
+    // A streaming client renders chunks and never reads the returned string, so appending only
+    // to `reply` would leave exactly the interactive path — the one a human reads — undisclosed.
+    const chunks: string[] = [];
+    const streamingAgent = {
+      stream: mock(async () => ({ fullStream: mockAgentTextDeltaStream() })),
+    } as unknown as Agent;
+    await runConversationalAgent({
+      agent: streamingAgent,
+      input: "list my log groups",
+      stream: true,
+      sendChunk: (t) => chunks.push(t),
+      localContext: "Indexed Nimbus context: ...",
+      localContextTruncation: { shown: 8, total: 16, atLeast: false },
+    });
+    expect(chunks.join("")).toContain("sample, not the complete set");
+  });
+
+  test("an untruncated context appends nothing", async () => {
+    const r = await runConversationalAgent({
+      agent: agentReplying("1. alpha"),
+      input: "list my log groups",
+      stream: false,
+      sendChunk: () => {},
+      localContext: "Indexed Nimbus context: ...",
+      localContextTruncation: { shown: 3, total: 3, atLeast: false },
+    });
+    expect(r.reply).toBe("1. alpha");
+  });
+
+  test("no context at all appends nothing", async () => {
+    const r = await runConversationalAgent({
+      agent: agentReplying("plain answer"),
+      input: "hello",
+      stream: false,
+      sendChunk: () => {},
+    });
+    expect(r.reply).toBe("plain answer");
+  });
+});

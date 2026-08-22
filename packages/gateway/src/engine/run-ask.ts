@@ -11,6 +11,7 @@ import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import type { ContextTruncation } from "./context-truncation-disclosure.ts";
 import {
   bindConsentChannel,
   type ExecutorDelegationDep,
@@ -169,7 +170,9 @@ async function answerConversationally(
     priorTurns,
     ...(p.conversationalAgent === undefined ? {} : { agent: p.conversationalAgent }),
     ...(p.llmRouter === undefined ? {} : { llmRouter: p.llmRouter }),
-    ...(localContext === undefined ? {} : { localContext }),
+    ...(localContext === undefined
+      ? {}
+      : { localContext: localContext.text, localContextTruncation: localContext.truncation }),
     ...(p.devil === true ? { devil: true } : {}),
     // Resolved here rather than at gateway boot so an edit to the active profile's toml is
     // picked up with no restart (D3). No logger: the boot-time resolution in
@@ -285,6 +288,19 @@ async function dispatchPlan(p: RunAskParams, plan: PlanResult): Promise<{ reply:
 }
 
 const LOCAL_CONTEXT_ITEM_LIMIT = 8;
+/**
+ * How far the primary ranked search looks before the context is sliced to
+ * {@link LOCAL_CONTEXT_ITEM_LIMIT}.
+ *
+ * The context budget stays 8; this exists only so the answer can SAY how much it left out.
+ * Before it, the search itself asked for 8, so nothing downstream could tell "8 matches" from
+ * "800 matches, of which you are seeing 8" — and `ask` served the second as the first.
+ *
+ * A ceiling rather than a full count because the ranked search fuses FTS with vector hits and
+ * has no cheap `COUNT(*)`. When the probe comes back full the total is reported as a FLOOR
+ * ("at least 100"), never as an exact number the query cannot support.
+ */
+const LOCAL_CONTEXT_TOTAL_PROBE_LIMIT = 100;
 const LOCAL_CONTEXT_PREVIEW_MAX_CHARS = 900;
 const LOCAL_CONTEXT_QUOTED_QUERY_LIMIT = 4;
 
@@ -403,10 +419,15 @@ function githubIssueContextItemsForRepo(
   });
 }
 
+interface LocalIndexedContext {
+  readonly text: string;
+  readonly truncation: ContextTruncation;
+}
+
 async function buildLocalIndexedContext(
   localIndex: LocalIndex,
   input: string,
-): Promise<string | undefined> {
+): Promise<LocalIndexedContext | undefined> {
   const query = input.trim();
   if (query === "") {
     return undefined;
@@ -427,12 +448,14 @@ async function buildLocalIndexedContext(
         }
       }
     };
-    addRankedResults(
-      await localIndex.searchRankedAsync(
-        { name: query, limit: LOCAL_CONTEXT_ITEM_LIMIT },
-        { semantic: true, contextChunks: 2 },
-      ),
+    // Probe wide, serve narrow. `primary.length` is the only honest source for "how many
+    // match" — every other search below is itself capped, so counting `byId` would just
+    // re-measure the truncation instead of the substrate.
+    const primary = await localIndex.searchRankedAsync(
+      { name: query, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT },
+      { semantic: true, contextChunks: 2 },
     );
+    addRankedResults(primary.slice(0, LOCAL_CONTEXT_ITEM_LIMIT));
     for (const quotedQuery of extractQuotedSearchQueries(query)) {
       addRankedResults(
         localIndex.searchRanked({ name: quotedQuery, limit: LOCAL_CONTEXT_ITEM_LIMIT }),
@@ -453,10 +476,20 @@ async function buildLocalIndexedContext(
     const contextItems = [...byId.values()]
       .slice(0, LOCAL_CONTEXT_ITEM_LIMIT)
       .map((item, idx) => ({ ...item, rank: idx + 1 }));
-    return `Indexed Nimbus context:\n${wrapToolOutput(
-      { service: "nimbus", tool: "localIndex.searchRanked" },
-      contextItems,
-    )}`;
+    return {
+      text: `Indexed Nimbus context:\n${wrapToolOutput(
+        { service: "nimbus", tool: "localIndex.searchRanked" },
+        contextItems,
+      )}`,
+      truncation: {
+        shown: contextItems.length,
+        // `byId` can hold more than the probe found — the quoted-query and repo-slug passes
+        // add items the primary search missed — so the total is the larger of the two. It is
+        // still a floor, never an upper bound on what the index holds.
+        total: Math.max(primary.length, byId.size),
+        atLeast: primary.length >= LOCAL_CONTEXT_TOTAL_PROBE_LIMIT,
+      },
+    };
   } catch (e) {
     runAskLog.warn({ err: e }, "failed to build local indexed context for local LLM");
     return undefined;

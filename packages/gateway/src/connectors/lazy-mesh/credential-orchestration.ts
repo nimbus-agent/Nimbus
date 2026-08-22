@@ -17,7 +17,12 @@ export type CredentialSpawners = {
   readonly ensureDiscordMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureGithubMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureGitlabMcp: (ctx: MeshSpawnContext) => Promise<void>;
-  readonly ensureGoogleDriveMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  /**
+   * Resolves to the connectors it registered, unlike its 24 siblings. The value is dropped by
+   * every caller here; it exists so a test can observe WHICH Google connectors survived a bad
+   * credential without reading an `MCPClient` internal that another test file mocks away.
+   */
+  readonly ensureGoogleDriveMcp: (ctx: MeshSpawnContext) => Promise<readonly string[]>;
   readonly ensureJenkinsMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureJiraMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureKubernetesMcp: (ctx: MeshSpawnContext) => Promise<void>;

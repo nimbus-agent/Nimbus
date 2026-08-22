@@ -241,7 +241,11 @@ export class LazyConnectorMesh {
   }
 
   async ensureGoogleDriveRunning(): Promise<void> {
-    return ensureGoogleDriveMcp(this.spawnContext);
+    // The value is deliberately dropped here. `ensureGoogleDriveMcp` reports which connectors
+    // it registered so a test can observe fault isolation without reaching into `MCPClient`;
+    // the MESH delegator's contract is "make it running", shared with eight sibling methods
+    // that all resolve to nothing, and widening one of them would be noise at every call site.
+    await ensureGoogleDriveMcp(this.spawnContext);
   }
 
   async ensureMicrosoftBundleRunning(): Promise<void> {

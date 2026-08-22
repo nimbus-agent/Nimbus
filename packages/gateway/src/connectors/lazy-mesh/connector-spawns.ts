@@ -106,13 +106,19 @@ function recordGoogleCredentialFailure(
  * Starts Google Drive / Gmail / Google Photos MCP subprocesses for which a vault
  * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
  * token exists (per-service keys or legacy `google.oauth`). Each server gets its own access token.
+ *
+ * Returns the service ids actually registered, sorted. Every production caller ignores it; it
+ * exists because WHICH connectors survived a bad credential is now the interesting fact about
+ * this function, and the alternative — reading `MCPClient`'s `serverConfigs` from a test — broke
+ * the moment another file in the same run `mock.module`d `@mastra/mcp` away. An observation that
+ * depends on a third-party internal is one someone else's mock can silently delete.
  */
-export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void> {
+export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<readonly string[]> {
   const slotKey = LAZY_MESH.googleBundle;
   ctx.clearLazyIdle(slotKey);
   if (ctx.getLazyClient(slotKey) !== undefined) {
     ctx.scheduleLazyDisconnect(slotKey);
-    return;
+    return [];
   }
   const googleServers: Record<string, ServerSpec> = {};
   for (const id of GOOGLE_BUNDLE_IDS) {
@@ -146,8 +152,9 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
       ctx,
     );
   }
-  if (Object.keys(googleServers).length === 0) {
-    return;
+  const registered = Object.keys(googleServers).sort();
+  if (registered.length === 0) {
+    return registered;
   }
   ctx.setLazyClient(
     slotKey,
@@ -158,6 +165,7 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
   );
   ctx.bumpToolsEpoch();
   ctx.scheduleLazyDisconnect(slotKey);
+  return registered;
 }
 
 /**

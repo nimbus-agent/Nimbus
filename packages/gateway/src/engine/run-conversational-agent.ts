@@ -4,6 +4,7 @@ import type { NimbusPersonaToml } from "../config/persona.ts";
 import { Config } from "../config.ts";
 import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
+import { type ContextTruncation, contextTruncationLine } from "./context-truncation-disclosure.ts";
 import { applyDevilAdvocate } from "./devil-advocate.ts";
 import { agentErrorFromCaughtError } from "./gateway-agent-error.ts";
 import { drainNegationDisclosures } from "./negation-disclosure.ts";
@@ -23,6 +24,12 @@ export type RunConversationalAgentParams = {
   sendChunk: (text: string) => void;
   priorTurns?: ReadonlyArray<{ role: "user" | "assistant" | "tool"; text: string }>;
   localContext?: string;
+  /**
+   * What `buildLocalIndexedContext` had to leave out (F14). Present only when the index held
+   * more matches than the context budget allowed, and appended to the reply by the same
+   * deterministic path that carries negation disclosures — never asked of the model.
+   */
+  localContextTruncation?: ContextTruncation;
   /**
    * Devil's-advocate mode (`nimbus ask --devil`). Injected into the prompt both execution
    * paths share — see `devil-advocate.ts` for why it is not in either system-prompt surface.
@@ -206,11 +213,26 @@ async function runTurn(
  * The stream has already been sent by the time this runs, so the disclosure necessarily arrives
  * last. That is deliberate: it qualifies an answer the user has already begun reading.
  */
-function appendNegationDisclosures<T extends { reply: string }>(
+/**
+ * Append every disclosure this turn OWES the reader, as one deterministic block.
+ *
+ * Two sources, one path on purpose. The negation lines were already constructed here rather
+ * than requested of the model, and F14 needs exactly the same guarantee for context truncation:
+ * a note that the model was asked to add is a note it can drop, and the answer it would have
+ * dropped it from is a confident, well-formed, incomplete list that no reader can distinguish
+ * from a correct one. Streaming clients get the block as a final chunk, since the reply text
+ * they render came from chunks and never from the returned string.
+ */
+function appendDeterministicDisclosures<T extends { reply: string }>(
   res: T,
   p: RunConversationalAgentParams,
 ): T {
   const lines = drainNegationDisclosures();
+  const truncation =
+    p.localContextTruncation === undefined
+      ? undefined
+      : contextTruncationLine(p.localContextTruncation);
+  if (truncation !== undefined) lines.push(truncation);
   if (lines.length === 0) {
     return res;
   }
@@ -245,7 +267,7 @@ export async function runConversationalAgent(
   const promptArg = buildPromptArg(promptWithContext, p.priorTurns ?? []);
 
   try {
-    return appendNegationDisclosures(await runTurn(p, promptArg, maxSteps), p);
+    return appendDeterministicDisclosures(await runTurn(p, promptArg, maxSteps), p);
   } catch (e) {
     // A step that recorded a disclosure and then threw must not leave it sitting in the
     // (possibly shared, e.g. workflow.run's one-store-per-workflow) request store for the
