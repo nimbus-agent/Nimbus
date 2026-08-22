@@ -6,6 +6,32 @@
 **Index:** 13,183 items — `github_actions` 11,361 · `filesystem` 1,360 (`C:\gitrep\nimbus-vscode`) · `gmail` 228 · `github` 213 · `google_drive` 18 · `nimbus` 3
 **Config:** `[llm] prefer_local = true`, `local_model = "llama3.2"` · `[agents] synthesis = "local"` · `[persona] tone = "terse"`
 
+## Resolution status (2026-08-22)
+
+Every finding in this document has been fixed, across four PRs. This section is the map; the
+finding sections below are unchanged from the audit and describe the code as it was.
+
+| Finding | Closed by |
+| --- | --- |
+| F15, F22 (the two unbundled workers) | #1299 |
+| F24a (deploy gate passing on an unknown service) | #1297 |
+| F2, F28, F29 (reserved-section leak, name-and-occurrence rule) | #1302 |
+| F24b (`metrics dora` gap label) | #1297 |
+| F16 (`vault set`/`delete` consent handler) | #1305 |
+| F1 (steps 1–2), F3–F14, F17–F21, F23, F25–F27, F30, F31 | #1307 |
+
+**Deliberately still open**, each for a reason stated in its own section:
+
+- **F1 step 3** — `ftsTitleMatchQuery`'s AND-join, punctuation handling and prefix-only matching.
+  Deferred to its own PR by this document's own instruction: it changes `nimbus search` semantics
+  for every caller, and does not belong behind an `ask` fix.
+- **F21 option 2** — real tool-calling on the local-router path. What shipped is the disclosure
+  half: `ask` under `[llm] prefer_local = true` now says it ran no negation predicate rather than
+  asserting an answer it did not compute. The predicate itself still does not run there, so this
+  is mitigated, not closed.
+- **F30 point 3** — whether a brief command should exit 2 rather than 1 on a `briefError`. The
+  stack-leak half shipped; the exit-code convention is a product decision, not a bug fix.
+
 ## Framing
 
 The question this audit exists to answer: **when a brief or an answer comes back wrong, is that Nimbus or the model?**
