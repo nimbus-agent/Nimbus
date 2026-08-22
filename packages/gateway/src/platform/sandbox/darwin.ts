@@ -142,10 +142,12 @@ export function generateSbplProfile(opts: SbplOpts): string {
     // the startup abort while `(subpath "/")` does — the child needs several of these at once,
     // which is exactly what an additive search cannot report.
     //
-    // What stays narrow is the part that carries user data: `/private/var` keeps only its
-    // `db/dyld` grant plus the sandbox scratch dir, and `/Users` is reachable only through the
-    // policy paths an extension declared. Those two are what the "refuses a path the policy does
-    // not grant" test actually exercises, and granting either broadly would make it vacuous.
+    // What stays narrow is the part that carries user data: `/private/var` is granted only as
+    // the `db` / `select` / `run` pieces, the derived per-user cache dir, the sandbox scratch
+    // dir, and the ancestor chain as LITERALS — never as a subpath, so `folders/<hash>/<hash>/T`
+    // stays closed. `/Users` is reachable only through the policy paths an extension declared.
+    // Those two are what the "refuses a path the policy does not grant" test actually exercises,
+    // and granting either broadly would make it vacuous.
     `  (subpath "/Library")`,
     `  (subpath "/dev")`,
     `  (subpath "/sbin")`,
