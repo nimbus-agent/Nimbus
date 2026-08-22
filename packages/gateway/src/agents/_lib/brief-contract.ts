@@ -117,10 +117,15 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
 
 export function contractViolations(brief: SynthInput, markdown: string): string[] {
   const out: string[] = [];
-  for (const { scope, anchor } of requiredPhrases(brief)) {
+  for (const { scope, anchors } of requiredPhrases(brief)) {
+    // EVERY anchor, not the first (F27). One `line` can carry two independent disclosures, and
+    // checking one of them let a rewrite drop the other and ship.
     if (scope.kind === "preamble") {
-      if (!normalizeSectionText(preambleBody(markdown)).includes(normalizeSectionText(anchor))) {
-        out.push(`the brief preamble dropped required phrase "${anchor}"`);
+      const preamble = normalizeSectionText(preambleBody(markdown));
+      for (const anchor of anchors) {
+        if (!preamble.includes(normalizeSectionText(anchor))) {
+          out.push(`the brief preamble dropped required phrase "${anchor}"`);
+        }
       }
       continue;
     }
@@ -129,8 +134,11 @@ export function contractViolations(brief: SynthInput, markdown: string): string[
       out.push(`missing required section "${scope.heading}"`);
       continue;
     }
-    if (!normalizeSectionText(body).includes(normalizeSectionText(anchor))) {
-      out.push(`section "${scope.heading}" dropped required phrase "${anchor}"`);
+    const normalized = normalizeSectionText(body);
+    for (const anchor of anchors) {
+      if (!normalized.includes(normalizeSectionText(anchor))) {
+        out.push(`section "${scope.heading}" dropped required phrase "${anchor}"`);
+      }
     }
   }
   return out;

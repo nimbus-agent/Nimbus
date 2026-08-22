@@ -353,9 +353,12 @@ test("emitNegotiateBrief routes through a configured LLM", async () => {
           // usable: it requires the factual fragment to survive, not the exact sentence.
           markdown: [
             "# LLM-authored negotiate brief",
-            "_counts cover items active in the window; the index records last-modified, not created._",
+            // Both anchors of the window entry and both of the ownership entry (F27). Each `line`
+            // carries two independent disclosures, and a rewrite keeping only the first now
+            // fails the contract — which is the whole point of the change.
+            "_counts cover items active in the window; the index records last-modified, not created. Two lanes sit outside it: decisions and ownership._",
             "## Ownership",
-            "- authorship-derived ownership, not formal accountability",
+            "- authorship-derived ownership, not formal accountability; there is no CODEOWNERS and no on-call rotation in the index",
             "## Decisions",
             "- some decisions have no indexed author and are not counted",
           ].join("\n\n"),

@@ -138,8 +138,14 @@ describe("negotiate interleaved disclosures", () => {
     const brief = populatedNegotiateBrief();
     const md = withoutLine(renderNegotiate(brief), fragment);
     const v = contractViolations(brief, md);
-    expect(v).toHaveLength(1);
-    expect(v[0]).toContain(scope);
+    // Deleting the LINE drops every anchor on it, and each is reported separately (F27) — a
+    // two-sentence disclosure yields two violations. Derived from the disclosure rather than
+    // hardcoded, so this still fails if a deletion takes an UNRELATED disclosure with it, which
+    // is what the original `toHaveLength(1)` was really guarding.
+    const owner = requiredPhrases(brief).find((d) => d.line.includes(fragment));
+    expect(owner).toBeDefined();
+    expect(v).toHaveLength(owner?.anchors.length ?? 0);
+    for (const violation of v) expect(violation).toContain(scope);
   });
 
   test("the window clause cannot be satisfied from inside a section", () => {
@@ -148,7 +154,11 @@ describe("negotiate interleaved disclosures", () => {
     // disclosure from the place every count below it is read against.
     const brief = populatedNegotiateBrief();
     const md = `${withoutLine(renderNegotiate(brief), "last-modified, not created")}\n\n## Notes\n\nthe index records last-modified, not created`;
-    expect(contractViolations(brief, md)).toHaveLength(1);
+    // Both of the window entry's anchors are still missing FROM THE PREAMBLE: re-stating one of
+    // them under a section satisfies neither, because preamble scope is not a document-wide
+    // substring search (F27 made this two anchors, not one).
+    const windowEntry = requiredPhrases(brief).find((d) => d.scope.kind === "preamble");
+    expect(contractViolations(brief, md)).toHaveLength(windowEntry?.anchors.length ?? 0);
   });
 
   test("a truncation clause is required only when the list WAS truncated", () => {
@@ -284,5 +294,46 @@ describe("why change-subject disclosure", () => {
     const { changeSubject: _drop, ...rest } = whyBriefWithChangeSubject();
     const brief = rest as WhyBrief;
     expect(requiredPhrases(brief)).toEqual([]);
+  });
+});
+
+describe("a rewrite that drops only sentence 2 is rejected (F27)", () => {
+  /**
+   * The audit's red-prove, verbatim: "feed `contractViolations` a rewrite with sentence 2
+   * removed; it must fail. Today it passes."
+   *
+   * This is the shape observed live. An accepted `negotiate` synthesis kept "the index records
+   * last-modified, not created" and dropped "Two lanes sit outside it: decisions windows on its
+   * recorded decision date, and ownership is not windowed at all" — so the brief shipped telling
+   * a reader that "last 90d" applied to an all-time ownership snapshot.
+   *
+   * The surviving anchor was not in the dropped sentence at all, which is sharper than the bound
+   * the I31 docs already concede ("a phrase check proves a fragment survived, not that its
+   * sentence still means the same thing").
+   */
+  test("keeping sentence 1 of the window clause is no longer enough", () => {
+    const brief = populatedNegotiateBrief();
+    const truncated = renderNegotiate(brief).replace(
+      /_window:[^\n]*_/,
+      "_window: last 90d — the index records last-modified, not created._",
+    );
+    expect(truncated).toContain("last-modified, not created");
+    expect(truncated).not.toContain("Two lanes sit outside it");
+
+    const violations = contractViolations(brief, truncated);
+    expect(violations.some((v) => v.includes("Two lanes sit outside it"))).toBe(true);
+  });
+
+  test("keeping sentence 1 of the ownership clause is no longer enough", () => {
+    const brief = populatedNegotiateBrief();
+    const truncated = renderNegotiate(brief).replace(
+      /- this is authorship-derived ownership[^\n]*/,
+      "- this is authorship-derived ownership — who wrote the lines, not who is formally accountable.",
+    );
+    expect(truncated).toContain("authorship-derived");
+    expect(truncated).not.toContain("no CODEOWNERS");
+
+    const violations = contractViolations(brief, truncated);
+    expect(violations.some((v) => v.includes("CODEOWNERS"))).toBe(true);
   });
 });

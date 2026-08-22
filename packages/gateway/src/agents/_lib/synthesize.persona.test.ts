@@ -140,10 +140,15 @@ function allNullLaneNegotiateBrief(): NegotiateBrief {
 function rewriteSatisfying(brief: NegotiateBrief, skipAnchor?: string): string {
   const preamble: string[] = [];
   const sections: string[] = [];
-  for (const { scope, anchor } of requiredPhrases(brief)) {
-    if (anchor === skipAnchor) continue;
-    if (scope.kind === "preamble") preamble.push(anchor);
-    else sections.push(`## ${scope.heading}\n\n${anchor}`);
+  for (const { scope, anchors } of requiredPhrases(brief)) {
+    // Per ANCHOR, not per disclosure: one `line` can carry several (F27), and skipping the whole
+    // entry when one is dropped would stop this producing the "kept every OTHER anchor" text the
+    // discard test below depends on.
+    for (const anchor of anchors) {
+      if (anchor === skipAnchor) continue;
+      if (scope.kind === "preamble") preamble.push(anchor);
+      else sections.push(`## ${scope.heading}\n\n${anchor}`);
+    }
   }
   return [...preamble, ...sections].join("\n\n");
 }
@@ -182,7 +187,7 @@ describe("I31 anchors under a terse persona (spec criterion 7)", () => {
 
   test("a terse rewrite that DROPS one anchor is discarded, with the persona on the provenance", async () => {
     const brief = allNullLaneNegotiateBrief();
-    const dropped = requiredPhrases(brief).find((d) => d.scope.kind === "preamble")?.anchor;
+    const dropped = requiredPhrases(brief).find((d) => d.scope.kind === "preamble")?.anchors[0];
     expect(typeof dropped).toBe("string");
     const out = await synthesize(brief, {
       runner: personaRunner(rewriteSatisfying(brief, dropped), "terse"),

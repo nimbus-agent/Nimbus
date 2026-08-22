@@ -59,8 +59,15 @@ export type Disclosure = {
    * Anchors also stop short of each sentence's tail, because the tail is variable: the
    * decisions line ends "not necessarily yours"/"…theirs" depending on `--person`, so an
    * anchor including it would be inert for half of all briefs.
+   *
+   * PLURAL, and ALL are required (F27). It was a single `anchor`, on the design assumption of
+   * one sentence per entry — two entries broke it. A `line` carrying two independent
+   * disclosures with one anchor drawn from the first sentence let a rewrite keep sentence 1,
+   * drop sentence 2 and ship: observed live on `negotiate`, where the dropped sentence was the
+   * one saying `## Decisions` and `## Ownership` are NOT filtered by the window printed above
+   * them. `disclosure-anchor-coverage.test.ts` fails when a sentence is added without an anchor.
    */
-  readonly anchor: string;
+  readonly anchors: readonly string[];
 };
 
 function section(heading: string): DisclosureScope {
@@ -84,7 +91,7 @@ export function negotiateNotComputedSection(heading: string): string {
 }
 
 export function negotiateNotComputedDisclosure(heading: string): Disclosure {
-  return { scope: section(heading), line: NOT_COMPUTED_LINE, anchor: NOT_COMPUTED_ANCHOR };
+  return { scope: section(heading), line: NOT_COMPUTED_LINE, anchors: [NOT_COMPUTED_ANCHOR] };
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +131,10 @@ export function negotiateWindowDisclosure(sinceMs: number, generatedAt: number):
       `windowed at all (it is an all-time snapshot) · generated ${new Date(
         generatedAt,
       ).toISOString()}_`,
-    anchor: "last-modified, not created",
+    // TWO sentences, TWO anchors (F27). The second was observed being dropped by an accepted
+    // synthesis while the first survived, and it is the one that says `## Decisions` and
+    // `## Ownership` are not filtered by the window printed directly above them.
+    anchors: ["last-modified, not created", "Two lanes sit outside it"],
   };
 }
 
@@ -147,7 +157,7 @@ export function negotiateOwnershipDisclosures(o: NegotiateOwnership): {
       ? {
           scope: section("Ownership"),
           line: "- list truncated at the display limit — more owned paths exist",
-          anchor: "list truncated at the display limit",
+          anchors: ["list truncated at the display limit"],
         }
       : undefined,
     accountability: {
@@ -161,7 +171,9 @@ export function negotiateOwnershipDisclosures(o: NegotiateOwnership): {
         "accountable. There is no CODEOWNERS and no on-call rotation in the index, and " +
         "reviewer data (`reviewed` edges from GitHub PR reviews) is not factored into this " +
         "ranking.",
-      anchor: "authorship-derived",
+      // Sentence 2 carries the substantive facts — no CODEOWNERS, no on-call rotation,
+      // reviewer data not factored in — and was unanchored. Same shape as the window entry.
+      anchors: ["authorship-derived", "no CODEOWNERS and no on-call rotation"],
     },
   };
 }
@@ -181,7 +193,7 @@ export function negotiateIncidentsDisclosure(i: NegotiateIncidents): Disclosure 
     line:
       `- ${String(i.unattributable)} in-window incident(s) have no indexed assignee or ` +
       "resolver and are not counted above — not necessarily inactivity",
-    anchor: "no indexed assignee or resolver",
+    anchors: ["no indexed assignee or resolver"],
   };
 }
 
@@ -201,7 +213,7 @@ export function negotiateDecisionsDisclosure(
     line:
       `- ${String(d.unattributable)} decision(s) in this index have no indexed author and are ` +
       `not counted above — they are not necessarily ${voice.possessive}`,
-    anchor: "no indexed author",
+    anchors: ["no indexed author"],
   };
 }
 
@@ -245,14 +257,14 @@ export function glossaryProvenanceDisclosure(
     return {
       scope: section(term),
       line: "- _Definition quoted verbatim from a source; no LLM configured._",
-      anchor: "no LLM configured",
+      anchors: ["no LLM configured"],
     };
   }
   if (source === "manual") {
     return {
       scope: section(term),
       line: "- _Authored in `nimbus.toml`; not derived from indexed sources._",
-      anchor: "not derived from indexed sources",
+      anchors: ["not derived from indexed sources"],
     };
   }
   return undefined;
@@ -280,6 +292,6 @@ export function whyChangeSubjectDisclosure(): Disclosure {
     line:
       "_Asked about a change: authorship needs a line (`nimbus why <file>:<line>`), " +
       "and downstream impact is `nimbus impact <url>`._",
-    anchor: "authorship needs a line",
+    anchors: ["authorship needs a line"],
   };
 }

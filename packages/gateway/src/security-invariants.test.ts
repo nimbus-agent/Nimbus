@@ -2184,9 +2184,13 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     // silently and the loop below would assert over fewer disclosures, still green.
     expect(disclosures).toHaveLength(9);
     for (const disclosure of disclosures) {
-      expect(normalizeSectionText(disclosure.line)).toContain(
-        normalizeSectionText(disclosure.anchor),
-      );
+      // EVERY anchor must occur in its own line, not just the first (F27). An entry carrying two
+      // sentences and one anchor was how a rewrite kept sentence 1, dropped sentence 2 and
+      // shipped — the anchor it satisfied was not in the sentence that went missing.
+      expect(disclosure.anchors.length).toBeGreaterThan(0);
+      for (const anchor of disclosure.anchors) {
+        expect(normalizeSectionText(disclosure.line)).toContain(normalizeSectionText(anchor));
+      }
     }
   });
 
