@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_LOCAL_CONTEXT_TOKENS } from "../llm/ollama-provider.ts";
 
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
@@ -198,6 +199,12 @@ export type NimbusLlmToml = {
   remoteModel: string;
   classifierModel: string;
   localModel: string;
+  /**
+   * `num_ctx` for the local provider, in tokens. See `DEFAULT_LOCAL_CONTEXT_TOKENS`: unset is
+   * NOT neutral, it hands the prompt window to Ollama's own 4096 default and its silent
+   * front-truncation. Tunable because the RAM cost is the user machine's.
+   */
+  localContextTokens: number;
   llamacppServerPath: string;
   minReasoningParams: number;
   enforceAirGap: boolean;
@@ -210,6 +217,7 @@ export const DEFAULT_NIMBUS_LLM_TOML: NimbusLlmToml = {
   remoteModel: "claude-sonnet-4-6",
   classifierModel: "claude-haiku-4-5-20251001",
   localModel: "llama3.2",
+  localContextTokens: DEFAULT_LOCAL_CONTEXT_TOKENS,
   llamacppServerPath: "",
   minReasoningParams: 7,
   enforceAirGap: false,
@@ -233,6 +241,14 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
     case "local_model":
       out.localModel = parseString(valRaw);
       break;
+    case "local_context_tokens": {
+      const n = parseIntDec(valRaw);
+      // A window below what `num_predict` alone reserves cannot hold a prompt at all, so a
+      // typo there would be worse than the default it replaced. Reject rather than clamp:
+      // clamping silently disagrees with what the file says.
+      if (n !== undefined && n >= 2048) out.localContextTokens = n;
+      break;
+    }
     case "llamacpp_server_path":
       out.llamacppServerPath = parseString(valRaw);
       break;

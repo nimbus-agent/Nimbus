@@ -1285,7 +1285,9 @@ function buildLlmRegistryFromToml(db: Database, activeTomlPath: string): LlmRegi
       enforceAirGap: llmToml.enforceAirGap,
     },
   });
-  llmRegistry.addProvider(new OllamaProvider("http://127.0.0.1:11434", llmToml.localModel));
+  llmRegistry.addProvider(
+    new OllamaProvider("http://127.0.0.1:11434", llmToml.localModel, llmToml.localContextTokens),
+  );
   const llamacppBaseUrl = llmToml.llamacppServerPath.trim();
   llmRegistry.addProvider(
     new LlamaCppProvider(llamacppBaseUrl === "" ? undefined : llamacppBaseUrl, llmToml.localModel),

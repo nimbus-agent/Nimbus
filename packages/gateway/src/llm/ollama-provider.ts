@@ -74,14 +74,41 @@ function parseOllamaModel(raw: OllamaTagsModel): LlmModelInfo | undefined {
   };
 }
 
+/**
+ * The prompt window Nimbus asks Ollama for, in tokens, when the caller names no other.
+ *
+ * Sending NOTHING is not neutral. Ollama then applies its own default of 4096 regardless of
+ * what the model supports — `llama3.2` handles 128k — and silently drops whatever does not fit
+ * from the front of the prompt. That window has to hold the system prompt, up to twelve prior
+ * turns, the question, the indexed context AND the 2048 tokens `num_predict` reserves for the
+ * answer, so eight context items at 900 preview chars can exhaust it in any conversation with
+ * history, with no error and no report.
+ *
+ * That is strictly worse than the truncation invariant F14 discloses: this one happens after
+ * Nimbus has handed the prompt over, where nothing can see it. It also BOUNDS that disclosure —
+ * "written from 8 indexed items" describes what Nimbus sent, and only stays true of what the
+ * model read while the prompt is not trimmed underneath it.
+ *
+ * 8192 doubles the headroom while staying cheap on the small local models this path targets. It
+ * is a DEFAULT, not a ceiling: `[llm] local_context_tokens` overrides it, because the RAM and
+ * prompt-eval cost land on the user's machine and only its owner can price them.
+ */
+export const DEFAULT_LOCAL_CONTEXT_TOKENS = 8192;
+
 export class OllamaProvider implements LlmProvider {
   readonly providerId = "ollama" as const;
   private readonly baseUrl: string;
   private readonly modelName: string;
+  private readonly contextTokens: number;
 
-  constructor(baseUrl = "http://127.0.0.1:11434", modelName = "llama3.2") {
+  constructor(
+    baseUrl = "http://127.0.0.1:11434",
+    modelName = "llama3.2",
+    contextTokens: number = DEFAULT_LOCAL_CONTEXT_TOKENS,
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.modelName = modelName;
+    this.contextTokens = contextTokens;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -126,6 +153,7 @@ export class OllamaProvider implements LlmProvider {
       system: opts.systemPrompt,
       stream: false,
       options: {
+        num_ctx: this.contextTokens,
         num_predict: opts.maxTokens ?? 2048,
         temperature: opts.temperature ?? 0.7,
       },
@@ -155,6 +183,7 @@ export class OllamaProvider implements LlmProvider {
       system: opts.systemPrompt,
       stream: true,
       options: {
+        num_ctx: this.contextTokens,
         num_predict: opts.maxTokens ?? 2048,
         temperature: opts.temperature ?? 0.7,
       },
