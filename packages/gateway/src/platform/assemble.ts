@@ -1240,6 +1240,11 @@ function bootPolicyGateWithConnectorAllowlist(
     retentionDays: auditCfg.toolCallLogRetentionDays,
     hitlRequired: new Set<string>(),
     quorum: loadNimbusQuorumFromConfigDir(configDir),
+    // Empty by design: the LOCAL kill-switch for an ai_v2 capability is its own config flag
+    // (`[code_execution] enabled`), which the exec gate checks separately. This baseline set is the
+    // seam an org policy tightens against, and conflating the two would make a local `enabled =
+    // true` look like it could argue with a policy lockoff -- which it must never be able to.
+    capabilitiesDisabled: new Set<string>(),
   });
   const enforcedConnectorAllow = policyGate.enforced().connectorAllow;
   const { blocked: blockedConnectors } = partitionByAllowlist(

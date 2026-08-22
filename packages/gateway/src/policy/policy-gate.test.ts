@@ -14,7 +14,45 @@ const baseline: LocalBaseline = {
   quorum: new Map<string, QuorumRule>([
     ["terraform.destroy", { approvers: 1, windowSeconds: 600 }],
   ]),
+  capabilitiesDisabled: new Set<string>(),
 };
+
+describe("computeEnforced — ai_v2 capability lockoff", () => {
+  test("UNIONS org policy with the local baseline", () => {
+    const e = computeEnforced(
+      parsePolicyToml(
+        `[policy]\nversion=1\norg="x"\n[policy.capabilities.ai_v2]\ncode_execution=false\n`,
+      ),
+      baseline,
+    );
+    expect(e.capabilitiesDisabled.has("code_execution")).toBe(true);
+  });
+
+  test("a policy naming NOTHING cannot re-enable a locally disabled capability", () => {
+    const e = computeEnforced(parsePolicyToml(`[policy]\nversion=1\norg="x"\n`), {
+      ...baseline,
+      capabilitiesDisabled: new Set(["code_execution"]),
+    });
+    expect(e.capabilitiesDisabled.has("code_execution")).toBe(true);
+  });
+
+  test("`= true` in policy cannot re-enable what the baseline disabled (tighten-only)", () => {
+    // The whole reason this is a SET and not a boolean: with booleans, a peer-distributed policy
+    // saying `code_execution = true` would read as a grant and undo the anchor's lockoff.
+    const e = computeEnforced(
+      parsePolicyToml(
+        `[policy]\nversion=1\norg="x"\n[policy.capabilities.ai_v2]\ncode_execution=true\n`,
+      ),
+      { ...baseline, capabilitiesDisabled: new Set(["code_execution"]) },
+    );
+    expect(e.capabilitiesDisabled.has("code_execution")).toBe(true);
+  });
+
+  test("an absent block disables nothing", () => {
+    const e = computeEnforced(parsePolicyToml(`[policy]\nversion=1\norg="x"\n`), baseline);
+    expect([...e.capabilitiesDisabled]).toEqual([]);
+  });
+});
 
 describe("computeEnforced — monotonic stricter", () => {
   test("retention floor raises but never lowers", () => {
@@ -121,6 +159,7 @@ describe("computeEnforced — monotonic stricter", () => {
       },
       audit: {},
       chatops: { channels: new Map(), ownership: new Map() },
+      capabilities: { disabled: [] as string[] },
     };
     const e = computeEnforced(policy, baseline);
     // local window 600 survives because policy contributed no positive window
@@ -140,6 +179,7 @@ describe("computeEnforced — monotonic stricter", () => {
       },
       audit: {},
       chatops: { channels: new Map(), ownership: new Map() },
+      capabilities: { disabled: [] as string[] },
     };
     const e = computeEnforced(policy, baseline);
     expect(e.quorum.get("db.drop")).toEqual({ approvers: 2, windowSeconds: 0 });

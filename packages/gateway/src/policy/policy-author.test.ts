@@ -24,6 +24,7 @@ function freshDeps(): { deps: AuthorDeps; pubkeyB64: string; privkeyB64: string 
     retentionDays: 7,
     hitlRequired: new Set<string>(),
     quorum: new Map(),
+    capabilitiesDisabled: new Set(),
   });
   const kp = generateEd25519Keypair();
   const privkeyB64 = encodeBase64(kp.privkey);

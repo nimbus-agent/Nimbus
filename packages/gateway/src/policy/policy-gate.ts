@@ -10,6 +10,8 @@ export interface LocalBaseline {
   readonly retentionDays: number;
   readonly hitlRequired: ReadonlySet<string>;
   readonly quorum: ReadonlyMap<string, QuorumRule>;
+  /** Capabilities the LOCAL config has already turned off, before any org policy applies. */
+  readonly capabilitiesDisabled: ReadonlySet<string>;
 }
 
 /** The enforced view — the ONLY thing enforcement sites read (I22). */
@@ -21,6 +23,12 @@ export interface EnforcedPolicy {
   readonly auditShipTo?: string;
   readonly auditShipFormat?: string;
   readonly chatops: ChatopsPolicy;
+  /**
+   * The resolved (baseline ∪ policy) set of disabled capabilities. Enforcement sites read THIS,
+   * never the raw policy TOML (I22) -- e.g. `exec/exec-gate.ts` refuses when it contains
+   * `code_execution`.
+   */
+  readonly capabilitiesDisabled: ReadonlySet<string>;
 }
 
 /** Pure monotonic-stricter resolution against the local baseline. */
@@ -43,11 +51,18 @@ export function computeEnforced(policy: OrgPolicy, base: LocalBaseline): Enforce
     quorum.set(id, { approvers, windowSeconds });
   }
 
+  // Union, not override: disabling is the tightening direction, so a capability disabled by EITHER
+  // side stays disabled. This is the whole reason the field is a set rather than booleans (I22) --
+  // there is no value a policy can carry that removes an entry.
+  const capabilitiesDisabled = new Set<string>(base.capabilitiesDisabled);
+  for (const c of policy.capabilities.disabled) capabilitiesDisabled.add(c);
+
   return {
     ...(policy.connectors.allow === undefined ? {} : { connectorAllow: policy.connectors.allow }),
     retentionDays: Math.max(base.retentionDays, policy.retention.minDays),
     hitlRequired,
     quorum,
+    capabilitiesDisabled,
     ...(policy.audit.shipTo === undefined ? {} : { auditShipTo: policy.audit.shipTo }),
     ...(policy.audit.shipFormat === undefined ? {} : { auditShipFormat: policy.audit.shipFormat }),
     chatops: policy.chatops,
@@ -81,6 +96,7 @@ export class PolicyGate {
       retentionDays: base.retentionDays,
       hitlRequired: new Set(base.hitlRequired),
       quorum: new Map(base.quorum),
+      capabilitiesDisabled: new Set(base.capabilitiesDisabled),
     };
   }
 
@@ -133,6 +149,9 @@ export class PolicyGate {
         hitlRequired: new Set(this.baseline.hitlRequired),
         quorum: new Map(this.baseline.quorum),
         chatops: { channels: new Map(), ownership: new Map() },
+        // With no org policy active, the local baseline IS the enforced set -- a locally disabled
+        // capability must not become enabled just because no policy is installed.
+        capabilitiesDisabled: new Set(this.baseline.capabilitiesDisabled),
       };
     }
     return computeEnforced(this.active, this.baseline);

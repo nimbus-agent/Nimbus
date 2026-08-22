@@ -7,7 +7,12 @@ import { refreshPolicy } from "./policy-runtime.ts";
 import { signPolicy } from "./policy-signing.ts";
 import { PolicyStore } from "./policy-store.ts";
 
-const baseline: LocalBaseline = { retentionDays: 7, hitlRequired: new Set(), quorum: new Map() };
+const baseline: LocalBaseline = {
+  retentionDays: 7,
+  hitlRequired: new Set(),
+  quorum: new Map(),
+  capabilitiesDisabled: new Set(),
+};
 
 function setup() {
   const db = new Database(":memory:");

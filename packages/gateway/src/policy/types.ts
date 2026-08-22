@@ -30,7 +30,29 @@ export interface OrgPolicy {
   };
   readonly audit: { readonly shipTo?: string; readonly shipFormat?: string };
   readonly chatops: ChatopsPolicy;
+  /**
+   * Capabilities the org has turned OFF.
+   *
+   * Modelled as a disabled SET rather than per-capability booleans so that resolution against the
+   * local baseline is a union -- monotonic-stricter by construction (I22). With booleans,
+   * `code_execution = true` would read as a grant, letting a peer-distributed policy RE-ENABLE what
+   * the anchor disabled; a set makes that unrepresentable rather than merely discouraged.
+   */
+  readonly capabilities: { readonly disabled: readonly string[] };
 }
+
+/**
+ * The Phase 14 / Spine S2 capability names an org policy may disable, via
+ * `[policy.capabilities.ai_v2]`. An unrecognised name in that block is ignored rather than carried,
+ * so a typo cannot masquerade as a lockoff nobody enforces.
+ */
+export const AI_V2_CAPABILITIES = [
+  "code_execution",
+  "computer_use",
+  "tool_generation",
+  "multimodal_input",
+  "local_finetuning",
+] as const;
 
 /** Where a persisted policy came from. */
 export type PolicySource = "anchor" | "peer" | "none";

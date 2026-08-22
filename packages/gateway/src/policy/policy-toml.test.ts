@@ -144,3 +144,38 @@ describe("parsePolicyToml", () => {
     expect(parsePolicyToml(serializePolicyToml(p))).toEqual(p);
   });
 });
+
+describe("[policy.capabilities.ai_v2]", () => {
+  const head = `[policy]\nversion = 1\norg = "acme"\n`;
+
+  test("false DISABLES a capability", () => {
+    const p = parsePolicyToml(`${head}[policy.capabilities.ai_v2]\ncode_execution = false\n`);
+    expect(p.capabilities.disabled).toContain("code_execution");
+  });
+
+  test("true is a NO-OP, not a grant -- policy can only tighten", () => {
+    const p = parsePolicyToml(`${head}[policy.capabilities.ai_v2]\ncode_execution = true\n`);
+    expect(p.capabilities.disabled).not.toContain("code_execution");
+  });
+
+  test("an unknown capability name is ignored", () => {
+    const p = parsePolicyToml(`${head}[policy.capabilities.ai_v2]\nmind_reading = false\n`);
+    expect(p.capabilities.disabled).not.toContain("mind_reading");
+  });
+
+  test("absent block yields an empty list", () => {
+    expect(parsePolicyToml(head).capabilities.disabled).toEqual([]);
+  });
+
+  test("disables several capabilities at once", () => {
+    const p = parsePolicyToml(
+      `${head}[policy.capabilities.ai_v2]\ncode_execution = false\ncomputer_use = false\n`,
+    );
+    expect([...p.capabilities.disabled].sort()).toEqual(["code_execution", "computer_use"]);
+  });
+
+  test("round-trips through the serializer", () => {
+    const p = parsePolicyToml(`${head}[policy.capabilities.ai_v2]\ncode_execution = false\n`);
+    expect(parsePolicyToml(serializePolicyToml(p))).toEqual(p);
+  });
+});

@@ -7,7 +7,13 @@ import {
   splitKeyValue,
   stripComment,
 } from "../config/toml-primitives.ts";
-import type { ChatopsChannelBinding, ChatopsPolicy, OrgPolicy, UnmappedMode } from "./types.ts";
+import {
+  AI_V2_CAPABILITIES,
+  type ChatopsChannelBinding,
+  type ChatopsPolicy,
+  type OrgPolicy,
+  type UnmappedMode,
+} from "./types.ts";
 
 const QUORUM_PREFIX = '[policy.hitl.quorum."';
 const CHATOPS_CHANNEL_PREFIX = '[policy.chatops.channel."';
@@ -27,6 +33,23 @@ interface PolicyAccum {
   quorumAccum: Map<string, Record<string, string>>;
   chatopsChannels: Map<string, Record<string, string>>;
   chatopsOwnership: Map<string, string>;
+  capabilitiesDisabled: Set<string>;
+}
+
+/**
+ * Route one `[policy.capabilities.ai_v2]` entry.
+ *
+ * ONLY `false` carries meaning. `true` is deliberately a no-op rather than a grant: an org policy
+ * may tighten the local posture, never loosen it (I22), so re-enabling a capability is not
+ * something this file is allowed to express. An unrecognised name is dropped so a typo cannot look
+ * like a lockoff.
+ */
+function applyCapabilitiesKey(acc: PolicyAccum, key: string, valRaw: string): void {
+  const name = parseString(key).trim().toLowerCase();
+  if (!(AI_V2_CAPABILITIES as readonly string[]).includes(name)) return;
+  // Matched explicitly against "false" rather than "not true": a malformed value (`code_execution
+  // = maybe`) must not be read as a lockoff the org never wrote, nor as permission to run.
+  if (valRaw.trim().toLowerCase() === "false") acc.capabilitiesDisabled.add(name);
 }
 
 function applyPolicyKey(acc: PolicyAccum, key: string, valRaw: string): void {
@@ -87,6 +110,9 @@ function dispatchKey(
       break;
     case "[policy.audit]":
       applyAuditKey(acc, key, valRaw);
+      break;
+    case "[policy.capabilities.ai_v2]":
+      applyCapabilitiesKey(acc, key, valRaw);
       break;
     case "quorum":
       applyQuorumKey(acc, quorumId, key, valRaw);
@@ -169,6 +195,7 @@ export function parsePolicyToml(source: string): OrgPolicy {
     quorumAccum: new Map<string, Record<string, string>>(),
     chatopsChannels: new Map<string, Record<string, string>>(),
     chatopsOwnership: new Map<string, string>(),
+    capabilitiesDisabled: new Set<string>(),
   };
 
   let section = "";
@@ -204,6 +231,9 @@ export function parsePolicyToml(source: string): OrgPolicy {
       ...(acc.shipFormat === undefined ? {} : { shipFormat: acc.shipFormat }),
     },
     chatops: finalizeChatops(acc.chatopsChannels, acc.chatopsOwnership),
+    // Sorted so the parse -> serialize -> parse round-trip is stable regardless of the order the
+    // keys appeared in the source document.
+    capabilities: { disabled: [...acc.capabilitiesDisabled].sort() },
   };
 }
 
@@ -240,6 +270,12 @@ export function serializePolicyToml(p: OrgPolicy): string {
     lines.push("", "[policy.audit]");
     if (p.audit.shipTo !== undefined) lines.push(`ship_to = "${p.audit.shipTo}"`);
     if (p.audit.shipFormat !== undefined) lines.push(`ship_format = "${p.audit.shipFormat}"`);
+  }
+  if (p.capabilities.disabled.length > 0) {
+    // Only disabled capabilities are emitted. There is deliberately no `= true` line to write:
+    // the set has no representation for "enabled", because a policy cannot grant one (I22).
+    lines.push("", "[policy.capabilities.ai_v2]");
+    for (const c of p.capabilities.disabled) lines.push(`${c} = false`);
   }
   return `${lines.join("\n")}\n`;
 }

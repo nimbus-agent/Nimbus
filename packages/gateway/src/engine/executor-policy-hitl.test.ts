@@ -147,6 +147,7 @@ describe("I22 — end to end from a SIGNED policy to a consent prompt", () => {
     retentionDays: 7,
     hitlRequired: new Set<string>(),
     quorum: new Map(),
+    capabilitiesDisabled: new Set(),
   };
 
   function gateWithSignedHitlRequire(require: readonly string[]): {

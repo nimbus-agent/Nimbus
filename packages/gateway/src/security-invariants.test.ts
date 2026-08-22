@@ -1501,6 +1501,7 @@ describe("I22 — org policy applied only from a signature-verified bundle, mono
     retentionDays: 7,
     hitlRequired: new Set(["git.force_push_main"]),
     quorum: new Map(),
+    capabilitiesDisabled: new Set(),
   };
 
   function gateWith(toml: string, sig: string, pubkeyB64: string): PolicyGate {

@@ -16,6 +16,7 @@ function enforcedWith(channels: Record<string, ChatopsChannelBinding>): Enforced
     retentionDays: 30,
     hitlRequired: new Set<string>(),
     quorum: new Map(),
+    capabilitiesDisabled: new Set(),
     chatops: {
       channels: new Map(Object.entries(channels)),
       ownership: new Map([["*", "oncall@acme.com"]]),
