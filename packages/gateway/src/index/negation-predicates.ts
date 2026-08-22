@@ -415,3 +415,65 @@ export function countNotTouchingExclusions(db: Database, scope?: ExclusionScope)
     .get(...vals) as { n: number };
   return { excludedNoCoverage: noCoverage.n, excludedTruncated: truncated.n };
 }
+
+/** A `--not-touching` pattern that passed validation, or the reason it cannot ever match. */
+export type PathGlobCheck =
+  | { readonly ok: true; readonly glob: string }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Reject `--not-touching` patterns that CANNOT match an indexed path, before they become a
+ * confident wrong answer.
+ *
+ * `pr_changed_file.path` is always POSIX-separated and repo-relative, so a backslash separator,
+ * a leading `/` and a leading `./` are not merely unusual — they can never match anything, and
+ * SQLite `GLOB` reports that by matching nothing rather than by failing. For a negation that
+ * inverts the answer: measured on the live index, `packages\gateway\**` returned all 173 PRs,
+ * including the 49 that touch the path, as "PRs not touching packages/gateway".
+ *
+ * The backslash form is the likeliest input on Windows — it is what Explorer's `Copy as path`,
+ * the address bar and `path.join` all produce.
+ *
+ * These are REJECTED, not corrected. Silently rewriting the caller's pattern would answer a
+ * question they did not ask, which on a negation surface is the same class of harm as the bug.
+ * The message names the corrected form so the fix is one edit away.
+ */
+export function validatePathGlob(raw: string): PathGlobCheck {
+  const glob = raw.trim();
+  if (glob === "") {
+    return { ok: false, reason: "--not-touching needs a path glob, e.g. packages/gateway/**" };
+  }
+  if (glob.includes("\\")) {
+    return {
+      ok: false,
+      reason: `indexed paths are POSIX-separated, so a backslash can never match — did you mean ${glob.replaceAll("\\", "/")}`,
+    };
+  }
+  if (glob.startsWith("/") || glob.startsWith("./")) {
+    const fixed = glob.replace(/^\.?\//, "");
+    return {
+      ok: false,
+      reason: `indexed paths are repo-relative, so a leading separator can never match — did you mean ${fixed}`,
+    };
+  }
+  return { ok: true, glob };
+}
+
+/**
+ * How many indexed paths the pattern actually matches.
+ *
+ * The existing substrate probe asks whether `pr_files_state` has ROWS — it was `passed=true
+ * rowCount=173` in every one of the failing cases above, because the table was fully populated
+ * and only the pattern was wrong. This asks the other question.
+ *
+ * ZERO has two readings that this function cannot tell apart — "genuinely nothing touches this"
+ * and "your pattern is wrong" — which is precisely why the caller must DISCLOSE the count rather
+ * than resolve it in either direction. Both readings make every returned row unfiltered, and a
+ * reader who is told that can judge which one applies; a reader told nothing cannot.
+ */
+export function countPathsMatchingGlob(db: Database, pathGlob: string): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM pr_changed_file WHERE path GLOB ?1")
+    .get(pathGlob) as { n: number } | null;
+  return row?.n ?? 0;
+}

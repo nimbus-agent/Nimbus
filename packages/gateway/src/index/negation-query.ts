@@ -14,6 +14,7 @@ import {
   countNoDownstreamIncidentExclusions,
   countNotReviewedExclusions,
   countNotTouchingExclusions,
+  countPathsMatchingGlob,
   type MissingSubstrateRefusal,
   missingSubstrateRefusal,
   type NegationExplain,
@@ -21,6 +22,7 @@ import {
   probePrFileCoverage,
   probeReviewed,
   toPositionalSubquery,
+  validatePathGlob,
 } from "./negation-predicates.ts";
 
 /**
@@ -67,6 +69,16 @@ export type NotTouchingParams = {
 };
 
 export type NotTouchingGaps = {
+  /**
+   * How many indexed paths the caller's glob matched (F20).
+   *
+   * Reported ALWAYS, not only when zero, because zero has two readings this code cannot tell
+   * apart — "genuinely nothing touches this" and "your pattern is wrong" — and a reader who is
+   * shown the number can judge which applies. Silence let a mistyped pattern return every PR,
+   * including the ones that DO touch the path, under a `Gaps: 0 excluded` line that reported
+   * nothing wrong.
+   */
+  readonly pathsMatchingGlob: number;
   readonly excludedNoCoverage: number;
   readonly excludedTruncated: number;
 };
@@ -95,6 +107,20 @@ export function runNotTouchingQuery(
     ...(params.untilMs === undefined ? {} : { untilMs: params.untilMs }),
     limit: params.limit,
   };
+  const globCheck = validatePathGlob(params.pathGlob);
+  if (!globCheck.ok) {
+    // Refuse rather than run. These forms cannot match an indexed path at all, so running them
+    // produces a confidently INVERTED negation — every PR returned as "not touching", including
+    // the ones that do. Consistent with the empty-substrate refusal this surface already makes.
+    return {
+      kind: "refused",
+      refusal: missingSubstrateRefusal(
+        `--not-touching pattern cannot match an indexed path: ${globCheck.reason}`,
+        "indexed paths are repo-relative and POSIX-separated, e.g. packages/gateway/**",
+        undefined,
+      ),
+    };
+  }
   const probeResult = probePrFileCoverage(db);
   const idInSql = toPositionalSubquery(buildNotTouchingSql(params.pathGlob));
   const composed = buildItemListSql({ ...baseParams, idInSql });
@@ -111,10 +137,13 @@ export function runNotTouchingQuery(
     };
   }
   const rows = index.listItems({ ...baseParams, idInSql });
-  const gaps = countNotTouchingExclusions(db, {
-    ...(params.services === undefined ? {} : { services: params.services }),
-    types,
-  });
+  const gaps = {
+    pathsMatchingGlob: countPathsMatchingGlob(db, params.pathGlob),
+    ...countNotTouchingExclusions(db, {
+      ...(params.services === undefined ? {} : { services: params.services }),
+      types,
+    }),
+  };
   return {
     kind: "ok",
     rows,

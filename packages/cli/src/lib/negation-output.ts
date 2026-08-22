@@ -100,6 +100,7 @@ export function printExplainBlock(explain: NegationExplain): void {
  * graphed" would claim a precision this count does not have.
  */
 export interface NegationGapsLike {
+  readonly pathsMatchingGlob?: number;
   readonly excludedNoCoverage?: number;
   readonly excludedTruncated?: number;
   readonly excludedNoGraphEntity?: number;
@@ -107,6 +108,17 @@ export interface NegationGapsLike {
 
 export function formatGapLine(gaps: NegationGapsLike): string {
   const parts: string[] = [];
+  // First, and phrased as a WARNING when zero (F20). The other entries count rows that could
+  // not be verified; this one says whether the filter ran at all. A pattern matching nothing
+  // makes every row below unfiltered — the answer is not incomplete, it is inverted — and the
+  // old line reported `0 excluded` for that case, which reads as "nothing needed excluding".
+  if (typeof gaps.pathsMatchingGlob === "number") {
+    parts.push(
+      gaps.pathsMatchingGlob === 0
+        ? "pattern matched 0 indexed paths — NOTHING was filtered out, every row below is unfiltered"
+        : `pattern matched ${String(gaps.pathsMatchingGlob)} indexed path(s)`,
+    );
+  }
   if (typeof gaps.excludedNoCoverage === "number") {
     parts.push(`${String(gaps.excludedNoCoverage)} excluded (no file coverage indexed)`);
   }

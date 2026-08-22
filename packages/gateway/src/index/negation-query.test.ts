@@ -123,7 +123,11 @@ describe("runNotTouchingQuery", () => {
     expect(out.kind).toBe("ok");
     if (out.kind !== "ok") return;
     expect(out.rows.map((r) => r.id)).toEqual(["touches-src"]);
-    expect(out.gaps).toEqual({ excludedNoCoverage: 1, excludedTruncated: 0 });
+    expect(out.gaps).toEqual({
+      pathsMatchingGlob: 1,
+      excludedNoCoverage: 1,
+      excludedTruncated: 0,
+    });
     db.close();
   });
 
@@ -300,6 +304,66 @@ describe("runNotReviewedQuery", () => {
     expect(out.kind).toBe("ok");
     if (out.kind !== "ok") return;
     expect(out.explain).toBeUndefined();
+    db.close();
+  });
+});
+
+describe("runNotTouchingQuery refuses a pattern that cannot match (F20)", () => {
+  /**
+   * The wire, not the validator. `validatePathGlob` is unit-tested next door; what matters here
+   * is that the query path actually consults it, because the failure this prevents is not a
+   * missing row — it is every PR returned as "not touching packages/gateway", including the 49
+   * that do touch it, under a gap line reporting nothing wrong.
+   */
+  test("a backslash pattern refuses rather than returning every PR", () => {
+    const { index, db } = freshIndex();
+    seedCoveredPr(db, "touches-gw", ["packages/gateway/src/a.ts"]);
+    seedCoveredPr(db, "touches-cli", ["packages/cli/src/b.ts"]);
+
+    const out = runNotTouchingQuery(db, index, {
+      pathGlob: String.raw`packages\gateway\**`,
+      limit: 20,
+    });
+
+    expect(out.kind).toBe("refused");
+    if (out.kind !== "refused") return;
+    expect(out.refusal.message).toContain("packages/gateway/**");
+    db.close();
+  });
+
+  test("a leading-slash pattern refuses too", () => {
+    const { index, db } = freshIndex();
+    seedCoveredPr(db, "touches-gw", ["packages/gateway/src/a.ts"]);
+    const out = runNotTouchingQuery(db, index, { pathGlob: "/packages/gateway/**", limit: 20 });
+    expect(out.kind).toBe("refused");
+    db.close();
+  });
+
+  test("a wrong-case pattern RUNS but reports that it matched nothing", () => {
+    // Deliberately not a refusal: GLOB is case-sensitive by design, and a caller could mean an
+    // exact-case path that genuinely is not indexed. The answer is disclosed, not withheld —
+    // `pathsMatchingGlob: 0` is what tells the reader the rows below are unfiltered.
+    const { index, db } = freshIndex();
+    seedCoveredPr(db, "touches-gw", ["packages/gateway/src/a.ts"]);
+
+    const out = runNotTouchingQuery(db, index, { pathGlob: "Packages/Gateway/**", limit: 20 });
+
+    expect(out.kind).toBe("ok");
+    if (out.kind !== "ok") return;
+    expect(out.gaps.pathsMatchingGlob).toBe(0);
+    // And the row that DOES touch the path comes back, which is precisely the inverted answer
+    // the disclosure exists to qualify.
+    expect(out.rows.map((r) => r.id)).toContain("touches-gw");
+    db.close();
+  });
+
+  test("a no-wildcard directory pattern reports zero matches as well", () => {
+    const { index, db } = freshIndex();
+    seedCoveredPr(db, "touches-gw", ["packages/gateway/src/a.ts"]);
+    const out = runNotTouchingQuery(db, index, { pathGlob: "packages/gateway", limit: 20 });
+    expect(out.kind).toBe("ok");
+    if (out.kind !== "ok") return;
+    expect(out.gaps.pathsMatchingGlob).toBe(0);
     db.close();
   });
 });

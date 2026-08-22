@@ -55,7 +55,16 @@ Negation predicates (each requires its --type; an empty substrate refuses with e
   nimbus query --service <id> --type pr         --not-touching '<glob>'
   nimbus query --service <id> --type deployment --no-downstream-incident
 
-  Excluded-but-unverifiable rows are always counted on a "Gaps:" line — that
+  --not-touching <glob> is SQLite GLOB over repo-relative, POSIX-separated paths:
+    * crosses / , so ** and * behave identically and a minimatch intuition does not hold
+    matching is CASE-SENSITIVE
+    a pattern with no wildcard is an exact path, not a prefix — packages/gateway
+      matches no file, while packages/gateway/** matches the tree
+    a backslash separator or a leading / or ./ is refused, since none can ever match
+  The "Gaps:" line reports how many indexed paths your pattern matched. Zero means
+  NOTHING was filtered out and every row shown is unfiltered.
+
+  Excluded-but-unverifiable rows are always counted on that same "Gaps:" line — the
   accounting is part of the answer, not debug output. --no-downstream-incident's
   correlation window is fixed at write time; there is deliberately no --within.
 
@@ -198,7 +207,11 @@ Output:
 }
 
 type QueryItemsGaps =
-  | { readonly excludedNoCoverage: number; readonly excludedTruncated: number }
+  | {
+      readonly pathsMatchingGlob?: number;
+      readonly excludedNoCoverage: number;
+      readonly excludedTruncated: number;
+    }
   | { readonly excludedNoGraphEntity: number };
 
 type QueryItemsSuccess = {
