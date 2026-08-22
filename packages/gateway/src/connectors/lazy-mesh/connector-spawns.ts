@@ -23,6 +23,7 @@ import { Config } from "../../config.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
+import { transitionHealth } from "../health.ts";
 import {
   hostnameFromUrl,
   manifestForFirstParty,
@@ -60,6 +61,48 @@ export async function ensurePhase3BundleMcp(ctx: MeshSpawnContext): Promise<void
 }
 
 /**
+ * The four services that share the Google mesh slot, and the connector each one spawns.
+ *
+ * One map rather than an `ids` array plus a four-branch `if/else` chain: the chain repeated the
+ * same five lines per service and made the loop body long enough that the unguarded token
+ * `await` at the top of it did not look like shared fate. It is a `Record` keyed by
+ * `GoogleConnectorOAuthServiceId`, so adding a fifth Google connector is a compile error here
+ * rather than a service silently missing from the bundle.
+ */
+const GOOGLE_BUNDLE_SPAWNS: Readonly<Record<GoogleConnectorOAuthServiceId, string>> = {
+  google_drive: "google-drive",
+  gmail: "gmail",
+  google_photos: "google-photos",
+  google_meet: "google-meet",
+};
+
+const GOOGLE_BUNDLE_IDS = Object.keys(GOOGLE_BUNDLE_SPAWNS) as GoogleConnectorOAuthServiceId[];
+
+/**
+ * Report a Google credential that is present but cannot produce an access token.
+ *
+ * Attribution is the point. The failure used to surface from whichever connector's `sync()`
+ * happened to boot the mesh — in practice `gmail`, the one Google connector whose credential
+ * was fine — so `sync_state.last_error` and `connector_health_history` both named the wrong
+ * service and re-authing it changed nothing. Naming `id` here puts the error on the connector
+ * that actually owns the credential. Mirrors `recordArgsJsonFailure` in `user-mcp.ts`.
+ */
+function recordGoogleCredentialFailure(
+  ctx: MeshSpawnContext,
+  id: GoogleConnectorOAuthServiceId,
+  err: unknown,
+): void {
+  const reason = err instanceof Error ? err.message : String(err);
+  ctx.logger?.warn(
+    { serviceId: id, reason },
+    "google credential unusable — skipping this connector, others in the bundle still start",
+  );
+  if (ctx.healthDb !== undefined) {
+    transitionHealth(ctx.healthDb, id, { type: "persistent_error", error: reason });
+  }
+}
+
+/**
  * Starts Google Drive / Gmail / Google Photos MCP subprocesses for which a vault
  * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
  * token exists (per-service keys or legacy `google.oauth`). Each server gets its own access token.
@@ -72,55 +115,36 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
     return;
   }
   const googleServers: Record<string, ServerSpec> = {};
-  const ids: GoogleConnectorOAuthServiceId[] = [
-    "google_drive",
-    "gmail",
-    "google_photos",
-    "google_meet",
-  ];
-  for (const id of ids) {
+  for (const id of GOOGLE_BUNDLE_IDS) {
     const resolved = await resolveGoogleOAuthVaultKey(ctx.vault, id);
     if (resolved === null) {
       continue;
     }
-    const token = await getValidGoogleAccessToken(ctx.vault, id);
-    if (id === "google_drive") {
-      googleServers["google_drive"] = wrap(
-        {
-          ...connectorSpawn("google-drive"),
-          env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
-        },
-        "google_drive",
-        ctx,
-      );
-    } else if (id === "gmail") {
-      googleServers["gmail"] = wrap(
-        {
-          ...connectorSpawn("gmail"),
-          env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
-        },
-        "gmail",
-        ctx,
-      );
-    } else if (id === "google_photos") {
-      googleServers["google_photos"] = wrap(
-        {
-          ...connectorSpawn("google-photos"),
-          env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
-        },
-        "google_photos",
-        ctx,
-      );
-    } else {
-      googleServers["google_meet"] = wrap(
-        {
-          ...connectorSpawn("google-meet"),
-          env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
-        },
-        "google_meet",
-        ctx,
-      );
+    let token: string;
+    try {
+      token = await getValidGoogleAccessToken(ctx.vault, id);
+    } catch (err) {
+      // A present-but-unusable credential is treated exactly like an absent one: skip this
+      // service, keep the others. Unguarded, this `await` aborted the whole bundle — and
+      // `google_drive` is first — so ONE stale refresh token disabled all four Google
+      // connectors. Observed in production: Drive's and Photos' tokens had expired months
+      // earlier, Gmail's was valid and accepted by Google, and every `connector sync gmail`
+      // failed with Drive's `invalid_grant: Bad Request`. Re-authing gmail could never fix
+      // it, and `connector pause google_drive` did not either — pause gates the scheduler,
+      // not this direct mesh call. The `resolved === null` guard above already skipped an
+      // ABSENT key, which is why `vault delete` worked where `pause` did not; that asymmetry
+      // was the bug, not the guard.
+      recordGoogleCredentialFailure(ctx, id, err);
+      continue;
     }
+    googleServers[id] = wrap(
+      {
+        ...connectorSpawn(GOOGLE_BUNDLE_SPAWNS[id]),
+        env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
+      },
+      id,
+      ctx,
+    );
   }
   if (Object.keys(googleServers).length === 0) {
     return;
