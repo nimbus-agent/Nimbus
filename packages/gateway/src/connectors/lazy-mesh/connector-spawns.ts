@@ -5,6 +5,7 @@ import { MCPClient } from "@mastra/mcp";
 import { getValidCanvaAccessToken } from "../../auth/canva-access-token.ts";
 import { getValidFigmaAccessToken } from "../../auth/figma-access-token.ts";
 import {
+  GOOGLE_OAUTH_PARSE_ERRORS,
   type GoogleConnectorOAuthServiceId,
   getValidGoogleAccessToken,
   resolveGoogleOAuthVaultKey,
@@ -79,6 +80,29 @@ const GOOGLE_BUNDLE_SPAWNS: Readonly<Record<GoogleConnectorOAuthServiceId, strin
 const GOOGLE_BUNDLE_IDS = Object.keys(GOOGLE_BUNDLE_SPAWNS) as GoogleConnectorOAuthServiceId[];
 
 /**
+ * A FIXED classification of why a Google credential could not produce a token — never the
+ * error text itself.
+ *
+ * `postToken` builds its message from `tokenErrorSummary`, which reads `error` and
+ * `error_description` straight out of the provider's JSON response. That is remote-controlled
+ * text, and non-negotiable 3 says credentials never reach logs; echoing an arbitrary provider
+ * string into both a log line and `sync_state.last_error` is the wrong side of that line even
+ * when the string is usually harmless. CodeQL flagged the same path (`js/clear-text-logging`).
+ *
+ * Nothing diagnostic is lost. The connector that OWNS the credential still runs its own sync,
+ * still calls `getValidGoogleAccessToken` for itself, and still records the full provider
+ * message through `syncFailureUserMessage` — which is precisely the attribution F11 exists to
+ * restore. This line only has to say which connector was skipped and roughly why.
+ */
+function classifyGoogleCredentialFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : "";
+  const parseFailure = Object.values(GOOGLE_OAUTH_PARSE_ERRORS).some((m) => message === m);
+  return parseFailure
+    ? "the stored credential could not be read (re-run: nimbus connector auth)"
+    : "the provider would not exchange the stored refresh token (re-run: nimbus connector auth)";
+}
+
+/**
  * Report a Google credential that is present but cannot produce an access token.
  *
  * Attribution is the point. The failure used to surface from whichever connector's `sync()`
@@ -92,7 +116,7 @@ function recordGoogleCredentialFailure(
   id: GoogleConnectorOAuthServiceId,
   err: unknown,
 ): void {
-  const reason = err instanceof Error ? err.message : String(err);
+  const reason = classifyGoogleCredentialFailure(err);
   ctx.logger?.warn(
     { serviceId: id, reason },
     "google credential unusable — skipping this connector, others in the bundle still start",

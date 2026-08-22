@@ -57,7 +57,7 @@ describe("authorization-code exchange — offline access requires a refresh toke
       exchangeAuthorizationCode(
         exchangeArgs(OAUTH_PROVIDERS.google, { access_token: "ya29.x", expires_in: 3599 }),
       ),
-    ).rejects.toThrow(/myaccount\.google\.com\/permissions/);
+    ).rejects.toThrow("myaccount.google.com/permissions");
   });
 
   test("an empty-string refresh_token is rejected too, not just an absent one", async () => {

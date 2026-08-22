@@ -184,9 +184,12 @@ describe("transitionHealth — skipped_offline", () => {
 });
 
 describe("getConnectorHealth", () => {
-  test("returns healthy default for unknown connector", () => {
+  test("returns not_configured for a connector that was never observed", () => {
+    // Was `healthy`, which is the F6 defect stated as a test: with no `sync_state` row nothing
+    // has ever been observed about this connector, and calling that healthy is an assertion the
+    // index cannot support. A fresh install claimed ~90 healthy connectors this way.
     const snap = getConnectorHealth(db, "unknown-connector");
-    expect(snap.state).toBe("healthy");
+    expect(snap.state).toBe("not_configured");
     expect(snap.backoffAttempt).toBe(0);
   });
 });

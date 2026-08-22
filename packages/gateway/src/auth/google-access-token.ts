@@ -16,7 +16,7 @@ export type GoogleConnectorOAuthServiceId =
   | "google_photos"
   | "google_meet";
 
-const GOOGLE_OAUTH_PARSE_ERRORS: ParseStoredOAuthErrors = {
+export const GOOGLE_OAUTH_PARSE_ERRORS: ParseStoredOAuthErrors = {
   invalidJson: "Invalid Google OAuth vault payload",
   invalidPayload: "Invalid Google OAuth vault payload",
   missingAccess: "Missing Google access token",

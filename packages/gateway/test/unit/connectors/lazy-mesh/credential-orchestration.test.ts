@@ -23,7 +23,12 @@ function makeRecorderSpawners(): CredentialSpawners {
     ensureDiscordMcp: make("discord"),
     ensureGithubMcp: make("github"),
     ensureGitlabMcp: make("gitlab"),
-    ensureGoogleDriveMcp: make("google-drive"),
+    // Returns the ids it registered (F11 fault isolation), unlike its 24 siblings, so it needs
+    // its own recorder rather than the void-returning `make`.
+    ensureGoogleDriveMcp: async (_ctx: MeshSpawnContext): Promise<readonly string[]> => {
+      spawnCalls.push("google-drive");
+      return [];
+    },
     ensureJenkinsMcp: make("jenkins"),
     ensureJiraMcp: make("jira"),
     ensureKubernetesMcp: make("kubernetes"),

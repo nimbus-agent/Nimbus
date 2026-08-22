@@ -130,7 +130,12 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
 
     const drive = getConnectorHealth(db, "google_drive");
     expect(drive.state).toBe("error");
-    expect(drive.lastError ?? "").toMatch(/vault payload/);
+    // A CLASSIFICATION, never the provider's own error text: `postToken` builds that from
+    // `tokenErrorSummary`, which reads `error_description` straight out of the remote JSON, and
+    // non-negotiable 3 keeps remote-controlled strings out of logs and stored state. The full
+    // message still reaches `sync_state.last_error` for google_drive via its OWN sync failure.
+    expect(drive.lastError ?? "").toContain("could not be read");
+    expect(drive.lastError ?? "").not.toContain("vault payload");
     expect(getConnectorHealth(db, "gmail").state).not.toBe("error");
   });
 
@@ -167,5 +172,47 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     const registered = await ensureGoogleDriveMcp(h.ctx);
 
     expect(registered).toEqual(["gmail", "google_drive", "google_meet", "google_photos"]);
+  });
+});
+
+describe("the skip reason never carries provider-controlled text", () => {
+  /**
+   * `postToken` composes its message from `tokenErrorSummary`, which reads `error` and
+   * `error_description` verbatim out of the provider's JSON response. Passing that through to a
+   * log line and to `sync_state.last_error` puts remote-controlled text on both surfaces —
+   * against non-negotiable 3, and flagged by CodeQL as `js/clear-text-logging`.
+   *
+   * Nothing is lost by classifying instead: google_drive's own sync still fails, still calls
+   * `getValidGoogleAccessToken` for itself, and still records the full message through
+   * `syncFailureUserMessage` — the correct attribution F11 exists to restore.
+   */
+  test("an error carrying a secret-shaped string does not reach the log or health row", async () => {
+    const vault = createMockVault();
+    // A stored payload whose PARSE fails is the reachable case here; the classification path is
+    // shared with the refresh-rejected case, which is where provider text would arrive.
+    await vault.set("google_drive.oauth", DEAD_TOKEN);
+    await vault.set("google_gmail.oauth", VALID_TOKEN);
+    const db = healthDb();
+    const h = harness(vault, db);
+
+    await ensureGoogleDriveMcp(h.ctx);
+
+    const logged = JSON.stringify(h.warnings);
+    expect(logged).not.toContain("vault payload");
+    expect(logged).toContain("nimbus connector auth");
+    expect(getConnectorHealth(db, "google_drive").lastError ?? "").not.toContain("vault payload");
+  });
+
+  test("both classifications point at the same remedy", async () => {
+    // The reason exists to be actionable. Whichever way the credential failed, re-auth is the
+    // fix, and the line has to say so — a classification that only says "something went wrong"
+    // would be a worse trade than the text it replaced.
+    const vault = createMockVault();
+    await vault.set("google_drive.oauth", DEAD_TOKEN);
+    const h = harness(vault);
+
+    await ensureGoogleDriveMcp(h.ctx);
+
+    expect(h.warnings[0]?.bindings["reason"]).toContain("nimbus connector auth");
   });
 });
