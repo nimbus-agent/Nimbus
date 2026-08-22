@@ -591,9 +591,17 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
     sched.start();
     await sleep(120);
     await sched.stop();
-    // Offline → the tick early-returns; the connector never runs. (skipped_offline is a
-    // history-only health event, so the state itself stays healthy.)
+    // Offline → the tick early-returns; the connector never runs. `skipped_offline` is a
+    // history-only event, so whatever state was there is left alone.
+    //
+    // Asserted against a SEEDED healthy row. It used to assert on a connector with no row at
+    // all, which passed only because `buildSnapshot` hard-coded `healthy` for that case — the
+    // F6 defect. That made this test agree with the bug while appearing to test the skip.
     expect(runs).toBe(0);
+    expect(getConnectorHealth(db, "off").state).toBe("not_configured");
+
+    transitionHealth(db, "off", { type: "sync_success" });
+    transitionHealth(db, "off", { type: "skipped_offline" });
     expect(getConnectorHealth(db, "off").state).toBe("healthy");
   });
 
@@ -1079,5 +1087,58 @@ describe("SyncScheduler — one-shot history floor", () => {
     sched.stop();
 
     expect(seen).toEqual([1_700_000_000_000, 1_700_000_000_000]);
+  });
+});
+
+describe("SyncScheduler records whether a run had a credential at all (F6/F13)", () => {
+  /**
+   * ~90 registered syncables short-circuit to a network-free no-op when unconfigured, and the
+   * scheduler recorded `sync_success` after every run regardless. So a connector nobody had set
+   * up ended up with `healthy` and a fresh `lastSyncAt` — which is what `getConnectorStatus`
+   * served to a model, and what `nimbus doctor` and `connector list` showed a human.
+   *
+   * `isConnectorConfigured` was already computed here, for the I29 egress gate, ~10 lines above
+   * the site that lied.
+   */
+  function syncableNamed(serviceId: string, onRun: () => void): Syncable {
+    return {
+      serviceId,
+      defaultIntervalMs: 10,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        onRun();
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+  }
+
+  test("a run with no credential leaves the connector not_configured, not healthy", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const sched = new SyncScheduler(ctx, {});
+    // `jenkins` has manifest keys and the memory vault holds none of them.
+    sched.register(syncableNamed("jenkins", () => (runs += 1)));
+    sched.start();
+    await sleep(120);
+    await sched.stop();
+
+    expect(runs).toBeGreaterThan(0);
+    expect(getConnectorHealth(db, "jenkins").state).toBe("not_configured");
+  });
+
+  test("a run WITH a credential reports healthy", async () => {
+    // The other direction: without this the fix could be "always not_configured", which would
+    // report every working connector as unset.
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    await ctx.vault.set("jenkins.base_url", "https://ci.example.com");
+    const sched = new SyncScheduler(ctx, {});
+    sched.register(syncableNamed("jenkins", () => {}));
+    sched.start();
+    await sleep(120);
+    await sched.stop();
+
+    expect(getConnectorHealth(db, "jenkins").state).toBe("healthy");
   });
 });

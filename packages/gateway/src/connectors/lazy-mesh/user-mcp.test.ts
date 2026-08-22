@@ -317,8 +317,13 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
     expect(calls.setLazyClient).toHaveLength(0);
     expect(warns).toHaveLength(0);
     if (healthDb === undefined) throw new Error("healthDb should be defined");
+    // The property is that NOTHING was recorded — the early return precedes the parse, so no
+    // health transition happens. It used to assert `healthy`, which was true only because
+    // `buildSnapshot` hard-coded that for a connector with no row (the F6 defect); the test
+    // therefore agreed with the bug while appearing to check the early return.
     const snap = getConnectorHealth(healthDb, "mcp_exists_broken");
-    expect(snap.state).toBe("healthy");
+    expect(snap.state).toBe("not_configured");
+    expect(snap.lastError).toBeUndefined();
     healthDb.close();
   });
 });

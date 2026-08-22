@@ -781,10 +781,10 @@ test("V52 leaves resolve_key NULL for a row with neither url", () => {
   db.close();
 });
 
-test("CURRENT_SCHEMA_VERSION is 55, so V54 runs in production", () => {
+test("CURRENT_SCHEMA_VERSION is 56, so the newest step runs in production", () => {
   // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
   // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
-  expect(CURRENT_SCHEMA_VERSION).toBe(55);
+  expect(CURRENT_SCHEMA_VERSION).toBe(56);
   const db = freshDb();
   runIndexedSchemaMigrations(db, 53);
   expect(tableNames(db)).toContain("item");
@@ -965,5 +965,27 @@ test("deleting a theme cascades its evidence", () => {
     n: number;
   };
   expect(left.n).toBe(0);
+  db.close();
+});
+
+test("V56 adds sync_state.configured, defaulting existing rows to configured", () => {
+  // DEFAULT 1 is the load-bearing part. Rows only exist for connectors the scheduler actually
+  // ran, so they WERE configured; defaulting to 0 would mark every working connector on every
+  // installed machine as unconfigured the moment it upgraded.
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 55);
+  db.query(
+    `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token, depth)
+     VALUES ('github', 123, NULL, 'full')`,
+  ).run();
+
+  runIndexedSchemaMigrations(db, 56);
+
+  const cols = db.query("PRAGMA table_info(sync_state)").all() as Array<{ name: string }>;
+  expect(cols.map((c) => c.name)).toContain("configured");
+  const row = db.query("SELECT configured FROM sync_state WHERE connector_id = 'github'").get() as {
+    configured: number;
+  };
+  expect(row.configured).toBe(1);
   db.close();
 });

@@ -11,6 +11,16 @@ function jitterBelowMs(maxExclusive: number): number {
 
 export type ConnectorHealthState =
   | "healthy"
+  /**
+   * Never set up — no credential the manifest names has ever been stored, so nothing this
+   * connector could report would be about a real conversation with a service.
+   *
+   * Deliberately NOT folded into `unauthenticated`. That state means a credential was presented
+   * and REJECTED, and its remedy is `nimbus connector auth <service>`; this one means there was
+   * never a credential, and its remedy may be "you do not use this service". Conflating the two
+   * is what made F11 take an hour: gmail was reported broken while its own credential was fine.
+   */
+  | "not_configured"
   | "degraded"
   | "error"
   | "rate_limited"
@@ -30,6 +40,14 @@ export interface ConnectorHealthSnapshot {
 
 export type HealthEvent =
   | { type: "sync_success" }
+  /**
+   * No credential for this connector has ever been stored. Sets `sync_state.configured = 0`
+   * and leaves `health_state` alone: the two answer different questions, and the last real
+   * attempt's outcome does not stop being true because the credential was later removed.
+   */
+  | { type: "not_configured" }
+  /** A credential IS present — clears the flag above. */
+  | { type: "configured" }
   | { type: "rate_limited"; retryAfter: Date }
   | { type: "unauthenticated" }
   | { type: "transient_error"; error: string; attempt: number }
@@ -45,7 +63,10 @@ function truncate(s: string): string {
   return s.length > MAX_ERROR_LENGTH ? `${s.slice(0, MAX_ERROR_LENGTH - 3)}...` : s;
 }
 
-type HealthEventWithStateChange = Exclude<HealthEvent, { type: "skipped_offline" }>;
+type HealthEventWithStateChange = Exclude<
+  HealthEvent,
+  { type: "skipped_offline" } | { type: "not_configured" } | { type: "configured" }
+>;
 
 function nextState(event: HealthEventWithStateChange, maxAttempts: number): ConnectorHealthState {
   switch (event.type) {
@@ -70,6 +91,7 @@ function nextState(event: HealthEventWithStateChange, maxAttempts: number): Conn
 
 interface SyncStateHealthRow {
   health_state: string;
+  configured: number;
   retry_after: number | null;
   backoff_until: number | null;
   backoff_attempt: number;
@@ -81,7 +103,7 @@ function readHealthRow(db: Database, connectorId: string): SyncStateHealthRow | 
   return (
     (db
       .query(
-        `SELECT health_state, retry_after, backoff_until, backoff_attempt, last_error, last_sync_at
+        `SELECT health_state, configured, retry_after, backoff_until, backoff_attempt, last_error, last_sync_at
          FROM sync_state WHERE connector_id = ?`,
       )
       .get(connectorId) as SyncStateHealthRow | null) ?? null
@@ -170,6 +192,39 @@ export function transitionHealth(
   if (event.type === "skipped_offline") {
     appendHistory(db, connectorId, fromState, fromState ?? "healthy", "skipped (offline)", now);
     return buildSnapshot(connectorId, current);
+  }
+
+  if (event.type === "not_configured" || event.type === "configured") {
+    // Writes only the `configured` flag. `health_state` is untouched on purpose: it records how
+    // the last REAL attempt went, and removing a credential does not retroactively change that.
+    // `buildSnapshot` is where the two become the single state a consumer reads.
+    //
+    // History gets a row only on a CHANGE. A connector nobody has configured is skipped on
+    // every scheduler tick, and appending there would bury the real transitions under one line
+    // per unconfigured service per tick — with ~90 registered syncables, that is the whole table.
+    // No row means the scheduler has never recorded anything for this connector, and
+    // `buildSnapshot` already reads that as `not_configured`. Creating one here would add ~90
+    // rows on the first tick of a fresh install to record the absence of news.
+    const wasConfigured = current === null ? null : current.configured !== 0;
+    const nowConfigured = event.type === "configured";
+    if (current !== null && wasConfigured !== nowConfigured) {
+      dbRun(db, "UPDATE sync_state SET configured = ? WHERE connector_id = ?", [
+        nowConfigured ? 1 : 0,
+        connectorId,
+      ]);
+      // History carries the DERIVED state, which is what a human reading the log needs. Logging
+      // the untouched `health_state` would record "healthy" for the moment a connector stopped
+      // being configured at all.
+      appendHistory(
+        db,
+        connectorId,
+        fromState,
+        nowConfigured ? (fromState ?? "healthy") : "not_configured",
+        nowConfigured ? "credential configured" : "no credential configured",
+        now,
+      );
+    }
+    return buildSnapshot(connectorId, readHealthRow(db, connectorId));
   }
 
   const to = nextState(event, maxAttempts);
@@ -265,7 +320,7 @@ export function getConnectorHealth(db: Database, connectorId: string): Connector
 export function getAllConnectorHealth(db: Database): ConnectorHealthSnapshot[] {
   const rows = db
     .query(
-      `SELECT connector_id, health_state, retry_after, backoff_until,
+      `SELECT connector_id, health_state, configured, retry_after, backoff_until,
               backoff_attempt, last_error, last_sync_at
        FROM sync_state`,
     )
@@ -274,6 +329,7 @@ export function getAllConnectorHealth(db: Database): ConnectorHealthSnapshot[] {
   return rows.map((r) =>
     buildSnapshot(r.connector_id, {
       health_state: r.health_state,
+      configured: r.configured,
       retry_after: r.retry_after,
       backoff_until: r.backoff_until,
       backoff_attempt: r.backoff_attempt,
@@ -337,11 +393,22 @@ function buildSnapshot(
   row: SyncStateHealthRow | null,
 ): ConnectorHealthSnapshot {
   if (row === null) {
-    return { connectorId, state: "healthy", backoffAttempt: 0 };
+    // No row means this connector has never been observed at all. Reporting `healthy` here was
+    // an assertion nothing supported, and it is the half of F6 that needs no scheduler run to
+    // reproduce — a fresh install claimed ~90 healthy connectors. `not_configured` is the
+    // honest reading, and it is self-correcting: the first successful sync overwrites it, so a
+    // connector configured moments ago reads this only until its next tick.
+    return { connectorId, state: "not_configured", backoffAttempt: 0 };
   }
   const snap: ConnectorHealthSnapshot = {
     connectorId,
-    state: (row.health_state as ConnectorHealthState) ?? "healthy",
+    // `configured = 0` outranks whatever the last attempt recorded. A connector with no
+    // credential cannot be healthy in any sense a reader cares about, and the stored
+    // `health_state` at that point describes an attempt that is no longer repeatable.
+    state:
+      row.configured === 0
+        ? "not_configured"
+        : ((row.health_state as ConnectorHealthState) ?? "healthy"),
     backoffAttempt: row.backoff_attempt ?? 0,
   };
   if (row.retry_after !== null) {

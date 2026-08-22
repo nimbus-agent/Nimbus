@@ -250,7 +250,11 @@ describe("LocalIndex", () => {
     expect(rows[0]?.serviceId).toBe("google_drive");
     expect(rows[0]?.intervalMs).toBe(60_000);
     expect(rows[0]?.status).toBe("ok");
-    expect(rows[0]?.healthState).toBe("healthy");
+    // Registering a connector writes `scheduler_state`, NOT `sync_state` — so nothing has been
+    // observed about its credentials yet. This asserted `healthy`, which is the F6 defect seen
+    // through `persistedConnectorStatuses`, one of the surfaces it was reported on: a connector
+    // the user never set up, presented as working.
+    expect(rows[0]?.healthState).toBe("not_configured");
     idx.upsert({
       id: "g1",
       service: "google_drive",

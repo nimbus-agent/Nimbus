@@ -719,13 +719,22 @@ export class SyncScheduler {
       // `per-run` is the honest granularity: a sync is a paginated run, not a call. Fail-closed —
       // a throw here aborts the run rather than syncing unrecorded (falls into the `catch` below
       // as an ordinary sync failure, since it happens before any real work started).
-      if (await isConnectorConfigured(this.ctx.vault, job.serviceId)) {
+      const configured = await isConnectorConfigured(this.ctx.vault, job.serviceId);
+      if (configured) {
         this.appendSyncEgress?.({
           destination: job.serviceId,
           sourceType: "sync",
           method: "sync.run",
         });
       }
+      // F6/F13: the same answer, one line later, decides whether this run can honestly be
+      // called a sync at all. Without it the `sync_success` below fired for the ~90 registered
+      // syncables whose `sync()` short-circuits to a network-free noop when unconfigured, so a
+      // connector nobody had set up reported `healthy` with a fresh `lastSyncAt` — which is what
+      // `getConnectorStatus` served to a model that has no prior to doubt it.
+      transitionHealth(this.db, job.serviceId, {
+        type: configured ? "configured" : "not_configured",
+      });
       result = await connector.sync(runCtx, row.cursor);
     } catch (err) {
       if (err instanceof RateLimitError) {

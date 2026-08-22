@@ -26,6 +26,13 @@ export function formatConnectorHealthCaveatForIndexSearch(
   if (h.state === "healthy") {
     return undefined;
   }
+  if (h.state === "not_configured") {
+    // Its own sentence, because the generic one below would be wrong twice over: a connector
+    // that was never set up has no results to be "stale", and telling the reader they may be
+    // "incomplete" implies some exist. The remedy differs too — `unauthenticated` means re-auth,
+    // this means set it up or ignore it.
+    return `The ${serviceId} connector has never been configured, so nothing from that service is indexed. Run nimbus connector auth ${serviceId} if you want it.`;
+  }
   if (h.state === "paused") {
     return `The ${serviceId} connector is paused — index results for this service may be stale until you run nimbus connector resume ${serviceId}.`;
   }

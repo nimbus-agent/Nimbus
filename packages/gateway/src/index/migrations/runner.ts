@@ -11,6 +11,7 @@ import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
+import { CONNECTOR_CONFIGURED_V56_SQL } from "../connector-configured-v56-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
 import { CONNECTOR_HEALTH_V13_SQL } from "../connector-health-v13-sql.ts";
 import { DECISIONS_V47_SQL } from "../decisions-v47-sql.ts";
@@ -550,6 +551,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(52, 53, "premortem theme extraction tables", PREMORTEM_V53_SQL),
   simpleStep(53, 54, "graph_entity metadata namespacing", ENTITY_METADATA_V54_SQL),
   simpleStep(54, 55, "PR changed-file paths + coverage", PR_CHANGED_FILE_V55_SQL),
+  simpleStep(
+    55,
+    56,
+    "sync_state.configured (never-set-up connectors)",
+    CONNECTOR_CONFIGURED_V56_SQL,
+  ),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
