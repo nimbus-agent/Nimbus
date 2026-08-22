@@ -37,6 +37,7 @@ function fakeRunner(child: FakeChild): SandboxRunner {
     spawn: () => child as never,
     isFullyActive: () => true,
     degradedReason: () => null,
+    canConfine: () => null,
   };
 }
 

@@ -42,6 +42,7 @@ function spyRunner(active = true): { calls: string[]; runner: SandboxRunner } {
       isFullyActive: () => active,
       // Non-null even when fully active -- exactly what the real Windows runner does.
       degradedReason: () => (active ? "windows per-host caveat" : "helper missing"),
+      canConfine: () => (active ? null : "helper missing"),
     },
   };
 }
@@ -294,5 +295,6 @@ function stubRunnerThatExits(code: number, out: string): SandboxRunner {
     },
     isFullyActive: () => true,
     degradedReason: () => null,
+    canConfine: () => null,
   };
 }

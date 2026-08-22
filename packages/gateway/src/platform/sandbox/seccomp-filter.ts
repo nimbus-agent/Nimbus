@@ -57,6 +57,7 @@ const SYSCALL_NR: Record<string, number> = {
   getdents: 78,
   getcwd: 79,
   chdir: 80,
+  ftruncate: 77,
   rename: 82,
   mkdir: 83,
   rmdir: 84,
@@ -336,6 +337,17 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "rt_sigsuspend",
   "tgkill",
   "preadv2",
+  // Needed the moment a sandboxed workload writes a file through an idiomatic API rather than a
+  // raw fd. Measured on Bun 1.3 under this filter: `openSync`+`writeSync`+`closeSync` survives,
+  // but BOTH `fs.writeFileSync` and `Bun.write` are SIGSYS-killed with no stderr at all — they
+  // truncate through `ftruncate` rather than relying solely on `O_TRUNC`. Without this the
+  // `--allow-fs-write` grant is nearly useless: the sandbox permits the write it was asked to
+  // permit, and the process dies anyway, for a reason nothing surfaces.
+  //
+  // It grants no privilege, on the same reasoning as every entry above: `ftruncate` acts on an
+  // ALREADY-OPEN fd, so it can only affect a file the bind mounts already made writable. It
+  // cannot open anything, reach outside the mounts, or change what is reachable.
+  "ftruncate",
 ]);
 
 export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([

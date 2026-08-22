@@ -220,6 +220,9 @@ function makeMockRunner(opts: {
     },
     isFullyActive: () => opts.fullyActive,
     degradedReason: () => opts.reason,
+    // The diagnostics payload reports posture, not per-policy enforceability, so this fake mirrors
+    // `isFullyActive` rather than modelling the real per-platform logic.
+    canConfine: () => (opts.fullyActive ? null : opts.reason),
   };
 }
 

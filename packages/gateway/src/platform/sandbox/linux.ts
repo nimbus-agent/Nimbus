@@ -179,5 +179,14 @@ export function createLinuxSandboxRunner(): SandboxRunner {
     degradedReason(): string | null {
       return helper.reason;
     },
+    canConfine(policy): string | null {
+      // The helper is needed ONLY for per-host network filtering. With an empty network set the
+      // runner passes `--unshare-net`, giving the child its own network namespace — no helper
+      // involved — while bwrap's filesystem binds and the seccomp filter apply regardless. So a
+      // no-network policy is fully confined on a box with no helper at all, which is the common
+      // case: CI installs bubblewrap, not the helper.
+      if (policy.permissions.network.length === 0) return null;
+      return helper.available ? null : helper.reason;
+    },
   };
 }

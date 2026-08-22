@@ -177,13 +177,24 @@ export async function runExecution(
     // on a machine where BOTH are true. Nothing above this line has an effect beyond a scratch file
     // the `finally` removes, so moving it here costs no safety.
     //
-    // The predicate is `isFullyActive()`, NEVER `degradedReason() === null`: on Windows
-    // degradedReason() is non-null even when the runner is fully active (it reports the accepted
-    // per-host filtering caveat), so keying on it would refuse every Windows execution forever.
-    if (!deps.runner.isFullyActive()) {
+    // The predicate is `canConfine(policy)` -- "can you enforce THIS policy?" -- and deliberately
+    // neither of the two obvious alternatives:
+    //
+    //   * `degradedReason() === null` is wrong on Windows, where it is non-null even when the
+    //     runner is fully active (it reports the accepted per-host filtering caveat). Keying on it
+    //     would refuse every Windows execution, forever.
+    //   * `isFullyActive()` is wrong on Linux, where it reports the `nimbus-sandbox-helper` used
+    //     ONLY for per-host network filtering. This slice grants no network, so `--unshare-net`
+    //     plus bwrap's binds and seccomp confine it completely without that helper -- and CI
+    //     installs bubblewrap but not the helper, so gating on it would make the capability
+    //     unusable on Linux, including in CI, on a dependency it never uses.
+    //
+    // Asking the runner about the actual policy keeps that per-platform reasoning inside the PAL.
+    const cannotConfine = deps.runner.canConfine(policy);
+    if (cannotConfine !== null) {
       throw new ExecGateError(
         "ERR_EXEC_SANDBOX_DEGRADED",
-        `refusing to execute unconfined: ${deps.runner.degradedReason() ?? "unknown"}`,
+        `refusing to execute unconfined: ${cannotConfine}`,
       );
     }
 

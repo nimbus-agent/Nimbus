@@ -217,5 +217,8 @@ export function createDarwinSandboxRunner(): SandboxRunner {
     },
     isFullyActive: () => true,
     degradedReason: () => null,
+    // `sandbox-exec` ships with the OS and the SBPL profile is generated per policy, so there is
+    // no optional component that could be missing — every policy is enforceable.
+    canConfine: () => null,
   };
 }

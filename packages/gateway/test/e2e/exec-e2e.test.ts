@@ -132,12 +132,18 @@ interface ExecOutcome {
  *
  * The gate is fail-closed: with no platform sandbox helper installed it refuses EVERY execution
  * with ERR_EXEC_SANDBOX_DEGRADED, which is correct behaviour but means the spawn-dependent cases
- * below cannot run here. They are skipped with this named reason rather than weakened to pass --
- * a test that "passes" on a box where nothing can execute proves nothing about execution.
+ * below cannot run here. They are skipped with a named reason rather than weakened to pass -- a
+ * test that "passes" on a box where nothing can execute proves nothing about execution.
  *
- * Linux CI installs the helper, so those cases DO run there. If you are reading this after a green
- * local run on Windows or macOS without the helper, note that three of these five never executed.
+ * OFF CI that is a contributor convenience. ON CI it is a FAILURE: a skip and a pass are
+ * indistinguishable in a CI summary, which is exactly how a broken Windows spawn path once
+ * survived a green three-OS matrix. Same discipline as
+ * `test/integration/platform/sandbox/sandbox-wrapper-spawn.test.ts`.
+ *
+ * Note for anyone reading a green local Windows/macOS run: `audit:platform-test-gaps` will NOT
+ * flag these, because it keys on `process.platform` and this condition is sandbox availability.
  */
+const IS_CI = process.env["CI"] === "true";
 const sandboxAvailable = await (async () => {
   const { createSandboxRunner } = await import("../../src/platform/sandbox/sandbox-runner.ts");
   try {
@@ -146,6 +152,27 @@ const sandboxAvailable = await (async () => {
     return false;
   }
 })();
+
+/**
+ * ONE loud, named failure when CI cannot confine, instead of three per-test failures that all say
+ * the same thing less clearly. Mirrors the CI-fail-fast branch in
+ * `test/integration/platform/sandbox/sandbox-wrapper-spawn.test.ts`.
+ *
+ * Note this fires under `verify:docker` too, which sets CI=true on a plain bun image with no
+ * sandbox dependencies installed — the real CI job installs them via
+ * `scripts/linux/install-sandbox-deps.sh`. That is the same pre-existing condition the sibling
+ * suite has; it means "this environment lacks the dependency", not "the code is broken".
+ */
+describe.skipIf(sandboxAvailable || !IS_CI)("nimbus exec e2e — CI sandbox precondition", () => {
+  test("fails loudly instead of silently skipping the spawn-dependent cases", () => {
+    throw new Error(
+      "exec-e2e: CI precondition unmet — the platform sandbox is not fully active, so no " +
+        "execution can be confined and the approve/deny round-trip cannot be exercised. A skip " +
+        "and a pass are indistinguishable in a CI summary; install this platform's sandbox " +
+        "dependency (scripts/linux/install-sandbox-deps.sh on Linux) and re-run.",
+    );
+  });
+});
 
 describe("nimbus exec e2e (real gateway subprocess)", () => {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-exec-e2e-"));

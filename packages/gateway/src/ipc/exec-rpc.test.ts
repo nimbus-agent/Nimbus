@@ -28,6 +28,7 @@ const inertRunner: SandboxRunner = {
   },
   isFullyActive: () => true,
   degradedReason: () => null,
+  canConfine: () => null,
 };
 
 interface TestCtx extends ExecRpcCtx {

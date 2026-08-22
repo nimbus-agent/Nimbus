@@ -1652,14 +1652,28 @@ describe("I33 — user code executes only behind the exec gate", () => {
   // On Windows `degradedReason()` is non-null even when the runner is fully active -- it reports
   // the accepted per-host-filtering caveat. A gate keyed on it would refuse every Windows
   // execution forever: fail-closed, but total.
-  test("the gate keys confinement on isFullyActive(), never on degradedReason() === null", async () => {
-    const src = await readFile(
-      resolve(REPO_ROOT, "packages/gateway/src/exec/exec-gate.ts"),
-      "utf8",
+  test("the gate keys confinement on canConfine(policy), not a policy-independent probe", async () => {
+    const code = stripComments(
+      await readFile(resolve(REPO_ROOT, "packages/gateway/src/exec/exec-gate.ts"), "utf8"),
     );
-    const code = stripComments(src);
-    expect(code).toContain("isFullyActive()");
+    // Ask "can you confine THIS policy?" -- neither policy-independent probe is correct.
+    // `isFullyActive()` is wrong on Linux, where it reports a helper used ONLY for per-host
+    // network filtering that a no-network policy never touches; gating on it made the capability
+    // unusable on every Linux box lacking that helper, CI included.
+    expect(code).toContain("canConfine(policy)");
     expect(code).not.toMatch(/degradedReason\(\)\s*===\s*null/);
+    expect(code).not.toMatch(/!\s*deps\.runner\.isFullyActive\(\)/);
+  });
+
+  // The Linux relaxation must stay policy-AWARE in the direction that matters: a network-bearing
+  // policy still requires the helper. If canConfine collapses to `return null`, "no network needs
+  // no helper" has silently become "nothing is ever checked".
+  test("Linux still requires the helper for a network-bearing policy", async () => {
+    const code = stripComments(
+      await readFile(resolve(REPO_ROOT, "packages/gateway/src/platform/sandbox/linux.ts"), "utf8"),
+    );
+    expect(code).toMatch(/canConfine[\s\S]{0,400}permissions\.network\.length === 0/);
+    expect(code).toMatch(/canConfine[\s\S]{0,400}helper\.available/);
   });
 
   // Empty-by-construction is the property; a caller-supplied network list must be REFUSED, not

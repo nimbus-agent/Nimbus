@@ -73,6 +73,16 @@ export function createWin32SandboxRunner(): SandboxRunner {
       // Documented and accepted; see docs/sandbox.md#platform-asymmetry.
       return "Windows: per-host network filtering is all-or-nothing (AppContainer internetClient); see docs/sandbox.md#platform-asymmetry";
     },
+    canConfine(): string | null {
+      // Unlike Linux, the helper here IS the confinement: it creates the AppContainer profile and
+      // applies the ACLs. Without it `spawn` refuses outright (I15), so no policy is enforceable.
+      if (!helper.available) return helper.reason;
+      // A multi-host policy cannot be honoured exactly — AppContainer's `internetClient` is
+      // all-or-nothing — but that is the documented, accepted platform asymmetry rather than a
+      // missing component, and `degradedReason()` already reports it. It does not make the policy
+      // unenforceable, so it is not reported here. A no-network policy is exact either way.
+      return null;
+    },
   };
 }
 

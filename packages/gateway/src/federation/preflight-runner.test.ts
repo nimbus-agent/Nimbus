@@ -26,6 +26,7 @@ function fakeRunner(spawn: SandboxRunner["spawn"]): () => Promise<SandboxRunner>
     platform: "linux",
     isFullyActive: () => true,
     degradedReason: () => null,
+    canConfine: () => null,
     spawn,
   });
 }
