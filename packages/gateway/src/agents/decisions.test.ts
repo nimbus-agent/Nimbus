@@ -466,7 +466,11 @@ test("emitDecisionsBrief renders deterministically alone and defers to a configu
 // Finding 3: the 0.86 ceiling was claimed in the docs and the spec but emitted
 // nowhere. Unconditional — unlike the truncated-source note above it, this one
 // is not data-dependent, so it never has a silent-when-clean case.
-test("always reports the 0.86 confidence ceiling", async () => {
+test("no longer reports a confidence ceiling, because there is not one (F25)", async () => {
+  // This asserted the note was on EVERY brief. The note said the ceiling existed because no
+  // connector indexed changed-file paths — true when written, false since V55 — and the real
+  // cause was two dead branches in `corroboration()` scoring against evidence nothing emits.
+  // Removing them makes the ceiling 1.0, so the disclosure has nothing left to disclose.
   extracted("a", 1_000, 0.9);
   writePassState(db, {
     watermarkMs: 1_000,
@@ -476,8 +480,7 @@ test("always reports the 0.86 confidence ceiling", async () => {
     scannedItems: 1,
   });
   const withRows = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
-  expect(withRows.gaps.some((g) => g.detail.includes("0.86"))).toBe(true);
-  // Also present on the empty brief — "every brief" means every brief.
+  expect(withRows.gaps.some((g) => g.detail.includes("tops out"))).toBe(false);
   const empty = await runDecisions({}, ctx());
-  expect(empty.gaps.some((g) => g.detail.includes("0.86"))).toBe(true);
+  expect(empty.gaps.some((g) => g.detail.includes("tops out"))).toBe(false);
 });

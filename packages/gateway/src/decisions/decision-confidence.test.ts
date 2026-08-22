@@ -24,7 +24,11 @@ test("a weak chat cue with no evidence and no rationale scores low", () => {
   expect(c).toBeLessThan(0.2);
 });
 
-test("adding a migration to a PR raises corroboration", () => {
+test("migration evidence no longer changes the score, because nothing emits it (F25)", () => {
+  // This pinned a branch that could never execute: the union, this scorer and the V47 CHECK are
+  // the only three sites the literal appears in, and no writer produces it. Keeping the branch
+  // meant PR/commit corroboration scored 0.6 and total confidence capped at 0.86 — a scale on
+  // which no real decision could ever score full marks.
   const base = {
     tier: "explicit",
     serviceType: "jira:issue",
@@ -33,7 +37,7 @@ test("adding a migration to a PR raises corroboration", () => {
   } as const;
   const pr = computeConfidence({ ...base, evidenceKinds: ["pr"] });
   const both = computeConfidence({ ...base, evidenceKinds: ["pr", "migration"] });
-  expect(both).toBeGreaterThan(pr);
+  expect(both).toBeCloseTo(pr, 10);
 });
 
 test("confidence never leaves 0..1", () => {
@@ -168,8 +172,9 @@ test("explainConfidence terms sum to exactly computeConfidence", () => {
   expect(rows).toEqual(expected);
 });
 
-// The ceiling the brief states as a standing honesty note (agents/decisions.ts).
-test("the reachable confidence ceiling is 0.86, not 1.0", () => {
+// Was 0.86, with a standing gap note in `agents/decisions.ts` explaining why. Both are gone:
+// the cap came from `corroboration()` reserving its top score for evidence nothing emits.
+test("the reachable confidence ceiling is 1.0 — full marks are attainable", () => {
   const best = computeConfidence({
     tier: "heading",
     serviceType: "notion:page",
@@ -177,5 +182,5 @@ test("the reachable confidence ceiling is 0.86, not 1.0", () => {
     hasRationale: true,
     hasAlternatives: true,
   });
-  expect(best).toBeCloseTo(0.86, 5);
+  expect(best).toBeCloseTo(1, 5);
 });
