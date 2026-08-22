@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.13.2](https://github.com/nimbus-agent/Nimbus/compare/v2.13.1...v2.13.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* **cli:** a Gateway connection can always answer a HITL prompt ([#1305](https://github.com/nimbus-agent/Nimbus/issues/1305)) ([576ba6e](https://github.com/nimbus-agent/Nimbus/commit/576ba6e2d7d5fb4ea0cd8d81d0505b4c57f4f085))
+
 ## [2.13.1](https://github.com/nimbus-agent/Nimbus/compare/v2.13.0...v2.13.1) (2026-08-22)
 
 
