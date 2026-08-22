@@ -50,7 +50,7 @@ describe("formatProveResult", () => {
     // Pinned to the REAL six-class gateway output — every observed class is named with a label,
     // never a raw key.
     expect(out.split("\n")[0]).toBe(
-      `outbound egress events during this query: 0 (scope: ${REAL_SCOPE})`,
+      `outbound egress events during this query, in the covered classes: 0 (scope: ${REAL_SCOPE})`,
     );
     expect(out).toContain("not observed: model, peer, session, sync");
     // No observed class fell through to its raw key. `mcp` alone in the scope clause would read as
@@ -70,7 +70,7 @@ describe("formatProveResult", () => {
       label: "in this window",
     });
     expect(out.split("\n")[0]).toBe(
-      `outbound egress events in this window: 3 (scope: ${REAL_SCOPE})`,
+      `outbound egress events in this window, in the covered classes: 3 (scope: ${REAL_SCOPE})`,
     );
     expect(out).not.toContain("during this query");
   });
@@ -101,7 +101,7 @@ describe("formatProveResult", () => {
     // `observed` is sorted by CLASS KEY before mapping to display names: mcp < session < task, so
     // the bare "session" lands between the two labelled entries rather than after them.
     expect(out.split("\n")[0]).toBe(
-      "outbound egress events during this query: 0 (scope: agents.* briefs served to MCP clients, session, gated connector actions)",
+      "outbound egress events during this query, in the covered classes: 0 (scope: agents.* briefs served to MCP clients, session, gated connector actions)",
     );
     expect(out).toContain("not observed: model, peer, sync");
   });

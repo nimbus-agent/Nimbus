@@ -129,6 +129,16 @@ const FUNCTION_WORDS: readonly string[] = [
 ];
 
 const COMMON_ENGLISH: readonly string[] = [
+  // F5: harvested from markdown headings on a real index and surfaced as "team terminology" —
+  // "Main" (a git branch, from `chore(main): release …` commit titles), "Key", "Start",
+  // "Built-in", "Read-only". None is a term anyone on a team would ask the meaning of.
+  "main",
+  "key",
+  "start",
+  "built-in",
+  "read-only",
+  "built in",
+  "read only",
   ...FUNCTION_WORDS,
   "new",
   "old",

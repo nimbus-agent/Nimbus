@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
-import { normalizeTerm } from "./term-normalize.ts";
+import { normalizeTerm, separatorFoldedKey } from "./term-normalize.ts";
 
 test("lowercases", () => {
   expect(normalizeTerm("CDR")).toBe("cdr");
@@ -73,4 +73,34 @@ test("still keeps ss/us/is endings intact with no internal dot", () => {
   expect(normalizeTerm("class")).toBe("class");
   expect(normalizeTerm("bus")).toBe("bus");
   expect(normalizeTerm("analysis")).toBe("analysis");
+});
+
+describe("separatorFoldedKey spots the same term written two ways (F5)", () => {
+  /**
+   * `nimbus glossary --limit 15` listed "quick-ask" (3) at position 5 and "Quick Ask" (3) at
+   * position 7. Case was already folded; the separator was not.
+   *
+   * A COMPARISON key, not an identity change: `normalizeTerm` still keeps `pr_changed_file` and
+   * `read-only` as single identifiers, because folding at normalisation time would turn every
+   * identifier into a multi-word phrase and change what gets mined and how it scores.
+   */
+  test.each([
+    ["quick ask", "quick-ask"],
+    ["read only", "read_only"],
+  ])("%s and %s fold together", (a, b) => {
+    expect(separatorFoldedKey(a)).toBe(separatorFoldedKey(b));
+  });
+
+  test("normalizeTerm itself is unchanged, so identifiers stay whole", () => {
+    expect(normalizeTerm("pr_changed_file")).toBe("pr_changed_file");
+    expect(normalizeTerm("read-only")).toBe("read-only");
+  });
+
+  test("a dotted identifier is untouched", () => {
+    expect(separatorFoldedKey("node.js")).toBe("node.js");
+  });
+
+  test("unrelated terms do not fold together", () => {
+    expect(separatorFoldedKey("billing")).not.toBe(separatorFoldedKey("retry"));
+  });
 });

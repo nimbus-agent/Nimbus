@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-
 import { dbRun } from "../db/write.ts";
+import { isAutomatedSenderEmail } from "./automated-sender.ts";
 import { NIMBUS_PERSON_NAMESPACE_UUID, uuidV5 } from "./person-id.ts";
 import {
   deletePersonById,
@@ -28,6 +28,28 @@ function nonEmpty(s: string | undefined): s is string {
 export function resolvePersonForSync(db: Database, hints: PersonSyncHints): string | null {
   if (
     !nonEmpty(hints.canonicalEmail) &&
+    !nonEmpty(hints.githubLogin) &&
+    !nonEmpty(hints.gitlabLogin) &&
+    !nonEmpty(hints.slackHandle) &&
+    !nonEmpty(hints.linearMemberId) &&
+    !nonEmpty(hints.jiraAccountId) &&
+    !nonEmpty(hints.notionUserId) &&
+    !nonEmpty(hints.bitbucketUuid) &&
+    !nonEmpty(hints.microsoftUserId) &&
+    !nonEmpty(hints.discordUserId)
+  ) {
+    return null;
+  }
+
+  // A send-only mailbox is not a person (F7). `nimbus people list` filled with `newsletter@`,
+  // `jobalerts-noreply@` and friends because every gmail `From:` became a graph entity — which
+  // dilutes `nimbus expert` and the involvement weighting F3 depends on.
+  //
+  // Only when email is the ONLY identity on offer. A hint carrying a GitHub login or a Slack
+  // handle alongside the address is a real account that happens to send from a no-reply address,
+  // and dropping it would lose a genuine collaborator.
+  if (
+    isAutomatedSenderEmail(hints.canonicalEmail) &&
     !nonEmpty(hints.githubLogin) &&
     !nonEmpty(hints.gitlabLogin) &&
     !nonEmpty(hints.slackHandle) &&

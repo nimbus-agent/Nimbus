@@ -124,3 +124,30 @@ describe("mergePeople", () => {
     );
   });
 });
+
+describe("automated senders do not become people (F7)", () => {
+  test("a newsletter address alone creates no person", () => {
+    const db = openDb();
+    expect(resolvePersonForSync(db, { canonicalEmail: "newsletter@first-backer.com" })).toBeNull();
+    db.close();
+  });
+
+  test("an ordinary address still does", () => {
+    const db = openDb();
+    expect(resolvePersonForSync(db, { canonicalEmail: "asaf@example.com" })).not.toBeNull();
+    db.close();
+  });
+
+  test("a no-reply address WITH another identity is kept", () => {
+    // A real account that happens to send from a no-reply address is still a collaborator, and
+    // dropping it would lose someone the graph needs. Email-only is the case this filters.
+    const db = openDb();
+    expect(
+      resolvePersonForSync(db, {
+        canonicalEmail: "no-reply@github.com",
+        githubLogin: "octocat",
+      }),
+    ).not.toBeNull();
+    db.close();
+  });
+});

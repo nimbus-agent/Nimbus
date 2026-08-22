@@ -95,7 +95,17 @@ export function formatProveResult(input: {
   // among several observed classes would silently drop the others from both this line AND the
   // "not observed" line below, understating scope.
   const scope = observed.map((c) => COVERAGE_CLASS_LABELS[c] ?? c).join(", ");
-  const lines = [`outbound egress events ${input.label}: ${String(input.delta)} (scope: ${scope})`];
+  // The HEADLINE names its own narrowness (F9). "outbound egress events during this query: 0" is
+  // the line a user reads; the scope parenthetical is the line they skip. During the audit four
+  // real outbound attempts to `api.anthropic.com` were made by the remote intent classifier — a
+  // class this ledger does not cover — and the headline still said 0. The scope label was honest
+  // and the number was correct; the sentence still read as "nothing left the machine".
+  //
+  // "in the covered classes" is four words and cannot be skipped, because it sits inside the
+  // clause carrying the number rather than after it.
+  const lines = [
+    `outbound egress events ${input.label}, in the covered classes: ${String(input.delta)} (scope: ${scope})`,
+  ];
   if (unobserved.length > 0) {
     lines.push(`  not observed: ${unobserved.join(", ")}`);
   }

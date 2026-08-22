@@ -2062,10 +2062,10 @@ Prove what (if anything) a query sent off your machine, and inspect the append-o
 Run a query and prove its outbound footprint. The command snapshots the ledger head **before** the query, runs it through the same blocking agent path as `nimbus ask`, snapshots the head **after**, and prints the delta:
 
 ```text
-outbound egress events during this query: N
+outbound egress events during this query, in the covered classes: N
 ```
 
-`0 ✓` means the query was answered entirely from the local index — nothing left the machine. A non-zero count is followed by the per-event egress report (see `nimbus egress` below) so you can see exactly what went where.
+`0 ✓` means the query was answered from the local index without any event **in the covered classes** — the classes named in the `(scope: …)` clause the same line prints. It is not a claim that no packet left the machine: traffic outside those classes (for example the remote intent classifier `ask` attempts before falling back to the local answer) is not ledgered and does not appear in this count. The `not observed:` line names the classes that are excluded. A non-zero count is followed by the per-event egress report (see `nimbus egress` below) so you can see exactly what went where.
 
 | Flag | Effect |
 | --- | --- |
@@ -2073,10 +2073,10 @@ outbound egress events during this query: N
 
 ```bash
 nimbus prove "what did Alice say about the launch?"
-# outbound egress events during this query: 0 ✓   (answered from the local index)
+# outbound egress events during this query, in the covered classes: 0 ✓
 
 nimbus prove "open a GitHub issue for the flaky test" --receipt
-# outbound egress events during this query: 1
+# outbound egress events during this query, in the covered classes: 1
 #   2026-06-21 14:03:11  github.issues.create         ok
 # receipt: digest=… sig=…
 ```

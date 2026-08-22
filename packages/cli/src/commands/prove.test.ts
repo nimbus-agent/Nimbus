@@ -8,7 +8,14 @@ import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 // Imported AFTER cli-mocks installs the gateway-process / ipc-client module mocks (mirrors
 // audit.test.ts) so the withIpc/withConsentIpc paths resolve the fake gateway state + IPC client.
 const proveMod = await import("./prove.ts");
-const { resolvePruneBeforeTs, runEgress, runEgressReport, runEgressVerify, runProve } = proveMod;
+const {
+  formatProveResult,
+  resolvePruneBeforeTs,
+  runEgress,
+  runEgressReport,
+  runEgressVerify,
+  runProve,
+} = proveMod;
 
 type Call = { method: string; params: unknown };
 
@@ -204,7 +211,9 @@ describe("runEgressReport", () => {
     // never a per-query delta — it must be labeled "in this window", NOT "during this query" (the
     // label `runProve` uses for its own, different, head-count-diff number). Pinned so the two
     // call sites cannot regress back to sharing an identical, scope-lying label.
-    expect(out.stdout).toContain("outbound egress events in this window: 1");
+    expect(out.stdout).toContain(
+      "outbound egress events in this window, in the covered classes: 1",
+    );
     expect(out.stdout).not.toContain("during this query");
     expect(out.stdout).toContain("email.send");
     expect(out.stdout).toContain("receipt: digest=deadbeef");
@@ -223,7 +232,9 @@ describe("runEgressReport", () => {
       // biome-ignore lint/suspicious/noExplicitAny: fake client
     }) as any;
     await runEgressReport(c, { json: false });
-    expect(out.stdout).toContain("outbound egress events in this window: 0");
+    expect(out.stdout).toContain(
+      "outbound egress events in this window, in the covered classes: 0",
+    );
     expect(out.stdout).not.toContain("during this query");
   });
 });
@@ -285,7 +296,7 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
     // Pinned to the REAL six-class output. A five-class fixture used to make this line read
     // "(scope: gated connector actions)", which no shipped gateway can produce.
     expect(out.stdout).toContain(
-      `outbound egress events during this query: 0 (scope: ${REAL_SCOPE})`,
+      `outbound egress events during this query, in the covered classes: 0 (scope: ${REAL_SCOPE})`,
     );
     expect(out.stdout).toContain("not observed: model, peer, session, sync");
     expect(out.stdout).not.toContain("0 ✓");
@@ -357,7 +368,9 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
     ]);
     wiredGateway(ipc.client.call);
     await runProve(["send the email"]);
-    expect(out.stdout).toContain("outbound egress events during this query: 1");
+    expect(out.stdout).toContain(
+      "outbound egress events during this query, in the covered classes: 1",
+    );
     expect(out.stdout).toContain("email.send");
     expect(ipc.calls.map((c) => c.method)).toContain("egress.proveWindow");
   });
@@ -407,7 +420,9 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
     ]);
     wiredGateway(ipc.client.call);
     await runProve(["send the email"]);
-    expect(out.stdout).toContain("outbound egress events during this query: 0");
+    expect(out.stdout).toContain(
+      "outbound egress events during this query, in the covered classes: 0",
+    );
     expect(out.stdout).not.toContain("during this query: 1");
   });
 });
@@ -494,5 +509,57 @@ describe("runEgress (dispatcher)", () => {
     await expect(runEgress(["verify"])).rejects.toThrow(
       "Gateway is not running. Start with: nimbus start",
     );
+  });
+});
+
+describe("the prove headline names its own narrowness (F9)", () => {
+  // Four real outbound attempts to `api.anthropic.com` were made during the audit — the remote
+  // intent classifier, a class this ledger does not cover — and `nimbus prove` reported 0. The
+  // scope label was honest and the count was correct; the HEADLINE still read as "nothing left
+  // the machine", which is the shape `egress-claim-must-match-real-outbound` exists to pre-empt.
+  test("the qualifier sits BEFORE the number, in the same clause", () => {
+    const line = formatProveResult({
+      delta: 0,
+      chainOk: true,
+      label: "during this query",
+      completeness: {
+        outboundEgressEvents: 0,
+        indeterminate: false,
+        coverage: { task: "per-action", sync: "per-run", model: "none" },
+      },
+    });
+    const head = line.split("\n")[0] ?? "";
+    expect(head).toContain("in the covered classes");
+    // Before the number, not appended after it — a trailing qualifier is the parenthetical that
+    // already existed and that readers already skip.
+    expect(head.indexOf("in the covered classes")).toBeLessThan(head.indexOf(": 0"));
+  });
+
+  test("a non-zero count carries the same qualifier", () => {
+    const line = formatProveResult({
+      delta: 7,
+      chainOk: true,
+      label: "in this window",
+      completeness: {
+        outboundEgressEvents: 7,
+        indeterminate: false,
+        coverage: { task: "per-action" },
+      },
+    });
+    expect(line).toContain("in the covered classes: 7");
+  });
+
+  test("the uncovered classes are still named on their own line", () => {
+    const line = formatProveResult({
+      delta: 0,
+      chainOk: true,
+      label: "during this query",
+      completeness: {
+        outboundEgressEvents: 0,
+        indeterminate: false,
+        coverage: { task: "per-action", model: "none" },
+      },
+    });
+    expect(line).toContain("not observed: model");
   });
 });

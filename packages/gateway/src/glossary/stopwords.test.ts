@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 import { isFunctionWord, isStopword, STOPWORDS } from "./stopwords.ts";
 
@@ -74,4 +74,23 @@ test("STOPWORDS covers all three layers at a meaningful size", () => {
   expect(STOPWORDS.has("the")).toBe(true);
   expect(STOPWORDS.has("json")).toBe(true);
   expect(STOPWORDS.has("impl")).toBe(true);
+});
+
+describe("headings-harvested noise is filtered (F5)", () => {
+  // A real 13,183-item index produced a glossary whose top ten included "main" (21), "Key" (4),
+  // "start" (3), "built-in" (7) and "read-only" (3). They are markdown-heading words, not team
+  // terminology — the list they crowded out is the product.
+  test.each([["main"], ["key"], ["start"], ["built-in"], ["read-only"]])(
+    "%s is a stopword",
+    (word) => {
+      expect(STOPWORDS.has(word)).toBe(true);
+    },
+  );
+
+  test("a real product term is NOT filtered", () => {
+    // The other direction: a stopword list that grows until it eats the answer is worse than one
+    // that lets some noise through.
+    expect(STOPWORDS.has("whypeek")).toBe(false);
+    expect(STOPWORDS.has("egress ledger")).toBe(false);
+  });
 });

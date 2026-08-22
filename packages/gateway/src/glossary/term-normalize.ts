@@ -56,3 +56,21 @@ export function normalizeTerm(surface: string): string {
   const key = lowered.join(" ").trim();
   return key;
 }
+
+/**
+ * A key with `-`/`_` folded to spaces, for spotting the SAME term written two ways.
+ *
+ * F5 — `nimbus glossary` listed "quick-ask" (3) at position 5 and "Quick Ask" (3) at position 7.
+ * Case was already folded by `normalizeTerm`; the separator was not, so those were two keys. The
+ * model even annotated the second "(same as above, but with capitalization)" — it noticed what
+ * the pipeline did not.
+ *
+ * Deliberately NOT folded inside `normalizeTerm` itself. `pr_changed_file` and `read-only` are
+ * single identifiers, and collapsing every separator at normalisation time would turn each into a
+ * multi-word phrase, changing what gets mined and how it is scored. This is a comparison key for
+ * the reconcile stage only — where the audit places dedup — so identity is unchanged and only
+ * duplicate DETECTION widens.
+ */
+export function separatorFoldedKey(termKey: string): string {
+  return termKey.replace(/(?<=\w)[-_]+(?=\w)/g, " ");
+}
