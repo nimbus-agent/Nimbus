@@ -96,7 +96,7 @@ const GOOGLE_BUNDLE_IDS = Object.keys(GOOGLE_BUNDLE_SPAWNS) as GoogleConnectorOA
  */
 function classifyGoogleCredentialFailure(err: unknown): string {
   const message = err instanceof Error ? err.message : "";
-  const parseFailure = Object.values(GOOGLE_OAUTH_PARSE_ERRORS).some((m) => message === m);
+  const parseFailure = Object.values(GOOGLE_OAUTH_PARSE_ERRORS).includes(message);
   return parseFailure
     ? "the stored credential could not be read (re-run: nimbus connector auth)"
     : "the provider would not exchange the stored refresh token (re-run: nimbus connector auth)";
@@ -176,7 +176,7 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<reado
       ctx,
     );
   }
-  const registered = Object.keys(googleServers).sort();
+  const registered = Object.keys(googleServers).sort((a, b) => a.localeCompare(b));
   if (registered.length === 0) {
     return registered;
   }

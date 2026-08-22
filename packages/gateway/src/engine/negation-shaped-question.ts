@@ -55,13 +55,52 @@ const NEGATION_PHRASES: readonly RegExp[] = [
  * phrase is what keeps "I don't know what this does" from triggering the disclosure: the question
  * has to be about the kind of thing a predicate could have answered.
  */
-const NEGATION_SUBJECTS =
-  /\b(pr|prs|pull request|pull requests|deploy|deploys|deployment|deployments|review|reviews|reviewed|reviewer|reviewers|incident|incidents|merge|merged|commit|commits|touch|touched|touching)\b/i;
+const NEGATION_SUBJECT_WORDS: ReadonlySet<string> = new Set([
+  "pr",
+  "prs",
+  "request",
+  "requests",
+  "deploy",
+  "deploys",
+  "deployment",
+  "deployments",
+  "review",
+  "reviews",
+  "reviewed",
+  "reviewer",
+  "reviewers",
+  "incident",
+  "incidents",
+  "merge",
+  "merged",
+  "commit",
+  "commits",
+  "touch",
+  "touched",
+  "touching",
+]);
+
+/**
+ * A word set rather than one long alternation. Twenty-three branches put the pattern over
+ * Sonar's regex-complexity limit (`S5843`), and all but one were single words, so a
+ * tokenise-and-look-up is both cheaper to read and cheaper to run.
+ *
+ * The exception, stated because it IS a behaviour change: the old pattern had a two-word branch
+ * `pull request`, and this matches on `request` alone. Marginally wider — "which request did not
+ * complete" now qualifies — which is the direction this module already argues for: a false
+ * positive costs one extra cautionary sentence, a false negative leaves the F21 failure intact.
+ */
+function mentionsCoveredSubject(q: string): boolean {
+  for (const word of q.toLowerCase().split(/[^a-z]+/)) {
+    if (NEGATION_SUBJECT_WORDS.has(word)) return true;
+  }
+  return false;
+}
 
 export function isNegationShapedQuestion(input: string): boolean {
   const q = input.trim();
   if (q === "") return false;
-  if (!NEGATION_SUBJECTS.test(q)) return false;
+  if (!mentionsCoveredSubject(q)) return false;
   return NEGATION_PHRASES.some((re) => re.test(q));
 }
 

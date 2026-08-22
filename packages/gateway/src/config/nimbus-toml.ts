@@ -241,14 +241,6 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
     case "local_model":
       out.localModel = parseString(valRaw);
       break;
-    case "local_context_tokens": {
-      const n = parseIntDec(valRaw);
-      // A window below what `num_predict` alone reserves cannot hold a prompt at all, so a
-      // typo there would be worse than the default it replaced. Reject rather than clamp:
-      // clamping silently disagrees with what the file says.
-      if (n !== undefined && n >= 2048) out.localContextTokens = n;
-      break;
-    }
     case "llamacpp_server_path":
       out.llamacppServerPath = parseString(valRaw);
       break;
@@ -273,8 +265,24 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
       break;
     }
     default:
+      applyNimbusLlmNumericKey(out, key, valRaw);
       break;
   }
+}
+
+/**
+ * The bounded-integer `[llm]` keys, split out of the switch above to keep it under the
+ * cognitive-complexity gate (Sonar `S3776`). Each is "parse, bounds-check, assign" — the same
+ * three lines with different bounds, which is exactly the shape that reads better apart from a
+ * switch of one-liners.
+ */
+function applyNimbusLlmNumericKey(out: Partial<NimbusLlmToml>, key: string, valRaw: string): void {
+  if (key !== "local_context_tokens") return;
+  const n = parseIntDec(valRaw);
+  // A window below what `num_predict` alone reserves cannot hold a prompt at all, so a typo
+  // there would be worse than the default it replaced. Reject rather than clamp: clamping
+  // silently disagrees with what the file says.
+  if (n !== undefined && n >= 2048) out.localContextTokens = n;
 }
 
 export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml> {

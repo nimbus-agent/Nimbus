@@ -140,8 +140,36 @@ function looksLikeIdentifier(token: string): boolean {
  * `,` and `.` are grammar. Quotes go entirely: `ftsTitleMatchQuery` escapes them into the FTS
  * string, where they are noise.
  */
+const LEADING_PUNCTUATION = new Set(['"', "'", "`", "(", "[", "{", "<"]);
+const TRAILING_PUNCTUATION = new Set([
+  '"',
+  "'",
+  "`",
+  ")",
+  "]",
+  "}",
+  ">",
+  ",",
+  ".",
+  ";",
+  ":",
+  "!",
+  "?",
+]);
+
+/**
+ * Character walks rather than a regex. `/^[…]+|[…]+$/` is an anchored alternation of two
+ * quantified classes, which backtracks super-linearly on a long run of punctuation — Sonar
+ * `S8786`, and the same ReDoS shape a correctness test would never catch, since every result
+ * here is correct and only the time is wrong. A token like `"""""""…` is not hypothetical input
+ * for a search box.
+ */
 function normalizeToken(raw: string): string {
-  return raw.replaceAll(/^["'`([{<]+|["'`)\]}>,.;:!?]+$/g, "");
+  let start = 0;
+  let end = raw.length;
+  while (start < end && LEADING_PUNCTUATION.has(raw[start] ?? "")) start++;
+  while (end > start && TRAILING_PUNCTUATION.has(raw[end - 1] ?? "")) end--;
+  return raw.slice(start, end);
 }
 
 /**

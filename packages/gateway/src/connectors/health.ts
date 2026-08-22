@@ -177,6 +177,50 @@ function appendHistory(
   );
 }
 
+/**
+ * Write the `configured` flag, and log the change.
+ *
+ * Extracted from `transitionHealth` to keep it under the cognitive-complexity gate (Sonar
+ * `S3776`) — it is a self-contained branch that shares nothing with the state machine below it.
+ *
+ * `health_state` is untouched on purpose: it records how the last REAL attempt went, and removing
+ * a credential does not retroactively change that. `buildSnapshot` is where the two columns
+ * become the single state a consumer reads.
+ *
+ * History gets a row only on a CHANGE, and only when a row already exists. A connector nobody
+ * has configured is skipped on EVERY scheduler tick; appending there would bury the real
+ * transitions under one line per unconfigured service per tick, and with ~90 registered syncables
+ * that is the whole table. No row at all means nothing has ever been observed, which
+ * `buildSnapshot` already reads as `not_configured` — creating ~90 rows on a fresh install to
+ * record the absence of news would be its own noise.
+ */
+function applyConfiguredFlag(
+  db: Database,
+  connectorId: string,
+  current: SyncStateHealthRow | null,
+  fromState: string | null,
+  nowConfigured: boolean,
+  now: number,
+): void {
+  if (current === null) return;
+  if ((current.configured !== 0) === nowConfigured) return;
+  dbRun(db, "UPDATE sync_state SET configured = ? WHERE connector_id = ?", [
+    nowConfigured ? 1 : 0,
+    connectorId,
+  ]);
+  // History carries the DERIVED state, which is what a human reading the log needs. Logging the
+  // untouched `health_state` would record "healthy" for the moment a connector stopped being
+  // configured at all.
+  appendHistory(
+    db,
+    connectorId,
+    fromState,
+    nowConfigured ? (fromState ?? "healthy") : "not_configured",
+    nowConfigured ? "credential configured" : "no credential configured",
+    now,
+  );
+}
+
 export const DEFAULT_MAX_BACKOFF_ATTEMPTS = 10;
 
 export function transitionHealth(
@@ -195,35 +239,7 @@ export function transitionHealth(
   }
 
   if (event.type === "not_configured" || event.type === "configured") {
-    // Writes only the `configured` flag. `health_state` is untouched on purpose: it records how
-    // the last REAL attempt went, and removing a credential does not retroactively change that.
-    // `buildSnapshot` is where the two become the single state a consumer reads.
-    //
-    // History gets a row only on a CHANGE. A connector nobody has configured is skipped on
-    // every scheduler tick, and appending there would bury the real transitions under one line
-    // per unconfigured service per tick — with ~90 registered syncables, that is the whole table.
-    // No row means the scheduler has never recorded anything for this connector, and
-    // `buildSnapshot` already reads that as `not_configured`. Creating one here would add ~90
-    // rows on the first tick of a fresh install to record the absence of news.
-    const wasConfigured = current === null ? null : current.configured !== 0;
-    const nowConfigured = event.type === "configured";
-    if (current !== null && wasConfigured !== nowConfigured) {
-      dbRun(db, "UPDATE sync_state SET configured = ? WHERE connector_id = ?", [
-        nowConfigured ? 1 : 0,
-        connectorId,
-      ]);
-      // History carries the DERIVED state, which is what a human reading the log needs. Logging
-      // the untouched `health_state` would record "healthy" for the moment a connector stopped
-      // being configured at all.
-      appendHistory(
-        db,
-        connectorId,
-        fromState,
-        nowConfigured ? (fromState ?? "healthy") : "not_configured",
-        nowConfigured ? "credential configured" : "no credential configured",
-        now,
-      );
-    }
+    applyConfiguredFlag(db, connectorId, current, fromState, event.type === "configured", now);
     return buildSnapshot(connectorId, readHealthRow(db, connectorId));
   }
 

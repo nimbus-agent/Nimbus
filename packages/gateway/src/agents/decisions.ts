@@ -66,16 +66,31 @@ function toEntry(
   };
 }
 
-function buildGaps(
-  db: Database,
-  counts: { total: number; pending: number; extracted: number; vetoed: number },
-  lastPassAt: number | null,
-  entryCount: number,
-  serviceUnmatched: number,
-  snippetCount: number,
-  truncation: { totalSources: number; truncatedSources: number },
-  staleScoreCount: number,
-): GapNote[] {
+/**
+ * One object rather than eight positionals (Sonar `S107`). At that arity the call site is a
+ * column of bare numbers whose meaning depends on order — `entryCount, serviceUnmatched,
+ * snippetCount` are three `number`s the compiler will happily let you transpose.
+ */
+interface GapInputs {
+  readonly counts: { total: number; pending: number; extracted: number; vetoed: number };
+  readonly lastPassAt: number | null;
+  readonly entryCount: number;
+  readonly serviceUnmatched: number;
+  readonly snippetCount: number;
+  readonly truncation: { totalSources: number; truncatedSources: number };
+  readonly staleScoreCount: number;
+}
+
+function buildGaps(db: Database, input: GapInputs): GapNote[] {
+  const {
+    counts,
+    lastPassAt,
+    entryCount,
+    serviceUnmatched,
+    snippetCount,
+    truncation,
+    staleScoreCount,
+  } = input;
   const gaps: GapNote[] = [];
   const anyItems = db.query("SELECT 1 FROM item LIMIT 1").get() !== null;
 
@@ -262,16 +277,15 @@ export async function runDecisions(
     agentVersion: 1,
     generatedAt: now,
     latencyMs: Math.round(performance.now() - start),
-    gaps: buildGaps(
-      ctx.db,
+    gaps: buildGaps(ctx.db, {
       counts,
-      passState.lastPassAt,
-      entries.length,
+      lastPassAt: passState.lastPassAt,
+      entryCount: entries.length,
       serviceUnmatched,
       snippetCount,
-      { totalSources, truncatedSources },
+      truncation: { totalSources, truncatedSources },
       staleScoreCount,
-    ),
+    }),
     query: { sinceMs: cutoffMs, service, minConfidence, explain },
     entries,
     stats: { ...counts, lastPassAt: passState.lastPassAt, truncatedSources },

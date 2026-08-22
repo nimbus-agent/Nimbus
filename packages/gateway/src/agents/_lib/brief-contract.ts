@@ -115,17 +115,23 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
   return assertNeverBrief(brief);
 }
 
+/**
+ * Which of `anchors` are absent from `haystack`, already normalized.
+ *
+ * EVERY anchor is checked, not the first (F27): one `line` can carry two independent
+ * disclosures, and checking one of them let a rewrite drop the other and ship.
+ */
+function missingAnchors(haystack: string, anchors: readonly string[]): string[] {
+  const normalized = normalizeSectionText(haystack);
+  return anchors.filter((a) => !normalized.includes(normalizeSectionText(a)));
+}
+
 export function contractViolations(brief: SynthInput, markdown: string): string[] {
   const out: string[] = [];
   for (const { scope, anchors } of requiredPhrases(brief)) {
-    // EVERY anchor, not the first (F27). One `line` can carry two independent disclosures, and
-    // checking one of them let a rewrite drop the other and ship.
     if (scope.kind === "preamble") {
-      const preamble = normalizeSectionText(preambleBody(markdown));
-      for (const anchor of anchors) {
-        if (!preamble.includes(normalizeSectionText(anchor))) {
-          out.push(`the brief preamble dropped required phrase "${anchor}"`);
-        }
+      for (const anchor of missingAnchors(preambleBody(markdown), anchors)) {
+        out.push(`the brief preamble dropped required phrase "${anchor}"`);
       }
       continue;
     }
@@ -134,11 +140,8 @@ export function contractViolations(brief: SynthInput, markdown: string): string[
       out.push(`missing required section "${scope.heading}"`);
       continue;
     }
-    const normalized = normalizeSectionText(body);
-    for (const anchor of anchors) {
-      if (!normalized.includes(normalizeSectionText(anchor))) {
-        out.push(`section "${scope.heading}" dropped required phrase "${anchor}"`);
-      }
+    for (const anchor of missingAnchors(body, anchors)) {
+      out.push(`section "${scope.heading}" dropped required phrase "${anchor}"`);
     }
   }
   return out;
