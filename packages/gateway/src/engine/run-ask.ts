@@ -21,6 +21,7 @@ import {
 } from "./executor.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
+import { broadestSearchTerm, questionSearchTerms } from "./question-search-terms.ts";
 import { type ClassifiedIntent, classifyIntent } from "./router.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
@@ -448,11 +449,19 @@ async function buildLocalIndexedContext(
         }
       }
     };
+    // The SENTENCE is not a search term (F1). `ftsTitleMatchQuery` AND-joins every whitespace
+    // token and keeps punctuation, so "what does egressRowToItem do?" contains `"do?"` — a
+    // prefix term nothing matches — and the whole conjunction is unsatisfiable even though the
+    // symbol is indexed and trivially findable on its own.
+    const searchTerms = questionSearchTerms(query);
+    if (searchTerms === undefined) {
+      return undefined;
+    }
     // Probe wide, serve narrow. `primary.length` is the only honest source for "how many
     // match" — every other search below is itself capped, so counting `byId` would just
     // re-measure the truncation instead of the substrate.
     const primary = await localIndex.searchRankedAsync(
-      { name: query, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT },
+      { name: searchTerms, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT },
       { semantic: true, contextChunks: 2 },
     );
     addRankedResults(primary.slice(0, LOCAL_CONTEXT_ITEM_LIMIT));
@@ -465,11 +474,29 @@ async function buildLocalIndexedContext(
       addContextItems(githubIssueContextItemsForRepo(localIndex, repoSlug));
     }
     if (byId.size === 0) {
-      addRankedResults(localIndex.searchRanked({ name: query, limit: LOCAL_CONTEXT_ITEM_LIMIT }));
+      // The AND join is strict enough that three reasonable words routinely describe a document
+      // containing only two — "what should I do for the smoke test issue?" misses an item titled
+      // "add a smoke test" on `issue`, which is its TYPE and appears in neither its title nor
+      // its body. Retry with the single most distinctive term: the same question with the
+      // strictest part relaxed, not a different one.
+      const broadest = broadestSearchTerm(searchTerms);
+      if (broadest !== undefined) {
+        addRankedResults(
+          localIndex.searchRanked({ name: broadest, limit: LOCAL_CONTEXT_ITEM_LIMIT }),
+        );
+      }
     }
-    if (byId.size === 0) {
-      addRankedResults(localIndex.searchRanked({ limit: LOCAL_CONTEXT_ITEM_LIMIT }));
-    }
+    // The no-name fallback is GONE (F1, fix 2). `searchRanked` with no `name` sets
+    // `useFts = false` and returns arbitrary recent items, which were then handed to the model
+    // under an authoritative "Indexed Nimbus context:" header inside a `<tool_output>` envelope.
+    //
+    // That is how `ask` answered a question about the user's Fargate log groups with a list of
+    // `microsoft/winget-pkgs` CI runs: the term matched nothing, the fallback fetched whatever
+    // was recent, `github_actions` is the highest-volume service, and the model answered the
+    // question it was asked using the only data it was given — even tagging each row
+    // "(GitHub Actions)". It reported its source honestly; the retrieval layer had asserted a
+    // relevance it did not have. No prompt change fixes that, and no context is better than
+    // confident, specific, false claims about someone's production infrastructure.
     if (byId.size === 0) {
       return undefined;
     }

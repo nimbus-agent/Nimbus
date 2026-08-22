@@ -1700,3 +1700,84 @@ describe("persona (A2) is resolved from disk by runAsk itself", () => {
     }
   });
 });
+
+describe("buildLocalIndexedContext never fabricates relevance (F1)", () => {
+  /**
+   * The audit's most damaging observed instance. Asking for "Fargate" log groups returned a list
+   * of `microsoft/winget-pkgs` CI runs, each tagged "(GitHub Actions)" by the model — which was
+   * reporting its source honestly. The chain: the term matched nothing, `byId.size === 0`, and
+   * the no-name fallback fetched arbitrary recent items which `github_actions` (the highest-
+   * volume service) dominated. The retrieval layer asserted a relevance it did not have.
+   */
+  function indexWithUnrelatedItems(): LocalIndex {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    for (let i = 1; i <= 5; i++) {
+      db.run(
+        `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+         VALUES (?, 'github_actions', 'ci_run', ?, ?, 'a workflow run', '', ?, ?)`,
+        [`gha:run-${String(i)}`, `run-${String(i)}`, `Wingetbot PR Triage ${String(i)}`, i, i],
+      );
+    }
+    return new LocalIndex(db);
+  }
+
+  test("a term that matches nothing yields NO context, not arbitrary recent rows", async () => {
+    const localIndex = indexWithUnrelatedItems();
+    const prompts: string[] = [];
+
+    await runAsk({
+      input: 'In prose, list my "RequiemNexusFargate" log groups by name.',
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(prompts, "I have no indexed context for that."),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+
+    expect(prompts[0]).not.toContain("Indexed Nimbus context");
+    expect(prompts[0]).not.toContain("Wingetbot");
+    localIndex.close();
+  });
+
+  test("a question that IS answerable still gets its context", async () => {
+    // The other direction, so the fix cannot be "never build context".
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+       VALUES ('nimbus:sym-1', 'nimbus', 'code_symbol', 'sym-1', 'egressRowToItem', 'maps EgressRow to SidebarItem', '', 1, 1)`,
+    );
+    const localIndex = new LocalIndex(db);
+    const prompts: string[] = [];
+
+    await runAsk({
+      input: "what does egressRowToItem do?",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(prompts, "It maps EgressRow to SidebarItem."),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+
+    // The whole sentence used to return zero rows here, because `"do?"` is a prefix term
+    // nothing matches and every token is AND-joined.
+    expect(prompts[0]).toContain("Indexed Nimbus context");
+    expect(prompts[0]).toContain("egressRowToItem");
+    localIndex.close();
+  });
+});

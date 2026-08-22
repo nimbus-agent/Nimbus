@@ -71,8 +71,48 @@ export function stripComments(src: string): string {
   return state.out;
 }
 
+/**
+ * Replace every string / template literal body with spaces, preserving length.
+ *
+ * A single left-to-right scan rather than a regex, because the cases that matter are exactly the
+ * ones a regex gets wrong: an escaped quote inside a literal must not end it early, and an
+ * apostrophe inside a double-quoted string must not open one.
+ */
+function stripStringLiterals(src: string): string {
+  const out = src.split("");
+  let quote: string | undefined;
+  for (let i = 0; i < out.length; i++) {
+    const ch = out[i];
+    if (quote === undefined) {
+      if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+      continue;
+    }
+    if (ch === "\\") {
+      // Blank the escape AND the character it escapes, so a closing quote is never faked.
+      out[i] = " ";
+      if (i + 1 < out.length) out[i + 1] = " ";
+      i++;
+      continue;
+    }
+    if (ch === quote) {
+      quote = undefined;
+      continue;
+    }
+    out[i] = " ";
+  }
+  return out.join("");
+}
+
+/**
+ * How many `any` TYPES the source uses.
+ *
+ * Comments were always stripped first; string literals now are too. Without that this counted
+ * prose — an English stopword list containing "any", a user-facing message, a SQL fragment — and
+ * each one demanded a baseline bump for debt that did not exist. A ratchet that fires on writing
+ * the word is one people learn to satisfy by rewording, which is the opposite of its purpose.
+ */
 export function countAnyInSource(src: string): number {
-  const stripped = stripComments(src);
+  const stripped = stripStringLiterals(stripComments(src));
   const matches = stripped.match(/\bany\b/g);
   return matches ? matches.length : 0;
 }

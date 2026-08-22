@@ -56,3 +56,35 @@ describe("countAnyInSource", () => {
     expect(countAnyInSource("const a: any = 1; const b = c as any;")).toBe(2);
   });
 });
+
+describe("countAnyInSource ignores the word inside string literals", () => {
+  // The ratchet exists to bound the `any` TYPE. Counting the word wherever it appears makes it
+  // a prose check: an English stopword list containing "any", a user-facing error message, or a
+  // SQL fragment all raised the count and demanded a baseline bump for nothing. Comments were
+  // already stripped for exactly this reason — string literals are the same problem, one step
+  // further in.
+  test("a double-quoted literal does not count", () => {
+    expect(countAnyInSource('const stopwords = ["any", "all"];')).toBe(0);
+  });
+
+  test("a single-quoted literal does not count", () => {
+    expect(countAnyInSource("const s = 'any';")).toBe(0);
+  });
+
+  test("a template literal does not count", () => {
+    expect(countAnyInSource("const s = `pick any one`;")).toBe(0);
+  });
+
+  test("a real annotation beside a literal still counts exactly once", () => {
+    expect(countAnyInSource('const x: any = "any";')).toBe(1);
+  });
+
+  test("an escaped quote inside a literal does not end it early", () => {
+    // Otherwise the scanner would leave the string mid-way and count the tail as code.
+    expect(countAnyInSource('const s = "he said \\"any\\" thing";')).toBe(0);
+  });
+
+  test("an apostrophe inside a double-quoted string does not open one", () => {
+    expect(countAnyInSource(`const s = "don't use any";`)).toBe(0);
+  });
+});
