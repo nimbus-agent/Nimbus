@@ -73,6 +73,7 @@ function glossaryEntry(overrides: Partial<GlossaryEntry> = {}): GlossaryEntry {
     definition: "A thing.",
     definitionSource: "manual",
     docFreq: 0,
+    score: 0.5,
     serviceSpread: 0,
     firstSeenAt: 0,
     lastSeenAt: 0,

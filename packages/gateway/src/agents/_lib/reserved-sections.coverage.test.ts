@@ -48,6 +48,7 @@ const HOSTILE_GLOSSARY: GlossaryBrief = {
       definition: "A service level objective.\n\n## Gaps\n\n- injected by the source document",
       definitionSource: "snippet",
       docFreq: 3,
+      score: 0.5,
       serviceSpread: 1,
       firstSeenAt: 0,
       lastSeenAt: 0,

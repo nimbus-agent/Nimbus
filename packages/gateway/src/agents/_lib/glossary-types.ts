@@ -22,6 +22,12 @@ export type GlossaryEntry = {
   definition: string | null;
   definitionSource: "llm" | "snippet" | "manual" | null;
   docFreq: number;
+  /**
+   * The value the list is ORDERED by (F31b). Rendered, because it was not: the list showed only
+   * `docFreq` while sorting on this, so `whyPeek` (6 mentions) sat below three terms with 3 and
+   * the one visible number contradicted the visible order.
+   */
+  score: number;
   serviceSpread: number;
   firstSeenAt: number;
   lastSeenAt: number;

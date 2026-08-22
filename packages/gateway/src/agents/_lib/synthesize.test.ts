@@ -707,7 +707,7 @@ describe("the reserved-section instruction is derived per kind, not global (I31 
   // owns, and nothing re-attaches it, so the citations silently disappeared from a synthesized
   // glossary brief. Red-proved by reverting `synthesisInstructionsFor` to the old constant: this
   // test then fails because the prompt contains "Sources".
-  test("a glossary prompt names only Gaps, never Sources", async () => {
+  test("a glossary prompt names Terms and Gaps, never Sources", async () => {
     const seenPrompt: string[] = [];
     const runner = capturingRunner(okAttempt("# Glossary\n\nnothing yet."), seenPrompt);
     await synthesize(GLOSSARY_FIXTURE, { runner });
@@ -716,7 +716,9 @@ describe("the reserved-section instruction is derived per kind, not global (I31 
     // substring check on the whole prompt would false-positive on that field name.
     const instructionLine = seenPrompt[0]?.split("\n").find((l) => l.startsWith("- Do not write"));
     expect(instructionLine).toBe(
-      "- Do not write a `Gaps` section: it is appended verbatim after your rewrite. The JSON still lists it so your prose does not contradict it.",
+      // Two reserved sections since F31a: the entry TABLE is withheld too, because in list mode
+      // the data is the brief and a rewrite dropped every definition while keeping the counts.
+      "- Do not write a `Terms` or `Gaps` section: they are appended verbatim after your rewrite. The JSON still lists them so your prose does not contradict them.",
     );
   });
 

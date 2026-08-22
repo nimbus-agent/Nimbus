@@ -379,14 +379,58 @@ function renderGlossaryEntry(brief: GlossaryBrief, e: GlossaryEntry): string[] {
   return lines;
 }
 
-/** `list` mode: one bullet per term, ranked by the caller. */
-function renderGlossaryList(entries: GlossaryEntry[]): string[] {
-  if (entries.length === 0) return ["\n_No terms extracted yet._"];
+/**
+ * `list` mode's entry table — a RESERVED section (F31a).
+ *
+ * Exported because `reserved-sections.ts` builds the withheld block from the SAME function the
+ * renderer uses, never by scanning rendered markdown. The `## Terms` heading exists so there is
+ * something to withhold: the list used to be bare bullets under `# Glossary`, which the strip and
+ * re-attach machinery has no way to address.
+ *
+ * Each row now carries the DEFINITION, not just the count. That is the finding: an accepted
+ * synthesis kept `term` and `docFreq` faithfully and dropped every definition, and a glossary
+ * without definitions is a word-frequency table.
+ *
+ * `score` is rendered and named because the list is ORDERED by it (authored definitions first)
+ * while only `docFreq` was visible — so `whyPeek` (6 mentions) sat below three terms with 3, and
+ * the one number on screen contradicted the order. Ranking silently on a hidden field is the same
+ * shape as F20's undisclosed glob semantics: correct, and unreadable.
+ */
+/**
+ * `## Terms` — glossary list mode's reserved entry table. Declared HERE rather than in
+ * `reserved-sections.ts` because that module already imports from this one, and the reverse
+ * edge would be a cycle.
+ */
+export const GLOSSARY_TERMS_HEADING = "## Terms";
+
+export function renderGlossaryTermsSection(entries: readonly GlossaryEntry[]): string {
+  if (entries.length === 0) return "";
   const rows = entries.map((e) => {
-    const suffix = e.definitionSource === "manual" ? " — authored" : "";
-    return `- **${e.term}** — ${String(e.docFreq)} mention(s)${suffix}`;
+    const authored = e.definitionSource === "manual" ? " — authored" : "";
+    const head = `- **${e.term}** — ${String(e.docFreq)} mention(s), score ${e.score.toFixed(2)}${authored}`;
+    // A consolidated term can legitimately have no definition. Say so, rather than render an
+    // empty tail that reads as a definition which happens to be blank.
+    const body =
+      e.definition === null || e.definition.trim() === ""
+        ? "  - _no definition recorded yet_"
+        : `  - ${e.definition.trim()}`;
+    return `${head}\n${body}`;
   });
-  return ["", ...rows];
+  return [
+    GLOSSARY_TERMS_HEADING,
+    "",
+    "_Ranked by relevance score, authored definitions first — not by mention count._",
+    "",
+    ...rows,
+  ].join("\n");
+}
+
+/**
+ * `list` mode's body is EMPTY: the entries moved into the reserved `## Terms` section above, so
+ * the model is handed a heading and nothing else to rewrite.
+ */
+function renderGlossaryList(entries: readonly GlossaryEntry[]): string[] {
+  return entries.length === 0 ? ["\n_No terms extracted yet._"] : [];
 }
 
 function renderGlossaryBody(brief: GlossaryBrief): string[] {
@@ -400,6 +444,13 @@ function renderGlossaryBody(brief: GlossaryBrief): string[] {
 
 export function renderGlossary(brief: GlossaryBrief, opts?: RenderOpts): string {
   const lines: string[] = ["# Glossary", ...renderGlossaryBody(brief)];
+  // List mode's entry table is reserved alongside `## Gaps` (F31a) — withheld from the model and
+  // re-attached verbatim, because a rewrite that keeps the term names and drops every definition
+  // leaves a word-frequency table where a glossary was.
+  if (brief.mode === "list") {
+    const terms = reserved(renderGlossaryTermsSection(brief.entries), opts);
+    if (terms !== "") lines.push("", terms);
+  }
   const gaps = reserved(renderGaps(brief.gaps), opts);
   if (gaps !== "") lines.push(gaps);
   lines.push(renderLatency(brief.latencyMs));

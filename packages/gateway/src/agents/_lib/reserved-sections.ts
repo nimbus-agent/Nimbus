@@ -1,10 +1,27 @@
 import type { SynthInput } from "./brief-kinds.ts";
-import { renderGaps, renderNegotiateEvidenceSection, renderNegotiateSources } from "./render.ts";
+import {
+  GLOSSARY_TERMS_HEADING,
+  renderGaps,
+  renderGlossaryTermsSection,
+  renderNegotiateEvidenceSection,
+  renderNegotiateSources,
+} from "./render.ts";
 
 /** A disclosure-only section held back from the model and re-attached verbatim (I31). */
 export type ReservedBlock = { readonly heading: string; readonly markdown: string };
 
 export const GAPS_HEADING = "## Gaps";
+/**
+ * `glossary` list mode's entry table (F31a).
+ *
+ * Reserved, because in that mode the DATA IS THE BRIEF. An accepted synthesis kept the term names
+ * and mention counts and dropped every definition, provenance, service spread, date range and
+ * cited source, replacing them with two content-free sentences about the data. I31 permitted it
+ * correctly — glossary requires a phrase only in `term` mode — and a phrase check is the wrong
+ * tool here anyway: a table of structured rows has no prose worth preserving through a rewrite,
+ * so withhold-and-re-attach fits it better than any anchor could.
+ */
+export { GLOSSARY_TERMS_HEADING } from "./render.ts";
 export const NEGOTIATE_SOURCES_HEADING = "## Sources";
 export const NEGOTIATE_EVIDENCE_HEADING = "## Evidence not available from the index";
 
@@ -29,7 +46,7 @@ export const RESERVED_HEADINGS_BY_KIND: Readonly<Record<SynthInput["kind"], read
     janitor: [GAPS_HEADING],
     preflight: [GAPS_HEADING],
     why: [GAPS_HEADING],
-    glossary: [GAPS_HEADING],
+    glossary: [GLOSSARY_TERMS_HEADING, GAPS_HEADING],
     decisions: [GAPS_HEADING],
     ownership: [GAPS_HEADING],
     premortem: [GAPS_HEADING],
@@ -66,6 +83,13 @@ export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
         markdown: renderNegotiateEvidenceSection(brief.unavailableEvidence).trim(),
       },
     );
+  }
+  if (brief.kind === "glossary" && brief.mode === "list") {
+    // Only in list mode. `term` mode renders one entry as prose the model is meant to improve,
+    // and `miss` has no entries at all — reserving a heading neither of them emits would leave
+    // an empty block to re-attach.
+    const terms = renderGlossaryTermsSection(brief.entries).trim();
+    if (terms !== "") blocks.push({ heading: GLOSSARY_TERMS_HEADING, markdown: terms });
   }
   const gaps = renderGaps(brief.gaps).trim();
   if (gaps !== "") blocks.push({ heading: GAPS_HEADING, markdown: gaps });

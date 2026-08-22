@@ -414,6 +414,9 @@ function formatHeadingList(names: readonly string[]): string {
   const quoted = names.map((n) => `\`${n}\``);
   if (quoted.length <= 1) return quoted.join("");
   const last = quoted.at(-1) ?? "";
+  // No Oxford comma at two items: glossary reserves exactly two (`Terms`, `Gaps`) and read
+  // "a `Terms`, or `Gaps` section", which is not a sentence.
+  if (quoted.length === 2) return `${quoted[0] ?? ""} or ${last}`;
   return `${quoted.slice(0, -1).join(", ")}, or ${last}`;
 }
 

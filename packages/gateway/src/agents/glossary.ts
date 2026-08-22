@@ -42,6 +42,7 @@ function toEntry(t: GlossaryTerm): GlossaryEntry {
     definition: t.definition,
     definitionSource: t.definitionSource,
     docFreq: t.docFreq,
+    score: t.score,
     serviceSpread: t.serviceSpread,
     firstSeenAt: t.firstSeenAt,
     lastSeenAt: t.lastSeenAt,

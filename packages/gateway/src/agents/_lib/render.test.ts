@@ -741,6 +741,7 @@ function glossaryEntryFixture(overrides: Partial<GlossaryEntry> = {}): GlossaryE
     definition: "Authored.",
     definitionSource: "manual",
     docFreq: 0,
+    score: 0.5,
     serviceSpread: 0,
     firstSeenAt: 0,
     lastSeenAt: 0,
@@ -783,7 +784,7 @@ describe("renderGlossary", () => {
       stats: { total: 2, pending: 0, vetoed: 0, manual: 1, lastPassAt: null, truncatedSources: 0 },
     };
     const md = renderGlossary(brief);
-    expect(md).toContain("**CDR** — 0 mention(s) — authored");
+    expect(md).toContain("**CDR** — 0 mention(s), score 0.50 — authored");
     // A mined entry's line must NOT pick up the authored suffix.
     expect(md).toContain("**widget** — 12 mention(s)");
     expect(md).not.toContain("widget** — 12 mention(s) — authored");
