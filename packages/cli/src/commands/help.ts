@@ -76,6 +76,8 @@ PRIVACY & AUDIT
   nimbus prove [--since 7d]   What left this machine, from the append-only egress ledger
   nimbus egress verify | prune   Verify the ledger chain; prune behind a HITL gate
   nimbus audit [--limit N]    Recent HITL audit rows
+  nimbus exec --code <src> | --file <path>   Run code in the sandbox, behind an approval prompt
+                              (off by default; enable with [code_execution] enabled = true)
   nimbus security scan        Local security scan (secrets, vulnerable deps, risky IaC)
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)

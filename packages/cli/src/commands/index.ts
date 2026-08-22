@@ -14,6 +14,7 @@ export { runDecisionsCommand } from "./decisions.ts";
 export { runDeployCli } from "./deploy.ts";
 export { runDiag } from "./diag.ts";
 export { runDoctor } from "./doctor.ts";
+export { runExec } from "./exec.ts";
 export { runExpertCli } from "./expert.ts";
 export { runExtension } from "./extension.ts";
 export { runGhostCli } from "./ghost.ts";

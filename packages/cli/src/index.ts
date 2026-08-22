@@ -19,6 +19,7 @@ import {
   runDiag,
   runDoctor,
   runEgress,
+  runExec,
   runExpertCli,
   runExtension,
   runGhostCli,
@@ -145,6 +146,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   "mcp-server": runMcpServer,
   prove: runProve,
   egress: runEgress,
+  exec: runExec,
   clip: runClip,
 };
 

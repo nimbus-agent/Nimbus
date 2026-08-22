@@ -131,17 +131,7 @@ export async function runExecution(
       throw new ExecGateError("ERR_EXEC_POLICY_DISABLED", "disabled by org policy");
     }
 
-    // 2. Confinement posture. `isFullyActive()`, NEVER `degradedReason() === null`: on Windows
-    // degradedReason() is non-null even when the runner is fully active (it reports the accepted
-    // per-host filtering caveat), so keying on it would refuse every Windows execution forever.
-    if (!deps.runner.isFullyActive()) {
-      throw new ExecGateError(
-        "ERR_EXEC_SANDBOX_DEGRADED",
-        `refusing to execute unconfined: ${deps.runner.degradedReason() ?? "unknown"}`,
-      );
-    }
-
-    // 3. Resolve the runtime from the REGISTRY -- never a caller-supplied argv.
+    // 2. Resolve the runtime from the REGISTRY -- never a caller-supplied argv.
     const runtime =
       req.runtimeId !== undefined
         ? resolveRuntimeById(req.runtimeId)
@@ -177,6 +167,25 @@ export async function runExecution(
       fsWrite: req.fsWrite,
       ...(req.network === undefined ? {} : { network: req.network }),
     });
+
+    // 6. Confinement posture -- asserted AFTER the request has been validated, but BEFORE consent.
+    //
+    // Before-consent is the load-bearing half: the owner must never be asked to approve something
+    // that could not have been confined anyway. After-validation is a deliberate ordering choice --
+    // an argument error is the caller's to fix and is deterministic, whereas a degraded sandbox is
+    // environmental, so reporting "your path was relative" beats reporting "the helper is missing"
+    // on a machine where BOTH are true. Nothing above this line has an effect beyond a scratch file
+    // the `finally` removes, so moving it here costs no safety.
+    //
+    // The predicate is `isFullyActive()`, NEVER `degradedReason() === null`: on Windows
+    // degradedReason() is non-null even when the runner is fully active (it reports the accepted
+    // per-host filtering caveat), so keying on it would refuse every Windows execution forever.
+    if (!deps.runner.isFullyActive()) {
+      throw new ExecGateError(
+        "ERR_EXEC_SANDBOX_DEGRADED",
+        `refusing to execute unconfined: ${deps.runner.degradedReason() ?? "unknown"}`,
+      );
+    }
 
     const wallClockMs = Math.min(
       req.timeoutMs ?? deps.config.maxWallClockMs,
