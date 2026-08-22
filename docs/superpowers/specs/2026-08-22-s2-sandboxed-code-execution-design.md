@@ -46,7 +46,8 @@ packages/gateway/src/exec/
   exec-consent-broker.ts   ExecConsentBroker extends ConsentBroker<ExecApprovalInput>
   exec-runtimes.ts         ExecRuntime registry: { id, detect(), argvFor(file) }
   exec-policy.ts           code + requested grants -> SandboxPolicy
-  exec-result.ts           { exitCode, stdout, stderr, durationMs, truncated }
+  exec-result.ts           { exitCode, stdout, stderr, durationMs,
+                             truncated, terminationReason }
 ```
 
 ### Why a dedicated gate rather than an executor action type
@@ -68,13 +69,33 @@ A dedicated gate is also the **established pattern** for high-blast-radius *loca
 
    All three are *derived* facts about today's code, and they are safe **because** of the no-network decision. An explicit assertion in the gate is what keeps the property true when network arrives in slice 2.
 
+### "No network" includes loopback — verified, and it is the property that matters most
+
+This needs stating explicitly, because the interesting attack is not egress to the internet: it is a sandboxed script reaching **the Gateway's own local surfaces** — the JSON-RPC IPC socket, and the HTTP API on `127.0.0.1` with its `agents` / `resolve` scopes and its I13 write surface. A sandbox that blocked the internet but allowed loopback would be a privilege-escalation path out of the very confinement the user consented to.
+
+Verified today, by three different mechanisms:
+
+| Platform | Mechanism when `permissions.network` is empty | Loopback reachable? |
+|---|---|---|
+| **Linux** | `--unshare-net` (`linux.ts:54`, selected when `hosts.length === 0`) | **No.** A fresh network namespace has its *own* loopback; the host's `127.0.0.1` is not in it. |
+| **macOS** | SBPL opens `(deny default)` (`darwin.ts:72`) and the `(allow network*)` block is emitted **only** `if (hosts.length > 0)` (`darwin.ts:163`) | **No.** With no hosts there is no network allow rule at all, so `deny default` covers loopback too. |
+| **Windows** | `capabilitiesForPolicy` returns `[]` (`win32.ts:79-80`); no `internetClient`, no `privateNetworkClientServer` | **No.** AppContainer blocks loopback by default absent an explicit `CheckNetIsolation` exemption. |
+
+The property holds by three independent accidents of three separate implementations, which is exactly the kind of thing that silently stops being true. It gets a named test per platform in the sandbox integration suite: **a script attempting to connect to the Gateway's own HTTP port fails.**
+
 ---
 
 ## 4. HITL and audit
 
 **Consent.** `ExecConsentBroker extends ConsentBroker<ExecApprovalInput>` broadcasting `exec.approvalRequest`, answered by `exec.approvalRespond`. This is the third binding over the shared `util/consent-broker.ts` base (after share and federated-preflight), so fail-closed TTL behaviour is inherited rather than re-implemented.
 
+**Concurrency is already handled by the base class** — `ConsentBroker.pending` is a `Map` keyed by a random `requestId` (`util/consent-broker.ts:20,30`), each entry carrying its own TTL timer. Multiple approval prompts can therefore be outstanding at once, from different terminals, and each resolves independently. No queueing, no new machinery; this slice inherits it.
+
 **The prompt shows the full code body verbatim — never a digest.** The human is the entire security boundary in this slice; a prompt reading "run script sha256:a1b2…" is a rubber stamp with extra steps. Alongside it: runtime id, resolved filesystem read/write paths, `network: none`, wall-clock budget, cwd.
+
+**The approved bytes are the executed bytes.** For `--file`, the gate reads the file **once, before the prompt**, and executes exactly the bytes it showed. The file is never re-read after approval.
+
+This is stronger than merely validating that the file exists before prompting, and it is worth the extra care: re-reading at spawn time would mean the user approves body X while body Y executes, if the file changes in the window between consent and spawn. That window is small but entirely attacker-controllable when the file is anywhere group-writable, and a TOCTOU on "what did I just consent to" defeats the whole gate. Reading once also gives the existence/readability check for free — a missing file fails with a named error before the human is ever prompted.
 
 **Audit.** Every outcome appends one row via `appendAuditEntry`:
 
@@ -82,11 +103,23 @@ A dedicated gate is also the **established pattern** for high-blast-radius *loca
 { actionType: "code.execute",
   hitlStatus: "approved" | "rejected" | "timeout",
   actionJson: JSON.stringify({
-    runtime, codeBody, grants, exitCode,
-    stdoutDigest, stderrDigest, durationMs, truncated }) }
+    runtime,
+    codeBody,                    // verbatim, exactly what was approved
+    grants: {                    // RESOLVED absolute paths, post-canonicalisation
+      fsRead: string[], fsWrite: string[], network: [] },
+    exitCode,
+    stdoutDigest, stderrDigest,  // BLAKE3, matching db/audit-chain.ts
+    durationMs,
+    terminationReason,           // "exited" | "output_cap" | "wall_clock"
+    truncated }) }
 ```
 
 Body in full, output hashed. That asymmetry is deliberate and matches the roadmap's acceptance criterion: the code is what you consented to; the output is potentially enormous.
+
+Two details that are easy to get wrong and cheap to pin down:
+
+- **Digests are BLAKE3**, the hash `db/audit-chain.ts` already uses for the audit and egress chains. Leaving the algorithm unstated invites a second one into the codebase.
+- **`grants` records the resolved, canonicalised absolute paths**, not what the user typed. Given §5's rule that the CLI resolves relative paths, the string the user typed and the directory actually granted are different artifacts, and the audit trail must record the latter — otherwise a reader cannot tell which directory was exposed.
 
 ---
 
@@ -103,6 +136,43 @@ nimbus exec --code 'console.log(1+1)'
 
 Lives at `packages/cli/src/commands/exec.ts`, exported from `commands/index.ts`.
 
+### Path resolution: the CLI resolves, the gate rejects
+
+The CLI and the Gateway are **separate processes with different working directories**, so a relative `--allow-fs-read ./src` is meaningless by the time it crosses JSON-RPC.
+
+- The **CLI** resolves every path argument to absolute with `path.resolve()` against its own cwd, before the IPC call.
+- The **gate rejects any non-absolute path** with a named error. It does *not* resolve relative paths itself.
+
+Reject-rather-than-resolve is the fail-closed half. If the gate resolved a stray relative path against the *daemon's* cwd, it would grant a real directory — just not the one the user meant — and nothing downstream could tell the difference. That is the same shape as a supplied flag silently degrading into a different filter: wrong, and invisible from the gateway side. An absolute-path precondition makes the CLI's omission a loud error instead.
+
+Canonicalisation (8.3 short names, symlinks) still happens gateway-side in the runners, which already canonicalise before both the ACL grant and the spawn (`win32.ts:59-63`).
+
+### Runtime selection
+
+With `--runtime` given, the id is looked up in the registry. Without it:
+
+- `--code` uses the sole wired entry (bun).
+- `--file` maps by **extension** (`.ts`/`.js`/`.mjs` → bun) and **rejects an unrecognised extension** rather than falling back to the sole entry.
+
+Rejecting matters for the future, not the present: with one runtime wired, a fallback would run `script.py` through bun and fail with a confusing parse error today, and would silently change meaning the day a Python entry lands. An explicit rejection is correct in both worlds.
+
+A runtime that is registered and allowed but **absent from the machine** fails at `detect()` with a named error, before consent — never at spawn.
+
+### Exit codes
+
+The CLI must let a script that exited non-zero be distinguished from a run that never happened:
+
+| Code | Meaning |
+|---|---|
+| *n* | the script itself exited with *n* |
+| 10 | approval denied by the owner |
+| 11 | approval timed out |
+| 12 | refused before consent (disabled by config or policy, bad runtime, relative path, missing file) |
+| 13 | killed — wall-clock exceeded |
+| 14 | killed — output cap exceeded |
+
+Without this split, a wrapper script cannot tell "you said no" from "your code returned 1".
+
 ```toml
 [code_execution]
 enabled           = false      # DEFAULT OFF
@@ -110,6 +180,10 @@ max_wall_clock_ms = 30000
 max_output_bytes  = 1048576
 allowed_runtimes  = ["bun"]
 ```
+
+**Exceeding `max_output_bytes` kills the process**, it does not merely truncate the buffer. A `while(true) console.log("spam")` would otherwise keep burning CPU and IO until the wall clock, with every byte discarded — pointless work with no upside. `terminationReason` records which limit fired, because `truncated: true` alone cannot distinguish "hit the cap" from "wall clock stopped it mid-write".
+
+One framing correction worth recording: the review called this a denial-of-service guard. It is not a security boundary — this is code the owner explicitly read and approved, on their own machine, already bounded by a 30-second wall clock. It is resource hygiene, and worth doing on those grounds alone. Overstating it would put a threat model in the spec that the design does not actually rest on.
 
 Follows the established `NimbusCodeExecutionToml` + `DEFAULT_NIMBUS_CODE_EXECUTION_TOML` + parser pattern in `config/nimbus-toml.ts`.
 
@@ -151,8 +225,9 @@ Per the triple rule, the wiring, the `docs/SECURITY-INVARIANTS.md` section, and 
 
 | Layer | What it proves |
 |---|---|
-| `exec-gate.test.ts` | net grant *rejected* (not dropped); non-`isFullyActive()` runner refused; **denied approval spawns nothing**; timeout kills; truncation disclosed; capability-disabled refusal |
-| sandbox integration suite | a real confined spawn per OS — the suite the `pr-quality-cross-platform` legs actually run |
+| `exec-gate.test.ts` | net grant *rejected* (not dropped); non-`isFullyActive()` runner refused; **denied approval spawns nothing**; wall-clock kill; output-cap kill; `terminationReason` correct for each; capability-disabled refusal; **relative path rejected, not resolved**; unknown file extension rejected; file read once — a file mutated after approval still executes the approved bytes |
+| sandbox integration suite | a real confined spawn per OS — the suite the `pr-quality-cross-platform` legs actually run — **including the loopback test: a script connecting to the Gateway's own HTTP port fails on all three platforms** |
+| `exec-consent-broker.test.ts` | two concurrent requests resolve independently; answering one leaves the other pending |
 | `security-invariants.test.ts` | the I33 case |
 | `check-nimbus-invariants.ts` | static D23 — spawn-from-user-code confined to `exec-gate.ts` |
 | `policy-gate.test.ts` | union semantics; `= true` does not loosen |
@@ -170,3 +245,24 @@ Per the triple rule, the wiring, the `docs/SECURITY-INVARIANTS.md` section, and 
 4. **A runtime listed in `allowed_runtimes` but absent from the machine** fails at detect with a named error, not at spawn.
 5. **The lockoff only tightens** — it cannot enable a capability the local config has off.
 6. **Linux's harmless degradation is contingent on no-network.** If slice 2 grants network, the `isFullyActive()` assertion becomes the only thing standing between a missing `CAP_NET_ADMIN` helper and unfiltered egress.
+7. **Loopback blocking rests on three unrelated mechanisms** (§3), none of which was written with this slice in mind. The per-platform test is what converts that coincidence into a guarantee; without it, a future change to any one runner could open loopback without failing anything.
+8. **Windows loopback blocking can be defeated by the machine's own configuration.** A pre-existing `CheckNetIsolation LoopbackExempt` entry covering the AppContainer profile would re-open loopback, and the Gateway cannot detect or override that. Out of scope for this slice; noted because it is the one platform where the property is not purely ours to enforce.
+
+---
+
+## 10. Review disposition (2026-08-22)
+
+All eight items from [the design review](./2026-08-22-s2-sandboxed-code-execution-design-review.md) were accepted; the review is answered in full, with two amendments to what it asked for.
+
+| # | Item | Disposition |
+|---|---|---|
+| Q1 | Relative FS-grant paths | **Fixed** (§5) — CLI resolves, gate *rejects* relative rather than resolving |
+| Q2 | Output cap: kill or truncate? | **Fixed** (§5) — kills; severity framing corrected from "DoS" to resource hygiene |
+| Q3 | Broker concurrency + exit codes | **Concurrency: no change needed** — the base class already supports it (§4, now documented). **Exit codes: fixed** (§5) |
+| Q4 | Runtime detection | **Fixed** (§5) — extension mapping, unknown extension rejected. The "allowed but missing" half was already bound #4 |
+| Q5 | Loopback | **Fixed** (§3) — verified blocked on all three platforms; now a documented, tested property |
+| S1 | Digest algorithm | **Fixed** (§4) — BLAKE3 |
+| S2 | Log FS grants | **Fixed** (§4) — resolved absolute paths, which Q1 makes a distinct artifact from what the user typed |
+| S3 | Pre-spawn file validation | **Fixed, strengthened** (§4) — read-once closes a TOCTOU the review did not name; existence checking falls out of it |
+
+**Q5 was the highest-value item.** The spec said "no network" and meant it, but never asked whether loopback counted — and loopback is where the Gateway's own IPC socket and HTTP API live. It happens to be blocked on all three platforms today by three independent mechanisms, which is the most fragile way for a security property to be true.
