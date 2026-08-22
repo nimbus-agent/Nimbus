@@ -12,7 +12,7 @@ import {
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
-import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { BATCH_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 
 const connectorMod = await import("./connector.ts");
 const { runConnector } = connectorMod;
@@ -1786,5 +1786,78 @@ describe("runConnector add --mcp — the Gateway's HITL gate (F16)", () => {
       commandLine: "npx -y @some/mcp-server",
     });
     expect(out.stdout).toContain("Registered user MCP connector: mcp_brave");
+  });
+});
+
+describe("connector auth waits for a human, not for an RPC (F17)", () => {
+  /**
+   * `nimbus connector auth onedrive` reported `IPC request timed out after 30000ms` while the
+   * browser was still on Microsoft's sign-in page. Every other IPC call is a local request that
+   * returns in milliseconds; `connector.auth` is the one whose duration is bounded by a person
+   * locating a window, signing in, passing MFA and reading a consent screen.
+   *
+   * Worse than a slow command: the GATEWAY owns the PKCE callback server and finishes the flow
+   * after the client gives up, so a sign-in completed past the timeout still stores a credential
+   * while the user has been told it failed. The CLI's report and the vault's state disagree, with
+   * no way to tell which happened — which is exactly the confusion F11 was buried under.
+   */
+  it("uses the interactive budget, not the 30s default", async () => {
+    const constructions: RecordedClientConstruction[] = [];
+    const ipc = createMockIpcClient([{ ok: true, serviceId: "onedrive", scopesGranted: [] }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+      clientConstructions: constructions,
+      clackAnswer: true,
+    });
+
+    await runConnector(["auth", "onedrive"]);
+
+    expect(constructions).toHaveLength(1);
+    expect(constructions[0]?.opts?.requestTimeoutMs).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+  });
+});
+
+describe("a timed-out auth does not claim nothing happened (F17)", () => {
+  it("names the two commands that settle whether a credential was stored", async () => {
+    // The transport says only "IPC request timed out", which reads as "nothing happened" — the
+    // one reading that is not safe here, since the gateway keeps the PKCE flow running after the
+    // client gives up.
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: () => {},
+        disconnect: () => {},
+        call: async (): Promise<never> => {
+          throw new Error("IPC request timed out after 3600000ms: connector.auth");
+        },
+      },
+      clackAnswer: true,
+    });
+
+    await expect(runConnector(["auth", "onedrive"])).rejects.toThrow("may still have completed");
+  });
+
+  it("does not add the guidance to an unrelated failure", async () => {
+    // A wrong client id is not a timeout, and telling the user to go check the vault for a
+    // credential that was never issued would send them looking for something that is not there.
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: () => {},
+        disconnect: () => {},
+        call: async (): Promise<never> => {
+          throw new Error("OAuth client id is not configured");
+        },
+      },
+      clackAnswer: true,
+    });
+
+    await expect(runConnector(["auth", "onedrive"])).rejects.toThrow(
+      "OAuth client id is not configured",
+    );
+    await expect(runConnector(["auth", "onedrive"])).rejects.not.toThrow(
+      "may still have completed",
+    );
   });
 });

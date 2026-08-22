@@ -1,3 +1,5 @@
+import pino from "pino";
+
 import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
@@ -28,6 +30,18 @@ export interface PKCEOptions {
 }
 
 const CALLBACK_PATH = "/oauth/callback";
+
+/**
+ * `auth/*` wrote no OAuth line at any level (F18 point 4, and F10's secondary finding): a
+ * permanent credential failure produced nothing beyond a `sync_state.last_error` string, with no
+ * provider, no error code and no response detail anywhere on disk.
+ *
+ * Provider and error CODE only. `error_description` is provider-controlled text and stays out of
+ * the log for the same reason `classifyGoogleCredentialFailure` keeps it out — it reaches the
+ * user through the thrown error and the browser page, which are ephemeral, rather than through a
+ * file that persists.
+ */
+const pkceLog = pino({ name: "oauth-pkce", level: process.env["NIMBUS_LOG_LEVEL"] ?? "info" });
 const AUTH_TIMEOUT_MS = 5 * 60_000;
 
 function assertValidPort(p: number): void {
@@ -111,9 +125,9 @@ async function persistOAuthTokensToVaultKey(
   await vault.set(vaultKey, payload);
 }
 
-type OAuthCompletion = { code: string } | { error: string };
+type OAuthCompletion = { code: string } | { error: string; description?: string };
 
-function handlePkceCallbackRequest(
+export function handlePkceCallbackRequest(
   req: Request,
   expectedState: string,
   sink: { value?: OAuthCompletion },
@@ -124,11 +138,33 @@ function handlePkceCallbackRequest(
   }
   const err = u.searchParams.get("error");
   if (err !== null && err !== "") {
-    sink.value = { error: err };
-    return new Response("Authorization was denied. You can close this window.", {
-      status: 200,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-    });
+    // Capture `error_description` too (F18): providers populate it with the human-readable half,
+    // and it was never read at all — not even into the sink, so no layer could have shown it.
+    const description = u.searchParams.get("error_description");
+    sink.value = {
+      error: err,
+      ...(description === null || description === "" ? {} : { description }),
+    };
+    // Say WHICH error. This asserted a denial for every code — `access_denied`,
+    // `consent_required`, `interaction_required`, `invalid_scope`, `unauthorized_client` and
+    // `server_error` all rendered as "Authorization was denied", and only the first one is a
+    // denial. The others need different actions from the user, and the page was telling them
+    // to take the wrong one.
+    const headline =
+      err === "access_denied" ? "Authorization was denied." : `Authorization failed: ${err}`;
+    const detail =
+      description === null || description === ""
+        ? ""
+        : `
+${description}`;
+    return new Response(
+      `${headline}${detail}
+You can close this window.`,
+      {
+        status: 200,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      },
+    );
   }
   const code = u.searchParams.get("code");
   const st = u.searchParams.get("state");
@@ -182,7 +218,12 @@ async function runOnLocalPort(
     }
     const done = completion.value;
     if ("error" in done) {
-      throw new Error("OAuth authorization did not complete");
+      // The code was in scope here and thrown away (F18), which is what made every OAuth failure
+      // undiagnosable — and what made F11 cost an hour of black-box probing to establish a fact
+      // the provider had already stated.
+      pkceLog.warn({ provider: options.provider, error: done.error }, "OAuth authorization failed");
+      const detail = done.description === undefined ? "" : ` — ${done.description}`;
+      throw new Error(`OAuth authorization did not complete: ${done.error}${detail}`);
     }
 
     const clientSecret = options.oauthClientSecret?.trim();

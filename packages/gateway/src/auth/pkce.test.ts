@@ -5,7 +5,12 @@ import {
   googlePkceOpenUrlCompleter,
   requestUrlString,
 } from "../testing/bun-test-support.ts";
-import { pkceCodeChallengeS256, refreshAccessToken, runPKCEFlow } from "./pkce.ts";
+import {
+  handlePkceCallbackRequest,
+  pkceCodeChallengeS256,
+  refreshAccessToken,
+  runPKCEFlow,
+} from "./pkce.ts";
 
 function isHttpsTokenEndpoint(s: string, host: string, pathname: string): boolean {
   try {
@@ -340,5 +345,59 @@ describe("refreshAccessToken", () => {
     const driveRaw = await vault.get("google_drive.oauth");
     expect(driveRaw).toContain("new-access");
     expect(await vault.get("google.oauth")).toBeNull();
+  });
+});
+
+describe("an OAuth error reaches the user with its provider code (F18)", () => {
+  /**
+   * A OneDrive sign-in failed. The user was told, in full: "Authorization was denied" in the
+   * browser, nothing at all in the gateway log, and "OAuth authorization did not complete" on the
+   * CLI. Microsoft had returned a specific machine-readable reason; none of the three surfaces
+   * carried it, so "you clicked Deny" was indistinguishable from "admin consent required",
+   * "invalid scope" or "unauthorized client".
+   *
+   * The code was CAPTURED and dropped twice — stored into `sink.value`, then discarded at the
+   * throw with `done.error` in scope and unused. `error_description`, which providers populate
+   * with a human-readable sentence, was never read at all.
+   *
+   * This is what made F11 expensive: roughly an hour of black-box probing to establish a fact the
+   * provider had already stated in a field Nimbus had in hand.
+   */
+  test("the callback page names the actual code, not a blanket denial", () => {
+    const sink: { value?: unknown } = {};
+    const res = handlePkceCallbackRequest(
+      new Request("http://127.0.0.1:8765/oauth/callback?error=consent_required"),
+      "st",
+      sink as never,
+    );
+    expect(res.status).toBe(200);
+    return res.text().then((body) => {
+      expect(body).toContain("consent_required");
+      // "denied" is true of `access_denied` alone; asserting it for every code is simply wrong.
+      expect(body.toLowerCase()).not.toContain("was denied");
+    });
+  });
+
+  test("an actual denial still reads as a denial", async () => {
+    const sink: { value?: unknown } = {};
+    const res = handlePkceCallbackRequest(
+      new Request("http://127.0.0.1:8765/oauth/callback?error=access_denied"),
+      "st",
+      sink as never,
+    );
+    expect((await res.text()).toLowerCase()).toContain("denied");
+  });
+
+  test("error_description is captured, since that is the human-readable half", () => {
+    const sink: { value?: { error?: string; description?: string } } = {};
+    handlePkceCallbackRequest(
+      new Request(
+        "http://127.0.0.1:8765/oauth/callback?error=unauthorized_client&error_description=The%20client%20is%20not%20enabled",
+      ),
+      "st",
+      sink as never,
+    );
+    expect(sink.value?.error).toBe("unauthorized_client");
+    expect(sink.value?.description).toBe("The client is not enabled");
   });
 });

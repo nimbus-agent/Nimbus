@@ -11,7 +11,7 @@ import {
 } from "../lib/connector-oauth-env-help.ts";
 import type { ConsentChoice } from "../lib/interactive-ipc-handlers.ts";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
-import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { BATCH_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
@@ -904,14 +904,15 @@ async function runConnectorAuth(tail: string[]): Promise<void> {
   }
   const normalized = service.trim().toLowerCase().replaceAll("-", "_");
   applyConnectorAuthParamsForService(normalized, params, f);
-  const res = await withIpc((c) =>
-    c.call<{
-      ok: boolean;
-      serviceId: string;
-      scopesGranted: string[];
-      verified?: "verified" | "unverified" | null;
-    }>("connector.auth", params),
-  );
+  // The INTERACTIVE budget, not the transport's 30s default (F17). This is the one RPC whose
+  // duration is bounded by a person using a web browser — finding the window, signing in, MFA,
+  // reading a consent screen — and 30s is routinely too short for that.
+  //
+  // Getting it wrong is worse than a slow command: the gateway owns the PKCE callback server and
+  // finishes the flow after the client gives up, so a sign-in completed past the deadline still
+  // stores a credential while the user has been told it timed out. The CLI's report and the
+  // vault's state then disagree with no way to tell which happened.
+  const res = await authCallWithTimeoutGuidance(params, service);
   // Report only what was actually checked. "Signed in" claimed more than the
   // command ever verified — for the connectors with no probe it would keep
   // claiming it.
@@ -1094,6 +1095,50 @@ async function runConnectorSync(tail: string[]): Promise<void> {
   await withIpc((c) => c.call("connector.sync", syncParams), undefined, BATCH_RPC_TIMEOUT_MS);
   const suffix = full === true ? " (full)" : "";
   console.log(`Sync requested: ${service}${suffix}`);
+}
+
+/**
+ * A timed-out `connector.auth` does NOT mean nothing was stored.
+ *
+ * The gateway owns the PKCE callback server and keeps the flow running after the client gives
+ * up, so a sign-in finished past the deadline still writes a credential while the user has been
+ * told it failed (F17). The transport's own message says only "IPC request timed out", which
+ * reads as "nothing happened" — the one reading that is not safe. Naming the two commands that
+ * settle the question costs a sentence and saves a user from re-running a flow that succeeded.
+ */
+async function authCallWithTimeoutGuidance(
+  params: Record<string, unknown>,
+  service: string,
+): Promise<{
+  ok: boolean;
+  serviceId: string;
+  scopesGranted: string[];
+  verified?: "verified" | "unverified" | null;
+}> {
+  try {
+    // The INTERACTIVE budget, not the transport's 30s default. This is the one RPC whose
+    // duration is bounded by a person using a web browser — finding the window, signing in, MFA,
+    // reading a consent screen — and 30s is routinely too short for that.
+    return await withIpc(
+      (c) =>
+        c.call<{
+          ok: boolean;
+          serviceId: string;
+          scopesGranted: string[];
+          verified?: "verified" | "unverified" | null;
+        }>("connector.auth", params),
+      undefined,
+      INTERACTIVE_RPC_TIMEOUT_MS,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes("timed out")) throw err;
+    throw new Error(
+      `${message}
+The browser sign-in may still have completed — the gateway finishes the flow ` +
+        `on its own. Check with: nimbus vault list ${service}  /  nimbus connector list`,
+    );
+  }
 }
 
 async function runConnectorAddMcp(tail: string[]): Promise<void> {
