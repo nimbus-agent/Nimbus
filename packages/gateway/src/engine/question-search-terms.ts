@@ -206,8 +206,8 @@ export function questionSearchTerms(question: string): string | undefined {
 }
 
 /**
- * The single most distinctive term, for a second attempt when the full conjunction matches
- * nothing.
+ * The terms to retry INDIVIDUALLY when the full conjunction matches nothing, most distinctive
+ * first.
  *
  * `ftsTitleMatchQuery` joins terms with `AND`, so three reasonable words can easily describe a
  * document that contains only two of them — "what should I do for the smoke test issue?" against
@@ -219,16 +219,17 @@ export function questionSearchTerms(question: string): string | undefined {
  * specific one far more often than not, and the alternative — a corpus frequency lookup — buys
  * little for a tiebreak between two words the user chose deliberately.
  *
- * Returns `undefined` when there is nothing to widen to, i.e. the term set was already a single
- * term. The caller must NOT then fall back to an unfiltered search: see the no-name fallback
- * comment in `run-ask.ts` for what that produced.
+ * Empty when there is nothing to widen to, i.e. the term set was already a single term. The caller
+ * must NOT then fall back to an unfiltered search: see the no-name fallback comment in
+ * `run-ask.ts` for what that produced.
  */
-export function broadestSearchTerm(terms: string): string | undefined {
+export function fallbackSearchTerms(terms: string): string[] {
   const parts = terms.split(" ").filter((t) => t.length > 0);
-  if (parts.length <= 1) return undefined;
-  let best = parts[0] ?? "";
-  for (const p of parts) {
-    if (p.length > best.length) best = p;
-  }
-  return best === "" ? undefined : best;
+  if (parts.length <= 1) return [];
+  // Longest first as a distinctiveness proxy, but ALL of them in turn rather than one guess.
+  // Picking a single "most distinctive" term looked reasonable and was wrong on the first real
+  // question it met: "what changed in billing?" ties `changed` and `billing` at seven characters,
+  // and the arbitrary winner was the verb. Trying each is at most a handful of cheap FTS queries,
+  // and only when the full conjunction already returned nothing.
+  return [...parts].sort((a, b) => b.length - a.length || parts.indexOf(a) - parts.indexOf(b));
 }

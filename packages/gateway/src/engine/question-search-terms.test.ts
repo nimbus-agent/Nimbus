@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { broadestSearchTerm, questionSearchTerms } from "./question-search-terms.ts";
+import { fallbackSearchTerms, questionSearchTerms } from "./question-search-terms.ts";
 
 /**
  * F1 — the audit's opening finding. Every case here is one the audit measured on a live index.
@@ -89,20 +89,28 @@ describe("questionSearchTerms (F1)", () => {
   });
 });
 
-describe("broadestSearchTerm (F1 — relaxing an over-strict AND join)", () => {
-  test("picks the longest term as the most distinctive one", () => {
-    expect(broadestSearchTerm("smoke test billing")).toBe("billing");
+describe("fallbackSearchTerms (F1 — relaxing an over-strict AND join)", () => {
+  test("longest first, as a distinctiveness proxy", () => {
+    expect(fallbackSearchTerms("smoke test billing")).toEqual(["billing", "smoke", "test"]);
+  });
+
+  test("EVERY term is offered, not just the best guess", () => {
+    // A single "most distinctive" pick looked reasonable and was wrong on the first real question
+    // it met: "what changed in billing?" ties `changed` and `billing` at seven characters, and
+    // the arbitrary winner was the verb — so the retry searched for `changed` and missed an item
+    // titled "billing retry fix".
+    expect(fallbackSearchTerms("changed billing")).toContain("billing");
+    expect(fallbackSearchTerms("changed billing")).toContain("changed");
   });
 
   test("a single term has nothing to widen to", () => {
-    // Important that this is `undefined` and not the term itself: the caller uses it to decide
-    // whether a SECOND query is worth running, and re-running the identical query would be a
-    // wasted round trip that changes nothing.
-    expect(broadestSearchTerm("egressRowToItem")).toBeUndefined();
-    expect(broadestSearchTerm("")).toBeUndefined();
+    // Empty, not the term itself: the caller uses this to decide whether a SECOND query is worth
+    // running, and re-running the identical query is a wasted round trip that changes nothing.
+    expect(fallbackSearchTerms("egressRowToItem")).toEqual([]);
+    expect(fallbackSearchTerms("")).toEqual([]);
   });
 
-  test("ties keep the first, so the result is deterministic", () => {
-    expect(broadestSearchTerm("smoke issue")).toBe("smoke");
+  test("ties keep source order, so the result is deterministic", () => {
+    expect(fallbackSearchTerms("smoke issue")).toEqual(["smoke", "issue"]);
   });
 });

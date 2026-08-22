@@ -11,6 +11,7 @@ import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import { capPerService, stripInternalRankField } from "./context-fairness.ts";
 import type { ContextTruncation } from "./context-truncation-disclosure.ts";
 import {
   bindConsentChannel,
@@ -21,7 +22,7 @@ import {
 } from "./executor.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
-import { broadestSearchTerm, questionSearchTerms } from "./question-search-terms.ts";
+import { fallbackSearchTerms, questionSearchTerms } from "./question-search-terms.ts";
 import { type ClassifiedIntent, classifyIntent } from "./router.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
@@ -390,15 +391,18 @@ function githubIssueContextItemsForRepo(
   localIndex: LocalIndex,
   repoSlug: string,
 ): Array<Omit<LocalContextItem, "rank">> {
-  const like = `${repoSlug}#issue-%`;
-  const urlLike = `%github.com/${repoSlug}/issues/%`;
+  // Issues AND PRs (F12a). This filtered to `type = 'issue'`, so asking about a repo silently
+  // excluded every pull request — and on the audited index `github`/`issue` held ZERO rows, so
+  // the path contributed nothing at all while 16 PRs sat unreachable.
+  const like = `${repoSlug}#%`;
+  const urlLike = `%github.com/${repoSlug}/%`;
   const rows = localIndex
     .getDatabase()
     .query(
       `SELECT id, service, type, title, body_preview, url
        FROM item
        WHERE service = 'github'
-         AND type = 'issue'
+         AND type IN ('issue', 'pr')
          AND (lower(external_id) LIKE ? OR lower(url) LIKE ?)
        ORDER BY modified_at DESC, synced_at DESC, title ASC
        LIMIT ?`,
@@ -479,11 +483,15 @@ async function buildLocalIndexedContext(
       // "add a smoke test" on `issue`, which is its TYPE and appears in neither its title nor
       // its body. Retry with the single most distinctive term: the same question with the
       // strictest part relaxed, not a different one.
-      const broadest = broadestSearchTerm(searchTerms);
-      if (broadest !== undefined) {
+      for (const term of fallbackSearchTerms(searchTerms)) {
+        // The PROBE limit, not the context limit: `capPerService` below can only balance the pool
+        // it is handed, and fetching eight rows from a service holding 11,979 of them returns
+        // eight rows from that service. Widening here is what gives the cap something to choose
+        // between; the slice back to eight still happens after it.
         addRankedResults(
-          localIndex.searchRanked({ name: broadest, limit: LOCAL_CONTEXT_ITEM_LIMIT }),
+          localIndex.searchRanked({ name: term, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT }),
         );
+        if (byId.size > 0) break;
       }
     }
     // The no-name fallback is GONE (F1, fix 2). `searchRanked` with no `name` sets
@@ -500,13 +508,20 @@ async function buildLocalIndexedContext(
     if (byId.size === 0) {
       return undefined;
     }
-    const contextItems = [...byId.values()]
-      .slice(0, LOCAL_CONTEXT_ITEM_LIMIT)
-      .map((item, idx) => ({ ...item, rank: idx + 1 }));
+    // Round-robin across services before slicing (F12b): `github_actions` held 11,979 items to
+    // `github`'s 214 on the audited index, so the eight highest-ranked were all CI runs and a
+    // question about a repo never saw a PR.
+    const contextItems = capPerService([...byId.values()], LOCAL_CONTEXT_ITEM_LIMIT).map(
+      (item, idx) => ({ ...item, rank: idx + 1 }),
+    );
     return {
+      // `rank` is stripped before serialising (F12c). It is internal relevance ordering, the
+      // envelope carries no schema to say so, and models reported it as data — "PR #414691 is
+      // ranked 1st" for GitHub, and for CloudWatch an invented "priority within the RequiemNexus
+      // infrastructure". Deleting the field works for every model; a prompt rule would not.
       text: `Indexed Nimbus context:\n${wrapToolOutput(
         { service: "nimbus", tool: "localIndex.searchRanked" },
-        contextItems,
+        stripInternalRankField(contextItems),
       )}`,
       truncation: {
         shown: contextItems.length,

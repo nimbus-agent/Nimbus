@@ -1781,3 +1781,75 @@ describe("buildLocalIndexedContext never fabricates relevance (F1)", () => {
     localIndex.close();
   });
 });
+
+describe("context is shared across services and carries no internal fields (F12)", () => {
+  test("a high-volume service does not crowd out the one the question is about", async () => {
+    // `github_actions` held 11,979 items to `github`'s 214 on the audited index, so the eight
+    // highest-ranked were all CI runs and a repo question never saw a PR.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    for (let i = 1; i <= 20; i++) {
+      db.run(
+        `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+         VALUES (?, 'github_actions', 'ci_run', ?, 'billing workflow run', '', '', ?, ?)`,
+        [`gha:${String(i)}`, `r${String(i)}`, i, i],
+      );
+    }
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+       VALUES ('github:pr-1', 'github', 'pr', 'acme/app#1', 'billing retry fix', '', '', 1, 1)`,
+    );
+    const localIndex = new LocalIndex(db);
+    const prompts: string[] = [];
+
+    await runAsk({
+      input: "what changed in billing?",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(prompts, "ok"),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+
+    expect(prompts[0]).toContain("billing retry fix");
+    localIndex.close();
+  });
+
+  test("the internal rank field never reaches the model", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+       VALUES ('github:pr-1', 'github', 'pr', 'acme/app#1', 'billing retry fix', '', '', 1, 1)`,
+    );
+    const localIndex = new LocalIndex(db);
+    const prompts: string[] = [];
+
+    await runAsk({
+      input: "what changed in billing?",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(prompts, "ok"),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+
+    expect(prompts[0]).toContain("billing retry fix");
+    expect(prompts[0]).not.toContain('"rank"');
+    localIndex.close();
+  });
+});
