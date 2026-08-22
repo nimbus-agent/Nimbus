@@ -35,6 +35,11 @@ export type RunConversationalAgentParams = {
    */
   localContextTruncation?: ContextTruncation;
   /**
+   * The exact index count for a "how many X" question (F23), appended after the model has run.
+   * A count is a `SELECT COUNT(*)`; asking a model to estimate it produced "3", then "2.2".
+   */
+  indexCountLine?: string;
+  /**
    * Devil's-advocate mode (`nimbus ask --devil`). Injected into the prompt both execution
    * paths share — see `devil-advocate.ts` for why it is not in either system-prompt surface.
    */
@@ -252,6 +257,10 @@ function appendDeterministicDisclosures<T extends { reply: string; toolless: boo
       ? undefined
       : contextTruncationLine(p.localContextTruncation);
   if (truncation !== undefined) lines.push(truncation);
+  // F23: the authoritative count, when the question asked for one. Appended rather than left to
+  // the model, which answered "how many PRs are in the index?" with 3, then 2.2, against a true
+  // 173 — it was describing the handful of retrieved items, not the index.
+  if (p.indexCountLine !== undefined) lines.push(p.indexCountLine);
   if (lines.length === 0) {
     return res;
   }

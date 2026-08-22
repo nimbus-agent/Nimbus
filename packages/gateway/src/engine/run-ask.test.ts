@@ -1853,3 +1853,69 @@ describe("context is shared across services and carries no internal fields (F12)
     localIndex.close();
   });
 });
+
+describe("a count question is answered from the index, not the model (F23)", () => {
+  function dbWithPrs(n: number): LocalIndex {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    for (let i = 1; i <= n; i++) {
+      db.run(
+        `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+         VALUES (?, 'github', 'pr', ?, 'a pull request', '', '', ?, ?)`,
+        [`github:pr-${String(i)}`, `acme/app#${String(i)}`, i, i],
+      );
+    }
+    return new LocalIndex(db);
+  }
+
+  test("the true count is appended even when the model says something else", async () => {
+    // Measured: three runs on an unchanged index answered 3, then "2.2 PRs", then nothing, against
+    // a true 173. `2.2` is the tell — no arithmetic over any set yields it.
+    const localIndex = dbWithPrs(12);
+    const prompts: string[] = [];
+
+    const out = await runAsk({
+      input: "how many PRs are in the index?",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(prompts, "There are 2.2 PRs in the index."),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+
+    expect(out.reply).toContain("**12**");
+    expect(out.reply).toContain("not the model's estimate");
+    localIndex.close();
+  });
+
+  test("an ordinary question gets no count line", async () => {
+    const localIndex = dbWithPrs(3);
+    const prompts: string[] = [];
+
+    const out = await runAsk({
+      input: "what changed in the pull requests?",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(prompts, "Some things changed."),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+
+    expect(out.reply).not.toContain("Counted from the index");
+    localIndex.close();
+  });
+});

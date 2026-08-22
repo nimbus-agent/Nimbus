@@ -21,6 +21,7 @@ import {
   ToolExecutor,
 } from "./executor.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
+import { indexCountFor, indexCountLine } from "./index-count-question.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
 import { fallbackSearchTerms, questionSearchTerms } from "./question-search-terms.ts";
 import { type ClassifiedIntent, classifyIntent } from "./router.ts";
@@ -165,6 +166,13 @@ async function answerConversationally(
     ? await buildLocalIndexedContext(p.localIndex, p.input)
     : undefined;
 
+  // Same guard as `countIndexedItems`: `localIndex.getDatabase` is optional on the interface, and
+  // a test stub without it must not take the whole turn down over a disclosure line.
+  const countDb =
+    typeof p.localIndex.getDatabase === "function" ? p.localIndex.getDatabase() : undefined;
+  const count = countDb === undefined ? undefined : indexCountFor(countDb, p.input);
+  const countLine = count === undefined ? undefined : indexCountLine(count);
+
   const result = await runConversationalAgent({
     input: p.input,
     stream: p.stream,
@@ -175,6 +183,7 @@ async function answerConversationally(
     ...(localContext === undefined
       ? {}
       : { localContext: localContext.text, localContextTruncation: localContext.truncation }),
+    ...(countLine === undefined ? {} : { indexCountLine: countLine }),
     ...(p.devil === true ? { devil: true } : {}),
     // Resolved here rather than at gateway boot so an edit to the active profile's toml is
     // picked up with no restart (D3). No logger: the boot-time resolution in
