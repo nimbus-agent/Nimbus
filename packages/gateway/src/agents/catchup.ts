@@ -152,6 +152,35 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
     mergeSubAgentResult(decoded, involvement, windowItems, subAgentGaps);
   }
 
+  // F3: a brief that cannot personalise must SAY SO. Every involvement axis came back empty on a
+  // real 13,183-item index, every item scored the identical default 0.1 with reason "default",
+  // and `gaps: []` asserted nothing was missing — while the command is documented as a
+  // "personalised retrospective digest weighted by your involvement".
+  //
+  // Keyed on the involvement signal rather than on the scores: `scoreAndGroup` gives every item
+  // the same default when there is nothing to weigh by, so the empty axes are the CAUSE and the
+  // uniform scores are its symptom. Naming the cause is what makes the note actionable.
+  const noInvolvementSignal =
+    involvement.ownedServices.length === 0 &&
+    involvement.activeRepos.length === 0 &&
+    involvement.incidentServices.length === 0 &&
+    involvement.collaboratorPersonIds.length === 0;
+  const involvementGaps: GapNote[] = noInvolvementSignal
+    ? [
+        {
+          category: "missing_user_identity",
+          detail:
+            "No involvement signal was found for you on any axis — owned services, active repos, " +
+            "incident services or collaborators — so nothing below is weighted by your activity. " +
+            "The list is ordered by recency, and every relevance score is the same default.",
+          remediation:
+            "Usually a split identity: run `nimbus people search <you>` and, if two records hold " +
+            "one human, `nimbus people link <a> <b>`. Otherwise the index holds no activity for " +
+            "you in this window yet.",
+        },
+      ]
+    : [];
+
   let sections = scoreAndGroup(windowItems, involvement);
   if (input.service !== undefined) {
     sections = sections.filter((s) => s.serviceId === input.service);
@@ -162,7 +191,7 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
     agentVersion: 1,
     generatedAt: Date.now(),
     latencyMs: Math.round(performance.now() - start),
-    gaps: [...preflightGaps, ...subAgentGaps],
+    gaps: [...preflightGaps, ...subAgentGaps, ...involvementGaps],
     query: { sinceMs },
     selfPersonId: resolution.personId,
     involvement,

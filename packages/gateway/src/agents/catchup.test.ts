@@ -171,3 +171,80 @@ describe("runCatchup", () => {
     expect(brief.sections.every((s) => s.serviceId === "github")).toBe(true);
   });
 });
+
+describe("catchup discloses when it could not personalise (F3)", () => {
+  /**
+   * `nimbus catchup` is documented as a "personalised retrospective digest weighted by your
+   * involvement". On a real 13,183-item index every involvement axis came back empty, every item
+   * scored the identical default 0.1 with reason "default", and `gaps: []` asserted that nothing
+   * was missing. A brief that cannot personalise has to say so — the same class the codebase
+   * already polices as I31 disclosure integrity.
+   *
+   * F26 is the cause underneath this one: `resolveSelfPerson` picks the half of a split identity
+   * that holds no edges, so every axis comes back empty for a person who is highly active. Fixing
+   * that makes this disclosure rare; it does not make it unnecessary.
+   */
+  test("an all-empty involvement signal produces a gap note", async () => {
+    const db = freshDb();
+    db.run("INSERT INTO person (id, display_name) VALUES ('person:me', 'Me')");
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
+        "('github:a', 'github', 'pr', 'a', 'A PR', '', 1700000000000, 1700000000000, 0)",
+    );
+    const brief = await runCatchup(
+      { sinceMs: 365 * 24 * 60 * 60 * 1000, mePersonIdOverride: "person:me" },
+      { db, sessionId: "t-f3", notify: () => {} },
+    );
+
+    expect(brief.involvement.ownedServices).toEqual([]);
+    expect(brief.gaps.some((g) => g.detail.toLowerCase().includes("involvement"))).toBe(true);
+    db.close();
+  });
+
+  test("the note says what the ordering IS, not only what it is not", async () => {
+    // "Not personalised" alone leaves a reader unable to interpret the list at all. The ordering
+    // is still meaningful — it is recency — and saying so is the difference between a caveat and
+    // a shrug.
+    const db = freshDb();
+    db.run("INSERT INTO person (id, display_name) VALUES ('person:me', 'Me')");
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
+        "('github:a', 'github', 'pr', 'a', 'A PR', '', 1700000000000, 1700000000000, 0)",
+    );
+    const brief = await runCatchup(
+      { sinceMs: 365 * 24 * 60 * 60 * 1000, mePersonIdOverride: "person:me" },
+      { db, sessionId: "t-f3b", notify: () => {} },
+    );
+
+    const note = brief.gaps.find((g) => g.detail.toLowerCase().includes("involvement"));
+    expect(note?.detail ?? "").toContain("recency");
+    expect(note?.remediation ?? "").toContain("nimbus people link");
+    db.close();
+  });
+});
+
+test("a brief WITH an involvement signal carries no such note (F3)", async () => {
+  // The other direction, so the note cannot become universal noise: `scoreAndGroup` is exercised
+  // directly with a populated involvement, proving the predicate keys on the signal and not on
+  // something that is always true.
+  const sections = scoreAndGroup(
+    [
+      {
+        itemId: "github:a",
+        title: "A PR",
+        service: "github",
+        repoLabel: "acme/app",
+        authorPersonId: null,
+        modifiedAt: 1_700_000_000_000,
+      } as never,
+    ],
+    {
+      ownedServices: ["github"],
+      activeRepos: [],
+      incidentServices: [],
+      collaboratorPersonIds: [],
+    },
+  );
+  const scored = sections.flatMap((s) => s.items);
+  expect(scored.some((i) => i.relevanceScore > 0.1)).toBe(true);
+});
