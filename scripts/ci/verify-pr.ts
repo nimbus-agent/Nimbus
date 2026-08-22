@@ -25,6 +25,19 @@ export interface PrState {
   readonly checks: readonly PrCheck[];
 }
 
+/**
+ * The one check the `General` ruleset (14784377) requires for a merge: an `if: always()`
+ * aggregator that `needs:` every other PR job. Named here because "every reported check is
+ * green" and "the gate reported" are different claims, and only the second protects `main`.
+ *
+ * A check that has not been CREATED yet does not appear in `gh pr checks` output at all — so a
+ * PR whose aggregator has not started looks, to a loop over reported checks, exactly like a PR
+ * that has no aggregator. #1298 merged at 17:47:15Z with this check not yet created; it started
+ * at 17:57:44Z and failed, putting two broken tests on `main`. Absence must therefore be its own
+ * reason, not silence.
+ */
+export const REQUIRED_GATE = "PR quality — required gates";
+
 export interface PrVerdict {
   readonly green: boolean;
   readonly reasons: readonly string[];
@@ -73,6 +86,14 @@ export function evaluatePrState(s: PrState): PrVerdict {
   const skipped = s.checks.filter((c) => c.state === "skipping").map((c) => c.name);
   if (skipped.length > 0)
     reasons.push(`skipped, never ran (skipped is not passed): ${skipped.join(", ")}`);
+
+  // Checked LAST and separately from the loop above: the merge-gating check being absent is a
+  // distinct failure from any reported check being red, and it is the one that reads as green.
+  if (s.checks.length > 0 && !s.checks.some((c) => c.name === REQUIRED_GATE)) {
+    reasons.push(
+      `the merge-gating check "${REQUIRED_GATE}" has not reported at all — it is the only check the ruleset requires, and a merge now would bypass it silently`,
+    );
+  }
 
   return { green: reasons.length === 0, reasons };
 }

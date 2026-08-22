@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "2.13.0",
+  "version": "2.13.1",
   "private": true,
   "repository": {
     "type": "git",
@@ -166,6 +166,7 @@
     "audit:any": "bun scripts/structure-audit/count-any-usage.ts",
     "audit:invariants": "bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only",
     "audit:worker-entries": "bun scripts/structure-audit/check-worker-entries.ts",
+    "audit:platform-test-gaps": "bun scripts/ci/platform-test-gaps.ts",
     "audit:connector-entrypoints": "bun scripts/structure-audit/check-connector-entrypoints.ts",
     "audit:connector-deps": "bun scripts/structure-audit/check-connector-deps.ts",
     "audit:connector-registry-drift": "bun scripts/structure-audit/check-connector-registry-drift.ts",

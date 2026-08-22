@@ -34,6 +34,17 @@ const FAST: readonly Gate[] = [
   { name: "audit:invariants", cmd: ["bun", "run", "audit:invariants"], tier: "fast" },
   { name: "audit:worker-entries", cmd: ["bun", "run", "audit:worker-entries"], tier: "fast" },
   {
+    // Advisory, never blocking. A test gated `skipIf(process.platform === "win32")` does not run
+    // on a Windows dev box — `bun test` and `preflight` both report green having never executed
+    // it, so CI is its first execution and a red macOS leg is the first feedback. This prints
+    // which tests in the current diff are in that state. `soft` because platform-gated tests are
+    // correct: the thing worth fixing is not knowing, not their existence.
+    name: "audit:platform-test-gaps",
+    cmd: ["bun", "run", "audit:platform-test-gaps"],
+    tier: "fast",
+    soft: true,
+  },
+  {
     // A connector that guards startup with `import.meta.main` is invisible to the bundled
     // registry: the guard is false under an import, so it loads, starts nothing and exits 0.
     // Ten connectors were in exactly that state before this gate existed.
