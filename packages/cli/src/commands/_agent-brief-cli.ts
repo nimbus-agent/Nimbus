@@ -100,6 +100,17 @@ export async function runAgentBriefCli<TFindings>(
     const briefPromise = awaitBrief(client, spec, (t) => {
       timeout = t;
     });
+    // Watch it FROM CREATION. Between this line and the `await` below, nothing was attached to
+    // `briefPromise`, so a `briefError` arriving in that window was an unhandled rejection at
+    // that instant — and Bun printed a code frame plus a ten-frame stack from the compiled
+    // binary before the outer `catch` wrote the clean message. Observed on `nimbus pre-mortem
+    // "S2"`: an unresolvable Jira key is the gateway's fastest possible rejection, needing no
+    // work, so it lands squarely in the gap. `why` / `janitor` / `impact` never showed it only
+    // because they render a brief with gap notes instead of rejecting.
+    //
+    // The no-op catch silences the RUNTIME, not the error: the rejection is still delivered to
+    // the real `await` below, and the `catch` there still writes the message and exits 2.
+    briefPromise.catch(() => {});
     await client.call<{ sessionId: string }>(`agents.${spec.kind}`, spec.params);
     const { brief, findings } = await briefPromise;
     spec.onResult?.(findings);
