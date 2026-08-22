@@ -100,3 +100,35 @@ export function explainConfidence(
     },
   ];
 }
+
+/**
+ * The evidence kinds any writer in `decision-corroborate.ts` actually emits.
+ *
+ * `EvidenceKind` also declares `migration` and `iac`. Nothing writes them — the union, the
+ * scoring read in `corroboration()` and the V47 `CHECK` are the only three sites either literal
+ * appears in. That gap is why `computeConfidence` cannot reach 1.0, and stating the emitted set
+ * HERE, next to the scorer, is what lets the ceiling be derived instead of written into a
+ * sentence as `0.86` and left to drift.
+ */
+export const EMITTED_EVIDENCE_KINDS: readonly EvidenceKind[] = ["source", "pr", "commit", "adr"];
+
+/**
+ * The highest confidence the pass can actually produce, given what is emitted.
+ *
+ * Derived, never a literal. A prose `0.86` in the brief and the real arithmetic here are two
+ * copies of one fact, and the whole reason `brief-disclosures.ts` exists is that two copies of a
+ * disclosure drift. This is the same failure one level up — so the number is computed from the
+ * weights and the emitted kinds, and a weight change moves the brief automatically.
+ *
+ * Everything except corroboration is set to its best case, because each of those IS reachable:
+ * a heading cue in a Notion page with both rationale and alternatives.
+ */
+export function maxReachableConfidence(): number {
+  return computeConfidence({
+    tier: "heading",
+    evidenceKinds: EMITTED_EVIDENCE_KINDS,
+    serviceType: "notion:page",
+    hasRationale: true,
+    hasAlternatives: true,
+  });
+}

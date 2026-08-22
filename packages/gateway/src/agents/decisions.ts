@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import { explainConfidence } from "../decisions/decision-confidence.ts";
+import { explainConfidence, maxReachableConfidence } from "../decisions/decision-confidence.ts";
 import { loadDecisionCandidates } from "../decisions/decision-extract.ts";
 import { matchesService, type ServiceMatchRoute } from "../decisions/decision-service-scope.ts";
 import { countByStatus, listDecisions, readPassState } from "../decisions/decision-store.ts";
@@ -139,23 +139,37 @@ function buildGaps(
     });
   }
 
-  // Second standing honesty note, also unconditional: the score scale a reader
-  // sees is not the scale the pass can actually reach. The corroboration term
-  // reserves its full 1.0 for `migration`/`iac` evidence, but no connector
-  // indexes changed-file paths today, so that kind is specified and never
-  // emitted. Presenting a 0..1 score without saying 1.0 is unreachable would
-  // make every real decision look under-evidenced.
+  // Second standing honesty note, also unconditional: the score scale a reader sees is not the
+  // scale the pass can actually reach.
+  //
+  // The CEILING is derived, not written down (F25). A prose `0.86` beside the arithmetic that
+  // produces it is two copies of one fact, and `brief-disclosures.ts` exists because two copies
+  // of a disclosure drifted; this is the same failure one level up.
+  //
+  // The stated CAUSE was stale and is corrected here. It used to read "no connector indexes
+  // changed-file paths" — true when written, false since V55 shipped `pr_changed_file` /
+  // `pr_files_state`, which `nimbus query --not-touching` already queries and which the same
+  // gateway reported as 100% covered in the same session the brief was read. The ceiling is real;
+  // its reason is that the extraction pass was never wired to that substrate, which is a small
+  // wiring task rather than a permanent fact a reader should stop expecting to change. Those two
+  // readings call for opposite actions, and the brief was giving the wrong one.
+  //
+  // I31 protected the false sentence perfectly — constructed, withheld, re-attached,
+  // anchor-checked — and every mechanism made it MORE durable. `confidence-ceiling.test.ts` is
+  // the expiry check that was missing: it fails when either half of the premise changes.
+  const ceiling = maxReachableConfidence().toFixed(2);
   gaps.push({
     category: "missing_relation_emit",
     detail:
-      "Confidence tops out at 0.86, not 1.0. The corroboration term reserves its full score " +
-      "for migration/iac evidence — derived from a corroborating change's file paths — and no " +
-      "connector indexes changed-file paths, so that evidence is specified but never emitted. " +
-      "With only PR/commit corroboration reachable, corroboration caps at 0.6 and total " +
-      "confidence at 0.86.",
+      `Confidence tops out at ${ceiling}, not 1.0. The corroboration term reserves its full ` +
+      "score for migration/iac evidence — derived from a corroborating change's file paths — " +
+      "and the extraction pass does not yet read the indexed changed-file paths, so that " +
+      "evidence is specified but never emitted. With only PR/commit corroboration reachable, " +
+      `corroboration caps at 0.6 and total confidence at ${ceiling}.`,
     remediation:
-      "Read scores against a 0.86 ceiling, not a full-marks scale; a 0.86 decision is a " +
-      "maximally-corroborated one.",
+      `Read scores against a ${ceiling} ceiling, not a full-marks scale; a ${ceiling} decision ` +
+      "is a maximally-corroborated one. This is a wiring gap, not a permanent limit — the " +
+      "changed-file paths it needs are already indexed.",
   });
 
   return gaps;
