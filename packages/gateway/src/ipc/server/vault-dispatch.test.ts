@@ -125,9 +125,12 @@ describe("dispatchVaultGated — invalid params", () => {
   });
 });
 
-function buildCtx(opts: { withLocalIndex: boolean }): { ctx: ServerCtx; openDbs: unknown[] } {
+function buildCtx(opts: { withLocalIndex: boolean; consentImpl?: ConsentCoordinatorImpl }): {
+  ctx: ServerCtx;
+  openDbs: unknown[];
+} {
   const openDbs: unknown[] = [];
-  const consentImpl = new ConsentCoordinatorImpl(() => undefined);
+  const consentImpl = opts.consentImpl ?? new ConsentCoordinatorImpl(() => undefined);
   let localIndex: LocalIndex | undefined;
   if (opts.withLocalIndex) {
     const { Database } = require("bun:sqlite") as { Database: new (path: string) => unknown };
@@ -191,5 +194,117 @@ describe("rpcVaultOrMethodNotFound", () => {
     const r = await rpcVaultOrMethodNotFound(ctx, "vault.listKeys", {}, "client-1");
     expect(Array.isArray(r)).toBe(true);
     expect(r).toContain("github.pat");
+  });
+});
+
+describe("rpcVaultOrMethodNotFound — the HITL gate's blocking contract (F16)", () => {
+  /**
+   * Every test above passes `undefined` for the ToolExecutor, so the gate never runs and the
+   * blocking half of `vault.set` / `vault.delete` was never exercised. That half IS the
+   * production behaviour: both methods are in the HITL frozen set (I2), `dispatchVaultGated`
+   * awaits `toolExecutor.gate()` first, and `ConsentCoordinatorImpl.requestConsent` has no
+   * timer — it settles on `consent.respond`, on client disconnect, and on nothing else.
+   *
+   * Pinning it here is what makes the CLI-side fake in `commands/vault.test.ts` honest: that
+   * fake blocks until a `consent.request` is answered because THIS is what the real dispatcher
+   * does, not because it seemed plausible.
+   */
+  function buildGatedCtx(): {
+    ctx: ServerCtx;
+    openDbs: unknown[];
+    consentImpl: ConsentCoordinatorImpl;
+    sent: Array<{ method: string; params: unknown }>;
+  } {
+    const sent: Array<{ method: string; params: unknown }> = [];
+    const consentImpl = new ConsentCoordinatorImpl((clientId) =>
+      clientId === "client-1"
+        ? (n): void => {
+            sent.push({ method: n.method, params: n.params });
+          }
+        : undefined,
+    );
+    const { ctx, openDbs } = buildCtx({ withLocalIndex: true, consentImpl });
+    return { ctx, openDbs, consentImpl, sent };
+  }
+
+  /** Resolves to "pending" if `p` has not settled by the next few macrotasks. */
+  async function settlesSoon(p: Promise<unknown>): Promise<"settled" | "pending"> {
+    return Promise.race([
+      p.then(
+        () => "settled" as const,
+        () => "settled" as const,
+      ),
+      new Promise<"pending">((r) => {
+        setTimeout(() => r("pending"), 50);
+      }),
+    ]);
+  }
+
+  test("vault.set emits consent.request and does NOT settle until it is answered", async () => {
+    const { ctx, openDbs, consentImpl, sent } = buildGatedCtx();
+    try {
+      const call = rpcVaultOrMethodNotFound(
+        ctx,
+        "vault.set",
+        { key: "azure.tenant_id", value: "6875a760" },
+        "client-1",
+      );
+
+      expect(await settlesSoon(call)).toBe("pending");
+      expect(sent.map((n) => n.method)).toEqual(["consent.request"]);
+      // Nothing is written while the owner has not answered.
+      expect(await vault.get("azure.tenant_id")).toBeNull();
+
+      const first = sent[0];
+      if (first === undefined) throw new Error("no consent.request was emitted");
+      const requestId = (first.params as { requestId: string }).requestId;
+      expect(consentImpl.handleRespond("client-1", { requestId, approved: true })).toBeNull();
+
+      await call;
+      expect(await vault.get("azure.tenant_id")).toBe("6875a760");
+    } finally {
+      for (const db of openDbs) (db as { close: () => void }).close();
+    }
+  });
+
+  test("an unanswered consent.request leaves vault.set pending and stores nothing", async () => {
+    // The production symptom of F16, at its source: the CLI registered no `consent.request`
+    // handler, so nobody ever called `consent.respond`, and the caller burned its own 30s
+    // request timeout while the gateway sat here. The gateway is not at fault and does not
+    // recover on its own — there is no timer to fire.
+    const { ctx, openDbs, sent } = buildGatedCtx();
+    try {
+      const call = rpcVaultOrMethodNotFound(
+        ctx,
+        "vault.set",
+        { key: "azure.tenant_id", value: "6875a760" },
+        "client-1",
+      );
+      call.catch(() => {}); // the test ends with it still pending; do not trip an unhandled rejection
+
+      expect(await settlesSoon(call)).toBe("pending");
+      expect(sent).toHaveLength(1);
+      expect(await vault.get("azure.tenant_id")).toBeNull();
+    } finally {
+      for (const db of openDbs) (db as { close: () => void }).close();
+    }
+  });
+
+  test("a REFUSED consent leaves the vault untouched", async () => {
+    const { ctx, openDbs, consentImpl, sent } = buildGatedCtx();
+    try {
+      const call = rpcVaultOrMethodNotFound(ctx, "vault.delete", { key: "github.pat" }, "client-1");
+      expect(await settlesSoon(call)).toBe("pending");
+
+      const first = sent[0];
+      if (first === undefined) throw new Error("no consent.request was emitted");
+      const requestId = (first.params as { requestId: string }).requestId;
+      consentImpl.handleRespond("client-1", { requestId, approved: false });
+
+      await expect(call).rejects.toBeInstanceOf(RpcMethodError);
+      expect(await vault.get("github.pat")).toBe("ghp_test");
+    } finally {
+      for (const db of openDbs) (db as { close: () => void }).close();
+    }
   });
 });

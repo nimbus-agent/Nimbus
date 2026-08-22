@@ -156,12 +156,27 @@ export function selectConsentHandler(client: IPCClient, opts: SelectConsentHandl
   registerConsentPromptHandler(client);
 }
 
-export function registerInteractiveCliIpcHandlers(client: IPCClient): void {
+/**
+ * The `consent.request` handler every Gateway connection gets unless its caller asks for a
+ * different one — `withGatewayIpc`'s default.
+ *
+ * Deliberately consent ONLY, with no `agent.chunk` sink: a connection that is not running an
+ * agent has no business writing agent output to stdout, whereas EVERY connection needs to be
+ * able to answer a HITL prompt. The Gateway's consent broker (`ipc/consent.ts`) has no timer —
+ * `requestConsent` settles on a response or on disconnect and on nothing else — so a client with
+ * no handler does not degrade, it hangs until its own request timeout and then reports a timeout
+ * rather than a missing approval.
+ */
+export function registerDefaultConsentHandler(client: IPCClient): void {
   const scriptSource = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
   if (scriptSource !== undefined && scriptSource.length > 0) {
     registerScriptConsentHandler(client, scriptSource);
   } else {
     registerConsentPromptHandler(client);
   }
+}
+
+export function registerInteractiveCliIpcHandlers(client: IPCClient): void {
+  registerDefaultConsentHandler(client);
   registerAgentChunkStdout(client);
 }

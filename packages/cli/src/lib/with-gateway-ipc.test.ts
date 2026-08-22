@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
@@ -192,14 +192,20 @@ describe("withGatewayIpc — onConnect", () => {
     ]);
   });
 
-  it("is optional — omitting it changes nothing", async () => {
+  it("registers a consent.request handler when the caller supplies no onConnect", async () => {
+    // The default has to be "can answer a HITL prompt", not "cannot". Three commands shipped
+    // hanging on this exact omission — `connector reindex --depth full`, `nimbus workflow run`,
+    // and (still broken when this test was written) `nimbus vault set` / `vault delete` /
+    // `connector add --mcp`. Requiring every caller to opt IN means the failure mode is a
+    // silent 30s timeout on the ONE command whose author forgot; defaulting it on means a
+    // caller must go out of its way to break, and no such caller exists.
     const order: string[] = [];
     fixtureWithOrder(order);
     await withGatewayIpc(
-      async (client) => client.call<string>("status.gateway", {}),
+      async (client) => client.call<string>("vault.set", { key: "a.b", value: "c" }),
       makePaths(dir),
     );
-    expect(order).toEqual(["connect", "call", "disconnect"]);
+    expect(order).toEqual(["connect", "onNotification:consent.request", "call", "disconnect"]);
   });
 
   it("still disconnects when onConnect throws", async () => {
@@ -256,6 +262,73 @@ describe("no command re-implements the connect/disconnect lifecycle", () => {
       const src = readFileSync(join(COMMANDS_DIR, entry), "utf8");
       if (!/async function with(?:Ipc|Client|ConsentIpc)\b/.test(src)) continue;
       if (src.includes('throw new Error("Gateway is not running')) offenders.push(entry);
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("an onConnect override never drops consent", () => {
+  // `withGatewayIpc` now registers a `consent.request` handler by default, so the ONE way a
+  // command can still reach the Gateway unable to answer a HITL prompt is by passing an
+  // `onConnect` that registers something else. This scan names any file that does.
+  //
+  // It is deliberately narrow, and the narrowness is the honest part: it covers the shared
+  // helper only. A command that builds a bare `new IPCClient(...)` — `extension.ts`,
+  // `team.ts`, `status.ts` and ~18 others — bypasses this default entirely, and no gated
+  // method is called from any of them today. That is a checked fact, not a guarantee: if a
+  // gated call is ever added to one of those files, this guard will not see it.
+  const SRC = join(import.meta.dir, "..");
+
+  /** The complete set of registrars in `interactive-ipc-handlers.ts` that answer consent. */
+  const CONSENT_REGISTRARS = [
+    "registerConsentPromptHandler",
+    "registerAutoApproveConsentHandler",
+    "registerScriptConsentHandler",
+    "registerDefaultConsentHandler",
+    "registerInteractiveCliIpcHandlers",
+    "selectConsentHandler",
+  ];
+
+  function* sourceFiles(dir: string): Generator<string> {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        yield* sourceFiles(full);
+      } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+        yield full;
+      }
+    }
+  }
+
+  /**
+   * Both checks below run on code with comments removed.
+   *
+   * The first draft did not, and could not fail: pointing `prove.ts`'s `onConnect` at a
+   * do-nothing registrar and deleting its import still left the guard green, because a
+   * comment forty lines further down says "(registerConsentPromptHandler)" and a bare
+   * `src.includes(...)` matched the prose. A guard whose evidence can be satisfied by a
+   * comment is not a guard.
+   */
+  function stripComments(src: string): string {
+    return src.replaceAll(/\/\*[\s\S]*?\*\//g, "").replaceAll(/\/\/[^\n]*/g, "");
+  }
+
+  it("every file that passes an onConnect also imports a consent registrar", () => {
+    // The evidence is the IMPORT, not a mention. A file cannot call a registrar it has not
+    // imported, so this is the property that actually implies "consent is registered", and it
+    // is the one thing a comment cannot fake.
+    const offenders: string[] = [];
+    for (const file of sourceFiles(SRC)) {
+      if (file.endsWith(`${sep}with-gateway-ipc.ts`)) continue;
+      const code = stripComments(readFileSync(file, "utf8"));
+      // Both shapes reach the same option: the named property, and `connector.ts`'s positional
+      // `withIpc(fn, onConnect, timeout)` wrapper, which forwards it under that name.
+      if (!code.includes("onConnect")) continue;
+      const imports = code.matchAll(/import\s*\{([^}]*)\}\s*from\s*["'][^"']*["']/g);
+      const imported = new Set(
+        [...imports].flatMap((m) => (m[1] ?? "").split(",").map((s) => s.trim())),
+      );
+      if (!CONSENT_REGISTRARS.some((r) => imported.has(r))) offenders.push(file.slice(SRC.length));
     }
     expect(offenders).toEqual([]);
   });

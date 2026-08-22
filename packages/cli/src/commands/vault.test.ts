@@ -228,3 +228,106 @@ describe("runVault (dispatcher)", () => {
     expect(ipc.calls[0]).toEqual({ method: "vault.listKeys", params: { prefix: "a." } });
   });
 });
+
+describe("runVault — the Gateway's HITL gate (F16)", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  /**
+   * A fake Gateway that behaves like the real one for `vault.set` / `vault.delete`: both are in
+   * the HITL frozen set (`engine/executor.ts`, invariant I2) and `ipc/server/vault-dispatch.ts`
+   * runs them through `toolExecutor.gate()` first, so the call does not resolve until the
+   * `consent.request` it pushes has been answered with `consent.respond`. `ipc/consent.ts` has
+   * no timer at all — `requestConsent` settles on a response or on client disconnect and on
+   * nothing else.
+   *
+   * That is the seam the injected-client tests above cannot reach. They call `runVaultSet(client,
+   * …)` with a client a test constructed, so they prove the CLI half against a fake and never
+   * observe that nothing on the real connection can answer the gate. In production the result
+   * was a flat 30s `IPC request timed out after 30000ms: vault.set` and nothing stored.
+   */
+  function consentAwareGateway(gatedMethods: readonly string[]): {
+    readonly calls: Array<{ method: string; params: unknown }>;
+    readonly fixtureClient: {
+      call: (method: string, params: unknown) => Promise<unknown>;
+      connect: () => void;
+      disconnect: () => void;
+      onNotification: (event: string, handler: (params: unknown) => void | Promise<void>) => void;
+    };
+  } {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    let consentHandler: ((params: unknown) => void | Promise<void>) | undefined;
+    return {
+      calls,
+      fixtureClient: {
+        connect: (): void => {},
+        disconnect: (): void => {},
+        onNotification: (event, handler): void => {
+          if (event === "consent.request") consentHandler = handler;
+        },
+        call: async (method, params): Promise<unknown> => {
+          calls.push({ method, params });
+          if (method === "consent.respond") return { ok: true };
+          if (gatedMethods.includes(method)) {
+            if (consentHandler === undefined) {
+              throw new Error(
+                `gateway is blocked on consent.request: the CLI registered no consent.request handler for ${method}`,
+              );
+            }
+            await consentHandler({ requestId: `req-${method}`, prompt: `Approve ${method}?` });
+          }
+          return { ok: true };
+        },
+      },
+    };
+  }
+
+  it("answers the consent.request that vault.set blocks on, and stores the secret", async () => {
+    const gw = consentAwareGateway(["vault.set"]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: gw.fixtureClient,
+      clackAnswer: true,
+    });
+
+    await runVault(["set", "azure.tenant_id", "6875a760"]);
+
+    expect(gw.calls.map((c) => c.method)).toEqual(["vault.set", "consent.respond"]);
+    expect(gw.calls[1]?.params).toEqual({ requestId: "req-vault.set", approved: true });
+    expect(out.stdout).toBe("Stored.\n");
+  });
+
+  it("answers the consent.request that vault.delete blocks on", async () => {
+    const gw = consentAwareGateway(["vault.delete"]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: gw.fixtureClient,
+      clackAnswer: true,
+    });
+
+    await runVault(["delete", "azure.tenant_id"]);
+
+    expect(gw.calls.map((c) => c.method)).toEqual(["vault.delete", "consent.respond"]);
+    expect(out.stdout).toBe("Deleted (if it existed).\n");
+  });
+
+  it("relays the owner's REFUSAL rather than approving on their behalf", async () => {
+    // The default handler must not be an auto-approver wearing a prompt's clothes: a HITL gate
+    // that always answers yes is worse than one that hangs, because it silently performs the
+    // mutation the owner declined.
+    const gw = consentAwareGateway(["vault.set"]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: gw.fixtureClient,
+      clackAnswer: false,
+    });
+
+    await runVault(["set", "azure.tenant_id", "6875a760"]);
+
+    expect(gw.calls[1]?.params).toEqual({ requestId: "req-vault.set", approved: false });
+  });
+});

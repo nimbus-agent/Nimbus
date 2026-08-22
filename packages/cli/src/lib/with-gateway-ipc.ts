@@ -2,6 +2,7 @@ import type { IPCClient } from "../ipc-client/index.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { readGatewayState } from "./gateway-process.ts";
+import { registerDefaultConsentHandler } from "./interactive-ipc-handlers.ts";
 import { createIpcClient } from "./rpc-timeouts.ts";
 
 /**
@@ -30,13 +31,13 @@ export interface WithGatewayIpcOptions {
   readonly requestTimeoutMs?: number;
 
   /**
-   * Runs after `connect()` and before `fn`, on the freshly built client.
+   * Runs after `connect()` and before `fn`, on the freshly built client — REPLACING the
+   * default `consent.request` registration described below.
    *
-   * This is the seam for registering notification handlers, and anything calling a
-   * HITL-gated method MUST use it to register a `consent.request` handler: the Gateway
-   * blocks on `consent.respond`, and a client that never answers just times out. That
-   * is not hypothetical — `connector reindex --depth full` and `nimbus workflow run`
-   * both shipped without one and hung until the request timeout.
+   * This is the seam for registering notification handlers. Supplying one means taking over
+   * consent for this connection: a caller that needs `agent.chunk` too, or an auto-approving
+   * / scripted decision, passes the handler it wants here. A caller that passes an `onConnect`
+   * registering NO consent handler re-opens the hang this default exists to close.
    *
    * Registration has to happen here rather than inside `fn`, because a notification can
    * arrive on the same socket chunk as the response to the first call `fn` makes.
@@ -46,6 +47,18 @@ export interface WithGatewayIpcOptions {
 
 /**
  * Connect to the Gateway, run `fn`, disconnect — the one implementation.
+ *
+ * A connection made here can ALWAYS answer a HITL prompt: with no `onConnect` supplied it
+ * registers `registerDefaultConsentHandler`. That default is the fix for a failure that had
+ * recurred three times — `connector reindex --depth full` and `nimbus workflow run` shipped
+ * hanging on a consent prompt nobody was listening for, and `nimbus vault set`, `vault delete`
+ * and `connector add --mcp` were still doing it. The Gateway's broker has no timer, so the
+ * symptom is a flat 30s timeout and a mutation that silently did not happen.
+ *
+ * Opt-in was the wrong polarity for that: it makes forgetting silent and correct wiring
+ * effortful, on a helper whose whole purpose is that commands stop re-deriving the lifecycle.
+ * Inverted, a caller has to pass an `onConnect` that omits consent in order to break, and no
+ * caller in the tree does — the three that pass one all register a consent handler themselves.
  *
  * Every `nimbus` command that talks to the Gateway goes through here. It used to be
  * eleven near-identical local helpers (`withIpc` in audit / clip / people / share /
@@ -66,7 +79,7 @@ export async function withGatewayIpc<T>(
   }
   const client = createIpcClient(state.socketPath, opts.requestTimeoutMs);
   await client.connect();
-  opts.onConnect?.(client);
+  (opts.onConnect ?? registerDefaultConsentHandler)(client);
   try {
     return await fn(client);
   } finally {

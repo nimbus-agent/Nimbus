@@ -1738,3 +1738,53 @@ describe("nimbus connector list --json", () => {
     expect(out.stdout).not.toContain("No connectors registered yet");
   });
 });
+
+describe("runConnector add --mcp — the Gateway's HITL gate (F16)", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("answers the consent.request that connector.addMcp blocks on", async () => {
+    // `connector.addMcp` is in the HITL frozen set and `ipc/connector-rpc.ts` runs it through
+    // `toolExecutor.gate()` before registering anything — the owner is asked to authorize
+    // spawning an arbitrary local process. `runConnectorAddMcp` passes no `onConnect`, so before
+    // `withGatewayIpc` registered a consent handler by default this call could only time out.
+    const calls: Array<{ method: string; params: unknown }> = [];
+    let consentHandler: ((params: unknown) => void | Promise<void>) | undefined;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clackAnswer: true,
+      ipcClient: {
+        connect: (): void => {},
+        disconnect: (): void => {},
+        onNotification: (event: string, handler: (params: unknown) => void | Promise<void>) => {
+          if (event === "consent.request") consentHandler = handler;
+        },
+        call: async (method: string, params: unknown): Promise<unknown> => {
+          calls.push({ method, params });
+          if (method === "consent.respond") return { ok: true };
+          if (consentHandler === undefined) {
+            throw new Error(
+              "gateway is blocked on consent.request: the CLI registered no consent.request handler",
+            );
+          }
+          await consentHandler({ requestId: "req-addmcp", prompt: "Approve connector.addMcp?" });
+          return { ok: true };
+        },
+      },
+    });
+
+    await runConnector(["add", "--mcp", "mcp_brave", "npx", "-y", "@some/mcp-server"]);
+    await flush();
+
+    expect(calls.map((c) => c.method)).toEqual(["connector.addMcp", "consent.respond"]);
+    expect(calls[0]?.params).toEqual({
+      serviceId: "mcp_brave",
+      commandLine: "npx -y @some/mcp-server",
+    });
+    expect(out.stdout).toContain("Registered user MCP connector: mcp_brave");
+  });
+});
