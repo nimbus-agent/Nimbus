@@ -345,3 +345,53 @@ export function stripSerializedGapEnvelope(markdown: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
 }
+
+/**
+ * Phrases that only appear in the SYNTHESIS PROMPT, never in a brief's content.
+ *
+ * F4 — `nimbus glossary --refresh` opened with "Based on the provided tool output, I will provide
+ * a deterministic fallback rendering of the glossary terms as a structural template, without
+ * copying verbatim." The model narrated its own instructions back to the reader: "deterministic
+ * fallback rendering", "structural template" and "without copying verbatim" are prompt vocabulary,
+ * not glossary content.
+ *
+ * A leading meta-preamble is cheap to strip unconditionally, and a strip is structural where a
+ * prompt directive is advisory — the whole reason the reserved-section machinery is a strip and
+ * not an instruction.
+ */
+const META_PREAMBLE_MARKERS: readonly RegExp[] = [
+  /\bbased on the (provided|given) (tool output|json|context)\b/i,
+  /\bdeterministic (fallback )?render(ing)?\b/i,
+  /\bstructural template\b/i,
+  /\bwithout copying verbatim\b/i,
+  /\bhere is (the|a) (rewritten|reformatted|more readable)\b/i,
+  /\bI will (provide|produce|present|rewrite)\b/i,
+  /\bas requested\b/i,
+];
+
+/**
+ * Drop a leading paragraph that talks ABOUT the rewrite rather than being it.
+ *
+ * Bounded to the text before the first heading, and to a single paragraph. Both bounds matter: a
+ * document-wide search would delete a legitimate sentence that happens to say "based on the
+ * provided context", and a brief's real preamble — `negotiate`'s window clause, for one — lives in
+ * exactly this position and must survive. So the paragraph is removed only when a marker phrase is
+ * present AND the paragraph is not itself a disclosure the renderer wrote (those start with `_`).
+ */
+export function stripMetaPreamble(markdown: string): string {
+  const firstHeading = markdown.search(/^#{1,6} /m);
+  const head = firstHeading === -1 ? markdown : markdown.slice(0, firstHeading);
+  if (head.trim() === "") return markdown;
+  const paragraphs = head.split(/\n{2,}/);
+  const kept = paragraphs.filter((p) => {
+    const t = p.trim();
+    if (t === "") return true;
+    // Renderer-authored disclosures are italic one-liners. Never strip one: they are the exact
+    // thing I31 exists to keep, and a marker phrase inside one would be our own wording.
+    if (t.startsWith("_")) return true;
+    return !META_PREAMBLE_MARKERS.some((re) => re.test(t));
+  });
+  if (kept.length === paragraphs.length) return markdown;
+  const rebuiltHead = kept.join("\n\n").replace(/^\n+/, "");
+  return firstHeading === -1 ? rebuiltHead : rebuiltHead + markdown.slice(firstHeading);
+}

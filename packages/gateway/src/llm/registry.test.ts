@@ -378,3 +378,67 @@ describe("LlmRegistry.getRouterStatus", () => {
     // and returns a defined value.
   });
 });
+
+describe("min_reasoning_params can actually fire (F8)", () => {
+  /**
+   * The knob was dead. `addProvider` called `registerProvider(provider)` with no meta, the default
+   * `{}` was stored, `parameterCount` was always `undefined`, and `meetsCapabilityFloor`'s
+   * `if (meta?.parameterCount === undefined) return true` fail-opened for every provider on the
+   * only production wiring path.
+   *
+   * Red-proved in the audit: `min_reasoning_params = 7` against a 3.2B model still routed
+   * reasoning to it, and `nimbus llm status` never reported `local-below-reasoning-floor`. A
+   * documented control that cannot fire is worse than no control.
+   */
+  function providerReporting(parameterCount: number | undefined): LlmProvider {
+    return {
+      providerId: "ollama",
+      isAvailable: async () => true,
+      listModels: async () => [
+        {
+          provider: "ollama" as const,
+          modelName: "llama3.2",
+          ...(parameterCount === undefined ? {} : { parameterCount }),
+        },
+      ],
+      generate: async () => ({
+        text: "",
+        tokensIn: 0,
+        tokensOut: 0,
+        modelUsed: "llama3.2",
+        isLocal: true,
+        provider: "ollama" as const,
+      }),
+    } as unknown as LlmProvider;
+  }
+
+  test("a reported parameter count reaches the router", async () => {
+    const registry = new LlmRegistry({
+      config: { preferLocal: true, localModel: "llama3.2", minReasoningParams: 7 } as never,
+    });
+    registry.addProvider(providerReporting(3.2));
+    await registry.refreshProviderMeta("llama3.2");
+
+    // 3.2B against a floor of 7 — the floor must now see the number it never used to get, so the
+    // 3.2B local provider is skipped for a reasoning task and nothing else is registered.
+    const chosen = await registry.llmRouter.selectProvider("reasoning");
+    expect(chosen).toBeUndefined();
+  });
+
+  test("an unreachable provider leaves the fail-open intact", async () => {
+    // Deliberate: refusing to route because the floor could not be EVALUATED would turn a
+    // capability preference into an outage.
+    const registry = new LlmRegistry({
+      config: { preferLocal: true, localModel: "llama3.2", minReasoningParams: 7 } as never,
+    });
+    registry.addProvider({
+      providerId: "ollama",
+      isAvailable: async () => false,
+      listModels: async () => {
+        throw new Error("connection refused");
+      },
+    } as unknown as LlmProvider);
+
+    await expect(registry.refreshProviderMeta("llama3.2")).resolves.toBeUndefined();
+  });
+});

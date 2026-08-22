@@ -75,6 +75,11 @@ export class LlmRouter {
     this.config = config;
   }
 
+  /** The registered provider for a kind, or `undefined`. Used to re-register it with real meta. */
+  providerFor(id: LlmProviderKind): LlmProvider | undefined {
+    return this.providers.get(id);
+  }
+
   registerProvider(provider: LlmProvider, meta: ProviderMeta = {}): void {
     this.providers.set(provider.providerId, provider);
     this.providerMeta.set(provider.providerId, meta);

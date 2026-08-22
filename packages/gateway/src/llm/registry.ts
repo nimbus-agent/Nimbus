@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
-import { LlmRouter, type LlmRouterConfig } from "./router.ts";
+import { LlmRouter, type LlmRouterConfig, type ProviderMeta } from "./router.ts";
 import type { LlmModelInfo, LlmProvider, PullProgressChunk } from "./types.ts";
 
 export type LlmRegistryOptions = {
@@ -17,8 +17,45 @@ export class LlmRegistry {
     this.db = opts.db;
   }
 
-  addProvider(provider: LlmProvider): void {
-    this.router.registerProvider(provider);
+  addProvider(provider: LlmProvider, meta?: ProviderMeta): void {
+    this.router.registerProvider(provider, meta ?? {});
+  }
+
+  /**
+   * Populate `parameterCount` for the local providers from what they report, so
+   * `[llm] min_reasoning_params` can actually fire (F8).
+   *
+   * It could not. `addProvider` called `registerProvider(provider)` with no meta, the default `{}`
+   * was stored, `parameterCount` was therefore always `undefined`, and `meetsCapabilityFloor`'s
+   * `if (meta?.parameterCount === undefined) return true` fail-opened for every provider on the
+   * only production wiring path. Red-proved in the audit: `min_reasoning_params = 7` against a
+   * 3.2B model still routed reasoning to it, and `nimbus llm status` never reported
+   * `local-below-reasoning-floor`.
+   *
+   * `OllamaProvider.parseOllamaModel` already parses `parameter_size: "3.2B"` correctly — it just
+   * fed `listModels()` rather than the router.
+   *
+   * Best-effort by design, and the fail-open stays: a provider that is down cannot report a
+   * parameter count, and refusing to route because the floor could not be EVALUATED would turn a
+   * capability preference into an outage. The difference from before is that the floor now fires
+   * whenever the information exists.
+   */
+  async refreshProviderMeta(modelName: string): Promise<void> {
+    for (const id of ["ollama", "llamacpp"] as const) {
+      const provider = this.router.providerFor(id);
+      if (provider === undefined) continue;
+      try {
+        const models = await provider.listModels();
+        const match = models.find(
+          (m) => m.modelName === modelName || m.modelName.startsWith(`${modelName}:`),
+        );
+        if (match?.parameterCount !== undefined) {
+          this.router.registerProvider(provider, { parameterCount: match.parameterCount });
+        }
+      } catch {
+        // Provider unreachable. Leaving meta empty keeps the documented fail-open.
+      }
+    }
   }
 
   get llmRouter(): LlmRouter {
