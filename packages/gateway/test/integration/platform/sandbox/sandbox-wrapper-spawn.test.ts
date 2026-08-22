@@ -313,30 +313,27 @@ function darwinPermissiveProbe(run: WrapperRun): string {
  * probed is the profile that actually ran.
  */
 function bisectMissingRule(run: WrapperRun): string {
-  // Round 4, and a correction to how rounds 1-3 asked the question.
+  // Round 5: WITHIN /private/var.
   //
-  // Rounds 2 and 3 tested "base profile PLUS one path" across sixteen candidates and every single
-  // one came back `no change`, while `(subpath "/")` kept working. That is not a mystery about
-  // macOS -- it is an ADDITIVE bisect being the wrong instrument. If the child needs two paths
-  // that are both missing, no single addition can ever flip the result, and the probe reports
-  // sixteen dead ends while the answer is any pair of them.
+  // The subtractive form named `/private/var` as the single required read outside the system
+  // tree, and granting four of its children -- db, select, run, and the per-user cache dir `C` --
+  // did not close it. So the needed piece is one of the rest. These deny each candidate from the
+  // total grant; whichever BREAKS it is the one.
   //
-  // So invert it: start from the grant that WORKS and take one path away. SBPL evaluates in
-  // order with the last matching rule winning, so an `(allow ... (subpath "/"))` followed by a
-  // `(deny ... (subpath X))` is exactly "everything except X". Whichever deny BREAKS it is a path
-  // the child genuinely needs, and unlike the additive form this finds every member of the set,
-  // not just a lone sufficient one.
+  // `T` is on the list even though granting it is the outcome to avoid: it is the per-user temp
+  // directory, and this suite puts the file the denial test expects to be REFUSED inside it. If T
+  // turns out to be required, the fix is not to grant it here but to move that file somewhere the
+  // policy genuinely does not reach, so the test keeps meaning something.
+  const tmpContainer = dirname(canonicalPath(tmpdir()));
   const CANDIDATES: ReadonlyArray<readonly [string, string]> = [
-    ['(deny file-read* (subpath "/private/var"))', "deny /private/var"],
-    ['(deny file-read* (subpath "/private/tmp"))', "deny /private/tmp"],
-    ['(deny file-read* (subpath "/private/etc"))', "deny /private/etc"],
-    ['(deny file-read* (subpath "/usr"))', "deny /usr"],
-    ['(deny file-read* (subpath "/System"))', "deny /System"],
-    ['(deny file-read* (subpath "/dev"))', "deny /dev"],
-    ['(deny file-read* (subpath "/Users"))', "deny /Users"],
-    ['(deny file-read* (subpath "/Library"))', "deny /Library"],
-    ['(deny file-read* (subpath "/bin"))', "deny /bin"],
-    ['(deny file-read* (subpath "/opt"))', "deny /opt"],
+    [`(deny file-read* (subpath "${canonicalPath(tmpdir())}"))`, "the per-user TEMP dir (T)"],
+    [`(deny file-read* (subpath "${tmpContainer}"))`, "the container holding T and C"],
+    ['(deny file-read* (subpath "/private/var/folders"))', "all of /private/var/folders"],
+    ['(deny file-read* (subpath "/private/var/db"))', "/private/var/db"],
+    ['(deny file-read* (subpath "/private/var/tmp"))', "/private/var/tmp"],
+    ['(deny file-read* (subpath "/private/var/run"))', "/private/var/run"],
+    ['(deny file-read* (subpath "/private/var/select"))', "/private/var/select"],
+    ['(deny file-read* (subpath "/private/var/log"))', "/private/var/log"],
   ];
   const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-bisect-"));
   try {

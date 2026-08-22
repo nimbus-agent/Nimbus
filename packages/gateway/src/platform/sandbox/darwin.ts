@@ -35,6 +35,33 @@ function darwinUserCacheDir(): string {
   return join(dirname(canonicalPath(tmpdir())), "C");
 }
 
+/**
+ * Every ancestor directory of `p`, as SBPL `(literal ...)` grants.
+ *
+ * `(literal "/a/b")` permits opening THAT directory and nothing inside it; `(subpath "/a/b")`
+ * permits the whole tree. The distinction is the entire point here. Resolving a path requires
+ * traversing its ancestors, and a runtime that opens its own cwd or temp directory needs
+ * `file-read-data` on the directory itself — which `file-read-metadata` does not cover, since
+ * that is `stat`, not `open`.
+ *
+ * A bisect named `/private/var` as the one required read outside the system tree, and granting
+ * `db`, `select`, `run` and the per-user cache dir did not close it. The remaining candidate is
+ * the ancestor chain of the temp directory itself — which cannot be granted as a subpath, because
+ * `/private/var/folders/<hash>/<hash>/T` holds every process's scratch data, and in this repo's
+ * own suite the file that "refuses a path the policy does not grant" expects to be DENIED.
+ * Literals give the traversal without the tree.
+ */
+function ancestorLiterals(p: string): string[] {
+  const out: string[] = [];
+  let cur = dirname(p);
+  while (cur !== dirname(cur)) {
+    out.push(cur);
+    cur = dirname(cur);
+  }
+  out.push("/");
+  return out;
+}
+
 export function generateSbplProfile(opts: SbplOpts): string {
   const hosts = opts.policy.permissions.network;
   const fsRead = opts.policy.permissions.filesystem.read;
@@ -100,6 +127,12 @@ export function generateSbplProfile(opts: SbplOpts): string {
     `  (subpath "/private/var/select")`,
     `  (subpath "/private/var/run")`,
     `  (subpath "${darwinUserCacheDir()}")`,
+    // The ancestor chain of the cwd and of the sandbox scratch dir, as LITERALS. Opening a
+    // directory needs read-data on that directory; `file-read-metadata` above only covers `stat`.
+    // Literals grant the traversal and nothing below it, so the per-user temp tree stays closed.
+    ...[...new Set([...ancestorLiterals(opts.cwd), ...ancestorLiterals(opts.tmpdir)])].map(
+      (p) => `  (literal "${p}")`,
+    ),
     // `zoneinfo` and ICU data — read by any runtime that can format a date.
     `  (subpath "/usr/share")`,
     // The rest of the SYSTEM tree, and the reason it is broad. The Linux runner binds `/usr`,

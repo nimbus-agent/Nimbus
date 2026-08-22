@@ -149,3 +149,42 @@ describe("system-tree read grants stay clear of user data", () => {
     expect(profile()).not.toContain('(subpath "/private/var/folders")');
   });
 });
+
+describe("ancestor literals grant traversal, never a tree", () => {
+  const CWD = "/private/var/folders/ab/cd/T/wrap/work";
+  const SBX = "/private/var/folders/ab/cd/T/sbx";
+  const built = (): string => generateSbplProfile({ cwd: CWD, tmpdir: SBX, policy: policy() });
+
+  it("emits a (literal ...) for every ancestor of the cwd, up to /", () => {
+    const p = built();
+    for (const a of [
+      "/private/var/folders/ab/cd/T/wrap",
+      "/private/var/folders/ab/cd/T",
+      "/private/var/folders/ab/cd",
+      "/private/var/folders/ab",
+      "/private/var/folders",
+      "/private/var",
+      "/private",
+      "/",
+    ]) {
+      expect(p).toContain(`(literal "${a}")`);
+    }
+  });
+
+  // The distinction the whole approach rests on. `(literal "/x")` permits opening that directory;
+  // `(subpath "/x")` permits everything under it. The per-user temp tree must get the first and
+  // never the second — it holds every other process's scratch data, and in the spawn suite the
+  // file the denial test expects to be refused.
+  it("never turns an ancestor into a subpath", () => {
+    const p = built();
+    for (const a of ["/private/var/folders", "/private/var", "/private", "/"]) {
+      expect(p).not.toContain(`(subpath "${a}")`);
+    }
+  });
+
+  it("does not duplicate an ancestor shared by the cwd and the sandbox dir", () => {
+    const p = built();
+    const occurrences = p.split('(literal "/private/var/folders")').length - 1;
+    expect(occurrences).toBe(1);
+  });
+});
