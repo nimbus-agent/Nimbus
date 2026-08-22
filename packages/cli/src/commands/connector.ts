@@ -9,10 +9,7 @@ import {
   printConnectorAuthPatOnlyHelp,
   SLACK_OAUTH_CLIENT_ID_HELP,
 } from "../lib/connector-oauth-env-help.ts";
-import {
-  registerAutoApproveConsentHandler,
-  registerConsentPromptHandler,
-} from "../lib/interactive-ipc-handlers.ts";
+import type { ConsentChoice } from "../lib/interactive-ipc-handlers.ts";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
@@ -76,18 +73,20 @@ type ConnectorFlags = {
  * Connect, run, disconnect — delegating to the shared `withGatewayIpc`.
  *
  * Kept as a thin local wrapper only because this file has eleven call sites using the
- * positional `(fn, onConnect, timeout)` shape; the lifecycle itself lives in one place
- * now. Anything calling a HITL-gated method MUST pass `onConnect` to register a
- * `consent.request` handler — the Gateway blocks on `consent.respond`, and a client that
- * never answers just times out.
+ * positional `(fn, consent, timeout)` shape; the lifecycle itself lives in one place now.
+ *
+ * The middle parameter used to be a free `onConnect` callback that a HITL-gated call site
+ * had to remember to pass. It is now a {@link ConsentChoice}, and omitting it selects the
+ * interactive prompt rather than nothing — so `connector add --mcp`, which called a gated
+ * method with no handler and hung for 30s every time, is correct by default.
  */
 async function withIpc<T>(
   fn: (c: IPCClient) => Promise<T>,
-  onConnect?: (c: IPCClient) => void,
+  consent?: ConsentChoice,
   requestTimeoutMs?: number,
 ): Promise<T> {
   return withGatewayIpc(fn, undefined, {
-    ...(onConnect === undefined ? {} : { onConnect }),
+    ...(consent === undefined ? {} : { consent }),
     ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
   });
 }
@@ -1171,9 +1170,7 @@ async function runConnectorRemove(tail: string[]): Promise<void> {
       c.call<ConnectorRemoveResult | ConnectorRemoveRejection>("connector.remove", {
         serviceId: service,
       }),
-    (c) => {
-      registerAutoApproveConsentHandler(c, accept ? "--yes" : "confirmed");
-    },
+    { kind: "auto", sourceLabel: accept ? "--yes" : "confirmed" },
   );
   if (isConnectorRemoveRejection(res)) {
     throw new Error(
@@ -1207,9 +1204,7 @@ async function runConnectorReindex(args: string[]): Promise<void> {
   // think time at that prompt and the re-walk itself, which the Gateway awaits.
   const result = await withIpc(
     (c) => c.call<{ itemsAffected: number; mode: string }>("connector.reindex", { service, depth }),
-    (c) => {
-      registerConsentPromptHandler(c);
-    },
+    { kind: "prompt" },
     BATCH_RPC_TIMEOUT_MS,
   );
   console.log(

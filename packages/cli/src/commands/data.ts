@@ -1,6 +1,5 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import { assertDestructiveDeleteAllowed, parseScriptConsentSource } from "../lib/data-helpers.ts";
-import { selectConsentHandler } from "../lib/interactive-ipc-handlers.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
@@ -35,8 +34,12 @@ async function withClient<T>(
   fn: (c: IPCClient) => Promise<T>,
 ): Promise<T> {
   return withGatewayIpc(fn, undefined, {
-    onConnect: (client) => {
-      selectConsentHandler(client, opts);
+    consent: {
+      kind: "flags",
+      yes: opts.yes,
+      ...(opts.scriptConsentSource === undefined
+        ? {}
+        : { scriptConsentSource: opts.scriptConsentSource }),
     },
     requestTimeoutMs: BATCH_RPC_TIMEOUT_MS,
   });

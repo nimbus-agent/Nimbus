@@ -1,5 +1,4 @@
 import type { IPCClient } from "../ipc-client/index.ts";
-import { registerConsentPromptHandler } from "../lib/interactive-ipc-handlers.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
@@ -104,28 +103,23 @@ export function formatProveResult(input: {
 }
 
 /**
- * Like {@link withIpc} but registers the interactive consent prompt handler first, so an inline
- * `consent.request` (egress.prune's owner-HITL gate, or any HITL action triggered by a proved
- * query) reaches the user as a y/n prompt instead of hanging. Without it the gateway's consent
- * gate never receives an answer and the call dies on the client's request timeout.
+ * A `withGatewayIpc` call with a caller-sized request budget.
  *
- * That prompt is awaited INSIDE the pending call, so the caller's `requestTimeoutMs` is also the
- * user's think time — pass a budget sized for a human, not for an RPC.
- */
-/**
- * Like a plain `withGatewayIpc` call but registering the interactive consent prompt, so an
- * inline `consent.request` (egress.prune's owner-HITL gate, or any HITL action a proved query
- * triggers) reaches the user as a y/n prompt instead of dying on the request timeout.
+ * It used to pass the interactive consent prompt explicitly, which is why it is named for
+ * consent; `withGatewayIpc` now registers that prompt itself and there is no way to opt out,
+ * so the only thing left here is the timeout. An inline `consent.request` — egress.prune's
+ * owner-HITL gate, or any HITL action a proved query triggers — is awaited INSIDE the pending
+ * call, so `requestTimeoutMs` is also the user's think time: pass a budget sized for a human,
+ * not for an RPC.
  *
- * That prompt is awaited INSIDE the pending call, so `requestTimeoutMs` is also the user's
- * think time — pass a budget sized for a human, not for an RPC.
+ * (Two stacked doc comments used to sit here, one of them referring to a `withIpc` helper this
+ * file does not have.)
  */
 async function withConsentIpc<T>(
   fn: (c: IPCClient) => Promise<T>,
   requestTimeoutMs?: number,
 ): Promise<T> {
   return withGatewayIpc(fn, undefined, {
-    onConnect: registerConsentPromptHandler,
     ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
   });
 }

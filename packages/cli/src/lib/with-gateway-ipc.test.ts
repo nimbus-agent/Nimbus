@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
@@ -130,12 +130,12 @@ describe("withGatewayIpc — happy path (mocked IPCClient)", () => {
   });
 });
 
-describe("withGatewayIpc — onConnect", () => {
+describe("withGatewayIpc — consent registration", () => {
   let dir: string;
 
   beforeEach(() => {
     out.reset();
-    dir = mkdtempSync(join(tmpdir(), "nimbus-with-ipc-onconnect-"));
+    dir = mkdtempSync(join(tmpdir(), "nimbus-with-ipc-consent-"));
   });
 
   afterEach(() => {
@@ -145,7 +145,7 @@ describe("withGatewayIpc — onConnect", () => {
 
   function fixtureWithOrder(order: string[]): void {
     setFixture({
-      gatewayState: { socketPath: "/tmp/nimbus-onconnect.sock", pid: 1 },
+      gatewayState: { socketPath: "/tmp/nimbus-consent.sock", pid: 1 },
       ipcClient: {
         connect: async (): Promise<void> => {
           order.push("connect");
@@ -164,62 +164,62 @@ describe("withGatewayIpc — onConnect", () => {
     });
   }
 
-  it("runs onConnect AFTER connect and BEFORE fn", async () => {
-    // Ordering is the property, not merely that it runs. A handler registered after the
-    // first call is issued can miss a notification that arrives in the same socket chunk
-    // as that call's response — which is how `connector reindex --depth full` and
-    // `nimbus workflow run` both shipped hanging on a consent prompt that never appeared.
+  it("registers consent.request AFTER connect and BEFORE fn, with no option supplied", async () => {
+    // Two properties in one order assertion.
+    //
+    // That it happens at all: three commands shipped unable to answer a HITL prompt —
+    // `connector reindex --depth full`, `nimbus workflow run`, and (still broken when this
+    // was written) `nimbus vault set` / `vault delete` / `connector add --mcp`. A default
+    // that cannot be switched off is what makes forgetting impossible rather than merely
+    // discouraged.
+    //
+    // And WHERE it happens: a handler registered after the first call is issued can miss a
+    // notification arriving in the same socket chunk as that call's response.
     const order: string[] = [];
     fixtureWithOrder(order);
 
-    await withGatewayIpc(
-      async (client) => client.call<string>("status.gateway", {}),
-      makePaths(dir),
-      {
-        onConnect: (client) => {
-          order.push("onConnect");
-          client.onNotification("consent.request", () => {});
-        },
-      },
-    );
-
-    expect(order).toEqual([
-      "connect",
-      "onConnect",
-      "onNotification:consent.request",
-      "call",
-      "disconnect",
-    ]);
-  });
-
-  it("registers a consent.request handler when the caller supplies no onConnect", async () => {
-    // The default has to be "can answer a HITL prompt", not "cannot". Three commands shipped
-    // hanging on this exact omission — `connector reindex --depth full`, `nimbus workflow run`,
-    // and (still broken when this test was written) `nimbus vault set` / `vault delete` /
-    // `connector add --mcp`. Requiring every caller to opt IN means the failure mode is a
-    // silent 30s timeout on the ONE command whose author forgot; defaulting it on means a
-    // caller must go out of its way to break, and no such caller exists.
-    const order: string[] = [];
-    fixtureWithOrder(order);
     await withGatewayIpc(
       async (client) => client.call<string>("vault.set", { key: "a.b", value: "c" }),
       makePaths(dir),
     );
+
     expect(order).toEqual(["connect", "onNotification:consent.request", "call", "disconnect"]);
   });
 
-  it("still disconnects when onConnect throws", async () => {
-    // A throwing registration must not strand the connection. `onConnect` runs outside
-    // the try/finally, so this pins that the client is not leaked.
+  it.each([
+    ["prompt", { kind: "prompt" } as const],
+    ["auto", { kind: "auto", sourceLabel: "--yes" } as const],
+    ["flags/yes", { kind: "flags", yes: true } as const],
+    ["flags/interactive", { kind: "flags", yes: false } as const],
+  ])("the %s consent choice still registers consent.request", async (_label, consent) => {
+    // Exhaustiveness over the union is the whole safety argument. `ConsentChoice` is worth
+    // more than the free `onConnect` callback it replaced ONLY if every variant of it really
+    // registers a handler — a variant that quietly did not would reintroduce the hang while
+    // looking, at the call site, like a deliberate choice.
     const order: string[] = [];
     fixtureWithOrder(order);
-    await expect(
-      withGatewayIpc(async () => "unreached", makePaths(dir), {
-        onConnect: () => {
-          throw new Error("registration-failed");
-        },
-      }),
-    ).rejects.toThrow("registration-failed");
+    await withGatewayIpc(async (client) => client.call<string>("vault.set", {}), makePaths(dir), {
+      consent,
+    });
+    expect(order).toContain("onNotification:consent.request");
+  });
+
+  it("still disconnects when registration throws", async () => {
+    // Registration runs outside the try/finally, so a throw there must not strand the
+    // connection. Reachable: `NIMBUS_SCRIPT_CONSENT_SOURCE` naming a file that is not there
+    // makes `registerScriptConsentHandler` throw before any call is issued.
+    const order: string[] = [];
+    fixtureWithOrder(order);
+    const prior = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+    process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = join(dir, "no-such-decisions.jsonl");
+    try {
+      await expect(withGatewayIpc(async () => "unreached", makePaths(dir))).rejects.toThrow(
+        "script consent source not found",
+      );
+    } finally {
+      if (prior === undefined) delete process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+      else process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = prior;
+    }
     expect(order).not.toContain("call");
   });
 });
@@ -267,27 +267,24 @@ describe("no command re-implements the connect/disconnect lifecycle", () => {
   });
 });
 
-describe("an onConnect override never drops consent", () => {
-  // `withGatewayIpc` now registers a `consent.request` handler by default, so the ONE way a
-  // command can still reach the Gateway unable to answer a HITL prompt is by passing an
-  // `onConnect` that registers something else. This scan names any file that does.
+describe("consent cannot be dropped by a caller", () => {
+  // The previous shape of this guard was a static scan, and CodeRabbit was right that it
+  // could not hold: it required a consent-registrar IMPORT in any file passing `onConnect`,
+  // and a file can import a registrar for one command while passing a do-nothing callback
+  // for another. An earlier draft was weaker still — it matched the registrar's NAME
+  // anywhere, and a COMMENT in `prove.ts` satisfied it while the real call site was broken.
   //
-  // It is deliberately narrow, and the narrowness is the honest part: it covers the shared
-  // helper only. A command that builds a bare `new IPCClient(...)` — `extension.ts`,
-  // `team.ts`, `status.ts` and ~18 others — bypasses this default entirely, and no gated
-  // method is called from any of them today. That is a checked fact, not a guarantee: if a
-  // gated call is ever added to one of those files, this guard will not see it.
+  // Two failed drafts is the signal. The option no longer takes a callback at all: it takes
+  // a `ConsentChoice`, a closed union with no member meaning "nobody answers". So what is
+  // asserted here is not a text pattern over call sites — it is that no call site can even
+  // spell the failure, plus (in the `it.each` above) that every variant of the union really
+  // does register.
+  //
+  // What remains, stated rather than glossed: a command that builds a bare `new IPCClient(...)`
+  // — `extension.ts`, `team.ts`, `status.ts` and ~18 others — never reaches `withGatewayIpc`
+  // and gets none of this. No gated method is called from any of them today, which is a
+  // checked fact and not a guarantee.
   const SRC = join(import.meta.dir, "..");
-
-  /** The complete set of registrars in `interactive-ipc-handlers.ts` that answer consent. */
-  const CONSENT_REGISTRARS = [
-    "registerConsentPromptHandler",
-    "registerAutoApproveConsentHandler",
-    "registerScriptConsentHandler",
-    "registerDefaultConsentHandler",
-    "registerInteractiveCliIpcHandlers",
-    "selectConsentHandler",
-  ];
 
   function* sourceFiles(dir: string): Generator<string> {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -300,35 +297,21 @@ describe("an onConnect override never drops consent", () => {
     }
   }
 
-  /**
-   * Both checks below run on code with comments removed.
-   *
-   * The first draft did not, and could not fail: pointing `prove.ts`'s `onConnect` at a
-   * do-nothing registrar and deleting its import still left the guard green, because a
-   * comment forty lines further down says "(registerConsentPromptHandler)" and a bare
-   * `src.includes(...)` matched the prose. A guard whose evidence can be satisfied by a
-   * comment is not a guard.
-   */
+  /** Comments are not evidence — an earlier draft of this file passed on one. */
   function stripComments(src: string): string {
     return src.replaceAll(/\/\*[\s\S]*?\*\//g, "").replaceAll(/\/\/[^\n]*/g, "");
   }
 
-  it("every file that passes an onConnect also imports a consent registrar", () => {
-    // The evidence is the IMPORT, not a mention. A file cannot call a registrar it has not
-    // imported, so this is the property that actually implies "consent is registered", and it
-    // is the one thing a comment cannot fake.
+  it("no command passes a consent CALLBACK to the shared helper any more", () => {
+    // `onConnect` is gone from `WithGatewayIpcOptions`, so a stray one would be a type error
+    // rather than a silent hang — but `connector.ts` keeps a positional local wrapper whose
+    // middle parameter a rename could turn back into a callback without the compiler minding.
+    // This is the cheap check that the callback shape has not crept back in.
     const offenders: string[] = [];
     for (const file of sourceFiles(SRC)) {
-      if (file.endsWith(`${sep}with-gateway-ipc.ts`)) continue;
-      const code = stripComments(readFileSync(file, "utf8"));
-      // Both shapes reach the same option: the named property, and `connector.ts`'s positional
-      // `withIpc(fn, onConnect, timeout)` wrapper, which forwards it under that name.
-      if (!code.includes("onConnect")) continue;
-      const imports = code.matchAll(/import\s*\{([^}]*)\}\s*from\s*["'][^"']*["']/g);
-      const imported = new Set(
-        [...imports].flatMap((m) => (m[1] ?? "").split(",").map((s) => s.trim())),
-      );
-      if (!CONSENT_REGISTRARS.some((r) => imported.has(r))) offenders.push(file.slice(SRC.length));
+      if (stripComments(readFileSync(file, "utf8")).includes("onConnect")) {
+        offenders.push(file.slice(SRC.length));
+      }
     }
     expect(offenders).toEqual([]);
   });

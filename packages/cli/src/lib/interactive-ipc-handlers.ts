@@ -157,8 +157,28 @@ export function selectConsentHandler(client: IPCClient, opts: SelectConsentHandl
 }
 
 /**
- * The `consent.request` handler every Gateway connection gets unless its caller asks for a
- * different one — `withGatewayIpc`'s default.
+ * How a `withGatewayIpc` connection answers `consent.request` — the complete vocabulary.
+ *
+ * The point of a closed union here is that it has no member meaning "nobody answers". Every
+ * consent behaviour in the CLI is one of these three, and a caller can pick the wrong one but
+ * cannot pick none, which is the failure this replaced: a free `onConnect` callback could
+ * register nothing at all and the omission was invisible until a gated call hung for 30s.
+ *
+ *  - `prompt` — ask the operator on this terminal. The default, and what an interactive
+ *    `nimbus vault set` wants. Honours `NIMBUS_SCRIPT_CONSENT_SOURCE` so a scripted run does
+ *    not need every command to thread a flag through.
+ *  - `auto` — the caller ALREADY obtained this approval from the operator, so answering again
+ *    would ask the same question twice; `sourceLabel` names where it came from and is echoed
+ *    on stderr so the transcript still shows an auto-approval happened.
+ *  - `flags` — resolve from the command's own `--yes` / `--script-consent-source` flags.
+ */
+export type ConsentChoice =
+  | { readonly kind: "prompt" }
+  | { readonly kind: "auto"; readonly sourceLabel?: string }
+  | { readonly kind: "flags"; readonly yes: boolean; readonly scriptConsentSource?: string };
+
+/**
+ * Register the `consent.request` handler a {@link ConsentChoice} names.
  *
  * Deliberately consent ONLY, with no `agent.chunk` sink: a connection that is not running an
  * agent has no business writing agent output to stdout, whereas EVERY connection needs to be
@@ -167,13 +187,34 @@ export function selectConsentHandler(client: IPCClient, opts: SelectConsentHandl
  * no handler does not degrade, it hangs until its own request timeout and then reports a timeout
  * rather than a missing approval.
  */
-export function registerDefaultConsentHandler(client: IPCClient): void {
-  const scriptSource = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
-  if (scriptSource !== undefined && scriptSource.length > 0) {
-    registerScriptConsentHandler(client, scriptSource);
-  } else {
-    registerConsentPromptHandler(client);
+export function registerConsentFor(client: IPCClient, choice: ConsentChoice): void {
+  switch (choice.kind) {
+    case "auto":
+      registerAutoApproveConsentHandler(client, choice.sourceLabel);
+      return;
+    case "flags":
+      selectConsentHandler(client, {
+        yes: choice.yes,
+        ...(choice.scriptConsentSource === undefined
+          ? {}
+          : { scriptConsentSource: choice.scriptConsentSource }),
+      });
+      return;
+    case "prompt": {
+      const scriptSource = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+      if (scriptSource !== undefined && scriptSource.length > 0) {
+        registerScriptConsentHandler(client, scriptSource);
+      } else {
+        registerConsentPromptHandler(client);
+      }
+      return;
+    }
   }
+}
+
+/** The `prompt` behaviour on its own, for the bare-client commands that do not use options. */
+export function registerDefaultConsentHandler(client: IPCClient): void {
+  registerConsentFor(client, { kind: "prompt" });
 }
 
 export function registerInteractiveCliIpcHandlers(client: IPCClient): void {
