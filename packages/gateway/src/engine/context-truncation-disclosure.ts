@@ -8,6 +8,11 @@
  * user who has 16 — an answer indistinguishable from a correct one, since the only way to catch
  * it is to already know the true count, which is what the tool was asked for.
  *
+ * The claim is deliberately "was GIVEN n items", not "was written from n": Nimbus knows what it
+ * handed over, not what the model read. `DEFAULT_LOCAL_CONTEXT_TOKENS` exists so the two do not
+ * silently diverge — before it, Ollama capped the prompt at 4096 and dropped the overflow
+ * unreported, which would have made the stronger phrasing false.
+ *
  * The line is CONSTRUCTED here and appended to the reply by the same deterministic path that
  * carries negation disclosures — never handed to the model as an instruction it may or may not
  * follow. That mirrors what invariant I31 requires of `negotiate`'s list-truncation clause: the
@@ -33,7 +38,7 @@ export function contextTruncationLine(t: ContextTruncation): string | undefined 
   if (t.total <= t.shown) return undefined;
   const total = t.atLeast ? `at least ${String(t.total)}` : String(t.total);
   return (
-    `_Note: this answer was written from ${String(t.shown)} indexed items, but ${total} match. ` +
+    `_Note: this answer was given ${String(t.shown)} indexed items, but ${total} match. ` +
     "Any list above is a sample, not the complete set — run `nimbus query` or `nimbus search` " +
     "for the full result._"
   );

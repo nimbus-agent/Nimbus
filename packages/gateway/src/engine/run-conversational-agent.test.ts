@@ -546,7 +546,7 @@ describe("context-truncation disclosure reaches the reply (F14)", () => {
       localContextTruncation: { shown: 8, total: 16, atLeast: false },
     });
     expect(r.reply).toContain("1. alpha");
-    expect(r.reply).toContain("8 indexed items");
+    expect(r.reply).toContain("given 8 indexed items");
     expect(r.reply).toContain("16 match");
   });
 
