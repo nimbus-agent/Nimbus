@@ -1790,6 +1790,19 @@ describe("runConnector add --mcp — the Gateway's HITL gate (F16)", () => {
 });
 
 describe("connector auth waits for a human, not for an RPC (F17)", () => {
+  // Every sibling describe in this file clears the fixture; these two did not, and the LAST
+  // fixture set in the file leaked into whatever ran next in the combined `bun test
+  // packages/cli/src` run — `negation-examples.test.ts` got this describe's "OAuth client id is
+  // not configured" thrower instead of a real gateway lookup. It only reproduced on the
+  // macOS/Windows cross-platform legs, which run that scope; the Ubuntu leg runs `packages/cli`
+  // and ordered the files differently.
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
   /**
    * `nimbus connector auth onedrive` reported `IPC request timed out after 30000ms` while the
    * browser was still on Microsoft's sign-in page. Every other IPC call is a local request that
@@ -1819,6 +1832,14 @@ describe("connector auth waits for a human, not for an RPC (F17)", () => {
 });
 
 describe("a timed-out auth does not claim nothing happened (F17)", () => {
+  // Clears the fixture for the same reason as the describe above.
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
   it("names the two commands that settle whether a credential was stored", async () => {
     // The transport says only "IPC request timed out", which reads as "nothing happened" — the
     // one reading that is not safe here, since the gateway keeps the PKCE flow running after the

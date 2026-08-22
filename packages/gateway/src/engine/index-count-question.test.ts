@@ -73,6 +73,25 @@ describe("indexCountFor", () => {
     expect(indexCountFor(dbWith([]), "what changed in billing?")).toBeUndefined();
   });
 
+  test("a count question naming no indexed type counts EVERY item", () => {
+    // `countQuestionType` returns `null` for "how many things are indexed?" — a real, answerable
+    // number rather than a guess at which type was meant. This is the arm that answers it.
+    const db = dbWith([
+      { id: "a", type: "pr" },
+      { id: "b", type: "ci_run" },
+    ]);
+    expect(indexCountFor(db, "how many things are indexed?")).toEqual({ itemType: null, total: 2 });
+  });
+
+  test("an unreadable index says nothing rather than asserting 0", () => {
+    // A count that cannot be read is not a count that is zero. Saying nothing leaves the model's
+    // answer unqualified, which is where F23 started — but appending "0" would be a specific
+    // claim, and a wrong specific claim is what F23 IS.
+    const db = dbWith([]);
+    db.close();
+    expect(indexCountFor(db, "how many PRs?")).toBeUndefined();
+  });
+
   test("zero is a real answer and is reported", () => {
     expect(indexCountFor(dbWith([{ id: "c", type: "ci_run" }]), "how many PRs?")).toEqual({
       itemType: "pr",
@@ -86,6 +105,13 @@ describe("indexCountLine", () => {
     const line = indexCountLine({ itemType: "pr", total: 173 });
     expect(line).toContain("173");
     expect(line).toContain("not the model's estimate");
+  });
+
+  test("the all-items line names no type", () => {
+    const line = indexCountLine({ itemType: null, total: 13183 });
+    expect(line).toContain("13183");
+    expect(line).toContain("indexed items.");
+    expect(line).not.toContain("`");
   });
 
   test("singular reads correctly", () => {
