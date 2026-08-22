@@ -283,10 +283,15 @@ test("--person naming a git: blame alias says which lanes are structurally zero"
   db.close();
 });
 
-test("--person naming a real person raises no structural-zero gap", async () => {
+test("--person naming a real person WITH edges raises no structural-zero gap", async () => {
+  // The subject used to have no edges of any kind, so this asserted the absence of a
+  // disclosure that the F26 arm now — correctly — produces. Giving it a PR restores the
+  // property the test was written for: a `person` match is measurable, so `explicitSubjectGap`
+  // stays silent. The zero-edge case it accidentally covered is asserted separately below.
   const db = freshDb();
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
   db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:other", "Other Person"]);
+  seedPr(db, 1, "person:other");
 
   const brief = await runNegotiate(
     { personId: "person:other", mePersonIdOverride: "person:me" },
@@ -1135,7 +1140,10 @@ test("an unrecognised configured service yields zero extra rows and no error", a
   );
 
   expect(brief.writing?.notes).toBe(0);
-  expect(brief.gaps.some((g) => g.detail.toLowerCase().includes("writing"))).toBe(false);
+  // The lane-failure SHAPE (`laneFailureGap`), not any gap that happens to say "writing" —
+  // the F26 structural-zero note names every zeroed lane, this one included, and a substring
+  // match on the word made an unrelated disclosure look like a lane crash.
+  expect(brief.gaps.some((g) => g.detail.includes("lane `writing`"))).toBe(false);
   db.close();
 });
 
@@ -1733,5 +1741,146 @@ test("omits the error-issue line when it is zero", async () => {
     await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db)),
   );
   expect(markdown).not.toContain("Sentry error issue");
+  db.close();
+});
+
+/**
+ * F26 — a subject that IS a real `person` row but holds none of the graph edges the brief
+ * measures. The observed shape: one human indexed as two unlinked `person` rows — a Gmail/Drive
+ * record carrying the email `git config user.email` reports, and a GitHub record carrying every
+ * `authored` edge. `resolveSelfPerson` tries git email first, so it returns the empty half and
+ * six lanes each honestly render `0` for someone who authored 160 of the index's 173 PRs.
+ *
+ * `explicitSubjectGap` was built for exactly this class of harm and cannot fire here: its first
+ * line returns `null` for a `person` match, and the empty half IS a person row. The anticipated
+ * failure was "the id matched nothing"; the one that happens is "the id matched half a human",
+ * which is the NORMAL state of a fresh index — one connector supplies the email, another the
+ * login — and is what `nimbus people link` exists to repair.
+ */
+function seedSplitIdentity(db: Database): { emailHalf: string; githubHalf: string } {
+  db.run("INSERT INTO person (id, display_name, canonical_email) VALUES (?, ?, ?)", [
+    "person:email-half",
+    "Asaf Golombek",
+    "asafgolombek@gmail.com",
+  ]);
+  db.run("INSERT INTO person (id, display_name, github_login, linked) VALUES (?, ?, ?, 0)", [
+    "person:github-half",
+    "asafgolombek",
+    "asafgolombek",
+  ]);
+  return { emailHalf: "person:email-half", githubHalf: "person:github-half" };
+}
+
+test("a subject with no authored/opened/reviewed edges is disclosed, not rendered as six zeroes", async () => {
+  const db = freshDb();
+  const { emailHalf, githubHalf } = seedSplitIdentity(db);
+  // Every PR hangs off the GitHub half; the resolver returns the email half.
+  seedPr(db, 1, githubHalf);
+  seedPr(db, 2, githubHalf);
+
+  const brief = await runNegotiate(
+    { sinceMs: 90 * 24 * 60 * 60 * 1000, mePersonIdOverride: emailHalf },
+    ctxFor(db),
+  );
+
+  expect(brief.gaps.map((g) => g.category)).toContain("missing_user_identity");
+  db.close();
+});
+
+test("the zero-edge disclosure names the duplicate record and the command that repairs it", async () => {
+  // Both halves are knowable, so saying only "we measured zero" would waste what the index
+  // already holds. The email local-part and the github login are the same string here, which
+  // is what makes them recognisable as one human; the display names are NOT equal, so a
+  // name-only comparison would find nothing.
+  const db = freshDb();
+  const { emailHalf, githubHalf } = seedSplitIdentity(db);
+  seedPr(db, 1, githubHalf);
+
+  const brief = await runNegotiate(
+    { sinceMs: 90 * 24 * 60 * 60 * 1000, mePersonIdOverride: emailHalf },
+    ctxFor(db),
+  );
+
+  const note = brief.gaps.find((g) => g.detail.includes("no `authored`"));
+  expect(note).toBeDefined();
+  expect(note?.remediation ?? "").toContain("nimbus people link");
+  expect(note?.detail ?? "").toContain(githubHalf);
+  db.close();
+});
+
+test("the zero-edge disclosure fires on the SELF path too, which is where it was observed", async () => {
+  // `nimbus negotiate` with no `--person` is how this was hit. `subjectGap` was hard-coded to
+  // `null` on that branch, so only an explicit `--person` could ever produce a disclosure.
+  const db = freshDb();
+  const { emailHalf, githubHalf } = seedSplitIdentity(db);
+  seedPr(db, 1, githubHalf);
+
+  const brief = await runNegotiate(
+    {
+      sinceMs: 90 * 24 * 60 * 60 * 1000,
+      runGitOverride: async () => "asafgolombek@gmail.com",
+      osUsernameOverride: "asafgolombek",
+    },
+    ctxFor(db),
+  );
+
+  expect(brief.subject.personId).toBe(emailHalf);
+  expect(brief.gaps.some((g) => g.detail.includes("no `authored`"))).toBe(true);
+  db.close();
+});
+
+test("a subject that DOES hold edges gets no zero-edge disclosure", async () => {
+  // The other direction, so the disclosure cannot become universal noise the way F3's did.
+  const db = freshDb();
+  const me = seedMe(db);
+  seedPr(db, 1, me);
+
+  const brief = await runNegotiate(
+    { sinceMs: 90 * 24 * 60 * 60 * 1000, mePersonIdOverride: me },
+    ctxFor(db),
+  );
+
+  expect(brief.gaps.some((g) => g.detail.includes("no `authored`"))).toBe(false);
+  db.close();
+});
+
+test("a zero-edge subject with no lookalike record says so rather than inventing one", async () => {
+  // Naming a duplicate that does not exist would be a fabricated cause. The disclosure still
+  // fires — the zeroes are still structural — but it must not point at a record.
+  const db = freshDb();
+  const me = seedMe(db);
+  db.run("INSERT INTO person (id, display_name, github_login) VALUES (?, ?, ?)", [
+    "person:unrelated",
+    "Someone Else",
+    "someoneelse",
+  ]);
+  seedPr(db, 1, "person:unrelated");
+
+  const brief = await runNegotiate(
+    { sinceMs: 90 * 24 * 60 * 60 * 1000, mePersonIdOverride: me },
+    ctxFor(db),
+  );
+
+  const note = brief.gaps.find((g) => g.detail.includes("no `authored`"));
+  expect(note).toBeDefined();
+  expect(note?.detail ?? "").not.toContain("person:unrelated");
+  db.close();
+});
+
+test("an explicit --person at a zero-edge record is disclosed too", async () => {
+  // `mePersonIdOverride` takes the SELF branch of `resolveSubject`, so the four tests above
+  // never exercise the explicit `--person` branch where `explicitSubjectGap` runs first. Its
+  // `person` arm returns null, which must fall through to the zero-edge arm rather than end
+  // the check.
+  const db = freshDb();
+  const { emailHalf, githubHalf } = seedSplitIdentity(db);
+  seedPr(db, 1, githubHalf);
+
+  const brief = await runNegotiate(
+    { sinceMs: 90 * 24 * 60 * 60 * 1000, personId: emailHalf, mePersonIdOverride: githubHalf },
+    ctxFor(db),
+  );
+
+  expect(brief.gaps.some((g) => g.detail.includes("no `authored`"))).toBe(true);
   db.close();
 });

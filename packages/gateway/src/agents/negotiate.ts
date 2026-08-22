@@ -150,6 +150,158 @@ function explicitSubjectGap(match: ExplicitSubjectMatch, personId: string): GapN
   };
 }
 
+interface PersonHandleRow {
+  readonly id: string;
+  readonly display_name: string | null;
+  readonly canonical_email: string | null;
+  readonly github_login: string | null;
+  readonly gitlab_login: string | null;
+  readonly slack_handle: string | null;
+}
+
+/**
+ * The identity strings a person row can be recognised by, normalised for comparison.
+ *
+ * Lowercased with every non-alphanumeric character removed, and an email reduced to its
+ * local-part. That is what makes the observed pair recognisable as one human: the Gmail record's
+ * `asafgolombek@gmail.com` and the GitHub record's login `asafgolombek` normalise to the same
+ * string, while their DISPLAY NAMES — "Asaf Golombek" and "asafgolombek" — do not compare equal
+ * at all. A name-only match would have found nothing here.
+ */
+function personHandles(row: PersonHandleRow): Set<string> {
+  const out = new Set<string>();
+  const add = (raw: string | null): void => {
+    if (raw === null) return;
+    const value = raw.includes("@") ? (raw.split("@")[0] ?? "") : raw;
+    const norm = value.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+    if (norm.length >= 3) out.add(norm);
+  };
+  add(row.display_name);
+  add(row.canonical_email);
+  add(row.github_login);
+  add(row.gitlab_login);
+  add(row.slack_handle);
+  return out;
+}
+
+/**
+ * How many person rows to consider as lookalikes. This query runs ONLY when the subject has
+ * zero edges, which is rare, and the filter is a set intersection in JS because SQLite cannot
+ * strip punctuation. A larger index than this simply reports no lookalike — the disclosure
+ * still fires, it just cannot name a cause.
+ */
+const LOOKALIKE_SCAN_LIMIT = 500;
+
+/**
+ * Edges the subject holds, or `null` when the graph could not be read at all.
+ *
+ * `null` is NOT folded into `0`. A missing or broken `graph_relation` table would otherwise
+ * look identical to a healthy graph holding nothing for this person, and the brief would
+ * announce a split identity when the real problem is that the graph is unreadable. Every lane
+ * that touches the same table fails in that case and `laneFailureGap` says so by name, which is
+ * the accurate disclosure; adding a second, wrong one on top of it is not more honest.
+ */
+function subjectEdgeCount(db: Database, personId: string): number | null {
+  try {
+    const row = db
+      .query(
+        `SELECT COUNT(*) AS n
+           FROM graph_relation r
+           JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+          WHERE pe.external_id = ?
+            AND r.type IN ('authored', 'opened', 'reviewed')`,
+      )
+      .get(personId) as { n: number } | null;
+    return row?.n ?? 0;
+  } catch {
+    return null;
+  }
+}
+
+/** Another person row that shares a normalised handle with the subject AND holds edges. */
+function findLookalikeWithEdges(db: Database, personId: string): PersonHandleRow | null {
+  try {
+    return findLookalikeWithEdgesUnguarded(db, personId);
+  } catch {
+    return null;
+  }
+}
+
+function findLookalikeWithEdgesUnguarded(db: Database, personId: string): PersonHandleRow | null {
+  const subject = db
+    .query(
+      `SELECT id, display_name, canonical_email, github_login, gitlab_login, slack_handle
+         FROM person WHERE id = ?`,
+    )
+    .get(personId) as PersonHandleRow | null;
+  if (subject === null) return null;
+  const mine = personHandles(subject);
+  if (mine.size === 0) return null;
+  const others = db
+    .query(
+      `SELECT p.id, p.display_name, p.canonical_email, p.github_login, p.gitlab_login, p.slack_handle
+         FROM person p
+        WHERE p.id <> ?
+          AND EXISTS (
+                SELECT 1 FROM graph_relation r
+                  JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+                 WHERE pe.external_id = p.id
+                   AND r.type IN ('authored', 'opened', 'reviewed'))
+        ORDER BY p.id ASC
+        LIMIT ?`,
+    )
+    .all(personId, LOOKALIKE_SCAN_LIMIT) as PersonHandleRow[];
+  for (const other of others) {
+    for (const h of personHandles(other)) {
+      if (mine.has(h)) return other;
+    }
+  }
+  return null;
+}
+
+/**
+ * The third arm of the structural-zero disclosure: the subject IS an indexed person, and holds
+ * none of the edges this brief measures.
+ *
+ * `explicitSubjectGap`'s two arms cover "the id matched nothing" and "the id matched only a
+ * graph entity". Both return early on a `person` match, on the reasoning that a real person row
+ * is the ordinary case needing no disclosure. It is not: one human routinely lands in the index
+ * as two unlinked rows — an email from one connector, a login from another — and
+ * `resolveSelfPerson` consults `git config user.email` FIRST, so it returns whichever half
+ * carries the email. Observed: six lanes rendering `0` for someone who authored 160 of 173
+ * indexed PRs, with no note, because the id did resolve.
+ *
+ * Both facts are knowable from the index, so both are stated: that the zeroes are structural,
+ * and — when a lookalike exists — which record holds the edges and how to merge them. When no
+ * lookalike is found the note still fires but names no record, since inventing a cause would be
+ * its own false statement.
+ */
+function zeroEdgeSubjectGap(db: Database, personId: string): GapNote | null {
+  const edges = subjectEdgeCount(db, personId);
+  if (edges === null || edges > 0) return null;
+  const twin = findLookalikeWithEdges(db, personId);
+  const base =
+    `The subject \`${personId}\` is an indexed person but has no \`authored\`, \`opened\` or ` +
+    "`reviewed` edges at all, so PRs authored, PRs reviewed, tickets, decisions and writing " +
+    "below are structurally zero — not measurements of what this human did.";
+  if (twin === null) {
+    return {
+      category: "missing_user_identity",
+      detail: base,
+      remediation:
+        "Run `nimbus people search <name>`: if a second record holds this human's activity, " +
+        "`nimbus people link <a> <b>` merges them. If not, the index genuinely holds nothing " +
+        "for this person yet.",
+    };
+  }
+  const twinLabel = twin.display_name === null ? twin.id : `${twin.display_name} (${twin.id})`;
+  return {
+    category: "missing_user_identity",
+    detail: `${base} Another indexed record — ${twinLabel} — shares an identity handle with this one AND holds those edges, so this looks like one human split across two unlinked person rows.`,
+    remediation: `Merge them with \`nimbus people link ${personId} ${twin.id}\`, then re-run this brief.`,
+  };
+}
+
 /**
  * A lane that fails degrades to a gap note, never a silent zero (spec § 4). `laneName` is
  * carried in `detail` (not just `taskIndex`) so a reader — and Task 2's red-prove test — can
@@ -1184,7 +1336,12 @@ async function resolveSubject(
         isOther: input.personId !== resolution.personId,
       },
       gitEmailAttempted,
-      subjectGap: explicitSubjectGap(classifyExplicitSubject(db, input.personId), input.personId),
+      // The two arms fire only when the id is NOT a person row, so the zero-edge arm is the
+      // fallback rather than an alternative — a `person` match reaches it, everything else
+      // has already been described.
+      subjectGap:
+        explicitSubjectGap(classifyExplicitSubject(db, input.personId), input.personId) ??
+        zeroEdgeSubjectGap(db, input.personId),
     };
   }
   return {
@@ -1196,7 +1353,10 @@ async function resolveSubject(
       isOther: false,
     },
     gitEmailAttempted,
-    subjectGap: null,
+    // Was hard-coded `null`, which meant only an explicit `--person` could ever be disclosed —
+    // and the split-identity failure was observed on the bare `nimbus negotiate` path, where
+    // the resolver picks the subject and the user never named one.
+    subjectGap: resolution.personId === null ? null : zeroEdgeSubjectGap(db, resolution.personId),
   };
 }
 
