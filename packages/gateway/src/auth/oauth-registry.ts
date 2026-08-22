@@ -54,6 +54,21 @@ export interface OAuthProviderDescriptor {
   bodyFormat: "form" | "json";
   tokenHeaders?: Readonly<Record<string, string>>;
   mirrorPerService: boolean;
+  /**
+   * Set when `buildAuthorizeParams` asks the provider for offline access — i.e. this provider
+   * is expected to return a `refresh_token` on the AUTHORIZATION-CODE exchange, and a stored
+   * credential without one can never be refreshed.
+   *
+   * `revokeUrl` is where the user has to go to make the provider issue a new one. It is not
+   * decoration: Google re-issues a refresh token only after the prior grant is revoked, so
+   * "run `nimbus connector auth` again" — the obvious instruction — is precisely the one that
+   * does not work, and the user in the F10 report re-authed repeatedly to no effect.
+   *
+   * A provider that never requests offline access leaves this unset; requiring a refresh token
+   * of it would invent a failure. `offline-refresh-token.test.ts` derives the expected value
+   * from `buildAuthorizeParams` so the two cannot drift.
+   */
+  offlineAccess?: { readonly revokeUrl: string };
   buildAuthorizeParams(a: AuthorizeArgs): Record<string, string>;
   parseTokenResponse(json: unknown, requestedScopes: string[]): PKCEResult;
   isTokenSuccess?(json: unknown, httpOk: boolean): boolean;
@@ -236,6 +251,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: true,
+    offlineAccess: { revokeUrl: "https://myaccount.google.com/permissions" },
     buildAuthorizeParams: (a) => ({
       ...pkceAuthorizeParams(a),
       access_type: "offline",
@@ -522,7 +538,7 @@ export async function exchangeAuthorizationCode(a: ExchangeArgs): Promise<PKCERe
   if (a.descriptor.usesPkce && a.codeVerifier !== undefined) {
     grant["code_verifier"] = a.codeVerifier;
   }
-  return postToken({
+  const result = await postToken({
     descriptor: a.descriptor,
     fetchFn: a.fetchFn,
     clientId: a.clientId,
@@ -530,6 +546,24 @@ export async function exchangeAuthorizationCode(a: ExchangeArgs): Promise<PKCERe
     grant,
     requestedScopes: a.requestedScopes,
   });
+  // Fail the exchange rather than persist a credential that can never be refreshed.
+  //
+  // `parseStandardTokenResponse` coerces an absent `refresh_token` to `""` — deliberately, and
+  // it must keep doing so, because a REFRESH response omits the field and `refreshViaRegistry`
+  // reads that `""` as "keep the token I already have". But on the AUTHORIZATION-CODE exchange
+  // there is no token to keep: `access_token` and `expires_in` both throw when absent, and
+  // `refresh_token` degrading to `""` here was the one silent path. It produced a stored
+  // credential whose every later refresh sends an empty token and gets `invalid_grant: Bad
+  // Request` back forever, after the CLI reported the auth as successful.
+  const offline = a.descriptor.offlineAccess;
+  if (offline !== undefined && result.refreshToken === "") {
+    throw new Error(
+      `${a.descriptor.id} returned no refresh token, so this credential could never be refreshed — nothing was stored. ` +
+        `Revoke Nimbus's access at ${offline.revokeUrl} and run the auth command again; ` +
+        `re-running it WITHOUT revoking returns the same response, because the provider only issues a refresh token on a fresh grant.`,
+    );
+  }
+  return result;
 }
 
 async function persistTokens(vault: NimbusVault, vaultKey: string, r: PKCEResult): Promise<void> {
