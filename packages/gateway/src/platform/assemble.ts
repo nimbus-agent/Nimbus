@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
@@ -33,6 +34,7 @@ import {
   loadNimbusAutomationFromConfigDir,
   loadNimbusBriefsFromPath,
   loadNimbusChatopsFromConfigDir,
+  loadNimbusCodeExecutionFromConfigDir,
   loadNimbusConnectorsFromConfigDir,
   loadNimbusDecisionsFromConfigDir,
   loadNimbusEmbeddingFromPath,
@@ -128,6 +130,7 @@ import {
 } from "../engine/executor.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import type { ConnectorDispatcher } from "../engine/types.ts";
+import { execConsent } from "../exec/exec-consent-broker.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
@@ -2695,6 +2698,29 @@ export async function assemblePlatformServices(
   // session-memory store + tool calls (with their SECRET-redacted input params, V42) from
   // tool_call_log. The share-gate applies the full PII redaction set on top before any share leaves
   // the machine.
+  // I33 (S2 slice 1): the sandboxed code-execution surface. DEFAULT OFF -- `enabled` is read from
+  // `[code_execution]`, and `runExecution` refuses before consent when it is false, so wiring the
+  // ctx unconditionally does not enable anything. The org-policy half is read LAZILY through
+  // `policyGate.enforced()` rather than snapshotted here, so a policy installed after boot tightens
+  // the next execution rather than the next restart.
+  const codeExecCfg = loadNimbusCodeExecutionFromConfigDir(paths.configDir);
+  ipcOpts.execRpcCtx = {
+    consent: execConsent,
+    gateDeps: {
+      runner: sandboxRunner,
+      config: codeExecCfg,
+      get enforced() {
+        return policyGate.enforced();
+      },
+      requestApproval: (input) =>
+        execConsent.request(input, (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000),
+      db,
+      readFile: (p) => readFileSync(p, "utf8"),
+      now: () => Date.now(),
+      newId: () => randomUUID(),
+    },
+  };
+
   const shareHttpSink = loadNimbusShareHttpSink(paths.configDir);
   ipcOpts.shareRpcCtx = {
     db,
@@ -2771,6 +2797,13 @@ export async function assemblePlatformServices(
   // (NOT federation-gated) — sharing to a file/http sink works with federation disabled; a missing
   // binding would leave the broker's broadcast a no-op → every approval times out → silent deny.
   shareConsent.setBroadcast((method, params) => ipc.broadcast(method, asBroadcastParams(params)));
+
+  // I33 (S2 slice 1): the code-execution approval prompt reaches the local owner via the same
+  // broadcast channel; they answer through exec.approvalRespond. UNCONDITIONAL for the same reason
+  // as share above — a missing binding leaves the broker's broadcast a no-op, so every approval
+  // times out and the capability silently never works (fail-closed, but indistinguishable from a
+  // bug). The gate is still fail-closed either way: no answer means no spawn.
+  execConsent.setBroadcast((method, params) => ipc.broadcast(method, asBroadcastParams(params)));
 
   if (federationBooted) {
     federationConsent.setBroadcast((method, params) =>

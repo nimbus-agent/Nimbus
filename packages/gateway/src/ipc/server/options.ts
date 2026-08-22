@@ -31,6 +31,7 @@ import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import type { EgressRpcCtx } from "../egress-rpc.ts";
+import type { ExecRpcCtx } from "../exec-rpc.ts";
 import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
@@ -137,6 +138,11 @@ export type CreateIpcServerOptions = {
   // cleanly when unset. share.create/share.prune are LAN-forbidden (I5); only share.get/list/pubkey/
   // verify are Tauri-exposed (I7).
   shareRpcCtx?: ShareRpcCtx;
+  // Sandboxed code execution (I33). exec.run gates through the owner consent broker (fail-closed on
+  // timeout/deny) inside `runExecution`; exec.approvalRespond is the owner's answer channel. Present
+  // only when assembled at boot; the dispatcher skips cleanly when unset. exec.run is RCE-class:
+  // NOT Tauri-exposed (I7), and LAN-forbidden (I5).
+  execRpcCtx?: ExecRpcCtx;
   // Egress Ledger. The dependency seam behind the egress.* IPC namespace (list, verify, head,
   // proveWindow, prune). egress.prune gates through requestPruneApproval (owner HITL, I2, fail-closed).
   // Present only when assembled at boot; the dispatcher skips cleanly when unset. egress.prune is

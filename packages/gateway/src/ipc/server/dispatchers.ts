@@ -27,6 +27,7 @@ import { DecisionsRpcError, dispatchDecisionsRpc } from "../decisions-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
 import { dispatchEgressRpc, type EgressRpcCtx, EgressRpcError } from "../egress-rpc.ts";
+import { dispatchExecRpc, ExecRpcError } from "../exec-rpc.ts";
 import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
 import { dispatchFilesystemRpc, FilesystemRpcError } from "../filesystem-rpc.ts";
 import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
@@ -960,6 +961,30 @@ export async function tryDispatchTribalRpc(
  * per-client `ToolExecutor` channel like tribal.capture. So every share.* method (incl. share.create)
  * lives in the HANDLERS map and is dispatched here uniformly.
  */
+/**
+ * Sandboxed code execution (Spine S2 slice 1, invariant I33). Like share, the 3-arg form: the HITL
+ * here is the broadcast consent broker answered by the local owner, not a per-client `ToolExecutor`
+ * channel. Present only when assembled at boot, so the dispatcher skips cleanly when the capability
+ * is not wired. `exec.run` is RCE-class and is NOT Tauri-exposed (I7).
+ */
+export async function tryDispatchExecRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("exec.")) return phase4RpcSkipped;
+  const rpc = ctx.options.execRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchExecRpc(method, params, rpc);
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof ExecRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchShareRpc(
   ctx: ServerCtx,
   method: string,
@@ -1230,6 +1255,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchChatopsRpc,
   tryDispatchTribalRpc,
   tryDispatchShareRpc,
+  tryDispatchExecRpc,
   tryDispatchEgressRpc,
   tryDispatchGlossaryRpc,
   tryDispatchDecisionsRpc,

@@ -312,6 +312,18 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(() => checkLanMethodAllowed("share.verify", peer)).not.toThrow();
   });
 
+  test("FORBIDDEN_OVER_LAN blocks the whole exec namespace (S2 slice 1 / I33)", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // exec.run is the arbitrary-code-execution surface itself. exec.approvalRespond matters just
+    // as much: admitting it would let a paired peer APPROVE code running on the owner's machine,
+    // which defeats the I33 gate without ever calling exec.run over the wire.
+    expect(() => checkLanMethodAllowed("exec.run", peer)).toThrow();
+    expect(() => checkLanMethodAllowed("exec.approvalRespond", peer)).toThrow();
+    // Namespace-level, so a future exec.* verb is forbidden by default rather than by memory.
+    expect(() => checkLanMethodAllowed("exec.anythingAddedLater", peer)).toThrow();
+  });
+
   test("FORBIDDEN_OVER_LAN blocks filesystem.ensureRoot (Stage 2a)", async () => {
     const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
     const peer = { peerId: "peer:x", writeAllowed: true };

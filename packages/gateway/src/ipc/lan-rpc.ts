@@ -23,6 +23,13 @@ const FORBIDDEN_OVER_LAN = new Set([
   "share.create",
   "share.prune",
   "share.approvalRespond",
+  // S2 slice 1 — exec: the WHOLE namespace, not selected methods. `exec.run` is RCE-class by
+  // definition (it is the arbitrary-code-execution surface, a stronger case than
+  // connector.addMcp), and `exec.approvalRespond` is the LOCAL owner answering an execution
+  // prompt -- admitting it over the wire would let a paired peer approve arbitrary code running
+  // on the owner's machine, defeating the entire I33 gate. There are no read verbs here to
+  // preserve, so the namespace forbid costs nothing.
+  "exec",
   "audit", // exfiltration-class namespace
   "data", // exfiltration-class namespace
   "security", // exfiltration-class — credential locations must not leak to LAN peers
