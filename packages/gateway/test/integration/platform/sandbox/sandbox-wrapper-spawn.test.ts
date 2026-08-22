@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { canonicalPath } from "../../../../src/platform/sandbox/canonical-path.ts";
+import { generateSbplProfile } from "../../../../src/platform/sandbox/darwin.ts";
 import {
   SANDBOX_CWD_ENV,
   SANDBOX_POLICY_ENV,
@@ -114,6 +116,28 @@ writeFileSync(join(outside, "secret.txt"), "do-not-read-me");
  */
 const childBinaryDir = dirname(process.execPath);
 
+/**
+ * The runtime's own home tree — `~/.bun`, one level above `~/.bun/bin`.
+ *
+ * Bun reads its global config and cache at startup (`bunfig.toml`, `install/cache`), not only the
+ * binary out of `bin/`. Granting the binary's directory alone leaves those denied, and on macOS
+ * the result is an abort with no stderr rather than a diagnosable error.
+ *
+ * Declared in the POLICY rather than baked into the SBPL profile on purpose: this is a statement
+ * about what this particular child needs, which is exactly what a policy is for. The production
+ * macOS child is a compiled binary with no such tree, so putting it in the profile would grant
+ * every extension a path only this test's child uses.
+ */
+const childRuntimeHome = dirname(childBinaryDir);
+
+/**
+ * darwin ONLY. On Windows the helper writes an ACE per granted path, and `~/.bun` carries
+ * `install/cache` — thousands of entries. Granting it there made every spawn hang until the test
+ * timeout killed it (`status: null`, no output), turning a macOS fix into a Windows regression.
+ * The Windows child is `powershell.exe` and needs nothing from the Bun tree anyway.
+ */
+const RUNTIME_HOME_GRANT = process.platform === "darwin" ? [childRuntimeHome] : [];
+
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
@@ -123,7 +147,7 @@ function policy(): SandboxPolicy {
     id: "com.nimbus.wrapper-test",
     permissions: {
       network: [],
-      filesystem: { read: [work, childBinaryDir], write: [work] },
+      filesystem: { read: [work, childBinaryDir, ...RUNTIME_HOME_GRANT], write: [work] },
     },
   };
 }
@@ -189,6 +213,198 @@ function isAnomalous(run: WrapperRun): boolean {
  * error — replaces the failing assertion's line with the wrapper's (measured, not assumed).
  * Printing from here keeps every frame pointing at the assertion that failed.
  */
+/**
+ * On darwin, re-run the identical spawn with the sandbox effectively OFF and report whether it
+ * then succeeds.
+ *
+ * This is the one question the existing diagnostics could not answer. A `status: 134` with EMPTY
+ * stderr says the child aborted before it could say anything, and that has two very different
+ * causes: the SBPL profile denied something the runtime needs at startup, or the runtime cannot
+ * run on this machine at all. The kernel-denial step in `ci.yml` was supposed to distinguish them
+ * and does not — on the failing run it printed only boot-time `(Sandbox)` kext lines, no denial.
+ *
+ * The comment in `darwin.ts` is explicit that the previous attempt at this failed by GUESSING at
+ * grants (`sysctl-read`, `/dev/urandom`, `/dev/null`), and that the fix must add exactly what a
+ * denial names and nothing else. This narrows the search without widening the real profile: the
+ * permissive profile is written to a throwaway file, used once for a diagnostic, and never
+ * reaches production code.
+ */
+function darwinPermissiveProbe(run: WrapperRun): string {
+  if (process.platform !== "darwin") return "";
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-probe-"));
+  try {
+    const profilePath = join(dir, "permissive.sb");
+    writeFileSync(profilePath, "(version 1)\n(allow default)\n");
+    // BOUNDED. This is a diagnostic that runs inside an already-failing test, so a child that
+    // hangs would turn one assertion failure into a suite-wide stall and bury the very thing the
+    // probe was added to explain. 15s is far above a startup abort and far below the 60s suite
+    // timeout.
+    const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
+      encoding: "utf8",
+      cwd: run.cwd,
+      env: process.env,
+      timeout: 15_000,
+    });
+    if (r.error !== undefined) {
+      // A timeout is NOT "it fails unsandboxed too" — the child was still running when we killed
+      // it, which says nothing about the profile. Reporting it as a failure would point the next
+      // reader away from the profile, the opposite of what this probe is for.
+      const code = (r.error as NodeJS.ErrnoException).code ?? "";
+      const why =
+        code === "ETIMEDOUT"
+          ? "TIMED OUT after 15s — the child was still running, so this is INCONCLUSIVE, not an unsandboxed failure"
+          : r.error.message;
+      return `permissive-probe did not complete: ${why}`;
+    }
+    return [
+      "permissive-probe (same argv, `(allow default)` profile):",
+      `  status : ${String(r.status)}`,
+      `  stdout : ${JSON.stringify(r.stdout ?? "")}`,
+      `  stderr : ${JSON.stringify((r.stderr ?? "").slice(0, 400))}`,
+      // Compared against the SANDBOXED status, not against 0. The first version asked
+      // `r.status === 0`, which mislabelled every case whose expected exit is non-zero: the
+      // `exit 7` test came back "it fails unsandboxed too" when 7 was exactly right. What
+      // actually distinguishes the two causes is whether removing the sandbox CHANGES the
+      // outcome.
+      r.status !== run.status
+        ? `  => the runtime is FINE here (unsandboxed status ${String(r.status)} vs sandboxed ${String(run.status)}); the profile is denying something it needs.`
+        : "  => identical outcome without the sandbox; this is NOT an SBPL grant problem.",
+      // When the permissive run SUCCEEDS, the profile is the problem and the only useful next
+      // question is "which rule". SBPL answers it directly: `(trace "<file>")` runs the process
+      // unconfined and writes out the rules it actually exercised. That is the mechanism this
+      // whole investigation needed and did not have — the kernel denial log in `ci.yml` reports
+      // nothing for a `(deny default)` profile, because denials are only logged under
+      // `(deny default (with report))`, which is not something to add to a production profile
+      // just to read it.
+      //
+      // Printed rather than acted on automatically: `trace` output is a superset (it records what
+      // was touched, not what was required), so it is a candidate list for a human to narrow, in
+      // the same spirit as `darwin.ts`'s "add exactly what it names, and nothing else".
+      r.status !== run.status ? bisectMissingRule(run) : "",
+    ]
+      .filter((l) => l !== "")
+      .join("\n");
+  } catch (e) {
+    return `permissive-probe failed to run: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Which paths does the REAL profile still need? Root grant MINUS one path at a time.
+ *
+ * Three mechanisms for naming a Seatbelt denial have now failed on `macos-15`, each for its own
+ * reason, and all three are recorded here so nobody spends a cycle re-trying them:
+ *
+ *  - `ci.yml`'s kernel-log step: a plain `(deny default)` logs nothing at all.
+ *  - `(trace "<file>")`: produced no output file. Trace mode is gone on modern macOS.
+ *  - `(deny default (with report))`: rejected at compile time —
+ *    "report modifier does not apply to deny action".
+ *
+ * So instead of asking the kernel what it denied, ask the profile what it is missing: run the real
+ * profile once per candidate rule and report which candidates flip the outcome. The candidates are
+ * deliberately BROAD (a whole operation class, `(subpath "/")`), because the goal here is to
+ * identify the CLASS in one CI round-trip, not to propose the grant — a broad candidate that
+ * works tells you where to look, and the narrow rule is then written by hand.
+ *
+ * Nothing here reaches production: every profile is built in a temp dir, used for one spawn, and
+ * deleted. `generateSbplProfile` is called with the same inputs the wrapper used, so what is
+ * probed is the profile that actually ran.
+ */
+function bisectMissingRule(run: WrapperRun): string {
+  // Round 5: WITHIN /private/var.
+  //
+  // The subtractive form named `/private/var` as the single required read outside the system
+  // tree, and granting four of its children -- db, select, run, and the per-user cache dir `C` --
+  // did not close it. So the needed piece is one of the rest. These deny each candidate from the
+  // total grant; whichever BREAKS it is the one.
+  //
+  // `T` is on the list even though granting it is the outcome to avoid: it is the per-user temp
+  // directory, and this suite puts the file the denial test expects to be REFUSED inside it. If T
+  // turns out to be required, the fix is not to grant it here but to move that file somewhere the
+  // policy genuinely does not reach, so the test keeps meaning something.
+  const tmpContainer = dirname(canonicalPath(tmpdir()));
+  const CANDIDATES: ReadonlyArray<readonly [string, string]> = [
+    [`(deny file-read* (subpath "${canonicalPath(tmpdir())}"))`, "the per-user TEMP dir (T)"],
+    [`(deny file-read* (subpath "${tmpContainer}"))`, "the container holding T and C"],
+    ['(deny file-read* (subpath "/private/var/folders"))', "all of /private/var/folders"],
+    ['(deny file-read* (subpath "/private/var/db"))', "/private/var/db"],
+    ['(deny file-read* (subpath "/private/var/tmp"))', "/private/var/tmp"],
+    ['(deny file-read* (subpath "/private/var/run"))', "/private/var/run"],
+    ['(deny file-read* (subpath "/private/var/select"))', "/private/var/select"],
+    ['(deny file-read* (subpath "/private/var/log"))', "/private/var/log"],
+  ];
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-bisect-"));
+  try {
+    // canonicalPath, exactly as the runner does. The previous probe passed the raw mkdtemp path
+    // and printed a profile granting `/var/folders/...` while the kernel sees
+    // `/private/var/folders/...` — a misleading diagnostic, and the very bug canonical-path.ts
+    // exists to prevent.
+    const base = generateSbplProfile({
+      cwd: run.cwd,
+      tmpdir: canonicalPath(dir),
+      policy: run.policy,
+    });
+    /** What the child does when it is actually allowed to run. Every candidate is judged by this. */
+    const runOnce = (extra: string) => {
+      const profilePath = join(dir, "candidate.sb");
+      // Root grant FIRST, then the extra rule. The ORDER is the mechanism: SBPL takes the last
+      // matching rule, so `(allow ... "/")` followed by `(deny ... X)` composes to
+      // "everything except X".
+      writeFileSync(profilePath, `${base}\n(allow file-read* (subpath "/"))\n${extra}\n`);
+      return spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...run.argv], {
+        encoding: "utf8",
+        cwd: run.cwd,
+        env: process.env,
+        timeout: 15_000,
+      });
+    };
+
+    const baselineRun = runOnce("");
+    const baseline = baselineRun.status;
+    const out: string[] = [
+      "bisect-probe — root read grant MINUS one path (REQUIRED = the child needs it):",
+      `  baseline with the root grant and no deny: status ${String(baseline)}`,
+    ];
+    if (baselineRun.error !== undefined || baseline === run.status) {
+      // Without a working baseline every candidate would compare against a broken reference and
+      // the whole table would be noise. Say so instead of printing ten meaningless rows.
+      return `${out[0] ?? ""}\n  ABORTED — the root grant does not repair this run either, so there is nothing to subtract from.`;
+    }
+
+    // One budget for the whole probe. 15s is PER candidate, so ten of them is a 150s worst case
+    // against a 60s suite timeout — and this runs once per failing wrapper run, not once overall.
+    const DEADLINE = Date.now() + 40_000;
+    for (const [rule, label] of CANDIDATES) {
+      if (Date.now() > DEADLINE) {
+        out.push("  (budget exhausted — remaining candidates not run)");
+        break;
+      }
+      const r = runOnce(rule);
+      // Compared against the ROOT-GRANT BASELINE measured just above, not against 0 and not
+      // against `run.status`.
+      //
+      // Against 0 was the original bug: on a run whose expected exit is non-zero (`exit 7`), it
+      // reports EVERY candidate as unchanged, including ones that repair the profile. Three rounds
+      // of this investigation were spent reading exactly that kind of output.
+      //
+      // Against `run.status` would be wrong too, and differently: in this SUBTRACTIVE form
+      // `run.status` is the FAILING status under the real profile, so matching it would mean the
+      // candidate broke things. "Still working" means matching what the child does when it is
+      // allowed to run, which is what `baseline` holds.
+      const stillWorks = r.error === undefined && r.status === baseline;
+      // Inverted for the subtractive form: BREAKS IT means the denied path is required.
+      out.push(`  ${stillWorks ? "not needed" : "REQUIRED  "} ${rule}   (${label})`);
+    }
+    return out.join("\n");
+  } catch (e) {
+    return `bisect-probe failed: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function reportLauncherError(run: WrapperRun): void {
   if (!isAnomalous(run)) return;
   console.error(
@@ -202,9 +418,13 @@ function reportLauncherError(run: WrapperRun): void {
       `policy   : ${JSON.stringify(run.policy.permissions)}`,
       `argv     : ${JSON.stringify(run.argv)}`,
       `status   : ${String(run.status)}`,
+      // 134 is SIGABRT, 139 SIGSEGV, 137 SIGKILL. Naming it saves the next reader the arithmetic
+      // and makes "the child aborted" legible as something other than an ordinary exit code.
+      `signal   : ${run.status !== null && run.status > 128 ? `SIG(${String(run.status - 128)})` : "none"}`,
       `stdout   : ${JSON.stringify(run.stdout)}`,
       "stderr   :",
       run.stderr.replace(/^/gm, "  ").trimEnd(),
+      darwinPermissiveProbe(run),
       "----------------------------------------------------------",
     ].join("\n"),
   );
@@ -235,6 +455,55 @@ function runThroughWrapper(
   reportLauncherError(run);
   return { status: run.status, stdout: run.stdout, stderr: run.stderr };
 }
+
+/**
+ * Windows child bodies use only PowerShell LANGUAGE features and .NET statics — never a cmdlet.
+ *
+ * Measured, not stylistic. Inside the AppContainer on the `windows-2025` runner, PowerShell
+ * starts and exits 0 but its command table is EMPTY: `Write-Output 'x'` fails with
+ * `CommandNotFoundException`, so the child produced no stdout and the round-trip assertion saw
+ * `""`. Command discovery has to read `$PSHOME`, which the container does not grant; type
+ * resolution and operators do not, because they are served by already-loaded assemblies.
+ *
+ * The third case matters most. `refuses a path the policy does not grant` used
+ * `Get-Content ... -ErrorAction Stop` inside a `try`, so a MISSING CMDLET threw and was caught by
+ * the same `catch` a denied read would hit — the test exited `DENIED_CODE` and passed without the
+ * sandbox denying anything. That is the one test which, by its own comment, makes this a sandbox
+ * suite rather than a spawn suite, and on CI it was passing vacuously.
+ * `[IO.File]::ReadAllBytes` throws on a real ACL denial and cannot be confused with a resolution
+ * failure.
+ *
+ * Keep it that way: a cmdlet added here re-opens both holes at once.
+ */
+/**
+ * A PowerShell single-quoted literal, with embedded apostrophes doubled.
+ *
+ * Reachable, not hypothetical: every path interpolated below is derived from `os.tmpdir()`, which
+ * on Windows is `C:\Users\<user>\AppData\Local\Temp`. A user named `O'Connor` ends the literal
+ * early and the script fails to parse — the child would then exit non-zero for a parse error while
+ * the denial test asserts the DENIED code, so it would fail with a misleading reason on exactly
+ * one developer's machine and nowhere else.
+ *
+ * Doubling is the escape PowerShell defines for a single-quoted string; there are no others to
+ * handle, because a single-quoted literal interpolates nothing.
+ */
+function psQuote(s: string): string {
+  return s.replace(/'/g, "''");
+}
+
+const PS_WRITE = (s: string): string => `[Console]::Out.Write('${s}')`;
+
+/**
+ * Separator for the argv round-trip: U+0001, which no argument under test contains.
+ *
+ * Both platforms emit the same joined form so ONE assertion covers both. It replaces
+ * `$args | ConvertTo-Json -Compress` on Windows — another cmdlet, and one whose failure showed up
+ * as a JSON parse error in the assertion rather than as anything about argv. A join preserves
+ * quotes, spaces and trailing backslashes byte-for-byte, which is the property this pins.
+ */
+const ARGV_SEP = String.fromCharCode(1);
+const PS_WRITE_ARGV = "[Console]::Out.Write(($args -join [char]1))";
+const JS_WRITE_ARGV = "process.stdout.write(process.argv.slice(2).join(String.fromCharCode(1)))";
 
 /**
  * The child process the sandbox spawns, chosen per platform — this is the one place this file
@@ -305,7 +574,7 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
     const { argv } = childProcess(
       work,
       "hello",
-      IS_WIN ? "Write-Output 'hello-from-sandbox'" : 'process.stdout.write("hello-from-sandbox")',
+      IS_WIN ? PS_WRITE("hello-from-sandbox") : 'process.stdout.write("hello-from-sandbox")',
     );
     const r = runThroughWrapper(policy(), work, argv);
     expect(r.stdout).toContain("hello-from-sandbox");
@@ -325,7 +594,7 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
     const body = IS_WIN
       ? [
           "try {",
-          `  Get-Content -LiteralPath '${secretPath}' -ErrorAction Stop | Out-Null`,
+          `  $null = [IO.File]::ReadAllBytes('${psQuote(secretPath)}')`,
           `  exit ${UNEXPECTED_SUCCESS_CODE}`,
           "} catch {",
           `  exit ${DENIED_CODE}`,
@@ -350,15 +619,9 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
     // becomes the child argv. On Linux/macOS this passes trivially — that is the point, it pins
     // the property on every platform rather than only where it is easy to break.
     const passthroughArgs = ['{"k":"v"}', "C:\\dir\\", "a b", "plain"];
-    const { argv } = childProcess(
-      work,
-      "argv",
-      IS_WIN
-        ? "$args | ConvertTo-Json -Compress"
-        : "process.stdout.write(JSON.stringify(process.argv.slice(2)))",
-    );
+    const { argv } = childProcess(work, "argv", IS_WIN ? PS_WRITE_ARGV : JS_WRITE_ARGV);
     const r = runThroughWrapper(policy(), work, [...argv, ...passthroughArgs]);
-    expect(JSON.parse(r.stdout) as string[]).toEqual(passthroughArgs);
+    expect(r.stdout.split(ARGV_SEP)).toEqual(passthroughArgs);
   });
 
   it("rejects a spawn with no policy at all", () => {

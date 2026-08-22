@@ -3,7 +3,7 @@ import { personaDirective } from "../../engine/persona.ts";
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { contractViolations } from "./brief-contract.ts";
 import { assertNeverBrief, type SynthInput } from "./brief-kinds.ts";
-import { stripSections } from "./markdown-sections.ts";
+import { stripSections, stripSerializedGapEnvelope } from "./markdown-sections.ts";
 import {
   type RenderOpts,
   renderCatchup,
@@ -355,7 +355,16 @@ async function synthesizeInner(
   // The strip runs on the MODEL's markdown — untrusted, hence the shared parser — while the
   // blocks come from the brief. The contract guard then inspects the artifact the reader
   // actually receives, not an intermediate.
-  const strippedBody = stripSections(attempt.markdown, reservedHeadingsFor(brief));
+  //
+  // TWO strips, because the model reproduces a reserved section in two shapes and each is
+  // invisible to the other check. `stripSections` keys on the reserved NAME at any heading level,
+  // which covers a promoted `# Gaps` and a demoted `### Gaps` alike. It cannot see a reserved
+  // block the model wrote as BODY TEXT — a plain `Gaps:` label, or no label at all, followed by
+  // raw `category:`/`detail:`/`remediation:` lines — because there is no heading to parse. That
+  // shape was observed shipping on `negotiate` and `janitor`, so it is stripped by field name.
+  const strippedBody = stripSerializedGapEnvelope(
+    stripSections(attempt.markdown, reservedHeadingsFor(brief)),
+  );
 
   // Re-check emptiness AFTER stripping, not just on the raw markdown above. A model that
   // returns ONLY a fabricated reserved section (e.g. its own invented `## Gaps`) is non-empty

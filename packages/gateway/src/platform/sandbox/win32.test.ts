@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { canonicalPath } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 import { capabilitiesForPolicy, createWin32SandboxRunner, profileNameFor } from "./win32.ts";
 
@@ -205,7 +206,13 @@ describe("createWin32SandboxRunner — helper probe outcomes", () => {
         "--profile",
         "nimbus-ext-com.nimbus.test",
         "--cwd",
-        cwd,
+        // `canonicalPath`, not the raw `cwd`: the runner canonicalises via `realpathSync.native`
+        // before handing the path to the helper, and on macOS `/var/folders/...` resolves to
+        // `/private/var/folders/...` — the same symlink case `canonical-path.ts` documents. This
+        // suite is a unit test of the Windows argv construction and runs on every platform, so
+        // asserting the raw path made it fail on macOS only. Calling the SAME helper production
+        // calls is what stops the expectation drifting from the behaviour again.
+        canonicalPath(cwd),
         "--capability",
         "internetClient",
         "--",
