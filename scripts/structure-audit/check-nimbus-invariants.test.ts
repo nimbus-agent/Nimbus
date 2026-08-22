@@ -9,6 +9,7 @@ import {
   checkEgressChokepointConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkForwardShareConfinement,
+  checkRunConfinedConfinement,
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
   checkSpawnInvariant,
@@ -1070,5 +1071,48 @@ describe("the scan floor (every rule below it reports clean on an empty scan)", 
     expect(firstRuleAt).toBeGreaterThan(-1);
     expect(floorAt).toBeLessThan(bailAt);
     expect(bailAt).toBeLessThan(firstRuleAt);
+  });
+});
+
+describe("D23 — runConfined confinement (I33)", () => {
+  const GATE = "packages/gateway/src/exec/exec-gate.ts";
+  const RUN = "packages/gateway/src/exec/exec-run.ts";
+
+  test("flags a runConfined call outside the exec gate", () => {
+    const v = checkRunConfinedConfinement([
+      {
+        relPath: "packages/gateway/src/ipc/some-rpc.ts",
+        contents: `const r = await runConfined(runner, cmd, args, opts);`,
+      },
+    ]);
+    expect(v.some((x) => x.rule === "D23-runconfined-callsite")).toBe(true);
+  });
+
+  test("allows the gate and the definition file", () => {
+    const v = checkRunConfinedConfinement([
+      { relPath: GATE, contents: `const result = await runConfined(deps.runner, cmd, args, {});` },
+      { relPath: RUN, contents: `export function runConfined(runner, cmd, args, opts) {}` },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("ignores .test.ts files", () => {
+    const v = checkRunConfinedConfinement([
+      {
+        relPath: "packages/gateway/src/exec/exec-run.test.ts",
+        contents: `const p = runConfined(fakeRunner(child), "bun", [], BASE);`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("does not flag a mere mention in a comment", () => {
+    const v = checkRunConfinedConfinement([
+      {
+        relPath: "packages/gateway/src/engine/executor.ts",
+        contents: `// see runConfined(...) for the confined-spawn path\nconst x = 1;`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
   });
 });

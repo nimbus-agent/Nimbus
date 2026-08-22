@@ -46,10 +46,12 @@
 ## Task 1: `[code_execution]` config block
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts`
 - Test: `packages/gateway/src/config/nimbus-toml.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing (first task).
 - Produces: `NimbusCodeExecutionToml`, `DEFAULT_NIMBUS_CODE_EXECUTION_TOML`, `parseNimbusCodeExecutionToml(raw, defaults?)`, `loadNimbusCodeExecutionFromConfigDir(configDir)`.
 
@@ -220,10 +222,12 @@ git commit -m "feat(exec): add the default-off [code_execution] config block"
 ## Task 2: `ExecRuntime` registry
 
 **Files:**
+
 - Create: `packages/gateway/src/exec/exec-runtimes.ts`
 - Test: `packages/gateway/src/exec/exec-runtimes.test.ts`
 
 **Interfaces:**
+
 - Consumes: `KNOWN_EXEC_RUNTIMES` from Task 1.
 - Produces:
   - `interface ExecRuntime { readonly id: string; detect(): string | null; argvFor(scriptPath: string): { cmd: string; args: string[] } }`
@@ -384,10 +388,12 @@ git commit -m "feat(exec): add the ExecRuntime registry with bun wired"
 ## Task 3: `exec-policy.ts` — grants to `SandboxPolicy`
 
 **Files:**
+
 - Create: `packages/gateway/src/exec/exec-policy.ts`
 - Test: `packages/gateway/src/exec/exec-policy.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SandboxPolicy` from `../platform/sandbox/sandbox-policy.ts`.
 - Produces:
   - `interface ExecGrants { readonly fsRead: readonly string[]; readonly fsWrite: readonly string[]; readonly network?: readonly string[] }`
@@ -535,10 +541,12 @@ git commit -m "feat(exec): derive a network-free SandboxPolicy from execution gr
 ## Task 4: `ExecConsentBroker`
 
 **Files:**
+
 - Create: `packages/gateway/src/exec/exec-consent-broker.ts`
 - Test: `packages/gateway/src/exec/exec-consent-broker.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ConsentBroker` from `../util/consent-broker.ts`.
 - Produces: `interface ExecApprovalInput`, `class ExecConsentBroker extends ConsentBroker<ExecApprovalInput>`, `const execConsent: ExecConsentBroker`.
 
@@ -671,11 +679,13 @@ git commit -m "feat(exec): add the owner-approval consent broker for executions"
 ## Task 5: Confined run with bounded output
 
 **Files:**
+
 - Create: `packages/gateway/src/exec/exec-result.ts`
 - Create: `packages/gateway/src/exec/exec-run.ts`
 - Test: `packages/gateway/src/exec/exec-run.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SandboxRunner` from `../platform/sandbox/sandbox-runner.ts`; `SandboxPolicy` from Task 3.
 - Produces:
   - `type TerminationReason = "exited" | "output_cap" | "wall_clock"`
@@ -977,12 +987,14 @@ git commit -m "feat(exec): run confined with wall-clock and output-cap kills"
 ## Task 6: Org-policy capability lockoff
 
 **Files:**
+
 - Modify: `packages/gateway/src/policy/types.ts`
 - Modify: `packages/gateway/src/policy/policy-toml.ts`
 - Modify: `packages/gateway/src/policy/policy-gate.ts:9-24`
 - Test: `packages/gateway/src/policy/policy-gate.test.ts`, `packages/gateway/src/policy/policy-toml.test.ts`
 
 **Interfaces:**
+
 - Consumes: `OrgPolicy`, `LocalBaseline`, `computeEnforced` (existing).
 - Produces: `OrgPolicy.capabilities: { readonly disabled: readonly string[] }`; `LocalBaseline.capabilitiesDisabled: ReadonlySet<string>`; `EnforcedPolicy.capabilitiesDisabled: ReadonlySet<string>`; `AI_V2_CAPABILITIES` constant.
 
@@ -1082,6 +1094,7 @@ export const AI_V2_CAPABILITIES = [
 ```
 
 In `policy/policy-toml.ts`:
+
 - add `capabilitiesDisabled: new Set<string>()` to the `PolicyAccum` initialiser;
 - add a case to `dispatchKey`'s switch (alongside `"[policy.audit]"` at `:87`):
 
@@ -1153,6 +1166,7 @@ git commit -m "feat(policy): add tighten-only ai_v2 capability lockoff as a disa
 > **This task is deliberately large.** `CLAUDE.md`'s triple rule requires the wiring, the `docs/SECURITY-INVARIANTS.md` entry and the enforcement test to land in **one commit**. Do not split it.
 
 **Files:**
+
 - Create: `packages/gateway/src/exec/exec-gate.ts`
 - Test: `packages/gateway/src/exec/exec-gate.test.ts`
 - Modify: `docs/SECURITY-INVARIANTS.md`
@@ -1161,6 +1175,7 @@ git commit -m "feat(policy): add tighten-only ai_v2 capability lockoff as a disa
 - Modify: `packages/gateway/src/platform/sandbox/sandbox-policy.ts:14-20` (the stale `limits` comment)
 
 **Interfaces:**
+
 - Consumes: Tasks 1-6 in full.
 - Produces:
   - `interface RunExecutionRequest { code?: string; filePath?: string; runtimeId?: string; fsRead: readonly string[]; fsWrite: readonly string[]; network?: readonly string[]; timeoutMs?: number; cwd: string }`
@@ -1694,12 +1709,14 @@ git commit -m "feat(exec): add the I33 code-execution gate with its D23 static r
 ## Task 8: IPC surface
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/exec-rpc.ts`
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts` (broadcast wiring)
 - Test: `packages/gateway/src/ipc/exec-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runExecution`, `ExecGateDeps` (Task 7); `execConsent` (Task 4).
 - Produces: `dispatchExecRpc(method, params, ctx): Promise<RpcMissOrHit>`; `interface ExecRpcCtx`; `class ExecRpcError extends Error { rpcCode: number }`. Methods: `exec.run`, `exec.approvalRespond`.
 
@@ -1827,12 +1844,14 @@ git commit -m "feat(exec): expose exec.run and exec.approvalRespond over local I
 ## Task 9: `nimbus exec` CLI
 
 **Files:**
+
 - Create: `packages/cli/src/commands/exec.ts`
 - Modify: `packages/cli/src/commands/index.ts`
 - Modify: `packages/cli/src/index.ts:120-149`
 - Test: `packages/cli/src/commands/exec.test.ts`
 
 **Interfaces:**
+
 - Consumes: `exec.run` / `exec.approvalRespond` over IPC (Task 8).
 - Produces: `runExec(args: string[]): Promise<void>`; `parseExecArgs(args: string[]): ParsedExecArgs` (exported for test); `EXEC_EXIT_CODES`.
 
@@ -2085,9 +2104,11 @@ git commit -m "feat(cli): add nimbus exec with absolute-path resolution and dist
 ## Task 10: Loopback + real-sandbox integration tests
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/exec-sandbox.integration.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything above. No new production code — this task adds only tests.
 
 > This is the task that converts §3's "loopback happens to be blocked by three unrelated mechanisms" into a guarantee. Without it, a future change to any one runner could open loopback without failing anything.
@@ -2180,6 +2201,7 @@ git commit -m "test(exec): prove loopback and filesystem confinement against a r
 ## Task 11: Documentation and roadmap
 
 **Files:**
+
 - Modify: `CLAUDE.md`, `GEMINI.md` (the invariant list + status line)
 - Modify: `docs/architecture.md` (IPC method catalogue)
 - Modify: `docs/cli-reference.md`

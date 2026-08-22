@@ -11,7 +11,7 @@
 
 Turn the three-OS sandbox that shipped in #1294 from something only *connectors* spawn into something the **owner** can run arbitrary code inside, behind the HITL gate, with a full audit record.
 
-#1294 left an explicit hand-off. `platform/sandbox/sandbox-policy.ts` was deliberately shaped so that "a per-execution capability set can reach the same three runners a connector uses", and its `limits.wallClockMs` field carries the comment *"DECLARED BUT NOT ENFORCED by any runner in this release — the execution surface adds enforcement."* This slice **is** that execution surface.
+PR #1294 left an explicit hand-off. `platform/sandbox/sandbox-policy.ts` was deliberately shaped so that "a per-execution capability set can reach the same three runners a connector uses", and its `limits.wallClockMs` field carries the comment *"DECLARED BUT NOT ENFORCED by any runner in this release — the execution surface adds enforcement."* This slice **is** that execution surface.
 
 ### Non-goals for this slice
 
@@ -38,7 +38,7 @@ Four forks were settled before design:
 
 ## 3. Architecture
 
-```
+```text
 packages/gateway/src/exec/
   exec-gate.ts             The ONLY path to a code execution. Owns policy
                            construction, confinement assertion, HITL approval,
@@ -125,7 +125,7 @@ Two details that are easy to get wrong and cheap to pin down:
 
 ## 5. CLI and configuration
 
-```
+```text
 nimbus exec --file ./script.ts
 nimbus exec --code 'console.log(1+1)'
   --runtime bun                    # registry id; defaults to the sole wired entry

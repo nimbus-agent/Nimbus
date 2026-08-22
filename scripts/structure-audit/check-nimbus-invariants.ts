@@ -664,6 +664,39 @@ export function checkShareConsentBrokerConfinement(files: readonly FileEntry[]):
   return out;
 }
 
+// D23 (I33): `runConfined` — the confined-spawn primitive that turns user-supplied code into a
+// running process — may be CALLED only from the exec gate (which performs the config/policy checks,
+// the sandbox-posture assertion and the owner-HITL approval first) plus its own definition file.
+// A second caller would be a second path from arbitrary code to a process, bypassing every one of
+// those, which is precisely what I33 forbids. Mirrors D21's createShare/forwardShare confinement.
+// Test files are exempt.
+const D23_RUNCONFINED_ALLOWED = [
+  "packages/gateway/src/exec/exec-gate.ts",
+  "packages/gateway/src/exec/exec-run.ts",
+];
+const D23_RUNCONFINED_RE = /\brunConfined\s*\(/;
+
+export function checkRunConfinedConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (D23_RUNCONFINED_ALLOWED.includes(f.relPath)) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (D23_RUNCONFINED_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "D23-runconfined-callsite",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // D21 (I27) extension: `forwardShare` — the re-forward chokepoint (owner-HITL + hop-append + emit) —
 // may be CALLED only from its home (share-forward.ts) and the single wiring file federation-rpc.ts.
 // Mirrors the createShare confinement so the SECOND outbound-share emit path cannot be invoked out of
@@ -1175,6 +1208,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D21 forwardShare called outside share-forward.ts/federation-rpc.ts — bypasses I27 second emit chokepoint: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkRunConfinedConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D23 runConfined called outside exec-gate.ts/exec-run.ts — bypasses the I33 code-execution gate: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

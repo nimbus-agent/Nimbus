@@ -1622,6 +1622,54 @@ describe("I26 — connector writes (warehouse/BI ∪ GitOps/ML) are confined to 
   });
 });
 
+describe("I33 — user code executes only behind the exec gate", () => {
+  // The runtime complement to static rule D23. A second caller of `runConfined` would be a second
+  // path from user-supplied code to a running process, which is the whole of what I33 forbids.
+  test("runConfined is called only from exec-gate.ts (and defined in exec-run.ts)", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const callers = files
+      .filter((f) => /\brunConfined\s*\(/.test(stripComments(f.contents)))
+      .map((f) => `packages/gateway/src/${f.rel}`)
+      .sort();
+    expect(callers).toEqual([
+      "packages/gateway/src/exec/exec-gate.ts",
+      "packages/gateway/src/exec/exec-run.ts",
+    ]);
+  });
+
+  // On Windows `degradedReason()` is non-null even when the runner is fully active -- it reports
+  // the accepted per-host-filtering caveat. A gate keyed on it would refuse every Windows
+  // execution forever: fail-closed, but total.
+  test("the gate keys confinement on isFullyActive(), never on degradedReason() === null", async () => {
+    const src = await readFile(
+      resolve(REPO_ROOT, "packages/gateway/src/exec/exec-gate.ts"),
+      "utf8",
+    );
+    const code = stripComments(src);
+    expect(code).toContain("isFullyActive()");
+    expect(code).not.toMatch(/degradedReason\(\)\s*===\s*null/);
+  });
+
+  // Empty-by-construction is the property; a caller-supplied network list must be REFUSED, not
+  // quietly dropped, or "no network" becomes a convention rather than a guarantee.
+  test("exec-policy refuses a requested network grant rather than dropping it", async () => {
+    const { buildExecPolicy } = await import("./exec/exec-policy.ts");
+    const abs = process.platform === "win32" ? "C:\\tmp" : "/tmp";
+    expect(() =>
+      buildExecPolicy("i33", { fsRead: [abs], fsWrite: [], network: ["x.com"] }),
+    ).toThrow();
+    expect(buildExecPolicy("i33", { fsRead: [abs], fsWrite: [] }).permissions.network).toEqual([]);
+  });
+
+  // `not_required` on a code.execute row would read as "this ran without needing approval".
+  test("the gate never records a code.execute row as not_required", async () => {
+    const code = stripComments(
+      await readFile(resolve(REPO_ROOT, "packages/gateway/src/exec/exec-gate.ts"), "utf8"),
+    );
+    expect(code).not.toContain('"not_required"');
+  });
+});
+
 describe("I27 — outbound share gated by share.publish HITL action", () => {
   test("HITL_REQUIRED includes share.publish", async () => {
     const { HITL_REQUIRED } = await import("./engine/executor.ts");

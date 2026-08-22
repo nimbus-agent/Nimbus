@@ -13,9 +13,14 @@ export interface SandboxPolicy {
   readonly id: string;
   readonly permissions: SandboxPermissions;
   /**
-   * One-shot executions only. DECLARED BUT NOT ENFORCED by any runner in this release — the
-   * execution surface adds enforcement (on Windows, a limit on the Job Object the helper already
-   * assigns). Nothing may treat a set value here as a guarantee.
+   * One-shot executions only. Still NOT enforced by any runner, and still not an OS-level limit —
+   * but the execution surface this field was reserved for now exists: `exec/exec-run.ts`
+   * (`runConfined`) enforces the budget itself, killing the child on expiry (SIGTERM, escalating to
+   * SIGKILL). A connector spawn ignores this field entirely.
+   *
+   * So a set value is a guarantee ONLY for a caller that routes through `runConfined`. Handing a
+   * policy carrying `limits` to a runner directly still bounds nothing. Moving enforcement down to
+   * the Windows Job Object the helper already assigns remains available as later hardening.
    */
   readonly limits?: { readonly wallClockMs?: number };
 }
