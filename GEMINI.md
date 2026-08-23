@@ -123,9 +123,12 @@ Windows leg. Pushes run the full 3-OS matrix. Exactly one status check gates the
 **`PR quality — required gates`**, an `if: always()` aggregator that `needs:` every other PR job —
 so adding or renaming a gate never needs a ruleset edit, and a red leg reds the aggregator.
 
-**The PR cross-platform legs run the same test command as the push matrix** —
+**The PR cross-platform legs run the same test PATHS as the push matrix** —
 `bun test packages/gateway packages/cli packages/mcp-connectors scripts`, whole-repo and in ONE
-process. That equality is load-bearing and was only established on 2026-08-23. Before it, the PR
+process, so unit + integration + e2e alike (a directory argument recurses, and `bunfig.toml`
+excludes nothing). Only the flags differ: the push leg adds coverage instrumentation and a JUnit
+reporter this job has no use for, which is why the parity test compares positional paths only.
+That equality is load-bearing and was only established on 2026-08-23. Before it, the PR
 leg ran `bun test packages/<pkg>/src` per package while the push leg ran everything in one process,
 and the difference was where the red lived: of the 200 CI runs on `main` between 2026-08-02 and
 2026-08-22, 50 failed and 35 had a failing macOS job — **33 of the 35 were in files the PR gate

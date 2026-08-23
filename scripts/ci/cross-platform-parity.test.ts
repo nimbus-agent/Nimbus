@@ -100,6 +100,7 @@ describe("PR cross-platform legs run the same tests as the push matrix", () => {
     ]) {
       expect(paths).toContain("packages/gateway");
       expect(paths).toContain("packages/cli");
+      expect(paths).toContain("packages/mcp-connectors");
       expect(paths).toContain("scripts");
       for (const p of paths) {
         expect(p.endsWith("/src")).toBe(false);

@@ -351,8 +351,11 @@ NIMBUS_RUN_LOCAL_BENCH=1 bun test
 | Push to `main` / `develop` | Full 3-platform matrix: `windows-2025`, `macos-15`, `ubuntu-24.04` |
 | Push to `main` + release tags | E2E Desktop (Playwright + Tauri WebDriver) on all three platforms |
 
-The PR cross-platform legs carry **no e2e, no coverage, no packaging**. A regression confined to
-`test/e2e/` is still a push-matrix discovery — i.e. found after merge.
+The PR cross-platform legs carry **no coverage and no packaging** — both are Ubuntu-only by design
+(the coverage floor is CI-Linux-authoritative; packaging is a separate job). They **do** carry
+integration and e2e: `bun test packages/gateway` recurses into every subdirectory, `test/integration/`
+and `test/e2e/` included, and `bunfig.toml` configures no path exclusions. So a regression confined
+to `test/e2e/` is a PR-time discovery now, not a post-merge one — that changed on 2026-08-23.
 
 **Exactly one check gates the merge:** `PR quality — required gates`, an `if: always()` aggregator
 over every other PR job. See the `nimbus-preflight` skill § _Merging_ — the ruleset's org-admin
