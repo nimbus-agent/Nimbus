@@ -131,7 +131,8 @@
     "packages/mcp-connectors/monte-carlo",
     "packages/mcp-connectors/powerbi",
     "packages/mcp-connectors/snowflake",
-    "packages/mcp-connectors/tableau"
+    "packages/mcp-connectors/tableau",
+    "packages/mcp-connectors/standalone"
   ],
   "scripts": {
     "dev": "bun run --filter './packages/gateway' dev & bun run --filter './packages/cli' dev",
