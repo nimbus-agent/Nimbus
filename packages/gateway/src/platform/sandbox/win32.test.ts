@@ -57,6 +57,31 @@ describe("win32 sandbox", () => {
 });
 
 describe("createWin32SandboxRunner", () => {
+  // The probe resolves `NIMBUS_SANDBOX_HELPER_PATH ?? <next to process.execPath>`, and the
+  // default-path cases below assert the "probe found nothing" branch. That branch is reachable
+  // only while the variable is UNSET, and this suite used to just assume it would be.
+  //
+  // It is not, in a shared process. Two files assign it at module TOP LEVEL with no cleanup —
+  // `test/integration/platform/sandbox/exec-sandbox.test.ts` and `test/e2e/exec-e2e.test.ts` —
+  // both pointing at `src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe`, which on
+  // Windows CI is a real, working binary because the workflow builds it before the run. Once
+  // either module is imported, every test in the process that reads the variable sees it.
+  // Reproduced directly: with that path exported, the two cases below fail; with it cleared,
+  // they pass. That is what these hooks guarantee.
+  //
+  // Whichever file wins the import order, this suite no longer depends on the answer. afterEach
+  // RESTORES rather than deletes — the two files set it for their own use, and this suite must
+  // not become the reason they stop working.
+  let priorHelperPath: string | undefined;
+  beforeEach(() => {
+    priorHelperPath = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+    delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+  });
+  afterEach(() => {
+    if (priorHelperPath === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+    else process.env["NIMBUS_SANDBOX_HELPER_PATH"] = priorHelperPath;
+  });
+
   it("reports the win32 platform tag", () => {
     expect(createWin32SandboxRunner().platform).toBe("win32");
   });
@@ -82,10 +107,13 @@ describe("createWin32SandboxRunner", () => {
   });
 
   it("reports itself as not fully active when the default helper path has nothing at it", () => {
-    // No NIMBUS_SANDBOX_HELPER_PATH override here: the default is derived from
-    // process.execPath (the bun binary running this test), which never has
-    // nimbus-sandbox-helper.exe next to it, so this exercises the same "probe found nothing"
-    // path as CI without needing the override.
+    // Exercises the DEFAULT path — `dirname(process.execPath)`, the bun binary running this
+    // test, which has no nimbus-sandbox-helper.exe next to it — so the probe takes the same
+    // "found nothing" branch as a real Windows box with the helper uninstalled.
+    //
+    // This once read "no NIMBUS_SANDBOX_HELPER_PATH override here", as though not setting the
+    // variable were the same as it being unset. It is not, in a shared process: see the hooks
+    // at the top of this describe, which are what actually guarantee the precondition.
     expect(createWin32SandboxRunner().isFullyActive()).toBe(false);
   });
 
