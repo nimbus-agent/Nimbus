@@ -55,6 +55,11 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
   { file: "packages/gateway/src/vault/darwin.ts", gate: "Vault", why: "Keychain backend" },
   { file: "packages/gateway/src/vault/linux.ts", gate: "Vault", why: "libsecret backend" },
   {
+    file: "packages/gateway/src/exec/exec-runtimes.ts",
+    gate: "Sandbox",
+    why: "ExecRuntime.requiredReadPaths: macOS alone needs the runtime HOME granted; Windows must NOT get it (~/.bun carries thousands of cache entries and the AppContainer helper writes one ACE per path, so granting it hangs every spawn)",
+  },
+  {
     file: "packages/gateway/src/platform/sandbox/win32.ts",
     gate: "Sandbox",
     why: "Windows job-object sandbox",

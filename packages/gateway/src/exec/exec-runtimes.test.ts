@@ -65,7 +65,12 @@ describe("ExecRuntime registry", () => {
   });
 
   test("requireInstalled throws a NAMED error when detect() finds nothing", () => {
-    const absent = { id: "ghost", detect: () => null, argvFor: () => ({ cmd: "", args: [] }) };
+    const absent = {
+      id: "ghost",
+      detect: () => null,
+      argvFor: () => ({ cmd: "", args: [] }),
+      requiredReadPaths: () => [],
+    };
     try {
       requireInstalled(absent);
       throw new Error("should have thrown");

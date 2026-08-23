@@ -162,8 +162,19 @@ export async function runExecution(
     const scriptPath = scratch?.file ?? (req.filePath as string);
 
     const policy = buildExecPolicy(executionId, {
-      // The scratch dir is granted READ only -- the child must load its script, never rewrite it.
-      fsRead: scratch === undefined ? req.fsRead : [...req.fsRead, scratch.dir],
+      // Three read sources, all mandatory:
+      //   - the caller's own grants;
+      //   - the scratch dir, READ only -- the child loads its script, it must not rewrite it;
+      //   - the runtime's own binary directory, without which the child cannot start at all.
+      // That last one is not optional and is not an optimisation: on Windows the AppContainer
+      // helper writes an ACE per granted path, so an ungranted interpreter is unreadable and the
+      // child dies before executing a line (exit 68, no stdout, no stderr). Linux hides this
+      // because bwrap binds the system tree by default.
+      fsRead: [
+        ...req.fsRead,
+        ...(scratch === undefined ? [] : [scratch.dir]),
+        ...runtime.requiredReadPaths(),
+      ],
       fsWrite: req.fsWrite,
       ...(req.network === undefined ? {} : { network: req.network }),
     });

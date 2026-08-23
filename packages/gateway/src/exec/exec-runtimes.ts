@@ -1,4 +1,4 @@
-import { extname } from "node:path";
+import { dirname, extname } from "node:path";
 
 /**
  * A named error so a caller can distinguish refusal reasons without matching on message text.
@@ -20,6 +20,15 @@ export interface ExecRuntime {
   /** Absolute path to the interpreter, or null when it is not installed. */
   detect(): string | null;
   argvFor(scriptPath: string): { cmd: string; args: string[] };
+  /**
+   * Paths the sandbox must grant READ so the child can load this interpreter at all.
+   *
+   * Not an optimisation: on Windows the AppContainer helper writes an ACE per granted path, so a
+   * binary outside every grant is simply unreadable and the child dies before running a line — exit
+   * 68, no stdout, no stderr. Linux happens to hide this because bwrap binds the system tree by
+   * default, which is exactly why it must be stated explicitly rather than left to luck.
+   */
+  requiredReadPaths(): string[];
 }
 
 const BUN_RUNTIME: ExecRuntime = {
@@ -29,6 +38,16 @@ const BUN_RUNTIME: ExecRuntime = {
   // NOT hold for a future Deno or Python entry, which must really probe.
   detect: () => process.execPath,
   argvFor: (scriptPath) => ({ cmd: process.execPath, args: ["run", scriptPath] }),
+  requiredReadPaths: () => {
+    const binDir = dirname(process.execPath);
+    // macOS additionally needs the runtime HOME (`~/.bun`), where the SBPL-confined child resolves
+    // its own support files. Windows must NOT get it: `~/.bun` carries `install/cache` with
+    // thousands of entries, and the helper writes one ACE per granted path -- granting it there
+    // made every spawn hang until the harness killed it. Measured in
+    // `test/integration/platform/sandbox/sandbox-wrapper-spawn.test.ts`; do not "simplify" this
+    // into an unconditional parent grant.
+    return process.platform === "darwin" ? [binDir, dirname(binDir)] : [binDir];
+  },
 };
 
 const REGISTRY: ReadonlyMap<string, ExecRuntime> = new Map([["bun", BUN_RUNTIME]]);

@@ -30,6 +30,19 @@ const WIN_HELPER =
   process.env["NIMBUS_SANDBOX_HELPER_PATH"] ??
   resolve(import.meta.dir, "../../../../src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe");
 
+// Point the RUNTIME at the same binary this file's readiness check tests for.
+//
+// `helperPath()` (win32.ts) resolves `NIMBUS_SANDBOX_HELPER_PATH ?? <next to the running exe>`, and
+// that default lands in `~/.bun/bin` — NOT the repo's `src-native` build output. Without this, the
+// guard below reports READY against the repo binary while the runner probes a path that does not
+// exist, so every case fails with ERR_EXEC_SANDBOX_DEGRADED and the suite reads as a code defect
+// rather than the wiring one it is. The sibling spawn suite sidesteps this by spawning a child
+// gateway with the variable already set; this one runs in-process, so it sets it here — and before
+// any `createSandboxRunner()` call, because the probe result is captured at construction.
+if (process.platform === "win32" && process.env["NIMBUS_SANDBOX_HELPER_PATH"] === undefined) {
+  process.env["NIMBUS_SANDBOX_HELPER_PATH"] = WIN_HELPER;
+}
+
 function findBwrap(): string | null {
   const r = spawnSync("sh", ["-c", "command -v bwrap"], { encoding: "utf8" });
   const p = (r.stdout ?? "").trim();

@@ -1,3 +1,4 @@
+import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import type { SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import type { ExecResult, TerminationReason } from "./exec-result.ts";
@@ -53,10 +54,17 @@ export function runConfined(
   return new Promise<ExecResult>((resolve) => {
     const child = runner.spawn(cmd, args, {
       policy: opts.policy,
-      // Deliberately empty: an execution inherits NOTHING from the gateway's environment. A
-      // stray token in `process.env` reaching approved-but-untrusted code would be an exfiltration
-      // path the sandbox's filesystem and network rules never see.
-      env: {},
+      // The I1 baseline allowlist, NOT the gateway's environment and NOT `{}`.
+      //
+      // The intent is the same as inheriting nothing -- a stray token in `process.env` reaching
+      // approved-but-untrusted code would be an exfiltration path the filesystem and network rules
+      // never see -- but a literally empty block does not work: `CreateProcessW` fails with 203
+      // (ERROR_ENVVAR_NOT_FOUND) when the child has no `SystemRoot`, so on Windows EVERY execution
+      // died at exit 68 before running a line. `extensionProcessEnv` is the same
+      // invariant-governed scoping every spawned MCP child already uses, and its BASELINE_KEYS
+      // carries `SYSTEMROOT`/`PATH`/`TEMP` and nothing secret. Reusing it beats a second, private
+      // answer to a question this tree has already answered once.
+      env: extensionProcessEnv({}),
       cwd: opts.cwd,
       stdio: ["ignore", "pipe", "pipe"],
     });

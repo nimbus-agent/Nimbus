@@ -16,6 +16,7 @@ export const COMMAND_NAMES = [
   "diag",
   "doctor",
   "egress",
+  "exec",
   "expert",
   "extension",
   "ghost",
