@@ -173,7 +173,7 @@ const githubPrMergeSchema = repoSlugArgs.extend({
 
 registerGithubWriteTool(
   "github_pr_merge",
-  { mutates: "repo.pr.merge", recoverable: true },
+  { mutates: "github.pr.merge", recoverable: true },
   "Merge a pull request.",
   githubPrMergeSchema,
   (parsed) => `${slug(parsed.owner, parsed.repo)}/pulls/${String(parsed.pullNumber)}/merge`,
@@ -191,7 +191,7 @@ registerGithubWriteTool(
 
 registerGithubWriteTool(
   "github_pr_close",
-  { mutates: "repo.pr.close", recoverable: true },
+  { mutates: "github.pr.close", recoverable: true },
   "Close a pull request without merging.",
   githubPrNumberSchema,
   (parsed) => `${slug(parsed.owner, parsed.repo)}/pulls/${String(parsed.pullNumber)}`,
@@ -239,7 +239,7 @@ const githubIssueCreateSchema = repoSlugArgs.extend({
 
 registerGithubWriteTool(
   "github_issue_create",
-  { mutates: "repo.issue.create", recoverable: true },
+  { mutates: "github.issue.create", recoverable: true },
   "Create a new issue in a repository.",
   githubIssueCreateSchema,
   (parsed) => `${slug(parsed.owner, parsed.repo)}/issues`,
@@ -283,7 +283,7 @@ const githubBranchDeleteSchema = repoSlugArgs.extend({
 registerWriteTool(
   "github_branch_delete",
   {
-    mutates: "repo.branch.delete",
+    mutates: "github.branch.delete",
     // The only GitHub mutation here that cannot be undone from its own result, so the ref's SHA is
     // captured BEFORE the delete. With it the branch can be recreated; without it the commit is
     // only reachable by reflog on someone's clone.
@@ -320,7 +320,7 @@ const githubTagCreateSchema = repoSlugArgs.extend({
 
 registerGithubWriteTool(
   "github_tag_create",
-  { mutates: "repo.tag.create", recoverable: true },
+  { mutates: "github.tag.create", recoverable: true },
   "Create a lightweight tag pointing at a commit SHA.",
   githubTagCreateSchema,
   (parsed) => `${slug(parsed.owner, parsed.repo)}/git/refs`,

@@ -75,13 +75,13 @@ describe("github standalone write surface", () => {
 describe("github write declarations", () => {
   const src = readFileSync(SERVER, "utf8");
 
-  test("every mutating tool declares a machine-readable action type", () => {
+  test("every mutating tool declares a PER-CONNECTOR action type", () => {
     for (const mutates of [
-      "repo.pr.merge",
-      "repo.pr.close",
-      "repo.issue.create",
-      "repo.branch.delete",
-      "repo.tag.create",
+      "github.pr.merge",
+      "github.pr.close",
+      "github.issue.create",
+      "github.branch.delete",
+      "github.tag.create",
     ]) {
       expect(src).toContain(`mutates: "${mutates}"`);
     }
@@ -92,6 +92,12 @@ describe("github write declarations", () => {
     const block = src.slice(idx, idx + 900);
     expect(block).toContain("recoverable: false");
     expect(block).toContain("capturePreState");
+  });
+
+  test("no migrated tool declares a generic cross-service type", () => {
+    // repo.pr.merge is shared by github, gitlab and bitbucket, so it cannot tell I29's egress
+    // ledger which service was written to, nor scope an I20 delegation to one of them.
+    expect(src).not.toContain('mutates: "repo.');
   });
 
   test("the prose 'requires HITL' hints are gone from migrated tools", () => {
