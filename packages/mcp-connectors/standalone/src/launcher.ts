@@ -132,5 +132,12 @@ export async function runStandalone(argv: readonly string[]): Promise<number> {
 }
 
 if (import.meta.main) {
-  process.exit(await runStandalone(process.argv.slice(2)));
+  const code = await runStandalone(process.argv.slice(2));
+  // Exit ONLY on failure. Most connectors connect their stdio transport at module scope, so the
+  // import above resolves once the server is live and `runStandalone` returns 0 immediately —
+  // `process.exit(0)` here would tear down the server it just started. On success we fall through
+  // and the connected transport keeps the process alive.
+  if (code !== 0) {
+    process.exit(code);
+  }
 }

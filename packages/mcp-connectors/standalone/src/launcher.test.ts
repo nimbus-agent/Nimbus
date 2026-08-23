@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import { resolveConnectorEntry, runStandalone, standaloneEligibility } from "./launcher.ts";
 
@@ -68,4 +73,47 @@ describe("runStandalone", () => {
     // connector", and a human triaging the failure should not have to read the message to tell.
     expect(await runStandalone(["snowflake"])).toBe(3);
   });
+});
+
+describe("the launcher as an entrypoint", () => {
+  const LAUNCHER = resolve(fileURLToPath(import.meta.url), "../launcher.ts");
+
+  async function toolsVia(id: string, elicitation: boolean): Promise<string[]> {
+    const client = new Client(
+      { name: "launcher-e2e", version: "1.0.0" },
+      { capabilities: elicitation ? { elicitation: {} } : {} },
+    );
+    await client.connect(
+      new StdioClientTransport({
+        command: process.execPath,
+        args: ["run", LAUNCHER, id],
+        env: { ...process.env, NIMBUS_MCP_GITHUB_WRITE_SCOPE: "repo:acme/api" } as Record<
+          string,
+          string
+        >,
+      }),
+    );
+    try {
+      return (await client.listTools()).tools.map((t) => t.name);
+    } finally {
+      await client.close();
+    }
+  }
+
+  test("a connector booted THROUGH the launcher stays alive and serves tools", async () => {
+    // REGRESSION GUARD. `process.exit(await runStandalone(...))` killed the server it had just
+    // started: most connectors connect their transport at module scope, so the import resolves
+    // while the server is live and runStandalone returns 0 immediately. Calling runStandalone
+    // directly — as the unit tests above do — never executes the import.meta.main block, so only
+    // an out-of-process boot can catch this.
+    const tools = await toolsVia("github", true);
+    expect(tools).toContain("github_repo_list");
+    expect(tools).toContain("github_branch_delete");
+  }, 30_000);
+
+  test("the launcher applies the standalone gate — no elicitation means no write tools", async () => {
+    const tools = await toolsVia("github", false);
+    expect(tools).toContain("github_repo_list");
+    expect(tools).not.toContain("github_branch_delete");
+  }, 30_000);
 });
