@@ -46,6 +46,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/index.ts" },
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-wrapper.ts" },
   { kind: "exact", path: "packages/gateway/src/connectors/index.ts" },
+  // `standalone/src/bin.ts` is the `nimbus-mcp` process entry point and nothing else: read argv,
+  // call `runStandalone`, exit only on failure. It was SPLIT OUT of `launcher.ts` precisely so the
+  // eligibility and consent logic could be covered — an `import.meta.main`-class shell cannot be
+  // executed by any in-process test, so leaving it inline meant either an uncoverable branch or
+  // exempting the logic along with it. Same process-entry class as `cli/src/index.ts` above.
+  { kind: "exact", path: "packages/mcp-connectors/standalone/src/bin.ts" },
   { kind: "exact", path: "packages/gateway/src/vault/factory.ts" },
 
   // ── mock.module-shadowed (real logic tested via the gateway-process.ts twin) ──
