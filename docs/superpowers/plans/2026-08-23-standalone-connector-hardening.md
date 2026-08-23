@@ -2335,3 +2335,43 @@ verified by execution rather than reasoning, and both held.
 The first item is the one worth remembering: the drafted tests would have passed, because the fake
 server answered `getClientCapabilities()` synchronously from construction. The test encoded the bug
 rather than catching it — which is why the fakes now model the handshake explicitly.
+
+---
+
+## Execution outcome (2026-08-23)
+
+All 12 tasks landed, in 10 commits. Five things the plan did not predict, each caught by execution
+rather than review — recorded because the pattern matters more than the individual bugs.
+
+| What | How it surfaced | Where |
+|---|---|---|
+| The launcher **killed the server it had just started**. `process.exit(await runStandalone(...))` returns 0 while the connector is live, because most connectors connect their transport at module scope. | Only an out-of-process boot reaches `import.meta.main`; the unit tests call `runStandalone` directly and passed throughout. Found by driving the launcher with a real MCP client. | Task 10 |
+| **Four structural mismatches** between `ConsentServer` and the real `McpServer` — the restricted JSON-Schema subset for `elicitInput`, two `exactOptionalPropertyTypes` gaps, and `registerTool`'s `inputSchema`. | Typecheck, the first time a real server was passed. A hand-written fake accepts anything. | Task 8 |
+| Routing unconditionally through `child_process` **bypassed a global `Bun.spawn` stub** in `cloudwatch/test/tools.test.ts`, which then spawned a real `aws` and hung the connector suite past 600s. | The suite went from 1.75s to a timeout. Fixed by choosing the runtime at CALL time, restoring the dual-branch design the plan actually specified. | Task 9 |
+| The port **dropped `gcloudEnv()`** from bigquery's token call, which carries `GOOGLE_APPLICATION_CREDENTIALS`. | Typecheck flagged the now-unused function. Silent auth breakage otherwise. | Task 9 |
+| Adding a workspace package **changed `bun.lock`**, and CI installs `--frozen-lockfile`. | `verify:docker`, which installs the same way. No local command catches it. | Task 10 |
+
+Two design changes were made during execution and are worth carrying into Part 2:
+
+- **`stripComments` is not safe for this audit.** It has no regex-literal awareness: a regex
+  containing a quote character opens a phantom string and every comment after it survives
+  unstripped. Verified directly. The first version of the consent gate consequently flagged the
+  launcher's comment *explaining that it deliberately does not call `setConnectorMode`*.
+  `check-connector-entrypoints.ts` uses the same helper and may share the weakness — not
+  investigated, not changed, worth a look.
+- **Eligibility needs both signals.** Seven connectors — dagster, google-photos, prefect, ramp,
+  snyk, superset, wiz — issue mutating HTTP requests while declaring `hitlRequired: []`. The
+  manifest alone admitted all seven as write-free; the source verb alone misses the ten that mutate
+  through a CLI or the filesystem. Each covers the other's blind spot.
+
+### Final verification
+
+| Check | Result |
+|---|---|
+| Whole-repo suite (`bun test packages/gateway packages/cli packages/mcp-connectors scripts`) | 20,147 pass / 0 fail. A first run had one `runPKCEFlow` port-binding timeout that passed in isolation and did not recur — a load flake, though the ~24 new subprocess spawns raise the load |
+| `preflight:fast` | 30/30 (was 29; `audit:connector-consent` added) |
+| `verify:docker --changed` | exit 0, 108 tests |
+| `test:connector-boot` (compiled binary) | 94 connectors — 89 answered, 5 refused without credentials, 0 failed |
+| **Gateway regression**, compiled binary, client with NO elicitation | all 5 github write tools present — the standalone gate does not leak into the gateway |
+| Standalone through the launcher | 14 tools / 5 writes with elicitation; 9 tools / 0 writes without; ineligible connector exits 3 |
+| Standalone eligibility | 51 of 94 (50 no-writes + github); 43 refused until Part 2 |
