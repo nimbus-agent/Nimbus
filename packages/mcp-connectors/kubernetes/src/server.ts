@@ -47,7 +47,21 @@ async function k8sListNamespacedResource(p: { namespace?: string | undefined }, 
 }
 
 const mcp = new McpServer({ name: "nimbus-kubernetes", version: "0.1.0" });
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING kubernetes tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "kubernetes",
+  scopeEnv: "NIMBUS_MCP_KUBERNETES_WRITE_SCOPE",
+  scopeKinds: ["namespace"],
+});
 
 reg(
   "k8s_pod_list",
@@ -64,9 +78,14 @@ reg("k8s_event_list", "List events in a namespace.", optionalNamespaceSchema, (p
   k8sListNamespacedResource(p, "events"),
 );
 
-reg(
+registerWriteTool(
   "k8s_rollout_restart",
-  "Restart a rollout (e.g. deployment). Requires Gateway HITL.",
+  {
+    mutates: "kubernetes.rollout.restart",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "namespace", value: p.namespace ?? "default" }),
+  },
+  "Restart a rollout (e.g. deployment).",
   z.object({
     namespace: z.string().min(1).optional(),
     resourceType: z.string().min(1),
@@ -83,9 +102,16 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "k8s_pod_delete",
-  "Delete a pod. Requires Gateway HITL.",
+  {
+    mutates: "kubernetes.pod.delete",
+    // A deleted pod is not restorable; its identity is all that remains to record.
+    recoverable: false,
+    capturePreState: (p) => Promise.resolve({ namespace: p.namespace, podName: p.podName }),
+    scopeTargetOf: (p) => ({ kind: "namespace", value: p.namespace ?? "default" }),
+  },
+  "Delete a pod.",
   z.object({
     namespace: z.string().min(1).optional(),
     podName: z.string().min(1),
@@ -101,9 +127,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "k8s_deployment_scale",
-  "Scale a deployment. Requires Gateway HITL.",
+  {
+    mutates: "kubernetes.deployment.scale",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "namespace", value: p.namespace ?? "default" }),
+  },
+  "Scale a deployment.",
   z.object({
     namespace: z.string().min(1).optional(),
     deploymentName: z.string().min(1),

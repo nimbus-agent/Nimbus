@@ -78,4 +78,20 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "apple_mail_draft_create",
   "apple_calendar_event_create",
   "apple_calendar_event_delete",
+
+  // Wave 7 — files + cloud
+  "gdrive_file_create",
+  "gdrive_file_move",
+  "gdrive_file_rename",
+  "onedrive_item_delete",
+  "onedrive_item_move",
+  "aws_ecs_service_update",
+  "aws_lambda_invoke",
+  "azure_app_service_restart",
+  "azure_aks_node_pool_scale",
+  "gcp_cloud_run_deploy",
+  "gcp_gke_workload_restart",
+  "k8s_rollout_restart",
+  "k8s_deployment_scale",
+  "k8s_pod_delete",
 ]);

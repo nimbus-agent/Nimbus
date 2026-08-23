@@ -27,7 +27,21 @@ async function gcloudJson(args: string[]): Promise<unknown> {
 }
 
 const mcp = new McpServer({ name: "nimbus-gcp", version: "0.1.0" });
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING gcp tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "gcp",
+  scopeEnv: "NIMBUS_MCP_GCP_WRITE_SCOPE",
+  scopeKinds: ["project"],
+});
 
 reg(
   "gcp_cloud_run_service_list",
@@ -45,9 +59,14 @@ reg(
     ),
 );
 
-reg(
+registerWriteTool(
   "gcp_cloud_run_deploy",
-  "Deploy a container image to Cloud Run. HITL.",
+  {
+    mutates: "gcp.cloud_run.deploy",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "project", value: p.projectId }),
+  },
+  "Deploy a container image to Cloud Run.",
   z.object({
     projectId: z.string().min(1),
     region: z.string().min(1),
@@ -75,9 +94,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "gcp_gke_workload_restart",
-  "Restart a GKE deployment rollout via kubectl (uses current cluster credentials). HITL.",
+  {
+    mutates: "gcp.gke.workload.restart",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "project", value: p.projectId }),
+  },
+  "Restart a GKE deployment rollout via kubectl (uses current cluster credentials).",
   z.object({
     projectId: z.string().min(1),
     location: z.string().min(1),

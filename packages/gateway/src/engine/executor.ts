@@ -62,6 +62,12 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "github.issue.create",
   "github.branch.delete",
   "github.tag.create",
+  // Wave 7 — files + cloud.
+  "google_drive.file.create",
+  "google_drive.file.move",
+  "google_drive.file.rename",
+  "onedrive.item.delete",
+  "onedrive.item.move",
   // Wave 6 — mail + calendar. Per-connector types so serviceOf names the actual mail service:
   // the ledger records "gmail" or "outlook", never a shared "email".
   "gmail.draft.create",

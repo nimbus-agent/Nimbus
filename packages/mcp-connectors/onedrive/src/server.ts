@@ -7,7 +7,9 @@ import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResult,
+  mcpJsonResultIfOk,
   requireProcessEnv,
+  type ZodObjectSchema,
 } from "../../shared/mcp-tool-kit.ts";
 import { makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
@@ -43,9 +45,41 @@ async function graphRequest(
 
 const server = new McpServer({ name: "nimbus-onedrive", version: "0.1.0" });
 
+import { createWriteToolRegistrar, type WriteToolConfig } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
 
+/**
+ * Every MUTATING onedrive tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "onedrive",
+  scopeEnv: "NIMBUS_MCP_ONEDRIVE_WRITE_SCOPE",
+  scopeKinds: ["item"],
+});
+
 /** Standard Graph tool: token → graphRequest(buildPath[, buildInit]) → mcpJsonResultIfOk("Graph", …, 200). */
+/**
+ * The write-tool equivalent of `registerOnedriveTool`: identical fetch and result handling, routed
+ * through the write registrar.
+ */
+function registerOnedriveWriteTool<T>(
+  name: string,
+  cfg: WriteToolConfig<T>,
+  description: string,
+  schema: ZodObjectSchema<T>,
+  buildPath: (p: T) => string,
+  buildInit?: (p: T) => RequestInit,
+): void {
+  registerWriteTool(name, cfg, description, schema, async (parsed) => {
+    const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
+    const res = await graphRequest(token, buildPath(parsed), buildInit?.(parsed));
+    return mcpJsonResultIfOk("Graph", res, 200);
+  });
+}
+
 const registerOnedriveTool = makeRestToolRegistrar({
   registrar: reg,
   tokenEnv: "MICROSOFT_OAUTH_ACCESS_TOKEN",
@@ -166,8 +200,14 @@ const onedriveItemDeleteArgs = z.object({
   itemId: z.string().min(1),
 });
 
-reg(
+registerWriteTool(
   "onedrive_item_delete",
+  {
+    mutates: "onedrive.item.delete",
+    recoverable: false,
+    capturePreState: (p) => Promise.resolve({ itemId: p.itemId }),
+    scopeTargetOf: (p) => ({ kind: "item", value: p.itemId }),
+  },
   "Permanently delete a OneDrive item. Requires Gateway HITL onedrive.delete.",
   onedriveItemDeleteArgs,
   async (data) => {
@@ -188,8 +228,13 @@ const onedriveItemMoveArgs = z.object({
   newName: z.string().min(1).max(500).optional(),
 });
 
-registerOnedriveTool(
+registerOnedriveWriteTool(
   "onedrive_item_move",
+  {
+    mutates: "onedrive.item.move",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "item", value: p.itemId }),
+  },
   "Move (and optionally rename) a drive item. Requires Gateway HITL onedrive.move.",
   onedriveItemMoveArgs,
   (data) => `/me/drive/items/${encodeURIComponent(data.itemId)}`,

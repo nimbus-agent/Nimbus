@@ -330,6 +330,36 @@ const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
  * wrap. Handlers needing a pre-wrap check (e.g. download's `!result.ok` throw)
  * do it inside the handler and return the payload.
  */
+import { createWriteToolRegistrar, type WriteToolConfig } from "../../shared/consent-kit.ts";
+
+/**
+ * Every MUTATING google-drive tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "google-drive",
+  scopeEnv: "NIMBUS_MCP_GOOGLE_DRIVE_WRITE_SCOPE",
+  scopeKinds: ["folder", "file"],
+});
+
+/**
+ * The write-tool equivalent of `registerDriveTool`: identical token handling and result wrapping,
+ * routed through the write registrar.
+ */
+function registerDriveWriteTool<T>(
+  name: string,
+  cfg: WriteToolConfig<T>,
+  description: string,
+  schema: ZodObjectSchema<T>,
+  handler: (args: T, token: string) => Promise<unknown>,
+): void {
+  registerWriteTool(name, cfg, description, schema, async (parsed) => {
+    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+    return mcpJsonResult(await handler(parsed, token));
+  });
+}
+
 function registerDriveTool<T>(
   name: string,
   description: string,
@@ -412,8 +442,13 @@ const gdriveFileCreateArgs = z.object({
   content: z.string().max(4_000_000).optional(),
 });
 
-registerDriveTool(
+registerDriveWriteTool(
   "gdrive_file_create",
+  {
+    mutates: "google_drive.file.create",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "folder", value: p.parentId ?? "root" }),
+  },
   "Create a Google Drive file. Optional text `content` uses multipart upload. Empty file if content omitted. Requires Gateway HITL file.create.",
   gdriveFileCreateArgs,
   (args, token) => {
@@ -449,8 +484,13 @@ const gdriveFileMoveArgs = z.object({
   removeParentId: z.string().min(1).optional(),
 });
 
-registerDriveTool(
+registerDriveWriteTool(
   "gdrive_file_move",
+  {
+    mutates: "google_drive.file.move",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "file", value: p.fileId }),
+  },
   "Move a file or folder to another parent folder (Drive parents). If removeParentId is omitted, the first current parent is used. Requires Gateway HITL file.move.",
   gdriveFileMoveArgs,
   async (args, token) => {
@@ -476,8 +516,13 @@ const gdriveFileRenameArgs = z.object({
   newName: z.string().min(1).max(500),
 });
 
-registerDriveTool(
+registerDriveWriteTool(
   "gdrive_file_rename",
+  {
+    mutates: "google_drive.file.rename",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "file", value: p.fileId }),
+  },
   "Rename a Drive file or folder. Requires Gateway HITL file.rename.",
   gdriveFileRenameArgs,
   (args, token) => drivePatchJson(token, args.fileId, { name: args.newName }),

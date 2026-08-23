@@ -43,7 +43,21 @@ async function awsJson(args: string[]): Promise<unknown> {
 }
 
 const mcp = new McpServer({ name: "nimbus-aws", version: "0.1.0" });
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING aws tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "aws",
+  scopeEnv: "NIMBUS_MCP_AWS_WRITE_SCOPE",
+  scopeKinds: ["cluster", "function"],
+});
 
 reg(
   "aws_ecs_service_list",
@@ -56,9 +70,14 @@ reg("aws_lambda_list", "List Lambda functions (first page).", z.object({}), asyn
   jsonResult(await awsJson(["lambda", "list-functions"])),
 );
 
-reg(
+registerWriteTool(
   "aws_ecs_service_update",
-  "Update ECS service (e.g. new task definition). HITL.",
+  {
+    mutates: "aws.ecs.service.update",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "cluster", value: p.cluster }),
+  },
+  "Update ECS service (e.g. new task definition).",
   z.object({
     cluster: z.string().min(1),
     service: z.string().min(1),
@@ -85,9 +104,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "aws_lambda_invoke",
-  "Invoke a Lambda function. HITL.",
+  {
+    mutates: "aws.lambda.invoke",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "function", value: p.functionName }),
+  },
+  "Invoke a Lambda function.",
   z.object({
     functionName: z.string().min(1),
     payloadJson: z.string().optional(),

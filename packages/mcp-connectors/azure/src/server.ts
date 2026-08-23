@@ -22,7 +22,21 @@ async function azJson(args: string[]): Promise<unknown> {
 }
 
 const mcp = new McpServer({ name: "nimbus-azure", version: "0.1.0" });
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING azure tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "azure",
+  scopeEnv: "NIMBUS_MCP_AZURE_WRITE_SCOPE",
+  scopeKinds: ["resource_group"],
+});
 
 reg(
   "azure_app_service_list",
@@ -44,9 +58,14 @@ reg(
     ),
 );
 
-reg(
+registerWriteTool(
   "azure_app_service_restart",
-  "Restart an App Service. HITL.",
+  {
+    mutates: "azure.app_service.restart",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "resource_group", value: p.resourceGroup }),
+  },
+  "Restart an App Service.",
   z.object({
     subscriptionId: z.string().min(1),
     resourceGroup: z.string().min(1),
@@ -74,9 +93,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "azure_aks_node_pool_scale",
-  "Scale an AKS node pool. HITL.",
+  {
+    mutates: "azure.aks.node_pool.scale",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "resource_group", value: p.resourceGroup }),
+  },
+  "Scale an AKS node pool.",
   z.object({
     subscriptionId: z.string().min(1),
     resourceGroup: z.string().min(1),
