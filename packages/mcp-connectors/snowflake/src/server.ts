@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
@@ -128,7 +129,15 @@ function tableKey(row: Record<string, unknown>): string {
  * `runReadOnlyMcpConnector` call) so the tool handlers can be exercised in unit tests without
  * starting a real stdio transport.
  */
-export function registerSnowflakeTools(reg: ZodToolRegistrar): void {
+export function registerSnowflakeTools(reg: ZodToolRegistrar, server: unknown): void {
+  // Despite the read-only helper's name, this connector exposes write tools. The consent
+  // kit needs the real server, which the helper now passes through as its second argument.
+  const registerWriteTool = createWriteToolRegistrar(server as ConsentServer, {
+    connector: "snowflake",
+    scopeEnv: "NIMBUS_MCP_SNOWFLAKE_WRITE_SCOPE",
+    scopeKinds: ["object"],
+  });
+
   reg(
     "snowflake_list",
     "List Snowflake tables across all databases and schemas. Paginated: `cursor` (opaque offset) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
@@ -176,9 +185,14 @@ export function registerSnowflakeTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "snowflake_tag_set",
-    "Set or unset a governance TAG on a table (requires HITL snowflake.tag.set). `ALTER TABLE <object> SET TAG <tag> = '<value>'`; omit `value` to UNSET.",
+    {
+      mutates: "snowflake.tag.set",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "object", value: p.object }),
+    },
+    "Set or unset a governance TAG on a table. `ALTER TABLE <object> SET TAG <tag> = '<value>'`; omit `value` to UNSET.",
     z.object({
       object: z.string().min(1),
       tag: z.string().min(1),
@@ -196,9 +210,14 @@ export function registerSnowflakeTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "snowflake_comment_set",
-    "Set a COMMENT on a table (requires HITL snowflake.comment.set). `COMMENT ON TABLE <object> IS '<comment>'`.",
+    {
+      mutates: "snowflake.comment.set",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "object", value: p.object }),
+    },
+    "Set a COMMENT on a table. `COMMENT ON TABLE <object> IS '<comment>'`.",
     z.object({ object: z.string().min(1), comment: z.string() }),
     async (p) => {
       const obj = assertSfIdentifier(p.object, "object");

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
@@ -149,7 +150,15 @@ async function tableauRefresh(kind: "datasources" | "workbooks", id: string): Pr
   return jobId;
 }
 
-export function registerTableauTools(reg: ZodToolRegistrar): void {
+export function registerTableauTools(reg: ZodToolRegistrar, server: unknown): void {
+  // Despite the read-only helper's name, this connector exposes write tools. The consent
+  // kit needs the real server, which the helper now passes through as its second argument.
+  const registerWriteTool = createWriteToolRegistrar(server as ConsentServer, {
+    connector: "tableau",
+    scopeEnv: "NIMBUS_MCP_TABLEAU_WRITE_SCOPE",
+    scopeKinds: ["resource"],
+  });
+
   reg(
     "tableau_list",
     "List Tableau views/dashboards (`GET /api/3.4/sites/{siteId}/views`). Requires a PAT sign-in first. Paginated (1-based): `cursor` (page number) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
@@ -205,16 +214,26 @@ export function registerTableauTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "tableau_datasource_refresh",
-    "Trigger an extract refresh for a published datasource (requires HITL tableau.datasource.refresh). Async — returns the job id.",
+    {
+      mutates: "tableau.datasource.refresh",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "resource", value: p.id }),
+    },
+    "Trigger an extract refresh for a published datasource. Async — returns the job id.",
     z.object({ id: z.string().min(1) }),
     async (p) => jsonResult({ status: "queued", jobId: await tableauRefresh("datasources", p.id) }),
   );
 
-  reg(
+  registerWriteTool(
     "tableau_workbook_refresh",
-    "Trigger an extract refresh for a workbook (requires HITL tableau.workbook.refresh). Async — returns the job id.",
+    {
+      mutates: "tableau.workbook.refresh",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "resource", value: p.id }),
+    },
+    "Trigger an extract refresh for a workbook. Async — returns the job id.",
     z.object({ id: z.string().min(1) }),
     async (p) => jsonResult({ status: "queued", jobId: await tableauRefresh("workbooks", p.id) }),
   );

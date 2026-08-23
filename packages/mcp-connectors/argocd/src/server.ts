@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
@@ -57,7 +58,15 @@ function applicationsFrom(root: unknown): unknown[] {
   return Array.isArray(items) ? items : [];
 }
 
-export function registerArgocdTools(reg: ZodToolRegistrar): void {
+export function registerArgocdTools(reg: ZodToolRegistrar, server: unknown): void {
+  // Despite the read-only helper's name, this connector exposes write tools. The consent
+  // kit needs the real server, which the helper now passes through as its second argument.
+  const registerWriteTool = createWriteToolRegistrar(server as ConsentServer, {
+    connector: "argocd",
+    scopeEnv: "NIMBUS_MCP_APP_WRITE_SCOPE",
+    scopeKinds: ["app"],
+  });
+
   reg(
     "argocd_list",
     "List ArgoCD applications. Optionally filter by `project` (passes `?projects=<project>` to the API). ArgoCD returns the full list in one response; `limit` (default 200) caps the returned `items` client-side.",
@@ -104,8 +113,13 @@ export function registerArgocdTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "argocd_app_sync",
+    {
+      mutates: "argocd.app.sync",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "app", value: p.name }),
+    },
     "Trigger a sync for an ArgoCD application (`POST /api/v1/applications/{name}/sync`, requires HITL argocd.app.sync). Async — the sync is requested; verify via the next metadata sync (sync_status/health_status). Recommend /schedule to re-check.",
     z.object({
       name: z.string().min(1),
@@ -121,8 +135,13 @@ export function registerArgocdTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "argocd_app_rollback",
+    {
+      mutates: "argocd.app.rollback",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "app", value: p.name }),
+    },
     "Roll back an ArgoCD application to a prior deployment history id (`POST /api/v1/applications/{name}/rollback`, requires HITL argocd.app.rollback). Async — verify via the next metadata sync.",
     z.object({ name: z.string().min(1), id: z.number().int().nonnegative() }),
     async (p) => {

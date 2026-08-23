@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
@@ -67,7 +68,15 @@ async function updateIssueStatus(issueId: string, status: string): Promise<void>
   }
 }
 
-export function registerBigeyeTools(reg: ZodToolRegistrar): void {
+export function registerBigeyeTools(reg: ZodToolRegistrar, server: unknown): void {
+  // Despite the read-only helper's name, this connector exposes write tools. The consent
+  // kit needs the real server, which the helper now passes through as its second argument.
+  const registerWriteTool = createWriteToolRegistrar(server as ConsentServer, {
+    connector: "bigeye",
+    scopeEnv: "NIMBUS_MCP_BIGEYE_WRITE_SCOPE",
+    scopeKinds: ["issue"],
+  });
+
   reg(
     "bigeye_list",
     "List Bigeye data-quality issues (`GET /api/v1/issues`). Paginated: `cursor` (offset) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
@@ -112,9 +121,14 @@ export function registerBigeyeTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "bigeye_issue_acknowledge",
-    "Acknowledge a Bigeye issue (requires HITL bigeye.issue.acknowledge).",
+    {
+      mutates: "bigeye.issue.acknowledge",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "issue", value: p.issueId }),
+    },
+    "Acknowledge a Bigeye issue.",
     z.object({ issueId: z.string().min(1) }),
     async (p) => {
       await updateIssueStatus(p.issueId, "ISSUE_STATUS_ACKNOWLEDGED");
@@ -122,9 +136,14 @@ export function registerBigeyeTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "bigeye_issue_resolve",
-    "Resolve (close) a Bigeye issue (requires HITL bigeye.issue.resolve).",
+    {
+      mutates: "bigeye.issue.resolve",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "issue", value: p.issueId }),
+    },
+    "Resolve (close) a Bigeye issue.",
     z.object({ issueId: z.string().min(1) }),
     async (p) => {
       await updateIssueStatus(p.issueId, "ISSUE_STATUS_CLOSED");

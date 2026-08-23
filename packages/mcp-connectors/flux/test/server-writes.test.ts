@@ -1,6 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resetConnectorModeForTests, setConnectorMode } from "../../shared/connector-mode.ts";
 import type { McpListResult, ZodObjectSchema } from "../../shared/mcp-tool-kit.ts";
 import { registerFluxTools } from "../src/server.ts";
+
+// These cases assert the TOOL SURFACE, not the consent gate. Gateway mode is the shape they were
+// written against: the connector registers everything and executor.ts (I2) is the gate. Reset on
+// BOTH sides — bun test runs many files in ONE process.
+beforeEach(() => {
+  resetConnectorModeForTests();
+  setConnectorMode("gateway");
+});
+afterEach(() => {
+  resetConnectorModeForTests();
+});
+
+/**
+ * Minimal server for the consent kit. In gateway mode it never reads the capability surface, but
+ * it DOES register through `registerTool` — so this records into the same sink the read registrar
+ * fills, or the connector's write tools would vanish from the captured surface.
+ */
+function consentFakeServer(sink: (name: string, handler: unknown) => void): never {
+  return {
+    server: { getClientCapabilities: () => undefined },
+    registerTool: (name: string, _cfg: unknown, handler: unknown) => {
+      sink(name, handler);
+      return { disable: () => undefined };
+    },
+    sendToolListChanged: () => undefined,
+    sendLoggingMessage: () => Promise.resolve(),
+  } as unknown as never;
+}
 
 type Handler = (args: unknown) => Promise<McpListResult>;
 
@@ -9,6 +38,7 @@ function captureTools(): Map<string, Handler> {
   registerFluxTools(
     <T>(n: string, _d: string, _s: ZodObjectSchema<T>, h: (a: T) => Promise<McpListResult>) =>
       tools.set(n, h as Handler),
+    consentFakeServer((n, h) => tools.set(n, h as Handler)),
   );
   return tools;
 }

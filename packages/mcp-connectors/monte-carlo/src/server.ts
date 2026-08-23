@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
@@ -138,7 +139,15 @@ async function fetchIncidents(apiId: string, apiToken: string): Promise<unknown[
   return page.incidents;
 }
 
-export function registerMonteCarloTools(reg: ZodToolRegistrar): void {
+export function registerMonteCarloTools(reg: ZodToolRegistrar, server: unknown): void {
+  // Despite the read-only helper's name, this connector exposes write tools. The consent
+  // kit needs the real server, which the helper now passes through as its second argument.
+  const registerWriteTool = createWriteToolRegistrar(server as ConsentServer, {
+    connector: "monte-carlo",
+    scopeEnv: "NIMBUS_MCP_MONTE_CARLO_WRITE_SCOPE",
+    scopeKinds: ["incident"],
+  });
+
   reg(
     "montecarlo_list",
     "List Monte Carlo data-quality incidents (relay GraphQL `getIncidents`). Paginated: `cursor` (the relay `after` token) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
@@ -188,9 +197,14 @@ export function registerMonteCarloTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "montecarlo_incident_acknowledge",
-    "Acknowledge a Monte Carlo incident (requires HITL montecarlo.incident.acknowledge).",
+    {
+      mutates: "montecarlo.incident.acknowledge",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "incident", value: p.incidentId }),
+    },
+    "Acknowledge a Monte Carlo incident.",
     z.object({ incidentId: z.string().min(1) }),
     async (p) => {
       const apiId = requireEnv("MONTECARLO_API_ID");
@@ -200,9 +214,14 @@ export function registerMonteCarloTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "montecarlo_incident_resolve",
-    "Resolve a Monte Carlo incident (requires HITL montecarlo.incident.resolve).",
+    {
+      mutates: "montecarlo.incident.resolve",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "incident", value: p.incidentId }),
+    },
+    "Resolve a Monte Carlo incident.",
     z.object({ incidentId: z.string().min(1) }),
     async (p) => {
       const apiId = requireEnv("MONTECARLO_API_ID");

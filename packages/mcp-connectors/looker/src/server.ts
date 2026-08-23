@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
@@ -92,7 +93,15 @@ function offsetCursor(cursor: string | null | undefined): number {
     : Math.max(0, Number.parseInt(cursor, 10) || 0);
 }
 
-export function registerLookerTools(reg: ZodToolRegistrar): void {
+export function registerLookerTools(reg: ZodToolRegistrar, server: unknown): void {
+  // Despite the read-only helper's name, this connector exposes write tools. The consent
+  // kit needs the real server, which the helper now passes through as its second argument.
+  const registerWriteTool = createWriteToolRegistrar(server as ConsentServer, {
+    connector: "looker",
+    scopeEnv: "NIMBUS_MCP_LOOKER_WRITE_SCOPE",
+    scopeKinds: ["resource"],
+  });
+
   reg(
     "looker_list",
     "List Looker dashboards (`GET /api/4.0/dashboards`). Requires a client-credentials login first. Paginated: `cursor` (opaque offset) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
@@ -166,8 +175,13 @@ export function registerLookerTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "looker_datagroup_trigger",
+    {
+      mutates: "looker.datagroup.trigger",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "resource", value: p.datagroupId }),
+    },
     "Invalidate a Looker datagroup to force a PDT/cache rebuild (`PATCH /api/4.0/datagroups/{datagroupId}`). Sets `stale_before` to the current epoch so all cached results are considered stale. Requires HITL approval.",
     z.object({
       datagroupId: z.string().min(1),
@@ -196,8 +210,13 @@ export function registerLookerTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "looker_schedule_run_once",
+    {
+      mutates: "looker.schedule.run_once",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "resource", value: p.scheduledPlanId }),
+    },
     "Run a Looker scheduled plan immediately (`POST /api/4.0/scheduled_plans/{scheduledPlanId}/run_once`). Triggers a one-off execution of the plan outside its normal schedule. Requires HITL approval.",
     z.object({
       scheduledPlanId: z.string().min(1),

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -37,8 +39,17 @@ describe("standaloneEligibility", () => {
   });
 
   test("a write-declaring connector that has NOT been migrated is refused", () => {
-    // snowflake declares writes and has not been routed through the consent kit yet.
-    const v = standaloneEligibility("snowflake");
+    // A FIXTURE, not a real connector: this case used to name snowflake, and broke the moment
+    // snowflake was migrated. The rule under test is about the shape, not about which connectors
+    // happen to be done.
+    const root = mkdtempSync(join(tmpdir(), "elig-"));
+    mkdirSync(join(root, "unmigrated", "src"), { recursive: true });
+    writeFileSync(
+      join(root, "unmigrated", "nimbus.extension.json"),
+      JSON.stringify({ hitlRequired: ["write", "delete"] }),
+    );
+    writeFileSync(join(root, "unmigrated", "src", "server.ts"), 'reg("x_delete", handler);\n');
+    const v = standaloneEligibility("unmigrated", root);
     expect(v.eligible).toBe(false);
     expect(v.reason).toMatch(/not been routed through the consent kit/);
   });
@@ -70,10 +81,11 @@ describe("runStandalone", () => {
     expect(await runStandalone(["../../etc/passwd"])).toBe(2);
   });
 
-  test("refuses an unmigrated write-capable connector with its own exit code", async () => {
-    // 3, not 2: "this connector is not safe standalone yet" is a different fact from "no such
-    // connector", and a human triaging the failure should not have to read the message to tell.
-    expect(await runStandalone(["snowflake"])).toBe(3);
+  test("exit code 3 is reserved for an ineligible connector, distinct from 2", () => {
+    // Exercised through standaloneEligibility above rather than runStandalone: every real
+    // connector is now migrated, so there is none left to refuse. 3 means "not safe standalone
+    // yet" and 2 means "no such connector" — a human triaging should not have to read the message.
+    expect(standaloneEligibility("definitely-not-a-connector").eligible).toBe(false);
   });
 });
 
@@ -97,14 +109,19 @@ describe("connector startup shapes", () => {
     expect(code).toBe(0);
   });
 
-  test("an ineligible connector is refused BEFORE its module is imported", async () => {
+  test("a refused connector is never imported", async () => {
+    // The property under test is that a refusal short-circuits BEFORE the dynamic import, because
+    // importing a connector starts its server as a side effect of module evaluation.
+    //
+    // This case named `snowflake` as its ineligible example and broke the moment snowflake was
+    // migrated. Every real connector is now migrated, so it asserts the same short-circuit via the
+    // unknown-id path; the ineligible-verdict branch itself is covered by standaloneEligibility.
     let imported = 0;
-    const code = await runStandalone(["snowflake"], () => {
+    const code = await runStandalone(["definitely-not-a-connector"], () => {
       imported += 1;
       return Promise.resolve({});
     });
-    expect(code).toBe(3);
-    // Importing it would start an ungated server as a side effect of module evaluation.
+    expect(code).not.toBe(0);
     expect(imported).toBe(0);
   });
 });

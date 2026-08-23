@@ -1,5 +1,6 @@
 import { FLUX_KINDS, type FluxKindEntry, trimTrailingSlash } from "@nimbus-dev/sdk";
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   runReadOnlyMcpConnector,
@@ -79,7 +80,15 @@ async function fluxReconcile(kind: string, namespace: string, name: string): Pro
   return requestedAt;
 }
 
-export function registerFluxTools(reg: ZodToolRegistrar): void {
+export function registerFluxTools(reg: ZodToolRegistrar, server: unknown): void {
+  // Despite the read-only helper's name, this connector exposes write tools. The consent
+  // kit needs the real server, which the helper now passes through as its second argument.
+  const registerWriteTool = createWriteToolRegistrar(server as ConsentServer, {
+    connector: "flux",
+    scopeEnv: "NIMBUS_MCP_FLUX_WRITE_SCOPE",
+    scopeKinds: ["namespace"],
+  });
+
   reg(
     "flux_list",
     "List Flux Custom Resources of one `kind` (default `kustomization`). Reads the Kubernetes API: all-namespaces by default, or scoped to `namespace` when given. `limit` (default 200) caps the returned `items` client-side. Returns the raw Kubernetes List envelope.",
@@ -131,8 +140,13 @@ export function registerFluxTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "flux_kustomization_reconcile",
+    {
+      mutates: "flux.kustomization.reconcile",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "namespace", value: p.namespace }),
+    },
     "Request a reconcile of a Flux Kustomization by annotating reconcile.fluxcd.io/requestedAt (PATCH the CR; requires HITL flux.kustomization.reconcile, and the SA's `patch` RBAC verb on kustomizations). Async — verify via the next metadata sync.",
     z.object({ namespace: z.string().min(1), name: z.string().min(1) }),
     async (p) =>
@@ -143,8 +157,13 @@ export function registerFluxTools(reg: ZodToolRegistrar): void {
       }),
   );
 
-  reg(
+  registerWriteTool(
     "flux_helmrelease_reconcile",
+    {
+      mutates: "flux.helmrelease.reconcile",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "namespace", value: p.namespace }),
+    },
     "Request a reconcile of a Flux HelmRelease by annotating reconcile.fluxcd.io/requestedAt (PATCH the CR; requires HITL flux.helmrelease.reconcile, and the SA's `patch` RBAC verb on helmreleases). Async — verify via the next metadata sync.",
     z.object({ namespace: z.string().min(1), name: z.string().min(1) }),
     async (p) =>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
@@ -107,7 +108,15 @@ async function expandReport(accessToken: string, report: unknown): Promise<unkno
   return { ...r, datasetTables };
 }
 
-export function registerPowerBiTools(reg: ZodToolRegistrar): void {
+export function registerPowerBiTools(reg: ZodToolRegistrar, server: unknown): void {
+  // Despite the read-only helper's name, this connector exposes write tools. The consent
+  // kit needs the real server, which the helper now passes through as its second argument.
+  const registerWriteTool = createWriteToolRegistrar(server as ConsentServer, {
+    connector: "powerbi",
+    scopeEnv: "NIMBUS_MCP_POWERBI_WRITE_SCOPE",
+    scopeKinds: ["workspace"],
+  });
+
   reg(
     "powerbi_list",
     "List Power BI reports (`GET /v1.0/myorg/reports`), each expanded with its dataset-table refs for lineage. The reports endpoint returns the full org list in one response and has no reliable server paging, so this is a single fetch returning ALL reports with `nextCursor: null` (`cursor`/`limit` are accepted for `_list` API symmetry but never truncate).",
@@ -166,9 +175,14 @@ export function registerPowerBiTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "powerbi_dataset_refresh",
-    "Trigger a dataset refresh (requires HITL powerbi.dataset.refresh). groupId optional (omit for My Workspace). Async (202).",
+    {
+      mutates: "powerbi.dataset.refresh",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "workspace", value: p.groupId ?? "my-workspace" }),
+    },
+    "Trigger a dataset refresh. groupId optional (omit for My Workspace). Async (202).",
     // groupId is nullish: indexed dashboard metadata stores `null` for "My Workspace" reports, and
     // Zod `.optional()` would reject a literal null — `.nullish()` accepts both null and undefined.
     z.object({ groupId: z.string().min(1).nullish(), datasetId: z.string().min(1) }),
@@ -199,9 +213,14 @@ export function registerPowerBiTools(reg: ZodToolRegistrar): void {
     },
   );
 
-  reg(
+  registerWriteTool(
     "powerbi_dataflow_refresh",
-    "Trigger a dataflow refresh (requires HITL powerbi.dataflow.refresh). Async (202).",
+    {
+      mutates: "powerbi.dataflow.refresh",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "workspace", value: p.groupId ?? "my-workspace" }),
+    },
+    "Trigger a dataflow refresh. Async (202).",
     z.object({ groupId: z.string().min(1), dataflowId: z.string().min(1) }),
     async (p) => {
       const token = await accessToken();

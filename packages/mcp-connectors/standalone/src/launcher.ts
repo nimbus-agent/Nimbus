@@ -50,8 +50,14 @@ export type Eligibility =
  * An unreadable manifest is treated as declaring a write. The cost is refusing one connector that
  * might have been fine; the alternative is starting one that is not.
  */
-export function standaloneEligibility(id: string): Eligibility {
-  const dir = join(connectorsDir(), id);
+export function standaloneEligibility(
+  id: string,
+  // Injectable root so a test can point at a fixture. Tests previously used a real connector as
+  // their "unmigrated" example and broke the moment it was migrated — a test whose meaning depends
+  // on unrelated work is a test that will lie eventually.
+  root: string = connectorsDir(),
+): Eligibility {
+  const dir = join(root, id);
   let declaresWrite: boolean;
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(dir, "nimbus.extension.json"), "utf8"));
