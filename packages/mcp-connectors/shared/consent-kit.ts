@@ -21,14 +21,40 @@ export type ConsentServer = {
     getClientCapabilities(): { elicitation?: unknown } | undefined;
     /** Fired after the client's `initialize` — the FIRST moment capabilities are knowable. */
     oninitialized?: (() => void) | undefined;
+    /**
+     * `requestedSchema` is typed to the restricted JSON-Schema subset the MCP spec allows, not
+     * `Record<string, unknown>`. The loose form does not satisfy the real `McpServer.elicitInput`,
+     * which is only discoverable by passing a real server — a hand-written fake accepts anything.
+     */
     elicitInput(
-      params: { mode: "form"; message: string; requestedSchema: Record<string, unknown> },
+      params: {
+        mode: "form";
+        message: string;
+        requestedSchema: {
+          type: "object";
+          properties: Record<
+            string,
+            { type: "boolean"; title?: string; description?: string; default?: boolean }
+          >;
+          required?: string[];
+        };
+      },
       options?: { timeout?: number },
-    ): Promise<{ action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> }>;
+    ): Promise<{
+      action: "accept" | "decline" | "cancel";
+      content?: Record<string, unknown> | undefined;
+    }>;
   };
+  /**
+   * `inputSchema` is `unknown` on purpose. The real signature wants the SDK's
+   * `ZodRawShapeCompat | AnySchema`, and the connector kit's `ZodObjectSchema["shape"]` is
+   * `Record<string, unknown>` — neither is assignable to the other, so a concrete type here makes
+   * a real `McpServer` fail to satisfy this interface. The value is passed straight through and
+   * never inspected by this kit.
+   */
   registerTool(
     name: string,
-    config: { description?: string; inputSchema?: Record<string, unknown> },
+    config: { description?: string; inputSchema?: unknown },
     cb: (args: unknown) => Promise<McpListResult>,
   ): ToolHandle;
   sendToolListChanged(): void;
@@ -69,7 +95,7 @@ async function consented(
   mutates: string,
   params: unknown,
 ): Promise<boolean> {
-  let res: { action: string; content?: Record<string, unknown> };
+  let res: { action: string; content?: Record<string, unknown> | undefined };
   try {
     res = await server.server.elicitInput({
       mode: "form",

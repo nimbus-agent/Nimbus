@@ -2,11 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { createWriteToolRegistrar, type WriteToolConfig } from "../../shared/consent-kit.ts";
 import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResult as jsonResult,
+  mcpJsonResultIfOk,
   requireProcessEnv,
+  type ZodObjectSchema,
 } from "../../shared/mcp-tool-kit.ts";
 import { makeRestFetcher, makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
@@ -28,6 +31,44 @@ const server = new McpServer({ name: "nimbus-github", version: "0.1.0" });
 
 const registerSimpleTool = createRegisterSimpleTool(server);
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING GitHub tool goes through here. Outside the gateway this adds the consent gate,
+ * the write-scope allow-list, the mutation budget and the audit record; inside the gateway it is a
+ * pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "github",
+  scopeEnv: "NIMBUS_MCP_GITHUB_WRITE_SCOPE",
+  scopeKinds: ["repo"],
+});
+
+/**
+ * The write-tool equivalent of `registerGithubTool`: same buildPath/buildInit shape, same fetch and
+ * result handling, routed through the write registrar. `scopeTargetOf` is supplied here rather
+ * than per tool — every GitHub mutation is scoped to one `owner/repo`, and deriving it centrally
+ * means a new write tool cannot forget it.
+ */
+function registerGithubWriteTool<T extends { owner: string; repo: string }>(
+  name: string,
+  cfg: Omit<WriteToolConfig<T>, "scopeTargetOf">,
+  description: string,
+  schema: ZodObjectSchema<T>,
+  buildPath: (parsed: T) => string,
+  buildInit?: (parsed: T) => RequestInit,
+): void {
+  registerWriteTool(
+    name,
+    { ...cfg, scopeTargetOf: (p) => ({ kind: "repo", value: `${p.owner}/${p.repo}` }) },
+    description,
+    schema,
+    async (parsed) => {
+      const token = requireProcessEnv("GITHUB_PAT");
+      const res = await ghFetch(token, buildPath(parsed), buildInit?.(parsed));
+      return mcpJsonResultIfOk("GitHub", res);
+    },
+  );
+}
 
 /** Standard GitHub tool: token → ghFetch(buildPath[, buildInit]) → mcpJsonResultIfOk("GitHub"). */
 const registerGithubTool = makeRestToolRegistrar({
@@ -119,9 +160,10 @@ const githubPrMergeSchema = repoSlugArgs.extend({
   commitTitle: z.string().max(500).optional(),
 });
 
-registerGithubTool(
+registerGithubWriteTool(
   "github_pr_merge",
-  "Merge a pull request (requires HITL repo.pr.merge).",
+  { mutates: "repo.pr.merge", recoverable: true },
+  "Merge a pull request.",
   githubPrMergeSchema,
   (parsed) => `${slug(parsed.owner, parsed.repo)}/pulls/${String(parsed.pullNumber)}/merge`,
   (parsed) => {
@@ -136,9 +178,10 @@ registerGithubTool(
   },
 );
 
-registerGithubTool(
+registerGithubWriteTool(
   "github_pr_close",
-  "Close a pull request without merging (requires HITL repo.pr.close).",
+  { mutates: "repo.pr.close", recoverable: true },
+  "Close a pull request without merging.",
   githubPrNumberSchema,
   (parsed) => `${slug(parsed.owner, parsed.repo)}/pulls/${String(parsed.pullNumber)}`,
   () => jsonInit("PATCH", { state: "closed" }),
@@ -183,8 +226,9 @@ const githubIssueCreateSchema = repoSlugArgs.extend({
   body: z.string().max(65_000).optional(),
 });
 
-registerGithubTool(
+registerGithubWriteTool(
   "github_issue_create",
+  { mutates: "repo.issue.create", recoverable: true },
   "Create a new issue in a repository.",
   githubIssueCreateSchema,
   (parsed) => `${slug(parsed.owner, parsed.repo)}/issues`,
@@ -225,9 +269,26 @@ const githubBranchDeleteSchema = repoSlugArgs.extend({
   branch: z.string().min(1).max(255),
 });
 
-reg(
+registerWriteTool(
   "github_branch_delete",
-  "Delete a branch by ref name (requires HITL repo.branch.delete).",
+  {
+    mutates: "repo.branch.delete",
+    // The only GitHub mutation here that cannot be undone from its own result, so the ref's SHA is
+    // captured BEFORE the delete. With it the branch can be recreated; without it the commit is
+    // only reachable by reflog on someone's clone.
+    recoverable: false,
+    capturePreState: async (parsed) => {
+      const token = requireProcessEnv("GITHUB_PAT");
+      const ref = `heads/${parsed.branch}`;
+      const res = await ghFetch(
+        token,
+        `${slug(parsed.owner, parsed.repo)}/git/ref/${encodeURIComponent(ref)}`,
+      );
+      return { ref, resolved: res.ok, sha: res.json };
+    },
+    scopeTargetOf: (parsed) => ({ kind: "repo", value: `${parsed.owner}/${parsed.repo}` }),
+  },
+  "Delete a branch by ref name.",
   githubBranchDeleteSchema,
   async (parsed) => {
     const token = requireProcessEnv("GITHUB_PAT");
@@ -246,9 +307,10 @@ const githubTagCreateSchema = repoSlugArgs.extend({
   sha: z.string().min(7).max(40),
 });
 
-registerGithubTool(
+registerGithubWriteTool(
   "github_tag_create",
-  "Create a lightweight tag pointing at a commit SHA (requires HITL repo.tag.create).",
+  { mutates: "repo.tag.create", recoverable: true },
+  "Create a lightweight tag pointing at a commit SHA.",
   githubTagCreateSchema,
   (parsed) => `${slug(parsed.owner, parsed.repo)}/git/refs`,
   (parsed) => jsonInit("POST", { ref: `refs/tags/${parsed.tag}`, sha: parsed.sha }),
