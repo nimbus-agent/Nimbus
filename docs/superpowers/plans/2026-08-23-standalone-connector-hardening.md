@@ -56,7 +56,7 @@ wire degrades to read-only rather than silently ungating.
 Create `packages/mcp-connectors/shared/connector-mode.test.ts`:
 
 ```ts
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
   getConnectorMode,
@@ -66,6 +66,11 @@ import {
 
 describe("connector mode", () => {
   beforeEach(() => {
+    resetConnectorModeForTests();
+  });
+  // bun test shares ONE process across test files, so an unreset lock would change the
+  // behaviour of every file that runs after this one.
+  afterEach(() => {
     resetConnectorModeForTests();
   });
 
@@ -157,7 +162,18 @@ export function getConnectorMode(): ConnectorMode {
   return current;
 }
 
-/** Test-only: clear the lock between cases. Never called from production code. */
+/**
+ * TEST-ONLY: clear the lock between cases. Never called from production code — the
+ * `audit:connector-consent` gate (Task 11) permits `setConnectorMode` only in the two sanctioned
+ * entrypoints, and this function exists so tests never need to reach for it.
+ *
+ * This matters more than it looks. `bun test` runs MANY TEST FILES IN ONE PROCESS — verified:
+ * two files sharing a module observed the same pid, and state set by the first was visible to the
+ * second. So a file that locks the mode and does not clear it changes the behaviour of every file
+ * that runs after it. Any test file that touches the mode must reset in BOTH `beforeEach` and
+ * `afterEach`: `beforeEach` protects this file from its predecessors, `afterEach` protects the
+ * suite from this one.
+ */
 export function resetConnectorModeForTests(): void {
   current = undefined;
 }
@@ -678,6 +694,8 @@ the client can prompt a human. The model cannot call a tool it never saw.
 export type ConsentServer = {
   readonly server: {
     getClientCapabilities(): { elicitation?: unknown } | undefined;
+    /** Fired after the client's `initialize` — the FIRST moment capabilities are knowable. */
+    oninitialized?: (() => void) | undefined;
     elicitInput(
       params: { mode: "form"; message: string; requestedSchema: Record<string, unknown> },
       options?: { timeout?: number },
@@ -688,10 +706,25 @@ export type ConsentServer = {
 };
 ```
 
+**Capabilities are NOT knowable at registration time.** Connectors call `registerWriteTool` at
+module scope, which runs before `server.connect(transport)` and long before the client's
+`initialize` arrives. Verified against the real SDK on 2026-08-23:
+
+```text
+getClientCapabilities() at module scope = undefined
+would register write tools? false
+```
+
+Reading capabilities during registration would therefore register **zero** write tools on *every*
+client, including one that fully supports elicitation. Registration is deferred to `oninitialized`
+instead — which is what the spec (§6) always said. The tests below drive `oninitialized` explicitly,
+because a fake server that answers `getClientCapabilities()` synchronously would hide exactly this
+bug.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { z } from "zod";
 
 import { resetConnectorModeForTests, setConnectorMode } from "./connector-mode.ts";
@@ -699,19 +732,36 @@ import { type ConsentServer, createWriteToolRegistrar } from "./consent-kit.ts";
 
 type Registered = { name: string };
 
-function fakeServer(opts: { elicitation: boolean }): ConsentServer & { registered: Registered[] } {
+/**
+ * `capsReadable` models the real SDK: capabilities are `undefined` until `initialize` lands.
+ * A fake that answers synchronously from the start would hide the whole bug this guards.
+ */
+function fakeServer(opts: {
+  elicitation: boolean;
+}): ConsentServer & { registered: Registered[]; handshake: () => void } {
   const registered: Registered[] = [];
-  return {
+  let capsReadable = false;
+  const srv = {
     registered,
     server: {
-      getClientCapabilities: () => (opts.elicitation ? { elicitation: {} } : {}),
+      getClientCapabilities: () =>
+        capsReadable ? (opts.elicitation ? { elicitation: {} } : {}) : undefined,
+      oninitialized: undefined as (() => void) | undefined,
       elicitInput: () => Promise.resolve({ action: "accept" as const, content: { confirm: true } }),
+    },
+    registerTool: (name: string) => {
+      registered.push({ name });
+      return { disable: () => undefined };
     },
     sendToolListChanged: () => undefined,
     sendLoggingMessage: () => Promise.resolve(),
-    // `register` is supplied by the registrar factory in the real impl; the fake records calls.
-    register: (name: string) => registered.push({ name }),
-  } as unknown as ConsentServer & { registered: Registered[] };
+    /** Simulate the client's `initialize` completing. */
+    handshake: () => {
+      capsReadable = true;
+      srv.server.oninitialized?.();
+    },
+  } as unknown as ConsentServer & { registered: Registered[]; handshake: () => void };
+  return srv;
 }
 
 const schema = z.object({ branch: z.string() });
@@ -726,6 +776,7 @@ describe("write tool registration", () => {
     const srv = fakeServer({ elicitation: false });
     const reg = createWriteToolRegistrar(srv, { connector: "github", scopeEnv: "X", scopeKinds: ["repo"] });
     reg("github_branch_delete", cfgFor(), "desc", schema, async () => ok());
+    // No handshake needed: the gateway does not consult client capabilities at all.
     expect(srv.registered.map((r) => r.name)).toEqual(["github_branch_delete"]);
   });
 
@@ -734,15 +785,33 @@ describe("write tool registration", () => {
     const srv = fakeServer({ elicitation: false });
     const reg = createWriteToolRegistrar(srv, { connector: "github", scopeEnv: "X", scopeKinds: ["repo"] });
     reg("github_branch_delete", cfgFor(), "desc", schema, async () => ok());
+    srv.handshake();
     expect(srv.registered).toEqual([]);
   });
 
-  test("standalone WITH elicitation registers it", () => {
+  test("standalone WITH elicitation registers it AFTER the handshake", () => {
     setConnectorMode("standalone");
     const srv = fakeServer({ elicitation: true });
     const reg = createWriteToolRegistrar(srv, { connector: "github", scopeEnv: "X", scopeKinds: ["repo"] });
     reg("github_branch_delete", cfgFor(), "desc", schema, async () => ok());
+
+    // THE REGRESSION GUARD. Capabilities are unknowable at module scope — verified against the
+    // real SDK, where getClientCapabilities() returns undefined before initialize. A registrar
+    // that decided here would register nothing, for every client, forever.
+    expect(srv.registered).toEqual([]);
+
+    srv.handshake();
     expect(srv.registered.map((r) => r.name)).toEqual(["github_branch_delete"]);
+  });
+
+  test("a second initialize does not double-register", () => {
+    setConnectorMode("standalone");
+    const srv = fakeServer({ elicitation: true });
+    const reg = createWriteToolRegistrar(srv, { connector: "github", scopeEnv: "X", scopeKinds: ["repo"] });
+    reg("github_branch_delete", cfgFor(), "desc", schema, async () => ok());
+    srv.handshake();
+    srv.handshake();
+    expect(srv.registered).toHaveLength(1);
   });
 
   test("a config with recoverable:false and NO capturePreState is rejected at registration", () => {
@@ -827,6 +896,51 @@ export function createWriteToolRegistrar(
     readonly scopeKinds: readonly string[];
   },
 ): WriteToolRegistrar {
+  const handles: ToolHandle[] = [];
+  const pending: Array<() => void> = [];
+  let flushed = false;
+
+  /**
+   * Decide the write surface, once, at the first moment client capabilities are knowable.
+   *
+   * Default-DENY: if the client cannot prompt a human, the queued tools are dropped and never
+   * appear in `tools/list` at all. Refusing at call time instead would still advertise a tool the
+   * model must not use.
+   */
+  function flushWriteTools(): void {
+    if (flushed) return;
+    flushed = true;
+    const caps = server.server.getClientCapabilities();
+    if (caps?.elicitation === undefined) {
+      pending.length = 0;
+      return;
+    }
+    for (const register of pending) register();
+    pending.length = 0;
+    // The tool list changed after `initialize`, so the client must be told to re-read it.
+    if (handles.length > 0) server.sendToolListChanged();
+  }
+
+  if (getConnectorMode() === "standalone") {
+    // An empty scope denies every mutation, which is the correct default but looks identical to a
+    // broken connector from the outside. Say so on stderr — safe for a stdio server, whose PROTOCOL
+    // channel is stdout; writing this to stdout would corrupt the JSON-RPC stream.
+    if (parseWriteScope(process.env[cfg.scopeEnv], cfg.scopeKinds).length === 0) {
+      process.stderr.write(
+        `nimbus-mcp ${cfg.connector}: ${cfg.scopeEnv} is unset or empty, so every write tool ` +
+          `will refuse. Set it to a comma-separated list of ${cfg.scopeKinds.join("|")}:value ` +
+          "terms to enable writes.\n",
+      );
+    }
+    // Chain rather than overwrite: another module may already own this hook, and clobbering it
+    // would silently disable whatever it did.
+    const prev = server.server.oninitialized;
+    server.server.oninitialized = (): void => {
+      prev?.();
+      flushWriteTools();
+    };
+  }
+
   return <T>(
     name: string,
     toolCfg: WriteToolConfig<T>,
@@ -843,16 +957,17 @@ export function createWriteToolRegistrar(
       );
     }
 
-    if (getConnectorMode() === "standalone") {
-      const caps = server.server.getClientCapabilities();
-      if (caps?.elicitation === undefined) {
-        // Default-DENY registration. Refusing at call time would still show the model a tool it
-        // must not use; not registering means it never appears in tools/list at all.
-        return;
-      }
+    // Gateway mode registers the RAW handler immediately: executor.ts (I2) is the gate there, and
+    // client capabilities are irrelevant. Scope, budget and connector-side audit do not apply —
+    // the gateway has its own.
+    if (getConnectorMode() === "gateway") {
+      registerOn(server, name, description, schema, handler, handles);
+      return;
     }
 
-    registerOn(server, name, description, schema, handler);
+    // Standalone: QUEUE it. Capabilities are unknowable until `initialize` has been received, and
+    // registration happens at module scope, so deciding here would deny every client.
+    pending.push(() => registerOn(server, name, description, schema, guarded, handles));
   };
 }
 ```
@@ -1021,13 +1136,18 @@ type Elicit = (p: { message: string }) => Promise<{
 type FakeServer = ConsentServer & {
   captured: ((args: unknown) => Promise<McpListResult>) | undefined;
   onUnregister?: () => void;
+  /** Simulate the client's `initialize` completing, which is what flushes the write tools. */
+  handshake: () => void;
 };
 
 function serverWith(elicit: Elicit): FakeServer {
+  let capsReadable = false;
   const srv: FakeServer = {
     captured: undefined,
     server: {
-      getClientCapabilities: () => ({ elicitation: {} }),
+      // Mirrors the real SDK: undefined until initialize.
+      getClientCapabilities: () => (capsReadable ? { elicitation: {} } : undefined),
+      oninitialized: undefined,
       elicitInput: (p) => elicit(p),
     },
     registerTool: (_name, _config, cb) => {
@@ -1040,6 +1160,10 @@ function serverWith(elicit: Elicit): FakeServer {
     },
     sendToolListChanged: () => undefined,
     sendLoggingMessage: () => Promise.resolve(),
+    handshake: () => {
+      capsReadable = true;
+      srv.server.oninitialized?.();
+    },
   } as unknown as FakeServer;
   return srv;
 }
@@ -1071,6 +1195,9 @@ function registerAndGet(
     z.object({ branch: z.string() }),
     handler,
   );
+  // Standalone write tools are queued at registration and flushed on initialize. Without this the
+  // tool is never registered and `captured` stays undefined — which is the bug, not the test.
+  srv.handshake();
   const cb = srv.captured;
   if (cb === undefined) throw new Error("tool was not registered");
   return (args) => cb(args);
@@ -1536,6 +1663,19 @@ describe("nimbusSpawn", () => {
     expect(r.code).toBe(0);
     expect(r.stdout.length).toBe(2_000_000);
   });
+
+  test("multi-byte UTF-8 spanning chunk boundaries is not corrupted", async () => {
+    // The previous case is pure ASCII and cannot catch per-chunk decoding. This one can: a large
+    // run of 3-byte characters guarantees some character straddles a pipe chunk boundary.
+    const r = await nimbusSpawn(
+      [process.execPath, "-e", "process.stdout.write('豆'.repeat(400_000))"],
+      {},
+    );
+    expect(r.code).toBe(0);
+    expect(r.stdout.length).toBe(400_000);
+    // U+FFFD REPLACEMENT CHARACTER is what per-chunk decoding produces at a split boundary.
+    expect(r.stdout).not.toContain("�");
+  });
 });
 ```
 
@@ -1565,19 +1705,28 @@ export function nimbusSpawn(
   if (bin === undefined) return Promise.resolve({ code: 1, stdout: "", stderr: "empty command" });
   return new Promise((resolveP) => {
     const child = spawn(bin, args, { env: { ...process.env, ...env } });
-    let stdout = "";
-    let stderr = "";
+    // Accumulate RAW BUFFERS and decode once at the end. Decoding each chunk with
+    // `chunk.toString("utf8")` corrupts any multi-byte character that straddles a chunk boundary,
+    // and chunk boundaries are a function of pipe timing — so it fails intermittently, on
+    // non-ASCII data, in production. `aws`/`gcloud` JSON routinely contains non-ASCII.
+    const outChunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => {
-      stdout += c.toString("utf8");
+      outChunks.push(c);
     });
     child.stderr.on("data", (c: Buffer) => {
-      stderr += c.toString("utf8");
+      errChunks.push(c);
+    });
+    const decode = (): { stdout: string; stderr: string } => ({
+      stdout: Buffer.concat(outChunks).toString("utf8"),
+      stderr: Buffer.concat(errChunks).toString("utf8"),
     });
     child.on("error", (e) => {
-      resolveP({ code: 1, stdout, stderr: `${stderr}${e.message}` });
+      const d = decode();
+      resolveP({ code: 1, stdout: d.stdout, stderr: `${d.stderr}${e.message}` });
     });
     child.on("close", (code) => {
-      resolveP({ code: code ?? 1, stdout, stderr });
+      resolveP({ code: code ?? 1, ...decode() });
     });
   });
 }
@@ -1840,7 +1989,16 @@ const MODE_SETTER_ALLOWED = [
   "packages/mcp-connectors/shared/connector-mode.ts",
 ];
 
-const MUTATING_RE = /"(POST|PUT|PATCH|DELETE)"/;
+/**
+ * A mutating HTTP method as a quoted literal, in any of the three quote styles. Biome normalises
+ * to double quotes, but a template literal is untouched by it, so all three are matched.
+ *
+ * BOUNDED BY DESIGN: this cannot see a method built from a variable (`method: verb`) or assembled
+ * at runtime, and it cannot tell a GraphQL read POST from a GraphQL write POST. That is precisely
+ * why write status is DECLARED via `registerWriteTool` rather than detected — this rule is a net
+ * for the obvious cases, not the mechanism. Do not extend it into a substitute for the declaration.
+ */
+const MUTATING_RE = /(["'`])(POST|PUT|PATCH|DELETE)\1/;
 
 /**
  * Rule 2 is ADVISORY in Part 1 and blocking at the end of Part 2.
@@ -2111,3 +2269,20 @@ git commit -m "docs(connectors): NOTICE and machine-readable standalone security
 | §9 B6 launcher, Node target, spawn shim | 9, 10 |
 | §10 B7 NOTICE, instructions, trademark | 12 |
 | §11 testing and gates | every task, plus Final verification |
+
+## Plan review disposition (2026-08-23)
+
+Reviewed in `…-standalone-connector-hardening-review.md`. All five items accepted; two premises were
+verified by execution rather than reasoning, and both held.
+
+| Item | Verdict | What changed |
+|---|---|---|
+| 1 — capabilities are unreadable at registration time | **Accepted; it was fatal** | Proven against the real SDK: `getClientCapabilities()` is `undefined` at module scope, so Task 5 as drafted registered **zero** write tools on every client. Registration is now queued and flushed on `oninitialized` — which is what spec §6 always said, so this was plan-vs-spec drift. Tasks 5–7 fakes now model capabilities as unreadable until a `handshake()`, and Task 5 carries an explicit regression guard asserting nothing is registered before it. |
+| Q1 — per-chunk UTF-8 decoding | **Accepted** | `nimbusSpawn` accumulates raw `Buffer`s and decodes once. The existing 2 MB case is pure ASCII and could never catch this, so a 400,000-character multi-byte case was added that asserts no U+FFFD appears. |
+| Q2 — cross-test mode contamination | **Accepted; premise verified** | Two test files sharing a module reported the same pid, and state set by the first was visible to the second — `bun test` runs many files in one process. Every mode-touching `describe` now resets in **both** `beforeEach` and `afterEach`, and `resetConnectorModeForTests` documents why. |
+| Q3 — silent deny on empty scope | **Accepted** | Standalone startup warns on **stderr** when the scope env is unset. Deliberately not stdout: that is the JSON-RPC channel for a stdio server and writing there would corrupt the protocol stream. |
+| Q4 — mutation regex only matched double quotes | **Accepted, with the real limit stated** | Widened to `/(["'`])(POST\|PUT\|PATCH\|DELETE)\1/`. The deeper bound is unchanged and now documented: no regex can see a method held in a variable, or tell a GraphQL read POST from a write POST. That is why write status is declared, not detected, and why this rule is advisory in Part 1. |
+
+The first item is the one worth remembering: the drafted tests would have passed, because the fake
+server answered `getClientCapabilities()` synchronously from construction. The test encoded the bug
+rather than catching it — which is why the fakes now model the handshake explicitly.
