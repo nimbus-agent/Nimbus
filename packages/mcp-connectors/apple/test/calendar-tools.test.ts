@@ -409,3 +409,98 @@ describe("apple_calendar_event_delete", () => {
     ).rejects.toThrow("404 Not Found");
   });
 });
+
+describe("apple calendar write tools in STANDALONE mode", () => {
+  // The consent config — scopeTargetOf and capturePreState — only executes on the guarded path,
+  // which gateway mode skips entirely. Without a standalone case those arrows are never called and
+  // the file sits below the branch floor, so this covers the behaviour AND the branches together.
+  beforeEach(() => {
+    resetConnectorModeForTests();
+    setConnectorMode("standalone");
+    process.env["NIMBUS_MCP_APPLE_WRITE_SCOPE"] =
+      "calendar:work,calendar:default,calendar:/e/1.ics";
+  });
+  afterEach(() => {
+    resetConnectorModeForTests();
+    delete process.env["NIMBUS_MCP_APPLE_WRITE_SCOPE"];
+  });
+
+  function standaloneServer(accept: boolean) {
+    const tools: Record<string, (input: unknown) => Promise<unknown>> = {};
+    let ready = false;
+    const srv = {
+      server: {
+        getClientCapabilities: () => (ready ? { elicitation: {} } : undefined),
+        oninitialized: undefined as (() => void) | undefined,
+        elicitInput: () =>
+          Promise.resolve({ action: accept ? "accept" : "decline", content: { confirm: accept } }),
+      },
+      registerTool: (name: string, _cfg: unknown, cb: (i: unknown) => Promise<unknown>) => {
+        tools[name] = cb;
+        return { disable: () => undefined };
+      },
+      tool: () => undefined,
+      sendToolListChanged: () => undefined,
+      sendLoggingMessage: () => Promise.resolve(),
+      handshake: () => {
+        ready = true;
+        srv.server.oninitialized?.();
+      },
+    };
+    return { srv, tools };
+  }
+
+  const client: CalDavClient = {
+    listCalendars: async (): Promise<CalendarRef[]> => [],
+    listEvents: async () => [],
+    putEvent: async () => undefined,
+    deleteEvent: async () => undefined,
+  } as unknown as CalDavClient;
+
+  it("an approved create runs, exercising scopeTargetOf with an explicit calendar", async () => {
+    const { srv, tools } = standaloneServer(true);
+    registerAppleCalendarTools(srv as never, { calendar: client, now: () => "20260601T000000Z" });
+    srv.handshake();
+    // It reaches the CONNECTOR's own error, not a gate refusal — which is the point: scope
+    // matched, consent was granted, and the handler ran. The stub exposes no calendars.
+    await expect(
+      tools.apple_calendar_event_create?.({
+        calendar: "work",
+        summary: "s",
+        start: "20260601T000000Z",
+        end: "20260601T010000Z",
+      }),
+    ).rejects.toThrow(/Calendar "work" not found/);
+  });
+
+  it('an omitted calendar scopes to "default" — the nullish arm', async () => {
+    const { srv, tools } = standaloneServer(true);
+    registerAppleCalendarTools(srv as never, { calendar: client, now: () => "20260601T000000Z" });
+    srv.handshake();
+    // Scoped to "default" via the nullish arm, so it passes the allow-list and reaches the
+    // connector's own error rather than being refused as out of scope.
+    await expect(
+      tools.apple_calendar_event_create?.({
+        summary: "s",
+        start: "20260601T000000Z",
+        end: "20260601T010000Z",
+      }),
+    ).rejects.toThrow(/No calendar available/);
+  });
+
+  it("a DECLINED delete mutates nothing, and capturePreState never runs", async () => {
+    const { srv, tools } = standaloneServer(false);
+    registerAppleCalendarTools(srv as never, { calendar: client, now: () => "20260601T000000Z" });
+    srv.handshake();
+    const res = await tools.apple_calendar_event_delete?.({ href: "/e/1.ics" });
+    expect(JSON.stringify(res)).toMatch(/not approved/i);
+  });
+
+  it("an approved delete captures the href as pre-state", async () => {
+    const { srv, tools } = standaloneServer(true);
+    registerAppleCalendarTools(srv as never, { calendar: client, now: () => "20260601T000000Z" });
+    srv.handshake();
+    const res = await tools.apple_calendar_event_delete?.({ href: "/e/1.ics" });
+    expect(JSON.stringify(res)).not.toMatch(/not approved/i);
+  });
+});
