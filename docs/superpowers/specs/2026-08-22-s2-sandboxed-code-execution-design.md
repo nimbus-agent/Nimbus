@@ -250,6 +250,20 @@ Per the triple rule, the wiring, the `docs/SECURITY-INVARIANTS.md` section, and 
 
 ---
 
+## 11. Corrections from implementation (2026-08-23)
+
+Four things this document asserted that building it disproved. Recorded here rather than silently edited, because the reasoning that was wrong is more useful than a clean spec.
+
+1. **§4's audit status vocabulary was unstorable.** It specified `"approved" | "rejected" | "timeout"`, but `audit_log.hitl_status` is CHECK-constrained to `approved` / `rejected` / `not_required` (`index/schema-sql.ts`). A refusal and a denial both record `rejected`, distinguished by an `outcome` field. `not_required` is deliberately never used here: every other caller uses it for actions that legitimately skip HITL, so on a `code.execute` row it would read as "ran without needing approval".
+
+2. **§3's confinement predicate was wrong on Linux.** `isFullyActive()` reports the `nimbus-sandbox-helper`, which exists *solely* for per-host network filtering. §3 itself observed that Linux degradation is network-only and therefore harmless here — and then gated on it anyway, which made the capability unusable on every Linux machine lacking a helper it never uses, CI included. The predicate is now `SandboxRunner.canConfine(policy)`. §3's Windows analysis was right; the Linux conclusion did not follow from its own evidence.
+
+3. **Posture is asserted after validation, not before it.** Unchanged: before consent. But an argument error is the caller's to fix and deterministic, while a degraded sandbox is environmental, so where both are true "your path was relative" beats "the helper is missing".
+
+4. **`--allow-fs-write` did not work, and no unit test could have caught it.** The connector-tuned seccomp filter omits `ftruncate`, so `fs.writeFileSync` and `Bun.write` were SIGSYS-killed with **no stderr at all** — the sandbox permitting a write that then died silently. Isolated by bisection, not guessed. Nothing short of running against a real sandbox on Linux would have found it, which is the argument for §8's integration row being non-optional.
+
+---
+
 ## 10. Review disposition (2026-08-22)
 
 All eight items from [the design review](./2026-08-22-s2-sandboxed-code-execution-design-review.md) were accepted; the review is answered in full, with two amendments to what it asked for.

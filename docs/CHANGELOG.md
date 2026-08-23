@@ -8,6 +8,40 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-23 — The machine becomes somewhere the agent can work, starting with the owner.**
+  `nimbus exec` runs code inside the three-OS sandbox that shipped in #1294, behind an approval
+  prompt showing the **verbatim body** — never a digest, because the human is the entire security
+  boundary here and "run script sha256:a1b2…" is a rubber stamp with extra steps. First delivery in
+  Spine S2. Invariant **I33**, static rule **D23**, no schema change.
+  **The order inside `exec/exec-gate.ts` is the invariant, not an implementation detail:** every
+  refusal decidable *without* the owner — the default-off `[code_execution]` kill-switch, the
+  `[policy.capabilities.ai_v2]` org lockoff, runtime resolution from a registry rather than a caller
+  argv, absolute-path validation — happens before the prompt, so a disabled capability never
+  advertises its own existence by prompting; and the sandbox posture is asserted before consent, so
+  the owner is never asked to approve something that could not have been confined. The script is
+  read **once**: re-reading at spawn would mean approving body X while body Y runs.
+  **"No network" includes loopback, and that is the point.** The interesting target is not the
+  internet but the Gateway's own IPC socket and `127.0.0.1` HTTP API. That holds via three unrelated
+  mechanisms — Linux `--unshare-net`, macOS `deny default` with no allow block emitted, Windows
+  AppContainer without `internetClient` — which is the most fragile way for a security property to
+  be true, so it now has a per-platform test asserting a script cannot reach the Gateway's own port.
+  The whole `exec` IPC namespace is LAN-forbidden, not merely `exec.run`: admitting
+  `exec.approvalRespond` would let a paired peer *approve* code running on the owner's machine.
+  **Two defects that only a real Linux sandbox could surface, both fixed here.** The gate first asked
+  `isFullyActive()` — a policy-independent question that on Linux reports a helper existing *solely*
+  for per-host network filtering. Since this slice grants no network, and `install-sandbox-deps.sh`
+  installs bubblewrap but not that helper, the capability was unusable on every Linux machine
+  including CI, gated on a dependency it never uses; `SandboxRunner` now answers
+  `canConfine(policy)`, keeping the per-platform reasoning in the PAL. And the connector-tuned
+  seccomp filter omitted `ftruncate`, so `fs.writeFileSync` and `Bun.write` were SIGSYS-killed with
+  no stderr at all — the sandbox permitting a write that then died silently, making
+  `--allow-fs-write` nearly useless for idiomatic code.
+  **Deliberately not shipped**, so the row is not misread: the agent-callable path (the LLM cannot
+  trigger an execution — that bound is what makes one human approval sufficient), `--allow-net`,
+  `nimbus exec --interactive`, Deno/Python runtimes, and remote sandbox adapters. `wrapToolOutput`
+  (**I11**) is correspondingly not exercised, and `exec` appends no `egress_ledger` row — true by
+  construction, since no network is grantable, rather than by an appender someone forgot.
+
 - **2026-08-21 — A web clip can finally say who wrote it.**
   `POST /v1/clips` gains one optional `source` object — `author`, `publishedAt` (epoch ms),
   `siteName`, `lang`, `leadImage` — which lands at `metadata.source`. Until now a clip was the

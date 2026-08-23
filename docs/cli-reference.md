@@ -1106,6 +1106,73 @@ response.
 
 ---
 
+## Sandboxed Code Execution
+
+### `nimbus exec`
+
+Run code inside the platform sandbox, behind an approval prompt showing the
+exact body that will execute. Invariant **I33**.
+
+**Off by default.** Add to `nimbus.toml`:
+
+```toml
+[code_execution]
+enabled           = true       # DEFAULT false
+max_wall_clock_ms = 30000
+max_output_bytes  = 1048576
+allowed_runtimes  = ["bun"]
+```
+
+With `enabled = false` the gate refuses *before* prompting, so a fresh install
+has no arbitrary-code-execution path and the capability cannot be discovered by
+triggering a prompt.
+
+```bash
+nimbus exec --code 'console.log(1 + 1)'
+nimbus exec --file ./script.ts --allow-fs-write ./out --timeout 5000
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--code <src>` | Inline source. Mutually exclusive with `--file`; one is required. |
+| `--file <path>` | Script to run. Read **once**, before the prompt — the approved bytes are the executed bytes. |
+| `--runtime <id>` | Registry id. Only `bun` ships today; `--file` otherwise maps by extension (`.ts`/`.js`/`.mjs`) and **rejects** an unrecognised one rather than guessing. |
+| `--allow-fs-read <path>` | Repeatable. Resolved to absolute against **your** cwd before it is sent. |
+| `--allow-fs-write <path>` | Repeatable. Same resolution. |
+| `--timeout <ms>` | Wall-clock budget, capped by `max_wall_clock_ms`. |
+
+**There is no `--allow-net`, and no network is grantable.** That includes
+loopback — a script cannot reach the Gateway's own IPC socket or HTTP API. A
+request that asks for network is rejected, not silently downgraded.
+
+**Exit codes.** A script's own exit code passes through unchanged, so these are
+distinct from it:
+
+| Code | Meaning |
+| --- | --- |
+| *n* | The script exited with *n*. |
+| `10` | You denied the approval (or cancelled the prompt). |
+| `11` | The approval timed out. |
+| `12` | Refused before consent — disabled by config or org policy, unknown runtime, relative grant path, missing file. |
+| `13` | Killed: wall-clock exceeded. |
+| `14` | Killed: output cap exceeded. |
+
+**The LLM cannot invoke this.** `nimbus exec` is owner-only in this release, so
+no indexed content can cause code to run. That bound is what makes a single
+human approval a sufficient boundary.
+
+**Org lockoff.** A signed `nimbus.policy.toml` can disable it fleet-wide:
+
+```toml
+[policy.capabilities.ai_v2]
+code_execution = false
+```
+
+Only `false` carries meaning — `= true` is a no-op, because policy may tighten
+the local posture and never loosen it.
+
+---
+
 ## Interactive Sessions
 
 ### `nimbus tui`
