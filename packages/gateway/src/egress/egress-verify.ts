@@ -186,7 +186,23 @@ export function egressHead(db: Database): { head: string; count: number } {
 
 export function listEgress(
   db: Database,
-  opts: { since?: number | undefined; until?: number | undefined; limit?: number | undefined },
+  opts: {
+    since?: number | undefined;
+    until?: number | undefined;
+    limit?: number | undefined;
+    /**
+     * Newest-first is OPT-IN, and the ascending default is load-bearing.
+     *
+     * `proveWindow` calls this function and `digestEgressWindow` hashes the rows IN THE ORDER it
+     * returns them. Flipping this default would silently change the digest of every window, so a
+     * receipt issued yesterday would no longer match one computed today for the same window — a
+     * signed artifact broken by a change that looks like pagination. There is a test pinning it.
+     */
+    order?: "asc" | "desc" | undefined;
+    /** Exclusive cursor: return rows with a LOWER id than this. Pages backwards, and composes
+     *  with `since`/`until` rather than replacing the window. */
+    before?: number | undefined;
+  },
 ): EgressRow[] {
   const since = opts.since ?? 0;
   const until = opts.until ?? Number.MAX_SAFE_INTEGER;
@@ -194,13 +210,19 @@ export function listEgress(
   // could force an expensive scan/allocation on a large ledger.
   const requested = opts.limit !== undefined && opts.limit > 0 ? Math.floor(opts.limit) : 1000;
   const limit = Math.min(requested, MAX_EGRESS_LIST_LIMIT);
+  const before = opts.before !== undefined && opts.before > 0 ? Math.floor(opts.before) : null;
+  // Interpolated from a two-value union that never touches caller input — anything other than the
+  // literal "desc" is ASC. Every genuine parameter below stays bound.
+  const direction = opts.order === "desc" ? "DESC" : "ASC";
   const rows = db
     .query(
       `SELECT id, timestamp, source_type, source_id, destination, method, payload_summary,
               hitl_status, result_status, row_hash, prev_hash
-       FROM egress_ledger WHERE timestamp >= ? AND timestamp <= ? ORDER BY id ASC LIMIT ?`,
+       FROM egress_ledger
+       WHERE timestamp >= ? AND timestamp <= ? AND (? IS NULL OR id < ?)
+       ORDER BY id ${direction} LIMIT ?`,
     )
-    .all(since, until, limit) as RawRow[];
+    .all(since, until, before, before, limit) as RawRow[];
   return rows.map(toRow);
 }
 
