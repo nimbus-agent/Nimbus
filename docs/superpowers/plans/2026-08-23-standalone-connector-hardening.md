@@ -1953,6 +1953,22 @@ describe("check-connector-consent", () => {
     expect(checkConnectorConsent(root)).toEqual([]);
   });
 
+  test("flags a connector whose MANIFEST declares write, even with no HTTP verb in source", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "packages/mcp-connectors/evil/nimbus.extension.json"),
+      JSON.stringify({ hitlRequired: ["write"] }),
+    );
+    // Mutates via a CLI, so no verb literal appears anywhere. Ten real connectors look like this.
+    await writeFile(
+      join(root, "packages/mcp-connectors/evil/src/server.ts"),
+      'await nimbusSpawn(["kubectl", "delete", "pod", name], {});
+',
+    );
+    const v = checkConnectorConsent(root);
+    expect(v.map((x) => x.rule)).toContain("mutation-declared");
+  });
+
   test("flags a mutating handler with no registerWriteTool", async () => {
     const root = await fixture();
     await writeFile(
@@ -2009,6 +2025,32 @@ const MUTATING_RE = /(["'`])(POST|PUT|PATCH|DELETE)\1/;
  */
 export const MUTATION_RULE_BLOCKING = false;
 
+/**
+ * Whether the connector owning `rel` declares `write` or `delete` in `hitlRequired`.
+ *
+ * This is the RELIABLE mutation signal. Measured across all 94 connectors: 34 carry an HTTP verb
+ * literal, but a further 10 declare write/delete while mutating through the CLI, the filesystem or
+ * a mail protocol — invisible to any regex over source text. 50 declare nothing and carry no verb.
+ */
+function connectorDeclaresWrite(root: string, rel: string): boolean {
+  const parts = rel.split("/");
+  const name = parts[2];
+  if (name === undefined) return false;
+  try {
+    const manifest: unknown = JSON.parse(
+      readFileSync(join(root, "packages/mcp-connectors", name, "nimbus.extension.json"), "utf8"),
+    );
+    if (typeof manifest !== "object" || manifest === null) return false;
+    const hitl = (manifest as Record<string, unknown>)["hitlRequired"];
+    return Array.isArray(hitl) && hitl.some((h) => h === "write" || h === "delete");
+  } catch {
+    // An unreadable manifest is an OBSERVATION failure, not a finding. Fail SAFE here by treating
+    // it as declaring a write: the cost is a false positive on one connector, versus certifying a
+    // mutating connector as needing no declaration.
+    return true;
+  }
+}
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
@@ -2048,10 +2090,17 @@ export function checkConnectorConsent(root: string = resolve(import.meta.dir, ".
         });
       }
 
+      // PRIMARY signal: the connector's own manifest. `hitlRequired` naming "write" or "delete" is
+      // authored per connector and is transport-independent, so it catches the ten connectors that
+      // mutate through a channel no verb scan can see — CLI (aws, gcp, azure, kubernetes, iac),
+      // the filesystem (obsidian), and mail protocols (imap, apple, protonmail, discord).
+      // Keying only on HTTP verb literals would certify all ten as needing no declaration.
+      const manifestDeclaresWrite = connectorDeclaresWrite(root, rel);
+
       if (
         rel.startsWith("packages/mcp-connectors/") &&
         rel.includes("/src/") &&
-        MUTATING_RE.test(src) &&
+        (MUTATING_RE.test(src) || manifestDeclaresWrite) &&
         !src.includes("registerWriteTool")
       ) {
         out.push({
