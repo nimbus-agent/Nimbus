@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.15.0](https://github.com/nimbus-agent/Nimbus/compare/v2.14.0...v2.15.0) (2026-08-23)
+
+
+### Features
+
+* **connectors:** consent-gated standalone connectors, so writes cannot run ungated off-gateway ([#1318](https://github.com/nimbus-agent/Nimbus/issues/1318)) ([e4d948a](https://github.com/nimbus-agent/Nimbus/commit/e4d948aa3c03b4a22d603b0f816d3f98bf2c3fe6))
+
+
+### Bug Fixes
+
+* **test:** stop the Windows deploy.preflight hook timeout and clear the Sonar backlog ([#1316](https://github.com/nimbus-agent/Nimbus/issues/1316)) ([139aa40](https://github.com/nimbus-agent/Nimbus/commit/139aa40307d73083bfeb955d264858d1ad2e54c9))
+
 ## [2.14.0](https://github.com/nimbus-agent/Nimbus/compare/v2.13.4...v2.14.0) (2026-08-23)
 
 
