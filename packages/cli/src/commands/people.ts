@@ -135,62 +135,71 @@ type PeopleListDoc = {
 // render.
 type PeopleListResult = PersonJson[] | PeopleListDoc | MissingSubstrateRefusal;
 
-async function runPeopleList(args: string[]): Promise<void> {
-  const { unlinkedOnly, limit, notReviewed, sinceRaw, explain, wantJson } = parseListFlags(args);
+interface PeopleListParams {
+  unlinkedOnly: boolean;
+  limit: number;
+  notReviewed?: boolean;
+  sinceMs?: number;
+  explain?: boolean;
+}
 
-  let sinceMs: number | undefined;
-  if (sinceRaw !== undefined) {
-    sinceMs = Date.now() - parseSinceDurationToMs(sinceRaw);
-  }
-
-  const params: {
-    unlinkedOnly: boolean;
-    limit: number;
-    notReviewed?: boolean;
-    sinceMs?: number;
-    explain?: boolean;
-  } = { unlinkedOnly, limit };
-  if (notReviewed) {
+/** Omit the optionals rather than sending them undefined, so they don't appear in the request. */
+function buildListParams(f: {
+  unlinkedOnly: boolean;
+  limit: number;
+  notReviewed: boolean;
+  sinceMs: number | undefined;
+  explain: boolean;
+}): PeopleListParams {
+  const params: PeopleListParams = { unlinkedOnly: f.unlinkedOnly, limit: f.limit };
+  if (f.notReviewed) {
     params.notReviewed = true;
   }
-  if (sinceMs !== undefined) {
-    params.sinceMs = sinceMs;
+  if (f.sinceMs !== undefined) {
+    params.sinceMs = f.sinceMs;
   }
-  if (explain) {
+  if (f.explain) {
     params.explain = true;
   }
+  return params;
+}
 
-  const r = await withGatewayIpc((c) => c.call<PeopleListResult>("people.list", params));
+/**
+ * `--not-reviewed` is WINDOWED (spec § 4.4): with no `--since` the window is ALL TIME
+ * ("has not reviewed EVER"), never a silently-narrowed recent window. That must be visible
+ * in what is printed, not just true of what was asked for — otherwise a caller reading the
+ * output has no way to tell an all-time answer from a recent one.
+ *
+ * Extracted from a nested ternary (S3358); the three outcomes now read top to bottom.
+ */
+function windowLineFor(notReviewed: boolean, sinceRaw: string | undefined): string | undefined {
+  if (!notReviewed) {
+    return undefined;
+  }
+  if (sinceRaw !== undefined) {
+    return `Window: reviews since --since ${sinceRaw}`;
+  }
+  return 'Window: ALL TIME — no --since given, so this reports "never reviewed, ever", not a recent window';
+}
 
-  if (isMissingSubstrateRefusal(r)) {
-    printRefusal(r, wantJson);
-    process.exitCode = 1;
+function printListJson(
+  r: PersonJson[] | PeopleListDoc,
+  notReviewed: boolean,
+  sinceRaw: string | undefined,
+  sinceMs: number | undefined,
+): void {
+  if (Array.isArray(r)) {
+    console.log(JSON.stringify(r, null, 2));
     return;
   }
-
-  // `--not-reviewed` is WINDOWED (spec § 4.4): with no `--since` the window is ALL TIME
-  // ("has not reviewed EVER"), never a silently-narrowed recent window. That must be visible
-  // in what is printed, not just true of what was asked for — otherwise a caller reading the
-  // output has no way to tell an all-time answer from a recent one.
-  const windowLine = notReviewed
-    ? sinceRaw !== undefined
-      ? `Window: reviews since --since ${sinceRaw}`
-      : 'Window: ALL TIME — no --since given, so this reports "never reviewed, ever", not a recent window'
-    : undefined;
-
-  if (wantJson) {
-    if (Array.isArray(r)) {
-      console.log(JSON.stringify(r, null, 2));
-      return;
-    }
-    const doc: Record<string, unknown> = { ...r };
-    if (notReviewed) {
-      doc["window"] = { sinceMs: sinceMs ?? 0, allTime: sinceRaw === undefined };
-    }
-    console.log(JSON.stringify(doc, null, 2));
-    return;
+  const doc: Record<string, unknown> = { ...r };
+  if (notReviewed) {
+    doc["window"] = { sinceMs: sinceMs ?? 0, allTime: sinceRaw === undefined };
   }
+  console.log(JSON.stringify(doc, null, 2));
+}
 
+function printListText(r: PersonJson[] | PeopleListDoc, windowLine: string | undefined): void {
   const people = Array.isArray(r) ? r : r.people;
   const gaps = Array.isArray(r) ? undefined : r.gaps;
   const meta = Array.isArray(r) ? undefined : r.meta;
@@ -211,6 +220,28 @@ async function runPeopleList(args: string[]): Promise<void> {
   if (explainBlock !== undefined) {
     printExplainBlock(explainBlock);
   }
+}
+
+async function runPeopleList(args: string[]): Promise<void> {
+  const { unlinkedOnly, limit, notReviewed, sinceRaw, explain, wantJson } = parseListFlags(args);
+
+  const sinceMs =
+    sinceRaw === undefined ? undefined : Date.now() - parseSinceDurationToMs(sinceRaw);
+
+  const params = buildListParams({ unlinkedOnly, limit, notReviewed, sinceMs, explain });
+  const r = await withGatewayIpc((c) => c.call<PeopleListResult>("people.list", params));
+
+  if (isMissingSubstrateRefusal(r)) {
+    printRefusal(r, wantJson);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (wantJson) {
+    printListJson(r, notReviewed, sinceRaw, sinceMs);
+    return;
+  }
+  printListText(r, windowLineFor(notReviewed, sinceRaw));
 }
 
 async function runPeopleSearch(args: string[]): Promise<void> {

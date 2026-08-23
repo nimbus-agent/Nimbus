@@ -24,7 +24,11 @@ import { buildItemListSql } from "../index/item-list-query.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { LocalIndex as LocalIndexClass } from "../index/local-index.ts";
 import type { NegationExplain } from "../index/negation-predicates.ts";
-import { runNoDownstreamIncidentQuery, runNotTouchingQuery } from "../index/negation-query.ts";
+import {
+  type NegationOutcome,
+  runNoDownstreamIncidentQuery,
+  runNotTouchingQuery,
+} from "../index/negation-query.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
 import type { ConsentCoordinator } from "./consent.ts";
@@ -335,29 +339,43 @@ function rpcDbSetMeta(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsR
 // file reads the same as before.
 type QueryExplain = NegationExplain;
 
-function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
+interface QueryItemsRequest {
+  readonly sinceMs: number | undefined;
+  readonly untilMs: number | undefined;
+  readonly limit: number;
+  readonly services: string[];
+  readonly types: string[];
+  readonly notTouching: string | undefined;
+  readonly noDownstreamIncident: boolean;
+  readonly explain: boolean;
+}
+
+/** A finite number floored to an int, or `undefined` for anything else. */
+function optFiniteInt(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : undefined;
+}
+
+/** The string members of an array param; `[]` for a non-array. */
+function stringArrayParam(v: unknown): string[] {
+  return Array.isArray(v) ? (v as unknown[]).filter((x): x is string => typeof x === "string") : [];
+}
+
+/**
+ * Coerce and VALIDATE `index.queryItems` params. Split out of `rpcIndexQueryItems` for cognitive
+ * complexity (S3776) — every guard below is unchanged, including the fail-closed reasoning that
+ * is the whole point of this surface.
+ */
+function parseQueryItemsParams(params: unknown): QueryItemsRequest {
   const rec = asRecord(params);
-  const rawSinceMs = rec?.["sinceMs"];
-  const sinceMs =
-    typeof rawSinceMs === "number" && Number.isFinite(rawSinceMs)
-      ? Math.floor(rawSinceMs)
-      : undefined;
-  const rawUntilMs = rec?.["untilMs"];
-  const untilMs =
-    typeof rawUntilMs === "number" && Number.isFinite(rawUntilMs)
-      ? Math.floor(rawUntilMs)
-      : undefined;
+  const sinceMs = optFiniteInt(rec?.["sinceMs"]);
+  const untilMs = optFiniteInt(rec?.["untilMs"]);
   const limitRaw = rec?.["limit"];
   const limit =
     typeof limitRaw === "number" && Number.isFinite(limitRaw)
       ? Math.min(1000, Math.max(1, Math.floor(limitRaw)))
       : 50;
-  const services = Array.isArray(rec?.["services"])
-    ? (rec["services"] as unknown[]).filter((x): x is string => typeof x === "string")
-    : [];
-  const types = Array.isArray(rec?.["types"])
-    ? (rec["types"] as unknown[]).filter((x): x is string => typeof x === "string")
-    : [];
+  const services = stringArrayParam(rec?.["services"]);
+  const types = stringArrayParam(rec?.["types"]);
   const rawNotTouching = rec?.["notTouching"];
   // A PRESENT but unusable `notTouching` must NEVER silently fall through to the plain path: that
   // would answer a different question ("every item") than the one asked ("items not touching X"),
@@ -404,6 +422,35 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
   }
   const explain = rec?.["explain"] === true;
 
+  return { sinceMs, untilMs, limit, services, types, notTouching, noDownstreamIncident, explain };
+}
+
+/**
+ * Shape a negation outcome into the RPC result. Both predicate branches produced this block
+ * verbatim; one definition means they cannot drift into answering in different shapes.
+ */
+function negationResult<Row, Gaps>(
+  outcome: NegationOutcome<Row, Gaps>,
+  limit: number,
+): DiagnosticsRpcOutcome {
+  if (outcome.kind === "refused") {
+    return { kind: "hit", value: outcome.refusal };
+  }
+  return {
+    kind: "hit",
+    value: {
+      items: outcome.rows,
+      meta: { limit, total: outcome.rows.length },
+      gaps: outcome.gaps,
+      ...(outcome.explain === undefined ? {} : { explain: outcome.explain }),
+    },
+  };
+}
+
+function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
+  const { sinceMs, untilMs, limit, services, types, notTouching, noDownstreamIncident, explain } =
+    parseQueryItemsParams(params);
+
   const baseParams = {
     services,
     types,
@@ -430,18 +477,7 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
       limit,
       explain,
     });
-    if (outcome.kind === "refused") {
-      return { kind: "hit", value: outcome.refusal };
-    }
-    return {
-      kind: "hit",
-      value: {
-        items: outcome.rows,
-        meta: { limit, total: outcome.rows.length },
-        gaps: outcome.gaps,
-        ...(outcome.explain === undefined ? {} : { explain: outcome.explain }),
-      },
-    };
+    return negationResult(outcome, limit);
   }
 
   // --no-downstream-incident: same probe-first shape, over the `correlates_with` substrate.
@@ -455,18 +491,7 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
       limit,
       explain,
     });
-    if (outcome.kind === "refused") {
-      return { kind: "hit", value: outcome.refusal };
-    }
-    return {
-      kind: "hit",
-      value: {
-        items: outcome.rows,
-        meta: { limit, total: outcome.rows.length },
-        gaps: outcome.gaps,
-        ...(outcome.explain === undefined ? {} : { explain: outcome.explain }),
-      },
-    };
+    return negationResult(outcome, limit);
   }
 
   // Plain path — no negation predicate requested. `--explain` still works here: the spec (§ 5)

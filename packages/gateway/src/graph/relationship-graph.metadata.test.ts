@@ -179,6 +179,14 @@ describe("upsertGraphEntity — compile-time co-owned-type guard", () => {
       externalId: "pr:1",
       label: "PR #1",
     });
+
+    // The runtime assertion is NOT that guard. It is here so the case cannot quietly become a
+    // no-op: a body that asserts nothing passes just as happily if `upsertGraphEntity` stops
+    // writing anything at all, which is the failure a compile-time-only test cannot see.
+    const row = db
+      .query("SELECT type, label FROM graph_entity WHERE external_id = ?")
+      .get("pr:1") as { type: string; label: string } | null;
+    expect(row).toEqual({ type: "pr", label: "PR #1" });
   });
 
   test("a co-owned literal type is rejected at compile time", () => {
@@ -189,5 +197,16 @@ describe("upsertGraphEntity — compile-time co-owned-type guard", () => {
       externalId: "file:/repo:z.ts",
       label: "z.ts",
     });
+
+    // `@ts-expect-error` is the assertion that matters — it fails `typecheck` the moment this
+    // call stops being an error. What the runtime check adds is WHY that guard has to exist:
+    // nothing here refuses the write. The row lands with `service` NULL — un-namespaced, the
+    // exact state `upsertGraphEntityNamespaced` exists to prevent — so the type system is the
+    // ONLY thing between a co-owned entity and a namespace-less row. Verified, not assumed.
+    const row = db
+      .query("SELECT service FROM graph_entity WHERE external_id = ?")
+      .get("file:/repo:z.ts") as { service: string | null } | null;
+    expect(row).not.toBeNull();
+    expect(row?.service).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
-import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
+import { AgentCoordinator, type SubTask, type SubTaskResult } from "../engine/coordinator.ts";
 import type { BlameLookup } from "../security/blame-store.ts";
 import { type BlameSpawn, ensureBlameLine } from "./_lib/blame-on-demand.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
@@ -76,26 +76,24 @@ function makeSubAgent(
   };
 }
 
-export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief> {
-  const start = performance.now();
-  const preflightGaps: GapNote[] = [];
-  const empty = detectEmptyIndex(ctx.db);
-  if (empty !== null) preflightGaps.push(empty);
+interface WhyLaneResolution {
+  readonly subject: WhySubject | null;
+  readonly blame: BlameLookup | null;
+  readonly pr: PrForSha | null;
+  /** `undefined` on the ref arm (the field is omitted entirely); `null` when a change */
+  /** was asked about and could not be named. The two are NOT interchangeable. */
+  readonly changeSubject: WhyChangeSubject | null | undefined;
+  readonly queryRef: string;
+  readonly queryLine: number | null;
+}
 
-  let subject: WhySubject | null = null;
-  let blame: BlameLookup | null = null;
-  let pr: PrForSha | null = null;
-  let changeSubject: WhyChangeSubject | null | undefined;
-  let queryRef: string;
-  let queryLine: number | null;
-
-  if (isWhyPrInput(input)) {
-    queryRef = input.prUrl;
-    queryLine = null;
-    const resolved = resolvePrSubject(ctx.db, input.prUrl);
-    // null, not absent: the caller asked about a change and we could not name it.
-    changeSubject = resolved.ok ? resolved.subject : null;
-    pr = resolved.ok
+/** The `--pr` arm: resolve the change subject and the PR shape the lanes consume. */
+function resolvePrArm(db: Database, prUrl: string): WhyLaneResolution {
+  const resolved = resolvePrSubject(db, prUrl);
+  return {
+    subject: null,
+    blame: null,
+    pr: resolved.ok
       ? {
           entityId: resolved.subject.entityId,
           number: resolved.subject.number,
@@ -103,24 +101,76 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
           url: resolved.subject.url,
           modifiedAt: resolved.subject.modifiedAt,
         }
-      : null;
-  } else {
-    queryRef = input.ref;
-    queryLine = input.line ?? parseRef(input.ref).line;
-    subject = resolveWhySubject(ctx.db, ctx.roots, input);
-    // Resolve-once design: two lanes need the blamed SHA, and running
-    // `ensureBlameLine` inside parallel sub-agents could double-spawn on a
-    // cold line. Resolve it here, once, and hand the result to every lane.
-    if (subject !== null && subject.lineNo !== null) {
-      blame = await ensureBlameLine(
-        ctx.db,
-        { repoRoot: subject.repoRoot, filePath: subject.filePath },
-        subject.lineNo,
-        ctx.spawn,
-      );
-    }
-    pr = blame === null ? null : findPrForSha(ctx.db, blame.commitSha);
+      : null,
+    // null, not absent: the caller asked about a change and we could not name it.
+    changeSubject: resolved.ok ? resolved.subject : null,
+    queryRef: prUrl,
+    queryLine: null,
+  };
+}
+
+/**
+ * The ref arm. Resolve-once design: two lanes need the blamed SHA, and running `ensureBlameLine`
+ * inside parallel sub-agents could double-spawn on a cold line. Resolve it here, once, and hand
+ * the result to every lane.
+ */
+async function resolveRefArm(
+  input: Exclude<WhyInput, { prUrl: string }>,
+  ctx: WhyContext,
+): Promise<WhyLaneResolution> {
+  const subject = resolveWhySubject(ctx.db, ctx.roots, input);
+  let blame: BlameLookup | null = null;
+  if (subject !== null && subject.lineNo !== null) {
+    blame = await ensureBlameLine(
+      ctx.db,
+      { repoRoot: subject.repoRoot, filePath: subject.filePath },
+      subject.lineNo,
+      ctx.spawn,
+    );
   }
+  return {
+    subject,
+    blame,
+    pr: blame === null ? null : findPrForSha(ctx.db, blame.commitSha),
+    changeSubject: undefined,
+    queryRef: input.ref,
+    queryLine: input.line ?? parseRef(input.ref).line,
+  };
+}
+
+/** Decode the sub-agent results into findings + gap notes; a failed lane becomes a gap, not a throw. */
+function collectLaneOutput(results: readonly SubTaskResult[]): {
+  findings: WhyFinding[];
+  gaps: GapNote[];
+} {
+  const findings: WhyFinding[] = [];
+  const gaps: GapNote[] = [];
+  for (const r of results) {
+    if (r.status !== "done" || r.text === undefined) {
+      gaps.push({
+        category: "missing_connector",
+        detail: `why sub-agent #${r.taskIndex} failed${
+          r.errorText === undefined ? "" : `: ${r.errorText}`
+        }`,
+      });
+      continue;
+    }
+    const decoded: SubAgentResult = JSON.parse(r.text);
+    if (decoded.findings !== undefined) findings.push(...decoded.findings);
+    if (decoded.gap !== undefined) gaps.push(decoded.gap);
+  }
+  return { findings, gaps };
+}
+
+export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief> {
+  const start = performance.now();
+  const preflightGaps: GapNote[] = [];
+  const empty = detectEmptyIndex(ctx.db);
+  if (empty !== null) preflightGaps.push(empty);
+
+  const { subject, blame, pr, changeSubject, queryRef, queryLine } = isWhyPrInput(input)
+    ? resolvePrArm(ctx.db, input.prUrl)
+    : await resolveRefArm(input, ctx);
 
   const lane: LaneInput = {
     subject,
@@ -153,23 +203,7 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
   ];
 
   const results = await coordinator.run(tasks);
-
-  const allFindings: WhyFinding[] = [];
-  const laneGaps: GapNote[] = [];
-  for (const r of results) {
-    if (r.status !== "done" || r.text === undefined) {
-      laneGaps.push({
-        category: "missing_connector",
-        detail: `why sub-agent #${r.taskIndex} failed${
-          r.errorText === undefined ? "" : `: ${r.errorText}`
-        }`,
-      });
-      continue;
-    }
-    const decoded: SubAgentResult = JSON.parse(r.text);
-    if (decoded.findings !== undefined) allFindings.push(...decoded.findings);
-    if (decoded.gap !== undefined) laneGaps.push(decoded.gap);
-  }
+  const { findings: allFindings, gaps: laneGaps } = collectLaneOutput(results);
 
   const gaps = aggregateMissingEntityTypes([...preflightGaps, ...laneGaps]);
 

@@ -560,8 +560,12 @@ describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform
     // of silently skipping. This is the only test bun-test-registers on CI when the precondition
     // is unmet; the five real spawn tests below are deliberately not registered in that case —
     // running them anyway would only produce confusing secondary failures on top of this one.
+    // `expect.unreachable` rather than a bare `throw`: the two fail this test identically, but an
+    // assertion-free body is what S2699 flags — and it is right to, because that shape is
+    // indistinguishable from a test that simply forgot to assert. Reaching this line IS the
+    // failure, which is exactly what `unreachable` says.
     it("fails loudly instead of silently skipping when its CI prerequisite is missing", () => {
-      throw new Error(
+      expect.unreachable(
         `sandbox-wrapper-spawn: CI precondition unmet — ${MISSING}. ` +
           "This suite must never silently skip on CI: that is the exact hole it exists to " +
           "close. Install the missing sandbox dependency for this platform's CI job and re-run.",

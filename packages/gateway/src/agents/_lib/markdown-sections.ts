@@ -304,6 +304,37 @@ const BARE_GAPS_LABEL = /^\s*(?:[-*+]\s*)?\*{0,2}gaps\*{0,2}:?\s*$/i;
  * Fence-aware through the shared `headingLines` scan's sibling logic: a fenced YAML example
  * containing `category:` is documentation, not fabrication.
  */
+/**
+ * Walk back from the `category:` line over contiguous field lines, then over a single label line
+ * if one is present. Split out for cognitive complexity (S3776); the scan is unchanged.
+ */
+function envelopeStart(lines: readonly string[], fenced: readonly boolean[], i: number): number {
+  let start = i;
+  while (start > 0 && !fenced[start - 1] && ENVELOPE_FIELD_LINE.test(lines[start - 1] ?? "")) {
+    start--;
+  }
+  if (start > 0 && !fenced[start - 1] && BARE_GAPS_LABEL.test(lines[start - 1] ?? "")) {
+    start--;
+  }
+  return start;
+}
+
+/** Walk forward over field lines and the blank lines between them. */
+function envelopeEnd(lines: readonly string[], fenced: readonly boolean[], i: number): number {
+  let end = i;
+  for (let j = i + 1; j < lines.length; j++) {
+    if (fenced[j]) break;
+    const line = lines[j] ?? "";
+    if (ENVELOPE_FIELD_LINE.test(line)) {
+      end = j;
+      continue;
+    }
+    if (line.trim() === "") continue;
+    break;
+  }
+  return end;
+}
+
 export function stripSerializedGapEnvelope(markdown: string): string {
   const lines = markdown.split("\n");
   const fenced = fencedLineFlags(lines);
@@ -313,28 +344,8 @@ export function stripSerializedGapEnvelope(markdown: string): string {
     if (fenced[i] || drop.has(i)) continue;
     if (!CATEGORY_LINE.test(lines[i] ?? "")) continue;
 
-    // Walk back over contiguous field lines, then over a single label line if present.
-    let start = i;
-    while (start > 0 && !fenced[start - 1] && ENVELOPE_FIELD_LINE.test(lines[start - 1] ?? "")) {
-      start--;
-    }
-    if (start > 0 && !fenced[start - 1] && BARE_GAPS_LABEL.test(lines[start - 1] ?? "")) {
-      start--;
-    }
-
-    // Walk forward over field lines and the blank lines between them.
-    let end = i;
-    for (let j = i + 1; j < lines.length; j++) {
-      if (fenced[j]) break;
-      const line = lines[j] ?? "";
-      if (ENVELOPE_FIELD_LINE.test(line)) {
-        end = j;
-        continue;
-      }
-      if (line.trim() === "") continue;
-      break;
-    }
-
+    const start = envelopeStart(lines, fenced, i);
+    const end = envelopeEnd(lines, fenced, i);
     for (let j = start; j <= end; j++) drop.add(j);
   }
 

@@ -21,17 +21,20 @@ describe("stripMetaPreamble (F4)", () => {
     expect(out).toContain("**main**");
   });
 
-  test("leaves a brief with no preamble untouched", () => {
-    const md = "# Glossary\n\n- **main** — 21 mention(s)";
-    expect(stripMetaPreamble(md)).toBe(md);
-  });
-
-  test("never strips a renderer-authored disclosure", () => {
+  // These cases assert one property — the input comes back byte-identical — and differ only in
+  // WHICH input. Parameterized (S5976) so the next case is a row rather than a fourth copy of the
+  // same body, and so a change to the property is made in one place.
+  test.each([
+    ["a brief with no preamble", "# Glossary\n\n- **main** — 21 mention(s)"],
     // `negotiate`'s window clause lives in exactly this position and is the thing I31 exists to
     // protect. Stripping it to remove model chatter would be a far worse trade than leaving the
     // chatter in.
-    const md =
-      "_window: last 90d — the index records last-modified, not created._\n\n# Negotiation brief";
+    [
+      "a renderer-authored disclosure",
+      "_window: last 90d — the index records last-modified, not created._\n\n# Negotiation brief",
+    ],
+    ["ordinary prose above a heading", "A short summary of the week.\n\n# Catchup"],
+  ])("leaves %s untouched", (_case, md) => {
     expect(stripMetaPreamble(md)).toBe(md);
   });
 
@@ -41,10 +44,5 @@ describe("stripMetaPreamble (F4)", () => {
     const md =
       "# Decisions\n\nWe chose Postgres based on the provided benchmark numbers.\n\n## Gaps\n\n- none";
     expect(stripMetaPreamble(md)).toContain("based on the provided benchmark");
-  });
-
-  test("ordinary prose above a heading survives", () => {
-    const md = "A short summary of the week.\n\n# Catchup";
-    expect(stripMetaPreamble(md)).toBe(md);
   });
 });

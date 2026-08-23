@@ -159,6 +159,63 @@ function dedupeFileRowsByPath(rows: readonly ChangedFileRow[]): ChangedFileRow[]
  * Pages are mapped and concatenated as they arrive rather than being buffered as raw JSON, so a
  * large PR never holds more than one page of payload in memory.
  */
+interface PrFilePages {
+  readonly rows: ChangedFileRow[];
+  /** True only when a page reported `hasMore === false` — i.e. we hold the FULL path set. */
+  readonly pagesExhausted: boolean;
+  readonly failed: boolean;
+  readonly rateLimited: boolean;
+}
+
+/**
+ * Walk one PR's changed-file pages. Split out of `runPrFilePass` for cognitive complexity
+ * (S3776) — the page walk and the per-candidate bookkeeping are separate concerns, and the
+ * three mutable flags the caller used to thread through the loop are now this function's
+ * return value.
+ */
+async function collectPrFilePages(
+  ctx: SyncContext,
+  args: { readonly service: Provider; readonly fetchPage: FetchPage },
+  c: PrFileCandidate,
+): Promise<PrFilePages> {
+  const rows: ChangedFileRow[] = [];
+  for (let page = 1; page <= MAX_PAGES_PER_PR; page++) {
+    // `tryAcquire`, never `acquire`: at least one existing 429 handler in this codebase
+    // (`_lib/gitlab/pipelines.ts`) calls `rateLimiter.penalise()` WITHOUT throwing, by
+    // design — its own caller keeps going rather than aborting the sync. `acquire` would
+    // then SLEEP OUT that whole penalty window right here, blocking one of only
+    // `maxConcurrentSyncs` scheduler slots for the full `Retry-After`. `tryAcquire` never
+    // sleeps (see its doc comment in `sync/rate-limiter.ts`) — it takes a token if one is
+    // free and returns `false` instantly otherwise — so a penalised or exhausted provider
+    // is detected without blocking, and the pass simply stops for THIS tick.
+    const ok = await ctx.rateLimiter.tryAcquire(args.service);
+    if (!ok) {
+      return { rows, pagesExhausted: false, failed: false, rateLimited: true };
+    }
+    const res = await args.fetchPage(c, page);
+    if (res === null) {
+      // Warn on the SILENT failure path too, not just on the throw path below. `null` is what
+      // every forge closure returns for a non-ok response (a 404 on a deleted or now-private
+      // repo, most of all) and for an unparseable body — precisely the failures that repeat
+      // forever on the same PRs. Unlogged, the head-of-line stall that
+      // `PR_ATTEMPT_BUDGET_MULTIPLIER` bounds would be invisible: coverage would sit still
+      // with nothing in the log to say why.
+      ctx.logger.warn(
+        { service: args.service, itemId: c.itemId, page },
+        "PR changed-file page unavailable (non-fatal, PR left uncovered, will retry next tick)",
+      );
+      return { rows, pagesExhausted: false, failed: true, rateLimited: false };
+    }
+    rows.push(...res.rows);
+    if (!res.hasMore) {
+      return { rows, pagesExhausted: true, failed: false, rateLimited: false };
+    }
+  }
+  // Ran out of page budget with more still on offer — not exhausted, so the caller marks the
+  // record truncated.
+  return { rows, pagesExhausted: false, failed: false, rateLimited: false };
+}
+
 export async function runPrFilePass(
   ctx: SyncContext,
   args: {
@@ -180,46 +237,13 @@ export async function runPrFilePass(
     if (recorded >= MAX_PRS_PER_TICK) {
       break;
     }
-    const collected: ChangedFileRow[] = [];
-    let pagesExhausted = false;
-    let failed = false;
-    let rateLimited = false;
     try {
-      for (let page = 1; page <= MAX_PAGES_PER_PR; page++) {
-        // `tryAcquire`, never `acquire`: at least one existing 429 handler in this codebase
-        // (`_lib/gitlab/pipelines.ts`) calls `rateLimiter.penalise()` WITHOUT throwing, by
-        // design — its own caller keeps going rather than aborting the sync. `acquire` would
-        // then SLEEP OUT that whole penalty window right here, blocking one of only
-        // `maxConcurrentSyncs` scheduler slots for the full `Retry-After`. `tryAcquire` never
-        // sleeps (see its doc comment in `sync/rate-limiter.ts`) — it takes a token if one is
-        // free and returns `false` instantly otherwise — so a penalised or exhausted provider
-        // is detected without blocking, and the pass simply stops for THIS tick.
-        const ok = await ctx.rateLimiter.tryAcquire(args.service);
-        if (!ok) {
-          rateLimited = true;
-          break;
-        }
-        const res = await args.fetchPage(c, page);
-        if (res === null) {
-          // Warn on the SILENT failure path too, not just on the throw path below. `null` is what
-          // every forge closure returns for a non-ok response (a 404 on a deleted or now-private
-          // repo, most of all) and for an unparseable body — precisely the failures that repeat
-          // forever on the same PRs. Unlogged, the head-of-line stall that
-          // `PR_ATTEMPT_BUDGET_MULTIPLIER` bounds would be invisible: coverage would sit still
-          // with nothing in the log to say why.
-          ctx.logger.warn(
-            { service: args.service, itemId: c.itemId, page },
-            "PR changed-file page unavailable (non-fatal, PR left uncovered, will retry next tick)",
-          );
-          failed = true;
-          break;
-        }
-        collected.push(...res.rows);
-        if (!res.hasMore) {
-          pagesExhausted = true;
-          break;
-        }
-      }
+      const {
+        rows: collected,
+        pagesExhausted,
+        failed,
+        rateLimited,
+      } = await collectPrFilePages(ctx, args, c);
       if (rateLimited) {
         // No coverage row for this candidate — same handling as a failed fetch, and the
         // selector re-queues it next tick. Stop the WHOLE pass, not just this candidate: every

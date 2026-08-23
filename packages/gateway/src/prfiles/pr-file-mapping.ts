@@ -48,8 +48,9 @@ export function mapGithubPrFiles(payload: unknown): ChangedFileRow[] {
     const status = normaliseGithubStatus(stringField(rec, "status") ?? "modified");
     const previous = stringField(rec, "previous_filename");
     if (status === "renamed" && previous !== undefined && previous !== "") {
-      out.push({ path, status: "renamed", counterpartPath: previous });
-      out.push({ path: previous, status: "renamed", counterpartPath: path });
+      // Was two inline pushes duplicating `pushPair` below; GitHub's `filename` is the NEW path
+      // and `previous_filename` the OLD one, so the argument order preserves the emitted order.
+      pushPair(out, previous, path);
       continue;
     }
     out.push({ path, status, counterpartPath: null });
@@ -59,8 +60,35 @@ export function mapGithubPrFiles(payload: unknown): ChangedFileRow[] {
 
 /** Emit one row per touched path, collapsing a rename's two paths into two rows. */
 function pushPair(out: ChangedFileRow[], oldPath: string, newPath: string): void {
-  out.push({ path: newPath, status: "renamed", counterpartPath: oldPath });
-  out.push({ path: oldPath, status: "renamed", counterpartPath: newPath });
+  out.push(
+    { path: newPath, status: "renamed", counterpartPath: oldPath },
+    { path: oldPath, status: "renamed", counterpartPath: newPath },
+  );
+}
+
+/**
+ * GitLab's three booleans, resolved to a status. Extracted from a nested ternary (S3358) — and
+ * the extraction is what brings `mapGitlabMrFiles` back under the complexity ceiling.
+ */
+function gitlabStatus(rec: Record<string, unknown>): ChangedFileStatus {
+  if (rec["new_file"] === true) {
+    return "added";
+  }
+  if (rec["deleted_file"] === true) {
+    return "removed";
+  }
+  return "modified";
+}
+
+/** Bitbucket's `status` string, narrowed to the three we store. Same reasoning as above. */
+function bitbucketStatus(raw: string): ChangedFileStatus {
+  if (raw === "added") {
+    return "added";
+  }
+  if (raw === "removed") {
+    return "removed";
+  }
+  return "modified";
 }
 
 /**
@@ -88,9 +116,7 @@ export function mapGitlabMrFiles(payload: unknown): ChangedFileRow[] {
     if (path === "") {
       continue;
     }
-    const status: ChangedFileStatus =
-      rec["new_file"] === true ? "added" : rec["deleted_file"] === true ? "removed" : "modified";
-    out.push({ path, status, counterpartPath: null });
+    out.push({ path, status: gitlabStatus(rec), counterpartPath: null });
   }
   return out;
 }
@@ -129,9 +155,7 @@ export function mapBitbucketPrFiles(payload: unknown): ChangedFileRow[] {
     if (path === "") {
       continue;
     }
-    const status: ChangedFileStatus =
-      raw === "added" ? "added" : raw === "removed" ? "removed" : "modified";
-    out.push({ path, status, counterpartPath: null });
+    out.push({ path, status: bitbucketStatus(raw), counterpartPath: null });
   }
   return out;
 }

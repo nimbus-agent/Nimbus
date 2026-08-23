@@ -1,8 +1,5 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { dispatchPreflightRpc } from "../../../src/ipc/preflight-rpc.ts";
@@ -12,26 +9,30 @@ import {
 } from "../../fixtures/preflight/payment-service/seed.ts";
 
 describe("E2E (in-process): deploy.preflight", () => {
-  let dir: string;
   let db: Database;
 
+  // `:memory:`, not a temp-dir file — matching every sibling scenario in this directory
+  // (catchup / decisions / expert / glossary / impact all do the same).
+  //
+  // This hook runs the whole migration chain, and it does so once PER TEST. Against a file it
+  // measured 145-161 ms locally versus 12-13 ms in memory, and the CI runner is ~13-18x slower
+  // at exactly this work — temp-dir SQLite. That put the hook at ~3 s on Windows with nothing
+  // between it and Bun's 5 s hook budget, so the suite did not fail on an assertion, it failed
+  // with "a beforeEach/afterEach hook timed out for this test" on `main` (runs 32611067170 and
+  // 32638974730). The sibling test was passing at 2970 ms — over half the budget — which is the
+  // shape of a flake, not a pass.
+  //
+  // Nothing here needs a file: `dispatchPreflightRpc` takes the handle, never a path. Dropping
+  // the temp dir also drops the afterEach that existed solely to survive Windows file locking
+  // (#972, #973) — an unfinalized statement can make `db.close()` a silent no-op that pins the
+  // file open, and that hook was itself competing for the same timeout budget.
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-e2e-"));
-    db = new Database(join(dir, "nimbus.db"));
+    db = new Database(":memory:");
     runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   });
 
   afterEach(() => {
     db.close();
-    try {
-      // maxRetries: 0 / retryDelay: 0 — an unfinalized statement can make db.close() a
-      // silent no-op that pins the file open, and Windows will otherwise burn the hook's
-      // timeout budget retrying the delete. Fail fast and leak the temp dir instead: it's
-      // the accepted trade-off (#972, #973). Do NOT turn this back into a blocking retry.
-      rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
-    } catch {
-      /* non-fatal */
-    }
   });
 
   it("returns a warn-verdict envelope on the fixture", async () => {

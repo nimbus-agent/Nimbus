@@ -29,13 +29,24 @@ interface ServiceScoped {
  * Relevance order WITHIN a service is preserved: the input is already ranked, and reshuffling it
  * would discard the ordering the search just computed.
  */
-export function capPerService<T extends ServiceScoped>(items: readonly T[], limit: number): T[] {
+/**
+ * Group by service in input order, so each bucket keeps the relevance ordering search computed.
+ *
+ * Split out of `capPerService` for cognitive complexity (S3776): the grouping and the round-robin
+ * drain are independent steps, and reading either one no longer means holding the other in mind.
+ */
+function bucketByService<T extends ServiceScoped>(items: readonly T[]): Map<string, T[]> {
   const byService = new Map<string, T[]>();
   for (const item of items) {
     const bucket = byService.get(item.service);
     if (bucket === undefined) byService.set(item.service, [item]);
     else bucket.push(item);
   }
+  return byService;
+}
+
+export function capPerService<T extends ServiceScoped>(items: readonly T[], limit: number): T[] {
+  const byService = bucketByService(items);
   if (byService.size <= 1) return items.slice(0, limit);
 
   const out: T[] = [];

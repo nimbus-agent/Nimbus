@@ -40,8 +40,12 @@ function makeInMemoryVault(tokensJson?: string): NimbusVault {
 
 /** Turns a fixed hit list into the `IndexSearch` seam, ignoring the query and limit. */
 function makeIndexSearch(hits: IndexHit[]): IndexSearch {
-  return async (_query: string, limit: number) =>
-    Promise.resolve({ hits: hits.slice(0, limit), semanticAvailable: true });
+  // `async` already wraps the return value in a promise; `Promise.resolve` on top of it is
+  // redundant (S7746). The seam's signature is unchanged.
+  return async (_query: string, limit: number) => ({
+    hits: hits.slice(0, limit),
+    semanticAvailable: true,
+  });
 }
 
 /** Kicks off synthesis fire-and-forget — same contract as `BriefsWriteSurface.startRun`. */
@@ -203,7 +207,8 @@ function citeAllTokensLlm(): BriefSynthesizerLlm {
         text: `Finding ${i + 1} supported by ${t}.`,
         refs: [t],
       }));
-      return Promise.resolve({
+      // `generateJson` is already `async`, so the wrapper is redundant (S7746).
+      return {
         text: JSON.stringify({
           summary: "Synthesized summary citing every available token.",
           findings,
@@ -212,7 +217,7 @@ function citeAllTokensLlm(): BriefSynthesizerLlm {
         }),
         model: "stub-cite-all-tokens",
         remote: false,
-      });
+      };
     },
   };
 }

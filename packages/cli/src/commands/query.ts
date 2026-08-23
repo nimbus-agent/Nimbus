@@ -43,9 +43,7 @@ function formatDurationMs(ms: number): string {
   return `${String(ms)}ms`;
 }
 
-export async function runQuery(args: string[]): Promise<void> {
-  if (args.length === 0 || args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
-    console.log(`nimbus query — structured index reads (Gateway IPC)
+const QUERY_HELP = `nimbus query — structured index reads (Gateway IPC)
 
 Usage:
   nimbus query --service <id> [--type <t>] [--since 7d] [--limit N] [--json | --pretty]
@@ -76,7 +74,96 @@ Output:
   piped (default)→ compact JSON, one row per array (jq-friendly)
   --json         → pretty JSON (2-space indent), good for inspection
   --pretty       → force cards even when piped
-`);
+`;
+
+/**
+ * Guards on `--not-touching` / `--no-downstream-incident`, all of which must run BEFORE any IPC
+ * call. Split out of `runQuery` for cognitive complexity (S3776); the reasoning for each is
+ * unchanged and lives with the check it justifies.
+ */
+function validateNegationFlags(f: {
+  type: string | undefined;
+  notTouchingRequested: boolean;
+  notTouchingRaw: string | undefined;
+  noDownstreamIncident: boolean;
+}): void {
+  // Scoping validated BEFORE any IPC call (non-negotiable): unscoped, `--not-touching`
+  // would return every issue, message and commit — all of which trivially "do not touch"
+  // any path, because they cannot touch anything. Checked on the REQUEST (whether the flag
+  // was supplied), not on its parsed value, so a present-but-blank `--not-touching ''` still
+  // trips the guard rather than silently skipping it.
+  if (f.notTouchingRequested && f.type !== "pr") {
+    throw new Error("--not-touching requires --type pr");
+  }
+  // A SUPPLIED flag must never become an OMITTED filter. `takeFlag` returns `args[i + 1]`
+  // verbatim, so `--not-touching` at the end of argv yields `undefined` and a blank one yields
+  // `""` — both would drop `notTouching` from the params below and answer "every PR" to a caller
+  // who asked "PRs not touching X". The gateway cannot catch that: an absent param is
+  // indistinguishable there from a caller who never asked. The option-token case is the same
+  // failure wearing a value — `--not-touching --json` sends `"--json"` as the glob, a pattern
+  // that matches no path, so EVERY covered PR comes back as "not touching" with no gap or
+  // refusal to signal it.
+  if (f.notTouchingRequested) {
+    if (f.notTouchingRaw === undefined || f.notTouchingRaw.trim() === "") {
+      throw new Error("--not-touching requires a glob pattern (e.g. --not-touching 'tests/**')");
+    }
+    if (f.notTouchingRaw.startsWith("--")) {
+      throw new Error(
+        `--not-touching requires a glob pattern, got the option "${f.notTouchingRaw}" ` +
+          "(quote the pattern if it really starts with --)",
+      );
+    }
+  }
+  if (f.noDownstreamIncident && f.type !== "deployment") {
+    throw new Error("--no-downstream-incident requires --type deployment");
+  }
+}
+
+interface QueryItemsParams {
+  services: string[];
+  types?: string[];
+  sinceMs?: number;
+  limit: number;
+  notTouching?: string;
+  noDownstreamIncident?: boolean;
+  explain?: boolean;
+}
+
+/** Omit the optionals rather than sending them undefined, so they don't appear in the request. */
+function buildQueryParams(f: {
+  service: string;
+  type: string | undefined;
+  sinceMs: number | undefined;
+  limit: number;
+  notTouchingRaw: string | undefined;
+  noDownstreamIncident: boolean;
+  explainRequested: boolean;
+}): QueryItemsParams {
+  const params: QueryItemsParams = {
+    services: [f.service],
+    limit: Number.isFinite(f.limit) && f.limit > 0 ? Math.min(1000, f.limit) : 50,
+  };
+  if (f.sinceMs !== undefined) {
+    params.sinceMs = f.sinceMs;
+  }
+  if (f.type !== undefined && f.type !== "") {
+    params.types = [f.type];
+  }
+  if (f.notTouchingRaw !== undefined && f.notTouchingRaw !== "") {
+    params.notTouching = f.notTouchingRaw;
+  }
+  if (f.noDownstreamIncident) {
+    params.noDownstreamIncident = true;
+  }
+  if (f.explainRequested) {
+    params.explain = true;
+  }
+  return params;
+}
+
+export async function runQuery(args: string[]): Promise<void> {
+  if (args.length === 0 || args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
+    console.log(QUERY_HELP);
     return;
   }
 
@@ -107,69 +194,20 @@ Output:
   const explainRequested = args.includes("--explain");
   const limit = limitRaw === undefined ? Number.NaN : Number.parseInt(limitRaw, 10);
 
-  // Scoping validated BEFORE any IPC call (non-negotiable): unscoped, `--not-touching`
-  // would return every issue, message and commit — all of which trivially "do not touch"
-  // any path, because they cannot touch anything. Checked on the REQUEST (whether the flag
-  // was supplied), not on its parsed value, so a present-but-blank `--not-touching ''` still
-  // trips the guard rather than silently skipping it.
-  if (notTouchingRequested && type !== "pr") {
-    throw new Error("--not-touching requires --type pr");
-  }
-  // A SUPPLIED flag must never become an OMITTED filter. `takeFlag` returns `args[i + 1]`
-  // verbatim, so `--not-touching` at the end of argv yields `undefined` and a blank one yields
-  // `""` — both would drop `notTouching` from the params below and answer "every PR" to a caller
-  // who asked "PRs not touching X". The gateway cannot catch that: an absent param is
-  // indistinguishable there from a caller who never asked. The option-token case is the same
-  // failure wearing a value — `--not-touching --json` sends `"--json"` as the glob, a pattern
-  // that matches no path, so EVERY covered PR comes back as "not touching" with no gap or
-  // refusal to signal it.
-  if (notTouchingRequested) {
-    if (notTouchingRaw === undefined || notTouchingRaw.trim() === "") {
-      throw new Error("--not-touching requires a glob pattern (e.g. --not-touching 'tests/**')");
-    }
-    if (notTouchingRaw.startsWith("--")) {
-      throw new Error(
-        `--not-touching requires a glob pattern, got the option "${notTouchingRaw}" ` +
-          "(quote the pattern if it really starts with --)",
-      );
-    }
-  }
-  if (noDownstreamIncident && type !== "deployment") {
-    throw new Error("--no-downstream-incident requires --type deployment");
-  }
+  validateNegationFlags({ type, notTouchingRequested, notTouchingRaw, noDownstreamIncident });
 
-  let sinceMs: number | undefined;
-  if (sinceRaw !== undefined) {
-    sinceMs = Date.now() - parseSinceDurationToMs(sinceRaw);
-  }
+  const sinceMs =
+    sinceRaw === undefined ? undefined : Date.now() - parseSinceDurationToMs(sinceRaw);
 
-  const params: {
-    services: string[];
-    types?: string[];
-    sinceMs?: number;
-    limit: number;
-    notTouching?: string;
-    noDownstreamIncident?: boolean;
-    explain?: boolean;
-  } = {
-    services: [service],
-    limit: Number.isFinite(limit) && limit > 0 ? Math.min(1000, limit) : 50,
-  };
-  if (sinceMs !== undefined) {
-    params.sinceMs = sinceMs;
-  }
-  if (type !== undefined && type !== "") {
-    params.types = [type];
-  }
-  if (notTouchingRaw !== undefined && notTouchingRaw !== "") {
-    params.notTouching = notTouchingRaw;
-  }
-  if (noDownstreamIncident) {
-    params.noDownstreamIncident = true;
-  }
-  if (explainRequested) {
-    params.explain = true;
-  }
+  const params = buildQueryParams({
+    service,
+    type,
+    sinceMs,
+    limit,
+    notTouchingRaw,
+    noDownstreamIncident,
+    explainRequested,
+  });
 
   const r = await withGatewayIpc((c) => c.call<QueryItemsResult>("index.queryItems", params));
 
@@ -179,29 +217,39 @@ Output:
     return;
   }
 
+  printQueryResult(r, { wantJson, pretty, noDownstreamIncident });
+}
+
+function printQueryResult(
+  r: Exclude<QueryItemsResult, MissingSubstrateRefusal>,
+  o: { wantJson: boolean; pretty: boolean; noDownstreamIncident: boolean },
+): void {
   const isNegationResult = r.gaps !== undefined || r.explain !== undefined;
-  if (wantJson && isNegationResult) {
+  if (o.wantJson && isNegationResult) {
     const doc: Record<string, unknown> = { ...r };
-    if (noDownstreamIncident) {
+    if (o.noDownstreamIncident) {
       doc["correlationWindowMs"] = CORRELATION_WINDOW_MS_CLI_MIRROR;
     }
     console.log(JSON.stringify(doc, null, 2));
     return;
   }
 
-  printRows(r.items, wantJson, pretty);
-  if (!wantJson && r.gaps !== undefined) {
+  printRows(r.items, o.wantJson, o.pretty);
+  if (o.wantJson) {
+    return;
+  }
+  if (r.gaps !== undefined) {
     console.log(formatGapLine(r.gaps));
     console.log(formatBatchCaveat(r.meta));
   }
-  if (!wantJson && noDownstreamIncident) {
+  if (o.noDownstreamIncident) {
     console.log(
       `Correlation window: ${formatDurationMs(CORRELATION_WINDOW_MS_CLI_MIRROR)} (fixed at ` +
         "write time by the deployment→incident correlator; not adjustable per-query — see " +
         "the design doc § 4.2/D5)",
     );
   }
-  if (!wantJson && r.explain !== undefined) {
+  if (r.explain !== undefined) {
     printExplainBlock(r.explain);
   }
 }

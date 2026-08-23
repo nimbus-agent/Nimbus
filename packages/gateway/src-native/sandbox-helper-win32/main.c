@@ -25,6 +25,12 @@
 #define MAPPINGS_KEY   L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\" \
                        L"CurrentVersion\\AppContainer\\Mappings"
 
+/* NOSONAR c:S923 — the variadic is deliberate and is the SAFER option here. This is the single
+ * audited wrapper over vfwprintf for all 26 diagnostic sites, each with its own format string and
+ * argument types (`%s` paths, `%lu` Win32 codes, `%08lx` HRESULTs). Removing the ellipsis means
+ * every one of those sites pre-formats into its own stack buffer, replacing one reviewed call
+ * with 26 hand-managed buffers in security-sensitive C — more attack surface, not less, for a
+ * rule aimed at unchecked variadic APIs rather than a fixed-format logger. */
 static void err(const wchar_t *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -129,7 +135,8 @@ static int mode_delete_profile(const wchar_t *name) {
  * on the wrong path makes that test fail. Do not widen a grant to make it pass.
  */
 static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
-    PACL old_acl = NULL, new_acl = NULL;
+    PACL old_acl = NULL;
+    PACL new_acl = NULL;
     PSECURITY_DESCRIPTOR sd = NULL;
     DWORD rc = GetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
                                      DACL_SECURITY_INFORMATION, NULL, NULL, &old_acl, NULL, &sd);
@@ -195,51 +202,91 @@ static int append_quoted(wchar_t *dst, size_t cap, size_t *len, const wchar_t *a
 #undef PUT
 }
 
-static int mode_spawn(int argc, wchar_t **argv) {
-    const wchar_t *profile = NULL;
-    const wchar_t *cwd = NULL;
-    BOOL want_net = FALSE;
-    const wchar_t *reads[64];  int nread = 0;
-    const wchar_t *writes[64]; int nwrite = 0;
-    int i = 1;
+#define MAX_GRANTS 64
 
+/* Parsed `--profile ... -- <child argv>` invocation. `child_argv_start` is the index of the first
+ * token AFTER the `--` separator. */
+typedef struct {
+    const wchar_t *profile;
+    const wchar_t *cwd;
+    BOOL want_net;
+    const wchar_t *reads[MAX_GRANTS];
+    int nread;
+    const wchar_t *writes[MAX_GRANTS];
+    int nwrite;
+    int child_argv_start;
+} spawn_opts;
+
+/* Parse argv into `o`. Returns 0, or the process exit code the caller must return verbatim —
+ * every failure path has already emitted its own diagnostic. Split out of mode_spawn for
+ * cognitive complexity (S3776); the accepted grammar is unchanged. */
+static int parse_spawn_args(int argc, wchar_t **argv, spawn_opts *o) {
+    o->profile = NULL;
+    o->cwd = NULL;
+    o->want_net = FALSE;
+    o->nread = 0;
+    o->nwrite = 0;
+
+    int i = 1;
     for (; i < argc; i++) {
         if (wcscmp(argv[i], L"--") == 0) { i++; break; }
-        if (wcscmp(argv[i], L"--profile") == 0 && i + 1 < argc)          { profile = argv[++i]; }
-        else if (wcscmp(argv[i], L"--cwd") == 0 && i + 1 < argc)         { cwd = argv[++i]; }
-        else if (wcscmp(argv[i], L"--capability") == 0 && i + 1 < argc)  { i++; if (wcscmp(argv[i], L"internetClient") == 0) want_net = TRUE; }
-        else if (wcscmp(argv[i], L"--grant-read") == 0 && i + 1 < argc)  { if (nread  >= 64) { err(L"too many --grant-read");  return 64; } reads[nread++]   = argv[++i]; }
-        else if (wcscmp(argv[i], L"--grant-write") == 0 && i + 1 < argc) { if (nwrite >= 64) { err(L"too many --grant-write"); return 64; } writes[nwrite++] = argv[++i]; }
+        if (wcscmp(argv[i], L"--profile") == 0 && i + 1 < argc)          { o->profile = argv[++i]; }
+        else if (wcscmp(argv[i], L"--cwd") == 0 && i + 1 < argc)         { o->cwd = argv[++i]; }
+        else if (wcscmp(argv[i], L"--capability") == 0 && i + 1 < argc)  { i++; if (wcscmp(argv[i], L"internetClient") == 0) o->want_net = TRUE; }
+        else if (wcscmp(argv[i], L"--grant-read") == 0 && i + 1 < argc)  { if (o->nread  >= MAX_GRANTS) { err(L"too many --grant-read");  return 64; } o->reads[o->nread++]   = argv[++i]; }
+        else if (wcscmp(argv[i], L"--grant-write") == 0 && i + 1 < argc) { if (o->nwrite >= MAX_GRANTS) { err(L"too many --grant-write"); return 64; } o->writes[o->nwrite++] = argv[++i]; }
         else { err(L"unexpected arg: %s", argv[i]); return 64; }
     }
-    if (profile == NULL) { err(L"--profile is required"); return 64; }
-    if (cwd == NULL)     { err(L"--cwd is required"); return 64; }
-    if (i >= argc)       { err(L"expected -- followed by child argv"); return 64; }
+    o->child_argv_start = i;
 
-    PSID sid = NULL;
-    HRESULT hr = profile_sid(profile, &sid);
-    if (FAILED(hr)) { err(L"profile %s: hr=0x%08lx", profile, (unsigned long)hr); return 65; }
+    if (o->profile == NULL) { err(L"--profile is required"); return 64; }
+    if (o->cwd == NULL)     { err(L"--cwd is required"); return 64; }
+    if (i >= argc)          { err(L"expected -- followed by child argv"); return 64; }
+    return 0;
+}
 
+/* Apply the cwd grant and the policy-path grants. Returns 0 or the exit code. Does NOT free
+ * `sid` — the caller owns it on every path, which is why this returns a code rather than
+ * cleaning up itself. */
+static int apply_grants(PSID sid, const spawn_opts *o) {
     /* The working directory: Modify, inheritable — the child works inside it. */
-    int rc = grant_path(cwd, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
+    int rc = grant_path(o->cwd, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
                         SUB_CONTAINERS_AND_OBJECTS_INHERIT);
-    if (rc != 0) { FreeSid(sid); return rc; }
+    if (rc != 0) return rc;
 
     /* Policy paths are subtree grants, so they inherit. Their ancestors get NOTHING: Windows
      * bypasses traverse checking by default, so a known full path opens without listing rights on
      * the way down — the spike's failure was on ENUMERATION, not traversal. If a connector turns
      * out to need more than this, widen it deliberately and record why; do not widen on a hunch. */
-    for (int k = 0; k < nread; k++) {
-        rc = grant_path(reads[k], sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+    for (int k = 0; k < o->nread; k++) {
+        rc = grant_path(o->reads[k], sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
                         SUB_CONTAINERS_AND_OBJECTS_INHERIT);
-        if (rc != 0) { FreeSid(sid); return rc; }
+        if (rc != 0) return rc;
     }
-    for (int k = 0; k < nwrite; k++) {
-        rc = grant_path(writes[k], sid,
+    for (int k = 0; k < o->nwrite; k++) {
+        rc = grant_path(o->writes[k], sid,
                         FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
                         SUB_CONTAINERS_AND_OBJECTS_INHERIT);
-        if (rc != 0) { FreeSid(sid); return rc; }
+        if (rc != 0) return rc;
     }
+    return 0;
+}
+
+static int mode_spawn(int argc, wchar_t **argv) {
+    spawn_opts o;
+    int prc = parse_spawn_args(argc, argv, &o);
+    if (prc != 0) return prc;
+
+    const wchar_t *cwd = o.cwd;
+    const BOOL want_net = o.want_net;
+    const int i = o.child_argv_start;
+
+    PSID sid = NULL;
+    HRESULT hr = profile_sid(o.profile, &sid);
+    if (FAILED(hr)) { err(L"profile %s: hr=0x%08lx", o.profile, (unsigned long)hr); return 65; }
+
+    int rc = apply_grants(sid, &o);
+    if (rc != 0) { FreeSid(sid); return rc; }
 
     /* Job Object: the analogue of bwrap's --die-with-parent. When our handle closes — including
      * on a crash — the OS terminates the child rather than orphaning it. */
