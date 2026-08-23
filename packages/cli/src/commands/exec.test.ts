@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
+import type { ExecClient } from "./exec.ts";
 import {
   EXEC_EXIT_CODES,
   exitCodeFor,
@@ -7,6 +8,7 @@ import {
   handleApprovalBroadcast,
   parseExecArgs,
   renderOutcome,
+  runExec,
 } from "./exec.ts";
 
 const ABS = process.platform === "win32" ? "C:\\x" : "/x";
@@ -249,6 +251,90 @@ describe("handleApprovalBroadcast", () => {
     await handleApprovalBroadcast({ requestId: "r2" }, h.ask, h.respond);
     expect(h.answered[0]?.requestId).toBe("r2");
     expect(h.shown[0]).toContain("unknown"); // runtime fallback
+  });
+});
+
+describe("runExec orchestration", () => {
+  function deps(over: Partial<Parameters<typeof runExec>[1]> = {}) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const codes: number[] = [];
+    const calls: Array<{ method: string; params: unknown }> = [];
+    let notify: ((params: unknown) => unknown) | undefined;
+    const client = {
+      onNotification: (_m: string, h: (p: unknown) => unknown) => {
+        notify = h;
+      },
+      call: async (method: string, params: unknown) => {
+        calls.push({ method, params });
+        return method === "exec.run"
+          ? { status: "ran", result: { exitCode: 0, terminationReason: "exited", stdout: "hi" } }
+          : { matched: true };
+      },
+    };
+    const base = {
+      runWithClient: async <T>(fn: (c: typeof client) => Promise<T>) => fn(client),
+      ask: async () => true,
+      sink: { out: (s: string) => out.push(s), err: (s: string) => err.push(s) },
+      setExitCode: (c: number) => codes.push(c),
+      cwd: () => "/work",
+      ...over,
+    };
+    return { out, err, codes, calls, notifier: () => notify, d: base as never };
+  }
+
+  test("parses, calls exec.run with the CLI cwd, renders, and sets the exit code", async () => {
+    const h = deps();
+    await runExec(["--code", "console.log(1)"], h.d);
+    const run = h.calls.find((c) => c.method === "exec.run");
+    if (run === undefined) throw new Error("expected an exec.run call");
+    expect((run.params as { cwd: string }).cwd).toBe("/work");
+    expect(h.out.join("")).toBe("hi");
+    expect(h.codes).toEqual([0]);
+  });
+
+  test("an ARG error never opens a connection, and exits refused", async () => {
+    const h = deps();
+    await runExec(["--allow-net"], h.d);
+    expect(h.calls).toEqual([]);
+    expect(h.codes).toEqual([EXEC_EXIT_CODES.refused]);
+    expect(h.err.join("")).toContain("Unknown flag");
+  });
+
+  test("a transport failure is reported and exits refused, never 0", async () => {
+    const h = deps({
+      runWithClient: async () => {
+        throw new Error("Gateway is not running");
+      },
+    });
+    await runExec(["--code", "1"], h.d);
+    expect(h.err.join("")).toContain("Gateway is not running");
+    expect(h.codes).toEqual([EXEC_EXIT_CODES.refused]);
+  });
+
+  test("registers the approval handler, which answers over the SAME client", async () => {
+    const h = deps();
+    await runExec(["--code", "1"], h.d);
+    const notify = h.notifier();
+    expect(notify).toBeDefined();
+    await notify?.({ requestId: "r9", runtime: "bun", codeBody: "1" });
+    const respond = h.calls.find((c) => c.method === "exec.approvalRespond");
+    expect(respond?.params).toEqual({ requestId: "r9", approved: true });
+  });
+
+  test("a script's own non-zero exit code reaches the process exit code", async () => {
+    const h = deps({
+      runWithClient: async <T>(fn: (c: ExecClient) => Promise<T>) =>
+        fn({
+          onNotification: () => {},
+          call: async () => ({
+            status: "ran",
+            result: { exitCode: 7, terminationReason: "exited", stdout: "" },
+          }),
+        }),
+    });
+    await runExec(["--code", "1"], h.d);
+    expect(h.codes).toEqual([7]);
   });
 });
 

@@ -233,44 +233,72 @@ export async function handleApprovalBroadcast(
   await respond(p.requestId, !isCancel(answer) && answer === true);
 }
 
-export async function runExec(args: string[]): Promise<void> {
+/** The slice of the IPC client this command uses. Narrow so a test can supply one. */
+export interface ExecClient {
+  onNotification(method: string, handler: (params: unknown) => unknown): void;
+  call(method: string, params: unknown): Promise<unknown>;
+}
+
+/**
+ * Seams `runExec` needs from the outside world.
+ *
+ * Injected rather than reached for directly so the orchestration — parse, connect, register the
+ * approval handler, call, render, set the exit code — is testable without a live Gateway. The
+ * defaults are the real thing, so production callers pass nothing.
+ */
+export interface RunExecDeps {
+  readonly runWithClient: <T>(fn: (c: ExecClient) => Promise<T>) => Promise<T>;
+  readonly ask: (message: string) => Promise<unknown>;
+  readonly sink: OutcomeSink;
+  readonly setExitCode: (code: number) => void;
+  readonly cwd: () => string;
+}
+
+const defaultDeps: RunExecDeps = {
+  runWithClient: (fn) =>
+    withGatewayIpc(fn as never, undefined, {
+      // The call blocks on a human answering, so it needs the interactive budget rather than the
+      // 30s default.
+      requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS,
+    }) as never,
+  ask: (message) => confirm({ message }),
+  sink: {
+    out: (s) => void process.stdout.write(s),
+    err: (s) => void process.stderr.write(s),
+  },
+  setExitCode: (c) => {
+    process.exitCode = c;
+  },
+  cwd: () => process.cwd(),
+};
+
+export async function runExec(args: string[], deps: RunExecDeps = defaultDeps): Promise<void> {
   let parsed: ParsedExecArgs;
   try {
     parsed = parseExecArgs(args);
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exitCode = EXEC_EXIT_CODES.refused;
+    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
+    deps.setExitCode(EXEC_EXIT_CODES.refused);
     return;
   }
 
   try {
-    const outcome = await withGatewayIpc(
-      async (c) => {
-        // The gate's approval arrives as a BROADCAST, not a consent.request, so it needs its own
-        // handler. Registered before the call because the notification can share a socket chunk
-        // with the response.
-        c.onNotification("exec.approvalRequest", (params: unknown) =>
-          handleApprovalBroadcast(
-            params,
-            (message) => confirm({ message }),
-            (requestId, approved) => c.call("exec.approvalRespond", { requestId, approved }),
-          ),
-        );
-        return (await c.call("exec.run", { ...parsed, cwd: process.cwd() })) as ExecOutcomeShape;
-      },
-      undefined,
-      // The call blocks on a human answering, so it needs the interactive budget rather than the
-      // 30s default.
-      { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS },
-    );
-
-    renderOutcome(outcome, {
-      out: (s) => void process.stdout.write(s),
-      err: (s) => void process.stderr.write(s),
+    const outcome = await deps.runWithClient(async (c) => {
+      // The gate's approval arrives as a BROADCAST, not a consent.request, so it needs its own
+      // handler. Registered before the call because the notification can share a socket chunk
+      // with the response.
+      c.onNotification("exec.approvalRequest", (params: unknown) =>
+        handleApprovalBroadcast(params, deps.ask, (requestId, approved) =>
+          c.call("exec.approvalRespond", { requestId, approved }),
+        ),
+      );
+      return (await c.call("exec.run", { ...parsed, cwd: deps.cwd() })) as ExecOutcomeShape;
     });
-    process.exitCode = exitCodeFor(outcome);
+
+    renderOutcome(outcome, deps.sink);
+    deps.setExitCode(exitCodeFor(outcome));
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exitCode = EXEC_EXIT_CODES.refused;
+    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
+    deps.setExitCode(EXEC_EXIT_CODES.refused);
   }
 }
