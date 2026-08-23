@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.13.4](https://github.com/nimbus-agent/Nimbus/compare/v2.13.3...v2.13.4) (2026-08-23)
+
+
+### Bug Fixes
+
+* **test:** re-home the F11 Google-spawn isolation tests off a process-global mock ([#1311](https://github.com/nimbus-agent/Nimbus/issues/1311)) ([f9c6f92](https://github.com/nimbus-agent/Nimbus/commit/f9c6f92ee2c2ef27b96c2df26b8a68ee4b8dd60d))
+
 ## [2.13.3](https://github.com/nimbus-agent/Nimbus/compare/v2.13.2...v2.13.3) (2026-08-22)
 
 
