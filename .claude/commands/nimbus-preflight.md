@@ -64,10 +64,13 @@ and using it produces **no bypass annotation anywhere on the PR**. Nothing in th
 ## Cross-platform discipline
 
 Develop on one OS, but CI runs all three — and **PRs now gate on macOS + Windows too**, not just
-Ubuntu: `pr-quality-cross-platform` runs `bun test packages/<pkg>/src` for `gateway` and `cli` on
-`macos-15` + `windows-2025`, narrowed by changed paths, plus the platform-sensitive sandbox
-integration tests on the gateway legs. Treat "it passes on Ubuntu" as covering roughly half the
-gate. Build paths with `path.join()` / `os.tmpdir()` / `PlatformServices`, never hardcoded separators. `bun run audit:cross-platform` flags hardcoded **Windows-separator** path literals (backslash, drive-letter `C:\`, UNC `\\server`) in `*.test.ts(x)` assertions — the "passes on my Windows machine, fails on the Ubuntu PR gate" footgun. POSIX forward-slash absolutes (`/tmp/...`, `/home/...`) are intentionally **not** flagged: in this codebase they are overwhelmingly legitimate data values (socket-path fixtures, env-var pass-throughs, HTTP/API routes) that a regex cannot distinguish from a constructed path — an empirical pass produced 52 false positives and 0 real bugs, so reliable POSIX-absolute detection is deferred to the AST v2 rewrite (see the script header). Genuinely platform-specific literal? End the line with `// cross-platform-ok`.
+Ubuntu: `pr-quality-cross-platform` runs one leg on `macos-15` and one on `windows-2025`, each
+executing the SAME whole-repo command as the push matrix
+(`bun test packages/gateway packages/cli packages/mcp-connectors scripts`, one process). Treat "it
+passes on Ubuntu" as covering roughly half the gate. Note what that equality buys and what it does
+not: the legs now load the same FILES in the same PROCESS as the push run, which is what makes a
+green PR leg predictive at all — but they still run on runners ~13–18× slower than a dev machine,
+so a wall-clock assumption that holds locally can still fail there. Build paths with `path.join()` / `os.tmpdir()` / `PlatformServices`, never hardcoded separators. `bun run audit:cross-platform` flags hardcoded **Windows-separator** path literals (backslash, drive-letter `C:\`, UNC `\\server`) in `*.test.ts(x)` assertions — the "passes on my Windows machine, fails on the Ubuntu PR gate" footgun. POSIX forward-slash absolutes (`/tmp/...`, `/home/...`) are intentionally **not** flagged: in this codebase they are overwhelmingly legitimate data values (socket-path fixtures, env-var pass-throughs, HTTP/API routes) that a regex cannot distinguish from a constructed path — an empirical pass produced 52 false positives and 0 real bugs, so reliable POSIX-absolute detection is deferred to the AST v2 rewrite (see the script header). Genuinely platform-specific literal? End the line with `// cross-platform-ok`.
 
 ## Git guardrails (opt-in)
 

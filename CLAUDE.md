@@ -33,7 +33,7 @@ Architectural constraints, not preferences. Do not suggest changes that violate 
 2. **HITL (human-in-the-loop) is structural** — consent gate lives in the executor, not the prompt; cannot be bypassed or configured away.
 3. **No plaintext credentials** — Vault only (Windows DPAPI / macOS Keychain / Linux libsecret); never in logs/IPC/config.
 4. **MCP as connector standard** — the engine never calls cloud APIs directly.
-5. **Platform equality** — Windows/macOS/Linux equally supported. PRs gate on Ubuntu **plus** narrowed macOS + Windows legs (`pr-quality-cross-platform`); pushes run the full 3-OS matrix. See _CI gating_ below for what the PR legs do and do not cover.
+5. **Platform equality** — Windows/macOS/Linux equally supported. PRs gate on Ubuntu **plus** a macOS and a Windows leg (`pr-quality-cross-platform`) running the SAME whole-repo `bun test` command as the push matrix; pushes run the full 3-OS matrix. See _CI gating_ below for the one thing the PR legs still do not cover.
 6. **AGPL-3.0 core / MIT SDK** — dual license is intentional; do not change license fields.
 7. **No `any`** — use `unknown` for external data; TypeScript strict mode is non-negotiable.
 
@@ -118,15 +118,26 @@ Several surfaces live in their own standalone repos and release independently of
 
 ### CI gating
 
-PRs run the Ubuntu `pr-quality` set **and** `pr-quality-cross-platform` — macOS + Windows legs for
-`gateway` and `cli`, narrowed by changed paths (a CLI-only PR drops the two gateway legs). Pushes
-run the full 3-OS matrix. Exactly one status check gates the merge:
+PRs run the Ubuntu `pr-quality` set **and** `pr-quality-cross-platform` — one macOS leg and one
+Windows leg. Pushes run the full 3-OS matrix. Exactly one status check gates the merge:
 **`PR quality — required gates`**, an `if: always()` aggregator that `needs:` every other PR job —
 so adding or renaming a gate never needs a ruleset edit, and a red leg reds the aggregator.
 
-**What the PR cross-platform legs do NOT cover:** they run `bun test packages/<pkg>/src` plus the
-platform-sensitive sandbox integration tests. No e2e, no coverage, no packaging. A regression that
-only shows up in `test/e2e/` still reaches `main` before anything catches it.
+**The PR cross-platform legs run the same test command as the push matrix** —
+`bun test packages/gateway packages/cli packages/mcp-connectors scripts`, whole-repo and in ONE
+process. That equality is load-bearing and was only established on 2026-08-23. Before it, the PR
+leg ran `bun test packages/<pkg>/src` per package while the push leg ran everything in one process,
+and the difference was where the red lived: of the 200 CI runs on `main` between 2026-08-02 and
+2026-08-22, 50 failed and 35 had a failing macOS job — **33 of the 35 were in files the PR gate
+never loaded** (`scripts/`, `test/integration/`, `test/e2e/`), so they could only ever be found
+after merge. The process shape matters as much as the file set: `mock.module` is process-global, so
+a per-package run and a whole-repo run do not have the same mocks in play. #1307 shipped a test that
+was green on the PR leg on all three OSes and red on the macOS push leg minutes later, purely
+because `packages/gateway/src` never loads the two files under `packages/gateway/test/` that mock
+its dependency. **If you change one command, change the other.**
+
+**What the PR cross-platform legs still do NOT cover:** coverage and packaging. Both are Ubuntu-only
+by design (the coverage floor is CI-Linux-authoritative; packaging is a separate job).
 
 **A green local run does not predict these legs.** The runner is ~13–18× slower than a dev machine
 at temp-dir SQLite work, so every wall-clock assumption in a test is a different number there.

@@ -347,7 +347,7 @@ NIMBUS_RUN_LOCAL_BENCH=1 bun test
 
 | Trigger | Jobs |
 |---|---|
-| PR opened/updated | `pr-quality` on Ubuntu: lint (Biome), typecheck, unit + integration tests, `bun audit` — **plus** `pr-quality-cross-platform`: `bun test packages/<pkg>/src` for `gateway` and `cli` on `macos-15` + `windows-2025`, narrowed to the packages the diff can affect, with the platform-sensitive sandbox integration tests on the gateway legs |
+| PR opened/updated | `pr-quality` on Ubuntu: lint (Biome), typecheck, unit + integration tests, `bun audit` — **plus** `pr-quality-cross-platform`: one `macos-15` leg and one `windows-2025` leg, each running the same whole-repo `bun test packages/gateway packages/cli packages/mcp-connectors scripts` as the push matrix, in one process |
 | Push to `main` / `develop` | Full 3-platform matrix: `windows-2025`, `macos-15`, `ubuntu-24.04` |
 | Push to `main` + release tags | E2E Desktop (Playwright + Tauri WebDriver) on all three platforms |
 

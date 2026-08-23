@@ -127,7 +127,7 @@ expect(sidecarPath("/opt/nimbus/bin/nimbus-gateway", "linux"))
 
 The same rule applies to production helpers that accept a `platform` argument and run on a host where `process.platform` differs — branch on the argument, not on `process.platform`.
 
-The `pr-quality-cross-platform` job (`.github/workflows/ci.yml`) runs gateway/CLI unit tests on macOS and Windows at PR time so this class of regression is caught before merge.
+The `pr-quality-cross-platform` job (`.github/workflows/ci.yml`) runs the whole test suite on macOS and Windows at PR time — the same command the push matrix runs — so this class of regression is caught before merge rather than on `main`.
 
 ### Using the `nimbus-*` skill set (Claude Code / compatible AI assistants)
 

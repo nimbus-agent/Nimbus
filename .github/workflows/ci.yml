@@ -41,21 +41,12 @@ jobs:
       # (which checks doc-ref drift — the relevant gate for docs PRs) without
       # paying for a full 3-runner test cycle.
       code-changed: ${{ steps.changes.outputs.code-changed }}
-      # gateway-touched / cli-touched gate the per-package cross-platform
-      # matrix entries (see pr-quality-cross-platform). True when any path
-      # *could* affect that package's tests — including shared deps (sdk,
-      # client, mcp-connectors), root config (bun.lock, package.json,
-      # tsconfig, biome), and scripts/. CLI imports from sdk/client/
-      # mcp-connectors, so any change there triggers both. The result is
-      # that a pure cli-src PR skips the Windows-gateway cross-platform
-      # leg (the slowest in the matrix) and vice versa.
-      gateway-touched: ${{ steps.changes.outputs.gateway-touched }}
-      cli-touched: ${{ steps.changes.outputs.cli-touched }}
-      # JSON-encoded matrix `include:` list for pr-quality-cross-platform.
-      # Built from gateway-touched / cli-touched so each matrix entry is
-      # only emitted when its package was touched. Empty list ("[]") on a
-      # PR that affects neither package — the job is skipped wholesale.
-      cross-platform-matrix: ${{ steps.changes.outputs.cross-platform-matrix }}
+      # There is deliberately no per-package narrowing output here any more.
+      # `pr-quality-cross-platform` used to emit a {os, pkg} matrix so a cli-only
+      # PR could drop the two gateway legs; it now runs ONE leg per OS executing
+      # the same whole-repo command as the push matrix, so there is no package
+      # dimension left to narrow. That is cheaper, not dearer: a PR touching both
+      # packages went from four legs to two.
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
@@ -81,58 +72,6 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE" "${{ github.sha }}" 2>/dev/null || echo "")
           echo "ui=$(echo "$CHANGED" | grep -qE '^packages/ui/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "rust=$(echo "$CHANGED" | grep -qE '^packages/ui/src-tauri/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
-          # gateway-touched / cli-touched use "exclude" logic — true unless
-          # every changed file is exclusively under a path that can't affect
-          # that package's tests. This is more robust than enumerating the
-          # positive set: workflow changes, root config, scripts, and shared
-          # deps (mcp-connectors) all correctly trigger both. (@nimbus-dev/sdk
-          # and @nimbus-dev/client are consumed from npm, not in-monorepo dirs.)
-          GATEWAY_EXCLUDE='^(packages/(cli|ui|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
-          CLI_EXCLUDE='^(packages/(gateway|ui|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
-          if [[ -z "$CHANGED" ]]; then
-            GW=true
-            CLI=true
-          else
-            echo "$CHANGED" | grep -qvE "$GATEWAY_EXCLUDE" && GW=true || GW=false
-            echo "$CHANGED" | grep -qvE "$CLI_EXCLUDE" && CLI=true || CLI=false
-          fi
-          echo "gateway-touched=$GW" >> "$GITHUB_OUTPUT"
-          echo "cli-touched=$CLI" >> "$GITHUB_OUTPUT"
-
-          # Cross-platform matrix: emit only the packages this PR can affect.
-          #
-          # This used to always emit all 4 entries, on the stated grounds that
-          # branch-protection rulesets require the expanded check names. That is
-          # no longer true — the General ruleset (14784377) requires exactly:
-          # "PR quality — required gates", the six Security contexts, the two
-          # CodeQL "Analyze (…)" contexts and "cla". No expanded Cross-platform
-          # name appears in any ruleset, so narrowing the matrix removes no
-          # required context. `pr-quality-required` still `needs:` this job, so
-          # the gate keeps its dependency either way.
-          #
-          # gateway-touched / cli-touched are exclude-logic (true unless every
-          # changed file is provably irrelevant to that package) and both fall
-          # back to true on an empty diff, so the failure mode is running MORE
-          # than needed, never less. A PR touching only packages/cli/ drops the
-          # two gateway legs — macOS especially, where the account-wide cap is
-          # just 5 concurrent jobs.
-          ENTRIES=()
-          if [[ "$GW" == "true" ]]; then
-            ENTRIES+=('{"os":"macos-15","pkg":"gateway"}' '{"os":"windows-2025","pkg":"gateway"}')
-          fi
-          if [[ "$CLI" == "true" ]]; then
-            ENTRIES+=('{"os":"macos-15","pkg":"cli"}' '{"os":"windows-2025","pkg":"cli"}')
-          fi
-          # An empty matrix makes GitHub fail the job rather than skip it, which
-          # would red every docs-only PR through `pr-quality-required`. Neither
-          # flag can be false on an empty diff, but belt-and-braces: fall back to
-          # the cli pair, the cheaper of the two.
-          if [[ ${#ENTRIES[@]} -eq 0 ]]; then
-            ENTRIES+=('{"os":"macos-15","pkg":"cli"}' '{"os":"windows-2025","pkg":"cli"}')
-          fi
-          MATRIX="[$(IFS=,; echo "${ENTRIES[*]}")]"
-          echo "cross-platform-matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
           # Fail-safe: an empty diff (e.g. base resolution glitch) is treated as
           # "code might have changed" so we never skip the test suite on an
@@ -206,41 +145,69 @@ jobs:
       - name: Setup Rust + Tauri checks
         uses: ./.github/actions/setup-rust-tauri
 
-  # Cross-platform smoke — non-Linux gateway/cli unit tests at PR time.
+  # Cross-platform gate — the non-Linux half of the PR test gate.
   # The full 3-OS matrix runs on push to main, but that catches platform
-  # divergence only AFTER merge. This narrow PR-time job runs the gateway
-  # and CLI unit tests on macOS + Windows so cross-platform regressions
-  # (BUG-009 cross-OS path-shape mismatch was the motivating example)
-  # surface before the merge button is pressed. Scope is intentionally narrow:
-  # no integration, no e2e, no coverage upload — just `bun test` on source.
+  # divergence only AFTER merge. This job runs the same suite on macOS +
+  # Windows so cross-platform regressions (BUG-009 cross-OS path-shape
+  # mismatch was the motivating example) surface before the merge button.
   #
-  # Gateway and CLI run as SEPARATE matrix entries so they execute in parallel,
-  # not back-to-back in one runner. This halves the critical-path wall time on
-  # Windows (the slowest leg of the PR matrix). The per-package isolation also
-  # remains a hard requirement: the CLI suite's mock harness
+  # Gateway and CLI used to run as SEPARATE matrix entries, for parallelism and
+  # for process isolation: the CLI suite's mock harness
   # (`packages/cli/test/helpers/cli-mocks.ts`) installs process-global
-  # `mock.module` registrations and assumes per-package process isolation —
-  # running gateway + CLI tests in one process let a gateway test's global
-  # `mock.restore()` corrupt CLI repl tests on macOS. Separate matrix entries
-  # restore that isolation by construction.
+  # `mock.module` registrations, and running gateway + CLI in one process once
+  # let a gateway test's global `mock.restore()` corrupt CLI repl tests on macOS.
+  #
+  # That isolation was never a property of the product — only of this job. The
+  # macOS and Windows PUSH legs have run gateway + cli + mcp-connectors + scripts
+  # in ONE process the whole time (`_test-suite.yml`), so `main` was already
+  # paying whatever that costs while the PR gate was insulated from it. Checked
+  # against the 2026-08-22 macOS push run before this job was changed: every
+  # `cli-mocks` consumer (`ask`/`audit`/`catchup`/`clip`…) and `repl-core.test.ts`
+  # loaded in the same process as the gateway suite, and not one CLI test failed.
+  # The hazard is stale.
+  #
+  # So a per-package split now buys parallelism at the cost of the only thing
+  # that makes this gate predictive. If the hazard ever returns, this job is
+  # where it should surface — at PR time, on the contributor's branch, instead
+  # of on `main` where it is everyone's problem.
   pr-quality-cross-platform:
-    name: PR quality — Cross-platform (${{ matrix.pkg }}, ${{ matrix.os }})
-    # The filter emits only the packages this PR can affect (see
-    # ci.yml#Detect-changed-paths). No expanded Cross-platform check name is a
-    # required context in any ruleset — verified against the live General
-    # ruleset — so a narrowed matrix leaves nothing "Expected — Waiting for
-    # status to be reported". `pr-quality-required` needs: this job, which is
-    # what actually gates.
+    name: PR quality — Cross-platform (${{ matrix.os }})
+    # ONE leg per OS, running the SAME whole-repo `bun test` command as the push
+    # matrix. That equality is the entire point of this job's shape, and it was
+    # not true before 2026-08-23: this job ran `bun test packages/<pkg>/src` while
+    # the push leg ran `bun test packages/gateway packages/cli packages/mcp-connectors
+    # scripts` in ONE process. Over the 200 CI runs on `main` between 2026-08-02 and
+    # 2026-08-22, 50 failed and 35 of those had a failing macOS job — and 33 of the
+    # 35 were files this job never loaded at all (`scripts/`, `test/integration/`,
+    # `test/e2e/`). They were only ever discovered after merge, on `main`.
+    #
+    # The process composition matters as much as the file set, which is the part
+    # that is easy to under-fix. `mock.module` is process-global in Bun, so a
+    # per-package run and a whole-repo run do not have the same mock registrations
+    # in play — #1307 merged a test that was green on this job on all three OSes
+    # (the two files that mock its dependency live under `packages/gateway/test/`,
+    # which `packages/gateway/src` never loads) and red on the macOS push leg
+    # within minutes. Scoping alone would not have caught it; running the same
+    # command in the same shape does.
+    #
+    # No expanded Cross-platform check name is a required context in any ruleset —
+    # verified against the live General ruleset (14784377), which requires exactly
+    # "PR quality — required gates", the six Security contexts, the two CodeQL
+    # "Analyze (…)" contexts and "cla" — so renaming the legs leaves nothing
+    # "Expected — Waiting for status to be reported". `pr-quality-required`
+    # needs: this job, which is what actually gates.
     #
     # The job still RUNS on every PR: the expensive steps below are individually
-    # gated on `code-changed`, so a docs-only PR spins up the remaining legs and
-    # reports success without doing test work.
+    # gated on `code-changed`, so a docs-only PR spins up both legs and reports
+    # success without doing test work. Keep it that way — a job that does not
+    # expand cannot report, and an unreported required-gate dependency blocks the
+    # PR forever rather than failing it.
     if: github.event_name == 'pull_request'
     needs: filter
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.filter.outputs.cross-platform-matrix) }}
+        os: [macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
     # Backstop only — each test attempt has its own 15-min wall-clock cap (see the
     # unit-tests step), so a hang fails fast via retry rather than burning this
@@ -283,13 +250,13 @@ jobs:
           security unlock-keychain -p "" nimbus-ci.keychain
           security set-keychain-settings -lut 7200 nimbus-ci.keychain
 
-      # Typecheck runs on the gateway matrix entry only. Typecheck is
-      # monorepo-wide and identical between entries, so doing it twice per OS
-      # would be pure runner-minute waste with no signal gain — host-specific TS
-      # quirks still surface on the gateway entry. cli consumes the published
-      # @nimbus-dev/client from npm, so no local client build is needed.
+      # Typecheck is monorepo-wide, so it runs once per OS — which is exactly
+      # once per leg now that the matrix has no package dimension. (It used to be
+      # pinned to the `gateway` entry to avoid running twice on the same OS.)
+      # cli consumes the published @nimbus-dev/client from npm, so no local client
+      # build is needed.
       - name: Typecheck (catches host-specific TS quirks)
-        if: matrix.pkg == 'gateway' && needs.filter.outputs.code-changed == 'true'
+        if: needs.filter.outputs.code-changed == 'true'
         shell: bash
         # @nimbus/docs is excluded here: it has no host-specific TS surface and
         # its astro-sync content-type generation flakes a 60s Vite timeout on slow
@@ -306,7 +273,17 @@ jobs:
             sleep 5
           done
 
-      - name: ${{ matrix.pkg }} unit tests (retry once on slow runners)
+      # Must precede the test step: the whole-repo run collects
+      # `packages/gateway/test/integration/platform/sandbox/`, whose spawn suite
+      # goes RED rather than skipping when its platform dependency is missing (a
+      # skip and a pass are indistinguishable in a CI summary — exactly how the
+      # original Windows spawn defect survived a green three-OS matrix).
+      - name: Build sandbox helper (Windows, for the spawn suite)
+        if: needs.filter.outputs.code-changed == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: bun run build:sandbox-helper:win32
+
+      - name: Unit + integration tests (retry once on slow runners)
         if: needs.filter.outputs.code-changed == 'true'
         shell: bash
         # `--timeout 60000` matches every other Bun test invocation in the repo
@@ -367,12 +344,12 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 900 bun test "packages/${{ matrix.pkg }}/src" --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun scripts/run-with-timeout.ts 900 bun test packages/gateway packages/cli packages/mcp-connectors scripts --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
               if [ "$attempt" -eq 2 ]; then
-                echo "::warning title=Retry masked a failure::${{ matrix.pkg }} on ${{ matrix.os }} FAILED on attempt 1 and passed on attempt 2. The job is green but paid for two full suite runs — see the annotations naming the failing test(s)."
+                echo "::warning title=Retry masked a failure::${{ matrix.os }} FAILED on attempt 1 and passed on attempt 2. The job is green but paid for two full suite runs — see the annotations naming the failing test(s)."
               fi
               exit 0
             fi
@@ -392,7 +369,7 @@ jobs:
               echo "::warning title=Attempt 1 failed with no (fail) line::exit ${code} — a timeout, crash or hang rather than an assertion. See the attempt-1 output above."
             fi
             {
-              echo "### ⚠ ${{ matrix.pkg }} on ${{ matrix.os }} needed a retry"
+              echo "### ⚠ ${{ matrix.os }} needed a retry"
               echo ""
               echo "Attempt 1 exited \`${code}\`; attempt 2 follows. A retry costs a full suite run."
               echo ""
@@ -409,36 +386,15 @@ jobs:
         env:
           CI: "true"
 
-      # ── Platform-sensitive integration tests ────────────────────────────────
-      # The step above is scoped to `packages/<pkg>/src`, so it does NOT collect
-      # `packages/gateway/test/integration/`. On the PR gate that integration suite runs on
-      # UBUNTU ONLY, which is how a Windows- and macOS-broken sandbox spawn suite merged green
-      # (#1294): the suite added specifically to prove the wrapper spawns on all three platforms
-      # had never once run on two of them before it reached `main`, and the push matrix found it
-      # minutes after merge.
-      #
-      # This does NOT widen the PR gate to the whole integration suite — that would add minutes
-      # to every PR on two slow runners for tests that are not platform-sensitive. It runs the
-      # named suites whose whole purpose is per-platform behaviour, and nothing else. Add a suite
-      # here only when it genuinely branches on the OS; the Ubuntu integration job stays the
-      # place for everything else.
-      - name: Build sandbox helper (Windows, for the spawn suite below)
-        if: needs.filter.outputs.code-changed == 'true' && matrix.pkg == 'gateway' && runner.os == 'Windows'
-        shell: pwsh
-        run: bun run build:sandbox-helper:win32
-
-      - name: Platform-sensitive integration tests
-        if: needs.filter.outputs.code-changed == 'true' && matrix.pkg == 'gateway'
-        shell: bash
-        # No retry wrapper: these are seconds-long, and a sandbox spawn that fails intermittently
-        # is a finding, not a flake to paper over.
-        run: |
-          bun test \
-            packages/gateway/test/integration/platform/sandbox/ \
-            --timeout 60000
-        env:
-          CI: "true"
-
+      # There is no separate "platform-sensitive integration tests" step any more.
+      # #1298 added one because the step above was scoped to `packages/<pkg>/src` and
+      # so never collected `packages/gateway/test/integration/` — it named the sandbox
+      # spawn suite explicitly, and nothing else, to avoid paying for the whole
+      # integration suite on two slow runners. The whole-repo command above now
+      # collects that directory (and `test/e2e/`, and `scripts/`) on its own, so
+      # keeping the step would run those tests twice per leg. Do not re-add a
+      # narrowly-named suite here: if a test needs to run cross-platform at PR
+      # time, it already does.
       # macOS denials never reach the child's stderr — the kernel logs them, and the process just
       # dies (SIGABRT -> exit 134 through the wrapper's signal translation) with both streams
       # empty. That is why two rounds of in-test diagnostics could not name the macOS cause while
@@ -453,7 +409,7 @@ jobs:
       # `--info --debug`, without which sandbox denial records are not emitted by `log show` at
       # all. The subsystem predicate is the one that actually matches a denial line.
       - name: macOS — sandbox denials from the kernel log (on failure only)
-        if: failure() && runner.os == 'macOS' && matrix.pkg == 'gateway'
+        if: failure() && runner.os == 'macOS'
         shell: bash
         run: |
           echo "Sandbox denials logged in the last 30 minutes:"

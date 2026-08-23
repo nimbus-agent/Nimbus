@@ -1762,7 +1762,7 @@ PRs that drop below threshold are blocked when checks are required.
 
 **CI breakdown:**
 
-- **PR (five parallel jobs, aggregated by `pr-quality-required`):** `pr-quality-ts` (ubuntu-24.04 — typecheck → Biome → build → unit + integration + e2e + coverage gates → Vitest UI, via reusable `_test-suite.yml`); `pr-quality-rust` (ubuntu-24.04 — Rust fmt/clippy/build for `packages/ui/src-tauri`, runs only when a file under `packages/ui/src-tauri/` changes); `pr-quality-cross-platform` (macos-15 + windows-2025, matrix narrowed by the `filter` job); `pr-quality-duplication` (jscpd token scan); `pr-quality-structure` (`_structure.yml`).
+- **PR (five parallel jobs, aggregated by `pr-quality-required`):** `pr-quality-ts` (ubuntu-24.04 — typecheck → Biome → build → unit + integration + e2e + coverage gates → Vitest UI, via reusable `_test-suite.yml`); `pr-quality-rust` (ubuntu-24.04 — Rust fmt/clippy/build for `packages/ui/src-tauri`, runs only when a file under `packages/ui/src-tauri/` changes); `pr-quality-cross-platform` (macos-15 + windows-2025, one leg per OS running the same whole-repo `bun test` command as the push matrix); `pr-quality-duplication` (jscpd token scan); `pr-quality-structure` (`_structure.yml`).
 - **PR opt-in:** E2E Desktop (Playwright + Tauri WebDriver) when the PR carries the `ci:e2e-desktop` label **and** a file under `packages/ui/` changed.
 - **Push to `main`/`develop` (full 3-platform matrix):** `ci-ts` and `ci-rust` run the same suites on `ubuntu-24.04`, `macos-15`, `windows-2025` in parallel.
 - **Push to `main` only:** E2E Desktop on the full 3-platform matrix, after `ci-ts` and `ci-rust` succeed.
