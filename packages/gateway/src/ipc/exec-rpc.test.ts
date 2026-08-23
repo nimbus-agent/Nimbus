@@ -122,6 +122,79 @@ describe("exec RPC", () => {
     expect((out.value as { status: string }).status).toBe("denied");
   });
 
+  test("forwards every OPTIONAL field when supplied", async () => {
+    // Each of these is a separate conditional spread; an omitted one must stay absent rather than
+    // arrive as undefined, which is why they are spreads and not plain properties.
+    const ctx = makeCtx();
+    const run = dispatchExecRpc(
+      "exec.run",
+      {
+        filePath: `${CWD}/s.ts`,
+        runtimeId: "bun",
+        cwd: CWD,
+        fsRead: [CWD],
+        fsWrite: [CWD],
+        timeoutMs: 500,
+      },
+      ctx,
+    );
+    await Bun.sleep(1);
+    const seen = ctx.broadcasts[0];
+    expect(seen?.["runtime"]).toBe("bun");
+    // `readFile` in this ctx returns a fixed body, proving --file took the read path.
+    expect(seen?.["codeBody"]).toBe("console.log(1)");
+    // Clamped by the config's maxWallClockMs of 1000, so the supplied 500 survives.
+    expect(seen?.["wallClockMs"]).toBe(500);
+    await dispatchExecRpc(
+      "exec.approvalRespond",
+      { requestId: seen?.["requestId"] as string, approved: false },
+      ctx,
+    );
+    await run;
+  });
+
+  test("a non-numeric timeoutMs is ignored rather than coerced", async () => {
+    const ctx = makeCtx();
+    const run = dispatchExecRpc("exec.run", { code: "1", cwd: CWD, timeoutMs: "soon" }, ctx);
+    await Bun.sleep(1);
+    const seen = ctx.broadcasts[0];
+    // Falls back to the config ceiling, not NaN.
+    expect(seen?.["wallClockMs"]).toBe(1000);
+    await dispatchExecRpc(
+      "exec.approvalRespond",
+      { requestId: seen?.["requestId"] as string, approved: false },
+      ctx,
+    );
+    await run;
+  });
+
+  test("an explicitly EMPTY network array is forwarded and accepted", async () => {
+    // Distinct from omitting the key: "asked for nothing" must not be confused with "asked for an
+    // empty list", and neither may be confused with asking for a host.
+    const ctx = makeCtx();
+    const run = dispatchExecRpc("exec.run", { code: "1", cwd: CWD, network: [] }, ctx);
+    await Bun.sleep(1);
+    const seen = ctx.broadcasts[0];
+    expect(seen).toBeDefined();
+    await dispatchExecRpc(
+      "exec.approvalRespond",
+      { requestId: seen?.["requestId"] as string, approved: false },
+      ctx,
+    );
+    expect((await run).kind).toBe("hit");
+  });
+
+  test("a network array naming a host is REFUSED by the gate", async () => {
+    const ctx = makeCtx();
+    const out = await dispatchExecRpc(
+      "exec.run",
+      { code: "1", cwd: CWD, network: ["example.com"] },
+      ctx,
+    );
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect((out.value as { status: string }).status).toBe("refused");
+  });
+
   test("a malformed fsRead array yields an EMPTY grant, never a partial one", async () => {
     // A half-parsed grant list is a grant the caller did not ask for.
     const ctx = makeCtx();

@@ -4,15 +4,27 @@ import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 /**
- * Distinct codes so a wrapper script can tell "you said no" from "your code returned 1".
- * Documented in `docs/cli-reference.md`; changing one is a breaking change for any script.
+ * Control outcomes, in the 124–127 band the shell already reserves for "the command did not run":
+ * 124 is GNU `timeout`'s kill code, 125 is `git bisect`'s "cannot test", and 126/127 mean found-but-
+ * not-executed and not-found. A script's own exit code passes through unchanged.
+ *
+ * The collision is real and cannot be designed away: a script is free to `exit 126` itself, and
+ * nothing in-band can distinguish that from a denial. Picking this band minimises it — 10–14, the
+ * obvious first choice, sits exactly where ordinary scripts put their own error codes — and
+ * `docs/cli-reference.md` states the residual ambiguity plainly rather than promising a distinction
+ * that does not exist. stderr carries the unambiguous reason in every control case.
+ *
+ * There is deliberately no `timeout` entry. `ExecGateOutcome` has no timeout variant: the consent
+ * broker resolves `false` on TTL, so a timed-out approval IS a denial and reports as one. A code
+ * for it would be documented and unreachable.
+ *
+ * Changing any value is a breaking change for anything scripting `nimbus exec`.
  */
 export const EXEC_EXIT_CODES = {
-  denied: 10,
-  timeout: 11,
-  refused: 12,
-  wallClock: 13,
-  outputCap: 14,
+  wallClock: 124,
+  outputCap: 125,
+  denied: 126,
+  refused: 127,
 } as const;
 
 export interface ParsedExecArgs {
@@ -114,14 +126,41 @@ export interface ExecOutcomeShape {
  * `refused`, never 0: exiting 0 on something we did not understand would read as "it ran fine".
  */
 export function exitCodeFor(outcome: ExecOutcomeShape): number {
+  // A timed-out approval arrives here as "denied" -- the broker resolves false on TTL -- so there
+  // is no separate timeout branch to write.
   if (outcome.status === "denied") return EXEC_EXIT_CODES.denied;
-  if (outcome.status === "timeout") return EXEC_EXIT_CODES.timeout;
   if (outcome.status === "refused") return EXEC_EXIT_CODES.refused;
   const r = outcome.result;
   if (outcome.status !== "ran" || r === undefined) return EXEC_EXIT_CODES.refused;
   if (r.terminationReason === "wall_clock") return EXEC_EXIT_CODES.wallClock;
   if (r.terminationReason === "output_cap") return EXEC_EXIT_CODES.outputCap;
   return r.exitCode ?? 1;
+}
+
+/** Where rendered output goes. Injected so the rendering is testable without a live process. */
+export interface OutcomeSink {
+  readonly out: (s: string) => void;
+  readonly err: (s: string) => void;
+}
+
+/**
+ * Write a gate outcome to the user.
+ *
+ * Pure over an injected sink, because this is the half of `runExec` worth testing: the rest is
+ * connect / call / disconnect that only an e2e can exercise honestly. Truncation is DISCLOSED
+ * rather than left implicit — a short buffer that looks complete is the failure mode a silent cap
+ * would produce, and stderr is what a script should read for the unambiguous reason, since the
+ * exit code alone cannot separate a control outcome from a script that chose the same number.
+ */
+export function renderOutcome(outcome: ExecOutcomeShape, sink: OutcomeSink): void {
+  const r = outcome.result;
+  if (r !== undefined) {
+    if (r.stdout !== undefined && r.stdout !== "") sink.out(r.stdout);
+    if (r.stderr !== undefined && r.stderr !== "") sink.err(r.stderr);
+    if (r.truncated === true) sink.err("nimbus: output truncated at the configured cap\n");
+  }
+  if (outcome.status === "refused") sink.err(`nimbus: refused (${outcome.code ?? "unknown"})\n`);
+  if (outcome.status === "denied") sink.err("nimbus: execution denied\n");
 }
 
 export interface ExecApprovalPrompt {
@@ -202,16 +241,10 @@ export async function runExec(args: string[]): Promise<void> {
       { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS },
     );
 
-    const r = outcome.result;
-    if (r !== undefined) {
-      if (r.stdout !== undefined && r.stdout !== "") process.stdout.write(r.stdout);
-      if (r.stderr !== undefined && r.stderr !== "") process.stderr.write(r.stderr);
-      // Disclose truncation rather than handing back a short buffer that looks complete.
-      if (r.truncated === true) console.error("nimbus: output truncated at the configured cap");
-    }
-    if (outcome.status === "refused")
-      console.error(`nimbus: refused (${outcome.code ?? "unknown"})`);
-    if (outcome.status === "denied") console.error("nimbus: execution denied");
+    renderOutcome(outcome, {
+      out: (s) => void process.stdout.write(s),
+      err: (s) => void process.stderr.write(s),
+    });
     process.exitCode = exitCodeFor(outcome);
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));

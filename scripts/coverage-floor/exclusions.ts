@@ -238,6 +238,10 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/embedding/embedding-runtime.ts" },
   { kind: "exact", path: "packages/gateway/src/vault/nimbus-vault.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/agent-invoke.ts" },
+  // exec-result.ts: one `type` and one `interface`, no executable statement. Emits no `SF:` record,
+  // so the gate reads 0% and it can never rejoin the floor. Not named `*types.ts`, so the basename
+  // regexes above do not reach it. Guardian header on the file forbids runtime logic.
+  { kind: "exact", path: "packages/gateway/src/exec/exec-result.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/workflow-invoke.ts" },
   { kind: "exact", path: "packages/gateway/src/connectors/mapped-row.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/connector-rpc-handlers/context.ts" },

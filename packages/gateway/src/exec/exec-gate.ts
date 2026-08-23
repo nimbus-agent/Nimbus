@@ -70,7 +70,11 @@ function digest(s: string): string {
  * retention, deploy annotation), so on a `code.execute` row it would read as "this ran without
  * needing approval" -- the single most dangerous thing an auditor could wrongly conclude here.
  */
-type ExecOutcomeTag = "denied_by_owner" | "refused_before_consent" | "executed";
+type ExecOutcomeTag =
+  | "denied_by_owner"
+  | "refused_before_consent"
+  | "executed"
+  | "failed_after_approval";
 
 function audit(
   deps: ExecGateDeps,
@@ -99,6 +103,11 @@ export async function runExecution(
   deps: ExecGateDeps,
 ): Promise<ExecGateOutcome> {
   const executionId = deps.newId();
+  // Whether the owner has said yes yet. The catch below is unconditional, and a failure AFTER
+  // approval -- `runConfined` throwing, the runner dying -- must not be recorded as though consent
+  // was never sought: an auditor reading `refused_before_consent` concludes nothing was approved
+  // and nothing spawned, when in fact the owner approved and a process may have started.
+  let approvedAt: string | undefined;
 
   try {
     // 1. Local kill-switch, then org policy. Both BEFORE consent.
@@ -217,6 +226,8 @@ export async function runExecution(
       return { status: "denied" };
     }
 
+    approvedAt = codeBody;
+
     // 7. Spawn. Both cmd and args come from the REGISTRY (never a caller-supplied argv, I33).
     const { cmd, args } = runtime.argvFor(codeBody);
     const result = await runConfined(deps.runner, cmd, args, {
@@ -247,7 +258,17 @@ export async function runExecution(
       e instanceof ExecGateError || e instanceof ExecPolicyError || e instanceof ExecRuntimeError
         ? e.code
         : "ERR_EXEC_FAILED";
-    audit(deps, "rejected", "refused_before_consent", { executionId, code });
+    // An owner-approved run that then failed is recorded as APPROVED, because it was. Only a
+    // pre-consent failure may claim the owner never saw it.
+    if (approvedAt === undefined) {
+      audit(deps, "rejected", "refused_before_consent", { executionId, code });
+    } else {
+      audit(deps, "approved", "failed_after_approval", {
+        executionId,
+        code,
+        codeBody: approvedAt,
+      });
+    }
     return { status: "refused", code };
   }
   // No `finally` cleanup: the body is passed inline, so this gate writes no file anywhere. That is

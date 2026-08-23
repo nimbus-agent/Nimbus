@@ -218,6 +218,43 @@ describe("runExecution (I33)", () => {
     expect(out.status).toBe("denied");
   });
 
+  test("a failure AFTER approval is audited as approved, not as refused-before-consent", async () => {
+    // The catch is unconditional, so a spawn/runner failure once the owner has said yes must not
+    // record `refused_before_consent`: an auditor reading that concludes no consent was sought and
+    // nothing started, when the owner approved and a process may already have run.
+    const throwingRunner: SandboxRunner = {
+      platform: process.platform as "linux" | "darwin" | "win32",
+      spawn: () => {
+        throw new Error("spawn blew up after approval");
+      },
+      isFullyActive: () => true,
+      degradedReason: () => null,
+      canConfine: () => null,
+    };
+    const { deps } = makeDeps({ runner: throwingRunner, requestApproval: async () => true });
+    const out = await runExecution(REQ, deps);
+    expect(out.status).toBe("refused");
+
+    const rows = auditRows(deps.db);
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.hitl_status).toBe("approved");
+    const payload = JSON.parse(rows[0]?.action_json ?? "{}") as Record<string, unknown>;
+    expect(payload["outcome"]).toBe("failed_after_approval");
+    // The approved body is still recorded — it is what the owner consented to.
+    expect(payload["codeBody"]).toBe("console.log(1)");
+  });
+
+  test("a failure BEFORE approval still records refused_before_consent", async () => {
+    // The other side: the distinction is only worth anything if both directions are right.
+    const { deps } = makeDeps({ config: { ...CONFIG, enabled: false } });
+    await runExecution(REQ, deps);
+    const payload = JSON.parse(auditRows(deps.db)[0]?.action_json ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(payload["outcome"]).toBe("refused_before_consent");
+  });
+
   test("the gate writes NO file anywhere, on denial or otherwise", async () => {
     // The body is passed inline, so there is no scratch file to leak on a denial, race the spawn,
     // or let another local user read or swap between approval and execution. This guards against

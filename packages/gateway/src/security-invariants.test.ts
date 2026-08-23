@@ -1525,6 +1525,68 @@ describe("I22 — org policy applied only from a signature-verified bundle, mono
     return new PolicyGate(store, baseline);
   }
 
+  // The ai_v2 capability lockoff rides on I22's enforced view, so it needs I22's coverage too.
+  test("(cap-1) a SIGNATURE-VERIFIED policy disabling code_execution reaches EnforcedPolicy", () => {
+    const kp = generateEd25519Keypair();
+    const toml = `[policy]
+version=1
+org="acme"
+[policy.capabilities.ai_v2]
+code_execution=false
+`;
+    const gate = gateWith(
+      toml,
+      signPolicy(toml, encodeBase64(kp.privkey)),
+      encodeBase64(kp.pubkey),
+    );
+    expect(gate.enforced().capabilitiesDisabled.has("code_execution")).toBe(true);
+  });
+
+  test("(cap-2) a TAMPERED policy cannot disable a capability", () => {
+    // Same signature, body flipped. Rejected wholesale, so the gate falls back to the baseline
+    // rather than honouring any value the forged body carried.
+    const kp = generateEd25519Keypair();
+    const good = `[policy]
+version=1
+org="acme"
+[policy.capabilities.ai_v2]
+code_execution=false
+`;
+    const sig = signPolicy(good, encodeBase64(kp.privkey));
+    const forged = good.replace("version=1", "version=2");
+    const gate = gateWith(forged, sig, encodeBase64(kp.pubkey));
+    expect(gate.enforced().capabilitiesDisabled.has("code_execution")).toBe(false);
+  });
+
+  test("(cap-3) a capability disabled in the LOCAL baseline survives any policy", () => {
+    // Resolution is a union, so no value a policy can carry removes an entry -- including a validly
+    // signed `= true`, which parses to "disables nothing" rather than to a grant.
+    const kp = generateEd25519Keypair();
+    const toml = `[policy]
+version=1
+org="acme"
+[policy.capabilities.ai_v2]
+code_execution=true
+`;
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 36);
+    const store = new PolicyStore(db);
+    store.pinAnchorPubkey(encodeBase64(kp.pubkey), "manual", 1);
+    store.persist({
+      toml,
+      sig: signPolicy(toml, encodeBase64(kp.privkey)),
+      org: "acme",
+      version: 1,
+      source: "peer",
+      fetchedAt: 1,
+    });
+    const locked = new PolicyGate(store, {
+      ...baseline,
+      capabilitiesDisabled: new Set(["code_execution"]),
+    });
+    expect(locked.enforced().capabilitiesDisabled.has("code_execution")).toBe(true);
+  });
+
   test("(a) a tampered policy is rejected; the gate stays ungoverned (falls back to baseline)", () => {
     const kp = generateEd25519Keypair();
     const good = `[policy]\nversion=1\norg="acme"\n[policy.retention]\nmin_days=30\n`;

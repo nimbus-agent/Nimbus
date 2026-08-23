@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { EXEC_EXIT_CODES, exitCodeFor, formatApprovalPrompt, parseExecArgs } from "./exec.ts";
+import {
+  EXEC_EXIT_CODES,
+  exitCodeFor,
+  formatApprovalPrompt,
+  parseExecArgs,
+  renderOutcome,
+} from "./exec.ts";
 
 const ABS = process.platform === "win32" ? "C:\\x" : "/x";
 
@@ -58,25 +64,38 @@ describe("nimbus exec arg parsing", () => {
 });
 
 describe("exec exit codes", () => {
-  test("are the documented, distinct values", () => {
+  test("live in the shell-reserved 124-127 band, not where scripts put their own codes", () => {
+    // 10-14 was the obvious first choice and the wrong one: that is exactly where ordinary scripts
+    // put their own error codes, so `exit 10` would be indistinguishable from a denial. 124-127 is
+    // the band the shell already reserves for "the command did not run".
     expect(EXEC_EXIT_CODES).toEqual({
-      denied: 10,
-      timeout: 11,
-      refused: 12,
-      wallClock: 13,
-      outputCap: 14,
+      wallClock: 124,
+      outputCap: 125,
+      denied: 126,
+      refused: 127,
     });
+    for (const c of Object.values(EXEC_EXIT_CODES)) {
+      expect(c).toBeGreaterThanOrEqual(124);
+      expect(c).toBeLessThanOrEqual(127);
+    }
+  });
+
+  test("has NO timeout code, because no outcome can produce one", () => {
+    // The consent broker resolves false on TTL, so a timed-out approval IS a denial. A documented
+    // code for it would be unreachable -- the shape this repo has been bitten by before.
+    expect("timeout" in EXEC_EXIT_CODES).toBe(false);
+    expect(exitCodeFor({ status: "timeout" })).toBe(EXEC_EXIT_CODES.refused);
   });
 
   test("maps every outcome to its documented exit code", () => {
-    expect(exitCodeFor({ status: "denied" })).toBe(10);
-    expect(exitCodeFor({ status: "refused", code: "ERR_EXEC_DISABLED" })).toBe(12);
+    expect(exitCodeFor({ status: "denied" })).toBe(126);
+    expect(exitCodeFor({ status: "refused", code: "ERR_EXEC_DISABLED" })).toBe(127);
     expect(
       exitCodeFor({ status: "ran", result: { exitCode: null, terminationReason: "wall_clock" } }),
-    ).toBe(13);
+    ).toBe(124);
     expect(
       exitCodeFor({ status: "ran", result: { exitCode: null, terminationReason: "output_cap" } }),
-    ).toBe(14);
+    ).toBe(125);
   });
 
   test("a script's OWN non-zero code passes through unchanged", () => {
@@ -91,8 +110,71 @@ describe("exec exit codes", () => {
 
   test("an unrecognised outcome is a refusal, not a success", () => {
     // Fail-closed: an unknown shape must never exit 0 and read as "it ran fine".
-    expect(exitCodeFor({ status: "ran" })).toBe(12);
-    expect(exitCodeFor({ status: "something-new" })).toBe(12);
+    expect(exitCodeFor({ status: "ran" })).toBe(127);
+    expect(exitCodeFor({ status: "something-new" })).toBe(127);
+  });
+});
+
+describe("renderOutcome", () => {
+  function sink() {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { out, err, s: { out: (x: string) => out.push(x), err: (x: string) => err.push(x) } };
+  }
+
+  test("writes stdout and stderr through, and stays silent when both are empty", () => {
+    const a = sink();
+    renderOutcome(
+      {
+        status: "ran",
+        result: { exitCode: 0, terminationReason: "exited", stdout: "hi", stderr: "warn" },
+      },
+      a.s,
+    );
+    expect(a.out.join("")).toBe("hi");
+    expect(a.err.join("")).toContain("warn");
+
+    const b = sink();
+    renderOutcome(
+      {
+        status: "ran",
+        result: { exitCode: 0, terminationReason: "exited", stdout: "", stderr: "" },
+      },
+      b.s,
+    );
+    expect(b.out.join("")).toBe("");
+    expect(b.err.join("")).toBe("");
+  });
+
+  test("DISCLOSES truncation rather than handing back a short buffer that looks complete", () => {
+    const a = sink();
+    renderOutcome(
+      {
+        status: "ran",
+        result: { exitCode: 0, terminationReason: "output_cap", stdout: "part", truncated: true },
+      },
+      a.s,
+    );
+    expect(a.err.join("")).toContain("truncated");
+  });
+
+  test("names the refusal code on stderr — the unambiguous signal the exit code cannot carry", () => {
+    const a = sink();
+    renderOutcome({ status: "refused", code: "ERR_EXEC_DISABLED" }, a.s);
+    expect(a.err.join("")).toContain("ERR_EXEC_DISABLED");
+  });
+
+  test("falls back to 'unknown' for a refusal with no code", () => {
+    const a = sink();
+    renderOutcome({ status: "refused" }, a.s);
+    expect(a.err.join("")).toContain("unknown");
+  });
+
+  test("says so on a denial, and writes nothing to stdout", () => {
+    const a = sink();
+    renderOutcome({ status: "denied" }, a.s);
+    expect(a.err.join("")).toContain("denied");
+    expect(a.out.join("")).toBe("");
   });
 });
 

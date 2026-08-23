@@ -83,6 +83,25 @@ export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): stri
   return argv;
 }
 
+/**
+ * Is `bwrap` itself present?
+ *
+ * Distinct from the helper probe below: `bwrap` IS the confinement on Linux, while the helper only
+ * adds per-host network filtering. Resolved through PATH rather than a fixed `/usr/bin/bwrap`,
+ * because that is how `spawn` finds it — a path check would answer a narrower question and
+ * disagree with production on any distro that installs it elsewhere.
+ *
+ * Probed once at construction so `canConfine` can answer BEFORE the owner is asked to approve.
+ * Without it a no-network policy reported "confinable", the owner approved, and only then did the
+ * spawn fail — exactly the "never ask for approval of something unconfinable" rule the gate exists
+ * to keep.
+ */
+function probeBwrap(): string | null {
+  const r = spawnSync("sh", ["-c", "command -v bwrap"], { encoding: "utf8" });
+  const p = (r.stdout ?? "").trim();
+  return r.status === 0 && p !== "" ? null : "bwrap not found on PATH";
+}
+
 function probeHelper(): HelperState {
   if (!existsSync(HELPER_PATH)) {
     return {
@@ -130,6 +149,7 @@ export function createLinuxSandboxRunner(): SandboxRunner {
   const seccompPath = join(seccompDir, "seccomp.bpf");
   writeFileSync(seccompPath, seccompProgram, { mode: 0o600 });
 
+  const bwrapMissing = probeBwrap();
   const helper = probeHelper();
   if (!helper.available) {
     log.warn({ helper: helper.reason }, "sandbox: degraded mode (no per-host network gating)");
@@ -180,6 +200,8 @@ export function createLinuxSandboxRunner(): SandboxRunner {
       return helper.reason;
     },
     canConfine(policy): string | null {
+      // bwrap first: without it NOTHING is confinable here, network-bearing or not.
+      if (bwrapMissing !== null) return bwrapMissing;
       // The helper is needed ONLY for per-host network filtering. With an empty network set the
       // runner passes `--unshare-net`, giving the child its own network namespace — no helper
       // involved — while bwrap's filesystem binds and the seccomp filter apply regardless. So a

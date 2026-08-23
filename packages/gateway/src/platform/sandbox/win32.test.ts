@@ -125,6 +125,37 @@ describe("createWin32SandboxRunner — helper probe outcomes", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
+  const NO_NET_POLICY = {
+    id: "canconfine-probe",
+    permissions: { network: [], filesystem: { read: [], write: [] } },
+  };
+  const NET_POLICY = {
+    id: "canconfine-probe",
+    permissions: { network: ["example.com"], filesystem: { read: [], write: [] } },
+  };
+
+  it("canConfine reports the helper's reason when the helper is unusable", () => {
+    // Unlike Linux, the Windows helper IS the confinement -- it creates the AppContainer profile
+    // and applies the ACLs -- so without it NO policy is enforceable, network-bearing or not.
+    process.env["NIMBUS_SANDBOX_HELPER_PATH"] = process.execPath;
+    const runner = createWin32SandboxRunner();
+    expect(runner.canConfine(NO_NET_POLICY)).toContain("cannot create an AppContainer profile");
+    expect(runner.canConfine(NET_POLICY)).toContain("cannot create an AppContainer profile");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "canConfine accepts BOTH policy shapes once the helper answers OK",
+    () => {
+      installFakeHelper("echo OK\nexit 0\n");
+      const runner = createWin32SandboxRunner();
+      // The all-or-nothing `internetClient` asymmetry is a documented platform caveat reported by
+      // degradedReason(), not an unenforceable policy -- so canConfine does not report it.
+      expect(runner.canConfine(NO_NET_POLICY)).toBeNull();
+      expect(runner.canConfine(NET_POLICY)).toBeNull();
+      expect(runner.degradedReason()).toContain("all-or-nothing");
+    },
+  );
+
   it("refuses a helper that exits 0 but does not answer exactly OK", () => {
     // process.execPath is the bun binary running this test: it exists, and it answers an
     // unrecognised flag with its own help text on stdout and a 0 exit. Present-but-wrong is

@@ -1145,17 +1145,29 @@ nimbus exec --file ./script.ts --allow-fs-write ./out --timeout 5000
 loopback — a script cannot reach the Gateway's own IPC socket or HTTP API. A
 request that asks for network is rejected, not silently downgraded.
 
-**Exit codes.** A script's own exit code passes through unchanged, so these are
-distinct from it:
+**Exit codes.** A script's own exit code passes through unchanged. Control
+outcomes use the 124–127 band the shell already reserves for "the command did
+not run":
 
 | Code | Meaning |
 | --- | --- |
 | *n* | The script exited with *n*. |
-| `10` | You denied the approval (or cancelled the prompt). |
-| `11` | The approval timed out. |
-| `12` | Refused before consent — disabled by config or org policy, unknown runtime, relative grant path, missing file. |
-| `13` | Killed: wall-clock exceeded. |
-| `14` | Killed: output cap exceeded. |
+| `124` | Killed: wall-clock exceeded. |
+| `125` | Killed: output cap exceeded. |
+| `126` | You denied the approval, cancelled the prompt, or let it time out. |
+| `127` | Refused before consent — disabled by config or org policy, unknown runtime, relative grant path, missing file, body over the size cap. |
+
+**The distinction is not absolute, and this document will not pretend it is.** A
+script is free to `exit 126` itself, and nothing in the exit code can separate
+that from a denial. The band is chosen to make the collision unlikely rather
+than impossible — 124 is GNU `timeout`'s, 125 is `git bisect`'s, 126 and 127
+are the shell's found-but-not-executed and not-found. **stderr carries the
+unambiguous reason** in every control case, and is what a script should read
+when it needs certainty.
+
+There is no separate timeout code. The consent broker treats an unanswered
+prompt as a denial, so a timeout reports as one; a distinct code would be
+documented and unreachable.
 
 **The LLM cannot invoke this.** `nimbus exec` is owner-only in this release, so
 no indexed content can cause code to run. That bound is what makes a single

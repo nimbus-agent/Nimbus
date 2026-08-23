@@ -118,6 +118,44 @@ describe("runConfined", () => {
     expect(r.stdout).not.toContain("�");
   });
 
+  test("a chunk that fills the budget EXACTLY still truncates when more arrives", async () => {
+    // The boundary the obvious implementation gets wrong: the first chunk leaves room === 0, so a
+    // later chunk hits `room <= 0` and returns. Without marking it, the child ran on to the wall
+    // clock while the result claimed truncated:false — output dropped, and the caller told none was.
+    const child = fakeChild();
+    const p = runConfined(fakeRunner(child), "bun", [], { ...BASE, maxOutputBytes: 4 });
+    child.stdout.write("aaaa"); // exactly fills
+    child.stdout.write("bbbb"); // arrives with room === 0
+    const r = await p;
+    expect(r.truncated).toBe(true);
+    expect(r.terminationReason).toBe("output_cap");
+    expect(r.stdout).toBe("aaaa");
+    expect(child.killed.length).toBeGreaterThan(0);
+  });
+
+  test("a chunk that fills the budget exactly and is never followed is NOT truncated", async () => {
+    // The other side of that boundary: exactly-full is not itself an overflow, and reporting it as
+    // one would be a false disclosure.
+    const child = fakeChild();
+    const p = runConfined(fakeRunner(child), "bun", [], { ...BASE, maxOutputBytes: 4 });
+    child.stdout.write("aaaa");
+    child.emit("close", 0);
+    const r = await p;
+    expect(r.truncated).toBe(false);
+    expect(r.terminationReason).toBe("exited");
+    expect(r.stdout).toBe("aaaa");
+  });
+
+  test("an EMPTY chunk after the budget is full does not fabricate a truncation", async () => {
+    const child = fakeChild();
+    const p = runConfined(fakeRunner(child), "bun", [], { ...BASE, maxOutputBytes: 4 });
+    child.stdout.write("aaaa");
+    child.stdout.write(Buffer.alloc(0));
+    child.emit("close", 0);
+    const r = await p;
+    expect(r.truncated).toBe(false);
+  });
+
   test("stdout and stderr share ONE budget", async () => {
     const child = fakeChild();
     const p = runConfined(fakeRunner(child), "bun", [], { ...BASE, maxOutputBytes: 6 });

@@ -122,18 +122,27 @@ export function runConfined(
      * The budget is shared across stdout and stderr: it bounds the memory this function holds, and
      * a child can choose which stream to flood.
      */
+    function overflow(): void {
+      truncated = true;
+      if (reason === "exited") reason = "output_cap";
+      stop();
+    }
+
     function absorb(chunk: unknown, into: Uint8Array[]): void {
       const buf = chunk instanceof Uint8Array ? chunk : new TextEncoder().encode(String(chunk));
       const room = opts.maxOutputBytes - bytes;
-      if (room <= 0) return;
+      // A chunk arriving with the budget ALREADY exactly full is still an overflow. Returning here
+      // without marking it -- the obvious reading of "no room left, nothing to do" -- left the
+      // child running to the wall clock while the result claimed `truncated: false`, so output was
+      // dropped and the caller was told none had been.
+      if (room <= 0) {
+        if (buf.byteLength > 0) overflow();
+        return;
+      }
       const slice = buf.byteLength > room ? buf.subarray(0, room) : buf;
       bytes += slice.byteLength;
       into.push(slice);
-      if (buf.byteLength > room) {
-        truncated = true;
-        if (reason === "exited") reason = "output_cap";
-        stop();
-      }
+      if (buf.byteLength > room) overflow();
     }
 
     child.stdout?.on("data", (c: unknown) => absorb(c, outChunks));
