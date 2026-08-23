@@ -14,10 +14,17 @@
 
 This is **Part 1 of 2**. It builds the whole mechanism and migrates **only `github`** (6 write tools).
 
-**Part 2** — a separate plan, written after this lands — covers the bulk rollout: the remaining ~33
-write-capable connectors and ~67 call sites, the 18 in-process connector test files that must set
-gateway mode once their connector migrates, and wiring the declared write set into I26's
-`isConnectorWriteToolId`.
+**Part 2** — a separate plan, DEFERRED until Part 1 has been reviewed — covers the bulk rollout:
+the **36** connectors that declare `write`/`delete` and are refused standalone until migrated, their
+~68 mutating call sites, the 18 in-process connector test files that must set gateway mode once
+their connector migrates, flipping `MUTATION_RULE_BLOCKING` to `true`, and wiring the declared write
+set into I26's `isConnectorWriteToolId` (which today covers ~20 of those sites, and is the only item
+touching a live invariant, so it carries the wiring + docs + test triple).
+
+Deferred deliberately. Executing Part 1 surfaced six defects the plan and two review passes all
+missed — a fatal registration-timing bug, four SDK type mismatches, a 600s suite hang, a dropped
+credential, and twice, flaws in the detection logic itself. That was on ONE connector. Committing 36
+more to a design with no external review is the expensive direction to be wrong in.
 
 Part 1 is deliberately inert for every connector except `github`: Tasks 1–7 add new modules nobody
 calls yet, so `main` stays green at every commit.
@@ -2019,7 +2026,7 @@ const MUTATING_RE = /(["'`])(POST|PUT|PATCH|DELETE)\1/;
 /**
  * Rule 2 is ADVISORY in Part 1 and blocking at the end of Part 2.
  *
- * ~33 connectors still register mutations through the plain registrar, so blocking now would red
+ * 36 connectors still register mutations through the plain registrar, so blocking now would red
  * `main` for work that is deliberately scheduled later. This is a named constant rather than a
  * silent `exit(0)` so flipping it is a one-line, reviewable change.
  */

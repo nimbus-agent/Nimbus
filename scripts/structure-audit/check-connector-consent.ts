@@ -39,7 +39,7 @@ const MUTATING_RE = /(["'`])(POST|PUT|PATCH|DELETE)\1/;
 /**
  * Rule 2 is ADVISORY in Part 1 and blocking at the end of Part 2.
  *
- * ~43 connectors still register mutations through the plain registrar, so blocking now would red
+ * 36 connectors still register mutations through the plain registrar, so blocking now would red
  * `main` for work that is deliberately scheduled later. A named constant rather than a silent
  * `exit(0)`, so flipping it is a one-line, reviewable change.
  */
