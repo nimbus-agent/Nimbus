@@ -730,6 +730,21 @@ jobs:
         shell: bash
         run: sudo bash scripts/linux/install-vault-deps.sh
 
+      # This job collects `packages/gateway/test/e2e/exec-e2e.test.ts`, which drives a REAL
+      # sandboxed execution through the I33 gate. Like sandbox-wrapper-spawn.test.ts, it goes RED
+      # rather than skipping when its platform dependency is missing on CI — a skip and a pass are
+      # indistinguishable in a CI summary — so the job that collects it needs the dependency, the
+      # same reason install-vault-deps.sh is duplicated across every job that collects vault tests.
+      - name: Linux — bubblewrap (sandboxed code-execution e2e, collected by this job)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo bash scripts/linux/install-sandbox-deps.sh
+
+      - name: Build sandbox helper (Windows, sandboxed code-execution e2e)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: bun run build:sandbox-helper:win32
+
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
         shell: bash

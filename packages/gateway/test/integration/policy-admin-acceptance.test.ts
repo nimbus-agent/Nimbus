@@ -35,6 +35,7 @@ const BASELINE = (retentionDays: number): LocalBaseline => ({
   retentionDays,
   hitlRequired: new Set<string>(),
   quorum: new Map(),
+  capabilitiesDisabled: new Set<string>(),
 });
 
 const ANCHOR_TOML = [

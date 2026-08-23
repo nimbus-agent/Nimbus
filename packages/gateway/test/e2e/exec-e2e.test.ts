@@ -144,10 +144,35 @@ interface ExecOutcome {
  * flag these, because it keys on `process.platform` and this condition is sandbox availability.
  */
 const IS_CI = process.env["CI"] === "true";
+
+// Point the runtime at the repo's built helper on Windows, before the probe below and before the
+// gateway subprocess inherits this environment. `helperPath()` (win32.ts) resolves
+// `NIMBUS_SANDBOX_HELPER_PATH ?? <next to the running exe>`, and that default lands in `~/.bun/bin`
+// — not `src-native`, where CI's `build:sandbox-helper:win32` step puts it. Without this the probe
+// and the child gateway would both look somewhere the binary is not.
+if (process.platform === "win32" && process.env["NIMBUS_SANDBOX_HELPER_PATH"] === undefined) {
+  process.env["NIMBUS_SANDBOX_HELPER_PATH"] = join(
+    import.meta.dir,
+    "../../src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe",
+  );
+}
+
 const sandboxAvailable = await (async () => {
   const { createSandboxRunner } = await import("../../src/platform/sandbox/sandbox-runner.ts");
   try {
-    return (await createSandboxRunner()).isFullyActive();
+    // Ask the SAME question the gate asks — "can you confine THIS policy?" — with the empty-network
+    // policy every execution in this slice uses. Probing `isFullyActive()` instead would repeat the
+    // exact defect this branch fixed in the gate: on Linux it reports the nimbus-sandbox-helper,
+    // which exists solely for per-host network filtering and which CI does not install, so a
+    // perfectly capable bubblewrap sandbox would be reported unavailable and these cases would
+    // "fail loudly" about a dependency they never needed.
+    const runner = await createSandboxRunner();
+    return (
+      runner.canConfine({
+        id: "e2e-probe",
+        permissions: { network: [], filesystem: { read: [], write: [] } },
+      }) === null
+    );
   } catch {
     return false;
   }
