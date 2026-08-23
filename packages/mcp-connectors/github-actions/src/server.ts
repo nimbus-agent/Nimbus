@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
@@ -26,6 +26,17 @@ function ghFetch(
 
 const mcp = new McpServer({ name: "nimbus-github-actions", version: "0.1.0" });
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING github-actions tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "github-actions",
+  scopeEnv: "NIMBUS_MCP_GITHUB_ACTIONS_WRITE_SCOPE",
+  scopeKinds: ["repo"],
+});
 
 /** Standard GitHub Actions tool: token → ghFetch(buildPath) → mcpJsonResultIfOk("GitHub Actions"). */
 const registerGhaTool = makeRestToolRegistrar({
@@ -137,9 +148,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "gha_run_trigger",
-  "Dispatch a workflow (workflow_dispatch). Requires Gateway HITL.",
+  {
+    mutates: "github_actions.run.trigger",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "repo", value: `${p.owner}/${p.repo}` }),
+  },
+  "Dispatch a workflow (workflow_dispatch).",
   repoSlugArgs.extend({
     workflowId: z
       .string()
@@ -173,9 +189,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "gha_run_cancel",
-  "Cancel a workflow run. Requires Gateway HITL.",
+  {
+    mutates: "github_actions.run.cancel",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "repo", value: `${p.owner}/${p.repo}` }),
+  },
+  "Cancel a workflow run.",
   runIdSchema,
   async (parsed) => {
     const token = requireProcessEnv("GITHUB_PAT");

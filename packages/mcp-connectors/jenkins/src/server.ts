@@ -17,7 +17,21 @@ import {
 } from "./jenkins-api.ts";
 
 const mcp = new McpServer({ name: "nimbus-jenkins", version: "0.1.0" });
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING jenkins tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "jenkins",
+  scopeEnv: "NIMBUS_MCP_JENKINS_WRITE_SCOPE",
+  scopeKinds: ["job"],
+});
 
 const JOBS_TREE =
   "jobs[name,fullname,url,jobs[name,fullname,url,jobs[name,fullname,url,jobs[name,fullname,url]]]]";
@@ -129,9 +143,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "jenkins_build_trigger",
-  "Trigger a new build for a job (HITL in Gateway).",
+  {
+    mutates: "jenkins.build.trigger",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "job", value: p.jobName }),
+  },
+  "Trigger a new build for a job.",
   jobNameSchema,
   async (parsed) => {
     const base = jenkinsBaseUrl();
@@ -146,9 +165,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "jenkins_build_abort",
-  "Abort/stop a running build (HITL in Gateway).",
+  {
+    mutates: "jenkins.build.abort",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "job", value: p.jobName }),
+  },
+  "Abort/stop a running build.",
   z.object({
     jobName: z.string().min(1),
     buildNumber: z.number().int().min(1),

@@ -9,7 +9,21 @@ import {
 import { runCliOkThrowing } from "../../shared/run-cli-json.ts";
 
 const mcp = new McpServer({ name: "nimbus-iac", version: "0.1.0" });
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING iac tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "iac",
+  scopeEnv: "NIMBUS_MCP_IAC_WRITE_SCOPE",
+  scopeKinds: ["dir", "stack"],
+});
 
 const processEnv = process.env as Record<string, string | undefined>;
 
@@ -25,9 +39,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "iac_terraform_apply",
-  "Run terraform apply. HITL.",
+  {
+    mutates: "iac.terraform.apply",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "dir", value: p.workingDirectory }),
+  },
+  "Run terraform apply.",
   z.object({ workingDirectory: z.string().min(1) }),
   async (p) => {
     await runCliOkThrowing(
@@ -38,9 +57,18 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "iac_terraform_destroy",
-  "Run terraform destroy. HITL.",
+  {
+    mutates: "iac.terraform.destroy",
+    // Destroying infrastructure cannot be undone from its own result, and there is nothing
+    // queryable to snapshot, so the identifying parameters ARE the pre-state: a record naming
+    // WHICH directory was destroyed still beats silence.
+    recoverable: false,
+    capturePreState: (p) => Promise.resolve({ workingDirectory: p.workingDirectory }),
+    scopeTargetOf: (p) => ({ kind: "dir", value: p.workingDirectory }),
+  },
+  "Run terraform destroy.",
   z.object({ workingDirectory: z.string().min(1) }),
   async (p) => {
     await runCliOkThrowing(
@@ -51,9 +79,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "iac_cloudformation_deploy",
-  "Deploy a CloudFormation stack via AWS CLI. HITL.",
+  {
+    mutates: "iac.cloudformation.deploy",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "stack", value: p.stackName }),
+  },
+  "Deploy a CloudFormation stack via AWS CLI.",
   z.object({
     stackName: z.string().min(1),
     templateBody: z.string().min(1),
@@ -90,9 +123,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "iac_pulumi_up",
-  "Run pulumi up. HITL.",
+  {
+    mutates: "iac.pulumi.up",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "dir", value: p.workingDirectory }),
+  },
+  "Run pulumi up.",
   z.object({ workingDirectory: z.string().min(1) }),
   async (p) => {
     await runCliOkThrowing(

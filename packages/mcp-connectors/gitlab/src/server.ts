@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
+import { createWriteToolRegistrar, type WriteToolConfig } from "../../shared/consent-kit.ts";
 import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
@@ -59,6 +59,43 @@ const reg = createZodToolRegistrar(registerSimpleTool);
  * optional fetch init (method/body). Tools with a non-standard tail (raw text
  * trace, custom error text) stay hand-written below.
  */
+/**
+ * Every MUTATING gitlab tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "gitlab",
+  scopeEnv: "NIMBUS_MCP_GITLAB_WRITE_SCOPE",
+  scopeKinds: ["repo"],
+});
+
+/**
+ * The write-tool equivalent of `registerGitlabTool`: identical fetch and result handling, routed
+ * through the write registrar. `scopeTargetOf` is supplied here rather than per tool — every
+ * GitLab mutation is scoped to one project — so a new write tool cannot forget it.
+ */
+function registerGitlabWriteTool<T extends { projectPath: string }>(
+  name: string,
+  cfg: Omit<WriteToolConfig<T>, "scopeTargetOf">,
+  description: string,
+  schema: ZodObjectSchema<T>,
+  buildUrl: (p: T) => string,
+  buildInit?: (p: T) => RequestInit,
+): void {
+  registerWriteTool(
+    name,
+    { ...cfg, scopeTargetOf: (p) => ({ kind: "repo", value: p.projectPath }) },
+    description,
+    schema,
+    async (parsed) => {
+      const token = requireProcessEnv("GITLAB_PAT");
+      const res = await glFetch(token, buildUrl(parsed), buildInit?.(parsed));
+      return mcpJsonResultIfOk("GitLab", res);
+    },
+  );
+}
+
 function registerGitlabTool<T>(
   name: string,
   description: string,
@@ -147,9 +184,13 @@ const gitlabMrMergeSchema = projectPathArg.extend({
   shouldRemoveSourceBranch: z.boolean().optional(),
 });
 
-registerGitlabTool(
+registerGitlabWriteTool(
   "gitlab_mr_merge",
-  "Merge a merge request (requires HITL repo.pr.merge).",
+  {
+    mutates: "gitlab.mr.merge",
+    recoverable: true,
+  },
+  "Merge a merge request.",
   gitlabMrMergeSchema,
   (parsed) =>
     `/projects/${encodeURIComponent(parsed.projectPath)}/merge_requests/${String(parsed.mergeRequestIid)}/merge`,
@@ -305,9 +346,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "gitlab_pipeline_retry",
-  "Retry failed jobs in a pipeline. Requires Gateway HITL.",
+  {
+    mutates: "gitlab.pipeline.retry",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "repo", value: p.projectPath }),
+  },
+  "Retry failed jobs in a pipeline.",
   gitlabPipelineGetSchema,
   async (parsed) => {
     const token = requireProcessEnv("GITLAB_PAT");
@@ -321,9 +367,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "gitlab_pipeline_cancel",
-  "Cancel a pipeline. Requires Gateway HITL.",
+  {
+    mutates: "gitlab.pipeline.cancel",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "repo", value: p.projectPath }),
+  },
+  "Cancel a pipeline.",
   gitlabPipelineGetSchema,
   async (parsed) => {
     const token = requireProcessEnv("GITLAB_PAT");

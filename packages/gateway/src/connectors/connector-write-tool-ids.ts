@@ -17,4 +17,20 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "github_issue_create",
   "github_branch_delete",
   "github_tag_create",
+
+  // Wave 3 — repos + CI
+  "bitbucket_pr_merge",
+  "gitlab_mr_merge",
+  "gitlab_pipeline_retry",
+  "gitlab_pipeline_cancel",
+  "jenkins_build_trigger",
+  "jenkins_build_abort",
+  "iac_terraform_apply",
+  "iac_terraform_destroy",
+  "iac_cloudformation_deploy",
+  "iac_pulumi_up",
+  "gha_run_trigger",
+  "gha_run_cancel",
+  "circleci_pipeline_trigger",
+  "circleci_job_cancel",
 ]);

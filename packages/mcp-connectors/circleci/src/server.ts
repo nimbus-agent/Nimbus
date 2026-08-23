@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
@@ -47,6 +47,17 @@ async function circleciFetch(
 
 const mcp = new McpServer({ name: "nimbus-circleci", version: "0.1.0" });
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING circleci tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "circleci",
+  scopeEnv: "NIMBUS_MCP_CIRCLECI_WRITE_SCOPE",
+  scopeKinds: ["project"],
+});
 
 /** Standard CircleCI read tool: token → circleciFetch(buildPath) → mcpJsonResultIfOk("CircleCI"). */
 const registerCciTool = makeRestToolRegistrar({
@@ -110,9 +121,14 @@ registerCciTool(
     `/project/${projectPathSegments(parsed.projectSlug)}/job/${String(parsed.jobNumber)}/artifacts`,
 );
 
-reg(
+registerWriteTool(
   "circleci_pipeline_trigger",
-  "Trigger a new pipeline on a branch (or tag). Requires Gateway HITL.",
+  {
+    mutates: "circleci.pipeline.trigger",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "project", value: p.projectSlug }),
+  },
+  "Trigger a new pipeline on a branch (or tag).",
   projectSlugSchema.extend({
     branch: z.string().min(1).optional(),
     tag: z.string().min(1).optional(),
@@ -142,9 +158,14 @@ reg(
   },
 );
 
-reg(
+registerWriteTool(
   "circleci_job_cancel",
-  "Cancel a running job by project slug and job number. Requires Gateway HITL.",
+  {
+    mutates: "circleci.job.cancel",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "project", value: p.projectSlug }),
+  },
+  "Cancel a running job by project slug and job number.",
   projectSlugSchema.extend({
     jobNumber: z.number().int().min(1),
   }),

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { joinApiPath } from "../../shared/join-api-path.ts";
 import {
   createRegisterSimpleTool,
@@ -70,6 +71,17 @@ const server = new McpServer({ name: "nimbus-bitbucket", version: "0.1.0" });
 
 const registerSimpleTool = createRegisterSimpleTool(server);
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING bitbucket tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "bitbucket",
+  scopeEnv: "NIMBUS_MCP_BITBUCKET_WRITE_SCOPE",
+  scopeKinds: ["repo"],
+});
 
 const repoFullArg = z.object({
   repoFull: z
@@ -150,9 +162,14 @@ const bitbucketPrMergeSchema = repoFullArg.extend({
   message: z.string().max(32_768).optional(),
 });
 
-reg(
+registerWriteTool(
   "bitbucket_pr_merge",
-  "Merge a pull request (requires HITL repo.pr.merge).",
+  {
+    mutates: "bitbucket.pr.merge",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "repo", value: p.repoFull }),
+  },
+  "Merge a pull request.",
   bitbucketPrMergeSchema,
   async (parsed) => {
     const { workspace, repoSlug } = splitRepoFull(parsed.repoFull);
