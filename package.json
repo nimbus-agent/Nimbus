@@ -171,6 +171,7 @@
     "audit:connector-entrypoints": "bun scripts/structure-audit/check-connector-entrypoints.ts",
     "audit:connector-deps": "bun scripts/structure-audit/check-connector-deps.ts",
     "audit:connector-registry-drift": "bun scripts/structure-audit/check-connector-registry-drift.ts",
+    "audit:connector-consent": "bun scripts/structure-audit/check-connector-consent.ts",
     "audit:import-meta-dir": "bun scripts/structure-audit/check-import-meta-dir.ts",
     "gen:connector-registry": "bun scripts/gen-bundled-connector-registry.ts",
     "test:connector-boot": "bun scripts/connector-boot-smoke.ts dist/nimbus-gateway",

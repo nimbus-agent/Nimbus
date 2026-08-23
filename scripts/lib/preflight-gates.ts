@@ -68,6 +68,15 @@ const FAST: readonly Gate[] = [
     tier: "fast",
   },
   {
+    // "The connector mode comes from the entrypoint" is a convention until something enforces it:
+    // any other caller of `setConnectorMode` could re-gate a connector mid-process, which is what
+    // Non-Negotiable #2 forbids. Also reports, advisorily for now, connectors that mutate without
+    // declaring it through `registerWriteTool`.
+    name: "audit:connector-consent",
+    cmd: ["bun", "run", "audit:connector-consent"],
+    tier: "fast",
+  },
+  {
     // A source-tree-relative path derived from `import.meta.dir` resolves inside the read-only
     // bunfs root in a compiled binary, so it silently points at nothing. Two such sites made the
     // admin console and the OpenAPI route unreachable in every released binary.
