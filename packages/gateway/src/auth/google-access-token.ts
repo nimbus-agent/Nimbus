@@ -4,11 +4,9 @@ import {
   perServiceOAuthVaultKey,
 } from "../connectors/connector-vault.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { GOOGLE_OAUTH_PARSE_ERRORS } from "./google-oauth-parse-errors.ts";
 import { GOOGLE_OAUTH_CLIENT_ID_HELP } from "./oauth-env-help-messages.ts";
-import {
-  getValidVaultOAuthAccessToken,
-  type ParseStoredOAuthErrors,
-} from "./oauth-vault-tokens.ts";
+import { getValidVaultOAuthAccessToken } from "./oauth-vault-tokens.ts";
 
 export type GoogleConnectorOAuthServiceId =
   | "google_drive"
@@ -16,13 +14,7 @@ export type GoogleConnectorOAuthServiceId =
   | "google_photos"
   | "google_meet";
 
-export const GOOGLE_OAUTH_PARSE_ERRORS: ParseStoredOAuthErrors = {
-  invalidJson: "Invalid Google OAuth vault payload",
-  invalidPayload: "Invalid Google OAuth vault payload",
-  missingAccess: "Missing Google access token",
-  missingRefresh: "Missing Google refresh token",
-  missingExpiry: "Missing token expiry",
-};
+export { GOOGLE_OAUTH_PARSE_ERRORS } from "./google-oauth-parse-errors.ts";
 
 const NOT_CONFIGURED =
   "Google OAuth not configured; run: nimbus connector auth google_drive (or gmail / google_photos / google_meet)";

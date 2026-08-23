@@ -8,11 +8,27 @@
 // process-global, so this file's mocks (and slack-sync.test.ts's slack mock) leak
 // into any real-resolver twin in the same process and make ensureSlackMcp spawn
 // despite an absent/malformed token — green on the src-only PR gate, red on the
-// combined push run. One such twin was removed for exactly this reason.
+// combined push run. TWO such twins have now been removed for exactly this reason.
+//
+// The second was `src/connectors/lazy-mesh/google-spawn-isolation.test.ts` (F11), and it is
+// worth recording HOW it failed, because "green on the src-only gate, red on the combined
+// run" undersells it: the combined run was green on Ubuntu and Windows too, and red ONLY on
+// macOS. `bun test` executes files in filesystem-walk order, and it takes a mocking file
+// loading BEFORE the real-resolver twin to break it. On Linux/Windows the twin happened to
+// run first and saw the real module; on macOS `test/unit/connectors/google-drive-sync.test.ts`
+// — which also `mock.module`s google-access-token.ts — ran first, so the twin's malformed
+// vault payload resolved to a fake token and Drive spawned anyway. A leaked mock is not a
+// flake: it was 100% reproducible on macOS and 0% anywhere else. Its assertions live in
+// "ensureGoogleDriveMcp — a dead credential is isolated to its own service" below, driven by
+// THIS file's own mock, which is re-installed at this file's load and so cannot be outraced.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
+import { GOOGLE_OAUTH_PARSE_ERRORS } from "../../../../src/auth/google-oauth-parse-errors.ts";
 import { Config } from "../../../../src/config.ts";
+import { getConnectorHealth } from "../../../../src/connectors/health.ts";
 import type { MeshSpawnContext, ServerSpec } from "../../../../src/connectors/lazy-mesh/slot.ts";
+import { LocalIndex } from "../../../../src/index/local-index.ts";
 import { createMockVault } from "../../../../src/vault/mock.ts";
 
 // Config is `as const` (mutable at runtime, not Object.frozen). ensureWorkdayMcp reads the
@@ -49,6 +65,16 @@ mock.module("@mastra/mcp", () => ({
   },
 }));
 
+/**
+ * Per-service injected failure for `getValidGoogleAccessToken`, keyed by Google service id.
+ *
+ * A stored credential that is PRESENT but cannot produce an access token is the F11 case, and
+ * it has two shapes: the payload does not parse (a `GOOGLE_OAUTH_PARSE_ERRORS` message) or the
+ * provider refuses the refresh token (any other message). `classifyGoogleCredentialFailure`
+ * splits on exactly that, so both are injectable here rather than fixed.
+ */
+const googleTokenFailure = new Map<string, unknown>();
+
 mock.module("../../../../src/auth/google-access-token.ts", () => ({
   anyGoogleOAuthVaultPresent: async (vault: {
     get: (k: string) => Promise<string | null>;
@@ -79,8 +105,11 @@ mock.module("../../../../src/auth/google-access-token.ts", () => ({
     const v = await vault.get(k);
     return v !== null && v !== "" ? k : null;
   },
-  getValidGoogleAccessToken: async (_vault: unknown, id: string): Promise<string> =>
-    `fake-google-${id}-access-token`,
+  getValidGoogleAccessToken: async (_vault: unknown, id: string): Promise<string> => {
+    const injected = googleTokenFailure.get(id);
+    if (injected !== undefined) throw injected;
+    return `fake-google-${id}-access-token`;
+  },
 }));
 
 mock.module("../../../../src/auth/microsoft-access-token.ts", () => ({
@@ -235,10 +264,17 @@ type Calls = {
   bumpToolsEpoch: number;
 };
 
-function makeCtx(opts?: { existingClient?: boolean; obsidianVaultPaths?: readonly string[] }): {
+type MeshWarning = { bindings: Record<string, unknown>; msg?: string | undefined };
+
+function makeCtx(opts?: {
+  existingClient?: boolean;
+  obsidianVaultPaths?: readonly string[];
+  healthDb?: Database;
+}): {
   ctx: MeshSpawnContext;
   calls: Calls;
   vault: ReturnType<typeof createMockVault>;
+  warnings: MeshWarning[];
 } {
   const vault = createMockVault();
   const calls: Calls = {
@@ -247,9 +283,16 @@ function makeCtx(opts?: { existingClient?: boolean; obsidianVaultPaths?: readonl
     scheduleLazyDisconnect: [],
     bumpToolsEpoch: 0,
   };
+  const warnings: MeshWarning[] = [];
   const ctx: MeshSpawnContext = {
     vault,
     obsidianVaultPaths: opts?.obsidianVaultPaths,
+    ...(opts?.healthDb === undefined ? {} : { healthDb: opts.healthDb }),
+    logger: {
+      warn: (bindings: Record<string, unknown>, msg?: string) => {
+        warnings.push({ bindings, msg });
+      },
+    },
     clearLazyIdle: (key: string) => calls.clearLazyIdle.push(key),
     getLazyClient: () => (opts?.existingClient === true ? ({} as never) : undefined),
     setLazyClient: (key: string) => calls.setLazyClient.push({ key }),
@@ -258,11 +301,30 @@ function makeCtx(opts?: { existingClient?: boolean; obsidianVaultPaths?: readonl
     },
     scheduleLazyDisconnect: (key: string) => calls.scheduleLazyDisconnect.push(key),
   };
-  return { ctx, calls, vault };
+  return { ctx, calls, vault, warnings };
 }
+
+/**
+ * A real `LocalIndex` schema on an in-memory DB, not a hand-written stand-in: `transitionHealth`
+ * writes `sync_state`, not a `connector_health` table, and a fixture that guesses the shape
+ * fails for the wrong reason.
+ */
+const openHealthDbs: Database[] = [];
+
+function healthDb(): Database {
+  const db = new Database(":memory:");
+  openHealthDbs.push(db);
+  LocalIndex.ensureSchema(db);
+  return db;
+}
+
+afterEach(() => {
+  for (const db of openHealthDbs.splice(0)) db.close();
+});
 
 beforeEach(() => {
   capturedClients.length = 0;
+  googleTokenFailure.clear();
   authBehaviour.slack = "ok";
   authBehaviour.notion = "ok";
   authBehaviour.mendeley = "ok";
@@ -978,6 +1040,142 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
     await vault.set("google_drive.oauth", '{"access_token":"x"}');
     await ensureGoogleDriveMcp(ctx);
     expect(capturedClients).toHaveLength(0);
+  });
+});
+
+/**
+ * F11 — one dead Google credential must not disable the other three Google connectors.
+ *
+ * `ensureGoogleDriveMcp` boots ONE mesh slot holding Drive, Gmail, Photos and Meet, and
+ * `assemble-sync-registrations.ts` wires gmail's / photos' / meet's `ensureGoogleMcpRunning`
+ * to it. So the loop that resolves a token per service is a shared fate: it used to `await
+ * getValidGoogleAccessToken(...)` unguarded, and `google_drive` is first in the list.
+ *
+ * Observed in production: Drive's and Photos' refresh tokens had expired months earlier while
+ * Gmail's was valid and accepted by Google. Every `nimbus connector sync gmail` failed with
+ * `invalid_grant: Bad Request` — Drive's error, attributed to Gmail — and re-authing gmail
+ * could never fix it. Note the asymmetry the guard already had: an ABSENT credential was
+ * skipped by the `resolved === null` check, so deleting the vault key worked where
+ * `nimbus connector pause google_drive` did not (pause gates the scheduler, not this call).
+ *
+ * The failure is INJECTED through this file's own `getValidGoogleAccessToken` mock rather than
+ * planted as a malformed vault payload read by the real resolver. That is not a shortcut: the
+ * real-resolver version of these tests lived in the src tree, was overwritten by whichever
+ * google-access-token mock loaded first, and was red on macOS only — see the file header. What
+ * F11 is about is the loop's reaction to a throw, and a thrown error is what is injected here.
+ */
+describe("ensureGoogleDriveMcp — a dead credential is isolated to its own service", () => {
+  /** Unreadable stored payload — the deterministic stand-in for "present but unrefreshable". */
+  const parseFailure = (): TypeError => new TypeError(GOOGLE_OAUTH_PARSE_ERRORS.invalidJson);
+
+  test("gmail still boots when google_drive's stored credential cannot be used", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    await vault.set("google_gmail.oauth", '{"access_token":"g"}');
+    googleTokenFailure.set("google_drive", parseFailure());
+
+    const registered = await ensureGoogleDriveMcp(ctx);
+
+    expect(registered).toEqual(["gmail"]);
+  });
+
+  test("two dead credentials still leave the one healthy connector running", async () => {
+    // The production shape exactly: Drive AND Photos dead, Gmail valid. Re-authing only
+    // google_drive left gmail broken, because google_photos sits in the same loop.
+    const { ctx, vault } = makeCtx();
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    await vault.set("google_photos.oauth", '{"access_token":"p"}');
+    await vault.set("google_gmail.oauth", '{"access_token":"g"}');
+    googleTokenFailure.set("google_drive", parseFailure());
+    googleTokenFailure.set("google_photos", parseFailure());
+
+    const registered = await ensureGoogleDriveMcp(ctx);
+
+    expect(registered).toEqual(["gmail"]);
+  });
+
+  test("the failure is attributed to the service that owns the credential", async () => {
+    // `sync_state.last_error` and `connector_health_history` used to name `gmail` — the one
+    // Google connector whose credential was fine — because gmail's sync was what surfaced
+    // Drive's throw. Health must record google_drive.
+    const db = healthDb();
+    const { ctx, vault } = makeCtx({ healthDb: db });
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    await vault.set("google_gmail.oauth", '{"access_token":"g"}');
+    googleTokenFailure.set("google_drive", parseFailure());
+
+    await ensureGoogleDriveMcp(ctx);
+
+    const drive = getConnectorHealth(db, "google_drive");
+    expect(drive.state).toBe("error");
+    // A CLASSIFICATION, never the provider's own error text: `postToken` builds that from
+    // `tokenErrorSummary`, which reads `error_description` straight out of the remote JSON, and
+    // non-negotiable 3 keeps remote-controlled strings out of logs and stored state. The full
+    // message still reaches `sync_state.last_error` for google_drive via its OWN sync failure.
+    expect(drive.lastError ?? "").toContain("could not be read");
+    expect(getConnectorHealth(db, "gmail").state).not.toBe("error");
+  });
+
+  test("a refused refresh classifies differently from an unreadable payload", async () => {
+    // The other branch of `classifyGoogleCredentialFailure`. Both branches must stay reachable
+    // and stay distinguishable — and neither may carry the provider's own words.
+    const db = healthDb();
+    const { ctx, vault } = makeCtx({ healthDb: db });
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    googleTokenFailure.set(
+      "google_drive",
+      new Error("Token exchange failed (invalid_grant: Bad Request)"),
+    );
+
+    await ensureGoogleDriveMcp(ctx);
+
+    const lastError = getConnectorHealth(db, "google_drive").lastError ?? "";
+    expect(lastError).toContain("would not exchange");
+    expect(lastError).not.toContain("invalid_grant");
+  });
+
+  test("it warns with the failing service id, since nothing else surfaces this", async () => {
+    const { ctx, vault, warnings } = makeCtx();
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    await vault.set("google_gmail.oauth", '{"access_token":"g"}');
+    googleTokenFailure.set("google_drive", parseFailure());
+
+    await ensureGoogleDriveMcp(ctx);
+
+    expect(warnings.some((w) => w.bindings["serviceId"] === "google_drive")).toBe(true);
+  });
+
+  test("no server is registered when EVERY credential is dead", async () => {
+    // Fail-closed, and identical to the all-absent case: the slot stays empty rather than
+    // holding a half-built client. Each connector's own `sync()` then throws its OWN error.
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    await vault.set("google_gmail.oauth", '{"access_token":"g"}');
+    googleTokenFailure.set("google_drive", parseFailure());
+    googleTokenFailure.set("gmail", parseFailure());
+
+    await ensureGoogleDriveMcp(ctx);
+
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("the skip reason carries the remedy and no provider-controlled text", async () => {
+    // The reason exists to be actionable. Whichever way the credential failed, re-auth is the
+    // fix, and the line has to say so — a classification that only says "something went wrong"
+    // would be a worse trade than the text it replaced.
+    const db = healthDb();
+    const { ctx, vault, warnings } = makeCtx({ healthDb: db });
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    googleTokenFailure.set("google_drive", parseFailure());
+
+    await ensureGoogleDriveMcp(ctx);
+
+    const logged = JSON.stringify(warnings);
+    expect(logged).toContain("nimbus connector auth");
+    expect(logged).not.toContain("vault payload");
+    expect(warnings[0]?.bindings["reason"]).toContain("nimbus connector auth");
+    expect(getConnectorHealth(db, "google_drive").lastError ?? "").not.toContain("vault payload");
   });
 });
 

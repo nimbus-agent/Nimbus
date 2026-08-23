@@ -5,11 +5,14 @@ import { MCPClient } from "@mastra/mcp";
 import { getValidCanvaAccessToken } from "../../auth/canva-access-token.ts";
 import { getValidFigmaAccessToken } from "../../auth/figma-access-token.ts";
 import {
-  GOOGLE_OAUTH_PARSE_ERRORS,
   type GoogleConnectorOAuthServiceId,
   getValidGoogleAccessToken,
   resolveGoogleOAuthVaultKey,
 } from "../../auth/google-access-token.ts";
+// Deliberately NOT re-exported through `google-access-token.ts`: that module is `mock.module`d
+// process-globally by two test files, and reading the classifier's SSoT out of a mocked module
+// makes the classification depend on which factory ran last.
+import { GOOGLE_OAUTH_PARSE_ERRORS } from "../../auth/google-oauth-parse-errors.ts";
 import { getValidHubspotAccessToken } from "../../auth/hubspot-access-token.ts";
 import { getValidMendeleyAccessToken } from "../../auth/mendeley-access-token.ts";
 import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.ts";
