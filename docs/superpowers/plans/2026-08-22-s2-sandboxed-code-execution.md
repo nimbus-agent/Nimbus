@@ -1,5 +1,22 @@
 # Sandboxed Code Execution (S2 Slice 1) Implementation Plan
 
+> **⚠️ This is the plan as WRITTEN, not the code as BUILT. It was executed on
+> 2026-08-23 and several of its decisions turned out to be wrong.** It is kept
+> unamended because the reasoning that was wrong is more useful than a plan
+> retro-fitted to match the result — but do **not** read it as a description of
+> the shipped feature.
+>
+> Superseded here, each recorded with its cause in
+> [§11 of the design spec](../specs/2026-08-22-s2-sandboxed-code-execution-design.md#11-corrections-from-implementation-2026-08-23):
+>
+> - The audit status vocabulary (`"timeout"` is not storable; `audit_log.hitl_status` is CHECK-constrained).
+> - The confinement predicate (`isFullyActive()` → `SandboxRunner.canConfine(policy)`).
+> - Where the posture assertion sits (after request validation, still before consent).
+> - The scratch-file design (gone entirely — the body is passed inline via `bun -e`, with a size cap).
+> - `ExecRuntime` gained `requiredReadPaths()`, and the child gets an `extensionProcessEnv` baseline rather than an empty environment.
+>
+> For what actually shipped, read the spec and the code.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let the machine's owner run arbitrary code inside the existing three-OS sandbox, behind the HITL consent gate, with a complete audit record — the first thing to ship in the S2 (Local Compute Fleet) slot.

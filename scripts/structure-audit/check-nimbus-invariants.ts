@@ -1049,6 +1049,12 @@ export const RULE_ANCHORS: readonly string[] = [
   // in the scanned set proves nothing about whether the rule can see anything. ownership-pass.ts
   // is one of the two converted co-owned writers and is scanned normally.
   "packages/gateway/src/ownership/ownership-pass.ts",
+  // D23 — anchored on the confined-spawn primitive's own home, a file the rule SCANS (it is on the
+  // allow-list, so it is read and then permitted) rather than on some file the rule skips. Without
+  // an anchor of its own, D23 would report clean while scanning nothing the moment
+  // `iterateSourceFiles()` stopped loading `exec/`, and the D10–D22 anchors would still be present
+  // to make the run look healthy.
+  "packages/gateway/src/exec/exec-run.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
