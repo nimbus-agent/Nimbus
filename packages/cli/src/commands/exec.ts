@@ -97,6 +97,12 @@ export function parseExecArgs(args: readonly string[]): ParsedExecArgs {
   if (code === undefined && filePath === undefined) {
     throw new Error(`nimbus exec requires either --code or --file\n${USAGE}`);
   }
+  // Both is not "helpfully pick one": the gate reads the BODY from `code` but resolves the RUNTIME
+  // from `filePath`'s extension, so `--code 'x' --file s.py` would run the inline body under
+  // whatever `.py` maps to. Refused here rather than silently executing a combination nobody meant.
+  if (code !== undefined && filePath !== undefined) {
+    throw new Error(`nimbus exec takes --code OR --file, not both\n${USAGE}`);
+  }
   return {
     ...(code === undefined ? {} : { code }),
     ...(filePath === undefined ? {} : { filePath }),
@@ -219,13 +225,23 @@ export async function handleApprovalBroadcast(
 ): Promise<void> {
   const p = (params ?? {}) as ApprovalBroadcast;
   if (typeof p.requestId !== "string" || p.requestId === "") return;
+
+  // Validate every field, including the NESTED ones. `p.grants ?? {...}` looks like enough and is
+  // not: a broadcast carrying `grants: {}` satisfies the `??`, and `formatApprovalPrompt` then
+  // reads `undefined.length` and throws — before the response is sent, so the gate waits out its
+  // whole TTL and reports a denial the owner never made. This crosses a process boundary, so it is
+  // `unknown` until checked no matter who sent it.
+  const strs = (v: unknown): string[] =>
+    Array.isArray(v) && v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
+  const g = (p.grants ?? {}) as Partial<ExecApprovalPrompt["grants"]>;
+
   const answer = await ask(
     formatApprovalPrompt({
-      runtime: p.runtime ?? "unknown",
-      codeBody: p.codeBody ?? "",
-      grants: p.grants ?? { fsRead: [], fsWrite: [], network: [] },
-      wallClockMs: p.wallClockMs ?? 0,
-      cwd: p.cwd ?? "",
+      runtime: typeof p.runtime === "string" ? p.runtime : "unknown",
+      codeBody: typeof p.codeBody === "string" ? p.codeBody : "",
+      grants: { fsRead: strs(g.fsRead), fsWrite: strs(g.fsWrite), network: strs(g.network) },
+      wallClockMs: typeof p.wallClockMs === "number" ? p.wallClockMs : 0,
+      cwd: typeof p.cwd === "string" ? p.cwd : "",
     }),
   );
   // Only an explicit `true` approves. Cancelling the prompt (Ctrl-C) is a DENIAL, and so is any

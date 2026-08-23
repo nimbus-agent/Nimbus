@@ -23,12 +23,19 @@ const KILL_ESCALATION_MS = 2_000;
  * cutting four emoji at a 10-byte cap produced 11 bytes of output -- back OVER the very cap the
  * trim was enforcing.
  */
+/** How many bytes the UTF-8 sequence starting with this lead byte occupies. */
+function sequenceLength(lead: number): number {
+  if (lead < 0x80) return 1;
+  if ((lead & 0xe0) === 0xc0) return 2;
+  if ((lead & 0xf0) === 0xe0) return 3;
+  return 4;
+}
+
 function trimPartialUtf8(buf: Uint8Array): Uint8Array {
   for (let back = 1; back <= 4 && back <= buf.length; back++) {
     const b = buf[buf.length - back] as number;
     if ((b & 0xc0) === 0x80) continue; // continuation byte -- keep walking back to the lead byte
-    const need = b < 0x80 ? 1 : (b & 0xe0) === 0xc0 ? 2 : (b & 0xf0) === 0xe0 ? 3 : 4;
-    return need === back ? buf : buf.subarray(0, buf.length - back);
+    return sequenceLength(b) === back ? buf : buf.subarray(0, buf.length - back);
   }
   return buf;
 }

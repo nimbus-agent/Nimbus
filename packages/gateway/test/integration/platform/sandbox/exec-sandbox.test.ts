@@ -129,12 +129,15 @@ async function execReal(
 describe.skipIf(!READY && !IS_CI)("exec gate against a real sandbox", () => {
   if (IS_CI && !READY) {
     it("fails loudly instead of silently skipping when its CI prerequisite is missing", () => {
-      throw new Error(
-        `exec-sandbox: CI precondition unmet — ${MISSING}. This suite must never silently skip ` +
-          "on CI: a skip and a pass are indistinguishable in a summary, and these are the only " +
-          "tests that prove the I33 sandbox actually confines. Install the missing dependency " +
-          "for this platform's CI job and re-run.",
-      );
+      // An ASSERTION, not a bare throw: the reason has to reach the CI summary, and a throw with no
+      // expect() reads to static analysis as a test that checks nothing. `MISSING` is the named
+      // reason, so the failure message names the missing dependency.
+      expect(
+        `exec-sandbox: CI precondition unmet — ${MISSING}. This suite must never silently skip on ` +
+          "CI: a skip and a pass are indistinguishable in a summary, and these are the only tests " +
+          "that prove the I33 sandbox actually confines. Install the missing dependency for this " +
+          "platform's CI job and re-run.",
+      ).toBeNull();
     });
     return;
   }

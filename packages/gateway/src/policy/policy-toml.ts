@@ -233,7 +233,9 @@ export function parsePolicyToml(source: string): OrgPolicy {
     chatops: finalizeChatops(acc.chatopsChannels, acc.chatopsOwnership),
     // Sorted so the parse -> serialize -> parse round-trip is stable regardless of the order the
     // keys appeared in the source document.
-    capabilities: { disabled: [...acc.capabilitiesDisabled].sort() },
+    // Explicit comparator: bare `.sort()` compares UTF-16 code units, which happens to be right for
+    // today's ASCII capability names and would stop being right the moment one is not.
+    capabilities: { disabled: [...acc.capabilitiesDisabled].sort((a, b) => a.localeCompare(b)) },
   };
 }
 

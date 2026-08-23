@@ -166,7 +166,7 @@ describe("runConfined", () => {
     const r = await p;
     expect(r.terminationReason).toBe("output_cap");
     // One SIGTERM, not six.
-    expect(child.killed.filter((s) => s === "SIGTERM").length).toBe(1);
+    expect(child.killed.filter((s) => s === "SIGTERM")).toHaveLength(1);
   });
 
   test("an output-cap kill keeps its cause even if the wall clock fires afterwards", async () => {

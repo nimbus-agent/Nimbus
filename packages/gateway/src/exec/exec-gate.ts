@@ -10,6 +10,7 @@ import { buildExecPolicy, ExecPolicyError } from "./exec-policy.ts";
 import type { ExecResult } from "./exec-result.ts";
 import { runConfined } from "./exec-run.ts";
 import {
+  type ExecRuntime,
   ExecRuntimeError,
   MAX_INLINE_CODE_UNITS,
   requireInstalled,
@@ -55,6 +56,19 @@ export type ExecGateOutcome =
   | { readonly status: "refused"; readonly code: string };
 
 const CAPABILITY = "code_execution";
+
+/**
+ * Which runtime runs this request, resolved ONLY from the registry.
+ *
+ * An explicit `--runtime` wins; otherwise `--file` picks by extension (and REJECTS an unmapped one
+ * rather than guessing); otherwise the default. Extracted from `runExecution` so the precedence is
+ * one readable statement rather than a nested ternary inside an already-long function.
+ */
+function resolveRuntime(req: RunExecutionRequest): ExecRuntime {
+  if (req.runtimeId !== undefined) return resolveRuntimeById(req.runtimeId);
+  if (req.filePath !== undefined) return resolveRuntimeForFile(req.filePath);
+  return resolveRuntimeById("bun");
+}
 
 function digest(s: string): string {
   return bytesToHex(blake3(new TextEncoder().encode(s)));
@@ -119,12 +133,7 @@ export async function runExecution(
     }
 
     // 2. Resolve the runtime from the REGISTRY -- never a caller-supplied argv.
-    const runtime =
-      req.runtimeId !== undefined
-        ? resolveRuntimeById(req.runtimeId)
-        : req.filePath !== undefined
-          ? resolveRuntimeForFile(req.filePath)
-          : resolveRuntimeById("bun");
+    const runtime = resolveRuntime(req);
     if (!deps.config.allowedRuntimes.includes(runtime.id)) {
       throw new ExecGateError("ERR_EXEC_RUNTIME_NOT_ALLOWED", `runtime not allowed: ${runtime.id}`);
     }

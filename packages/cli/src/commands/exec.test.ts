@@ -34,8 +34,8 @@ describe("nimbus exec arg parsing", () => {
       "--allow-fs-write",
       "./c",
     ]);
-    expect(p.fsRead.length).toBe(2);
-    expect(p.fsWrite.length).toBe(1);
+    expect(p.fsRead).toHaveLength(2);
+    expect(p.fsWrite).toHaveLength(1);
   });
 
   test("resolves --file to absolute too", () => {
@@ -55,6 +55,12 @@ describe("nimbus exec arg parsing", () => {
     // Silently dropping --allow-net would be the worst possible failure here: the user would
     // believe they granted network and the run would look successful without it.
     expect(() => parseExecArgs(["--code", "x", "--allow-net"])).toThrow();
+  });
+
+  test("rejects --code AND --file together", () => {
+    // The gate would read the body from --code but resolve the runtime from --file's extension,
+    // executing a combination nobody asked for.
+    expect(() => parseExecArgs(["--code", "x", "--file", "./s.ts"])).toThrow(/not both/);
   });
 
   test("rejects a non-numeric --timeout", () => {
@@ -244,6 +250,29 @@ describe("handleApprovalBroadcast", () => {
       expect(h.answered).toEqual([]);
       expect(h.shown).toEqual([]);
     }
+  });
+
+  test("survives a broadcast whose NESTED grants are malformed, and still answers", async () => {
+    // `grants: {}` satisfies a `?? {...}` fallback but leaves the arrays undefined. Formatting then
+    // threw BEFORE the response was sent, so the gate waited out its whole TTL and reported a
+    // denial the owner never made. Every one of these must reach `respond`.
+    for (const grants of [{}, { fsRead: "nope" }, { fsRead: [1, 2] }, null, "x"]) {
+      const h = harness(true);
+      await handleApprovalBroadcast({ requestId: "r3", grants }, h.ask, h.respond);
+      expect(h.answered).toEqual([{ requestId: "r3", approved: true }]);
+      expect(h.shown[0]).toContain("none"); // malformed grants render as none, not as a crash
+    }
+  });
+
+  test("survives non-string scalars in the top-level fields", async () => {
+    const h = harness(false);
+    await handleApprovalBroadcast(
+      { requestId: "r4", runtime: 7, codeBody: {}, wallClockMs: "soon", cwd: [] },
+      h.ask,
+      h.respond,
+    );
+    expect(h.answered[0]?.requestId).toBe("r4");
+    expect(h.shown[0]).toContain("unknown");
   });
 
   test("fills in defaults rather than throwing on a partial broadcast", async () => {

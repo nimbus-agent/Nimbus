@@ -59,7 +59,7 @@ describe("ExecConsentBroker", () => {
     });
     const first = b.request(INPUT, 5000);
     const second = b.request(INPUT, 5000);
-    expect(ids.length).toBe(2);
+    expect(ids).toHaveLength(2);
     expect(ids[0]).not.toBe(ids[1]);
 
     b.respond(ids[1] as string, true);

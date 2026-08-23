@@ -97,9 +97,12 @@ export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): stri
  * to keep.
  */
 function probeBwrap(): string | null {
-  const r = spawnSync("sh", ["-c", "command -v bwrap"], { encoding: "utf8" });
-  const p = (r.stdout ?? "").trim();
-  return r.status === 0 && p !== "" ? null : "bwrap not found on PATH";
+  // Invoke `bwrap` DIRECTLY rather than asking a shell to look it up. Two reasons: it answers the
+  // question production actually asks -- `spawn("bwrap", ...)` below resolves the same way, so a
+  // `command -v` hit that then fails to execute would be a false positive -- and it spawns no shell
+  // at all, so there is no `sh -c` string for anything to be injected into.
+  const r = spawnSync("bwrap", ["--version"], { encoding: "utf8" });
+  return r.error === undefined && r.status === 0 ? null : "bwrap not found or not executable";
 }
 
 function probeHelper(): HelperState {

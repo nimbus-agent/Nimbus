@@ -190,12 +190,14 @@ const sandboxAvailable = await (async () => {
  */
 describe.skipIf(sandboxAvailable || !IS_CI)("nimbus exec e2e — CI sandbox precondition", () => {
   test("fails loudly instead of silently skipping the spawn-dependent cases", () => {
-    throw new Error(
-      "exec-e2e: CI precondition unmet — the platform sandbox is not fully active, so no " +
-        "execution can be confined and the approve/deny round-trip cannot be exercised. A skip " +
-        "and a pass are indistinguishable in a CI summary; install this platform's sandbox " +
-        "dependency (scripts/linux/install-sandbox-deps.sh on Linux) and re-run.",
-    );
+    // An ASSERTION, not a bare throw: a throw with no expect() reads to static analysis as a test
+    // that checks nothing, and the reason still has to reach the CI summary.
+    expect(
+      "exec-e2e: CI precondition unmet — the platform sandbox cannot confine a no-network policy, " +
+        "so no execution can run and the approve/deny round-trip cannot be exercised. A skip and " +
+        "a pass are indistinguishable in a CI summary; install this platform's sandbox dependency " +
+        "(scripts/linux/install-sandbox-deps.sh on Linux) and re-run.",
+    ).toBeNull();
   });
 });
 

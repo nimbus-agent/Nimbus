@@ -17,7 +17,11 @@
 >
 > For what actually shipped, read the spec and the code.
 >
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers: do NOT execute this plan.** It was executed once, on 2026-08-23, and is
+> finished. Running it again would re-introduce the superseded decisions listed above — the scratch
+> file, the `isFullyActive()` predicate, the unstorable audit status. Work from
+> [the design spec](../specs/2026-08-22-s2-sandboxed-code-execution-design.md) and the current code
+> instead. The `- [ ]` checkboxes below are the historical task list, not open work.
 
 **Goal:** Let the machine's owner run arbitrary code inside the existing three-OS sandbox, behind the HITL consent gate, with a complete audit record — the first thing to ship in the S2 (Local Compute Fleet) slot.
 

@@ -236,7 +236,7 @@ describe("runExecution (I33)", () => {
     expect(out.status).toBe("refused");
 
     const rows = auditRows(deps.db);
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.hitl_status).toBe("approved");
     const payload = JSON.parse(rows[0]?.action_json ?? "{}") as Record<string, unknown>;
     expect(payload["outcome"]).toBe("failed_after_approval");
@@ -263,14 +263,14 @@ describe("runExecution (I33)", () => {
     const { deps } = makeDeps({ requestApproval: async () => false });
     await runExecution(REQ, deps);
     const after = readdirSync(tmpdir()).filter((d) => d.startsWith("nimbus-exec-"));
-    expect(after.length).toBe(before.length);
+    expect(after).toHaveLength(before.length);
   });
 
   test("appends exactly one code.execute audit row on denial", async () => {
     const { deps } = makeDeps({ requestApproval: async () => false });
     await runExecution(REQ, deps);
     const rows = auditRows(deps.db);
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.hitl_status).toBe("rejected");
     const payload = JSON.parse(rows[0]?.action_json ?? "{}") as Record<string, unknown>;
     expect(payload["outcome"]).toBe("denied_by_owner");
@@ -282,7 +282,7 @@ describe("runExecution (I33)", () => {
     const { deps } = makeDeps({ config: { ...CONFIG, enabled: false } });
     await runExecution(REQ, deps);
     const rows = auditRows(deps.db);
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     // The schema CHECK allows only approved/rejected/not_required, so a refusal records `rejected`
     // and is distinguished by `outcome`. `not_required` would wrongly read as "ran without needing
     // approval" on a code.execute row.
@@ -318,7 +318,7 @@ describe("runExecution (I33)", () => {
     const payload = JSON.parse(rows[0]?.action_json ?? "{}") as Record<string, unknown>;
     expect(typeof payload["stdoutDigest"]).toBe("string");
     // BLAKE3 hex is 64 chars -- the same primitive db/audit-chain.ts uses.
-    expect((payload["stdoutDigest"] as string).length).toBe(64);
+    expect(payload["stdoutDigest"] as string).toHaveLength(64);
     expect(payload["exitCode"]).toBe(0);
   });
 
