@@ -93,6 +93,11 @@ export function standaloneEligibility(id: string): Eligibility {
   };
 }
 
+/** How a connector entrypoint is loaded. Injectable so tests need not import a real stdio server. */
+export type ConnectorImporter = (entry: string) => Promise<{
+  startConnector?: (() => Promise<void>) | undefined;
+}>;
+
 /**
  * Start one connector standalone.
  *
@@ -100,7 +105,10 @@ export function standaloneEligibility(id: string): Eligibility {
  * asserting it here would add a second production caller — which the `audit:connector-consent`
  * gate forbids — while changing nothing. Do not "fix" this omission.
  */
-export async function runStandalone(argv: readonly string[]): Promise<number> {
+export async function runStandalone(
+  argv: readonly string[],
+  importConnector: ConnectorImporter = (entry) => import(entry),
+): Promise<number> {
   const id = argv[0];
   if (id === undefined) {
     process.stderr.write("usage: nimbus-mcp <connector-id>\n");
@@ -124,20 +132,9 @@ export async function runStandalone(argv: readonly string[]): Promise<number> {
     return 3;
   }
 
-  const mod = (await import(entry)) as { startConnector?: () => Promise<void> };
+  const mod = await importConnector(entry);
   // Mirrors run-bundled-connector.ts: most connectors connect their transport at module scope, ten
   // guard on import.meta.main and export startConnector() instead.
   await mod.startConnector?.();
   return 0;
-}
-
-if (import.meta.main) {
-  const code = await runStandalone(process.argv.slice(2));
-  // Exit ONLY on failure. Most connectors connect their stdio transport at module scope, so the
-  // import above resolves once the server is live and `runStandalone` returns 0 immediately —
-  // `process.exit(0)` here would tear down the server it just started. On success we fall through
-  // and the connected transport keeps the process alive.
-  if (code !== 0) {
-    process.exit(code);
-  }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { nimbusSpawn, spawnViaBun, spawnViaNode } from "./nimbus-spawn.ts";
+import { detectBunSpawn, nimbusSpawn, spawnViaBun, spawnViaNode } from "./nimbus-spawn.ts";
 
 const IMPLS = [
   ["nimbusSpawn (runtime-selected)", nimbusSpawn],
@@ -65,5 +65,28 @@ describe.each(IMPLS)("%s", (_label, nimbusSpawn) => {
     expect(r.stdout.length).toBe(400_000);
     // U+FFFD REPLACEMENT CHARACTER is what per-chunk decoding produces at a split boundary.
     expect(r.stdout).not.toContain("�");
+  });
+});
+
+describe("runtime selection", () => {
+  test("detects Bun.spawn on a global that has it, and its absence on one that does not", () => {
+    // Bun's global is non-writable AND non-configurable, so it cannot be stubbed. Passing the
+    // global in is what makes the "absent" side — the one the npx artifact always takes —
+    // reachable at all from a suite running under Bun.
+    expect(detectBunSpawn({ Bun: { spawn: () => undefined } })).toBe(true);
+    expect(detectBunSpawn({})).toBe(false);
+    expect(detectBunSpawn({ Bun: {} })).toBe(false);
+    expect(detectBunSpawn()).toBe(true); // the real global, under Bun
+  });
+
+  test("routes to the Node implementation when told Bun is unavailable", async () => {
+    const r = await nimbusSpawn([process.execPath, "-e", "console.log('via-node')"], {}, false);
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe("via-node");
+  });
+
+  test("routes to the Bun implementation when told it is available", async () => {
+    const r = await nimbusSpawn([process.execPath, "-e", "console.log('via-bun')"], {}, true);
+    expect(r.stdout.trim()).toBe("via-bun");
   });
 });

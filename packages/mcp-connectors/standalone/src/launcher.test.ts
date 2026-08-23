@@ -75,8 +75,40 @@ describe("runStandalone", () => {
   });
 });
 
+describe("connector startup shapes", () => {
+  test("calls startConnector when the connector exports one", async () => {
+    let started = 0;
+    const code = await runStandalone(["github"], () =>
+      Promise.resolve({
+        startConnector: async () => {
+          started += 1;
+        },
+      }),
+    );
+    expect(code).toBe(0);
+    expect(started).toBe(1);
+  });
+
+  test("resolves for a connector that starts on import and exports nothing", async () => {
+    // The common shape: the transport is connected at module scope, so there is nothing to call.
+    const code = await runStandalone(["github"], () => Promise.resolve({}));
+    expect(code).toBe(0);
+  });
+
+  test("an ineligible connector is refused BEFORE its module is imported", async () => {
+    let imported = 0;
+    const code = await runStandalone(["snowflake"], () => {
+      imported += 1;
+      return Promise.resolve({});
+    });
+    expect(code).toBe(3);
+    // Importing it would start an ungated server as a side effect of module evaluation.
+    expect(imported).toBe(0);
+  });
+});
+
 describe("the launcher as an entrypoint", () => {
-  const LAUNCHER = resolve(fileURLToPath(import.meta.url), "../launcher.ts");
+  const LAUNCHER = resolve(fileURLToPath(import.meta.url), "../bin.ts");
 
   async function toolsVia(id: string, elicitation: boolean): Promise<string[]> {
     const client = new Client(

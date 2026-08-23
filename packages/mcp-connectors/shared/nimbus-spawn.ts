@@ -80,9 +80,22 @@ export async function spawnViaBun(
 }
 
 /**
+ * Whether `Bun.spawn` is usable on the given global.
+ *
+ * Takes the global as a PARAMETER rather than reading `globalThis` directly, because Bun defines
+ * its global as non-writable AND non-configurable — it cannot be stubbed or redefined, so the
+ * "absent" side is otherwise unreachable from a suite that runs under Bun. That side is the one
+ * the standalone npx artifact always takes, so it must be exercisable.
+ */
+export function detectBunSpawn(g: unknown = globalThis): boolean {
+  const bun = (g as { Bun?: { spawn?: unknown } }).Bun;
+  return typeof bun?.spawn === "function";
+}
+
+/**
  * Spawn a CLI and collect its output, on Bun or Node.
  *
- * The runtime is chosen at CALL time, not module load, so a test that swaps `Bun.spawn` is still
+ * Detection happens at CALL time, not module load, so a test that swaps `Bun.spawn` is still
  * honoured. That is not incidental: `cloudwatch/test/tools.test.ts` stubs `Bun.spawn` globally, and
  * routing unconditionally through Node made it spawn a real `aws` and hang the suite.
  *
@@ -91,8 +104,7 @@ export async function spawnViaBun(
 export function nimbusSpawn(
   command: readonly string[],
   env: Record<string, string | undefined>,
+  useBun: boolean = detectBunSpawn(),
 ): Promise<SpawnResult> {
-  const bunSpawnAvailable =
-    typeof globalThis.Bun !== "undefined" && typeof globalThis.Bun.spawn === "function";
-  return bunSpawnAvailable ? spawnViaBun(command, env) : spawnViaNode(command, env);
+  return useBun ? spawnViaBun(command, env) : spawnViaNode(command, env);
 }

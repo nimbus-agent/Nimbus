@@ -5,7 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "bin": {
-    "nimbus-mcp": "./dist/launcher.js"
+    "nimbus-mcp": "./dist/bin.js"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
