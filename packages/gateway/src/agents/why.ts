@@ -155,6 +155,17 @@ function collectLaneOutput(results: readonly SubTaskResult[]): {
       });
       continue;
     }
+    // Unguarded `JSON.parse` on purpose, and it stays safe only while this holds: `r.text` on a
+    // `done` result is ALWAYS `JSON.stringify` of a locally-typed `SubAgentResult`, produced by
+    // `makeSubAgent` above from one of the six lane functions in this file. No LLM output, no
+    // network payload and no user input reaches it, so the text cannot be malformed and
+    // `findings` cannot be a non-array. A throw inside `execute()` never arrives here either —
+    // the coordinator converts it to `status: "error"`, which the branch above turns into a gap.
+    //
+    // A try/catch here today would be a branch no test could reach, which the branch-coverage
+    // floor would then charge us for. If a lane is ever backed by a model or a remote call,
+    // that stops being true: parse into `unknown`, validate, and route a bad payload down the
+    // failed-lane gap path above.
     const decoded: SubAgentResult = JSON.parse(r.text);
     if (decoded.findings !== undefined) findings.push(...decoded.findings);
     if (decoded.gap !== undefined) gaps.push(decoded.gap);
