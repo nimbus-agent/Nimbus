@@ -34,6 +34,13 @@ Inline comments at `connectors/lazy-mesh/connector-spawns.ts:29–53` and `phase
 
 ## I2 — HITL frozen-set membership
 
+**Per-connector action types are ADDITIVE (Part 2).** New `<service>.<object>.<verb>` entries are
+added to `HITL_REQUIRED_BACKING` alongside the generic ones (`email.send`, `file.create`,
+`repo.pr.merge`, …), which STAY. The specific form matters because `serviceOf()` takes the prefix
+before the first dot and it becomes I29's egress-ledger `destination` and I20's delegation scope —
+"email" is not a place data can go; "gmail" is. Removing a generic entry would silently ungate
+anything still emitting it, which is the one failure a consent gate must never have.
+
 **Defense:** `HITL_REQUIRED` in `packages/gateway/src/engine/executor.ts` is a frozen façade over a module-private `Set` (`HITL_REQUIRED_BACKING`). The façade exposes `has`, iteration, and `forEach` but no mutators; an attempt to call `.add` on the cast type is a no-op or throws.
 
 **Wired at:** `executor.ts` `ToolExecutor.gate()` — every action passes `HITL_REQUIRED.has(action.type)` before dispatch; covered by the "every HITL_REQUIRED action type triggers the consent channel" test in `engine.test.ts`.
@@ -505,6 +512,15 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 ---
 
 ## I26 — connector writes (warehouse/BI ∪ GitOps/ML) execute only behind the local HITL gate; the federated invoke gate rejects them
+
+**Extended (Part 2).** `isConnectorWriteToolId` now also consults `MIGRATED_WRITE_TOOL_IDS`
+(`connectors/connector-write-tool-ids.ts`) — connector write tools routed through the standalone
+consent kit that have NO gateway dispatch path. They are kept in a set rather than as
+`ConnectorWrite` rows because that registry is a 1:1 `actionType` ↔ `toolId` map driving
+`connector-write-dispatch.ts`, and inventing rows for unroutable tools would put fictional routing
+into a real routing table. The predicate is about write-ness, not routability: a federated peer must
+be rejected for naming one of these tool ids whether or not the gateway could have dispatched it.
+The registry test asserts the set and the dispatchable rows never overlap.
 
 **Statement:** Connector write actions — warehouse/BI (Snowflake tag/comment set, Tableau / Power BI refresh, Looker datagroup/schedule trigger, Monte Carlo / Bigeye incident-issue acknowledge/resolve) **and** GitOps/ML (ArgoCD app sync/rollback, Flux kustomization/helmrelease reconcile, MLflow model promote/transition-stage) — execute ONLY behind the LOCAL owner's executor HITL gate (I2): their action types are all members of `HITL_REQUIRED_BACKING`. The federated peer invoke gate (`answerFederatedInvoke`) is fail-closed against any write-classified tool id via the injected `isWriteForbiddenToolId` predicate (the union `isConnectorWriteToolId`): a peer's `federation.invoke` for a connector write is rejected with a `write_forbidden` audit decision before any connector dispatch, so a teammate can never trigger a connector write over the wire. The write tool ids themselves are confined to the two single-source-of-truth modules (`connectors/warehouse-write-tools.ts`, `connectors/gitops-ml-write-tools.ts`), the connector definition `server.ts` files, and the gateway transport/dispatch sites. Static **D20**.
 

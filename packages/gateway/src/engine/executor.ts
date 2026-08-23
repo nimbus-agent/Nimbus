@@ -54,6 +54,14 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "repo.branch.delete",
   "repo.tag.create",
   "repo.commit.push",
+  // Per-connector git-host action types. `repo.*` above stays: removing a generic type silently
+  // ungates anything still emitting it. The prefix is what `serviceOf()` records as I29's egress
+  // destination and scopes an I20 delegation by, so "github" beats a shared "repo".
+  "github.pr.merge",
+  "github.pr.close",
+  "github.issue.create",
+  "github.branch.delete",
+  "github.tag.create",
   "pipeline.trigger",
   "pipeline.cancel",
   "pipeline.rerun",
