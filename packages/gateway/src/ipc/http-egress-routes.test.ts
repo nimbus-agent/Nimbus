@@ -1,13 +1,21 @@
 /**
  * The four egress-ledger read routes, against a REAL HTTP server.
  *
- * Harness copied from clips/clip-e2e.test.ts: fresh temp dir, real SQLite DB at the current
- * schema version, an in-memory vault (a plain Map satisfies NimbusVault — no OS keychain), a real
- * PairingWindowController, and startReadOnlyHttpServer on port 0.
+ * Harness modelled on clips/clip-e2e.test.ts: fresh temp dir, real SQLite DB at the current schema
+ * version, an in-memory vault (a plain Map satisfies NimbusVault — no OS keychain), and
+ * startReadOnlyHttpServer on port 0.
  *
- * Pairing directly through the controller is what makes the scope gate testable: `open(label,
- * scopes)` mints a token with exactly the scopes named, so a clip-only token and an egress-scoped
- * token can be compared against the same routes.
+ * Tokens are written STRAIGHT INTO THE VAULT with `addApiToken`, not minted over
+ * `POST /v1/clips/pair/confirm`. That is not a shortcut — it is load-bearing. The pair-confirm
+ * route is an I13 WRITE, so exercising it opens the server's writable connection, which applies
+ * `journal_mode = WAL` to the database FILE. The same server's READ-ONLY connection then has to
+ * attach the `-shm` wal-index to read anything, and that raced on macOS: every test after the
+ * first mint failed with SQLITE_CANTOPEN while the 401/403 tests, which never touch the database,
+ * passed. Writing the token directly keeps this suite to reads only, so the file stays in the
+ * rollback-journal mode `runIndexedSchemaMigrations` leaves it in.
+ *
+ * The pairing flow itself is covered by clips/clip-e2e.test.ts; what is under test here is the
+ * scope gate, so a token carrying exactly the scopes named is all this needs.
  */
 
 import { Database } from "bun:sqlite";
@@ -15,7 +23,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PairingWindowController } from "../clips/pairing-window.ts";
+import type { ApiScope } from "../clips/api-scopes.ts";
+import { addApiToken } from "../clips/clip-token-store.ts";
+import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { appendEgressEntry } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
@@ -55,21 +65,15 @@ let tmpDir: string;
 let dbPath: string;
 let handle: ReadOnlyHttpServerHandle;
 let vault: NimbusVault;
-let pairing: PairingWindowController;
 let base: string;
 let egressToken: string;
 let clipOnlyToken: string;
 
-/** Mint a token carrying exactly `scopes`, through the real pairing flow. */
-async function mint(label: string, scopes: string[]): Promise<string> {
-  const { code } = pairing.open(label, scopes as never);
-  const res = await fetch(`${base}/v1/clips/pair/confirm`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code }),
-  });
-  const body = (await res.json()) as { token: string };
-  return body.token;
+/** A token carrying exactly `scopes`, written straight into the vault. Reads only — see above. */
+async function mint(label: string, scopes: ApiScope[]): Promise<string> {
+  const token = `tok-${label}`;
+  await addApiToken(vault, label, token, scopes);
+  return token;
 }
 
 function get(path: string, token?: string): Promise<Response> {
@@ -93,6 +97,14 @@ beforeAll(async () => {
   dbPath = join(tmpDir, "nimbus.db");
   const db = new Database(dbPath);
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  // Establish WAL on the FILE before the server opens anything. `startReadOnlyHttpServer` opens
+  // its read-only handle first and only then calls `openI13WriteHandle`, which applies
+  // `journal_mode = WAL` — so without this the read handle opens a rollback-journal file that is
+  // flipped to WAL underneath it, and its next query needs a wal-index it never attached. That
+  // raced on macOS: every test touching the database failed with SQLITE_CANTOPEN while the
+  // 401/403 tests, which never read it, passed. Production never sees this because the file has
+  // been WAL since long before any given gateway start.
+  applyWritablePragmas(db);
   // Five chained rows, ids 1..5. Appended, never INSERTed: a raw insert leaves row_hash
   // unchained and GET /v1/egress/verify would then fail for an unrelated reason.
   for (let i = 1; i <= 5; i++) {
@@ -101,8 +113,7 @@ beforeAll(async () => {
   db.close();
 
   vault = makeInMemoryVault();
-  pairing = new PairingWindowController({ nowMs: () => Date.now() });
-  handle = startReadOnlyHttpServer(dbPath, 0, { clipsVault: vault, pairingController: pairing });
+  handle = startReadOnlyHttpServer(dbPath, 0, { clipsVault: vault });
   base = `http://127.0.0.1:${handle.port}`;
 
   egressToken = await mint("egress-browser", ["clip", "egress"]);
@@ -233,10 +244,7 @@ describe("prove is rate-limited, the plain reads are not", () => {
     // reads. The budget is per-route and per-server-instance, matching how the write surface
     // fingerprints its routes (a constant per route kind, not per token), so this test runs
     // against its OWN server to get a clean bucket.
-    const own = startReadOnlyHttpServer(dbPath, 0, {
-      clipsVault: vault,
-      pairingController: pairing,
-    });
+    const own = startReadOnlyHttpServer(dbPath, 0, { clipsVault: vault });
     try {
       const ownBase = `http://127.0.0.1:${own.port}`;
       const call = (path: string) =>
