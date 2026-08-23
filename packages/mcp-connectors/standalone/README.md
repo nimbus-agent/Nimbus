@@ -25,10 +25,11 @@ npx nimbus-mcp <connector-id>
 
 Nothing to install ahead of time — `npx` fetches it on first run.
 
-Not every connector can run standalone. The launcher refuses one whose mutating tools have not yet
-been routed through the consent kit, and exits `3` rather than starting it ungated. Today **51 of
-94** are eligible: the 50 with no mutating tools at all, plus `github`. The rest are gateway-only
-until migrated, and the list is derived from the connectors themselves, never hand-maintained.
+Not every connector can run standalone. The launcher refuses one that declares write or delete
+tools which have not yet been routed through the consent kit, and exits `3` rather than starting it
+ungated. Today **58 of 94** are eligible: the 57 that declare no mutating tools, plus `github`. The
+rest are gateway-only until migrated, and the list is derived from each connector's own manifest,
+never hand-maintained.
 
 ## Quickstart
 

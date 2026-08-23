@@ -24,10 +24,15 @@ const MODE_SETTER_ALLOWED = [
  * A mutating HTTP method as a quoted literal, in any of the three quote styles. Biome normalises
  * to double quotes, but a template literal is untouched by it.
  *
- * BOUNDED BY DESIGN: this cannot see a method built from a variable, nor tell a GraphQL read POST
- * from a write POST. That is precisely why write status is DECLARED via `registerWriteTool` rather
- * than detected — this rule is a net for the obvious cases, not the mechanism. Do not extend it
- * into a substitute for the declaration.
+ * ADVISORY ONLY, and it has FALSE POSITIVES — measured, not hypothetical. Seven read-only
+ * connectors POST for GraphQL queries, filter endpoints, OAuth token exchange or login: dagster,
+ * google-photos, prefect, ramp, snyk, superset, wiz. All seven trip this rule and none of them
+ * mutate. It is equally blind in the other direction, to the ten connectors that mutate through a
+ * CLI, the filesystem or a mail protocol without issuing an HTTP request at all.
+ *
+ * It is kept as a HINT for a human reading audit output, never as a gate. An earlier version of
+ * the standalone launcher used this signal to decide eligibility and wrongly refused all seven.
+ * Write status is DECLARED via `registerWriteTool`; do not promote this into a substitute for it.
  */
 const MUTATING_RE = /(["'`])(POST|PUT|PATCH|DELETE)\1/;
 
@@ -138,9 +143,10 @@ export function checkConnectorConsent(
           rule: "mutation-declared",
           file: rel,
           reason:
-            "exposes mutating tools but registers no write tool — write status must be DECLARED, " +
-            "since it cannot be inferred (a GraphQL connector POSTs its reads too, and ten " +
-            "connectors mutate through a CLI or the filesystem with no verb in source)",
+            "may expose mutating tools but registers no write tool. ADVISORY: the manifest " +
+            "signal is authoritative; the HTTP-verb signal has known false positives (a GraphQL " +
+            "or search connector POSTs its reads too). Confirm against the connector's actual " +
+            "tool surface before acting on this",
         });
       }
     }

@@ -43,11 +43,13 @@ describe("standaloneEligibility", () => {
     expect(v.reason).toMatch(/not been routed through the consent kit/);
   });
 
-  test("a connector that MUTATES but declares nothing is still refused", () => {
-    // snyk issues mutating HTTP requests while its manifest says hitlRequired: []. Trusting the
-    // manifest alone would admit it as write-free; the verb signal catches it.
-    const v = standaloneEligibility("snyk");
-    expect(v.eligible).toBe(false);
+  test("a read-only connector that POSTs is eligible — the verb is not the signal", () => {
+    // snyk POSTs for its queries (snyk_get/list/search only), as do dagster's GraphQL, prefect's
+    // filter endpoint, and ramp/wiz/superset's auth. An earlier verb-based check refused all
+    // seven. Write status is DECLARED, never inferred from the HTTP method.
+    for (const id of ["snyk", "dagster", "prefect", "ramp", "superset", "wiz", "google-photos"]) {
+      expect(standaloneEligibility(id)).toEqual({ eligible: true, reason: "no-writes" });
+    }
   });
 
   test("an unknown connector is refused rather than assumed safe", () => {

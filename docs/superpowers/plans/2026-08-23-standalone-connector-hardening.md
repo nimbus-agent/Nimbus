@@ -2359,10 +2359,17 @@ Two design changes were made during execution and are worth carrying into Part 2
   launcher's comment *explaining that it deliberately does not call `setConnectorMode`*.
   `check-connector-entrypoints.ts` uses the same helper and may share the weakness — not
   investigated, not changed, worth a look.
-- **Eligibility needs both signals.** Seven connectors — dagster, google-photos, prefect, ramp,
-  snyk, superset, wiz — issue mutating HTTP requests while declaring `hitlRequired: []`. The
-  manifest alone admitted all seven as write-free; the source verb alone misses the ten that mutate
-  through a CLI or the filesystem. Each covers the other's blind spot.
+- **Eligibility keys on the manifest ALONE — and an earlier version of this note said the
+  opposite.** It claimed the HTTP-verb signal covered the manifest's blind spot. It does not: those
+  same seven connectors — dagster, google-photos, prefect, ramp, snyk, superset, wiz — are
+  READ-ONLY. They POST for GraphQL queries, filter endpoints, OAuth token exchange and login, and
+  the verb check wrongly refused all seven from standalone. Their `hitlRequired: []` manifests were
+  correct all along.
+
+  This is F5 from the spec — *write status cannot be inferred from the HTTP method* — restated as a
+  finding, then violated by the very guard written to enforce it. The verb rule survives in the
+  audit as an advisory hint with its false positives documented; it decides nothing. Eligibility is
+  58 of 94, not the 51 an earlier version of this table reported.
 
 ### Final verification
 

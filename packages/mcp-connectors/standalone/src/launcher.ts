@@ -2,15 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/**
- * A mutating HTTP method as a quoted literal, in any of the three quote styles.
- *
- * Bounded by design: it cannot see a method held in a variable, nor tell a GraphQL read POST from
- * a write POST. It is a net for the obvious cases, paired with the manifest signal — not a
- * substitute for the write declaration itself.
- */
-const MUTATING_VERB_RE = /(["'`])(POST|PUT|PATCH|DELETE)\1/;
-
 /** Connector ids are directory names: lowercase letters, digits and hyphens only. */
 const ID_RE = /^[a-z0-9-]+$/;
 
@@ -45,9 +36,16 @@ export type Eligibility =
  * ungated destructive tools the moment it started outside the gateway — the exact outcome this
  * whole subsystem exists to prevent — so the launcher refuses to start it.
  *
- * `hitlRequired` is the primary signal because it is authored per connector and transport
- * independent: ten connectors mutate through a CLI, the filesystem or a mail protocol, where no
- * scan of the source for an HTTP verb can see them.
+ * `hitlRequired` is the AUTHORITATIVE signal, and deliberately the only one. It is authored per
+ * connector and transport independent: ten connectors mutate through a CLI, the filesystem or a
+ * mail protocol, where no scan of the source could see them.
+ *
+ * Scanning for a mutating HTTP verb was tried here and REMOVED. It cannot decide this question in
+ * either direction: seven read-only connectors POST for GraphQL queries, filter endpoints, OAuth
+ * token exchange and login (dagster, google-photos, prefect, ramp, snyk, superset, wiz), so the
+ * verb wrongly refused all seven; and it is blind to the ten that never issue an HTTP request at
+ * all. A connector that mutates without declaring it is a CONNECTOR BUG, caught at authoring time
+ * by `registerWriteTool` and its audit — not by a runtime heuristic that provably cannot tell.
  *
  * An unreadable manifest is treated as declaring a write. The cost is refusing one connector that
  * might have been fine; the alternative is starting one that is not.
@@ -65,6 +63,8 @@ export function standaloneEligibility(id: string): Eligibility {
   } catch {
     declaresWrite = true;
   }
+  if (!declaresWrite) return { eligible: true, reason: "no-writes" };
+
   let src = "";
   try {
     src = readFileSync(join(dir, "src", "server.ts"), "utf8");
@@ -72,22 +72,13 @@ export function standaloneEligibility(id: string): Eligibility {
     /* an unreadable entrypoint falls through to the refusal below */
   }
 
-  // SECOND signal, and it is not redundant. Seven connectors — dagster, google-photos, prefect,
-  // ramp, snyk, superset, wiz — issue mutating HTTP requests while declaring `hitlRequired: []`,
-  // so trusting the manifest alone would admit them as write-free. The manifest catches the ten
-  // that mutate through a CLI, the filesystem or a mail protocol, where no verb appears in source;
-  // the verb catches these seven. Each covers the other's blind spot.
-  const carriesMutatingVerb = MUTATING_VERB_RE.test(src);
-
-  if (!declaresWrite && !carriesMutatingVerb) return { eligible: true, reason: "no-writes" };
-
   if (src.includes("registerWriteTool")) return { eligible: true, reason: "hardened" };
 
   return {
     eligible: false,
     reason:
-      `${id} exposes mutating tools (declared in its manifest, or visible in its source) that ` +
-      "have not been routed through the consent kit, " +
+      `${id} declares write or delete tools in its manifest that have not been routed through ` +
+      "the consent kit, " +
       "so running it standalone would expose ungated mutations. Run it through the Nimbus " +
       "gateway, which gates them, until this connector is migrated.",
   };
