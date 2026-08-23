@@ -52,4 +52,15 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "confluence_page_update",
   "confluence_comment_add",
   "obsidian_append_to_daily_note",
+
+  // Wave 5 — tickets
+  "jira_issue_create",
+  "jira_issue_update",
+  "jira_comment_add",
+  "linear_issue_create",
+  "linear_issue_update",
+  "linear_comment_create",
+  "pd_incident_acknowledge",
+  "pd_incident_resolve",
+  "pd_incident_escalate",
 ]);

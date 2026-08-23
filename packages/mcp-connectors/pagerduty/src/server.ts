@@ -51,7 +51,21 @@ async function pdIncidentPutMutation(actionLabel: string, pathSuffix: string, in
 }
 
 const mcp = new McpServer({ name: "nimbus-pagerduty", version: "0.1.0" });
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/**
+ * Every MUTATING pagerduty tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(mcp, {
+  connector: "pagerduty",
+  scopeEnv: "NIMBUS_MCP_PAGERDUTY_WRITE_SCOPE",
+  scopeKinds: ["incident"],
+});
 
 /** Standard PagerDuty read tool: token → pdFetch(buildPath) → mcpJsonResultIfOk("PagerDuty"). */
 const registerPdTool = makeRestToolRegistrar({
@@ -86,23 +100,38 @@ registerPdTool(
   (parsed) => `/incidents/${encodeURIComponent(parsed.incidentId)}`,
 );
 
-reg(
+registerWriteTool(
   "pd_incident_acknowledge",
-  "Acknowledge an incident. Requires Gateway HITL.",
+  {
+    mutates: "pagerduty.incident.acknowledge",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "incident", value: p.incidentId }),
+  },
+  "Acknowledge an incident.",
   z.object({ incidentId: z.string().min(1) }),
   async (parsed) => pdIncidentPutMutation("acknowledge", "acknowledge", parsed.incidentId),
 );
 
-reg(
+registerWriteTool(
   "pd_incident_resolve",
-  "Resolve an incident. Requires Gateway HITL.",
+  {
+    mutates: "pagerduty.incident.resolve",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "incident", value: p.incidentId }),
+  },
+  "Resolve an incident.",
   z.object({ incidentId: z.string().min(1) }),
   async (parsed) => pdIncidentPutMutation("resolve", "resolve", parsed.incidentId),
 );
 
-reg(
+registerWriteTool(
   "pd_incident_escalate",
-  "Escalate an incident. Requires Gateway HITL.",
+  {
+    mutates: "pagerduty.incident.escalate",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "incident", value: p.incidentId }),
+  },
+  "Escalate an incident.",
   z.object({ incidentId: z.string().min(1) }),
   async (parsed) => pdIncidentPutMutation("escalate", "escalate", parsed.incidentId),
 );

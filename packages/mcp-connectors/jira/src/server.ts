@@ -53,7 +53,21 @@ function plainToAdf(text: string): Record<string, unknown> {
 const server = new McpServer({ name: "nimbus-jira", version: "0.1.0" });
 
 const registerSimpleTool = createRegisterSimpleTool(server);
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING jira tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "jira",
+  scopeEnv: "NIMBUS_MCP_JIRA_WRITE_SCOPE",
+  scopeKinds: ["project", "issue"],
+});
 
 const jiraIssueListSchema = z.object({
   jql: z.string().min(1).optional(),
@@ -112,8 +126,13 @@ const jiraIssueCreateSchema = z.object({
   issueTypeName: z.string().min(1).optional(),
 });
 
-reg(
+registerWriteTool(
   "jira_issue_create",
+  {
+    mutates: "jira.issue.create",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "project", value: p.projectKey }),
+  },
   "Create a Jira issue (POST /rest/api/3/issue). Requires project key and summary.",
   jiraIssueCreateSchema,
   async (parsed) => {
@@ -143,8 +162,13 @@ const jiraIssueUpdateSchema = z.object({
   description: z.string().optional(),
 });
 
-reg(
+registerWriteTool(
   "jira_issue_update",
+  {
+    mutates: "jira.issue.update",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "issue", value: p.issueKey }),
+  },
   "Update summary and/or description on a Jira issue (PUT /rest/api/3/issue/{key}).",
   jiraIssueUpdateSchema,
   async (parsed) => {
@@ -177,8 +201,13 @@ const jiraCommentAddSchema = z.object({
   body: z.string().min(1),
 });
 
-reg(
+registerWriteTool(
   "jira_comment_add",
+  {
+    mutates: "jira.comment.add",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "issue", value: p.issueKey }),
+  },
   "Add a comment to a Jira issue (POST /rest/api/3/issue/{key}/comment).",
   jiraCommentAddSchema,
   async (parsed) => {

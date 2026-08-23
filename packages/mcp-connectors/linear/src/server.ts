@@ -62,7 +62,21 @@ function linearGqlData<T>(
 const server = new McpServer({ name: "nimbus-linear", version: "0.1.0" });
 
 const registerSimpleTool = createRegisterSimpleTool(server);
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING linear tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "linear",
+  scopeEnv: "NIMBUS_MCP_LINEAR_WRITE_SCOPE",
+  scopeKinds: ["team", "issue"],
+});
 
 const linearIssueListSchema = z.object({
   first: z.number().int().min(1).max(100).optional(),
@@ -173,8 +187,13 @@ const linearIssueCreateSchema = z.object({
   assigneeId: z.string().min(1).optional(),
 });
 
-reg(
+registerWriteTool(
   "linear_issue_create",
+  {
+    mutates: "linear.issue.create",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "team", value: p.teamId }),
+  },
   "Create a Linear issue (requires teamId and title).",
   linearIssueCreateSchema,
   async (parsed) => {
@@ -218,8 +237,13 @@ const linearIssueUpdateSchema = z.object({
   assigneeId: z.string().min(1).optional(),
 });
 
-reg(
+registerWriteTool(
   "linear_issue_update",
+  {
+    mutates: "linear.issue.update",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "issue", value: p.issueId }),
+  },
   "Update a Linear issue by id.",
   linearIssueUpdateSchema,
   async (parsed) => {
@@ -264,8 +288,13 @@ const linearCommentCreateSchema = z.object({
   body: z.string().min(1),
 });
 
-reg(
+registerWriteTool(
   "linear_comment_create",
+  {
+    mutates: "linear.comment.create",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "issue", value: p.issueId }),
+  },
   "Add a comment to a Linear issue.",
   linearCommentCreateSchema,
   async (parsed) => {
