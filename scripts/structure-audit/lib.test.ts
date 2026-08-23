@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { iterateSourceFiles, REPO_ROOT } from "./lib.ts";
+import { iterateSourceFiles, REPO_ROOT, stripComments } from "./lib.ts";
 
 describe("iterateSourceFiles", () => {
   // Collected once: the walk reads every production source file in the monorepo, so doing it
@@ -51,5 +51,19 @@ describe("iterateSourceFiles", () => {
     expect(visited.filter((p) => p.endsWith(".test.ts"))).toEqual([]);
     expect(visited.filter((p) => p.endsWith(".d.ts"))).toEqual([]);
     expect(visited.filter((p) => p.includes("/__fixtures__/"))).toEqual([]);
+  });
+});
+
+describe("stripComments — known regex-literal limitation", () => {
+  // PINS the documented limitation rather than asserting it is desirable. If someone teaches
+  // stripComments about regex literals, this test fails — that is the point: it is the tripwire
+  // telling them to delete this block and the KNOWN LIMITATION note in lib.ts along with it.
+  test("a quote inside a regex literal opens a phantom string, so later comments survive", () => {
+    const src = 'const RE = /(["|]) /;\n/** marker */\nconst a = 1;\n';
+    expect(stripComments(src)).toContain("marker");
+  });
+
+  test("without the regex, the same comment is stripped", () => {
+    expect(stripComments("const RE = 1;\n/** marker */\nconst a = 1;\n")).not.toContain("marker");
   });
 });
