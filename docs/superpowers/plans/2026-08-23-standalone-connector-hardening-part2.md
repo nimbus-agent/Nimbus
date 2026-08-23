@@ -311,7 +311,11 @@ have.
 
 - [ ] **Step 5: Migrate the tools to `registerWriteTool`**
 
-Per tool decide `recoverable`, and supply `capturePreState` when it is `false`. Give the connector a
+Per tool decide `recoverable`, and supply `capturePreState` when it is `false`. Where the pre-state
+is genuinely unqueryable — the resource may already be gone, or reading it costs a chain of API
+calls — capture the identifying parameters instead of nothing. A record saying WHICH thing was
+destroyed still beats silence, and a throw is safe: the kit catches it and records
+`{ captureFailed }` rather than blocking a mutation the owner already approved. Give the connector a
 `registerWriteTool` built from `createWriteToolRegistrar` with its `scopeEnv` and `scopeKinds`.
 Remove any `(requires HITL ...)` prose from migrated descriptions — the requirement lives in
 `mutates` now, and keeping both invites drift.
@@ -392,3 +396,32 @@ Only after every wave has landed.
 | 18 in-process test files | each wave's step 7 |
 | discord manifest | 9 |
 | `MUTATION_RULE_BLOCKING` | 10 |
+
+---
+
+## Plan review disposition (2026-08-23)
+
+Four items raised in `…-part2-review.md`. Two were verified and rejected on evidence; one was
+already implemented but untested; one found a real defect shipped in Part 1.
+
+| Item | Verdict | Basis |
+|---|---|---|
+| 1 — concurrent test files race on the process-global mode | **Rejected, measured** | `bun test` runs files SEQUENTIALLY — probed: `A start → A end (300ms later) → B start`. No `--parallel`, `--concurrent` or `--isolate` appears in any test script, workflow or `bunfig.toml`. The repo already depends on this: `embedding-worker-core.test.ts` carries "do NOT mark these `it.concurrent` — this shared tracker assumes Bun's default sequential execution." And `--parallel` **implies `--isolate`**, i.e. separate worker processes, so adopting it would make the module global per-process and remove the race AND the cross-file leak. The leak the plan already handles is the real hazard; the race is not. |
+| 1b — thread the mode through a context object instead of a global | **Rejected** | The mode must be readable at module scope, during registration, before any server object exists — connectors register tools at import time. Threading a context would mean restructuring all 94 connectors, and would make the mode caller-supplied, which is exactly what Non-Negotiable #2 forbids. A per-process property is correctly modelled by a per-process global. |
+| 2 — downstream consumers hardcoding generic prefixes | **Accepted as a check; came back clean** | Nothing compares a destination or service to `"email"` / `"file"` / `"calendar"` / `"repo"`. `destination` is an opaque `string` on the ledger row and `prove.ts` treats it as text. Historical rows keep their old prefixes, which is correct for an append-only record of what was true at the time. |
+| 3 — `capturePreState` failure must not crash or block | **Already implemented, was UNTESTED** | Part 1's `guarded` handler catches the throw and records `{ captureFailed }`. Nothing proved it. A test now does, red-proved by making the throw fatal. Wave step 5 gains the fallback guidance. |
+| 4 — ensure the blocking rule actually runs in CI | **Accepted — found a real defect** | `audit:connector-consent` was **not run by any workflow**. #1318 added it to `preflight-gates.ts` and nowhere else, so it gated local runs and no PR — and CI went green on #1318 precisely because it never ran. Now wired into `_test-suite.yml` beside its three siblings. The second half of the suggestion was already satisfied: the verb rule's false positives are documented in the source. |
+
+**A guard was added for item 4's class, narrowly.** `preflight-gates.test.ts` now asserts every
+`audit:connector-*` manifest gate appears in a workflow. Scoped deliberately: a blanket check over
+all 39 manifest gates was measured first and reports 7, most of them false — `audit:any` runs in CI
+as `count-any-usage.ts --check`, `test:ci` as the suite itself, `lint` under its own step name. This
+family is always invoked as `bun run <name>`, so a name match is exact. `_test-suite.yml` already
+carried a comment about this same class of bug from an earlier occurrence; it is now a mechanism.
+
+**One incidental finding, recorded not fixed.** The new test initially failed because it set
+`NIMBUS_MCP_AUDIT_LOG` *after* `createWriteToolRegistrar`, which reads its env once at construction.
+It nonetheless got as far as the mutation, because a previous test's scope env was still set — so
+test env leaks between cases in this file. Harmless today; if a case ever depends on an env var
+being UNSET it will mislead. Any wave adding cases here should set env before constructing the
+registrar, as `registerAndGet` already does.

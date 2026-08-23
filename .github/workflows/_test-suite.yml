@@ -140,6 +140,16 @@ jobs:
         # FROM the registry is invisible to it.
         run: bun run audit:connector-registry-drift
 
+      - name: Connector consent confinement (setConnectorMode + declared mutations)
+        # "The connector mode comes from the entrypoint" is a convention until something enforces
+        # it: any other caller of setConnectorMode could re-gate a connector mid-process, which is
+        # what Non-Negotiable 2 forbids.
+        #
+        # This landed in preflight-gates.ts in #1318 and NOWHERE ELSE, so it gated local runs and
+        # no PR — the same "manifest but no workflow" gap noted above, reintroduced one gate later.
+        # CI passed on #1318 because this never ran.
+        run: bun run audit:connector-consent
+
       - name: import.meta path confinement (compiled-binary asset resolution)
         # A source-tree-relative path derived from import.meta.dir resolves inside the read-only
         # bunfs root in a compiled binary. Two such sites made the admin console and the OpenAPI

@@ -433,3 +433,57 @@ describe("empty-scope startup warning", () => {
     expect(written.join("")).toBe("");
   });
 });
+
+describe("pre-state capture failure", () => {
+  beforeEach(() => {
+    resetConnectorModeForTests();
+    setConnectorMode("standalone");
+  });
+  afterEach(() => {
+    resetConnectorModeForTests();
+  });
+
+  test("a THROWING capturePreState does not block an approved mutation", async () => {
+    // Refusing here would turn a transient read error into a blocked action the owner had already
+    // approved. The behaviour shipped in Part 1; nothing proved it until now.
+    let mutated = 0;
+    const srv = serverWith(() => Promise.resolve({ action: "accept", content: { confirm: true } }));
+    const log = await tempAuditPath();
+    // BEFORE the registrar is constructed: it reads scope and audit-log env once, at startup, so
+    // the model can never influence them mid-session. Setting them afterwards is a no-op.
+    process.env["NIMBUS_MCP_TEST_WRITE_SCOPE"] = "repo:acme/api";
+    process.env["NIMBUS_MCP_AUDIT_LOG"] = log;
+    const reg = createWriteToolRegistrar(srv, {
+      connector: "github",
+      scopeEnv: "NIMBUS_MCP_TEST_WRITE_SCOPE",
+      scopeKinds: ["repo"],
+    });
+    reg(
+      "github_branch_delete",
+      {
+        mutates: "github.branch.delete",
+        recoverable: false,
+        capturePreState: () => Promise.reject(new Error("ref lookup failed")),
+        scopeTargetOf: (a: { branch: string }) => ({ kind: "repo", value: a.branch }),
+      },
+      "Delete a branch.",
+      z.object({ branch: z.string() }),
+      async () => {
+        mutated += 1;
+        return ok();
+      },
+    );
+    srv.handshake();
+    const cb = srv.captured;
+    if (cb === undefined) throw new Error("tool was not registered");
+    await cb({ branch: "acme/api" });
+
+    expect(mutated).toBe(1);
+    const text = await readFile(log, "utf8");
+    // The failure is RECORDED, so the audit trail says the pre-state is missing rather than
+    // silently implying none was needed.
+    expect(text).toContain("captureFailed");
+    expect(text).toContain("ref lookup failed");
+    expect(text).toContain('"executed"');
+  });
+});
