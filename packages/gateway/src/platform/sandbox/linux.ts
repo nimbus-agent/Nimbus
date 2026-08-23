@@ -84,25 +84,39 @@ export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): stri
 }
 
 /**
- * Is `bwrap` itself present?
+ * Where `bwrap` is looked for, and why it is not looked up on `PATH`.
  *
  * Distinct from the helper probe below: `bwrap` IS the confinement on Linux, while the helper only
- * adds per-host network filtering. Resolved through PATH rather than a fixed `/usr/bin/bwrap`,
- * because that is how `spawn` finds it — a path check would answer a narrower question and
- * disagree with production on any distro that installs it elsewhere.
+ * adds per-host network filtering — so a missing helper degrades one feature, while a missing or
+ * substituted `bwrap` means no confinement at all.
  *
- * Probed once at construction so `canConfine` can answer BEFORE the owner is asked to approve.
- * Without it a no-network policy reported "confinable", the owner approved, and only then did the
- * spawn fail — exactly the "never ask for approval of something unconfinable" rule the gate exists
- * to keep.
+ * Both the probe and the real spawn use the SAME resolved absolute path, and it is resolved once at
+ * construction. That gives three things: `canConfine` can answer BEFORE the owner is asked to
+ * approve (without it a no-network policy reported "confinable", the owner approved, and only then
+ * did the spawn fail); nothing can substitute the sandbox binary by prepending a writable directory
+ * to `PATH`; and the binary that was checked is the binary that runs.
+ *
+ * The candidates are fixed, non-writable locations, plus an explicit override for unusual prefixes
+ * (Nix, a source build, a container image) — deliberately not a `PATH` scan, which would put the
+ * choice back in the hands of whatever can write to a directory on it.
  */
-function probeBwrap(): string | null {
-  // Invoke `bwrap` DIRECTLY rather than asking a shell to look it up. Two reasons: it answers the
-  // question production actually asks -- `spawn("bwrap", ...)` below resolves the same way, so a
-  // `command -v` hit that then fails to execute would be a false positive -- and it spawns no shell
-  // at all, so there is no `sh -c` string for anything to be injected into.
-  const r = spawnSync("bwrap", ["--version"], { encoding: "utf8" });
-  return r.error === undefined && r.status === 0 ? null : "bwrap not found or not executable";
+const BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"] as const;
+
+function resolveBwrapPath(): string | null {
+  const override = process.env["NIMBUS_BWRAP_PATH"];
+  if (override !== undefined && override !== "") {
+    return existsSync(override) ? override : null;
+  }
+  return BWRAP_CANDIDATES.find((p) => existsSync(p)) ?? null;
+}
+
+function probeBwrap(bwrapPath: string | null): string | null {
+  if (bwrapPath === null) {
+    return `bwrap not found at ${BWRAP_CANDIDATES.join(", ")} (set NIMBUS_BWRAP_PATH to override)`;
+  }
+  // Absolute path, no shell: nothing to inject into and nothing for PATH to redirect.
+  const r = spawnSync(bwrapPath, ["--version"], { encoding: "utf8" });
+  return r.error === undefined && r.status === 0 ? null : `bwrap at ${bwrapPath} is not executable`;
 }
 
 function probeHelper(): HelperState {
@@ -152,7 +166,8 @@ export function createLinuxSandboxRunner(): SandboxRunner {
   const seccompPath = join(seccompDir, "seccomp.bpf");
   writeFileSync(seccompPath, seccompProgram, { mode: 0o600 });
 
-  const bwrapMissing = probeBwrap();
+  const bwrapPath = resolveBwrapPath();
+  const bwrapMissing = probeBwrap(bwrapPath);
   const helper = probeHelper();
   if (!helper.available) {
     log.warn({ helper: helper.reason }, "sandbox: degraded mode (no per-host network gating)");
@@ -161,6 +176,13 @@ export function createLinuxSandboxRunner(): SandboxRunner {
   return {
     platform: "linux",
     spawn(cmd: string, args: string[], opts: SandboxSpawnOptions): ChildProcess {
+      // Fail closed rather than falling back to a bare `"bwrap"`, which would reintroduce the PATH
+      // lookup this resolution exists to remove -- and would spawn UNCONFINED-ish through whatever
+      // PATH found, at the one point where being wrong means no sandbox. The exec gate never gets
+      // here (canConfine refuses first); a connector spawn can, and should stop too.
+      if (bwrapPath === null) {
+        throw new Error(`refusing to spawn: ${bwrapMissing ?? "bwrap unavailable"}`);
+      }
       const mode = decideNetworkMode(opts.policy, { helperAvailable: helper.available });
       const bwrapArgv = buildBwrapArgv(opts.policy, { mode, cwd: opts.cwd });
       bwrapArgv.push("--seccomp", "3", cmd, ...args);
@@ -173,11 +195,11 @@ export function createLinuxSandboxRunner(): SandboxRunner {
         for (const host of opts.policy.permissions.network) {
           helperArgs.push("--allow", host);
         }
-        helperArgs.push("--", "bwrap", ...bwrapArgv);
+        helperArgs.push("--", bwrapPath, ...bwrapArgv);
         spawnCmd = HELPER_PATH;
         spawnArgs = helperArgs;
       } else {
-        spawnCmd = "bwrap";
+        spawnCmd = bwrapPath;
         spawnArgs = bwrapArgv;
       }
 
