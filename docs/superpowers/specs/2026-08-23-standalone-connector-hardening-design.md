@@ -435,10 +435,18 @@ A's design should be written only once B has landed, so it moves already-correct
    Project A question; B is indifferent.
 3. **Should the gateway wire `client.elicitation.onRequest` (F8)?** Not needed by this design, but it
    would let the gateway reuse one consent path for both modes. Out of scope, worth recording.
-4. **Is read-only-on-non-supporting-clients acceptable as the shipping posture?** §6 rejects an env
-   escape hatch on Non-Negotiable #2 grounds. That is a security judgement; whether the resulting
-   capability limitation is acceptable *as a product* is the owner's call, and the only place this
-   design would change shape if answered differently. **Partially measured — see §15.**
+4. **Is read-only-on-non-supporting-clients acceptable as the shipping posture?** **DECIDED
+   (2026-08-23): yes, ship as-is; measure before any public launch.** §6 rejects an env escape hatch
+   on Non-Negotiable #2 grounds, and that stands.
+
+   The decision was easier than expected once the cost was measured. **58 of 94 connectors declare
+   no mutating tools at all** — for those, elicitation support is irrelevant and they serve their
+   full surface on any client. The posture bites only the 36 write-declaring connectors, and 35 of
+   those are gateway-only anyway until Part 2 migrates them. So the posture costs exactly ONE
+   connector's write tools today: `github`, on a client without elicitation.
+
+   **This is a launch gate, not a merge gate.** No code changes on the answer. Recorded as an
+   explicit obligation below.
 
 ---
 
@@ -470,6 +478,15 @@ correspondingly only partly informed.
 
 Re-run before launch on a machine with Claude Desktop and Cursor installed. This is exactly the
 probe-generated matrix §6 requires; do not hand-write the missing rows.
+
+### Launch gate — do not publish without this
+
+`packages/mcp-connectors/standalone/README.md` tells the reader that write tools "appear when your
+client supports elicitation". For Claude Desktop and Cursor — the two clients most people will
+use — that claim is currently **UNVERIFIED**. Publishing `nimbus-mcp` to npm without running the
+probe against them ships a documented promise nobody has checked.
+
+Blocking for publication (Project A's choreography), not for merging this work.
 
 ### The probe, for re-running
 
