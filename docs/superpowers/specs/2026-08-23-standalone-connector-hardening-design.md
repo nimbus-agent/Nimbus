@@ -438,7 +438,92 @@ A's design should be written only once B has landed, so it moves already-correct
 4. **Is read-only-on-non-supporting-clients acceptable as the shipping posture?** §6 rejects an env
    escape hatch on Non-Negotiable #2 grounds. That is a security judgement; whether the resulting
    capability limitation is acceptable *as a product* is the owner's call, and the only place this
-   design would change shape if answered differently.
+   design would change shape if answered differently. **Partially measured — see §15.**
+
+---
+
+## 15. Client elicitation support — measured, 2026-08-23
+
+A throwaway stdio MCP server recorded what connecting clients declare at `initialize`. It was
+red-proved first against two synthetic clients, so a false "supported" is ruled out:
+
+```text
+fake-capable-client   elicitation:true   rawCapabilities {"elicitation":{"form":{}}}
+fake-legacy-client    elicitation:false  rawCapabilities {}
+```
+
+| Client | Version | `elicitation` | Raw |
+|---|---|---|---|
+| **Claude Code** | 2.1.241 | **YES** | `{"elicitation":{"form":{}},"roots":{"listChanged":true}}` |
+| Claude Desktop | — | **UNMEASURED** | not installed on the measuring machine |
+| Cursor | — | **UNMEASURED** | not installed on the measuring machine |
+
+Confirmed twice for Claude Code — once via `claude mcp list`, once inside a real headless agent
+session — with identical capabilities both times.
+
+**What this does and does not establish.** It proves elicitation is implemented in a shipping
+client today, in `form` mode, rather than being a spec-only feature — so the design's
+"self-resolving as clients adopt" argument rests on something real, and a Claude Code user gets the
+full write surface on day one. It does **not** answer the question for the two clients the
+standalone use case was actually aimed at. Those remain unmeasured, and the §13 Q4 decision is
+correspondingly only partly informed.
+
+Re-run before launch on a machine with Claude Desktop and Cursor installed. This is exactly the
+probe-generated matrix §6 requires; do not hand-write the missing rows.
+
+### The probe, for re-running
+
+Verified working on 2026-08-23. Needs the repo's `node_modules` on the resolution path, so run it
+from inside the repo:
+
+```ts
+import { appendFileSync } from "node:fs";
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+const server = new McpServer({ name: "nimbus-capability-probe", version: "0.0.0" });
+
+// One inert tool: some clients will not complete a handshake with a server exposing nothing.
+server.registerTool(
+  "probe_ping",
+  { description: "Returns pong. Exists only so the server has a tool surface." },
+  () => Promise.resolve({ content: [{ type: "text" as const, text: "pong" }] }),
+);
+
+server.server.oninitialized = (): void => {
+  const caps = server.server.getClientCapabilities();
+  const info = server.server.getClientVersion();
+  const line = JSON.stringify({
+    ts: new Date().toISOString(),
+    client: info?.name ?? "(unknown)",
+    clientVersion: info?.version ?? "(unknown)",
+    elicitation: caps?.elicitation !== undefined,
+    rawCapabilities: caps ?? null,
+  });
+  // stderr, never stdout — stdout is the JSON-RPC channel.
+  process.stderr.write(`[nimbus-probe] ${line}\n`);
+  const out = process.env["NIMBUS_PROBE_LOG"];
+  if (out !== undefined && out !== "") appendFileSync(out, `${line}\n`, "utf8");
+};
+
+await server.connect(new StdioServerTransport());
+```
+
+To measure a client, register it as an stdio MCP server with
+`NIMBUS_PROBE_LOG` set to an absolute path, open the client once, then read that file. For Claude
+Code the whole cycle is three commands:
+
+```bash
+claude mcp add nimbus-cap-probe -s local -e "NIMBUS_PROBE_LOG=<abs-path>" -- bun run <probe.ts>
+claude mcp list                       # connecting is enough to trigger the handshake
+claude mcp remove nimbus-cap-probe -s local
+```
+
+**Red-prove it before trusting a negative result.** Drive it with two synthetic clients — one
+constructed with `capabilities: { elicitation: {} }`, one with `{}` — and confirm it reports
+`true` and `false` respectively. A probe that reports `false` unconditionally looks exactly like a
+client with no support.
 
 ---
 
