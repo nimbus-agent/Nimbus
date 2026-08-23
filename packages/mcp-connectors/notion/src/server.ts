@@ -48,7 +48,21 @@ function richText(content: string): ReadonlyArray<Record<string, unknown>> {
 const server = new McpServer({ name: "nimbus-notion", version: "0.1.0" });
 
 const registerSimpleTool = createRegisterSimpleTool(server);
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING notion tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "notion",
+  scopeEnv: "NIMBUS_MCP_NOTION_WRITE_SCOPE",
+  scopeKinds: ["page", "database", "block"],
+});
 
 const notionSearchSchema = z.object({
   query: z.string().optional(),
@@ -178,8 +192,13 @@ const notionPageCreateSchema = z.object({
   titlePropertyName: z.string().min(1).optional(),
 });
 
-reg(
+registerWriteTool(
   "notion_page_create",
+  {
+    mutates: "notion.page.create",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "page", value: p.parentPageId }),
+  },
   "Create a page under a parent page (POST /v1/pages).",
   notionPageCreateSchema,
   async (parsed) => {
@@ -205,8 +224,13 @@ const notionKbAppendSchema = z.object({
   titlePropertyName: z.string().min(1).optional(),
 });
 
-reg(
+registerWriteTool(
   "notion_kb_append",
+  {
+    mutates: "notion.knowledge.write",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "database", value: p.databaseId }),
+  },
   "Create a knowledge-base page in a database from simple markdown + citations (POST /v1/pages). " +
     "Used by Nimbus tribal-knowledge capture; the destination database is supplied by the gateway from local config only.",
   notionKbAppendSchema,
@@ -230,8 +254,13 @@ const notionPageUpdateSchema = z.object({
   propertiesJson: z.string().min(1),
 });
 
-reg(
+registerWriteTool(
   "notion_page_update",
+  {
+    mutates: "notion.page.update",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "page", value: p.pageId }),
+  },
   "Update page properties (PATCH /v1/pages/{id}). Pass properties JSON as string.",
   notionPageUpdateSchema,
   async (parsed) => {
@@ -258,8 +287,13 @@ const notionBlockAppendSchema = z.object({
   childrenJson: z.string().min(1),
 });
 
-reg(
+registerWriteTool(
   "notion_block_append",
+  {
+    mutates: "notion.block.append",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "block", value: p.parentBlockId }),
+  },
   "Append blocks to a parent block (PATCH /v1/blocks/{id}/children). childrenJson is a JSON array of block objects.",
   notionBlockAppendSchema,
   async (parsed) => {
@@ -286,8 +320,13 @@ const notionCommentCreateSchema = z.object({
   text: z.string().min(1),
 });
 
-reg(
+registerWriteTool(
   "notion_comment_create",
+  {
+    mutates: "notion.comment.create",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "page", value: p.pageId }),
+  },
   "Create a comment thread on a page (POST /v1/comments).",
   notionCommentCreateSchema,
   async (parsed) => {

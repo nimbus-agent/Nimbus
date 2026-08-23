@@ -62,6 +62,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "github.issue.create",
   "github.branch.delete",
   "github.tag.create",
+  // Wave 4 — comms.
+  "slack.chat.post",
+  "teams.chat.post",
   // Wave 3 — repos + CI.
   "bitbucket.pr.merge",
   "gitlab.mr.merge",

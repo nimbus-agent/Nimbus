@@ -43,7 +43,21 @@ async function confFetch(
 const server = new McpServer({ name: "nimbus-confluence", version: "0.1.0" });
 
 const registerSimpleTool = createRegisterSimpleTool(server);
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING confluence tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "confluence",
+  scopeEnv: "NIMBUS_MCP_CONFLUENCE_WRITE_SCOPE",
+  scopeKinds: ["space", "page"],
+});
 
 const confluenceLimitStartSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
@@ -163,8 +177,13 @@ const confluencePageCreateSchema = z.object({
   parentPageId: z.string().min(1).optional(),
 });
 
-reg(
+registerWriteTool(
   "confluence_page_create",
+  {
+    mutates: "confluence.page.create",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "space", value: p.spaceKey }),
+  },
   "Create a page in a space (POST /content). Optional parentPageId.",
   confluencePageCreateSchema,
   async (parsed) => {
@@ -195,8 +214,13 @@ const confluenceKbAppendSchema = z.object({
   citationsJson: z.string().optional(),
 });
 
-reg(
+registerWriteTool(
   "confluence_kb_append",
+  {
+    mutates: "confluence.knowledge.write",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "space", value: p.spaceKey }),
+  },
   "Create a knowledge-base page under a parent from simple markdown + citations (POST /content). " +
     "Used by Nimbus tribal-knowledge capture; the destination space/parent is supplied by the gateway from local config only.",
   confluenceKbAppendSchema,
@@ -220,8 +244,13 @@ const confluencePageUpdateSchema = z.object({
   storageHtml: z.string().min(1),
 });
 
-reg(
+registerWriteTool(
   "confluence_page_update",
+  {
+    mutates: "confluence.page.update",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "page", value: p.pageId }),
+  },
   "Update page body and bump version (PUT /content/{id}). Pass current version number and title.",
   confluencePageUpdateSchema,
   async (parsed) => {
@@ -247,8 +276,13 @@ const confluenceCommentAddSchema = z.object({
   storageHtml: z.string().min(1),
 });
 
-reg(
+registerWriteTool(
   "confluence_comment_add",
+  {
+    mutates: "confluence.comment.add",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "page", value: p.pageId }),
+  },
   "Add a footer comment to a page (POST /content/{id}/child/comment).",
   confluenceCommentAddSchema,
   async (parsed) => {

@@ -33,4 +33,23 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "gha_run_cancel",
   "circleci_pipeline_trigger",
   "circleci_job_cancel",
+
+  // Wave 4 — comms. FOUR ids are deliberately ABSENT, each already confined by a stricter,
+  // purpose-built gate that a generic write-id set would only duplicate:
+  //   notion_kb_append, confluence_kb_append — static D19 confines them to tribal-write-gate.ts
+  //     and their own connectors; I25 pins their destination to config, not to a caller.
+  //   slack_chat_post, teams_chat_post — static D17 confines them to the ChatOps reply
+  //     dispatcher; I23 derives their destination server-side so it is never caller-supplied.
+  // All four are still routed through the consent kit IN THEIR CONNECTOR, which is what makes
+  // them safe standalone; only the gateway-side id set omits them.
+  "slack_message_post",
+  "teams_message_post",
+  "notion_page_create",
+  "notion_page_update",
+  "notion_block_append",
+  "notion_comment_create",
+  "confluence_page_create",
+  "confluence_page_update",
+  "confluence_comment_add",
+  "obsidian_append_to_daily_note",
 ]);

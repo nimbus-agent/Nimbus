@@ -94,7 +94,21 @@ function buildConversationsHistoryBody(
 const server = new McpServer({ name: "nimbus-slack", version: "0.1.0" });
 
 const registerSimpleTool = createRegisterSimpleTool(server);
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING slack tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "slack",
+  scopeEnv: "NIMBUS_MCP_SLACK_WRITE_SCOPE",
+  scopeKinds: ["channel"],
+});
 
 const slackChannelListSchema = z.object({
   types: z.string().optional(),
@@ -234,9 +248,14 @@ const slackMessagePostSchema = z.object({
   thread_ts: z.string().optional(),
 });
 
-reg(
+registerWriteTool(
   "slack_message_post",
-  "Post a message to a channel (requires HITL slack.message.post).",
+  {
+    mutates: "slack.message.post",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "channel", value: p.channel }),
+  },
+  "Post a message to a channel.",
   slackMessagePostSchema,
   async (parsed) => {
     const body: Record<string, unknown> = {
@@ -305,8 +324,13 @@ reg(
 );
 
 const slackChatPostSchema = z.object({ channel: z.string().min(1), text: z.string().min(1) });
-reg(
+registerWriteTool(
   "slack_chat_post",
+  {
+    mutates: "slack.chat.post",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "channel", value: p.channel }),
+  },
   "Post an operational bot message to a channel (ChatOps reply surface; bot token).",
   slackChatPostSchema,
   async (parsed) =>

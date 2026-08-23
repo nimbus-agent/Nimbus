@@ -175,7 +175,21 @@ function findVaultByIdOrPathPrefix(
 
 const server = new McpServer({ name: "nimbus-obsidian", version: "0.1.0" });
 const registerSimpleTool = createRegisterSimpleTool(server);
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING obsidian tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "obsidian",
+  scopeEnv: "NIMBUS_MCP_OBSIDIAN_WRITE_SCOPE",
+  scopeKinds: ["vault"],
+});
 
 const VAULTS = discoverVaults(loadVaultPaths());
 
@@ -360,8 +374,14 @@ function resolveDailyNoteRelativePath(vaultRoot: string, date: Date): string {
   return folder === "" ? filename : `${stripTrailingSlashes(folder)}/${filename}`;
 }
 
-reg(
+registerWriteTool(
   "obsidian_append_to_daily_note",
+  {
+    mutates: "obsidian.note.append",
+    // Append-only by construction — it never overwrites — so the note is recoverable by editing.
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "vault", value: p.vault_id }),
+  },
   "Append text to today's Obsidian daily note. Creates the file if it does not exist. Always appends — never overwrites. Adds a leading newline when the existing file does not end in one. Requires HITL `obsidian.note.append`.",
   appendDailyNoteSchema,
   async (parsed) => {

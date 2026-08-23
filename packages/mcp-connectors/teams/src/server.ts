@@ -44,7 +44,21 @@ function graphListResult(r: {
 const server = new McpServer({ name: "nimbus-teams", version: "0.1.0" });
 
 const registerSimpleTool = createRegisterSimpleTool(server);
+
+import { createWriteToolRegistrar } from "../../shared/consent-kit.ts";
+
 const reg = createZodToolRegistrar(registerSimpleTool);
+
+/**
+ * Every MUTATING teams tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "teams",
+  scopeEnv: "NIMBUS_MCP_TEAMS_WRITE_SCOPE",
+  scopeKinds: ["channel", "chat"],
+});
 
 const teamsTeamListSchema = z.object({
   top: z.number().int().min(1).max(100).optional(),
@@ -141,9 +155,14 @@ const teamsMessagePostSchema = z.object({
   contentType: z.enum(["text", "html"]).optional(),
 });
 
-reg(
+registerWriteTool(
   "teams_message_post",
-  "Post a message to a team channel (requires HITL teams.message.post).",
+  {
+    mutates: "teams.message.post",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "channel", value: `${p.teamId}/${p.channelId}` }),
+  },
+  "Post a message to a team channel.",
   teamsMessagePostSchema,
   async (parsed) => {
     const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
@@ -216,8 +235,13 @@ const teamsChatPostSchema = z.object({
   conversationId: z.string().min(1),
   text: z.string().min(1),
 });
-reg(
+registerWriteTool(
   "teams_chat_post",
+  {
+    mutates: "teams.chat.post",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "chat", value: p.conversationId }),
+  },
   "Post an operational bot message to a Teams conversation (ChatOps reply surface; bot app creds).",
   teamsChatPostSchema,
   async (parsed) => {
