@@ -20,6 +20,10 @@ export const ROUTE_KEY_CLIPS_RELATED = "POST /v1/clips/related";
 export const ROUTE_KEY_AGENTS_LIST = "GET /v1/agents";
 export const ROUTE_KEY_AGENT_RUN_GET = "GET /v1/agents/runs/*";
 export const ROUTE_KEY_ITEMS_RESOLVE = "GET /v1/items/resolve";
+export const ROUTE_KEY_EGRESS_LIST = "GET /v1/egress";
+export const ROUTE_KEY_EGRESS_HEAD = "GET /v1/egress/head";
+export const ROUTE_KEY_EGRESS_VERIFY = "GET /v1/egress/verify";
+export const ROUTE_KEY_EGRESS_PROVE = "GET /v1/egress/prove";
 
 export type RouteAuth =
   | { readonly kind: "public" }
@@ -70,6 +74,14 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   // Resolve is a bearer READ under its own scope. It appends NO egress row (see the `http`
   // narrowing in egress/egress-coverage.ts) — it reads the local index and returns metadata.
   [ROUTE_KEY_ITEMS_RESOLVE]: { kind: "clip", scope: "resolve" },
+  // The egress-ledger reads. Bearer reads under their own scope, appending no egress row of their
+  // own — they READ the record, and a read that ledgered itself would inflate the number it exists
+  // to report. `egress.prune`, the ledger's one sanctioned mutation, has no HTTP surface at all and
+  // keeps its owner-HITL gate (I2 frozen set), exactly as it is absent from the LAN allowlist.
+  [ROUTE_KEY_EGRESS_LIST]: { kind: "clip", scope: "egress" },
+  [ROUTE_KEY_EGRESS_HEAD]: { kind: "clip", scope: "egress" },
+  [ROUTE_KEY_EGRESS_VERIFY]: { kind: "clip", scope: "egress" },
+  [ROUTE_KEY_EGRESS_PROVE]: { kind: "clip", scope: "egress" },
 
   // --- Writes. Keys are the `ROUTE_*` constant VALUES from http-write-routes.ts, verbatim.
   // Note `{id}`, not `:id` — copied from source, not guessed.
@@ -140,7 +152,11 @@ export type ClipReadRouteKey =
   | typeof ROUTE_KEY_BRIEF_GET
   | typeof ROUTE_KEY_AGENTS_LIST
   | typeof ROUTE_KEY_AGENT_RUN_GET
-  | typeof ROUTE_KEY_ITEMS_RESOLVE;
+  | typeof ROUTE_KEY_ITEMS_RESOLVE
+  | typeof ROUTE_KEY_EGRESS_LIST
+  | typeof ROUTE_KEY_EGRESS_HEAD
+  | typeof ROUTE_KEY_EGRESS_VERIFY
+  | typeof ROUTE_KEY_EGRESS_PROVE;
 
 export type ClipScopeVerdict =
   | { readonly ok: true }
