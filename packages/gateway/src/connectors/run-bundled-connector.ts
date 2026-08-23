@@ -1,3 +1,4 @@
+import { setConnectorMode } from "../../../mcp-connectors/shared/connector-mode.ts";
 import { BUNDLED_CONNECTORS } from "./bundled-connector-registry.ts";
 
 /**
@@ -22,6 +23,12 @@ export async function runBundledConnector(
   id: string | undefined,
   registry: ConnectorRegistry = BUNDLED_CONNECTORS,
 ): Promise<void> {
+  // I2 lives in the gateway's executor, so a gateway-spawned connector keeps its full tool surface
+  // and does not gate itself. Set BEFORE the dynamic import below: connectors register tools at
+  // module scope, so a mode set afterwards would be read too late. This is the ONLY production
+  // caller that passes "gateway" — `audit:connector-consent` confines the setter to it.
+  setConnectorMode("gateway");
+
   const load = id === undefined ? undefined : registry[id];
   if (load === undefined) {
     const known = Object.keys(registry)
