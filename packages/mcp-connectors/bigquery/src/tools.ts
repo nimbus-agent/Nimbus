@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { nimbusSpawn } from "../../shared/nimbus-spawn.ts";
 import type { ZodToolRegistrar } from "../../shared/run-read-only-mcp-connector.ts";
 
 /**
@@ -33,14 +34,13 @@ function gcloudEnv(): Record<string, string | undefined> {
 
 /** Mint a short-lived access token via `gcloud auth print-access-token`. */
 async function accessToken(): Promise<string> {
-  const proc = Bun.spawn(["gcloud", "auth", "print-access-token"], {
-    env: { ...process.env, ...gcloudEnv() },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const code = await proc.exited;
-  const out = (await new Response(proc.stdout).text()).trim();
-  const err = (await new Response(proc.stderr).text()).trim();
+  const { code, stdout, stderr } = await nimbusSpawn(
+    ["gcloud", "auth", "print-access-token"],
+    // Restores GOOGLE_APPLICATION_CREDENTIALS when set; nimbusSpawn already merges process.env.
+    gcloudEnv(),
+  );
+  const out = stdout.trim();
+  const err = stderr.trim();
   if (code !== 0 || out === "") {
     throw new Error(`gcloud auth print-access-token failed: ${err.slice(0, 300)}`);
   }

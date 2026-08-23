@@ -1,3 +1,5 @@
+import { nimbusSpawn } from "./nimbus-spawn.ts";
+
 export type RunCliJsonResult = { ok: true; data: unknown } | { ok: false; message: string };
 
 export async function runCliOk(
@@ -7,13 +9,7 @@ export async function runCliOk(
   if (command.length === 0) {
     return { ok: false, message: "empty command" };
   }
-  const proc = Bun.spawn([...command], {
-    env: { ...process.env, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const code = await proc.exited;
-  const err = await new Response(proc.stderr).text();
+  const { code, stderr: err } = await nimbusSpawn(command, env);
   if (code !== 0) {
     return {
       ok: false,
@@ -40,14 +36,7 @@ export async function runCliJson(
   if (command.length === 0) {
     return { ok: false, message: "empty command" };
   }
-  const proc = Bun.spawn([...command], {
-    env: { ...process.env, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const code = await proc.exited;
-  const out = await new Response(proc.stdout).text();
-  const err = await new Response(proc.stderr).text();
+  const { code, stdout: out, stderr: err } = await nimbusSpawn(command, env);
   if (code !== 0) {
     return {
       ok: false,

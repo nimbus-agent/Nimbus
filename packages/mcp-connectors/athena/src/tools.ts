@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { nimbusSpawn } from "../../shared/nimbus-spawn.ts";
 import type { ZodToolRegistrar } from "../../shared/run-read-only-mcp-connector.ts";
 import { isSafeCliArg } from "../../shared/safe-cli-arg.ts";
 
@@ -49,14 +50,12 @@ function asArray(parsed: unknown, key: string): unknown[] {
  * natively from the process env injected at spawn time. Throws on non-zero exit.
  */
 async function athenaCli(args: string[]): Promise<unknown> {
-  const proc = Bun.spawn(["aws", "athena", ...args, "--output", "json"], {
-    env: { ...process.env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const code = await proc.exited;
-  const out = (await new Response(proc.stdout).text()).trim();
-  const err = (await new Response(proc.stderr).text()).trim();
+  const { code, stdout, stderr } = await nimbusSpawn(
+    ["aws", "athena", ...args, "--output", "json"],
+    {},
+  );
+  const out = stdout.trim();
+  const err = stderr.trim();
   if (code !== 0) {
     throw new Error(`aws athena ${args[0] ?? ""} failed: ${err.slice(0, 400)}`);
   }
