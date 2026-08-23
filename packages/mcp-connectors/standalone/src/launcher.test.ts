@@ -181,3 +181,13 @@ describe("eligibility reads both entrypoint files", () => {
     expect(viaToolsTs.length).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("discord over-declared and was corrected", () => {
+  test("discord is eligible with no writes at all", () => {
+    // Its manifest declared ["write","delete"] while exposing only discord_guild_list,
+    // discord_channel_list, discord_channel_messages and discord_thread_list — every one a read,
+    // and the file contains no mutating HTTP verb anywhere. Over-declaring is the FAIL-SAFE
+    // direction, so it cost availability rather than safety, but it was still wrong.
+    expect(standaloneEligibility("discord")).toEqual({ eligible: true, reason: "no-writes" });
+  });
+});

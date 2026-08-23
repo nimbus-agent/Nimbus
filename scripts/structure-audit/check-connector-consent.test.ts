@@ -40,12 +40,32 @@ describe("check-connector-consent", () => {
     expect(checkConnectorConsent(root)).toEqual([]);
   });
 
-  test("flags a mutating handler with no registerWriteTool", async () => {
+  test("does NOT flag a verb literal when the manifest declares nothing", async () => {
+    // The HTTP-verb signal was REMOVED from this rule, on evidence. With every connector migrated
+    // it still produced 32 findings and essentially all were false: search-filter.ts files doing
+    // pure filtering, transport helpers like imap-core.ts, the seven read-only connectors that
+    // POST for GraphQL/search/auth, kb-append.ts whose tool registers in server.ts, and the
+    // standalone launcher's own bin.ts. The rule was per-FILE while migration is per-CONNECTOR,
+    // so a helper holding a verb literal never contains the registration.
     const root = await fixture();
     await manifest(root, []);
     await writeFile(
       join(root, "packages/mcp-connectors/evil/src/server.ts"),
       'const init = { method: "DELETE" };\n',
+    );
+    expect(checkConnectorConsent(root).map((v) => v.rule)).not.toContain("mutation-declared");
+  });
+
+  test("the registrar DECLARATION alone does not count as hardened", async () => {
+    // `const registerWriteTool = createWriteToolRegistrar(...)` contains the identifier, so a
+    // substring check called a connector hardened even after every write registration had been
+    // reverted. Red-proving the gate is what caught it.
+    const root = await fixture();
+    await manifest(root, ["write"]);
+    await writeFile(
+      join(root, "packages/mcp-connectors/evil/src/server.ts"),
+      "const registerWriteTool = createWriteToolRegistrar(server, {});\n" +
+        'reg("evil_thing_delete", handler);\n',
     );
     expect(checkConnectorConsent(root).map((v) => v.rule)).toContain("mutation-declared");
   });

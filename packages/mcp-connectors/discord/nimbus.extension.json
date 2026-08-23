@@ -9,7 +9,7 @@
   "permissions": {
     "network": ["discord.com", "gateway.discord.gg", "cdn.discordapp.com"]
   },
-  "hitlRequired": ["write", "delete"],
+  "hitlRequired": [],
   "syncInterval": 120,
   "minNimbusVersion": "0.2.0"
 }

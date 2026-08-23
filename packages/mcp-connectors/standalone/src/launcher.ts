@@ -83,7 +83,12 @@ export function standaloneEligibility(
     }
   }
 
-  if (src.includes("registerWriteTool")) return { eligible: true, reason: "hardened" };
+  // A registration CALL, or the registrar handed to a shared kit — not a bare substring, which
+  // the registrar's own `const registerWriteTool = ...` would satisfy even with nothing registered.
+  // Kept in step with check-connector-consent.ts's WRITE_CALL_RE.
+  if (/^\s*register[A-Za-z]*WriteTool\(|^\s*registerWriteTool,$/m.test(src)) {
+    return { eligible: true, reason: "hardened" };
+  }
 
   return {
     eligible: false,

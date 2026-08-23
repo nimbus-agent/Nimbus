@@ -21,29 +21,21 @@ const MODE_SETTER_ALLOWED = [
 ];
 
 /**
- * A mutating HTTP method as a quoted literal, in any of the three quote styles. Biome normalises
- * to double quotes, but a template literal is untouched by it.
+ * Rule 2 is now BLOCKING, and it keys on the MANIFEST alone.
  *
- * ADVISORY ONLY, and it has FALSE POSITIVES — measured, not hypothetical. Seven read-only
- * connectors POST for GraphQL queries, filter endpoints, OAuth token exchange or login: dagster,
- * google-photos, prefect, ramp, snyk, superset, wiz. All seven trip this rule and none of them
- * mutate. It is equally blind in the other direction, to the ten connectors that mutate through a
- * CLI, the filesystem or a mail protocol without issuing an HTTP request at all.
+ * The HTTP-verb signal it used to carry was removed, on evidence. Once every connector was
+ * migrated it still produced 32 findings and essentially all were false: `search-filter.ts` files
+ * that do pure filtering, transport helpers like `imap-core.ts`, the seven read-only connectors
+ * that POST for GraphQL/search/auth, `kb-append.ts` whose tool is registered in `server.ts`, and
+ * the standalone launcher's own `bin.ts`. The rule was per-FILE while migration is per-CONNECTOR,
+ * so a helper holding a verb literal never contains the registration.
  *
- * It is kept as a HINT for a human reading audit output, never as a gate. An earlier version of
- * the standalone launcher used this signal to decide eligibility and wrongly refused all seven.
- * Write status is DECLARED via `registerWriteTool`; do not promote this into a substitute for it.
+ * `hitlRequired` is the authoritative signal: authored per connector, transport independent, and
+ * true for the ten that mutate through a CLI, the filesystem or a mail protocol with no HTTP
+ * request to inspect. A connector that mutates without declaring it is a connector bug — caught in
+ * review, not by a heuristic that provably cannot tell.
  */
-const MUTATING_RE = /(["'`])(POST|PUT|PATCH|DELETE)\1/;
-
-/**
- * Rule 2 is ADVISORY in Part 1 and blocking at the end of Part 2.
- *
- * 36 connectors still register mutations through the plain registrar, so blocking now would red
- * `main` for work that is deliberately scheduled later. A named constant rather than a silent
- * `exit(0)`, so flipping it is a one-line, reviewable change.
- */
-export const MUTATION_RULE_BLOCKING = false;
+export const MUTATION_RULE_BLOCKING = true;
 
 /**
  * Whether the connector owning `rel` declares `write` or `delete` in `hitlRequired`.
@@ -93,6 +85,26 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 
+/**
+ * A connector has routed its writes through the consent kit if EITHER form appears:
+ *
+ *   1. a registration call — `registerWriteTool(` or a composing wrapper like
+ *      `registerGithubWriteTool(`, at the start of a line;
+ *   2. the registrar handed to a shared kit as `registerWriteTool,` — imap, protonmail and apple
+ *      register their send tool through `shared/imap-tool-kit.ts`, and construct the registrar
+ *      themselves precisely so it is visible in their own files.
+ *
+ * Deliberately not a bare substring match: the registrar's own `const registerWriteTool = ...`
+ * satisfies that, so a connector kept passing this gate after every one of its write
+ * registrations had been reverted. Red-proving caught it.
+ */
+const WRITE_CALL_RE = /^\s*register[A-Za-z]*WriteTool\(|^\s*registerWriteTool,$/m;
+
+/** `packages/mcp-connectors/<name>/...` → `<name>`. */
+function connectorOf(rel: string): string {
+  return rel.split("/")[2] ?? "";
+}
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
@@ -109,6 +121,7 @@ export function checkConnectorConsent(
   root: string = resolve(import.meta.dir, "..", ".."),
 ): ConsentViolation[] {
   const out: ConsentViolation[] = [];
+  const hardened = new Set<string>();
   for (const base of ["packages/gateway/src", "packages/mcp-connectors"]) {
     const dir = join(root, base);
     try {
@@ -133,23 +146,28 @@ export function checkConnectorConsent(
         });
       }
 
-      if (
-        rel.startsWith("packages/mcp-connectors/") &&
-        rel.includes("/src/") &&
-        (MUTATING_RE.test(src) || connectorDeclaresWrite(root, rel)) &&
-        !src.includes("registerWriteTool")
-      ) {
-        out.push({
-          rule: "mutation-declared",
-          file: rel,
-          reason:
-            "may expose mutating tools but registers no write tool. ADVISORY: the manifest " +
-            "signal is authoritative; the HTTP-verb signal has known false positives (a GraphQL " +
-            "or search connector POSTs its reads too). Confirm against the connector's actual " +
-            "tool surface before acting on this",
-        });
-      }
+      // A CALL, not the declaration. `const registerWriteTool = createWriteToolRegistrar(...)`
+      // contains the identifier too, so a substring check called a connector hardened even after
+      // every one of its write registrations had been reverted — caught by red-proving this gate.
+      if (WRITE_CALL_RE.test(src)) hardened.add(connectorOf(rel));
     }
+  }
+  // Per CONNECTOR, not per file: a connector's write registration lives in one of its files and
+  // its verb literals may live in another.
+  for (const name of readdirSync(join(root, "packages/mcp-connectors"), { withFileTypes: true })) {
+    if (!name.isDirectory() || name.name === "shared" || name.name === "standalone") continue;
+    const rel = `packages/mcp-connectors/${name.name}/src/server.ts`;
+    if (!connectorDeclaresWrite(root, rel)) continue;
+    if (hardened.has(name.name)) continue;
+    out.push({
+      rule: "mutation-declared",
+      file: `packages/mcp-connectors/${name.name}/nimbus.extension.json`,
+      reason:
+        "declares write or delete in hitlRequired but no file in the connector registers a write " +
+        "tool through the consent kit — running it standalone would expose ungated mutations. " +
+        "Route its mutating tools through registerWriteTool, or correct the manifest if it does " +
+        "not actually mutate",
+    });
   }
   return out;
 }
