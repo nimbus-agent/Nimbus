@@ -746,15 +746,37 @@ async function handleEgressVerify(
   return json(verifyEgressChain(db));
 }
 
+/**
+ * `prove`'s own budget — the only one of the four egress reads that does asymmetric crypto per
+ * call (`signWindowDigest` signs with the Vault share key). List, head and verify are SQLite reads.
+ *
+ * Its OWN limiter instance rather than the write surface's, so a hot prove loop cannot starve clip
+ * ingest of its 60/min, and so a busy clipper cannot make proving fail. The fingerprint is a
+ * constant, matching how the write surface buckets its routes (`http-write-routes.ts` checkAuth) —
+ * this is a per-route budget, not a per-token one.
+ */
+const PROVE_RATE_LIMIT = { maxRequests: 10, windowMs: 60_000 } as const;
+const PROVE_FINGERPRINT = "egress-prove";
+
 // GET /v1/egress/prove — the signed window receipt.
 async function handleEgressProve(
   req: Request,
   url: URL,
   db: Database,
   opts: ReadOnlyHttpServerOptions,
+  proveRateLimiter: HttpWriteRateLimiter,
 ): Promise<Response> {
   const gate = await requireEgressRead(req, opts, ROUTE_KEY_EGRESS_PROVE);
   if (!gate.ok) return gate.response;
+  // After the scope gate, deliberately: an unauthorized caller must not be able to spend the
+  // budget of an authorized one.
+  const rate = proveRateLimiter.check(PROVE_FINGERPRINT);
+  if (!rate.allowed) {
+    return json(
+      { error: "rate_limited", retryAfterMs: Math.max(0, rate.resetMs - Date.now()) },
+      429,
+    );
+  }
   const proof = proveWindow(db, { since: intParam(url, "since"), until: intParam(url, "until") });
   const digest = digestEgressWindow(proof.rows, {
     outboundEgressEvents: proof.completeness.outboundEgressEvents,
@@ -1046,13 +1068,15 @@ async function tryBearerAuthedGet(
   url: URL,
   db: Database,
   opts: ReadOnlyHttpServerOptions,
+  proveRateLimiter: HttpWriteRateLimiter,
 ): Promise<Response | null> {
   if (req.method !== "GET") return null;
   if (url.pathname === "/v1/items/resolve") return await handleItemsResolve(req, url, db, opts);
   if (url.pathname === "/v1/egress") return await handleEgressList(req, url, db, opts);
   if (url.pathname === "/v1/egress/head") return await handleEgressHead(req, db, opts);
   if (url.pathname === "/v1/egress/verify") return await handleEgressVerify(req, db, opts);
-  if (url.pathname === "/v1/egress/prove") return await handleEgressProve(req, url, db, opts);
+  if (url.pathname === "/v1/egress/prove")
+    return await handleEgressProve(req, url, db, opts, proveRateLimiter);
   const briefGet = BRIEF_GET_RE.exec(url.pathname);
   if (briefGet !== null) return await handleBriefGet(req, briefGet[1] as string, opts);
   if (url.pathname === "/v1/agents") return await handleAgentsList(req, opts);
@@ -1087,6 +1111,9 @@ export function startReadOnlyHttpServer(
       ? null
       : openI13WriteHandle(dbPath);
   const rateLimiter = new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 });
+  // Separate instance, not a per-route override on the one above: prove must not spend clip
+  // ingest's budget, and a busy clipper must not make proving fail. See PROVE_RATE_LIMIT.
+  const proveRateLimiter = new HttpWriteRateLimiter(PROVE_RATE_LIMIT);
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -1108,7 +1135,7 @@ export function startReadOnlyHttpServer(
       if (req.method === "POST" && url.pathname === "/v1/clips/related") {
         return handleClipRelated(req, db, opts);
       }
-      const authedGet = await tryBearerAuthedGet(req, url, db, opts);
+      const authedGet = await tryBearerAuthedGet(req, url, db, opts, proveRateLimiter);
       if (authedGet !== null) return authedGet;
       // All writes (deployment POST + SCIM POST/PATCH/DELETE + policy PUT) → the single I13 dispatcher.
       if (

@@ -226,6 +226,36 @@ describe("the other three routes", () => {
   });
 });
 
+describe("prove is rate-limited, the plain reads are not", () => {
+  test("a hot prove loop is refused; list keeps answering", async () => {
+    // `prove` is the only one of the four that does asymmetric crypto per call — signWindowDigest
+    // derives an Ed25519 keypair from the Vault share seed and signs. The other three are SQLite
+    // reads. The budget is per-route and per-server-instance, matching how the write surface
+    // fingerprints its routes (a constant per route kind, not per token), so this test runs
+    // against its OWN server to get a clean bucket.
+    const own = startReadOnlyHttpServer(dbPath, 0, {
+      clipsVault: vault,
+      pairingController: pairing,
+    });
+    try {
+      const ownBase = `http://127.0.0.1:${own.port}`;
+      const call = (path: string) =>
+        fetch(`${ownBase}${path}`, { headers: { authorization: `Bearer ${egressToken}` } });
+
+      const statuses: number[] = [];
+      for (let i = 0; i < 12; i++) {
+        statuses.push((await call("/v1/egress/prove")).status);
+      }
+      expect(statuses[0]).toBe(200);
+      expect(statuses).toContain(429);
+      // A signing budget must not throttle a plain read.
+      expect((await call("/v1/egress")).status).toBe(200);
+    } finally {
+      own.stop();
+    }
+  });
+});
+
 describe("the clips surface is unmounted", () => {
   test("404s with a named cause, never falling through to the public items table", async () => {
     // `dispatchReadOnlyDataGet`'s "/v1/items/*" entry is PUBLIC — no bearer gate at all. A
