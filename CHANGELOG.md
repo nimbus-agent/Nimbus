@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.16.0](https://github.com/nimbus-agent/Nimbus/compare/v2.15.0...v2.16.0) (2026-08-23)
+
+
+### Features
+
+* **connectors:** per-connector write action types across all 94 connectors ([#1321](https://github.com/nimbus-agent/Nimbus/issues/1321)) ([072b1fa](https://github.com/nimbus-agent/Nimbus/commit/072b1fa9682c682bfb11fe56ce8498ff32ec56f0))
+* **http:** read the egress ledger over HTTP, under its own scope (U1) ([#1319](https://github.com/nimbus-agent/Nimbus/issues/1319)) ([e42d66b](https://github.com/nimbus-agent/Nimbus/commit/e42d66be2728742a9f9224fe44e20d180458729a))
+
 ## [2.15.0](https://github.com/nimbus-agent/Nimbus/compare/v2.14.0...v2.15.0) (2026-08-23)
 
 
