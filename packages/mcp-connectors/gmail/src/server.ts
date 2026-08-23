@@ -2,7 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { headerLine } from "../../shared/header-safe.ts";
-import { createRegisterSimpleTool, createZodToolRegistrar } from "../../shared/mcp-tool-kit.ts";
+import {
+  createRegisterSimpleTool,
+  createZodToolRegistrar,
+  mcpJsonResultIfOk,
+  requireProcessEnv,
+  type ZodObjectSchema,
+} from "../../shared/mcp-tool-kit.ts";
 import { makeRestFetcher, makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -43,6 +49,38 @@ const server = new McpServer({ name: "nimbus-gmail", version: "0.1.0" });
 const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
 
 /** Standard Gmail tool: token → gmailFetch(buildPath[, buildInit]) → mcpJsonResultIfOk("Gmail API", …, 200). */
+import { createWriteToolRegistrar, type WriteToolConfig } from "../../shared/consent-kit.ts";
+
+/**
+ * Every MUTATING gmail tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "gmail",
+  scopeEnv: "NIMBUS_MCP_GMAIL_WRITE_SCOPE",
+  scopeKinds: ["recipient", "draft"],
+});
+
+/**
+ * The write-tool equivalent of `registerGmailTool`: identical fetch and result handling, routed
+ * through the write registrar.
+ */
+function registerGmailWriteTool<T>(
+  name: string,
+  cfg: WriteToolConfig<T>,
+  description: string,
+  schema: ZodObjectSchema<T>,
+  buildPath: (p: T) => string,
+  buildInit?: (p: T) => RequestInit,
+): void {
+  registerWriteTool(name, cfg, description, schema, async (parsed) => {
+    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+    const res = await gmailFetch(token, buildPath(parsed), buildInit?.(parsed));
+    return mcpJsonResultIfOk("Gmail API", res, 200);
+  });
+}
+
 const registerGmailTool = makeRestToolRegistrar({
   registrar: reg,
   tokenEnv: "GOOGLE_OAUTH_ACCESS_TOKEN",
@@ -141,8 +179,13 @@ const gmailDraftCreateArgs = z.object({
   bcc: headerLine().optional(),
 });
 
-registerGmailTool(
+registerGmailWriteTool(
   "gmail_draft_create",
+  {
+    mutates: "gmail.draft.create",
+    recoverable: true,
+    scopeTargetOf: (p) => ({ kind: "recipient", value: p.to }),
+  },
   "Create a Gmail draft. Requires Gateway HITL email.draft.create.",
   gmailDraftCreateArgs,
   () => `${GMAIL_BASE}/drafts`,
@@ -171,8 +214,14 @@ const gmailDraftSendArgs = z.object({
   draftId: z.string().min(1),
 });
 
-registerGmailTool(
+registerGmailWriteTool(
   "gmail_draft_send",
+  {
+    mutates: "gmail.draft.send",
+    recoverable: false,
+    capturePreState: (p) => Promise.resolve({ draftId: p.draftId }),
+    scopeTargetOf: (p) => ({ kind: "draft", value: p.draftId }),
+  },
   "Send an existing Gmail draft by id. Requires Gateway HITL email.draft.send.",
   gmailDraftSendArgs,
   () => `${GMAIL_BASE}/drafts/send`,
@@ -191,8 +240,16 @@ const gmailMessageSendArgs = z.object({
   bcc: headerLine().optional(),
 });
 
-registerGmailTool(
+registerGmailWriteTool(
   "gmail_message_send",
+  {
+    mutates: "gmail.message.send",
+    recoverable: false,
+    // A sent mail cannot be recalled and nothing remains to query, so the recipient and subject
+    // ARE the pre-state.
+    capturePreState: (p) => Promise.resolve({ to: p.to, subject: p.subject }),
+    scopeTargetOf: (p) => ({ kind: "recipient", value: p.to }),
+  },
   "Send a new Gmail message (not a draft). Requires Gateway HITL email.send.",
   gmailMessageSendArgs,
   () => `${GMAIL_BASE}/messages/send`,

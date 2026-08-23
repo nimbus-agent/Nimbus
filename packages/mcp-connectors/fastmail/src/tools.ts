@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 
 import { emailToolSchemas } from "../../shared/imap-tool-kit.ts";
 import {
@@ -46,7 +47,9 @@ const searchArgs = z.object({
  * opening a real socket.
  */
 export function registerFastmailTools(
-  server: { tool: (...args: never) => unknown },
+  // Widened from `{ tool: ... }`: the consent kit needs the real server surface — capabilities,
+  // registerTool, list-changed and logging — not just the deprecated `.tool` shim.
+  server: ConsentServer & { tool: (...args: never) => unknown },
   client: JmapClient,
 ): void {
   const registerSimpleTool = createRegisterSimpleTool(server);
@@ -94,15 +97,26 @@ export function registerFastmailTools(
     },
   );
 
-  registerSimpleTool(
+  const registerWriteTool = createWriteToolRegistrar(server, {
+    connector: "fastmail",
+    scopeEnv: "NIMBUS_MCP_FASTMAIL_WRITE_SCOPE",
+    scopeKinds: ["recipient"],
+  });
+
+  registerWriteTool(
     "fastmail_mail_send",
-    "Send a new email via JMAP EmailSubmission. Requires Gateway HITL email.send.",
-    sendArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = sendArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
+    {
+      mutates: "fastmail.mail.send",
+      // A sent mail cannot be recalled and nothing remains to query, so the recipient and
+      // subject ARE the pre-state.
+      recoverable: false,
+      capturePreState: (p) => Promise.resolve({ to: p.to, subject: p.subject }),
+      scopeTargetOf: (p) => ({ kind: "recipient", value: p.to }),
+    },
+    "Send a new email via JMAP EmailSubmission.",
+    sendArgs,
+    async (parsedData): Promise<McpListResult> => {
+      const parsed = { success: true as const, data: parsedData };
       const input: { to: string; subject: string; body: string; cc?: string; bcc?: string } = {
         to: parsed.data.to,
         subject: parsed.data.subject,

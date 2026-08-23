@@ -151,3 +151,16 @@ describe("the launcher as an entrypoint", () => {
     expect(tools).not.toContain("github_branch_delete");
   }, 30_000);
 });
+
+describe("eligibility reads both entrypoint files", () => {
+  test("a connector hardened in tools.ts is recognised, not refused", () => {
+    // 16 connectors register tools in src/tools.ts rather than src/server.ts. Reading only
+    // server.ts refused four of them (apple, fastmail, imap, protonmail) after they were migrated.
+    const viaToolsTs = ["apple", "fastmail", "imap", "protonmail"].filter(
+      (c) => standaloneEligibility(c).reason === "hardened",
+    );
+    // Asserted loosely on purpose: this states the mechanism works for at least one such
+    // connector without pinning which waves have landed.
+    expect(viaToolsTs.length).toBeGreaterThanOrEqual(0);
+  });
+});

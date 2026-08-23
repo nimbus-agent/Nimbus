@@ -15,7 +15,9 @@ import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResult,
+  mcpJsonResultIfOk,
   requireProcessEnv,
+  type ZodObjectSchema,
 } from "../../shared/mcp-tool-kit.ts";
 import { makeRestFetcher, makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 import {
@@ -39,6 +41,38 @@ const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
 const grantedOutlookScopes = parseMicrosoftOAuthScopesFromEnv();
 
 /** Standard Graph read tool: token → graphRequest(buildPath[, buildInit]) → mcpJsonResultIfOk("Graph", …, 200). */
+import { createWriteToolRegistrar, type WriteToolConfig } from "../../shared/consent-kit.ts";
+
+/**
+ * Every MUTATING outlook tool goes through here. Outside the gateway this adds the
+ * consent gate, the write-scope allow-list, the mutation budget and the audit record; inside
+ * the gateway it is a pass-through, because executor.ts (I2) is the gate there.
+ */
+const registerWriteTool = createWriteToolRegistrar(server, {
+  connector: "outlook",
+  scopeEnv: "NIMBUS_MCP_OUTLOOK_WRITE_SCOPE",
+  scopeKinds: ["recipient", "calendar"],
+});
+
+/**
+ * The write-tool equivalent of `registerOutlookTool`: identical fetch and result handling, routed
+ * through the write registrar.
+ */
+function registerOutlookWriteTool<T>(
+  name: string,
+  cfg: WriteToolConfig<T>,
+  description: string,
+  schema: ZodObjectSchema<T>,
+  buildPath: (p: T) => string,
+  buildInit?: (p: T) => RequestInit,
+): void {
+  registerWriteTool(name, cfg, description, schema, async (parsed) => {
+    const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
+    const res = await graphRequest(token, buildPath(parsed), buildInit?.(parsed));
+    return mcpJsonResultIfOk("Graph", res, 200);
+  });
+}
+
 const registerOutlookTool = makeRestToolRegistrar({
   registrar: reg,
   tokenEnv: "MICROSOFT_OAUTH_ACCESS_TOKEN",
@@ -124,8 +158,14 @@ const outlookMailSendArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_mail_send", grantedOutlookScopes)) {
-  reg(
+  registerWriteTool(
     "outlook_mail_send",
+    {
+      mutates: "outlook.mail.send",
+      recoverable: false,
+      capturePreState: (p) => Promise.resolve({ to: p.to, subject: p.subject }),
+      scopeTargetOf: (p) => ({ kind: "recipient", value: p.to }),
+    },
     "Send an email via Microsoft Graph. Requires Gateway HITL email.send.",
     outlookMailSendArgs,
     async (data) => {
@@ -213,8 +253,13 @@ const outlookCalendarCreateArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_calendar_create", grantedOutlookScopes)) {
-  registerOutlookTool(
+  registerOutlookWriteTool(
     "outlook_calendar_create",
+    {
+      mutates: "outlook.calendar.create",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "calendar", value: p.subject }),
+    },
     "Create a calendar event. Requires Gateway HITL calendar.event.create.",
     outlookCalendarCreateArgs,
     () => "/me/events",
@@ -252,8 +297,14 @@ const outlookCalendarDeleteArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_calendar_delete", grantedOutlookScopes)) {
-  reg(
+  registerWriteTool(
     "outlook_calendar_delete",
+    {
+      mutates: "outlook.calendar.delete",
+      recoverable: false,
+      capturePreState: (p) => Promise.resolve({ eventId: p.eventId }),
+      scopeTargetOf: (p) => ({ kind: "calendar", value: p.eventId }),
+    },
     "Delete a calendar event. Requires Gateway HITL calendar.event.delete.",
     outlookCalendarDeleteArgs,
     async (data) => {

@@ -1,8 +1,21 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { parseICalendar } from "@nimbus-dev/sdk";
+import { resetConnectorModeForTests, setConnectorMode } from "../../shared/connector-mode.ts";
 import type { CalDavClient, CalendarRef } from "../src/caldav-core.ts";
 import { registerAppleCalendarTools } from "../src/calendar-tools.ts";
+
+// These cases exercise the TOOL SURFACE, not the consent gate, and pass a minimal fake server.
+// Gateway mode is the shape they were written against: the connector registers everything and
+// executor.ts (I2) is the gate there. Reset on BOTH sides — bun test runs many files in ONE
+// process, so an unreset lock would change every file that runs after this one.
+beforeEach(() => {
+  resetConnectorModeForTests();
+  setConnectorMode("gateway");
+});
+afterEach(() => {
+  resetConnectorModeForTests();
+});
 
 // ---------------------------------------------------------------------------
 // Stub MCP server (mirrors tools.test.ts pattern)
@@ -12,6 +25,16 @@ function stubServer() {
   const tools: Record<string, (input: unknown) => Promise<unknown>> = {};
   return {
     server: {
+      // The consent kit registers through `registerTool`, which returns a handle; the deprecated
+      // `tool` below is what the read tools still use. Both record into the same map.
+      registerTool: (
+        name: string,
+        _cfg: unknown,
+        cb: (i: unknown) => Promise<unknown>,
+      ): { disable: () => void } => {
+        tools[name] = cb;
+        return { disable: () => undefined };
+      },
       tool: (
         name: string,
         _desc: string,

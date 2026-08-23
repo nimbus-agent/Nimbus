@@ -1,3 +1,4 @@
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 import { registerEmailConnectorTools } from "../../shared/imap-tool-kit.ts";
 import { formatAddress, type MailClient, type SmtpMailer } from "./mail-core.ts";
 
@@ -7,12 +8,20 @@ import { formatAddress, type MailClient, type SmtpMailer } from "./mail-core.ts"
  * tool surface without opening real sockets.
  */
 export function registerProtonmailTools(
-  server: { tool: (...args: never) => unknown },
+  // Widened: the consent kit needs the real server surface, not just the `.tool` shim.
+  server: ConsentServer & { tool: (...args: never) => unknown },
   client: MailClient,
   mailer: SmtpMailer,
 ): void {
+  const registerWriteTool = createWriteToolRegistrar(server, {
+    connector: "protonmail",
+    scopeEnv: "NIMBUS_MCP_PROTONMAIL_WRITE_SCOPE",
+    scopeKinds: ["recipient"],
+  });
+
   registerEmailConnectorTools({
     server,
+    registerWriteTool,
     toolPrefix: "protonmail",
     descriptions: {
       list: "List recent ProtonMail messages (via Bridge) — HEADERS + attachment METADATA + a short capped text preview ONLY. Returns subject, from, to/cc, date, message-id, attachment {filename,size,mimetype}, and a <=2000-char plain-text body preview. NEVER returns attachment bytes or the full message body.",

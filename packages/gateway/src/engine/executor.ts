@@ -62,6 +62,21 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "github.issue.create",
   "github.branch.delete",
   "github.tag.create",
+  // Wave 6 — mail + calendar. Per-connector types so serviceOf names the actual mail service:
+  // the ledger records "gmail" or "outlook", never a shared "email".
+  "gmail.draft.create",
+  "gmail.draft.send",
+  "gmail.message.send",
+  "outlook.mail.send",
+  "outlook.calendar.create",
+  "outlook.calendar.delete",
+  "fastmail.mail.send",
+  "imap.mail.send",
+  "protonmail.mail.send",
+  "apple.mail.send",
+  "apple.mail.draft.create",
+  "apple.calendar.event.create",
+  "apple.calendar.event.delete",
   // Wave 4 — comms.
   "slack.chat.post",
   "teams.chat.post",

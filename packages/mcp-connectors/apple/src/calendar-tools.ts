@@ -1,3 +1,4 @@
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 /**
  * Apple Calendar tool handlers (read + write) over an injected CalDavClient.
  *
@@ -88,7 +89,8 @@ const DEFAULT_MAX_INSTANCES = 200;
  *                  format, e.g. "20260601T090000Z"), and optional config.
  */
 export function registerAppleCalendarTools(
-  server: { tool: (...args: never) => unknown },
+  // Widened: the consent kit needs the real server surface, not just the `.tool` shim.
+  server: ConsentServer & { tool: (...args: never) => unknown },
   options: {
     calendar: CalDavClient;
     now: () => string;
@@ -164,15 +166,23 @@ export function registerAppleCalendarTools(
   // apple_calendar_event_create
   // -------------------------------------------------------------------------
 
-  registerSimpleTool(
+  const registerWriteTool = createWriteToolRegistrar(server, {
+    connector: "apple",
+    scopeEnv: "NIMBUS_MCP_APPLE_WRITE_SCOPE",
+    scopeKinds: ["calendar"],
+  });
+
+  registerWriteTool(
     "apple_calendar_event_create",
-    "Create a new event in iCloud Calendar via CalDAV PUT. Requires Gateway HITL calendar.event.create.",
-    createArgs.shape,
-    async (args: unknown) => {
-      const parsed = createArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
+    {
+      mutates: "apple.calendar.event.create",
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "calendar", value: p.calendar ?? "default" }),
+    },
+    "Create a new event in iCloud Calendar via CalDAV PUT.",
+    createArgs,
+    async (parsedData) => {
+      const parsed = { success: true as const, data: parsedData };
 
       // Resolve the target calendar
       let targetCal: CalendarRef | undefined;
@@ -242,15 +252,20 @@ export function registerAppleCalendarTools(
   // apple_calendar_event_delete
   // -------------------------------------------------------------------------
 
-  registerSimpleTool(
+  registerWriteTool(
     "apple_calendar_event_delete",
-    "Delete an event from iCloud Calendar via CalDAV DELETE by href. Requires Gateway HITL calendar.event.delete.",
-    deleteArgs.shape,
-    async (args: unknown) => {
-      const parsed = deleteArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
+    {
+      mutates: "apple.calendar.event.delete",
+      // A deleted CalDAV event is gone from the server; the href is all that identifies it
+      // afterwards, so it IS the pre-state.
+      recoverable: false,
+      capturePreState: (p) => Promise.resolve({ href: p.href }),
+      scopeTargetOf: (p) => ({ kind: "calendar", value: p.href }),
+    },
+    "Delete an event from iCloud Calendar via CalDAV DELETE by href.",
+    deleteArgs,
+    async (parsedData) => {
+      const parsed = { success: true as const, data: parsedData };
 
       await calendar.deleteEvent(parsed.data.href);
 

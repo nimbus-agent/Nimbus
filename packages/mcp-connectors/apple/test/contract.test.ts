@@ -3,16 +3,35 @@
 // apple_list / apple_get expose ONLY headers + attachment METADATA + a capped
 // preview — never a full body or attachment bytes — and apple_calendar_list
 // caps event notes at 2000 chars while still surfacing attendee emails.
-import { describe, expect, it } from "bun:test";
-
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resetConnectorModeForTests, setConnectorMode } from "../../shared/connector-mode.ts";
 import type { EmailMessageMeta } from "../src/apple-mail-core.ts";
 import type { CalDavClient } from "../src/caldav-core.ts";
 import { APPLE_TOOL_NAMES, registerAppleTools } from "../src/tools.ts";
+
+// Contract cases assert the TOOL SURFACE, not the consent gate, against a minimal fake server.
+// Gateway mode is the shape they were written against. Reset on BOTH sides — bun test runs many
+// files in ONE process.
+beforeEach(() => {
+  resetConnectorModeForTests();
+  setConnectorMode("gateway");
+});
+afterEach(() => {
+  resetConnectorModeForTests();
+});
 
 function stubServer() {
   const tools: Record<string, (input: unknown) => Promise<unknown>> = {};
   return {
     server: {
+      registerTool: (
+        name: string,
+        _cfg: unknown,
+        cb: (i: unknown) => Promise<unknown>,
+      ): { disable: () => void } => {
+        tools[name] = cb;
+        return { disable: () => undefined };
+      },
       tool: (
         name: string,
         _desc: string,

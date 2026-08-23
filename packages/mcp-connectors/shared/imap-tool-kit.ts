@@ -1,3 +1,4 @@
+import type { WriteToolRegistrar } from "./consent-kit.ts";
 /**
  * Shared tool-layer helpers for the IMAP/JMAP email connectors (imap, protonmail).
  * Extracted to eliminate byte-identical duplication in tools.ts across those two
@@ -188,8 +189,17 @@ export function registerEmailConnectorTools(opts: {
   client: EmailReadClient;
   mailer: EmailSendMailer;
   formatAddr: (a: { readonly name?: string; readonly address?: string }) => string;
+  /**
+   * The connector's write registrar, for `<prefix>_mail_send`.
+   *
+   * Passed IN rather than built here on purpose: `standaloneEligibility` reads a connector's own
+   * `server.ts`/`tools.ts` to decide whether its mutations are gated, and a registrar constructed
+   * inside this shared module would be invisible there — the connector would be refused despite
+   * being hardened. Requiring it also means a new email connector cannot forget it.
+   */
+  registerWriteTool: WriteToolRegistrar;
 }): void {
-  const { server, toolPrefix, descriptions, client, mailer, formatAddr } = opts;
+  const { server, toolPrefix, descriptions, client, mailer, formatAddr, registerWriteTool } = opts;
   const registerSimpleTool = createRegisterSimpleTool(server);
   const { listArgs, getArgs, searchArgs, sendArgs } = emailToolSchemas;
 
@@ -247,15 +257,20 @@ export function registerEmailConnectorTools(opts: {
     },
   );
 
-  registerSimpleTool(
+  registerWriteTool(
     `${toolPrefix}_mail_send`,
+    {
+      mutates: `${toolPrefix}.mail.send`,
+      // A sent mail cannot be recalled and nothing remains to query, so the recipient and
+      // subject ARE the pre-state.
+      recoverable: false,
+      capturePreState: (p) => Promise.resolve({ to: p.to, subject: p.subject }),
+      scopeTargetOf: (p) => ({ kind: "recipient", value: p.to }),
+    },
     descriptions.send,
-    sendArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = sendArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
+    sendArgs,
+    async (parsedData): Promise<McpListResult> => {
+      const parsed = { success: true as const, data: parsedData };
       const input: { to: string; subject: string; body: string; cc?: string; bcc?: string } = {
         to: parsed.data.to,
         subject: parsed.data.subject,

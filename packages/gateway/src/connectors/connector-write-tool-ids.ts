@@ -63,4 +63,19 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "pd_incident_acknowledge",
   "pd_incident_resolve",
   "pd_incident_escalate",
+
+  // Wave 6 — mail + calendar
+  "gmail_draft_create",
+  "gmail_draft_send",
+  "gmail_message_send",
+  "outlook_mail_send",
+  "outlook_calendar_create",
+  "outlook_calendar_delete",
+  "fastmail_mail_send",
+  "imap_mail_send",
+  "protonmail_mail_send",
+  "apple_mail_send",
+  "apple_mail_draft_create",
+  "apple_calendar_event_create",
+  "apple_calendar_event_delete",
 ]);

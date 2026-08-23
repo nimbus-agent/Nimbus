@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { type ConsentServer, createWriteToolRegistrar } from "../../shared/consent-kit.ts";
 
 import { headerLine } from "../../shared/header-safe.ts";
 import { registerEmailConnectorTools } from "../../shared/imap-tool-kit.ts";
-import { createRegisterSimpleTool, mcpJsonResult } from "../../shared/mcp-tool-kit.ts";
+import { mcpJsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   type DraftAppender,
   type EmailReadClient,
@@ -58,14 +59,22 @@ export interface AppleToolsParams {
  * All three calendar tools are registered via registerAppleCalendarTools (Task C3).
  */
 export function registerAppleTools(
-  server: { tool: (...args: never) => unknown },
+  // Widened: the consent kit needs the real server surface, not just the `.tool` shim.
+  server: ConsentServer & { tool: (...args: never) => unknown },
   params: AppleToolsParams,
 ): void {
   const { client, mailer, draftAppender, calendar, now, calendarConfig } = params;
 
   // The four shared email tools (list/get/search/mail_send) via the shared kit.
+  const registerWriteTool = createWriteToolRegistrar(server, {
+    connector: "apple",
+    scopeEnv: "NIMBUS_MCP_APPLE_WRITE_SCOPE",
+    scopeKinds: ["recipient"],
+  });
+
   registerEmailConnectorTools({
     server,
+    registerWriteTool,
     toolPrefix: "apple",
     descriptions,
     client,
@@ -74,17 +83,18 @@ export function registerAppleTools(
   });
 
   // apple_mail_draft_create — iCloud-specific IMAP APPEND to Drafts.
-  const registerSimpleTool = createRegisterSimpleTool(server);
-
-  registerSimpleTool(
+  registerWriteTool(
     "apple_mail_draft_create",
-    "Save a new email to the iCloud Mail Drafts folder via IMAP APPEND. Requires Gateway HITL email.draft.create.",
-    draftArgs.shape,
-    async (args: unknown) => {
-      const parsed = draftArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
+    {
+      mutates: "apple.mail.draft.create",
+      // A draft is editable and deletable after the fact, so it is recoverable.
+      recoverable: true,
+      scopeTargetOf: (p) => ({ kind: "recipient", value: p.to }),
+    },
+    "Save a new email to the iCloud Mail Drafts folder via IMAP APPEND.",
+    draftArgs,
+    async (parsedData) => {
+      const parsed = { success: true as const, data: parsedData };
       const input: {
         to: string;
         subject: string;

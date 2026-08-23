@@ -65,11 +65,16 @@ export function standaloneEligibility(id: string): Eligibility {
   }
   if (!declaresWrite) return { eligible: true, reason: "no-writes" };
 
+  // BOTH entrypoint files. 16 connectors register their tools in `src/tools.ts` rather than
+  // `src/server.ts` — apple, fastmail, imap, protonmail and the CLI-backed cloud ones among them —
+  // so reading only server.ts would refuse a connector that IS hardened, in tools.ts.
   let src = "";
-  try {
-    src = readFileSync(join(dir, "src", "server.ts"), "utf8");
-  } catch {
-    /* an unreadable entrypoint falls through to the refusal below */
+  for (const f of ["server.ts", "tools.ts"]) {
+    try {
+      src += readFileSync(join(dir, "src", f), "utf8");
+    } catch {
+      /* a connector need not have both; an unreadable pair falls through to the refusal below */
+    }
   }
 
   if (src.includes("registerWriteTool")) return { eligible: true, reason: "hardened" };

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { resetConnectorModeForTests, setConnectorMode } from "../../shared/connector-mode.ts";
 import type { McpListResult } from "../../shared/mcp-tool-kit.ts";
 import type {
   MailClient,
@@ -12,6 +12,18 @@ import type {
 } from "../src/mail-core.ts";
 import { PROTONMAIL_TOOL_NAMES, registerProtonmailTools } from "../src/tools.ts";
 
+// These cases exercise the TOOL SURFACE, not the consent gate, and pass a minimal fake server.
+// Gateway mode is the shape they were written against: the connector registers everything and
+// executor.ts (I2) is the gate there. Reset on BOTH sides — bun test runs many files in ONE
+// process, so an unreset lock would change every file that runs after this one.
+beforeEach(() => {
+  resetConnectorModeForTests();
+  setConnectorMode("gateway");
+});
+afterEach(() => {
+  resetConnectorModeForTests();
+});
+
 type Handler = (args: unknown) => Promise<McpListResult>;
 
 function fakeServer() {
@@ -19,6 +31,13 @@ function fakeServer() {
   const server = {
     tool: (name: string, _desc: string, _shape: unknown, handler: Handler): void => {
       handlers.set(name, handler);
+    },
+
+    // The consent kit registers through `registerTool`, which returns a handle; the deprecated
+    // `tool` above is what the read tools still use. Both record into the same map.
+    registerTool: (name: string, _cfg: unknown, handler: Handler): { disable: () => void } => {
+      handlers.set(name, handler);
+      return { disable: () => undefined };
     },
   };
   return { server, handlers };

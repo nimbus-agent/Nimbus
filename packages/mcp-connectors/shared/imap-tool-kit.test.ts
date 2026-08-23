@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { WriteToolRegistrar } from "./consent-kit.ts";
 
 import {
   type EmailMessageMeta,
@@ -332,8 +333,22 @@ describe("registerEmailConnectorTools", () => {
         return { messageId: "<mid>", accepted: ["a@b.com"], rejected: [] };
       },
     };
+    // The send tool now goes through the connector's write registrar. This stub records the
+    // registration the same way `fakeServer` does, so the existing assertions about the four
+    // tool names and their descriptions keep testing what they always did.
+    const registerWriteTool = ((
+      name: string,
+      _cfg: unknown,
+      description: string,
+      _schema: unknown,
+      handler: unknown,
+    ) => {
+      recorded.push({ name, description, handler } as (typeof recorded)[number]);
+    }) as unknown as WriteToolRegistrar;
+
     registerEmailConnectorTools({
       server: fakeServer(recorded),
+      registerWriteTool,
       toolPrefix: prefix,
       descriptions: { list: "L", get: "G", search: "Se", send: "Sd" },
       client,
