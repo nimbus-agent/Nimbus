@@ -199,6 +199,40 @@ export function formatApprovalPrompt(p: ExecApprovalPrompt): string {
   ].join("\n");
 }
 
+/** What an `exec.approvalRequest` broadcast carries. Every field is validated before use. */
+type ApprovalBroadcast = Partial<ExecApprovalPrompt> & { requestId?: string };
+
+/**
+ * Answer one approval broadcast.
+ *
+ * Extracted from `runExec` because this is the decision-making half — what the owner is shown, and
+ * how their answer is read — while what remains there is connect / call / disconnect that only an
+ * e2e can exercise honestly. `confirm` and the responder are injected so both can be driven here.
+ *
+ * A broadcast with no usable `requestId` is IGNORED rather than answered: replying to an unknown
+ * id would at best do nothing and at worst answer a different prompt.
+ */
+export async function handleApprovalBroadcast(
+  params: unknown,
+  ask: (message: string) => Promise<unknown>,
+  respond: (requestId: string, approved: boolean) => Promise<unknown>,
+): Promise<void> {
+  const p = (params ?? {}) as ApprovalBroadcast;
+  if (typeof p.requestId !== "string" || p.requestId === "") return;
+  const answer = await ask(
+    formatApprovalPrompt({
+      runtime: p.runtime ?? "unknown",
+      codeBody: p.codeBody ?? "",
+      grants: p.grants ?? { fsRead: [], fsWrite: [], network: [] },
+      wallClockMs: p.wallClockMs ?? 0,
+      cwd: p.cwd ?? "",
+    }),
+  );
+  // Only an explicit `true` approves. Cancelling the prompt (Ctrl-C) is a DENIAL, and so is any
+  // other value -- fail-closed, because the alternative is approving arbitrary code by accident.
+  await respond(p.requestId, !isCancel(answer) && answer === true);
+}
+
 export async function runExec(args: string[]): Promise<void> {
   let parsed: ParsedExecArgs;
   try {
@@ -215,24 +249,13 @@ export async function runExec(args: string[]): Promise<void> {
         // The gate's approval arrives as a BROADCAST, not a consent.request, so it needs its own
         // handler. Registered before the call because the notification can share a socket chunk
         // with the response.
-        c.onNotification("exec.approvalRequest", async (params: unknown) => {
-          const p = params as Partial<ExecApprovalPrompt> & { requestId?: string };
-          if (typeof p.requestId !== "string") return;
-          const answer = await confirm({
-            message: formatApprovalPrompt({
-              runtime: p.runtime ?? "unknown",
-              codeBody: p.codeBody ?? "",
-              grants: p.grants ?? { fsRead: [], fsWrite: [], network: [] },
-              wallClockMs: p.wallClockMs ?? 0,
-              cwd: p.cwd ?? "",
-            }),
-          });
-          await c.call("exec.approvalRespond", {
-            requestId: p.requestId,
-            // Cancel (Ctrl-C at the prompt) is a denial, never an approval.
-            approved: !isCancel(answer) && answer === true,
-          });
-        });
+        c.onNotification("exec.approvalRequest", (params: unknown) =>
+          handleApprovalBroadcast(
+            params,
+            (message) => confirm({ message }),
+            (requestId, approved) => c.call("exec.approvalRespond", { requestId, approved }),
+          ),
+        );
         return (await c.call("exec.run", { ...parsed, cwd: process.cwd() })) as ExecOutcomeShape;
       },
       undefined,

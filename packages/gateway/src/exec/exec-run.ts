@@ -75,16 +75,28 @@ export function runConfined(
     let truncated = false;
     let reason: TerminationReason = "exited";
     let settled = false;
+    let stopping = false;
     let escalation: ReturnType<typeof setTimeout> | undefined;
 
     // NB: do NOT unref() these timers -- an awaited promise settling from an unref'd timer makes
     // `bun test` spin forever on Windows. Both are cleared on settle.
     const wallTimer = setTimeout(() => {
-      reason = "wall_clock";
+      // Only claim the wall clock if nothing else has already ended this run. An output-cap kill
+      // the child outlives by a moment must keep reporting `output_cap` — that is the cause; the
+      // wall clock merely arrived afterwards.
+      if (reason === "exited") reason = "wall_clock";
       stop();
     }, opts.maxWallClockMs);
 
+    /**
+     * Idempotent. Every call used to schedule ANOTHER escalation timer while `settle()` cleared
+     * only the last one, so a child emitting several chunks past a full budget left earlier timers
+     * armed to fire `SIGKILL` after the promise had already resolved — at a pid the OS may by then
+     * have reused. One stop, one escalation.
+     */
     function stop(): void {
+      if (stopping) return;
+      stopping = true;
       child.kill("SIGTERM");
       escalation = setTimeout(() => child.kill("SIGKILL"), KILL_ESCALATION_MS);
     }

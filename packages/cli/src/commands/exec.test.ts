@@ -4,6 +4,7 @@ import {
   EXEC_EXIT_CODES,
   exitCodeFor,
   formatApprovalPrompt,
+  handleApprovalBroadcast,
   parseExecArgs,
   renderOutcome,
 } from "./exec.ts";
@@ -175,6 +176,79 @@ describe("renderOutcome", () => {
     renderOutcome({ status: "denied" }, a.s);
     expect(a.err.join("")).toContain("denied");
     expect(a.out.join("")).toBe("");
+  });
+});
+
+describe("handleApprovalBroadcast", () => {
+  function harness(answer: unknown) {
+    const answered: Array<{ requestId: string; approved: boolean }> = [];
+    const shown: string[] = [];
+    return {
+      answered,
+      shown,
+      ask: async (m: string) => {
+        shown.push(m);
+        return answer;
+      },
+      respond: async (requestId: string, approved: boolean) => {
+        answered.push({ requestId, approved });
+      },
+    };
+  }
+
+  const REQ = {
+    requestId: "r1",
+    runtime: "bun",
+    codeBody: "console.log(1)",
+    grants: { fsRead: ["/a"], fsWrite: [], network: [] },
+    wallClockMs: 1000,
+    cwd: "/tmp",
+  };
+
+  test("approves only on an explicit true", async () => {
+    const h = harness(true);
+    await handleApprovalBroadcast(REQ, h.ask, h.respond);
+    expect(h.answered).toEqual([{ requestId: "r1", approved: true }]);
+    expect(h.shown[0]).toContain("console.log(1)");
+  });
+
+  test("a plain false is a denial", async () => {
+    const h = harness(false);
+    await handleApprovalBroadcast(REQ, h.ask, h.respond);
+    expect(h.answered[0]?.approved).toBe(false);
+  });
+
+  test("CANCELLING the prompt is a denial, never an approval", async () => {
+    // Ctrl-C at the prompt must not approve arbitrary code.
+    const cancelSymbol = Symbol.for("clack:cancel");
+    const h = harness(cancelSymbol);
+    await handleApprovalBroadcast(REQ, h.ask, h.respond);
+    expect(h.answered[0]?.approved).toBe(false);
+  });
+
+  test("any other value is a denial — fail-closed", async () => {
+    for (const v of ["yes", 1, {}, null, undefined]) {
+      const h = harness(v);
+      await handleApprovalBroadcast(REQ, h.ask, h.respond);
+      expect(h.answered[0]?.approved).toBe(false);
+    }
+  });
+
+  test("a broadcast with no usable requestId is IGNORED, not answered", async () => {
+    // Answering an unknown id would at best do nothing and at worst answer a different prompt.
+    for (const bad of [{}, { requestId: "" }, { requestId: 7 }, undefined]) {
+      const h = harness(true);
+      await handleApprovalBroadcast(bad, h.ask, h.respond);
+      expect(h.answered).toEqual([]);
+      expect(h.shown).toEqual([]);
+    }
+  });
+
+  test("fills in defaults rather than throwing on a partial broadcast", async () => {
+    const h = harness(false);
+    await handleApprovalBroadcast({ requestId: "r2" }, h.ask, h.respond);
+    expect(h.answered[0]?.requestId).toBe("r2");
+    expect(h.shown[0]).toContain("unknown"); // runtime fallback
   });
 });
 

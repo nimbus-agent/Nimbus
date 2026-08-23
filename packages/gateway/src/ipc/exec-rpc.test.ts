@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import type { NimbusCodeExecutionToml } from "../config/nimbus-toml.ts";
 import { ExecConsentBroker } from "../exec/exec-consent-broker.ts";
 import type { ExecGateDeps } from "../exec/exec-gate.ts";
@@ -129,7 +130,7 @@ describe("exec RPC", () => {
     const run = dispatchExecRpc(
       "exec.run",
       {
-        filePath: `${CWD}/s.ts`,
+        filePath: join(CWD, "s.ts"),
         runtimeId: "bun",
         cwd: CWD,
         fsRead: [CWD],

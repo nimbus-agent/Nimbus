@@ -156,6 +156,36 @@ describe("runConfined", () => {
     expect(r.truncated).toBe(false);
   });
 
+  test("many chunks past a full budget schedule only ONE termination", async () => {
+    // Each overflow used to arm another SIGKILL timer while settle() cleared only the last, leaving
+    // earlier ones to fire after the promise resolved — at a pid the OS may have reused by then.
+    const child = fakeChild();
+    const p = runConfined(fakeRunner(child), "bun", [], { ...BASE, maxOutputBytes: 4 });
+    child.stdout.write("aaaa");
+    for (let i = 0; i < 5; i++) child.stdout.write("bbbb");
+    const r = await p;
+    expect(r.terminationReason).toBe("output_cap");
+    // One SIGTERM, not six.
+    expect(child.killed.filter((s) => s === "SIGTERM").length).toBe(1);
+  });
+
+  test("an output-cap kill keeps its cause even if the wall clock fires afterwards", async () => {
+    // The wall timer used to overwrite `reason` unconditionally, so a child that outlived its
+    // output-cap kill by a moment reported `wall_clock` — naming the wrong cause.
+    const child = fakeChild();
+    child.kill = () => true; // ignore SIGTERM, so the wall clock lands while stopping
+    const p = runConfined(fakeRunner(child), "bun", [], {
+      ...BASE,
+      maxOutputBytes: 4,
+      maxWallClockMs: 20,
+    });
+    child.stdout.write("aaaaaaaa");
+    await Bun.sleep(60);
+    child.emit("close", null);
+    const r = await p;
+    expect(r.terminationReason).toBe("output_cap");
+  });
+
   test("stdout and stderr share ONE budget", async () => {
     const child = fakeChild();
     const p = runConfined(fakeRunner(child), "bun", [], { ...BASE, maxOutputBytes: 6 });
