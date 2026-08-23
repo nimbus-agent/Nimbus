@@ -15,11 +15,34 @@ export class ExecRuntimeError extends Error {
   }
 }
 
+/**
+ * Ceiling on an inline body, in UTF-16 code units.
+ *
+ * The body travels as a command-line argument, and the Windows helper's buffer is
+ * `wchar_t cmdline[32768]` covering the interpreter path, every flag and the body plus its quoting
+ * expansion. 16,384 leaves room for all of that with margin, and matches `BODY_MAX_PROSE` elsewhere
+ * in the tree. Exceeding it is a NAMED refusal before consent, never a silent truncation — running
+ * a prefix of someone's script is far worse than refusing the whole of it.
+ */
+export const MAX_INLINE_CODE_UNITS = 16_384;
+
 export interface ExecRuntime {
   readonly id: string;
   /** Absolute path to the interpreter, or null when it is not installed. */
   detect(): string | null;
-  argvFor(scriptPath: string): { cmd: string; args: string[] };
+  /**
+   * Argv that executes `code` INLINE — no script file anywhere.
+   *
+   * Measured on Windows: under the AppContainer, bun can read a granted file, list its cwd, report
+   * `process.cwd()`, and even `import()` and run that same file successfully — but naming it as the
+   * ENTRY POINT (`bun s.ts` / `bun run s.ts`) fails with `CouldntReadCurrentDirectory`. Its startup
+   * path for a file entry point touches something the sandbox denies; `-e` does not.
+   *
+   * Passing the body inline is what makes Windows work, and it is better on its own terms: there is
+   * no scratch file to write, grant, or clean up, and the bytes the owner approved are the bytes
+   * handed to the interpreter with no file in between for anything to swap.
+   */
+  argvFor(code: string): { cmd: string; args: string[] };
   /**
    * Paths the sandbox must grant READ so the child can load this interpreter at all.
    *
@@ -37,7 +60,7 @@ const BUN_RUNTIME: ExecRuntime = {
   // why bun needs no PATH probing and can never be "allowed but missing" -- a property that will
   // NOT hold for a future Deno or Python entry, which must really probe.
   detect: () => process.execPath,
-  argvFor: (scriptPath) => ({ cmd: process.execPath, args: ["run", scriptPath] }),
+  argvFor: (code) => ({ cmd: process.execPath, args: ["-e", code] }),
   requiredReadPaths: () => {
     const binDir = dirname(process.execPath);
     // macOS additionally needs the runtime HOME (`~/.bun`), where the SBPL-confined child resolves

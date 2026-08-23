@@ -1,7 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { NimbusCodeExecutionToml } from "../config/nimbus-toml.ts";
@@ -14,6 +11,7 @@ import type { ExecResult } from "./exec-result.ts";
 import { runConfined } from "./exec-run.ts";
 import {
   ExecRuntimeError,
+  MAX_INLINE_CODE_UNITS,
   requireInstalled,
   resolveRuntimeById,
   resolveRuntimeForFile,
@@ -58,26 +56,8 @@ export type ExecGateOutcome =
 
 const CAPABILITY = "code_execution";
 
-/** Per-runtime file extension for a scratch script. Keyed on the SAME ids as the registry. */
-const SCRATCH_EXT: ReadonlyMap<string, string> = new Map([["bun", ".ts"]]);
-
 function digest(s: string): string {
   return bytesToHex(blake3(new TextEncoder().encode(s)));
-}
-
-/**
- * Materialise an inline `--code` body so the runtime has a file to run.
- *
- * Mode 0o600 in a fresh per-execution directory: the scratch file holds code the owner just
- * approved, and a predictable world-readable path would let another local user read it -- or,
- * worse, replace it between write and spawn. Returns both paths so the caller can grant read
- * access to exactly the directory it created and nothing wider.
- */
-function writeScratchScript(codeBody: string, runtimeId: string): { dir: string; file: string } {
-  const dir = mkdtempSync(join(tmpdir(), "nimbus-exec-"));
-  const file = join(dir, `script${SCRATCH_EXT.get(runtimeId) ?? ".txt"}`);
-  writeFileSync(file, codeBody, { mode: 0o600 });
-  return { dir, file };
 }
 
 /**
@@ -119,8 +99,6 @@ export async function runExecution(
   deps: ExecGateDeps,
 ): Promise<ExecGateOutcome> {
   const executionId = deps.newId();
-  // Hoisted above the try so `finally` can clean up a scratch dir created deep inside it.
-  let scratch: { dir: string; file: string } | undefined;
 
   try {
     // 1. Local kill-switch, then org policy. Both BEFORE consent.
@@ -156,25 +134,26 @@ export async function runExecution(
             throw new ExecGateError("ERR_EXEC_NO_CODE", "neither code nor filePath supplied");
           })());
 
-    // 5. Materialise inline code, then build the policy -- in that order, because the child needs
-    // read access to the scratch directory and the policy is what grants it.
-    scratch = req.code === undefined ? undefined : writeScratchScript(codeBody, runtime.id);
-    const scriptPath = scratch?.file ?? (req.filePath as string);
+    // 5. Bound the body. It travels as a command-line argument (see `argvFor`), so an oversized one
+    // would be truncated by the Windows helper's buffer -- and running a PREFIX of someone's script
+    // is far worse than refusing the whole of it. Refused before consent, like every other
+    // caller-fixable error.
+    if (codeBody.length > MAX_INLINE_CODE_UNITS) {
+      throw new ExecGateError(
+        "ERR_EXEC_CODE_TOO_LARGE",
+        `code exceeds ${MAX_INLINE_CODE_UNITS} characters (${codeBody.length})`,
+      );
+    }
 
     const policy = buildExecPolicy(executionId, {
-      // Three read sources, all mandatory:
-      //   - the caller's own grants;
-      //   - the scratch dir, READ only -- the child loads its script, it must not rewrite it;
-      //   - the runtime's own binary directory, without which the child cannot start at all.
-      // That last one is not optional and is not an optimisation: on Windows the AppContainer
-      // helper writes an ACE per granted path, so an ungranted interpreter is unreadable and the
-      // child dies before executing a line (exit 68, no stdout, no stderr). Linux hides this
-      // because bwrap binds the system tree by default.
-      fsRead: [
-        ...req.fsRead,
-        ...(scratch === undefined ? [] : [scratch.dir]),
-        ...runtime.requiredReadPaths(),
-      ],
+      // Two read sources: the caller's own grants, and the runtime's binary directory -- without
+      // which the child cannot start at all. That second one is not an optimisation: on Windows the
+      // AppContainer helper writes an ACE per granted path, so an ungranted interpreter is
+      // unreadable and the child dies before executing a line (exit 68, no stdout, no stderr).
+      // Linux hides this because bwrap binds the system tree by default.
+      //
+      // There is deliberately NO scratch-file grant: the body is passed inline, so no file exists.
+      fsRead: [...req.fsRead, ...runtime.requiredReadPaths()],
       fsWrite: req.fsWrite,
       ...(req.network === undefined ? {} : { network: req.network }),
     });
@@ -239,7 +218,7 @@ export async function runExecution(
     }
 
     // 7. Spawn. Both cmd and args come from the REGISTRY (never a caller-supplied argv, I33).
-    const { cmd, args } = runtime.argvFor(scriptPath);
+    const { cmd, args } = runtime.argvFor(codeBody);
     const result = await runConfined(deps.runner, cmd, args, {
       policy,
       cwd: req.cwd,
@@ -270,15 +249,8 @@ export async function runExecution(
         : "ERR_EXEC_FAILED";
     audit(deps, "rejected", "refused_before_consent", { executionId, code });
     return { status: "refused", code };
-  } finally {
-    // Runs after `await runConfined(...)` has settled, so the child is gone and its output is
-    // already captured -- deleting earlier would pull the script out from under a live process.
-    if (scratch !== undefined) {
-      try {
-        rmSync(scratch.dir, { recursive: true, force: true });
-      } catch {
-        // A leaked temp dir must never turn a successful execution into a failure.
-      }
-    }
   }
+  // No `finally` cleanup: the body is passed inline, so this gate writes no file anywhere. That is
+  // the second benefit of the inline form -- there is nothing to leak on a denial, nothing to race
+  // the spawn, and nothing another local user could read or swap between approval and execution.
 }

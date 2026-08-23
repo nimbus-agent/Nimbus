@@ -193,7 +193,35 @@ describe("runExecution (I33)", () => {
     expect(seen?.codeBody).toBe("console.log(1)");
   });
 
-  test("a DENIED inline execution leaves no scratch directory behind", async () => {
+  test("an oversized body is REFUSED before consent, never truncated", async () => {
+    // The body travels as a command-line argument, so an oversized one would be cut by the Windows
+    // helper's buffer. Running a PREFIX of someone's script is far worse than refusing all of it.
+    let asked = false;
+    const { spy, deps } = makeDeps({
+      requestApproval: async () => {
+        asked = true;
+        return true;
+      },
+    });
+    const out = await runExecution({ ...REQ, code: "x".repeat(16_385) }, deps);
+    expect(out.status).toBe("refused");
+    if (out.status !== "refused") throw new Error("unreachable");
+    expect(out.code).toBe("ERR_EXEC_CODE_TOO_LARGE");
+    expect(asked).toBe(false);
+    expect(spy).toEqual([]);
+  });
+
+  test("a body exactly at the cap is accepted", async () => {
+    // Off-by-one guard: the cap is a maximum, not a threshold one below it.
+    const { deps } = makeDeps({ requestApproval: async () => false });
+    const out = await runExecution({ ...REQ, code: "x".repeat(16_384) }, deps);
+    expect(out.status).toBe("denied");
+  });
+
+  test("the gate writes NO file anywhere, on denial or otherwise", async () => {
+    // The body is passed inline, so there is no scratch file to leak on a denial, race the spawn,
+    // or let another local user read or swap between approval and execution. This guards against
+    // reintroducing one.
     const before = readdirSync(tmpdir()).filter((d) => d.startsWith("nimbus-exec-"));
     const { deps } = makeDeps({ requestApproval: async () => false });
     await runExecution(REQ, deps);
@@ -257,22 +285,40 @@ describe("runExecution (I33)", () => {
     expect(payload["exitCode"]).toBe(0);
   });
 
-  test("an APPROVED inline execution also cleans up its scratch directory", async () => {
-    const before = readdirSync(tmpdir()).filter((d) => d.startsWith("nimbus-exec-"));
-    const { deps } = makeDeps({ runner: stubRunnerThatExits(0, "") });
+  test("the body reaches the runtime INLINE, not as a file path", async () => {
+    // The whole reason Windows works: naming a file as bun's entry point fails under the
+    // AppContainer even though the same sandbox lets bun read and import that very file.
+    let seenArgs: string[] = [];
+    const { deps } = makeDeps({
+      runner: capturingRunner((a) => {
+        seenArgs = a;
+      }),
+    });
     await runExecution(REQ, deps);
-    const after = readdirSync(tmpdir()).filter((d) => d.startsWith("nimbus-exec-"));
-    expect(after.length).toBe(before.length);
+    expect(seenArgs[0]).toBe("-e");
+    expect(seenArgs[1]).toBe("console.log(1)");
   });
 });
+
+/** A runner that records the argv it was handed, then exits cleanly. */
+function capturingRunner(onArgs: (args: string[]) => void): SandboxRunner {
+  const base = stubRunnerThatExits(0, "");
+  return {
+    ...base,
+    spawn: (cmd, args, opts) => {
+      onArgs([...args]);
+      return base.spawn(cmd, args, opts);
+    },
+  };
+}
 
 /** A runner whose child writes `out` then exits with `code`. */
 function stubRunnerThatExits(code: number, out: string): SandboxRunner {
   return {
     platform: process.platform as "linux" | "darwin" | "win32",
     spawn: (_cmd, _args, opts) => {
-      // The scratch script must still exist at spawn time -- cleanup racing the spawn would be a
-      // real bug, and this assertion is what would catch it.
+      // The interpreter's own directory must be granted, or the Windows AppContainer cannot read
+      // bun.exe and the child dies before running a line.
       const readable = opts.policy.permissions.filesystem.read;
       expect(readable.some((p) => existsSync(p))).toBe(true);
       const { EventEmitter } = require("node:events") as typeof import("node:events");

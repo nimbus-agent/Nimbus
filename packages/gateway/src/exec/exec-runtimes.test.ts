@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { dirname } from "node:path";
 import {
   ExecRuntimeError,
   requireInstalled,
@@ -7,12 +8,31 @@ import {
 } from "./exec-runtimes.ts";
 
 describe("ExecRuntime registry", () => {
-  test("resolves bun by id and produces a runnable argv", () => {
+  test("resolves bun by id and produces an INLINE argv, never a script path", () => {
     const rt = resolveRuntimeById("bun");
     expect(rt.id).toBe("bun");
-    const { cmd, args } = rt.argvFor("/tmp/s.ts");
+    const { cmd, args } = rt.argvFor('console.log("hi")');
     expect(cmd).not.toBe("");
-    expect(args).toEqual(["run", "/tmp/s.ts"]);
+    // `-e` and not a file. Naming a file as bun's ENTRY POINT fails under the Windows
+    // AppContainer with CouldntReadCurrentDirectory, even though the same sandbox lets bun read,
+    // list and dynamically import that very file. Inline also means no scratch file exists to
+    // leak, race or swap between approval and execution.
+    expect(args).toEqual(["-e", 'console.log("hi")']);
+  });
+
+  test("requiredReadPaths includes the interpreter's own directory", () => {
+    // Without it the Windows AppContainer cannot read bun.exe and the child dies before running a
+    // line. Linux hides this because bwrap binds the system tree by default.
+    const paths = resolveRuntimeById("bun").requiredReadPaths();
+    expect(paths).toContain(dirname(process.execPath));
+  });
+
+  test("requiredReadPaths adds the runtime HOME on macOS only", () => {
+    // Windows must NOT get it: `~/.bun` carries thousands of cache entries and the helper writes
+    // one ACE per granted path, so granting it hangs every spawn.
+    const paths = resolveRuntimeById("bun").requiredReadPaths();
+    const home = dirname(dirname(process.execPath));
+    expect(paths.includes(home)).toBe(process.platform === "darwin");
   });
 
   test("an unknown id is a named error, not a fallback", () => {
