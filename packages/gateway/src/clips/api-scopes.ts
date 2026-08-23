@@ -7,8 +7,14 @@
  * `clip` and `briefs` are the surfaces that shipped before scopes existed; `agents`, `resolve` and
  * `fetch` are the ones this design adds. That split is not cosmetic — it is exactly the boundary
  * LEGACY_SCOPES draws.
+ *
+ * `egress` is the read over the ledger itself — the four `GET /v1/egress*` routes. It is last
+ * because it is the newest, and it is absent from LEGACY_SCOPES for the same reason the middle
+ * three are: it reads the record of everything this gateway sent on the owner's behalf, and a
+ * token already in the wild must gain nothing. The owner grants it deliberately, in place, with
+ * `nimbus clip scopes <label> --set <scopes>` — no re-pairing.
  */
-export const API_SCOPES = ["clip", "briefs", "agents", "resolve", "fetch"] as const;
+export const API_SCOPES = ["clip", "briefs", "agents", "resolve", "fetch", "egress"] as const;
 
 export type ApiScope = (typeof API_SCOPES)[number];
 

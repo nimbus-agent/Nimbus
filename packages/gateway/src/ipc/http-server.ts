@@ -11,6 +11,14 @@ import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts"
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { dbRun } from "../db/write.ts";
+import { digestEgressWindow, signWindowDigest } from "../egress/egress-sign.ts";
+import {
+  countEgressRows,
+  egressHead,
+  listEgress,
+  proveWindow,
+  verifyEgressChain,
+} from "../egress/egress-verify.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
 import { dispatchScimRead, isScimPath } from "../identity/scim-http-routes.ts";
@@ -33,6 +41,10 @@ import {
   ROUTE_KEY_AGENTS_LIST,
   ROUTE_KEY_BRIEF_GET,
   ROUTE_KEY_CLIPS_RELATED,
+  ROUTE_KEY_EGRESS_HEAD,
+  ROUTE_KEY_EGRESS_LIST,
+  ROUTE_KEY_EGRESS_PROVE,
+  ROUTE_KEY_EGRESS_VERIFY,
   ROUTE_KEY_ITEMS_RESOLVE,
 } from "./http-route-auth.ts";
 import {
@@ -648,6 +660,140 @@ async function handleItemsResolve(
   return json(resolveItemByUrl(db, raw, fetchable === undefined ? undefined : { fetchable }));
 }
 
+/**
+ * `?name=` as a non-negative integer, or undefined.
+ *
+ * Undefined on anything unparseable rather than a 400: these are all optional window/paging
+ * refinements, so a junk value should fall back to the route's default instead of failing a read
+ * the caller is entitled to make.
+ */
+function intParam(url: URL, name: string): number | undefined {
+  const raw = url.searchParams.get(name);
+  if (raw === null || raw.trim() === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * The four egress-ledger reads share a gate: the clips surface must be mounted, and the token must
+ * carry the `egress` scope.
+ *
+ * Mounted HERE — in the bearer-authed fetch handler — and NOT in `dispatchReadOnlyDataGet`, for the
+ * same reason `handleItemsResolve` is: that table's "/v1/items/*" entry is PUBLIC, with no bearer
+ * gate at all, so routing these through it would serve the record of everything this gateway ever
+ * sent to any local process on the machine. The ledger is strictly more sensitive than resolve.
+ *
+ * None of the four appends an egress row. They read the ledger; a read that ledgered itself would
+ * inflate the very number it exists to report.
+ */
+async function requireEgressRead(
+  req: Request,
+  opts: ReadOnlyHttpServerOptions,
+  routeKey: ClipReadRouteKey,
+): Promise<{ ok: true; clipsVault: NimbusVault } | { ok: false; response: Response }> {
+  const clipsVault = opts.clipsVault;
+  if (clipsVault === undefined) {
+    // A named 404, never a fall-through to the public /v1/items/* table.
+    return { ok: false, response: json({ error: "egress_disabled" }, 404) };
+  }
+  const auth = await requireScopedClipToken(req, clipsVault, routeKey);
+  if (!auth.ok) return { ok: false, response: auth.response };
+  return { ok: true, clipsVault };
+}
+
+// GET /v1/egress — a page of the ledger, newest first, with the window's counted totals.
+async function handleEgressList(
+  req: Request,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const gate = await requireEgressRead(req, opts, ROUTE_KEY_EGRESS_LIST);
+  if (!gate.ok) return gate.response;
+  const window = { since: intParam(url, "since"), until: intParam(url, "until") };
+  const rows = listEgress(db, {
+    ...window,
+    order: "desc",
+    limit: intParam(url, "limit"),
+    before: intParam(url, "before"),
+  });
+  // Counted in SQL over the WHOLE window — never derived from `rows`, which is a page. Deriving it
+  // would under-report, and is the failure `countOutboundEgress` was written to end.
+  const rowsTotal = countEgressRows(db, window);
+  return json({ rows, rowsTotal, rowsTruncated: rows.length < rowsTotal });
+}
+
+// GET /v1/egress/head — the chain head and the row count.
+async function handleEgressHead(
+  req: Request,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const gate = await requireEgressRead(req, opts, ROUTE_KEY_EGRESS_HEAD);
+  if (!gate.ok) return gate.response;
+  return json(egressHead(db));
+}
+
+// GET /v1/egress/verify — walk the chain and report. Passed through unchanged: `brokenAt` and
+// `reason` are the gateway's own vocabulary, and a client must not have to guess at a re-spelling.
+async function handleEgressVerify(
+  req: Request,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const gate = await requireEgressRead(req, opts, ROUTE_KEY_EGRESS_VERIFY);
+  if (!gate.ok) return gate.response;
+  return json(verifyEgressChain(db));
+}
+
+/**
+ * `prove`'s own budget — the only one of the four egress reads that does asymmetric crypto per
+ * call (`signWindowDigest` signs with the Vault share key). List, head and verify are SQLite reads.
+ *
+ * Its OWN limiter instance rather than the write surface's, so a hot prove loop cannot starve clip
+ * ingest of its 60/min, and so a busy clipper cannot make proving fail. The fingerprint is a
+ * constant, matching how the write surface buckets its routes (`http-write-routes.ts` checkAuth) —
+ * this is a per-route budget, not a per-token one.
+ */
+const PROVE_RATE_LIMIT = { maxRequests: 10, windowMs: 60_000 } as const;
+const PROVE_FINGERPRINT = "egress-prove";
+
+// GET /v1/egress/prove — the signed window receipt.
+async function handleEgressProve(
+  req: Request,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+  proveRateLimiter: HttpWriteRateLimiter,
+): Promise<Response> {
+  const gate = await requireEgressRead(req, opts, ROUTE_KEY_EGRESS_PROVE);
+  if (!gate.ok) return gate.response;
+  // After the scope gate, deliberately: an unauthorized caller must not be able to spend the
+  // budget of an authorized one.
+  const rate = proveRateLimiter.check(PROVE_FINGERPRINT);
+  if (!rate.allowed) {
+    return json(
+      { error: "rate_limited", retryAfterMs: Math.max(0, rate.resetMs - Date.now()) },
+      429,
+    );
+  }
+  const proof = proveWindow(db, { since: intParam(url, "since"), until: intParam(url, "until") });
+  const digest = digestEgressWindow(proof.rows, {
+    outboundEgressEvents: proof.completeness.outboundEgressEvents,
+    rowsTotal: proof.rowsTotal,
+  });
+  const { sigB64, pubkeyB64 } = await signWindowDigest(gate.clipsVault, digest);
+  return json({
+    digest,
+    sigB64,
+    pubkeyB64,
+    rowsTotal: proof.rowsTotal,
+    rowsTruncated: proof.rowsTruncated,
+    completeness: proof.completeness,
+    verify: proof.verify,
+  });
+}
+
 // GET /v1/briefs/{id} — bearer-authed read of an in-memory run. Mounted in the fetch handler,
 // NOT in dispatchReadOnlyDataGet: that table is documented "no bearer gate", so routing briefs
 // through it would expose a user's research report to any local process on the machine.
@@ -922,9 +1068,15 @@ async function tryBearerAuthedGet(
   url: URL,
   db: Database,
   opts: ReadOnlyHttpServerOptions,
+  proveRateLimiter: HttpWriteRateLimiter,
 ): Promise<Response | null> {
   if (req.method !== "GET") return null;
   if (url.pathname === "/v1/items/resolve") return await handleItemsResolve(req, url, db, opts);
+  if (url.pathname === "/v1/egress") return await handleEgressList(req, url, db, opts);
+  if (url.pathname === "/v1/egress/head") return await handleEgressHead(req, db, opts);
+  if (url.pathname === "/v1/egress/verify") return await handleEgressVerify(req, db, opts);
+  if (url.pathname === "/v1/egress/prove")
+    return await handleEgressProve(req, url, db, opts, proveRateLimiter);
   const briefGet = BRIEF_GET_RE.exec(url.pathname);
   if (briefGet !== null) return await handleBriefGet(req, briefGet[1] as string, opts);
   if (url.pathname === "/v1/agents") return await handleAgentsList(req, opts);
@@ -959,6 +1111,9 @@ export function startReadOnlyHttpServer(
       ? null
       : openI13WriteHandle(dbPath);
   const rateLimiter = new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 });
+  // Separate instance, not a per-route override on the one above: prove must not spend clip
+  // ingest's budget, and a busy clipper must not make proving fail. See PROVE_RATE_LIMIT.
+  const proveRateLimiter = new HttpWriteRateLimiter(PROVE_RATE_LIMIT);
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -980,7 +1135,7 @@ export function startReadOnlyHttpServer(
       if (req.method === "POST" && url.pathname === "/v1/clips/related") {
         return handleClipRelated(req, db, opts);
       }
-      const authedGet = await tryBearerAuthedGet(req, url, db, opts);
+      const authedGet = await tryBearerAuthedGet(req, url, db, opts, proveRateLimiter);
       if (authedGet !== null) return authedGet;
       // All writes (deployment POST + SCIM POST/PATCH/DELETE + policy PUT) → the single I13 dispatcher.
       if (

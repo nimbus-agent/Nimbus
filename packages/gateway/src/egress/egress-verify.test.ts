@@ -120,6 +120,62 @@ describe("listEgress", () => {
   });
 });
 
+/** n chained rows, timestamps 1..n, ids 1..n. Appended, never INSERTed — a raw
+ *  insert produces rows whose row_hash does not chain, which would fail
+ *  verifyEgressChain for a reason that has nothing to do with what is asserted. */
+function seedLedger(n: number): void {
+  for (let i = 1; i <= n; i++) {
+    appendEgressEntry(db, e({ timestamp: i, method: `m.${i}` }));
+  }
+}
+
+describe("listEgress ordering and cursor", () => {
+  test("defaults to id ASC — the order proveWindow's digest is built on", () => {
+    seedLedger(5);
+    expect(listEgress(db, {}).map((r) => r.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("order: desc returns the NEWEST rows first", () => {
+    seedLedger(5);
+    expect(listEgress(db, { order: "desc" }).map((r) => r.id)).toEqual([5, 4, 3, 2, 1]);
+  });
+
+  test("order: desc with a limit keeps the newest, not the oldest", () => {
+    // The whole point. `id ASC` + LIMIT drops the most recent rows, which is the
+    // worst direction for a surface whose job is to say what just left.
+    seedLedger(5);
+    expect(listEgress(db, { order: "desc", limit: 2 }).map((r) => r.id)).toEqual([5, 4]);
+  });
+
+  test("before is an exclusive cursor, paging backwards without gaps or repeats", () => {
+    seedLedger(5);
+    const page1 = listEgress(db, { order: "desc", limit: 2 });
+    const page2 = listEgress(db, { order: "desc", limit: 2, before: page1[1]?.id });
+    expect(page1.map((r) => r.id)).toEqual([5, 4]);
+    expect(page2.map((r) => r.id)).toEqual([3, 2]);
+  });
+
+  test("before composes with the since/until window rather than replacing it", () => {
+    seedLedger(5);
+    const rows = listEgress(db, { order: "desc", before: 4, limit: 10, since: 2 });
+    expect(rows.map((r) => r.id)).toEqual([3, 2]);
+  });
+
+  test("the existing limit clamp still applies to a descending read", () => {
+    seedLedger(3);
+    expect(listEgress(db, { order: "desc", limit: 999_999 })).toHaveLength(3);
+  });
+
+  test("proveWindow's rows are unchanged by this task", () => {
+    // Pin the coupling explicitly: proveWindow shares listEgress, and
+    // digestEgressWindow hashes the rows IN THE ORDER returned. If this ever
+    // reads descending, every receipt already issued stops matching. A failure
+    // here means "you changed a signed artifact", not "update the expectation".
+    seedLedger(4);
+    expect(proveWindow(db, {}).rows.map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+});
+
 describe("proveWindow", () => {
   test("a zero-egress window reports outboundEgressEvents 0 and verifies ok", () => {
     const out = proveWindow(db, { since: 0, until: 1000 });
