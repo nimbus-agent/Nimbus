@@ -12,6 +12,9 @@ type EgressRow = {
   readonly destination: FetchableService;
   readonly sourceType: "sync";
   readonly method: string;
+  /** Present only when a client asked for the fetch — see `targetedFetch`'s
+   *  `callerLabel`. Absent on the scheduler's own path. */
+  readonly sourceId?: string | undefined;
 };
 
 type DepsOverrides = {
@@ -93,6 +96,38 @@ function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
 }
 
 describe("targetedFetch", () => {
+  test("the caller's label reaches the egress row, and its absence leaves it unattributed", async () => {
+    // Typecheck cannot catch this: a closure taking only `url` stays assignable
+    // to `(url, callerLabel?)`, so a dropped label compiles clean and silently
+    // unattributes every row. Only a behavioural test pins the threading.
+    const rows: EgressRow[] = [];
+    const deps = depsWith({
+      hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+      appendEgress: (r) => {
+        rows.push(r);
+        return undefined;
+      },
+      syncableFor: (service) => ({
+        serviceId: service,
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync() {
+          throw new Error("not exercised");
+        },
+        fetchOne: async (): Promise<FetchOneResult> => ({
+          status: "indexed",
+          itemId: "github:o/r#1",
+        }),
+      }),
+    });
+
+    await targetedFetch(deps, "https://github.com/acme/web/pull/1", "asafs-browser");
+    expect(rows[0]?.sourceId).toBe("asafs-browser");
+
+    await targetedFetch(deps, "https://github.com/acme/web/pull/1");
+    expect(rows[1]?.sourceId).toBeUndefined();
+  });
+
   test("an unconfigured host (empty boundary) is not_configured, and no connector is called", async () => {
     let called = false;
     const deps = depsWith({

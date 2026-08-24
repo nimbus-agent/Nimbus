@@ -259,7 +259,7 @@ export interface FetchWriteSurface {
   readonly verifyToken: (
     presented: string,
   ) => Promise<{ label: string; scopes: readonly ApiScope[] } | null>;
-  readonly fetchItem: (url: string) => Promise<TargetedFetchOutcome>;
+  readonly fetchItem: (url: string, callerLabel?: string) => Promise<TargetedFetchOutcome>;
 }
 
 export interface WriteRouteContext {
@@ -1285,8 +1285,12 @@ function extractUrl(parsed: unknown): string | undefined {
 
 /**
  * 401/403 gate for the items-fetch route, mirroring `requireAgentAuth`. Returns the verified
- * principal on success — unused beyond the auth check itself: the egress row's `destination` is
- * the SERVICE id `targetedFetch` derives internally from the URL's host, never the caller's label.
+ * principal on success, and the route now USES it: its `label` becomes the egress row's
+ * `source_id`, so the ledger can say WHICH client asked for a fetch.
+ *
+ * That label is the only part of the row the caller influences, and only through a token the
+ * gateway itself verified — the row's `destination` remains the SERVICE id `targetedFetch` derives
+ * internally from the URL's host, never anything the caller supplied.
  */
 async function requireFetchAuth(
   ctx: WriteRouteContext,
@@ -1327,7 +1331,9 @@ async function runItemsFetchRoute(
     // Every TargetedFetchOutcome — `indexed` and every miss arm alike — is a 200: a miss is a
     // legitimate answer to a well-formed request, not a client error. Only a malformed body
     // (above) or an auth/rate-limit failure produces a non-2xx from this route.
-    const outcome = await fetchSurface.fetchItem(url);
+    // `auth.label` is the VERIFIED token label, not a body field: a caller-supplied one would let
+    // a client file its egress under another client's name.
+    const outcome = await fetchSurface.fetchItem(url, auth.label);
     return jsonResponse(outcome, 200, rateLimitHeaders(limit));
   } catch {
     // Reached when the egress append fails (I29 fail-closed) or the connector call throws

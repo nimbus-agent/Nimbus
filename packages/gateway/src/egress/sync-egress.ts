@@ -67,6 +67,19 @@ export function recordSyncEgress(
     readonly destination: string;
     readonly method: string;
     readonly now: number;
+    /**
+     * The label of the client that ASKED for this outbound call, when one did.
+     *
+     * Absent for the scheduler, which runs on its own timer — so `sourceId: null`
+     * on a `sync` row means "not caller-initiated" rather than "unknown", and a
+     * reader can separate a fetch someone asked for from a background sync
+     * nobody did without inferring it from `method`.
+     *
+     * Server-derived at every call site (the verified token label), never taken
+     * from a request body: a caller-supplied label would let one client file its
+     * egress under another's name.
+     */
+    readonly sourceId?: string | undefined;
   },
 ): undefined {
   if (LOCAL_ONLY_SYNC_SERVICES.has(args.destination)) {
@@ -75,7 +88,9 @@ export function recordSyncEgress(
   appendEgressEntry(db, {
     timestamp: args.now,
     sourceType: "sync",
-    sourceId: null,
+    // Empty collapses to null: an empty string would read as "attributed to a
+    // client whose label is blank", a claim the gateway cannot support.
+    sourceId: args.sourceId === undefined || args.sourceId === "" ? null : args.sourceId,
     destination: args.destination,
     method: args.method,
     payloadSummary: redactEgressSummary({ method: args.method }),

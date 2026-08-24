@@ -2219,7 +2219,13 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
   httpSidecarOpts: HttpSidecarOpts;
 }): void {
   const { db, vault, syncScheduler } = deps;
-  deps.httpSidecarOpts.fetchItem = async (url: string): Promise<TargetedFetchOutcome> => {
+  // `callerLabel` is threaded, not dropped. A closure taking only `url` stays ASSIGNABLE to the
+  // surface's `(url, callerLabel?)` type — TypeScript permits fewer parameters — so omitting it
+  // here would typecheck cleanly and silently leave every targeted-fetch row unattributed.
+  deps.httpSidecarOpts.fetchItem = async (
+    url: string,
+    callerLabel?: string,
+  ): Promise<TargetedFetchOutcome> => {
     const [hostMap, httpOrigins, jiraBaseUrl] = await Promise.all([
       deriveFetchHostMap(vault),
       buildHttpOriginMap(vault),
@@ -2236,6 +2242,7 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
         sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       },
       url,
+      callerLabel,
     );
   };
 }
