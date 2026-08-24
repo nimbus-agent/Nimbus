@@ -33,6 +33,48 @@ describe("recordSyncEgress", () => {
     expect(rows[0]?.sourceId).toBeNull();
   });
 
+  test("a caller-initiated row carries the caller's label", () => {
+    recordSyncEgress(db, {
+      destination: "github",
+      method: "items.fetch",
+      now: 1_000,
+      sourceId: "asafs-browser",
+    });
+    expect(listEgress(db, {})[0]?.sourceId).toBe("asafs-browser");
+  });
+
+  test("an absent caller keeps sourceId null, so null MEANS not-caller-initiated", () => {
+    // The scheduler passes no caller. That is what lets a reader tell a fetch
+    // someone asked for from a background sync nobody asked for, without having
+    // to infer it from `method`.
+    recordSyncEgress(db, { destination: "github", method: "sync.run", now: 1_000 });
+    expect(listEgress(db, {})[0]?.sourceId).toBeNull();
+  });
+
+  test("an empty label is stored as null, never as an empty string", () => {
+    // An empty string would read as "attributed to a client whose label is
+    // blank" — a claim the gateway cannot support. Absent is the honest value.
+    recordSyncEgress(db, {
+      destination: "github",
+      method: "items.fetch",
+      now: 1_000,
+      sourceId: "",
+    });
+    expect(listEgress(db, {})[0]?.sourceId).toBeNull();
+  });
+
+  test("a local-only destination appends nothing even with a caller", () => {
+    // The caller label must not become a reason to ledger a run that provably
+    // never left the machine.
+    recordSyncEgress(db, {
+      destination: "filesystem",
+      method: "items.fetch",
+      now: 1_000,
+      sourceId: "asafs-browser",
+    });
+    expect(listEgress(db, {})).toHaveLength(0);
+  });
+
   test("destination is the caller-supplied SERVICE id, never a raw URL — this function does no derivation", () => {
     recordSyncEgress(db, { destination: "jenkins", method: "items.fetch", now: 2_000 });
     const rows = listEgress(db, {});

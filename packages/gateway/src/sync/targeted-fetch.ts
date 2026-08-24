@@ -86,6 +86,9 @@ export interface TargetedFetchDeps {
     readonly destination: FetchableService;
     readonly sourceType: "sync";
     readonly method: string;
+    /** The verified label of the client that asked. Server-derived by the route; never a body
+     *  field, or one client could file its egress under another's name. */
+    readonly sourceId?: string | undefined;
   }) => undefined;
   /** Injected so the acquire poll loop below is testable without real time. */
   readonly sleep: (ms: number) => Promise<void>;
@@ -197,6 +200,13 @@ async function acquireWithinTimeout(
 export async function targetedFetch(
   deps: TargetedFetchDeps,
   url: string,
+  /**
+   * The verified label of the client that asked for this fetch, when a client did.
+   *
+   * Optional so the scheduler's own path stays caller-less: `sourceId: null` on a `sync` row then
+   * MEANS "not caller-initiated" rather than "unknown".
+   */
+  callerLabel?: string,
 ): Promise<TargetedFetchOutcome> {
   let parsed: URL;
   try {
@@ -297,7 +307,12 @@ export async function targetedFetch(
 
   // BEFORE the outbound call. A throw here propagates and no fetch happens — fail-closed, no row
   // means no fetch.
-  deps.appendEgress({ destination: service, sourceType: "sync", method: "items.fetch" });
+  deps.appendEgress({
+    destination: service,
+    sourceType: "sync",
+    method: "items.fetch",
+    ...(callerLabel === undefined ? {} : { sourceId: callerLabel }),
+  });
 
   return fetchOneWithRetry(fetchOne, ctx, canonical);
 }
