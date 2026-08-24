@@ -166,7 +166,7 @@ export function upsertIndexedItem(
   );
 }
 
-type BodyRow = Parameters<typeof upsertIndexedItem>[1];
+export type BodyRow = Parameters<typeof upsertIndexedItem>[1];
 
 /**
  * Coerce a connector's body input to the connector's configured depth.
@@ -205,7 +205,20 @@ function applyDepth(depth: SyncContext["depth"], row: BodyRow): BodyRow {
   return { ...rest, bodyPreview: text } as BodyRow;
 }
 
-export function upsertIndexedItemForSync(ctx: SyncContext, row: BodyRow): void {
+/**
+ * Exactly what the V48/V49 body-depth chokepoint needs, declared standalone rather than as
+ * `Pick<SyncContext, ...>`. `SyncContext` is losing its `db` handle to the narrowing (spec §5), so
+ * picking from it would make this signature circular on a field that is about to disappear. A
+ * `SyncContext` still satisfies this structurally, so every existing caller compiles unchanged.
+ */
+export interface UpsertSyncDeps {
+  db: Database;
+  depth: "metadata_only" | "summary" | "full";
+  resolveServiceId?: ResolveServiceId;
+  scheduleItemEmbedding?: (itemId: string) => void;
+}
+
+export function upsertIndexedItemForSync(ctx: UpsertSyncDeps, row: BodyRow): void {
   upsertIndexedItem(ctx.db, applyDepth(ctx.depth, row), ctx.resolveServiceId);
   const id = itemPrimaryKey(row.service, row.externalId);
   ctx.scheduleItemEmbedding?.(id);
