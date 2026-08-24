@@ -41,6 +41,25 @@
  * Like `mcp`, the class covers LESS than its name suggests: it is agent briefs served over HTTP,
  * NOT "everything on the HTTP API". The narrowing is recorded machine-readably in
  * `THIS_BINARY_COVERAGE` (egress-coverage.ts), which is what a consumer actually reads.
+ *
+ * `outcome` is the eleventh member, and the FIRST admitted as a MARKER rather than an egress class.
+ * It records how a targeted fetch ended. The authorising row structurally cannot say: `targetedFetch`
+ * appends it BEFORE calling the connector — fail-closed, no row means no fetch — so its
+ * `result_status` records the authorisation decision, and a fetch that 404s or times out still
+ * reads `authorized`.
+ *
+ * Marker, not egress class, IS the decision. The row is bookkeeping about an outbound call this
+ * ledger has already counted; counting it again would double every targeted fetch and inflate the
+ * exact number I29 exists to state honestly. Because it joins `MARKER_SOURCE_TYPES` it claims no
+ * coverage granularity, `COVERAGE_CLASSES` is untouched, and the existing
+ * "COVERAGE_CLASSES is exactly the non-marker source types" invariant proves the two lists stayed
+ * in step — the silent mismatch this header warns about.
+ *
+ * The freeze's own prescription — reuse an existing member with a reserved `method` — was rejected
+ * for the third time, and here for a new reason: the natural candidate is `sync`, which is NOT a
+ * marker, so every outcome row would count as outbound unless the counting predicate grew a
+ * method-level special case. That would reintroduce by hand the miscount `MARKER_SOURCE_TYPES`
+ * exists to make structural.
  */
 export const EGRESS_SOURCE_TYPES = [
   "task", // gated connector action
@@ -53,6 +72,7 @@ export const EGRESS_SOURCE_TYPES = [
   "boot", // per-process marker carrying the coverage vector
   "degraded", // lost-append recovery marker
   "http", // agent brief served over the local HTTP API
+  "outcome", // how a targeted fetch ended — a marker, never counted as egress
 ] as const;
 
 export type EgressSourceType = (typeof EGRESS_SOURCE_TYPES)[number];
@@ -68,6 +88,7 @@ export const MARKER_SOURCE_TYPES: ReadonlySet<EgressSourceType> = new Set<Egress
   "prune",
   "boot",
   "degraded",
+  "outcome",
 ]);
 
 /** Marker test over a raw DB string. Unknown values are NOT markers — an unknown row counts. */

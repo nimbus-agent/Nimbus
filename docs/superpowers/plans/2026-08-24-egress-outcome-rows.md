@@ -154,7 +154,7 @@ git commit -m "refactor(egress): return the row hash the append already computed
 - Consumes: nothing.
 - Produces: `"outcome"` as an `EgressSourceType` and a member of `MARKER_SOURCE_TYPES`, consumed by Task 3.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 The existing test asserts the exact ten-member list, so it must be EDITED, not appended to. In `egress-source-type.test.ts`:
 
@@ -189,12 +189,12 @@ The existing test asserts the exact ten-member list, so it must be EDITED, not a
 
 Keep the existing `isMarkerSourceType` test's egress-bearing and unknown cases exactly as they are.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/gateway/src/egress/egress-source-type.test.ts`
 Expected: FAIL — the union has ten members and `MARKER_SOURCE_TYPES` has three.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `egress-source-type.ts`, append the member and add its decision paragraph — the file's header requires one, and both `mcp` and `http` set the precedent:
 
@@ -232,7 +232,7 @@ export const MARKER_SOURCE_TYPES: ReadonlySet<EgressSourceType> = new Set<Egress
 ]);
 ```
 
-- [ ] **Step 4: Run the tests, including the invariant that validates the choice**
+- [x] **Step 4: Run the tests, including the invariant that validates the choice**
 
 Run: `bun test packages/gateway/src/egress/egress-source-type.test.ts`
 Expected: PASS.
@@ -240,7 +240,7 @@ Expected: PASS.
 Run: `bun test packages/gateway/src/security-invariants.test.ts`
 Expected: PASS, **with no edit to that file**. It asserts `COVERAGE_CLASSES` is exactly the non-marker source types; adding a marker keeps that identity. If it fails, `outcome` was added to `COVERAGE_CLASSES` or omitted from `MARKER_SOURCE_TYPES` — fix the code, never the assertion.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/egress/egress-source-type.ts packages/gateway/src/egress/egress-source-type.test.ts

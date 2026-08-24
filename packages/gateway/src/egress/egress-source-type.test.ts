@@ -23,7 +23,11 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
   // review moment, same rejected shortcut (`session` again), plus one reason of its own: it is
   // named for the VERIFIABLE TRANSPORT rather than a caller-declared client kind, so folding it
   // into `mcp` would have merged two different attribution strengths under one permanent string.
-  test("is exactly these ten members, in this order", () => {
+  //
+  // `outcome` is the ELEVENTH, and the first admitted as a MARKER rather than an egress class. It
+  // records how a targeted fetch ended, which the authorising row structurally cannot say: that row
+  // is appended BEFORE the connector call, so its `result_status` is an authorisation decision.
+  test("is exactly these eleven members, in this order", () => {
     expect(EGRESS_SOURCE_TYPES).toEqual([
       "task",
       "prune",
@@ -35,11 +39,19 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
       "boot",
       "degraded",
       "http",
+      "outcome",
     ]);
   });
 
-  test("marker types are the three bookkeeping classes", () => {
-    expect([...MARKER_SOURCE_TYPES].sort()).toEqual(["boot", "degraded", "prune"]);
+  test("marker types are the four bookkeeping classes", () => {
+    expect([...MARKER_SOURCE_TYPES].sort()).toEqual(["boot", "degraded", "outcome", "prune"]);
+  });
+
+  test("outcome is a MARKER, so it can never be counted as outbound egress", () => {
+    // The whole argument for admitting an eleventh member. An outcome row is
+    // bookkeeping about an outbound call the ledger has ALREADY counted;
+    // counting it again would double every targeted fetch.
+    expect(isMarkerSourceType("outcome")).toBe(true);
   });
 
   test("isMarkerSourceType: markers true, egress-bearing false, unknown false", () => {
