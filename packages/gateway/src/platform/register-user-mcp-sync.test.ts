@@ -2,11 +2,11 @@ import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import os from "node:os";
 import pino from "pino";
-
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
+import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
@@ -99,6 +99,7 @@ function makeSyncContext(db: Database): { ctx: SyncContext; warns: CapturedWarn[
   };
   return {
     ctx: {
+      ...unboundSyncCapabilities(),
       db,
       vault: EMPTY_VAULT,
       logger,

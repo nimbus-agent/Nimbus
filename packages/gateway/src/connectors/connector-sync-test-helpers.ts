@@ -5,8 +5,10 @@ import pino from "pino";
 
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
+import { buildSyncCapabilities, unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import type { ConnectorServiceId } from "./connector-catalog.ts";
 
 export const EMPTY_NIMBUS_VAULT: NimbusVault = {
   set: async () => {},
@@ -32,9 +34,21 @@ export function createStubVault(entries: Readonly<Record<string, string | null>>
 
 export function silentSyncContextExtras(): Pick<
   SyncContext,
-  "logger" | "rateLimiter" | "sandboxCwd" | "credentialFor" | "runTeamList" | "depth"
+  | "logger"
+  | "rateLimiter"
+  | "sandboxCwd"
+  | "credentialFor"
+  | "runTeamList"
+  | "depth"
+  | "getSecret"
+  | "upsertItem"
+  | "resolvePerson"
 > {
   return {
+    // UNBOUND by default: these throw a named error if a test reaches one without having said
+    // which service it is. A test that needs a working capability builds its context with
+    // `syncTestContext(db, vault, serviceId)`, which binds the real ones.
+    ...unboundSyncCapabilities(),
     logger: pino({ level: "silent" }),
     rateLimiter: new ProviderRateLimiter(),
     // Wave 7b SyncContext members — personal-credential defaults for sync tests.
@@ -46,8 +60,23 @@ export function silentSyncContextExtras(): Pick<
   };
 }
 
-export function syncTestContext(db: Database, vault: NimbusVault): SyncContext {
-  return { db, vault, ...silentSyncContextExtras() };
+/**
+ * @param serviceId Binds the scoped capabilities to that connector, exactly as
+ * `sync/scheduler.ts` does in production. Omit it only for a test that never reaches a capability:
+ * the unbound set THROWS a named error rather than returning undefined, so a test that does reach
+ * one fails loudly instead of silently reading no secret and asserting a happy path.
+ */
+export function syncTestContext(
+  db: Database,
+  vault: NimbusVault,
+  serviceId?: ConnectorServiceId,
+): SyncContext {
+  const extras = silentSyncContextExtras();
+  const caps =
+    serviceId === undefined
+      ? unboundSyncCapabilities()
+      : buildSyncCapabilities({ vault, db, depth: extras.depth }, serviceId);
+  return { db, vault, ...caps, ...extras };
 }
 
 export function expectSyncNoopResult(

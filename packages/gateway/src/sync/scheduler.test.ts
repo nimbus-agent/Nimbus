@@ -2,13 +2,13 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import pino from "pino";
-
 import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
 import { loadSchedulerState } from "./scheduler-store.ts";
+import { unboundSyncCapabilities } from "./sync-capabilities.ts";
 import {
   RateLimitError,
   type Syncable,
@@ -47,6 +47,7 @@ function sleep(ms: number): Promise<void> {
 
 function testContext(db: Database): SyncContext {
   return {
+    ...unboundSyncCapabilities(),
     db,
     vault: createMemoryVault(),
     logger: pino({ level: "silent" }),

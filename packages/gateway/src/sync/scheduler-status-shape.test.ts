@@ -2,11 +2,11 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import pino from "pino";
-
 import { LocalIndex } from "../index/local-index.ts";
 import { createMemoryVault } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
+import { unboundSyncCapabilities } from "./sync-capabilities.ts";
 import type { Syncable, SyncContext, SyncResult } from "./types.ts";
 
 function setup(): { idx: LocalIndex; sched: SyncScheduler; db: Database } {
@@ -14,6 +14,7 @@ function setup(): { idx: LocalIndex; sched: SyncScheduler; db: Database } {
   LocalIndex.ensureSchema(db);
   const idx = new LocalIndex(db);
   const ctx: SyncContext = {
+    ...unboundSyncCapabilities(),
     db,
     vault: createMemoryVault(),
     logger: pino({ level: "silent" }),

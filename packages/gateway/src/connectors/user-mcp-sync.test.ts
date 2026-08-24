@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import pino from "pino";
-
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
+import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { createMemoryIndexDb, EMPTY_NIMBUS_VAULT } from "./connector-sync-test-helpers.ts";
 import { createUserMcpSyncable } from "./user-mcp-sync.ts";
@@ -31,6 +31,7 @@ function makeCapturingContext(): {
   };
   return {
     ctx: {
+      ...unboundSyncCapabilities(),
       db,
       vault: EMPTY_NIMBUS_VAULT,
       logger,

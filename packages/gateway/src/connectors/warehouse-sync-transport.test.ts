@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import { __setSessionSpawnerForTest } from "../teamvault/connector-session.ts";
 import { __setPersonalDrainForTest, listConnectorItems } from "./warehouse-sync-transport.ts";
 
@@ -11,6 +12,7 @@ function ctx(
   over: Partial<Parameters<typeof listConnectorItems>[0]>,
 ): Parameters<typeof listConnectorItems>[0] {
   return {
+    ...unboundSyncCapabilities(),
     vault: {
       get: async () => "x",
       set: async () => {},

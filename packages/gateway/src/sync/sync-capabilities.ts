@@ -54,3 +54,28 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     resolvePerson: (hints) => resolvePersonForSync(deps.db, hints),
   };
 }
+
+/**
+ * Capabilities for a context that is NOT bound to a service — `platform/assemble.ts`'s shared
+ * `syncBase`, which every connector inherits from and which therefore cannot know whose secrets to
+ * resolve.
+ *
+ * They throw rather than being absent. An optional capability makes a missed binding a silent
+ * `undefined` at runtime — the syncable reads no secret, writes no item, and reports success. A
+ * throwing one names the mistake at the moment it is made. Fail-loud beats fail-open for something
+ * whose whole job is to be the only way to reach a credential.
+ */
+export function unboundSyncCapabilities(): SyncCapabilities {
+  const refuse = (what: string): never => {
+    throw new Error(
+      `${what} was called on an unbound SyncContext. Capabilities bind per service in ` +
+        "sync/scheduler.ts contextForService(); the shared context from assemble.ts cannot know " +
+        "which connector is asking.",
+    );
+  };
+  return {
+    getSecret: () => refuse("getSecret"),
+    upsertItem: () => refuse("upsertItem"),
+    resolvePerson: () => refuse("resolvePerson"),
+  };
+}

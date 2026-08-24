@@ -4,10 +4,10 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import pino from "pino";
-
 import { OAUTH_PROVIDERS } from "../auth/oauth-registry.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
+import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { SyncContext } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
@@ -41,6 +41,7 @@ export function openMemoryIndexDatabase(): Database {
 
 export function createSyncTestContext(db: Database, vault: NimbusVault): SyncContext {
   return {
+    ...unboundSyncCapabilities(),
     db,
     vault,
     logger: pino({ level: "silent" }),

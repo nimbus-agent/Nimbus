@@ -2,9 +2,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import os from "node:os";
 import pino from "pino";
-
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import type { FetchableService } from "./fetch-host-boundary.ts";
+import { unboundSyncCapabilities } from "./sync-capabilities.ts";
 import { type TargetedFetchDeps, targetedFetch } from "./targeted-fetch.ts";
 import type { FetchOneResult, Syncable, SyncContext } from "./types.ts";
 
@@ -51,6 +51,7 @@ function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
   const db = openMemoryIndexDatabase();
   openedDbs.push(db);
   const fakeCtx: SyncContext = {
+    ...unboundSyncCapabilities(),
     db,
     vault: createMemoryVault(),
     logger: pino({ level: "silent" }),

@@ -222,6 +222,7 @@ import {
 } from "../sync/fetch-host-boundary.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
+import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import { type TargetedFetchOutcome, targetedFetch } from "../sync/targeted-fetch.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { withConnectorSession } from "../teamvault/connector-session.ts";
@@ -2368,6 +2369,7 @@ export async function assemblePlatformServices(
   // `sync/scheduler.ts` `contextForService`, which both `runJob` and `syncContextFor` route
   // through — the first points that know which connector is running.
   const syncBase: SyncContext = {
+    ...unboundSyncCapabilities(),
     vault,
     db,
     logger: syncLogger,

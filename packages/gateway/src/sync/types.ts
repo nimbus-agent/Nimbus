@@ -7,7 +7,7 @@ import type { ProviderRateLimiter } from "./rate-limiter.ts";
 import type { SyncCapabilities } from "./sync-capabilities.ts";
 
 export interface SyncContext<S extends ConnectorServiceId = ConnectorServiceId>
-  extends Partial<SyncCapabilities<S>> {
+  extends SyncCapabilities<S> {
   /**
    * TEMPORARY, and the whole point of the narrowing (spec §5). `vault` and `db` are raw handles: a
    * syncable holding them can read ANY connector's secrets and write ANY table. They are being
