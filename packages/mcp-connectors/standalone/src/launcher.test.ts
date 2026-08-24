@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -189,5 +196,42 @@ describe("discord over-declared and was corrected", () => {
     // and the file contains no mutating HTTP verb anywhere. Over-declaring is the FAIL-SAFE
     // direction, so it cost availability rather than safety, but it was still wrong.
     expect(standaloneEligibility("discord")).toEqual({ eligible: true, reason: "no-writes" });
+  });
+});
+
+describe("the README's eligibility count cannot drift from the code", () => {
+  // Part 2 migrated every connector and took the count from 58 to 94, but the README kept saying
+  // "58 of 94 ... plus github" — a hand-maintained number that went stale the moment the work
+  // landed, understating the migration by 36 connectors. The count is derivable, so derive it.
+  function eligibilityCounts(): { total: number; noWrites: number; hardened: number } {
+    const root = join(fileURLToPath(import.meta.url), "../../..");
+    const ids = readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "nimbus.extension.json")))
+      .map((d) => d.name);
+    const verdicts = ids.map((id) => standaloneEligibility(id));
+    return {
+      total: ids.length,
+      noWrites: verdicts.filter((v) => v.eligible && v.reason === "no-writes").length,
+      hardened: verdicts.filter((v) => v.eligible && v.reason === "hardened").length,
+    };
+  }
+
+  test("every connector is eligible, so the README may claim all of them", () => {
+    const { total, noWrites, hardened } = eligibilityCounts();
+    expect(noWrites + hardened).toBe(total);
+  });
+
+  test("the README states the measured total and split", () => {
+    const { total, noWrites, hardened } = eligibilityCounts();
+    // Collapsed, because the README is hard-wrapped at 100 columns and a wrap can fall in the
+    // middle of any of these phrases — the first version of this test failed on "all 94 are\n
+    // eligible", which is a formatting artefact and not the drift the test exists to catch.
+    const readme = readFileSync(
+      join(fileURLToPath(import.meta.url), "../../README.md"),
+      "utf8",
+    ).replace(/\s+/g, " ");
+    expect(readme).toContain(`all ${total} are eligible`);
+    expect(readme).toContain(`${noWrites} declare no mutating tools`);
+    expect(readme).toContain(`other ${hardened} have had their writes`);
   });
 });
