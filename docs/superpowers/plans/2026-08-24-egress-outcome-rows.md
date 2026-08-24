@@ -261,7 +261,7 @@ git commit -m "feat(egress): admit outcome to the frozen union, as a marker"
 - Consumes: Task 1's `appendEgressEntry`; Task 2's `"outcome"` source type.
 - Produces: `recordFetchOutcomeEgress(db, args): undefined` where `args` is `{ destination: string; authorizingRowHash: string; status: FetchOutcomeStatus; itemId?: string; reason?: string; now: number }`, and `export type FetchOutcomeStatus = "indexed" | "not_found" | "rate_limited"`. Consumed by Task 4.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `packages/gateway/src/egress/outcome-egress.test.ts`, modelled on `sync-egress.test.ts` (copy its `beforeEach` DB setup and `listEgress` import):
 
@@ -380,12 +380,12 @@ describe("recordFetchOutcomeEgress", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/gateway/src/egress/outcome-egress.test.ts`
 Expected: FAIL — cannot resolve `./outcome-egress.ts`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `packages/gateway/src/egress/outcome-egress.ts`:
 
@@ -446,12 +446,12 @@ export function recordFetchOutcomeEgress(
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/gateway/src/egress`
 Expected: PASS, including the double-count guard and the chain verification.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/egress/outcome-egress.ts packages/gateway/src/egress/outcome-egress.test.ts
