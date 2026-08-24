@@ -1,4 +1,3 @@
-import { getValidNotionAccessToken } from "../auth/notion-access-token.ts";
 import {
   itemPrimaryKey,
   selectItemBodyFetchState,
@@ -288,7 +287,7 @@ export function createNotionSyncable(options: NotionSyncableOptions): Syncable {
 
       let accessToken: string;
       try {
-        accessToken = await getValidNotionAccessToken(ctx.vault);
+        accessToken = await ctx.accessToken();
       } catch {
         return syncNoopResult(cursor, t0);
       }

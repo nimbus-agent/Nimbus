@@ -46,7 +46,7 @@ describe("createOutlookSyncable", () => {
 
   // ── existing smoke test ───────────────────────────────────────────────────
   test("indexes messages from delta page", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -92,7 +92,7 @@ describe("createOutlookSyncable", () => {
   // The upserted counter is incremented for every non-removed entry even when
   // upsertMessage returns early; verify via DB that no row was written for it.
   test("skips message with undefined id — no DB row written", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -126,7 +126,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L43: message with empty-string id is skipped (id === "") ─────────────
   test("skips message with empty-string id — no DB row written", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -150,7 +150,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L46: missing subject → "(no subject)" ────────────────────────────────
   test("falls back to (no subject) when subject is missing", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -172,7 +172,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L46: empty-string subject → "(no subject)" ───────────────────────────
   test("falls back to (no subject) when subject is empty string", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -193,7 +193,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L47: missing bodyPreview → empty string in db ────────────────────────
   test("stores empty preview when bodyPreview is absent", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -214,7 +214,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L48: missing webLink → null url ──────────────────────────────────────
   test("stores null url when webLink is absent", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -235,7 +235,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L49: lastModifiedDateTime missing → fall back to receivedDateTime ────
   test("uses receivedDateTime when lastModifiedDateTime is absent", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -259,7 +259,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L53: missing from address → null authorId ────────────────────────────
   test("stores null authorId when from address is absent", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -280,7 +280,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L53: empty-string from address → null authorId ───────────────────────
   test("stores null authorId when from address is empty string", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -303,7 +303,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L56: address present but name missing → addr used as displayName ─────
   test("uses email address as displayName when name is absent", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -331,7 +331,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L56: address present but name is empty string → addr used as displayName
   test("uses email address as displayName when name is empty string", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -359,7 +359,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L64: very long subject gets truncated to 512 chars ───────────────────
   test("truncates subject longer than 512 chars", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const longSubject = "A".repeat(600);
 
@@ -382,7 +382,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L93: null cursor → no delta decode, uses initial URL ─────────────────
   test("null cursor triggers initial sync URL (not nextUrl)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     const capturedUrls: string[] = [];
@@ -403,7 +403,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L93: empty-string cursor → treated same as null (no decode) ──────────
   test("empty-string cursor triggers initial sync URL", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     const capturedUrls: string[] = [];
@@ -423,7 +423,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L95: valid cursor with a nextUrl → uses that URL as the page URL ─────
   test("valid cursor uses stored nextUrl for continuation", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const nextUrl = "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=continuation123";
     const cursor = encodeOutlookSyncCursor({ v: 1, nextUrl });
@@ -442,7 +442,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L95: cursor with invalid prefix → dec undefined → nextUrl falls to null
   test("cursor with wrong prefix is ignored, falls back to initial URL", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     // Wrong prefix — decodeOutlookSyncCursor returns undefined
     const badCursor = "nimbus-OTHER:abc123";
@@ -465,7 +465,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L106: empty value array → 0 upserted ─────────────────────────────────
   test("returns 0 upserted when value array is empty", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -483,7 +483,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L106: response without value key → 0 upserted ────────────────────────
   test("returns 0 upserted when value key is absent from response", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -506,7 +506,7 @@ describe("createOutlookSyncable", () => {
 
   // ── L112/L114: removed message with valid id → deleted, not upserted ─────
   test("deletes message marked with @removed", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     // First upsert the message so it exists in the db
@@ -544,7 +544,7 @@ describe("createOutlookSyncable", () => {
   // removed=true but id=undefined: the `if (removed && id !== undefined && id !== "")`
   // guard is false, so deleteItemByServiceExternal is NOT called (itemsDeleted stays 0).
   test("@removed entry with undefined id does not trigger delete", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -567,7 +567,7 @@ describe("createOutlookSyncable", () => {
 
   // ── pagination: nextLink present → hasMore = true, cursor stored ──────────
   test("returns hasMore=true and stores nextLink cursor when nextLink present", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const nextLink = "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=page2";
 
@@ -595,7 +595,7 @@ describe("createOutlookSyncable", () => {
 
   // ── cursor with null nextUrl → dec.nextUrl is null → fallback to initial ─
   test("cursor with null nextUrl falls back to initial URL", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const cursor = encodeOutlookSyncCursor({ v: 1, nextUrl: null });
 
@@ -615,7 +615,7 @@ describe("createOutlookSyncable", () => {
   // ── real Graph `body` indexing (Task 5) ───────────────────────────────────
 
   test("indexes the Graph body with the quoted tail stripped", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -642,7 +642,7 @@ describe("createOutlookSyncable", () => {
   });
 
   test("contentType text passes through without HTML stripping", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     // "plain & simple" is a FIXED POINT of plainTextFromHtmlLines (no tags, no
@@ -709,7 +709,7 @@ describe("createOutlookSyncable", () => {
   ].join("\r\n");
 
   test("a Word-composed HTML document indexes its prose, not its mso- CSS", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -760,7 +760,7 @@ describe("createOutlookSyncable", () => {
     // `$select` already fetches `bodyPreview`, so throwing it away bought
     // nothing: the `bodyPreview` arm gives `body_complete = 0` either way,
     // and keeping the ~255-char preview keeps the message searchable.
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -799,7 +799,7 @@ describe("createOutlookSyncable", () => {
     // sync page. A non-string contentType must be treated as non-"text" and
     // routed through `plainTextFromHtmlLines`, which is a safe no-op-ish
     // pass for content with no HTML markup.
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -829,7 +829,7 @@ describe("createOutlookSyncable", () => {
   });
 
   test("a message with no body still indexes title-only", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -851,7 +851,7 @@ describe("createOutlookSyncable", () => {
   });
 
   test("$select including body is on the initial delta request", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     let seenUrl = "";
@@ -871,7 +871,7 @@ describe("createOutlookSyncable", () => {
   });
 
   test("$select is NOT re-appended to a followed nextLink", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const storedNextLink =
       "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=continuePage";
@@ -890,7 +890,7 @@ describe("createOutlookSyncable", () => {
   });
 
   test("a pre-upgrade outl1 cursor is ignored and the initial delta URL is used", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     // Built with the OLD "nimbus-outl1:" prefix — must decode to undefined
     // under the bumped "nimbus-outl2:" CURSOR_PREFIX and fall through to the

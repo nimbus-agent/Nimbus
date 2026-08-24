@@ -7,6 +7,7 @@ import { type BodyRow, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { resolveAccessTokenForService } from "./access-token-registry.ts";
 
 /**
  * What a syncable may reach, in place of the raw `vault` and `db` handles it holds today.
@@ -63,6 +64,12 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
   ): Promise<string | null>;
   /** The V48/V49 body-depth chokepoint, unmoved — this only routes to it. */
   upsertItem(row: BodyRow): void;
+  /**
+   * The connector's OAuth access token, resolved by `sync/access-token-registry.ts` from the BOUND
+   * service — the connector does not choose its own provider, and does not hold a vault handle to
+   * pass into a helper.
+   */
+  accessToken(): Promise<string>;
   /** SYNCHRONOUS, and returns the id: callers set it as `authorId` on the item they build. */
   resolvePerson(hints: PersonSyncHints): string | null;
 }
@@ -98,6 +105,7 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     upsertItem: (row) => {
       upsertIndexedItemForSync(deps, row);
     },
+    accessToken: () => resolveAccessTokenForService(deps.vault, serviceId),
     resolvePerson: (hints) => resolvePersonForSync(deps.db, hints),
   };
 }
@@ -123,6 +131,7 @@ export function unboundSyncCapabilities(): SyncCapabilities {
   return {
     getSecret: () => refuse("getSecret"),
     getSharedSecret: () => refuse("getSharedSecret"),
+    accessToken: () => refuse("accessToken"),
     upsertItem: () => refuse("upsertItem"),
     resolvePerson: () => refuse("resolvePerson"),
   };

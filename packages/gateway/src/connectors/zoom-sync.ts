@@ -1,4 +1,3 @@
-import { getValidZoomAccessToken } from "../auth/zoom-access-token.ts";
 import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -463,7 +462,7 @@ export function createZoomSyncable(options: ZoomSyncableOptions): Syncable {
       }
       let token: string;
       try {
-        token = await getValidZoomAccessToken(ctx.vault);
+        token = await ctx.accessToken();
       } catch {
         return syncNoopResult(cursor, t0);
       }

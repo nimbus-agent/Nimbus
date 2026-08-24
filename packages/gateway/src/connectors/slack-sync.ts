@@ -1,4 +1,3 @@
-import { getValidSlackAccessToken } from "../auth/slack-access-token.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
@@ -403,7 +402,7 @@ export function createSlackSyncable(options: SlackSyncableOptions): Syncable {
 
       let token: string;
       try {
-        token = await getValidSlackAccessToken(ctx.vault);
+        token = await ctx.accessToken();
       } catch {
         return syncNoopResult(cursor, t0);
       }

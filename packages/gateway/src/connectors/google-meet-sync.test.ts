@@ -87,7 +87,7 @@ describe("createGoogleMeetSyncable", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("indexes conference records and paginates via nextPageToken", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -128,7 +128,7 @@ describe("createGoogleMeetSyncable", () => {
   });
 
   test("second pass forwards the page token and stops when nextPageToken is absent", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -156,7 +156,7 @@ describe("createGoogleMeetSyncable", () => {
   // L85 branch: dec is undefined → dec?.pageToken is undefined → ?? null arm taken
   // This happens when the cursor has the right prefix but an invalid payload
   test("corrupt cursor (valid prefix, invalid payload) falls back to pageToken=null", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
     let capturedUrl = "";
 
@@ -179,7 +179,7 @@ describe("createGoogleMeetSyncable", () => {
 
   // L90 branch: parsed.conferenceRecords is undefined → ?? [] arm taken (empty list)
   test("response with no conferenceRecords key yields 0 upserts", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -199,7 +199,7 @@ describe("createGoogleMeetSyncable", () => {
 
   // L95 branch: mapped === null → continue (record with no name is skipped)
   test("conference record without a name is skipped (mapped === null)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -233,7 +233,7 @@ describe("createGoogleMeetSyncable", () => {
   });
 
   test("a nameless record costs no participants request", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
     const participantUrls: string[] = [];
 
@@ -257,7 +257,7 @@ describe("createGoogleMeetSyncable", () => {
   });
 
   test("401 throws UnauthenticatedError with API message", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async () =>
@@ -310,7 +310,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("fetches the roster per record and stores it on the meeting item", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
     const participantUrls: string[] = [];
 
@@ -357,7 +357,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   });
 
   test("join/leave times never reach the indexed row", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -388,7 +388,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   });
 
   test("totalSize larger than the stored roster drives the `+N` remainder", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -413,7 +413,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   });
 
   test("a nonsense totalSize falls back to the stored roster length", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -435,7 +435,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   });
 
   test("a missing participants key yields an empty roster and the v1 title", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -453,7 +453,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   });
 
   test("a 403 on participants still indexes the conference record", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -473,7 +473,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   });
 
   test("a 401 on participants still surfaces UnauthenticatedError", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -494,7 +494,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   });
 
   test("invalid participants JSON degrades to an empty roster", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({
@@ -509,7 +509,7 @@ describe("createGoogleMeetSyncable — participants", () => {
   });
 
   test("the stored roster is clipped at 100 names", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_meet");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = meetFetch({

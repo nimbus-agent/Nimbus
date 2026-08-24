@@ -1,4 +1,3 @@
-import { getValidGoogleAccessToken } from "../auth/google-access-token.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
   fetchMessageMetadataOrNullOn404,
@@ -41,7 +40,7 @@ export function createGmailSyncable(options: GmailSyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       await ensure();
       const startedAt = Date.now();
-      const accessToken = await getValidGoogleAccessToken(ctx.vault, "gmail");
+      const accessToken = await ctx.accessToken();
       const now = Date.now();
       let itemsUpserted = 0;
       let itemsDeleted = 0;

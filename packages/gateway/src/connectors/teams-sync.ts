@@ -1,4 +1,3 @@
-import { getValidMicrosoftAccessToken } from "../auth/microsoft-access-token.ts";
 import { deleteItemByServiceExternal } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
@@ -31,7 +30,7 @@ export function createTeamsSyncable(options: TeamsSyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureMicrosoftMcpRunning();
-      const token = await getValidMicrosoftAccessToken(ctx.vault);
+      const token = await ctx.accessToken();
       const state = parseCursor(cursor);
       let bytesTransferred = 0;
 

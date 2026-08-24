@@ -57,7 +57,7 @@ describe("createGmailSyncable", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("null cursor: messages.list page + profile historyId → delta cursor", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -121,7 +121,7 @@ describe("createGmailSyncable", () => {
   });
 
   test("list phase: messages.get 404 is skipped, sync continues, warn logged", async () => {
-    const setup = await createOAuthConnectorTestSetup("google");
+    const setup = await createOAuthConnectorTestSetup("google", "gmail");
     const { logger, warns } = capturingLogger(setup.ctx.logger);
     const ctx = { ...setup.ctx, logger };
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
@@ -192,7 +192,7 @@ describe("createGmailSyncable", () => {
   });
 
   test("delta phase: messages.get 404 in messagesAdded is skipped, sync continues", async () => {
-    const setup = await createOAuthConnectorTestSetup("google");
+    const setup = await createOAuthConnectorTestSetup("google", "gmail");
     const { logger, warns } = capturingLogger(setup.ctx.logger);
     const ctx = { ...setup.ctx, logger };
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
@@ -268,7 +268,7 @@ describe("createGmailSyncable", () => {
 
   test("null cursor: empty messages list returns delta cursor with 0 upserts", async () => {
     // Covers L64 fallback: data.messages is undefined → entries = []
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -298,7 +298,7 @@ describe("createGmailSyncable", () => {
 
   test("list phase: message with undefined id is skipped", async () => {
     // Covers L67 TRUE branch: mid === undefined → continue
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -330,7 +330,7 @@ describe("createGmailSyncable", () => {
 
   test("list phase: meta.id missing is filled from list entry id; threadId fallback applied", async () => {
     // Covers L82 (meta.id ?? mid fallback) and L83-L84 (threadId fallback when meta.threadId empty)
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -383,7 +383,7 @@ describe("createGmailSyncable", () => {
 
   test("list phase: nextPageToken present → hasMore=true with list-phase cursor", async () => {
     // Covers L94 TRUE branch: next token triggers hasMore=true
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -411,7 +411,7 @@ describe("createGmailSyncable", () => {
 
   test("list phase: profile returns empty historyId → throws", async () => {
     // Covers L106 TRUE branch: historyId missing → throws Error
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -439,7 +439,7 @@ describe("createGmailSyncable", () => {
 
   test("non-prefix cursor → reset to initial list sync", async () => {
     // Covers L129 TRUE branch: cursor doesn't start with GMAIL_CURSOR_PREFIX
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
     let listCalled = false;
 
@@ -470,7 +470,7 @@ describe("createGmailSyncable", () => {
 
   test("corrupt cursor (valid prefix, invalid payload) → throws", async () => {
     // Covers L135 TRUE branch: decodeGmailSyncCursor returns undefined → throw
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     // Build a string with the right prefix but garbage base64 body
@@ -486,7 +486,7 @@ describe("createGmailSyncable", () => {
   test("list-phase cursor with pageToken resumes from that pageToken", async () => {
     // Covers L139 TRUE branch (decoded.phase === "list") and L140 (pageToken passed)
     // Also covers L58 TRUE branch (pageToken is set → searchParams.set called)
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
     let capturedListUrl = "";
 
@@ -525,7 +525,7 @@ describe("createGmailSyncable", () => {
 
   test("delta phase: history 404 (reset) → falls back to initial list sync", async () => {
     // Covers L144 TRUE branch: fetched.kind === "reset"
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
     let listCalled = false;
 
@@ -572,7 +572,7 @@ describe("createGmailSyncable", () => {
   });
 
   test("indexes a real Gmail body with the quoted tail stripped", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     const rawBody = "Agreed, ship Tuesday.\n\n> On Mon, Ana wrote:\n> the whole thread";
@@ -637,7 +637,7 @@ describe("createGmailSyncable", () => {
     // space — `stripQuotedTail`'s line-anchored markers can never match a
     // single-line body. It now routes through the line-preserving
     // `plainTextFromHtmlLines` instead.
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     const htmlBody =
@@ -702,7 +702,7 @@ describe("createGmailSyncable", () => {
     // part), so `upsertGmailMessage` stored the snippet with
     // `body_complete = 0` and the HTML body was never indexed — permanently,
     // since a later `index.rebody` reproduces the same result.
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     const blankPlain = Buffer.from("   \n  ", "utf8").toString("base64url");
@@ -768,7 +768,7 @@ describe("createGmailSyncable", () => {
     // `body_complete = 1` — losing the snippet the message used to have AND
     // making `index.rebody` skip it forever. Attachment-only mail, unusual
     // MIME shapes and trees past MAX_DEPTH/MAX_PARTS all land here too.
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -833,7 +833,7 @@ describe("createGmailSyncable", () => {
   });
 
   test("requests format=full, not format=metadata", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
     let seenUrl = "";
 
@@ -878,7 +878,7 @@ describe("createGmailSyncable", () => {
 
   test("delta phase: nextPageToken in history response → hasMore=true with delta cursor", async () => {
     // Covers L155 TRUE branch: nextPage present → returns hasMore=true delta cursor
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     const cursor = encodeGmailSyncCursor({

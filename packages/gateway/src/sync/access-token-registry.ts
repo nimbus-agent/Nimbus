@@ -1,0 +1,71 @@
+import { getValidCanvaAccessToken } from "../auth/canva-access-token.ts";
+import { getValidFigmaAccessToken } from "../auth/figma-access-token.ts";
+import { getValidGoogleAccessToken } from "../auth/google-access-token.ts";
+import { getValidHubspotAccessToken } from "../auth/hubspot-access-token.ts";
+import { getValidMendeleyAccessToken } from "../auth/mendeley-access-token.ts";
+import { getValidMicrosoftAccessToken } from "../auth/microsoft-access-token.ts";
+import { getValidMiroAccessToken } from "../auth/miro-access-token.ts";
+import { getValidNotionAccessToken } from "../auth/notion-access-token.ts";
+import { getValidSlackAccessToken } from "../auth/slack-access-token.ts";
+import { getValidWorkdayAccessToken } from "../auth/workday-access-token.ts";
+import { getValidZoomAccessToken } from "../auth/zoom-access-token.ts";
+import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
+
+/**
+ * Which OAuth helper resolves an access token for which connector.
+ *
+ * This exists so `SyncContext` can offer `accessToken()` without every connector holding a vault
+ * handle to pass into its own helper. The mapping is a property of the SERVICE, not a caller
+ * choice, which is why it is resolved from the bound service id rather than taken as an argument —
+ * the same reasoning that keeps the service id out of `getSecret`'s parameters.
+ *
+ * The four Google connectors share one helper parameterised by service, and OneDrive / Outlook /
+ * Teams share one Microsoft helper outright. Keeping the auth imports in this one module rather
+ * than in `sync-capabilities.ts` stops the capability layer from depending on fourteen auth
+ * modules.
+ *
+ * NOT REGISTERED — `salesforce`. `getValidSalesforceAuth` returns `{ accessToken, instanceUrl }`
+ * rather than a token, because the instance URL is per-tenant and comes out of the same OAuth
+ * exchange. It does not fit a `Promise<string>` capability and is deliberately left needing
+ * `ctx.vault` for now; Task 7 removes that handle and will surface this as a compile error, which
+ * is the right moment to decide between a second capability and reshaping the helper.
+ */
+const RESOLVERS: Partial<Record<ConnectorServiceId, (vault: NimbusVault) => Promise<string>>> = {
+  canva: getValidCanvaAccessToken,
+  figma: getValidFigmaAccessToken,
+  gmail: (v) => getValidGoogleAccessToken(v, "gmail"),
+  google_drive: (v) => getValidGoogleAccessToken(v, "google_drive"),
+  google_meet: (v) => getValidGoogleAccessToken(v, "google_meet"),
+  google_photos: (v) => getValidGoogleAccessToken(v, "google_photos"),
+  hubspot: getValidHubspotAccessToken,
+  mendeley: getValidMendeleyAccessToken,
+  miro: getValidMiroAccessToken,
+  notion: getValidNotionAccessToken,
+  onedrive: getValidMicrosoftAccessToken,
+  outlook: getValidMicrosoftAccessToken,
+  slack: getValidSlackAccessToken,
+  teams: getValidMicrosoftAccessToken,
+  workday: getValidWorkdayAccessToken,
+  zoom: getValidZoomAccessToken,
+};
+
+export function resolveAccessTokenForService(
+  vault: NimbusVault,
+  serviceId: ConnectorServiceId,
+): Promise<string> {
+  const resolver = RESOLVERS[serviceId];
+  if (resolver === undefined) {
+    // Throws rather than resolving to "" — an empty token would be sent as a real Authorization
+    // header and fail at the far end with an opaque 401, far from the actual mistake.
+    throw new Error(
+      `no OAuth access-token resolver is registered for "${serviceId}". Add one to ` +
+        "sync/access-token-registry.ts if that connector authenticates with OAuth.",
+    );
+  }
+  return resolver(vault);
+}
+
+export function hasAccessTokenResolver(serviceId: ConnectorServiceId): boolean {
+  return RESOLVERS[serviceId] !== undefined;
+}

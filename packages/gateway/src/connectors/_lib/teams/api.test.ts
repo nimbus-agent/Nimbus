@@ -338,7 +338,7 @@ describe("nextMessageCursorFromDeltaPage", () => {
 // ---------------------------------------------------------------------------
 describe("upsertChannelMessage", () => {
   test("missing id (undefined): returns without upsert (L49 branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {};
     upsertChannelMessage(ctx, "t1", "c1", m, Date.now());
     const row = db.query("SELECT count(*) as n FROM item WHERE service = 'teams'").get() as {
@@ -348,7 +348,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("empty string id: returns without upsert (L49 branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = { id: "" };
     upsertChannelMessage(ctx, "t1", "c1", m, Date.now());
     const row = db.query("SELECT count(*) as n FROM item WHERE service = 'teams'").get() as {
@@ -358,7 +358,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("body.content is a string: used as preview source (L53 branch: body defined, content string)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg1",
       body: { content: "Hello world message", contentType: "text" },
@@ -372,7 +372,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("body undefined: content defaults to empty string (L53 branch: body undefined)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = { id: "msg2" };
     upsertChannelMessage(ctx, "t1", "c1", m, 1_000_000);
     const row = db
@@ -387,7 +387,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("displayName non-empty: fromName set (L57 branch: defined and non-empty)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg3",
       from: { user: { displayName: "Alice" } },
@@ -402,7 +402,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("displayName empty string: fromName remains null (L57 branch: displayName === '')", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg4",
       from: { user: { displayName: "" } },
@@ -416,7 +416,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("displayName undefined: fromName remains null (L57 branch: undefined)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg5",
       from: { user: { id: "uid-5" } },
@@ -432,7 +432,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("preview non-empty: title derived from preview (L61 branch: trim !== '')", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg6",
       body: { content: "This is the message body text for preview", contentType: "text" },
@@ -448,7 +448,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("title exceeding 512 chars is truncated (L69 branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     // Generate a fromName long enough to push title > 512 (no body, from path L66: "Message from <name>")
     const longName = "A".repeat(520);
     const m: GraphTeamsMessage = {
@@ -464,7 +464,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("graphUserId empty string: authorId is null (L75 branch: graphUserId === '')", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg8",
       from: { user: { displayName: "Bob", id: "" } },
@@ -478,7 +478,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("graphUserId undefined: authorId is null (L75 branch: graphUserId undefined)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg9",
       from: { user: { displayName: "Carol" } },
@@ -491,7 +491,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("lastModifiedDateTime defined: used for modifiedAt (L78 branch: defined path)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const isoTs = "2024-01-15T10:00:00Z";
     const m: GraphTeamsMessage = {
       id: "msg10",
@@ -508,7 +508,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("lastModifiedDateTime undefined, createdDateTime defined: used via ?? (L78 branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg11",
       createdDateTime: "2024-02-20T12:00:00Z",
@@ -522,7 +522,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("both undefined: modifiedAt falls back to now (L78 branch: both undefined)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const now = 7_777_777;
     const m: GraphTeamsMessage = { id: "msg12" };
     upsertChannelMessage(ctx, "t1", "c1", m, now);
@@ -533,7 +533,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("from is undefined: no displayName, no graphUserId (L57/L75 branches, from=undefined)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = { id: "msg13", body: { content: "" } };
     upsertChannelMessage(ctx, "t1", "c1", m, 1_000_000);
     const row = db
@@ -547,7 +547,7 @@ describe("upsertChannelMessage", () => {
   });
 
   test("graphUserId defined and displayName null: displayName fallback to graphUserId (L78 in resolvePersonForSync)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const m: GraphTeamsMessage = {
       id: "msg14",
       from: { user: { id: "gid-14" } }, // displayName undefined → fromName=null → displayName fallback to graphUserId

@@ -46,6 +46,7 @@ export function silentSyncContextExtras(): Pick<
   | "depth"
   | "getSecret"
   | "getSharedSecret"
+  | "accessToken"
   | "upsertItem"
   | "resolvePerson"
 > {

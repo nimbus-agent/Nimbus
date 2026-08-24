@@ -5,9 +5,10 @@ import https from "node:https";
 import os from "node:os";
 import pino from "pino";
 import { OAUTH_PROVIDERS } from "../auth/oauth-registry.ts";
+import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
-import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
+import { buildSyncCapabilities, unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { SyncContext } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
@@ -39,9 +40,15 @@ export function openMemoryIndexDatabase(): Database {
   return db;
 }
 
-export function createSyncTestContext(db: Database, vault: NimbusVault): SyncContext {
+export function createSyncTestContext(
+  db: Database,
+  vault: NimbusVault,
+  serviceId?: ConnectorServiceId,
+): SyncContext {
   return {
-    ...unboundSyncCapabilities(),
+    ...(serviceId === undefined
+      ? unboundSyncCapabilities()
+      : buildSyncCapabilities({ vault, db, depth: "full" }, serviceId)),
     db,
     vault,
     logger: pino({ level: "silent" }),
@@ -82,11 +89,18 @@ function testOAuthVaultJson(): string {
 
 export async function createOAuthConnectorTestSetup(
   provider: "google" | "microsoft",
+  /**
+   * The CONNECTOR whose context this is — `gmail`, `onedrive`, and so on. The provider alone is not
+   * enough: four Google connectors share one provider but each resolves its own vault keys, so a
+   * context bound to the provider would scope three of them wrongly. Omitted, the capabilities
+   * throw rather than silently reading nothing.
+   */
+  serviceId?: ConnectorServiceId,
 ): Promise<{ db: Database; vault: NimbusVault; ctx: SyncContext }> {
   const vault = createMemoryVault();
   await vault.set(OAUTH_PROVIDERS[provider].vaultKey, testOAuthVaultJson());
   const db = openMemoryIndexDatabase();
-  return { db, vault, ctx: createSyncTestContext(db, vault) };
+  return { db, vault, ctx: createSyncTestContext(db, vault, serviceId) };
 }
 
 export function expectPrefixedCursorCodecRoundTrip<T>(

@@ -1,4 +1,3 @@
-import { getValidMendeleyAccessToken } from "../auth/mendeley-access-token.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -120,7 +119,7 @@ async function loadAccessToken(
     return null;
   }
   try {
-    return await getValidMendeleyAccessToken(ctx.vault);
+    return await ctx.accessToken();
   } catch {
     return null;
   }

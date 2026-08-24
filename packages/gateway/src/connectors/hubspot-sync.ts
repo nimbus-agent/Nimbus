@@ -1,4 +1,3 @@
-import { getValidHubspotAccessToken } from "../auth/hubspot-access-token.ts";
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
@@ -35,7 +34,7 @@ async function loadCreds(ctx: SyncContext): Promise<HubspotCreds | null> {
   }
   let token: string;
   try {
-    token = await getValidHubspotAccessToken(ctx.vault);
+    token = await ctx.accessToken();
   } catch {
     return null;
   }

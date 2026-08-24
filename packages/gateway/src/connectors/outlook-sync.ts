@@ -1,4 +1,3 @@
-import { getValidMicrosoftAccessToken } from "../auth/microsoft-access-token.ts";
 import {
   deleteItemByServiceExternal,
   type IndexedItemBodyInput,
@@ -122,7 +121,7 @@ export function createOutlookSyncable(options: OutlookSyncableOptions): Syncable
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureMicrosoftMcpRunning();
-      const token = await getValidMicrosoftAccessToken(ctx.vault);
+      const token = await ctx.accessToken();
 
       let nextUrl: string | null = null;
       if (cursor !== null && cursor !== "") {

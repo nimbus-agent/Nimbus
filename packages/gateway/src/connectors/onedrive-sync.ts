@@ -1,4 +1,3 @@
-import { getValidMicrosoftAccessToken } from "../auth/microsoft-access-token.ts";
 import { deleteItemByServiceExternal, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import { normalizeEmail } from "../people/person-store.ts";
@@ -123,7 +122,7 @@ export function createOneDriveSyncable(options: OneDriveSyncableOptions): Syncab
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureMicrosoftMcpRunning();
-      const token = await getValidMicrosoftAccessToken(ctx.vault);
+      const token = await ctx.accessToken();
 
       let nextUrl: string | null = null;
       if (cursor !== null && cursor !== "") {

@@ -74,7 +74,7 @@ describe("createGooglePhotosSyncable", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("indexes media items from search response", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -113,7 +113,7 @@ describe("createGooglePhotosSyncable", () => {
   });
 
   test("search request uses ALL_MEDIA filter for library-wide listing", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
@@ -133,7 +133,7 @@ describe("createGooglePhotosSyncable", () => {
   });
 
   test("401 throws UnauthenticatedError with API message", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async () =>
@@ -153,7 +153,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // L149: mediaItems absent → items defaults to []
   test("response with no mediaItems field yields 0 upserted and no hasMore", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -173,7 +173,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // L140: empty-string cursor behaves like null cursor (no pageToken in body)
   test("empty-string cursor is treated as fresh sync (no pageToken in request)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     let capturedBody: Record<string, unknown> = {};
@@ -190,7 +190,7 @@ describe("createGooglePhotosSyncable", () => {
   // L109: non-null, non-empty pageToken is forwarded in the POST body
   // L144: cursor with a real pageToken is decoded and forwarded
   test("valid cursor with pageToken forwards it in the search request body", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
     const cursor = encodeGooglePhotosSyncCursor({ v: 1, pageToken: "tok-abc" });
 
@@ -207,7 +207,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // L144: cursor with pageToken: null still starts fresh (no pageToken in body)
   test("cursor with null pageToken does not include pageToken in search body", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
     const cursor = encodeGooglePhotosSyncCursor({ v: 1, pageToken: null });
 
@@ -224,7 +224,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // L69: item with undefined id is silently skipped (no DB row written)
   test("media item with no id is skipped — no DB row written", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -253,7 +253,7 @@ describe("createGooglePhotosSyncable", () => {
   // L74: item with no productUrl → url is null
   // L60: item with no mediaMetadata creationTime → fallback timestamp used
   test("media item without filename or productUrl or creationTime uses sensible defaults", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -289,7 +289,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // L73 branch: filename is empty string → fallback to "photo_<id>"
   test("media item with empty filename falls back to photo_<id>", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -314,7 +314,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // L60 branch: creationTime is empty string → fallback timestamp
   test("media item with empty creationTime uses fallback timestamp", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     const before = Date.now();
@@ -349,7 +349,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // L64 branch: creationTime is an un-parseable string → fallback
   test("media item with invalid creationTime string uses fallback timestamp", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     const before = Date.now();
@@ -383,7 +383,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // L88: title longer than 512 chars is truncated
   test("media item with filename > 512 chars is truncated to 512", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     const longFilename = `${"x".repeat(600)}.jpg`;
@@ -410,7 +410,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // nextPageToken absent / empty → hasMore false, cursor null
   test("response with no nextPageToken yields hasMore false and null cursor", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -430,7 +430,7 @@ describe("createGooglePhotosSyncable", () => {
 
   // Non-decodable cursor string → treated as null pageToken (fresh start)
   test("malformed cursor string falls back to null pageToken", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "google_photos");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
     let capturedBody: Record<string, unknown> = {};

@@ -56,7 +56,7 @@ describe("createTeamsSyncable", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("indexes channel messages after teams and channels discovery", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -119,7 +119,7 @@ describe("createTeamsSyncable", () => {
   });
 
   test("teams phase paginates via @odata.nextLink (lines 55-67)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -149,7 +149,7 @@ describe("createTeamsSyncable", () => {
   });
 
   test("channels phase paginates via @odata.nextLink (lines 124-136)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -195,7 +195,7 @@ describe("createTeamsSyncable", () => {
   });
 
   test("messages phase with empty pairs returns immediately (lines 156-164)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     // No fetch should ever happen on this path.
@@ -227,7 +227,7 @@ describe("createTeamsSyncable", () => {
   });
 
   test("messages phase past last pair returns immediately (lines 166-175)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -255,7 +255,7 @@ describe("createTeamsSyncable", () => {
   });
 
   test("messages phase deletes @removed messages (lines 200-206)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     // Pass 1: index a normal message so there is a row to delete later.
@@ -329,7 +329,7 @@ describe("createTeamsSyncable", () => {
   });
 
   test("a Teams message over the prose cap is not reported complete", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     // 20 KiB of body content, well over BODY_MAX_PROSE (16384)

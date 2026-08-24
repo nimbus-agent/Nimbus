@@ -56,6 +56,7 @@ describe("the capability set exposes no raw handle", () => {
     // review surface. `getSharedSecret` was added for the four connectors that authenticate with a
     // shared gcp.*/github.* credential, and this assertion is what made that visible.
     expect(Object.keys(caps).sort()).toEqual([
+      "accessToken",
       "getSecret",
       "getSharedSecret",
       "resolvePerson",

@@ -155,7 +155,7 @@ describe("gmailFetchJson", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("returns json and bytes on 200", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     globalThis.fetch = (async (_input: FetchInput) => {
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
@@ -169,7 +169,7 @@ describe("gmailFetchJson", () => {
   });
 
   test("throws on non-200 response (covers L101 indirectly via google-sync-shared)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     globalThis.fetch = (async (_input: FetchInput) => {
       return new Response(JSON.stringify({ error: { code: 500, message: "internal" } }), {
         status: 500,
@@ -187,7 +187,7 @@ describe("fetchProfile", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("returns profile with emailAddress and historyId", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     globalThis.fetch = (async (_input: FetchInput) => {
       return new Response(JSON.stringify({ emailAddress: "user@example.com", historyId: "42" }), {
         status: 200,
@@ -208,7 +208,7 @@ describe("fetchMessageMetadataOrNullOn404", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("returns null on 404 response (L101 true branch)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     globalThis.fetch = (async (_input: FetchInput) => {
       return new Response(
         JSON.stringify({ error: { code: 404, message: "Requested entity was not found." } }),
@@ -221,7 +221,7 @@ describe("fetchMessageMetadataOrNullOn404", () => {
   });
 
   test("rethrows non-404 errors (L101 false branch — throw e)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     globalThis.fetch = (async (_input: FetchInput) => {
       return new Response(JSON.stringify({ error: { code: 403, message: "Forbidden" } }), {
         status: 403,
@@ -235,7 +235,7 @@ describe("fetchMessageMetadataOrNullOn404", () => {
   });
 
   test("returns resource on success", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("msg-ok")) {
@@ -264,7 +264,7 @@ describe("fetchMessageMetadataOrNullOn404", () => {
 // ---------------------------------------------------------------------------
 describe("upsertGmailMessage", () => {
   test("returns early when id is undefined (L145 true branch — id undefined)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m: GmailMessageResource = {};
     upsertGmailMessage(ctx, m, Date.now());
     // No row should be inserted
@@ -273,7 +273,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("returns early when id is empty string (L145 true branch — id '')", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m: GmailMessageResource = { id: "" };
     upsertGmailMessage(ctx, m, Date.now());
     const row = db.query("SELECT id FROM item WHERE service = 'gmail'").get();
@@ -281,7 +281,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("uses (no subject) when Subject header absent (L148 ?? fallback)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m: GmailMessageResource = {
       id: "m-nosubj",
       payload: { headers: [] },
@@ -296,7 +296,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("body_preview is '' when the payload carries no usable MIME part", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     // snippet is no longer read for the body — it is irrelevant here even
     // when malformed (number through unknown to satisfy no-any).
     const m = {
@@ -318,7 +318,7 @@ describe("upsertGmailMessage", () => {
     // upsertIndexedItem's body_preview = clampBody(body, BODY_PREVIEW_MAX).
     const longBody = "x".repeat(600);
     const encoded = Buffer.from(longBody, "utf8").toString("base64url");
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m: GmailMessageResource = {
       id: "m-longbody",
       internalDate: "1700000000000",
@@ -336,7 +336,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("subject longer than 512 chars is sliced (L173 true branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const longSubject = "A".repeat(600);
     const m: GmailMessageResource = {
       id: "m-longsubj",
@@ -352,7 +352,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("uses now when internalDate is undefined (L150 true branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const now = 1_700_000_000_000;
     const m: GmailMessageResource = {
       id: "m-nodate",
@@ -368,7 +368,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("uses now when internalDate is non-numeric (L151 false branch — not finite)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const now = 1_700_000_000_000;
     const m = {
       id: "m-badinternaldate",
@@ -385,7 +385,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("threadId '' when threadId is not a string (L152 false branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m = {
       id: "m-badthreadid",
       snippet: "snip",
@@ -404,7 +404,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("URL uses threadId when threadId is non-empty string (L165 false branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m: GmailMessageResource = {
       id: "m-withthreadid",
       threadId: "th-real",
@@ -426,7 +426,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("metadata threadId is undefined when threadId is '' (L180 true branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m = {
       id: "m-nothreadid",
       // threadId will be coerced to '' via non-string
@@ -444,7 +444,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("from email present → resolves authorId (L162 false branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m: GmailMessageResource = {
       id: "m-withauthor",
       threadId: "th-author",
@@ -466,7 +466,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("from header absent → authorId is null (L162 true branch — email undefined)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m: GmailMessageResource = {
       id: "m-noauthor",
       snippet: "snip",
@@ -481,7 +481,7 @@ describe("upsertGmailMessage", () => {
   });
 
   test("from header with displayName included in resolvePersonForSync (L153 branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const { db, ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const m: GmailMessageResource = {
       id: "m-displayname",
       snippet: "snip",

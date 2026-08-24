@@ -1,4 +1,3 @@
-import { getValidWorkdayAccessToken } from "../auth/workday-access-token.ts";
 import {
   DEFAULT_NIMBUS_WORKDAY_TOML,
   type NimbusWorkdayToml,
@@ -268,7 +267,13 @@ export type WorkdaySyncableOptions = {
   ensureWorkdayMcpRunning: () => Promise<void>;
   loadWorkdayConfig?: () => NimbusWorkdayToml;
   fetchFn?: FetchFn;
-  loadAccessToken?: (vault: SyncContext["vault"]) => Promise<string>;
+  /**
+   * Test seam only. It takes NO arguments: production never supplies this option
+   * (`assemble-sync-registrations.ts` does not set it) and every test mock ignored the vault it was
+   * handed, so the parameter existed solely to thread a vault handle through a callback — the exact
+   * shape the narrowing removes.
+   */
+  loadAccessToken?: () => Promise<string>;
   /** Override the tenant host used for same-host egress enforcement (tests only). */
   tenantHost?: string;
 };
@@ -287,8 +292,8 @@ export function createWorkdaySyncable(options: WorkdaySyncableOptions): Syncable
       try {
         accessToken =
           options.loadAccessToken === undefined
-            ? await getValidWorkdayAccessToken(ctx.vault)
-            : await options.loadAccessToken(ctx.vault);
+            ? await ctx.accessToken()
+            : await options.loadAccessToken();
       } catch {
         return syncNoopResult(cursor, t0);
       }

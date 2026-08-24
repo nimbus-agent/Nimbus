@@ -1,4 +1,3 @@
-import { getValidFigmaAccessToken } from "../auth/figma-access-token.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -115,7 +114,7 @@ export function createFigmaSyncable(options: FigmaSyncableOptions): Syncable {
       }
       let token: string;
       try {
-        token = await getValidFigmaAccessToken(ctx.vault);
+        token = await ctx.accessToken();
       } catch {
         return syncNoopResult(cursor, t0);
       }

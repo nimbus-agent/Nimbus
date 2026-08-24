@@ -1,4 +1,3 @@
-import { getValidGoogleAccessToken } from "../auth/google-access-token.ts";
 import { deleteItemByServiceExternal, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
@@ -398,7 +397,7 @@ export function createGoogleDriveSyncable(options: GoogleDriveSyncableOptions): 
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       await ensure();
       const startedAt = Date.now();
-      const accessToken = await getValidGoogleAccessToken(ctx.vault, "google_drive");
+      const accessToken = await ctx.accessToken();
 
       const sinceMs = Date.now() - initialSyncDepthDays * 86_400_000;
       const sinceIso = new Date(sinceMs).toISOString();

@@ -34,7 +34,7 @@ describe("createOneDriveSyncable", () => {
   registerGlobalFetchRestore(afterEach);
 
   test("upserts file items and stores deltaLink cursor", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -78,7 +78,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("folder item: sets type=folder, url=null when webUrl missing", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -116,7 +116,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("item with no id is skipped — no DB row written (L66 branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -145,7 +145,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("title fallback to item_<id> when name is missing (L69 branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -179,7 +179,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("title is truncated to 512 chars when name exceeds 512 (L102 branch)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const longName = "a".repeat(600);
 
@@ -206,7 +206,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("file mimeType is undefined when file field is array (L77 branch)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -231,7 +231,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("authorId is null when lastModifiedBy has no usable email (L93 displayName fallback and null path)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -293,7 +293,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("invalid cursor is treated as initial fetch (L131 branch)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     let capturedUrl = "";
@@ -320,7 +320,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("empty value array when page has no value field (L142 branch)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -343,7 +343,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("pagination: nextLink sets hasMore=true, uses nextLink on second call (L129/nextLink branch)", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     globalThis.fetch = (async (input: FetchInput) => {
@@ -381,7 +381,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("deleted.state='deleted' arm removes item with id (L155-L156 branches)", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     let call = 0;
@@ -433,7 +433,7 @@ describe("createOneDriveSyncable", () => {
   });
 
   test("deletes when @removed present", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "onedrive");
     const syncable = createOneDriveSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     let call = 0;
