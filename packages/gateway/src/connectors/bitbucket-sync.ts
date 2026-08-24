@@ -1,5 +1,4 @@
 import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
 import { mapBitbucketPrFiles } from "../prfiles/pr-file-mapping.ts";
 import { plainTextFromHtml } from "../string/html-plain-text.ts";
@@ -150,7 +149,7 @@ function upsertFromPullRequest(
     uuidRaw !== undefined && uuidRaw !== "" ? normalizeBitbucketUserUuid(uuidRaw) : undefined;
   const authorId =
     bbUuid !== undefined && bbUuid !== ""
-      ? resolvePersonForSync(ctx.db, {
+      ? ctx.resolvePerson({
           bitbucketUuid: bbUuid,
           displayName: displayName ?? bbUuid,
         })

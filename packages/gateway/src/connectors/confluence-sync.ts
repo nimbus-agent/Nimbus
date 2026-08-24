@@ -1,5 +1,4 @@
 import { type IndexedItemBodyInput, upsertIndexedItemForSync } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import { plainTextFromHtml } from "../string/html-plain-text.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
@@ -74,13 +73,13 @@ function resolveConfluenceAuthorId(ctx: SyncContext, by: Record<string, unknown>
   const email = stringField(by, "email");
   const displayName = stringField(by, "displayName");
   if (email !== undefined && email !== "" && email.includes("@")) {
-    return resolvePersonForSync(ctx.db, {
+    return ctx.resolvePerson({
       jiraAccountId: accountId,
       canonicalEmail: email,
       displayName: displayName ?? email,
     });
   }
-  return resolvePersonForSync(ctx.db, {
+  return ctx.resolvePerson({
     jiraAccountId: accountId,
     displayName: displayName ?? accountId,
   });

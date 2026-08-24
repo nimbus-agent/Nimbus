@@ -3,7 +3,6 @@ import {
   type IndexedItemBodyInput,
   upsertIndexedItemForSync,
 } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import { stripQuotedTail } from "../string/email-quoted-text.ts";
 import { plainTextFromHtmlLines } from "../string/html-plain-text-lines.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
@@ -85,7 +84,7 @@ function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
   const fromName = m.from?.emailAddress?.name;
   const authorId =
     addr !== undefined && addr !== ""
-      ? resolvePersonForSync(ctx.db, {
+      ? ctx.resolvePerson({
           canonicalEmail: addr,
           displayName: fromName !== undefined && fromName !== "" ? fromName : addr,
         })

@@ -1,5 +1,4 @@
 import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import {
   FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
@@ -301,13 +300,13 @@ function resolveJiraIssueAuthorId(
     return null;
   }
   if (creatorEmail !== undefined && creatorEmail !== "") {
-    return resolvePersonForSync(ctx.db, {
+    return ctx.resolvePerson({
       jiraAccountId: accountId,
       canonicalEmail: creatorEmail,
       displayName: creatorName ?? creatorEmail,
     });
   }
-  return resolvePersonForSync(ctx.db, {
+  return ctx.resolvePerson({
     jiraAccountId: accountId,
     displayName: creatorName ?? accountId,
   });

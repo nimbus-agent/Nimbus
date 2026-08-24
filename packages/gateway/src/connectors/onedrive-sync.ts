@@ -1,5 +1,4 @@
 import { deleteItemByServiceExternal, upsertIndexedItemForSync } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import { normalizeEmail } from "../people/person-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
@@ -86,7 +85,7 @@ function upsertDriveItem(ctx: SyncContext, d: DriveItem, now: number): void {
   const authorId =
     lmEmail === undefined
       ? null
-      : resolvePersonForSync(ctx.db, {
+      : ctx.resolvePerson({
           canonicalEmail: lmEmail,
           displayName:
             lmUser?.displayName !== undefined && lmUser.displayName !== ""

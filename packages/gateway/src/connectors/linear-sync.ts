@@ -1,5 +1,4 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -146,10 +145,10 @@ function resolveLinearIssueAuthorId(
     if (creatorId !== undefined) {
       hints.linearMemberId = creatorId;
     }
-    return resolvePersonForSync(ctx.db, hints);
+    return ctx.resolvePerson(hints);
   }
   if (creatorId !== undefined && creatorId !== "") {
-    return resolvePersonForSync(ctx.db, {
+    return ctx.resolvePerson({
       linearMemberId: creatorId,
       displayName: creatorName ?? creatorId,
     });

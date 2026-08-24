@@ -1,5 +1,4 @@
 import { deleteItemByServiceExternal, upsertIndexedItemForSync } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { fetchGoogleJson } from "./google-sync-shared.ts";
 import { asUnknownObjectRecord } from "./json-unknown.ts";
@@ -143,7 +142,7 @@ function resolveDriveOwnerAuthorId(
   if (email === undefined) {
     return null;
   }
-  return resolvePersonForSync(ctx.db, {
+  return ctx.resolvePerson({
     canonicalEmail: email,
     displayName: ownerName ?? email,
   });

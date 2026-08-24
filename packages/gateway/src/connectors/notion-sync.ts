@@ -3,7 +3,6 @@ import {
   selectItemBodyFetchState,
   upsertIndexedItemForSync,
 } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
   fetchNotionPageText,
@@ -175,7 +174,7 @@ function notionAuthorIdFromPageRow(ctx: SyncContext, row: Record<string, unknown
   if (notionUserId === undefined || notionUserId === "") {
     return null;
   }
-  return resolvePersonForSync(ctx.db, { notionUserId });
+  return ctx.resolvePerson({ notionUserId });
 }
 
 async function notionConsumeSearchResultRow(

@@ -1,5 +1,4 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -189,7 +188,7 @@ function upsertOneDiscordMessageIfValid(
   const url = `https://discord.com/channels/${guildId}/${channelId}/${mid}`;
   const authorId =
     authorSnowflake !== undefined && authorSnowflake !== ""
-      ? resolvePersonForSync(ctx.db, {
+      ? ctx.resolvePerson({
           discordUserId: authorSnowflake,
           displayName: displayNameFromDiscordAuthor(author),
         })
