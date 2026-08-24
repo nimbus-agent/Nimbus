@@ -1142,3 +1142,69 @@ describe("SyncScheduler records whether a run had a credential at all (F6/F13)",
     expect(getConnectorHealth(db, "jenkins").state).toBe("healthy");
   });
 });
+
+describe("per-service capability binding", () => {
+  // The scoping MUST bind per service, not per gateway: `syncBase` in assemble.ts is built once and
+  // shared by every connector, so binding there would scope all of them to whichever id was passed
+  // first. `runJob` and `syncContextFor` are the first points that know the service.
+  function ctxWithVaultSpy(db: Database): { ctx: SyncContext; asked: string[] } {
+    const asked: string[] = [];
+    const vault = {
+      get: (key: string) => {
+        asked.push(key);
+        return Promise.resolve(null);
+      },
+    } as unknown as SyncContext["vault"];
+    return { ctx: { ...testContext(db), vault }, asked };
+  }
+
+  function secretReadingSyncable(serviceId: string): Syncable {
+    return {
+      serviceId,
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(ctx): Promise<SyncResult> {
+        await ctx.getSecret?.("api_token" as never);
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+  }
+
+  test("getSecret prefixes the service whose job is running", async () => {
+    // One syncable per scheduler: registering several makes the scheduler run all of them, and
+    // `isConnectorConfigured` probes each one's vault keys, which is normal behaviour rather than a
+    // scoping violation. Isolating keeps the assertion about the capability.
+    async function keysAskedDuring(serviceId: string): Promise<string[]> {
+      const db = openMemoryIndexDatabase();
+      LocalIndex.ensureSchema(db);
+      const { ctx, asked } = ctxWithVaultSpy(db);
+      const scheduler = new SyncScheduler(ctx);
+      scheduler.register(secretReadingSyncable(serviceId));
+      await scheduler.forceSync(serviceId);
+      return asked;
+    }
+
+    expect(await keysAskedDuring("jira")).toContain("jira.api_token");
+    expect(await keysAskedDuring("linear")).toContain("linear.api_token");
+
+    // The same key NAME, bound to a different service, resolves a different vault key. That is the
+    // whole property: today `ctx.vault.get("jira.api_token")` works from inside linear's syncable.
+    const fromLinear = await keysAskedDuring("linear");
+    expect(fromLinear.filter((k) => k.startsWith("jira."))).toEqual([]);
+  });
+
+  test("syncContextFor binds capabilities too — the targeted-fetch path", async () => {
+    // assemble.ts routes POST /v1/items/fetch through syncContextFor, NOT runJob. A capability
+    // bound only in runJob would be undefined here and, being Partial during the migration, would
+    // fail silently rather than at compile time.
+    const db = openMemoryIndexDatabase();
+    LocalIndex.ensureSchema(db);
+    const { ctx, asked } = ctxWithVaultSpy(db);
+    const scheduler = new SyncScheduler(ctx);
+
+    const fetchCtx = scheduler.syncContextFor("jira");
+    expect(typeof fetchCtx.getSecret).toBe("function");
+    await fetchCtx.getSecret?.("api_token" as never);
+    expect(asked).toEqual(["jira.api_token"]);
+  });
+});

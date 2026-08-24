@@ -2362,6 +2362,11 @@ export async function assemblePlatformServices(
     );
   });
 
+  // Capabilities are NOT bound here, deliberately. This context is built ONCE and shared by every
+  // service, so a `getSecret` bound at this point would carry whichever service id happened to be
+  // chosen and be scoped to the wrong connector for all but one of them. They bind per service in
+  // `sync/scheduler.ts` `contextForService`, which both `runJob` and `syncContextFor` route
+  // through — the first points that know which connector is running.
   const syncBase: SyncContext = {
     vault,
     db,

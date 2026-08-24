@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-
+import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
 import {
   type ConnectorHealthSnapshot,
   type ConnectorHealthState,
@@ -14,6 +14,7 @@ import {
   type SchedulerStateRow,
   SqliteSchedulerStateRepository,
 } from "./scheduler-state-repository.ts";
+import { buildSyncCapabilities } from "./sync-capabilities.ts";
 import type {
   Syncable,
   SyncContext,
@@ -178,8 +179,41 @@ export class SyncScheduler {
    * so a targeted fetch shares depth enforcement and the rate-limiter bucket with scheduled syncs
    * rather than constructing a parallel context that could drift from it.
    */
+  /**
+   * The ONE place a per-service context is built. `runJob` and `syncContextFor` both route here so
+   * they cannot diverge: a second builder that forgot the capability binding would hand a syncable
+   * `undefined` capabilities, and because they are `Partial` during the migration that fails
+   * silently at runtime rather than at compile time.
+   */
+  private contextForService(serviceId: string, historyFloorMs?: number): SyncContext {
+    const depth = this.getDepthForService(serviceId);
+    const caps = buildSyncCapabilities(
+      {
+        vault: this.ctx.vault,
+        db: this.ctx.db,
+        depth,
+        ...(this.ctx.resolveServiceId === undefined
+          ? {}
+          : { resolveServiceId: this.ctx.resolveServiceId }),
+        ...(this.ctx.scheduleItemEmbedding === undefined
+          ? {}
+          : { scheduleItemEmbedding: this.ctx.scheduleItemEmbedding }),
+      },
+      // The scheduler types serviceId as `string`, but every value reaching here is a registry key
+      // — the same id space `CONNECTOR_VAULT_SECRET_KEYS` is keyed by. An id outside it simply
+      // resolves no secrets, which is the fail-closed direction.
+      serviceId as ConnectorServiceId,
+    );
+    return {
+      ...this.ctx,
+      ...caps,
+      depth,
+      ...(historyFloorMs === undefined ? {} : { historyFloorMs }),
+    };
+  }
+
   syncContextFor(serviceId: string): SyncContext {
-    return { ...this.ctx, depth: this.getDepthForService(serviceId) };
+    return this.contextForService(serviceId);
   }
 
   register(connector: Syncable, intervalOverrideMs?: number): void {
@@ -701,11 +735,7 @@ export class SyncScheduler {
     let result: SyncResult;
     try {
       const historyFloorMs = this.historyFloors.get(job.serviceId);
-      const runCtx: SyncContext = {
-        ...this.ctx,
-        depth: this.getDepthForService(job.serviceId),
-        ...(historyFloorMs === undefined ? {} : { historyFloorMs }),
-      };
+      const runCtx: SyncContext = this.contextForService(job.serviceId, historyFloorMs);
       // I29 CRITICAL 1: `platform/assemble-sync-registrations.ts` registers ~90 cloud syncables
       // with NO credential gate, and each one's `sync()` short-circuits to a network-free noop
       // when unconfigured — so appending unconditionally here fabricated an "authorized" `sync`
