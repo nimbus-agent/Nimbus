@@ -2238,7 +2238,9 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
         contextFor: (service) => syncScheduler.syncContextFor(service),
         httpOriginFor: (service) => httpOrigins.get(service) ?? null,
         urlIsSupported: (service, u) => fetchOneUrlIsSupported(service, u, jiraBaseUrl),
-        appendEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
+        // The returned row hash is discarded here and consumed once the seam is widened to
+        // carry it — an outcome marker names the row it describes by that hash.
+        appendEgress: (row) => void recordSyncEgress(db, { ...row, now: Date.now() }),
         sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       },
       url,

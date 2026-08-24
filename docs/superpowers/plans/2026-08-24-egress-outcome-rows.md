@@ -54,7 +54,7 @@
 - Consumes: nothing.
 - Produces: `appendEgressEntry(db, entry): { rowHash: string }` and `recordSyncEgress(db, args): { rowHash: string } | undefined`, both consumed by Tasks 3 and 4.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `packages/gateway/src/egress/egress-ledger.test.ts`:
 
@@ -86,12 +86,12 @@ test("returns undefined for a local-only destination, because no row was written
 
 If `egress-ledger.test.ts` has no `e()` entry factory or `listEgress` import, copy both from `egress-verify.test.ts`, which has them.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/gateway/src/egress/egress-ledger.test.ts packages/gateway/src/egress/sync-egress.test.ts`
 Expected: FAIL — `out.rowHash` is undefined because both functions return `void`/`undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `egress-ledger.ts`, change the signature and add the return. The body is otherwise untouched — `rowHash` is already computed on line 56:
 
@@ -127,12 +127,12 @@ export function recordSyncEgress(
 
 The return type stays a union with `undefined` rather than becoming `void`, for the reason its doc comment already gives: `void`-return leniency would silently accept an `async` implementation at either seam this function is assigned to.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/gateway/src/egress`
-Expected: PASS. Every existing test in the directory must still pass — this change is additive at both call sites.
+Expected: PASS. **Two existing assertions need updating, and this step's original claim that the change is "additive at both call sites" was wrong:** `sync-egress.test.ts`'s first test asserted `expect(out).toBeUndefined()`, which pinned the old return — change it to assert the hash, never delete it. And `assemble.ts`'s `appendEgress` closure is declared `=> undefined`, so it no longer typechecks: make it `(row) => void recordSyncEgress(...)` until Task 4 widens the seam to consume the value. `bun test` will NOT catch the second one — only `bun run typecheck` will.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git rev-parse --abbrev-ref HEAD   # must print dev/asafgolombek/egress-outcome
