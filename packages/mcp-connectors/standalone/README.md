@@ -84,17 +84,32 @@ because that is the only way a server can put a consent prompt in front of you. 
 gets read tools only — see the first entry under [behaviours that look like
 bugs](#two-behaviours-that-look-like-bugs-and-are-not).
 
-| Client | `elicitation` | Standalone connector gives you |
-| --- | --- | --- |
-| **Claude Code** | yes — form + URL mode | reads **and** writes |
-| **Cursor** | yes, since v1.5 | reads **and** writes |
-| **Claude Desktop** | **no** | **reads only** — every write tool is withheld |
-| Anything else | check it | reads, plus writes if it advertises `elicitation` |
+**This table is a dated observation, not a standing guarantee.** Client support changes between
+releases, so the version tested is part of the claim; re-check yours rather than trusting a row.
+
+| Client | Version tested | `elicitation` | Basis | You get |
+| --- | --- | --- | --- | --- |
+| **Claude Desktop** | 1.34493.1 (MSIX) | **no** | **observed** — see below | **reads only** |
+| Claude Code | not tested | yes — form + URL | vendor docs | reads and writes |
+| Cursor | not tested | yes, since v1.5 | vendor changelog | reads and writes |
+| Anything else | — | check it | — | reads, plus writes if it advertises `elicitation` |
 
 Measured 2026-08-24 against the `github` connector, which exposes 9 read tools and 5 write tools
 (`github_pr_merge`, `github_branch_delete`, `github_issue_create`, `github_pr_close`,
-`github_tag_create`). A client that supports elicitation is served 14 tools; Claude Desktop was
-served 9. Claude Code and Cursor are from vendor documentation, not measured here.
+`github_tag_create`).
+
+**The two numbers have different provenance, and the difference matters:**
+
+- **9 — observed from the real client.** Claude Desktop 1.34493.1, negotiating protocol
+  `2025-11-25`, declared only `roots` and `io.modelcontextprotocol/ui` in its `initialize` frame —
+  no `elicitation` — and its own log recorded `Connected to nimbus-github (9 tools)`. Asking it to
+  list them returned exactly the nine reads.
+- **14 — from a synthetic client.** An SDK client declaring `{ elicitation: {} }`, not a shipped
+  application. It establishes what a supporting client *would* be served; it is not evidence about
+  any product.
+
+Claude Code and Cursor rows are vendor documentation only — **not measured here**, and not implied
+to be by the 14.
 
 This is the designed behaviour, not a degradation we tolerate: a write tool the model cannot see is
 one it cannot call without a human. It also means the tool list is an honest signal — if the writes
