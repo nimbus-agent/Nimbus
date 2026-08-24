@@ -3,7 +3,11 @@
 ## What this is
 
 Runs a Nimbus first-party connector as a **standalone MCP server**, for any MCP client — Claude
-Desktop, Cursor, or anything else that speaks the protocol. No Nimbus gateway required.
+Code, Cursor, Claude Desktop, or anything else that speaks the protocol. No Nimbus gateway
+required.
+
+**What you get depends on your client**, and the difference is writes: see
+[Client support](#client-support) before assuming a write tool will appear.
 
 Standalone, a connector gives you:
 
@@ -25,15 +29,17 @@ npx nimbus-mcp <connector-id>
 
 Nothing to install ahead of time — `npx` fetches it on first run.
 
-Not every connector can run standalone. The launcher refuses one that declares write or delete
-tools which have not yet been routed through the consent kit, and exits `3` rather than starting it
-ungated. Today **58 of 94** are eligible: the 57 that declare no mutating tools, plus `github`. The
-rest are gateway-only until migrated, and the list is derived from each connector's own manifest,
-never hand-maintained.
+The launcher refuses a connector that declares write or delete tools which have not yet been routed
+through the consent kit, exiting `3` rather than starting it ungated. Today **all 94 are
+eligible** — 58 declare no mutating tools, and the other 36 have had their writes routed through
+the consent kit. The verdict is derived from each connector's own manifest, never hand-maintained,
+so this count cannot drift from the code even if this sentence does.
 
 ## Quickstart
 
-Claude Desktop or Cursor:
+Claude Code, Cursor, or Claude Desktop — the config is the same shape everywhere. The write-scope
+variable below is only consulted by a client that can show a consent prompt; on Claude Desktop it is
+harmless and unused, because the write tools never register.
 
 ```json
 {
@@ -61,12 +67,40 @@ this config holds the secret.
 | `NIMBUS_MCP_AUDIT_LOG` | Absolute path for the hash-chained JSONL audit log. Unset disables the durable log; the client-visible log messages are always sent. |
 | _connector credentials_ | Per connector, e.g. `GITHUB_PAT`. See the connector's own README. |
 
+## Client support
+
+Reads work everywhere. **Writes require your client to implement the MCP `elicitation` capability**,
+because that is the only way a server can put a consent prompt in front of you. A client without it
+gets read tools only — see the first entry under [behaviours that look like
+bugs](#two-behaviours-that-look-like-bugs-and-are-not).
+
+| Client | `elicitation` | Standalone connector gives you |
+| --- | --- | --- |
+| **Claude Code** | yes — form + URL mode | reads **and** writes |
+| **Cursor** | yes, since v1.5 | reads **and** writes |
+| **Claude Desktop** | **no** | **reads only** — every write tool is withheld |
+| Anything else | check it | reads, plus writes if it advertises `elicitation` |
+
+Measured 2026-08-24 against the `github` connector, which exposes 9 read tools and 5 write tools
+(`github_pr_merge`, `github_branch_delete`, `github_issue_create`, `github_pr_close`,
+`github_tag_create`). A client that supports elicitation is served 14 tools; Claude Desktop was
+served 9. Claude Code and Cursor are from vendor documentation, not measured here.
+
+This is the designed behaviour, not a degradation we tolerate: a write tool the model cannot see is
+one it cannot call without a human. It also means the tool list is an honest signal — if the writes
+are there, consent is enforceable.
+
+**Checking your own client** takes one query: ask it to list the connector's tools. If the write
+tools are absent, your client does not implement elicitation.
+
 ### Two behaviours that look like bugs and are not
 
 **No write tools appear.** Write tools register only if your client advertises the MCP `elicitation`
 capability — the mechanism a server uses to ask a human a question. Without it there is no way to
 obtain consent, so the tools are not offered at all rather than offered ungated. Reads work
 normally. The moment your client ships elicitation support, the same version gains its write tools.
+**On Claude Desktop this is the expected state today** — it does not implement elicitation, so you
+will see reads only. See [Client support](#client-support).
 
 **Every write refuses with "out of scope".** `NIMBUS_MCP_<SERVICE>_WRITE_SCOPE` is unset. An empty
 scope authorises nothing — unset never means unrestricted. The server prints a warning to stderr at
