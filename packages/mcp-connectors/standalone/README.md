@@ -23,11 +23,21 @@ supply them. See [`../NOTICE`](../NOTICE).
 
 ## Install
 
+**This package is not published yet.** Run it from a checkout:
+
 ```bash
-npx nimbus-mcp <connector-id>
+bun run packages/mcp-connectors/standalone/src/bin.ts <connector-id>
 ```
 
-Nothing to install ahead of time — `npx` fetches it on first run.
+> **Do not run `npx nimbus-mcp`.** An earlier version of this file said to, and that was wrong in a
+> way worth stating plainly: `nimbus-mcp` on npm belongs to an unrelated third party — an AWS
+> security-assessment server at version 1.6.0 — so the command fetched and executed someone else's
+> code. It is also not a name this project can publish under. The bin is now `nimbus-connector` to
+> avoid a second collision: `@nimbus-dev/mcp` already ships a `nimbus-mcp` bin that launches the
+> **gateway's** MCP server, which is a different program with a different tool surface.
+
+The published name is deliberately still open — it is one of the packaging decisions in the
+connector-extraction design, and picking it here would prejudge that.
 
 The launcher refuses a connector that declares write or delete tools which have not yet been routed
 through the consent kit, exiting `3` rather than starting it ungated. Today **all 94 are
@@ -45,8 +55,8 @@ harmless and unused, because the write tools never register.
 {
   "mcpServers": {
     "nimbus-github": {
-      "command": "npx",
-      "args": ["-y", "nimbus-mcp", "github"],
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/Nimbus/packages/mcp-connectors/standalone/src/bin.ts", "github"],
       "env": {
         "GITHUB_PAT": "ghp_...",
         "NIMBUS_MCP_GITHUB_WRITE_SCOPE": "repo:acme/api",
