@@ -737,12 +737,12 @@ git commit -m "feat(sync): record how a targeted fetch ended"
 - Consumes: everything above.
 - Produces: nothing.
 
-- [ ] **Step 1: Confirm the invariant suite still passes untouched**
+- [x] **Step 1: Confirm the invariant suite still passes untouched**
 
 Run: `bun test packages/gateway/src/security-invariants.test.ts`
 Expected: PASS with no edit to that file. If it fails, stop — the failure is the specification of what went wrong, and it means `outcome` landed in the wrong list.
 
-- [ ] **Step 2: Write the note**
+- [x] **Step 2: Write the note**
 
 In the I29 section of `docs/SECURITY-INVARIANTS.md`, after the U2a paragraph, record three things:
 
@@ -752,12 +752,12 @@ In the I29 section of `docs/SECURITY-INVARIANTS.md`, after the U2a paragraph, re
 
 Respect the launch-messaging guardrail: the ledger records dispatched actions at the executor chokepoint, not raw network traffic.
 
-- [ ] **Step 3: Lint the docs**
+- [x] **Step 3: Lint the docs**
 
 Run: `bun run lint:markdown`
 Expected: 0 issues.
 
-- [ ] **Step 4: Full verification**
+- [x] **Step 4: Full verification**
 
 Run:
 
@@ -769,7 +769,7 @@ bun run typecheck
 
 Expected: all pass. Remember `bun run lint` false-fails inside a worktree — use the `bunx biome check` form.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/SECURITY-INVARIANTS.md

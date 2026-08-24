@@ -664,6 +664,29 @@ influences, and only through a token the gateway itself verified: `destination` 
 service id derived internally from the URL's host, never anything the caller supplied. Nothing
 about I29's completeness changes — the same rows are appended, at the same point, fail-closed.
 
+**A completed targeted fetch now appends a SECOND row recording how it ended (U3).** The
+authorising row is appended BEFORE the connector call — fail-closed, no row no fetch — so its
+`result_status` records the authorisation decision and a fetch that 404s or times out still reads
+`authorized`. A `source_type='outcome'` row now follows it, carrying the status (`indexed` /
+`not_found` / `rate_limited`) and, on success, the item id. It names its authorising row by that
+row's `row_hash`, carried in `source_id` — the column prune tombstones already use for an attested
+hash, and the value the chain commits to.
+
+**It is a MARKER, and that is what keeps I29's counts honest.** An outcome row is bookkeeping about
+an outbound call this ledger has already counted; a fetch and its outcome are ONE outbound event,
+not two. `outcome` therefore joins `MARKER_SOURCE_TYPES` rather than becoming an egress class,
+`COVERAGE_CLASSES` is untouched, and the existing "COVERAGE_CLASSES is exactly the non-marker
+source types" test proves the two lists stayed in step without needing a new assertion of its own.
+
+**The two appends have deliberately opposite failure postures.** The authorising append is
+fail-closed. The outcome append swallows and warns, because by the time it runs the request has
+already left the machine: propagating would turn a fetch that genuinely succeeded into a failure
+and make the caller retry, causing MORE egress than the failure it reports. This is
+`appendBootMarkerOrWarn`'s precedent, and its rule holds here too — swallowing must never be
+silent, so the warning names what was lost. A reader seeing an authorising row with no outcome
+beside it may conclude only that the outcome was NOT RECORDED; a row written by a gateway predating
+this change is indistinguishable from one whose outcome append was lost.
+
 **`GET /v1/egress/prove` exposes `signWindowDigest` to a labelled clip token, and the bound is narrow by construction.** The caller supplies only `since`/`until` integers, so the signed message is always the BLAKE3 digest of a payload the gateway builds — never caller-chosen bytes. The `nimbus-egress-window-v2` tag lives inside that hashed payload, so a digest produced under a different rule cannot collide with one produced under this one. Share files sign `canonicalizeBody(body)` — canonical JSON — so a signature harvested here is not replayable as a share file. What the two artifacts do share is identity: both verify under the share keypair's public key, which `share.pubkey` already publishes. The route carries its own rate-limit budget (10/min, its own limiter instance) because it is the only one of the four doing asymmetric crypto per call.
 
 **How to comply:** `EgressSink` is the only DI seam for the ledger write — inject `makeEgressSink(db)` at boot (or the explicit `NULL_EGRESS_SINK` for an executor that structurally never dispatches). Every new action type that reaches `connectors.dispatch` from `executor.ts` will automatically be ledgered. If you add a new chokepoint around `connectors.dispatch`, you must run it through the existing executor gate (not bypass it) — the D22 static check will catch a new site that spells the literal string, but will not catch a decorator, façade, or raw-execute path, so those require a code-review judgment call, not just a green `audit:invariants`. For a new surface that serves gateway-synthesised content to an outside client, add its append at the surface's single dispatch entry point, before any work, with no `try/catch` — and land the `EGRESS_SOURCE_TYPES` member, the `COVERAGE_CLASSES` entry, the `THIS_BINARY_COVERAGE` granularity, the D22 caller pin, and the enforcement test in the same commit as the appender, exactly as `mcp` did.
