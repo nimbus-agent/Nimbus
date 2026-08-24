@@ -235,3 +235,22 @@ describe("the README's eligibility count cannot drift from the code", () => {
     expect(readme).toContain(`other ${hardened} have had their writes`);
   });
 });
+
+describe("no connector package can be published by accident", () => {
+  // `nimbus-mcp` on npm belongs to an unrelated third party, and this repo's README told users to
+  // npx it for two releases (#1323). Nothing publishes these packages today; this makes that
+  // structural rather than incidental.
+  test("every connector package.json is private", () => {
+    const root = join(fileURLToPath(import.meta.url), "../../..");
+    const offenders = readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "package.json")))
+      .filter((d) => {
+        const pkg = JSON.parse(readFileSync(join(root, d.name, "package.json"), "utf8")) as {
+          private?: unknown;
+        };
+        return pkg.private !== true;
+      })
+      .map((d) => d.name);
+    expect(offenders).toEqual([]);
+  });
+});

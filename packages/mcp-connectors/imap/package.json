@@ -1,7 +1,7 @@
 {
   "name": "nimbus-mcp-imap",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {

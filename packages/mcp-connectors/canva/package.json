@@ -1,7 +1,7 @@
 {
   "name": "nimbus-mcp-canva",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "description": "Canva connector — read-only access to designs",
   "license": "AGPL-3.0-only",
   "type": "module",
