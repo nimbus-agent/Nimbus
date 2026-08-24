@@ -19,7 +19,8 @@
 - **Never commit on `main`.** This work lands on `dev/asafgolombek/egress-outcome` in `.claude/worktrees/egress-outcome`. Verify with `git rev-parse --abbrev-ref HEAD` before the first commit.
 - **Biome false-fails in worktrees.** `bun run lint` reports "0 files processed" and exits 1 inside `.claude/worktrees/`. Validate with `bunx biome check packages scripts` instead.
 - **`docs/**` is markdownlint-gated.** Validate with `bun run lint:markdown` before committing.
-- **`appendEgressEntry` is confined to `egress/*` by the static D22 rule.** Never import it from `sync/`, `ipc/` or anywhere else — the write site receives an injected closure, as `targetedFetch` already does.
+- **`appendEgressEntry` is confined to `egress/*` by the static D22 rule.** Never import it from `sync/`, `ipc/` or anywhere else — the write site receives an injected closure, as `targetedFetch` already does. The rule is a SYMBOL regex (`/appendEgressEntry/`, `scripts/structure-audit/check-nimbus-invariants.ts`), not a path-import rule, so Task 4's `import type { FetchOutcomeStatus } from "../egress/outcome-egress.ts"` is fine — it names no confined symbol, and a type-only import emits nothing at runtime regardless.
+- **`() => undefined`, never a bare `() => {}`, for every append seam stub.** The seams return `undefined` rather than `void` on purpose; `targeted-fetch.test.ts` already defaults them as `overrides.appendEgress ?? (() => undefined)`, and new stubs follow that.
 - **The outcome row must never count as outbound.** It joins `MARKER_SOURCE_TYPES`. `COVERAGE_CLASSES` is NOT touched, and the existing `I29: COVERAGE_CLASSES is exactly the non-marker source types` test must pass unchanged. If it fails, the member went in the wrong list.
 - **The authorising append stays fail-closed; the outcome append swallows and warns.** By the time the outcome runs the request has left the machine — propagating would turn a successful fetch into a 500 and make the caller retry, causing MORE egress than the failure it reports. Swallowing must never be silent.
 - **The append seams stay synchronous.** They are typed to return `undefined` (not `void`) so an `async` implementation is a compile error: an async rejection would surface after `targetedFetch` had moved past the call, breaking fail-closed. Widening a return type must preserve that — return a plain object, never a promise.
@@ -577,9 +578,7 @@ test("a throwing outcome append does not fail the fetch, and warns", async () =>
     appendOutcome: () => {
       throw new Error("disk full");
     },
-    logger: {
-      warn: (...args: unknown[]) => void warnings.push(args),
-    },
+    warn: (...args: unknown[]) => void warnings.push(args),
     syncableFor: (service) => ({
       serviceId: service,
       defaultIntervalMs: 60_000,
@@ -601,7 +600,16 @@ test("a throwing outcome append does not fail the fetch, and warns", async () =>
 });
 ```
 
-The last test needs the fake `SyncContext`'s logger to be overridable. `depsWith` builds `fakeCtx` with `logger: pino({ level: "silent" })` — add an optional `logger` override to `DepsOverrides` and use it in place of the pino instance when present.
+The last test needs `warn` on `DepsOverrides`, defaulted to a no-op alongside `appendEgress`.
+
+**Inject `warn`; do not reach into `ctx.logger`.** `SyncContext["logger"]` is a pino `Logger`, so a
+`{ warn }` mock does not structurally satisfy it and the test would need an
+`as unknown as SyncContext["logger"]` cast. Every other collaborator in `TargetedFetchDeps` is
+already injected (`sleep`, `appendEgress`, `urlIsSupported`, `contextFor`) and `targetedFetch` does
+not log at all today, so a logger reached through the context would be the odd one out. Narrowing
+the dependency to what is actually used is also the precedent `appendBootMarkerOrWarn` sets, taking
+`Pick<Logger, "warn">` rather than a whole logger. The production wiring in `assemble.ts` passes
+`syncLogger.warn.bind(syncLogger)`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -639,6 +647,12 @@ In `targeted-fetch.ts`, widen `appendEgress` and add `appendOutcome` to `Targete
     readonly itemId?: string | undefined;
     readonly reason?: string | undefined;
   }) => undefined;
+  /**
+   * Where a swallowed outcome-append failure is reported. Injected rather than reached through
+   * `ctx.logger`: everything else this module collaborates with is injected, and a narrow seam is
+   * what `appendBootMarkerOrWarn` takes too (`Pick<Logger, "warn">`).
+   */
+  readonly warn: (err: unknown, message: string) => void;
 ```
 
 Import the type: `import type { FetchOutcomeStatus } from "../egress/outcome-egress.ts";`
@@ -671,7 +685,7 @@ Then the write site. Replace the tail of `targetedFetch`:
         ...("reason" in result ? { reason: result.reason } : {}),
       });
     } catch (err) {
-      ctx.logger.warn(
+      deps.warn(
         { err },
         "I29: failed to append the targeted-fetch outcome marker — the ledger will report this " +
           "fetch as authorised with no recorded outcome",
@@ -688,6 +702,7 @@ In `assemble.ts`, wire the new closure beside the existing `appendEgress` one:
 
 ```ts
         appendOutcome: (row) => recordFetchOutcomeEgress(db, { ...row, now: Date.now() }),
+        warn: (err, message) => syncLogger.warn(err, message),
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -766,5 +781,12 @@ git commit -m "docs(security): record the outcome marker against I29"
 **Placeholder scan.** No TBD/TODO. Task 5's doc note is prose specified by its three required points rather than verbatim text, because it must read continuously with the paragraphs around it; every claim it must make is enumerated.
 
 **Type consistency.** `{ rowHash: string }` is introduced in Task 1 and consumed under that exact name in Tasks 3 and 4. `FetchOutcomeStatus` is defined in Task 3 and imported in Task 4. `recordFetchOutcomeEgress`'s argument names (`destination`, `authorizingRowHash`, `status`, `itemId`, `reason`, `now`) match Task 4's `appendOutcome` row exactly, less `now`, which the assemble closure supplies — the same split `recordSyncEgress` already uses.
+
+**No D22 caller-pin is added for `recordFetchOutcomeEgress`, deliberately.** Rule (c) pins
+`recordAgentBriefEgress` to exactly one caller, which makes its chokepoint total. The closer
+analogue here is `recordSyncEgress` — also an `egress/` appender reached through an injected
+closure — and it carries no pin either. Adding one for a new appender while its sibling has none
+would be inconsistent, and the property this row class needs (never counted as outbound) is already
+structural through `MARKER_SOURCE_TYPES` rather than dependent on who calls it.
 
 **The risk worth flagging to the executor.** Task 4 widens a seam's return type. That seam is typed to return `undefined` rather than `void` specifically so an `async` implementation is a compile error, and U2a already produced one silent failure in this exact area — a closure with fewer parameters stayed assignable and dropped its argument. Typecheck cannot catch either shape. The behavioural tests in Task 4 are what prove the value arrives; do not weaken them into type assertions.
