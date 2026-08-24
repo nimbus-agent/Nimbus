@@ -32,7 +32,7 @@ function seedPrRow(
 }
 
 function ctxFor(db: ReturnType<typeof createMemoryIndexDb>): SyncContext {
-  return syncTestContext(db, createStubVault({}));
+  return syncTestContext(db, createStubVault({}), "github");
 }
 
 function titleOf(db: ReturnType<typeof createMemoryIndexDb>, externalId: string): string {

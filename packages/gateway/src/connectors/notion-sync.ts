@@ -1,8 +1,4 @@
-import {
-  itemPrimaryKey,
-  selectItemBodyFetchState,
-  upsertIndexedItemForSync,
-} from "../index/item-store.ts";
+import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
   fetchNotionPageText,
@@ -200,7 +196,7 @@ async function notionConsumeSearchResultRow(
   const modifiedAt = Number.isFinite(rawModified) ? rawModified : opts.syncTime;
 
   // 1. Nothing to gain: we already recorded a verdict for this exact revision.
-  const prior = selectItemBodyFetchState(ctx.db, itemPrimaryKey(SERVICE_ID, id));
+  const prior = ctx.bodyFetchState(itemPrimaryKey(SERVICE_ID, id));
   if (prior !== null && prior.bodyFetch !== null && prior.modifiedAt === modifiedAt) {
     return false;
   }

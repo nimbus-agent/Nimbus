@@ -167,7 +167,7 @@ describe("createBlameIndexSyncable (real repo)", () => {
 
   test("noop when there are no roots", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "blame");
     const syncable = createBlameIndexSyncable({ roots: [] });
     const res = await syncable.sync(ctx, null);
     expect(res.itemsUpserted).toBe(0);
@@ -182,7 +182,7 @@ describe("createBlameIndexSyncable (real repo)", () => {
     git(root, "commit", "-q", "-m", "init");
 
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "blame");
     const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
 
     const res = await syncable.sync(ctx, null);
@@ -201,7 +201,7 @@ describe("createBlameIndexSyncable (real repo)", () => {
     git(root, "commit", "-q", "-m", "c1");
 
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "blame");
     const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
     const first = await syncable.sync(ctx, null);
     expect(countBlame(db, root, "a.ts")).toBe(2);
@@ -229,7 +229,7 @@ describe("createBlameIndexSyncable (real repo)", () => {
     git(root, "commit", "-q", "-m", "c1");
 
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "blame");
     const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
     const first = await syncable.sync(ctx, null);
     expect(countBlame(db, root, "a.ts")).toBe(1);
@@ -253,7 +253,7 @@ describe("createBlameIndexSyncable (real repo)", () => {
     git(root, "commit", "-q", "-m", "init");
 
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "blame");
     const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
 
     const res = await syncable.sync(ctx, "not-a-valid-cursor");
@@ -270,7 +270,7 @@ describe("createBlameIndexSyncable (real repo)", () => {
     git(root, "commit", "-q", "-m", "init");
 
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "blame");
     const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
 
     const res = await syncable.sync(ctx, null);
@@ -286,7 +286,7 @@ describe("createBlameIndexSyncable (real repo)", () => {
     writeFileSync(filePath, "x\n");
 
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "blame");
     const syncable = createBlameIndexSyncable({
       roots: [blameRootConfig(filePath)],
       windowDays: 90,
@@ -302,7 +302,7 @@ describe("createBlameIndexSyncable (real repo)", () => {
     writeFileSync(join(plain, "a.ts"), "1\n");
 
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "blame");
     const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(plain)], windowDays: 90 });
     const res = await syncable.sync(ctx, null);
 

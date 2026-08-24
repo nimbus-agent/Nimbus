@@ -57,9 +57,18 @@ describe("the capability set exposes no raw handle", () => {
     // shared gcp.*/github.* credential, and this assertion is what made that visible.
     expect(Object.keys(caps).sort()).toEqual([
       "accessToken",
+      "bodyFetchState",
+      "countItems",
+      "deleteItem",
       "getSecret",
       "getSharedSecret",
+      "itemExists",
+      "itemMetadata",
+      "listIndexedGithubRepos",
+      "prEnrichCandidates",
+      "pruneBlameForFile",
       "resolvePerson",
+      "upsertBlameLines",
       "upsertItem",
     ]);
   });

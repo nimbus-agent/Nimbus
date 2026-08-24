@@ -1,4 +1,4 @@
-import { deleteItemByServiceExternal, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { fetchGoogleJson } from "./google-sync-shared.ts";
 import { asUnknownObjectRecord } from "./json-unknown.ts";
@@ -155,7 +155,7 @@ function upsertDriveFile(ctx: SyncContext, f: DriveFile, now: number): void {
     return;
   }
   if (f.trashed === true) {
-    deleteItemByServiceExternal(ctx.db, SERVICE_ID, id);
+    ctx.deleteItem(SERVICE_ID, id);
     return;
   }
   const mime = f.mimeType ?? "";
@@ -189,7 +189,7 @@ function applyChange(ctx: SyncContext, ch: DriveChange, now: number): "upsert" |
   if (ch["removed"] === true) {
     const fid = typeof ch["fileId"] === "string" ? ch["fileId"] : "";
     if (fid !== "") {
-      deleteItemByServiceExternal(ctx.db, SERVICE_ID, fid);
+      ctx.deleteItem(SERVICE_ID, fid);
       return "delete";
     }
     return "skip";
@@ -203,7 +203,7 @@ function applyChange(ctx: SyncContext, ch: DriveChange, now: number): "upsert" |
     return "skip";
   }
   if (file.trashed === true) {
-    deleteItemByServiceExternal(ctx.db, SERVICE_ID, id);
+    ctx.deleteItem(SERVICE_ID, id);
     return "delete";
   }
   upsertDriveFile(ctx, file, now);

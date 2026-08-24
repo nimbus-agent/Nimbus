@@ -1,4 +1,3 @@
-import { deleteItemByServiceExternal } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
   deltaKey,
@@ -192,11 +191,7 @@ export function createTeamsSyncable(options: TeamsSyncableOptions): Syncable {
         const removed = msg["@removed"] !== undefined && msg["@removed"] !== null;
         const mid = msg.id;
         if (removed && mid !== undefined && mid !== "") {
-          deleteItemByServiceExternal(
-            ctx.db,
-            TEAMS_SERVICE_ID,
-            `${pair.teamId}:${pair.channelId}:${mid}`,
-          );
+          ctx.deleteItem(TEAMS_SERVICE_ID, `${pair.teamId}:${pair.channelId}:${mid}`);
           deleted += 1;
           continue;
         }

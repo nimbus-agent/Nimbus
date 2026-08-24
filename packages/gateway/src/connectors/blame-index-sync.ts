@@ -3,12 +3,7 @@ import { join } from "node:path";
 
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import {
-  type BlameRow,
-  parseBlamePorcelain,
-  pruneBlameForFile,
-  upsertBlameLines,
-} from "../security/blame-store.ts";
+import { type BlameRow, parseBlamePorcelain } from "../security/blame-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -177,10 +172,10 @@ export type BlameIndexSyncableOptions = {
  * deleted file), then re-blame if it still exists on disk. Returns the blamed
  * line count (0 = file gone / no blame). */
 async function blameOneFile(ctx: SyncContext, root: string, relFile: string): Promise<number> {
-  pruneBlameForFile(ctx.db, root, relFile);
+  ctx.pruneBlameForFile(root, relFile);
   if (!existsSync(join(root, relFile))) return 0; // deleted/renamed-away: skip the spawn
   const rows = await gitBlameWholeFile(root, relFile);
-  if (rows.length > 0) upsertBlameLines(ctx.db, root, relFile, rows);
+  if (rows.length > 0) ctx.upsertBlameLines(root, relFile, rows);
   return rows.length;
 }
 
@@ -207,7 +202,7 @@ async function blameRootIncremental(ctx: SyncContext, root: string, last: string
   let filesBlamed = 0;
   for (const ch of await gitChangedSince(root, last)) {
     if (ch.status === "D") {
-      pruneBlameForFile(ctx.db, root, ch.path);
+      ctx.pruneBlameForFile(root, ch.path);
     } else if ((await blameOneFile(ctx, root, ch.path)) > 0) {
       filesBlamed += 1;
     }

@@ -6,6 +6,7 @@ import pino from "pino";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import {
+  buildLocalOnlySyncCapabilities,
   buildSyncCapabilities,
   type SyncCapabilities,
   unboundSyncCapabilities,
@@ -13,6 +14,14 @@ import {
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ConnectorServiceId } from "./connector-catalog.ts";
+
+export type LocalOnlySyncServiceId = "blame" | "filesystem" | "obsidian" | "openapi";
+const LOCAL_ONLY_SYNC_SERVICE_IDS: readonly LocalOnlySyncServiceId[] = [
+  "blame",
+  "filesystem",
+  "obsidian",
+  "openapi",
+];
 
 export const EMPTY_NIMBUS_VAULT: NimbusVault = {
   set: async () => {},
@@ -47,6 +56,15 @@ export function silentSyncContextExtras(): Pick<
   | "getSecret"
   | "getSharedSecret"
   | "accessToken"
+  | "deleteItem"
+  | "countItems"
+  | "itemExists"
+  | "bodyFetchState"
+  | "itemMetadata"
+  | "listIndexedGithubRepos"
+  | "prEnrichCandidates"
+  | "upsertBlameLines"
+  | "pruneBlameForFile"
   | "upsertItem"
   | "resolvePerson"
 > {
@@ -88,13 +106,21 @@ export function boundTestCapabilities(
 export function syncTestContext(
   db: Database,
   vault: NimbusVault,
-  serviceId?: ConnectorServiceId,
+  serviceId?: ConnectorServiceId | LocalOnlySyncServiceId,
 ): SyncContext {
   const extras = silentSyncContextExtras();
   const caps =
     serviceId === undefined
       ? unboundSyncCapabilities()
-      : buildSyncCapabilities({ vault, db, depth: extras.depth }, serviceId);
+      : LOCAL_ONLY_SYNC_SERVICE_IDS.includes(serviceId as LocalOnlySyncServiceId)
+        ? buildLocalOnlySyncCapabilities(
+            { vault, db, depth: extras.depth },
+            serviceId as LocalOnlySyncServiceId,
+          )
+        : buildSyncCapabilities(
+            { vault, db, depth: extras.depth },
+            serviceId as ConnectorServiceId,
+          );
   // `extras` carries the UNBOUND capability set as its default, so it must be spread FIRST — the
   // bound `caps` are the override, not the other way round. Reversed, every test silently got the
   // throwing capabilities back and 889 of them failed at once.

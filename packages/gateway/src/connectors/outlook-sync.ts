@@ -1,8 +1,4 @@
-import {
-  deleteItemByServiceExternal,
-  type IndexedItemBodyInput,
-  upsertIndexedItemForSync,
-} from "../index/item-store.ts";
+import { type IndexedItemBodyInput, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { stripQuotedTail } from "../string/email-quoted-text.ts";
 import { plainTextFromHtmlLines } from "../string/html-plain-text-lines.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
@@ -146,7 +142,7 @@ export function createOutlookSyncable(options: OutlookSyncableOptions): Syncable
         const removed = msg["@removed"] !== undefined && msg["@removed"] !== null;
         const id = msg.id;
         if (removed && id !== undefined && id !== "") {
-          deleteItemByServiceExternal(ctx.db, SERVICE_ID, id);
+          ctx.deleteItem(SERVICE_ID, id);
           deleted += 1;
           continue;
         }

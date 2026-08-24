@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import { type BlameRow, parseBlamePorcelain, upsertBlameLines } from "../security/blame-store.ts";
+import { type BlameRow, parseBlamePorcelain } from "../security/blame-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -326,7 +326,7 @@ async function blameIndexedExcerptRanges(
   const covered = merged.reduce((n, r) => n + (r.to - r.from + 1), 0);
   if (covered <= MAX_BLAME_LINES) {
     const rows = await gitBlameLinePorcelain(root, relNorm, merged);
-    if (rows.length > 0) upsertBlameLines(ctx.db, root, relNorm, rows);
+    if (rows.length > 0) ctx.upsertBlameLines(root, relNorm, rows);
   }
 }
 

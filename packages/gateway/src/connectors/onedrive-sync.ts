@@ -1,4 +1,4 @@
-import { deleteItemByServiceExternal, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { normalizeEmail } from "../people/person-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
@@ -146,13 +146,13 @@ export function createOneDriveSyncable(options: OneDriveSyncableOptions): Syncab
         const removed = item["@removed"] !== undefined && item["@removed"] !== null;
         const id = item.id;
         if (removed && id !== undefined && id !== "") {
-          deleteItemByServiceExternal(ctx.db, SERVICE_ID, id);
+          ctx.deleteItem(SERVICE_ID, id);
           deleted += 1;
           continue;
         }
         if (item.deleted !== undefined && item.deleted?.state === "deleted") {
           if (id !== undefined && id !== "") {
-            deleteItemByServiceExternal(ctx.db, SERVICE_ID, id);
+            ctx.deleteItem(SERVICE_ID, id);
             deleted += 1;
           }
           continue;

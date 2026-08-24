@@ -1,6 +1,5 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { listGithubReposFromIndex } from "./github-index-repos.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -221,7 +220,7 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
         return syncNoopResult(cursor, t0);
       }
 
-      const repos = listGithubReposFromIndex(ctx.db);
+      const repos = ctx.listIndexedGithubRepos();
       if (repos.length === 0) {
         return syncNoopResult(cursor, t0);
       }

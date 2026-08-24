@@ -30,10 +30,7 @@ export function createIacSyncable(options: IacSyncableOptions): Syncable {
       }
       await ctx.rateLimiter.acquire("iac");
       const now = Date.now();
-      const lambdaRow = ctx.db
-        .query(`SELECT COUNT(*) as c FROM item WHERE service = 'aws' AND type = 'lambda_function'`)
-        .get() as { c: number } | undefined;
-      const lambdaCount = lambdaRow?.c ?? 0;
+      const lambdaCount = ctx.countItems("aws", "lambda_function");
       upsertIndexedItemForSync(ctx, {
         service: SERVICE_ID,
         type: "sync_heartbeat",

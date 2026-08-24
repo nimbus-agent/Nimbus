@@ -61,7 +61,7 @@ test("indexes dependencies from package.json in a root", async () => {
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(2);
   expectServiceItemCount(db, "filesystem", 2);
 });
@@ -103,7 +103,7 @@ test("skips a non-existent root path silently (no rows upserted, no error)", asy
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBe(0);
   expect(r.itemsDeleted).toBe(0);
 });
@@ -128,7 +128,7 @@ test("excludes directories listed in `exclude` from the dependency walk (defends
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   const titles = db
     .query("SELECT title FROM item WHERE service = 'filesystem' AND type = 'dependency'")
     .all() as Array<{ title: string }>;
@@ -154,7 +154,7 @@ test("decodes a previously-issued cursor and round-trips tips through a re-sync"
     tips: { "git:/some/other/root": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" },
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), priorCursor);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), priorCursor);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
   expect(typeof r.cursor).toBe("string");
 });
@@ -175,7 +175,7 @@ test("gracefully ignores a malformed cursor payload", async () => {
   });
   const badCursor = encodeNimbusJsonCursor("nimbus-fsv2:", ["not", "an", "object"]);
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), badCursor);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), badCursor);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
 });
 
@@ -208,7 +208,7 @@ test("gitAware=true on a real git repo records git_commit items (covers gitLogRe
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
   const commitRow = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'git_commit' LIMIT 1`)
@@ -230,7 +230,7 @@ test("gitAware=true on a non-git directory returns zero commits (covers isGitRep
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBe(0);
 });
 
@@ -249,7 +249,7 @@ test("skips package.json whose JSON is malformed (parsePackageJsonDeps catch pat
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBe(0);
 });
 
@@ -268,7 +268,7 @@ test("skips a package.json whose top-level value is an array (parsePackageJsonDe
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBe(0);
 });
 
@@ -291,7 +291,7 @@ test("code index over a file with no exports returns nothing (extractExportedSym
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBe(0);
 });
 
@@ -439,7 +439,7 @@ test("decodeCursor: empty-string cursor is treated as fresh (no tips)", async ()
   });
   const db = createMemoryIndexDb();
   // passing "" triggers the `raw === ""` branch in decodeCursor → tips = {}
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), "");
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), "");
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
 });
 
@@ -460,7 +460,10 @@ test("decodeCursor: cursor with wrong prefix returns empty tips (parsed === unde
   const db = createMemoryIndexDb();
   // a cursor with a different prefix → decodeNimbusJsonCursorPayload returns undefined
   const wrongPrefixCursor = encodeNimbusJsonCursor("nimbus-OTHER:", { tips: { x: "abc" } });
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), wrongPrefixCursor);
+  const r = await sync.sync(
+    syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"),
+    wrongPrefixCursor,
+  );
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
 });
 
@@ -481,7 +484,7 @@ test("decodeCursor: tips field is null → treated as no tips", async () => {
   const db = createMemoryIndexDb();
   // tips = null triggers the `tipsRaw !== null` false branch
   const cursor = encodeNimbusJsonCursor("nimbus-fsv2:", { tips: null });
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), cursor);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), cursor);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
 });
 
@@ -502,7 +505,7 @@ test("decodeCursor: tips field is an array → treated as no tips", async () => 
   const db = createMemoryIndexDb();
   // tips = array triggers `!Array.isArray(tipsRaw)` false branch
   const cursor = encodeNimbusJsonCursor("nimbus-fsv2:", { tips: ["arr"] });
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), cursor);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), cursor);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
 });
 
@@ -523,7 +526,7 @@ test("decodeCursor: tips entry with empty-string value is filtered out", async (
   const db = createMemoryIndexDb();
   // tip value "" triggers `v !== ""` false branch (the entry is dropped)
   const cursor = encodeNimbusJsonCursor("nimbus-fsv2:", { tips: { "git:/root": "" } });
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), cursor);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), cursor);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
 });
 
@@ -545,7 +548,7 @@ test("skips a root path that exists but is a file rather than a directory", asyn
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBe(0);
 });
 
@@ -622,7 +625,7 @@ test("git_commit title is truncated to 200 chars when subject is very long", asy
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   const row = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'git_commit' LIMIT 1`)
     .get() as { title: string } | null;
@@ -658,7 +661,7 @@ test("listPackageJsonFiles maxFiles cap: only indexes up to the limit (dependenc
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBe(5);
 });
 
@@ -679,7 +682,7 @@ test("listPackageJsonFiles: non-package.json files in the root are ignored (isFi
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   // Only package.json is indexed, not README.md or index.js
   expect(r.itemsUpserted).toBe(1);
 });
@@ -702,7 +705,7 @@ test("parsePackageJsonDeps: dependencies field is a string (non-object) → no i
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBe(0);
 });
 
@@ -725,7 +728,7 @@ test("parsePackageJsonDeps: devDependencies field is an array → no devDep item
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   // only the one real dependency is indexed; devDependencies array is skipped
   expect(r.itemsUpserted).toBe(1);
 });
@@ -750,7 +753,7 @@ test("code files with no extension are not indexed (pushIfCodeExtensionFile dot 
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   // mod.ts has one export; Makefile is not indexed
   const rows = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
@@ -831,7 +834,7 @@ test("gitAware=true with codeIndex=true triggers blameIndexedExcerptRanges for a
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   // At least the code_symbol for myApi was indexed
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
   const symApi = db
@@ -865,7 +868,7 @@ export async function drawAsync() { return "ok"; }
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   const rows = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
     .all() as Array<{ title: string }>;
@@ -947,7 +950,7 @@ test("parsePackageJsonDeps: dependency entry with numeric version value is skipp
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   // only "valid-dep" with string version is indexed; "numeric-dep" with number version is skipped
   expect(r.itemsUpserted).toBe(1);
   const row = db
@@ -998,7 +1001,7 @@ test("dependencyGraph: isExcluded catches a nested excluded component in relPath
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   const titles = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'dependency'`)
     .all() as Array<{ title: string }>;
@@ -1026,7 +1029,7 @@ test("codeIndex: isExcluded catches .ts files inside an excluded subdirectory", 
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   const rows = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
     .all() as Array<{ title: string }>;
@@ -1066,7 +1069,7 @@ test("gitAware + codeIndex: blame rows are persisted when git blame succeeds wit
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
 
   // Verify: the git_blame_line table should have at least one row if blame succeeded
   // (it only has rows when rows.length > 0 → upsertBlameLines is called)
@@ -1109,7 +1112,7 @@ test("listPackageJsonFiles: stops recursing when depth exceeds 8 (deeply nested 
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   const titles = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'dependency'`)
     .all() as Array<{ title: string }>;
@@ -1138,7 +1141,7 @@ test("codeIndex: stops collecting files once the maxFiles (120) cap is reached",
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   // At most 120 files are indexed (each has 1 symbol); total symbols <= 120
   expect(r.itemsUpserted).toBeLessThanOrEqual(120);
   expect(r.itemsUpserted).toBeGreaterThan(0);
@@ -1171,7 +1174,7 @@ test("codeIndex: second sibling dir is skipped entirely when maxFiles already re
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   // Exactly 120 symbols (a/ fills the cap; b/ is skipped entirely)
   expect(r.itemsUpserted).toBeLessThanOrEqual(120);
   expect(r.itemsUpserted).toBeGreaterThan(0);
@@ -1202,7 +1205,7 @@ test("dependencyGraph: stops mid-iteration once maxFiles (80) package.json files
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   // At most 80 deps (one per package.json capped at 80 manifests)
   expect(r.itemsUpserted).toBeLessThanOrEqual(80);
   expect(r.itemsUpserted).toBeGreaterThan(0);

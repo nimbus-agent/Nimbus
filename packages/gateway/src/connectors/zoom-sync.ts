@@ -146,8 +146,7 @@ function nextRecordingsWindow(
  */
 function transcriptAlreadyIndexed(ctx: SyncContext, meetingUuid: string, fileId: string): boolean {
   const id = itemPrimaryKey("zoom", `${meetingUuid}:${fileId}`);
-  const row = ctx.db.query("SELECT 1 AS one FROM item WHERE id = ? LIMIT 1").get(id);
-  return row !== null && row !== undefined;
+  return ctx.itemExists(id);
 }
 
 /**

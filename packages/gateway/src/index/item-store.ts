@@ -313,3 +313,35 @@ export function selectItemBodyFetchState(db: Database, id: string): ItemBodyFetc
     .get(id);
   return row === null ? null : { modifiedAt: row.modified_at, bodyFetch: row.body_fetch };
 }
+
+/**
+ * How many indexed items a service holds of one type.
+ *
+ * Exists so `iac-sync.ts` can stop issuing its own `SELECT COUNT(*)` through a raw `db` handle.
+ * The SQL lives here, beside every other statement against `item`, which is the point: a connector
+ * that can write arbitrary SQL is a connector that can bypass I9's bound-parameter rule.
+ */
+export function countIndexedItems(db: Database, service: string, type: string): number {
+  const row = db
+    .query<{ c: number }, [string, string]>(
+      "SELECT COUNT(*) AS c FROM item WHERE service = ? AND type = ?",
+    )
+    .get(service, type);
+  return row?.c ?? 0;
+}
+
+/** Whether an item id is present. Replaces a raw `SELECT 1 ... LIMIT 1` in `zoom-sync.ts`. */
+export function indexedItemExists(db: Database, itemId: string): boolean {
+  const row = db
+    .query<{ one: number }, [string]>("SELECT 1 AS one FROM item WHERE id = ? LIMIT 1")
+    .get(itemId);
+  return row !== null && row !== undefined;
+}
+
+/** The raw `metadata` JSON column for one item, or null when absent. Parsing stays with the caller. */
+export function selectItemMetadataJson(db: Database, itemId: string): string | null {
+  const row = db
+    .query<{ metadata: string | null }, [string]>("SELECT metadata FROM item WHERE id = ?")
+    .get(itemId);
+  return row?.metadata ?? null;
+}

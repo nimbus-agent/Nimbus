@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 
 import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
-import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
 import { mapGithubPrFiles } from "../prfiles/pr-file-mapping.ts";
@@ -166,7 +165,7 @@ function decodeCursor(raw: string | null): GithubSyncCursorV1 | null {
 }
 
 function resolveGithubActorPersonId(
-  db: Database,
+  resolvePerson: SyncContext["resolvePerson"],
   user: Record<string, unknown> | undefined,
 ): string | null {
   if (user === undefined) {
@@ -184,9 +183,9 @@ function resolveGithubActorPersonId(
     githubLogin: login,
   };
   if (email !== undefined) {
-    return resolvePersonForSync(db, { ...hints, canonicalEmail: email });
+    return resolvePerson({ ...hints, canonicalEmail: email });
   }
-  return resolvePersonForSync(db, hints);
+  return resolvePerson(hints);
 }
 
 function modifiedMsFromGithubTimestamps(
@@ -255,7 +254,7 @@ const PR_STAT_KEYS = ["additions", "deletions", "changed_files", "commits"] as c
  * needs verification against the live API before anyone treats it as fixed either way.
  */
 function mergeForwardPrStats(
-  db: Database,
+  itemMetadata: SyncContext["itemMetadata"],
   meta: Record<string, unknown>,
   externalId: string,
 ): Record<string, unknown> {
@@ -264,13 +263,9 @@ function mergeForwardPrStats(
     return meta;
   }
   const id = itemPrimaryKey(SERVICE_ID, externalId);
-  const row = db.query("SELECT metadata FROM item WHERE id = ?").get(id) as {
-    metadata: string | null;
-  } | null;
-  // `?? null` rather than `row?.metadata == null`: the column is nullable AND the row
-  // may be absent, so the optional chain yields `undefined | string | null`. Folding
-  // the two empty cases into one `null` keeps the check strict-equality only.
-  const metadata = row?.metadata ?? null;
+  // The nullable column and the possibly-absent row are folded into one `null` by the capability,
+  // which keeps this check strict-equality only.
+  const metadata = itemMetadata(id);
   if (metadata === null) {
     return meta;
   }
@@ -325,10 +320,10 @@ export function upsertPr(
   const url = webUrl ?? htmlUrl ?? null;
   const modified = modifiedMsFromGithubTimestamps(pr, now);
   const user = asRecord(pr["user"]);
-  const authorId = resolveGithubActorPersonId(ctx.db, user);
+  const authorId = resolveGithubActorPersonId(ctx.resolvePerson, user);
   const externalId = githubPrExternalId(repoFull, num);
   const meta = mergeForwardPrStats(
-    ctx.db,
+    ctx.itemMetadata,
     extractPrMetadataForIndex(repoFull, pr, now),
     externalId,
   );
@@ -374,7 +369,7 @@ function upsertReview(
     return false;
   }
   const user = asRecord(review["user"]);
-  const authorId = resolveGithubActorPersonId(ctx.db, user);
+  const authorId = resolveGithubActorPersonId(ctx.resolvePerson, user);
   const state = stringField(review, "state");
   const body = stringField(review, "body");
   const submitted = stringField(review, "submitted_at");
@@ -419,7 +414,7 @@ function upsertFromIssue(
   const modified = modifiedMsFromGithubTimestamps(issue, now);
   const user = asRecord(issue["user"]);
   const login = user === undefined ? undefined : stringField(user, "login");
-  const authorId = resolveGithubActorPersonId(ctx.db, user);
+  const authorId = resolveGithubActorPersonId(ctx.resolvePerson, user);
   const meta: Record<string, unknown> = {
     number: num,
     repo: repoFull,
@@ -575,7 +570,7 @@ export function throwGithubRateLimitErrorIfApplicable(
   }
 }
 
-interface FallbackPrCandidate {
+export interface FallbackPrCandidate {
   readonly externalId: string;
   readonly repoFull: string;
   readonly num: number;
@@ -687,7 +682,7 @@ export async function enrichPrDetail(
   now: number,
   fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
-  const candidates = selectPrEnrichCandidates(ctx.db, MAX_ENRICH_PER_TICK);
+  const candidates = ctx.prEnrichCandidates(MAX_ENRICH_PER_TICK);
   let enriched = 0;
   for (const c of candidates) {
     await ctx.rateLimiter.acquire("github");
@@ -714,7 +709,7 @@ export async function enrichPrDetail(
     upsertPr(ctx, c.repoFull, pr, now);
     enriched += 1;
   }
-  const remaining = selectPrEnrichCandidates(ctx.db, MAX_ENRICH_PER_TICK + 1).length;
+  const remaining = ctx.prEnrichCandidates(MAX_ENRICH_PER_TICK + 1).length;
   if (remaining > MAX_ENRICH_PER_TICK) {
     ctx.logger.info(
       { service: SERVICE_ID, enriched, remainingAtLeast: MAX_ENRICH_PER_TICK },
