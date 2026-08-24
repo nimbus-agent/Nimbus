@@ -1,11 +1,11 @@
 {
-  "name": "nimbus-mcp",
+  "name": "@nimbus-dev/mcp-connector",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
   "bin": {
-    "nimbus-mcp": "./dist/bin.js"
+    "nimbus-connector": "./dist/bin.js"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -8,6 +8,41 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-24 — What a standalone connector actually gives you, measured per client rather than
+  assumed.** Off-gateway consent rests entirely on the MCP `elicitation` capability, and whether a
+  client implements it had never been checked against a real client. It is now, and the answer is a
+  split: **Claude Code** (form + URL mode) and **Cursor** (since v1.5) support it; **Claude Desktop
+  does not**, so a connector there serves **reads only** and every write tool is withheld.
+  Measured against `github` — 14 tools to a client with elicitation, 9 to Claude Desktop, with
+  `github_pr_merge`, `github_branch_delete`, `github_issue_create`, `github_pr_close` and
+  `github_tag_create` correctly absent. That is the designed fail-closed behaviour observed in a
+  third-party client for the first time, and it is now a support table in the `nimbus-mcp` README
+  instead of a surprise: "the write tools are missing" is otherwise a guaranteed bug report.
+  **Also corrected a count that went stale the moment Part 2 landed:** the README still claimed
+  "58 of 94 eligible … plus `github`", understating the migration by 36 connectors. It is **94 of
+  94** (58 declare no mutating tools, 36 had their writes routed through the consent kit), and a
+  drift test now derives all three numbers from the manifests, so the sentence cannot rot again.
+
+- **2026-08-23 — Connectors that cannot run ungated, wherever they run.** A connector spawned
+  outside the gateway has no executor and therefore no **I2** gate, which made "run a Nimbus
+  connector standalone" a quiet downgrade from the project's central guarantee. Two PRs closed it.
+  **#1318** added the consent kit (`mcp-connectors/shared/consent-kit.ts`): every mutating tool now
+  passes scope → budget → consent → pre-state → mutate → audit, with consent obtained through MCP
+  elicitation, a server-enforced write-scope allow-list the model cannot reach, a per-session
+  mutation budget, and a SHA-256 hash-chained JSONL audit any client can verify. The process mode
+  (`connector-mode.ts`) defaults to **standalone**, so the gated path is what you get unless the
+  gateway says otherwise. **#1321** then routed all 94 connectors through it and gave each write a
+  **per-connector** action type (`github.pr.merge`, not the generic `repo.pr.merge`), because
+  `serviceOf()` takes the prefix before the first dot and that string becomes **I29**'s egress
+  `destination` and **I20**'s delegation scope — "email" is not a place data can go, "gmail" is.
+  The generic entries stay: removing one would silently ungate anything still emitting it.
+  **A write tool registers only if the client advertises `elicitation`** — no consent mechanism, no
+  tool, rather than a tool offered ungated. **The security tiering is deliberate and stated in
+  `mcp-connectors/NOTICE`:** standalone gives consent, scope, budget and audit; the process
+  sandbox (**I15**), OS-keychain credentials, the egress ledger and *owner-controlled* consent
+  remain gateway-only, because standalone consent is mediated by a client that may be configured to
+  answer automatically.
+
 - **2026-08-23 — The machine becomes somewhere the agent can work, starting with the owner.**
   `nimbus exec` runs code inside the three-OS sandbox that shipped in #1294, behind an approval
   prompt showing the **verbatim body** — never a digest, because the human is the entire security
