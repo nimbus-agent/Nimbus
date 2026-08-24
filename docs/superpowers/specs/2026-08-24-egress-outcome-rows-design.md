@@ -100,6 +100,16 @@ already commits to, it is stable in a way a local rowid is not, and every
 consumer of `GET /v1/egress` already receives `rowHash` on every row — so the
 join needs no new field on the wire.
 
+**The summary survives redaction, verified rather than assumed.**
+`redactEgressSummary` caps at 256 bytes and redacts two ways: by KEY, against
+`/(token|key|secret|password|credential|bearer|auth|^pat$)/i`, and by VALUE,
+against credential-shaped patterns (GitHub, OpenAI, Anthropic, Slack, bearer).
+None of `status`, `itemId` or `reason` matches the key pattern, and an item id
+(`github:acme/web#482`) matches no value pattern. `formatAuditPayload` truncates
+rather than stripping fields, and this payload is far below the cap. So the
+summary is stored as written — and in the impossible case where an id did look
+like a credential, redacting it is the correct outcome anyway.
+
 **Why `resultStatus: "authorized"`.** The column means "was this action allowed",
 not "did it succeed". Markers legitimately carry `authorized` — `pruneEgress`
 does — and reusing it to mean "the fetch worked" would give one column two
@@ -141,12 +151,53 @@ in that set today, so this arm is unreachable through `targetedFetch`, but it is
 modelled rather than asserted away so a future local-only fetchable cannot
 silently produce an orphan outcome row.
 
+`appendEgressEntry` (`egress/egress-ledger.ts`) already computes `rowHash`
+internally before its INSERT; it returns `void` today and returns
+`{ rowHash: string }` after this change. `recordSyncEgress` passes that through.
+
+**`EgressSink` is deliberately NOT changed.** It is the executor's DI seam
+(`ToolExecutor`, chatops), and targeted fetch does not go through it —
+`assemble.ts` wires `recordSyncEgress` as a direct closure. Widening
+`EgressSink.append` would touch every executor wiring site and `NULL_EGRESS_SINK`
+to deliver a value nothing on that path consumes.
+
 **Its synchronous return type stays load-bearing.** That seam is typed to return
 `undefined` rather than `void` specifically so an `async` implementation is a
 compile error: an async append's rejection would surface after `targetedFetch`
 had already moved past the call, breaking the fail-closed contract. Widening it
 to a value type must not weaken that — the new type is a plain object, never a
 promise, and the existing doc comment explaining why is kept and extended.
+
+## The pair can straddle a page boundary
+
+An outcome row is appended after its authorising row, so it carries a HIGHER id.
+`GET /v1/egress` reads newest-first, which means **the outcome arrives before the
+row it describes** — and a page boundary can fall between them. A consumer will
+therefore see, routinely:
+
+- an outcome row whose authorising row is on the NEXT (older) page, and
+- an authorising row whose outcome was on the PREVIOUS (newer) page.
+
+Neither is corruption; it is what paging a two-row record looks like. The
+consumer's rule is the same one it already applies to attribution: **render only
+what the page supports.** An authorising row with no outcome IN THIS PAGE reads
+exactly like one with no outcome at all — "not recorded" — because from the
+page's own evidence those are the same thing. An orphan outcome row is not
+rendered as a row of its own; it has no time, service or action of its own worth
+showing that its authorising row does not show better.
+
+This is a consequence of the row-pair design and belongs in **U3b**, not here.
+It is recorded in this document because a reader of the gateway spec needs to
+know the pair is not guaranteed to travel together.
+
+**Nesting the outcome inside the authorising row was considered and rejected.**
+It would remove the join, but the route would have to look OUTSIDE the requested
+window to find an outcome written after `until` — which breaks the property U1
+worked to establish, that `rowsTotal` and the returned rows describe the same
+window. It would also make the route synthesise a shape the ledger does not
+hold, and the C4.1 posture is that the client reads the gateway's record rather
+than a derived view that can drift from it. The join is a `Map` over one page;
+the honesty property is worth more than saving it.
 
 ## Failure posture, deliberately asymmetric
 
