@@ -473,7 +473,7 @@ git commit -m "feat(egress): an outcome marker that names the row it describes"
 - Consumes: Task 1's `recordSyncEgress` return; Task 3's `recordFetchOutcomeEgress` and `FetchOutcomeStatus`.
 - Produces: `TargetedFetchDeps.appendEgress` returning `{ rowHash: string } | undefined`, and a new `TargetedFetchDeps.appendOutcome`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `packages/gateway/src/sync/targeted-fetch.test.ts`. The file's `depsWith` factory needs an `appendOutcome` override — add it to `DepsOverrides` and default it to `() => undefined` alongside `appendEgress`:
 
@@ -611,12 +611,12 @@ the dependency to what is actually used is also the precedent `appendBootMarkerO
 `Pick<Logger, "warn">` rather than a whole logger. The production wiring in `assemble.ts` passes
 `syncLogger.warn.bind(syncLogger)`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/gateway/src/sync/targeted-fetch.test.ts`
 Expected: FAIL — `appendOutcome` is not a known dep, and no outcome rows are recorded.
 
-- [ ] **Step 3: Implement the seam and the write site**
+- [x] **Step 3: Implement the seam and the write site**
 
 In `targeted-fetch.ts`, widen `appendEgress` and add `appendOutcome` to `TargetedFetchDeps`:
 
@@ -698,14 +698,18 @@ Then the write site. Replace the tail of `targetedFetch`:
 
 `result.status` is `"indexed" | "not_found" | "rate_limited"` here: `fetchOneWithRetry` returns a `FetchOneResult`, whose fourth arm `unsupported_url` is unreachable because the pre-append `willAttempt` check already refused it. If TypeScript does not narrow that automatically, narrow it explicitly with an `if (result.status !== "unsupported_url")` guard rather than casting.
 
-In `assemble.ts`, wire the new closure beside the existing `appendEgress` one:
+In `assemble.ts`, wire the new closures beside the existing `appendEgress` one. **`syncLogger` is
+not in scope inside `bootTargetedFetchIntoHttpSidecar`** — it is declared in the enclosing
+`assemble` function, so thread it through that function's deps as
+`logger: Pick<Logger, "warn">` (the same narrowing `appendBootMarkerOrWarn` uses) and pass
+`logger: syncLogger` at the call site:
 
 ```ts
         appendOutcome: (row) => recordFetchOutcomeEgress(db, { ...row, now: Date.now() }),
         warn: (err, message) => syncLogger.warn(err, message),
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/gateway/src/sync packages/gateway/src/egress`
 Expected: PASS.
@@ -713,7 +717,7 @@ Expected: PASS.
 Run: `bun run typecheck`
 Expected: 0 errors. **Do not skip this** — `bun test` does not typecheck strictly, and a test file's local row type may need the new optional fields.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/sync/targeted-fetch.ts packages/gateway/src/sync/targeted-fetch.test.ts packages/gateway/src/platform/assemble.ts

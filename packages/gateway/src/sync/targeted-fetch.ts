@@ -1,5 +1,6 @@
 // packages/gateway/src/sync/targeted-fetch.ts
 
+import type { FetchOutcomeStatus } from "../egress/outcome-egress.ts";
 import { canonicalizeUrl } from "../util/url-canonical.ts";
 import { type FetchableService, serviceForHost } from "./fetch-host-boundary.ts";
 import type { FetchMissReason, FetchOneResult, Syncable, SyncContext } from "./types.ts";
@@ -89,7 +90,28 @@ export interface TargetedFetchDeps {
     /** The verified label of the client that asked. Server-derived by the route; never a body
      *  field, or one client could file its egress under another's name. */
     readonly sourceId?: string | undefined;
+  }) => { rowHash: string } | undefined;
+  /**
+   * Appends ONE `outcome` marker after the connector call, naming the authorising row by its hash.
+   *
+   * Injected for the same D22 reason `appendEgress` is: `appendEgressEntry` is confined to
+   * `egress/*`. Synchronous for the same reason too — see the note above.
+   */
+  readonly appendOutcome: (row: {
+    readonly destination: FetchableService;
+    readonly authorizingRowHash: string;
+    readonly status: FetchOutcomeStatus;
+    readonly itemId?: string | undefined;
+    readonly reason?: string | undefined;
   }) => undefined;
+  /**
+   * Where a swallowed outcome-append failure is reported.
+   *
+   * Injected rather than reached through `ctx.logger`: every other collaborator this module has is
+   * injected, and narrowing to the one method actually used is what `appendBootMarkerOrWarn` does
+   * too (`Pick<Logger, "warn">`).
+   */
+  readonly warn: (err: unknown, message: string) => void;
   /** Injected so the acquire poll loop below is testable without real time. */
   readonly sleep: (ms: number) => Promise<void>;
 }
@@ -307,12 +329,39 @@ export async function targetedFetch(
 
   // BEFORE the outbound call. A throw here propagates and no fetch happens — fail-closed, no row
   // means no fetch.
-  deps.appendEgress({
+  const authorizing = deps.appendEgress({
     destination: service,
     sourceType: "sync",
     method: "items.fetch",
     ...(callerLabel === undefined ? {} : { sourceId: callerLabel }),
   });
 
-  return fetchOneWithRetry(fetchOne, ctx, canonical);
+  const result = await fetchOneWithRetry(fetchOne, ctx, canonical);
+
+  // AFTER the call, and deliberately the OPPOSITE posture to the append above. The request has
+  // already left the machine, so there is nothing left to abort; propagating would turn a fetch
+  // that genuinely succeeded into a failure and make the caller retry — more egress than the
+  // failure it reports. Swallow and warn, never silently (`appendBootMarkerOrWarn`'s precedent).
+  //
+  // `authorizing === undefined` means no row was written (a local-only destination), so there is
+  // nothing for an outcome to name.
+  if (authorizing !== undefined && result.status !== "unsupported_url") {
+    try {
+      deps.appendOutcome({
+        destination: service,
+        authorizingRowHash: authorizing.rowHash,
+        status: result.status,
+        ...("itemId" in result ? { itemId: result.itemId } : {}),
+        ...("reason" in result ? { reason: result.reason } : {}),
+      });
+    } catch (err) {
+      deps.warn(
+        { err },
+        "I29: failed to append the targeted-fetch outcome marker — the ledger will report this " +
+          "fetch as authorised with no recorded outcome",
+      );
+    }
+  }
+
+  return result;
 }
