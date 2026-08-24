@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -24,6 +25,15 @@ function ctxWithCreds(
       "jenkins.api_token": token,
     }),
     ...silentSyncContextExtras(),
+    ...boundTestCapabilities(
+      db,
+      createStubVault({
+        "jenkins.base_url": baseUrl,
+        "jenkins.username": user,
+        "jenkins.api_token": token,
+      }),
+      "jenkins",
+    ),
   };
 }
 

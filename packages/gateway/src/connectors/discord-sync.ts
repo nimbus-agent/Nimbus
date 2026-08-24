@@ -1,7 +1,6 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -437,8 +436,8 @@ export function createDiscordSyncable(options: DiscordSyncableOptions): Syncable
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureDiscordMcpRunning();
-      const enabled = await readConnectorSecret(ctx.vault, "discord", "enabled");
-      const token = await readConnectorSecret(ctx.vault, "discord", "bot_token");
+      const enabled = await ctx.getSecret("enabled");
+      const token = await ctx.getSecret("bot_token");
       if (enabled !== "1" || token === null || token === "") {
         return syncNoopResult(cursor, t0);
       }

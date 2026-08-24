@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -108,7 +109,7 @@ describeWithFetchRestore("notion-sync", () => {
     // "notion.oauth" present but payload is unparseable JSON
     const vault = createStubVault({ "notion.oauth": "not-valid-json" });
     const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "notion"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.itemsDeleted).toBe(0);
     expect(r.cursor).toBeNull();
@@ -153,6 +154,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -180,6 +186,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await expect(sync.sync(ctx, null)).rejects.toThrow(expectedMessage);
   });
@@ -196,6 +207,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await expect(sync.sync(ctx, null)).rejects.toThrow("invalid response");
   });
@@ -212,6 +228,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await expect(sync.sync(ctx, null)).rejects.toThrow("missing results");
   });
@@ -225,6 +246,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     // Only the valid page should be indexed; nulls/strings/numbers skipped
@@ -245,6 +271,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -263,6 +294,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -280,6 +316,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     // Both pages have no time → neither advances maxEdited, both should still upsert
@@ -294,7 +335,7 @@ describeWithFetchRestore("notion-sync", () => {
     installFetchSinglePage([makePage("page-a", { last_edited_time: "2026-04-02T12:00:00.000Z" })]);
     const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
     const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
-    const ctx = syncTestContext(db, vault);
+    const ctx = syncTestContext(db, vault, "notion");
     const r1 = await sync.sync(ctx, null);
     expect(r1.cursor).not.toBeNull();
 
@@ -315,7 +356,7 @@ describeWithFetchRestore("notion-sync", () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
     const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
-    const ctx = syncTestContext(db, vault);
+    const ctx = syncTestContext(db, vault, "notion");
 
     // First sync to establish a cursor/watermark
     installFetchSinglePage([makePage("page-a", { last_edited_time: "2026-05-01T12:00:00.000Z" })]);
@@ -348,6 +389,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -373,6 +419,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -427,6 +478,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(searchCallCount).toBe(2);
@@ -472,6 +528,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     expect(searchCallCount).toBe(2);
@@ -486,6 +547,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     // Pass a cursor that doesn't match the nimbus-ntn1: prefix
     const r = await sync.sync(ctx, "totally-invalid-cursor-garbage");
@@ -515,6 +581,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(2);
@@ -542,6 +613,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -569,6 +645,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -592,6 +673,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -622,6 +708,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -651,6 +742,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -682,6 +778,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -709,6 +810,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -745,6 +851,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(3);
@@ -775,6 +886,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -795,6 +911,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db
@@ -808,7 +929,7 @@ describeWithFetchRestore("notion-sync", () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
     const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
-    const ctx = syncTestContext(db, vault);
+    const ctx = syncTestContext(db, vault, "notion");
 
     // First sync: index a page to get a cursor with watermark
     installFetchSinglePage([makePage("page-a", { last_edited_time: "2026-04-01T12:00:00.000Z" })]);
@@ -828,7 +949,7 @@ describeWithFetchRestore("notion-sync", () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
     const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
-    const ctx = syncTestContext(db, vault);
+    const ctx = syncTestContext(db, vault, "notion");
 
     // Two pages with different times; the first should be newer (desc ordering)
     let callCount = 0;
@@ -880,6 +1001,11 @@ describeWithFetchRestore("notion-sync", () => {
       vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "notion.oauth": makeOauthPayload() }),
+        "notion",
+      ),
     };
     await sync.sync(ctx, null);
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
@@ -904,7 +1030,7 @@ describeWithFetchRestore("notion-sync", () => {
       ],
     });
     await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
-      syncTestContext(db, vault),
+      syncTestContext(db, vault, "notion"),
       null,
     );
     const row = db
@@ -924,11 +1050,11 @@ describeWithFetchRestore("notion-sync", () => {
     const page = makePage("pg-1");
     const first = installSearchAndBlocks([page], { "pg-1": [] });
     const syncable = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
-    await syncable.sync(syncTestContext(db, vault), null);
+    await syncable.sync(syncTestContext(db, vault, "notion"), null);
     expect(first.count()).toBe(1);
     // Second pass with the watermark cleared: same page, unchanged.
     const second = installSearchAndBlocks([page], { "pg-1": [] });
-    await syncable.sync(syncTestContext(db, vault), null);
+    await syncable.sync(syncTestContext(db, vault, "notion"), null);
     expect(second.count()).toBe(0);
     db.close();
   });
@@ -974,7 +1100,7 @@ describeWithFetchRestore("notion-sync", () => {
     };
     const syncable = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
     installSearchAndBlocks([page], deep);
-    await syncable.sync(syncTestContext(db, vault), null);
+    await syncable.sync(syncTestContext(db, vault, "notion"), null);
     const row = db
       .query<{ body_complete: number; meta: string }, []>(
         "SELECT body_complete, metadata AS meta FROM item WHERE service = 'notion'",
@@ -983,7 +1109,7 @@ describeWithFetchRestore("notion-sync", () => {
     expect(row?.body_complete).toBe(0);
     expect(JSON.parse(row?.meta ?? "{}").bodyFetch).toBe("capped");
     const second = installSearchAndBlocks([page], deep);
-    await syncable.sync(syncTestContext(db, vault), null);
+    await syncable.sync(syncTestContext(db, vault, "notion"), null);
     expect(second.count()).toBe(0); // the regression this whole design exists to prevent
     db.close();
   });
@@ -1006,7 +1132,7 @@ describeWithFetchRestore("notion-sync", () => {
     // A block-fetch failure must not reject the whole sync — the page still
     // indexes with what we already know about it (title, URL), just no body.
     const r = await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
-      syncTestContext(db, vault),
+      syncTestContext(db, vault, "notion"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -1043,6 +1169,7 @@ describeWithFetchRestore("notion-sync", () => {
       db,
       vault,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, vault, "notion"),
       rateLimiter: fastLimiter,
     };
     const r = await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
@@ -1058,7 +1185,7 @@ describeWithFetchRestore("notion-sync", () => {
     const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
     installSearchAndBlocks([makePage("pg-1")], { "pg-1": [] });
     const r = await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
-      syncTestContext(db, vault),
+      syncTestContext(db, vault, "notion"),
       null,
     );
     // The cursor is a base64url-encoded JSON payload (nimbus-json-cursor.ts),

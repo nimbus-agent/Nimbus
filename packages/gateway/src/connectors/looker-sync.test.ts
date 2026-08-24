@@ -36,7 +36,7 @@ describe("looker-sync (unified spawn transport)", () => {
   test("personal: indexes dashboards AND LookML-model lineage via both drained lists", async () => {
     __setPersonalDrainForTest(async (_ctx, _service, listToolId) => byTool(listToolId));
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }));
+    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }), "looker");
 
     const r = await createLookerSyncable().sync(ctx, null);
 
@@ -54,7 +54,7 @@ describe("looker-sync (unified spawn transport)", () => {
     const db = createMemoryIndexDb();
     const seenTools: string[] = [];
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "looker"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-looker" }),
       runTeamList: async (req: { listToolId: string }) => {
         seenTools.push(req.listToolId);
@@ -74,7 +74,7 @@ describe("looker-sync (unified spawn transport)", () => {
     const SECRET = "tv-secret-do-not-leak";
     const db = createMemoryIndexDb();
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "looker"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-looker" }),
       // Inject the secret as an extra field on every drained item so the assertion is non-vacuous:
       // it proves the mapper indexes only known fields and never copies arbitrary connector output
@@ -102,7 +102,7 @@ describe("looker-sync (unified spawn transport)", () => {
   test("empty drains index nothing", async () => {
     __setPersonalDrainForTest(async () => []);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }));
+    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }), "looker");
 
     const r = await createLookerSyncable().sync(ctx, null);
 
@@ -115,7 +115,7 @@ describe("looker-sync (unified spawn transport)", () => {
     // malformed (non-array) drain payload is treated as empty rather than throwing.
     __setPersonalDrainForTest(async () => ({ not: "an array" }) as unknown as unknown[]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }));
+    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }), "looker");
 
     const r = await createLookerSyncable().sync(ctx, null);
 
@@ -130,7 +130,7 @@ describe("looker-sync (unified spawn transport)", () => {
       listToolId === "looker_list" ? ["not-an-object", { id: "d2" }] : [],
     );
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }));
+    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }), "looker");
 
     const r = await createLookerSyncable().sync(ctx, null);
 
@@ -161,7 +161,7 @@ describe("looker-sync (unified spawn transport)", () => {
       listToolId === "looker_models_list" ? models : [],
     );
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }));
+    const ctx = syncTestContext(db, createStubVault({ "looker.base_url": "https://l" }), "looker");
 
     const r = await createLookerSyncable().sync(ctx, null);
 

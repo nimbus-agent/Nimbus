@@ -2,7 +2,6 @@ import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import type { SentryIssuePassResult } from "./sentry-issue-sync.ts";
 import { syncSentryIssuePass } from "./sentry-issue-sync.ts";
@@ -126,12 +125,12 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
        * at all, and an Organization Auth Token is not a substitute: it exists for
        * source-map upload in CI and its scope cannot be changed after creation.
        */
-      const token = (await readConnectorSecret(ctx.vault, "sentry", "auth_token"))?.trim() ?? "";
-      const org = (await readConnectorSecret(ctx.vault, "sentry", "org_slug"))?.trim() ?? "";
+      const token = (await ctx.getSecret("auth_token"))?.trim() ?? "";
+      const org = (await ctx.getSecret("org_slug"))?.trim() ?? "";
       if (token === "" || org === "") {
         return syncNoopResult(cursor, t0);
       }
-      const baseRaw = await readConnectorSecret(ctx.vault, "sentry", "url");
+      const baseRaw = await ctx.getSecret("url");
       const apiRoot =
         baseRaw !== null && baseRaw.trim() !== ""
           ? `${stripTrailingSlashes(baseRaw.trim())}/api/0`

@@ -22,7 +22,7 @@ describe("monte-carlo-sync (unified spawn transport)", () => {
   test("personal: maps + indexes incidents drained from montecarlo_list", async () => {
     __setPersonalDrainForTest(async () => [rawIncident("42", "ANALYTICS.PUBLIC.REVENUE")]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "montecarlo.api_id": "id" }));
+    const ctx = syncTestContext(db, createStubVault({ "montecarlo.api_id": "id" }), "montecarlo");
 
     const r = await createMonteCarloSyncable().sync(ctx, null);
 
@@ -43,7 +43,7 @@ describe("monte-carlo-sync (unified spawn transport)", () => {
     const db = createMemoryIndexDb();
     let listReq: unknown;
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "montecarlo"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-montecarlo" }),
       runTeamList: async (req: unknown) => {
         listReq = req;
@@ -66,7 +66,7 @@ describe("monte-carlo-sync (unified spawn transport)", () => {
     const SECRET = "tv-secret-do-not-leak";
     const db = createMemoryIndexDb();
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "montecarlo"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-montecarlo" }),
       runTeamList: async () => [rawIncident("42", "ANALYTICS.PUBLIC.REVENUE")],
     };
@@ -86,7 +86,7 @@ describe("monte-carlo-sync (unified spawn transport)", () => {
   test("a non-object row and an incident missing its incidentId are both skipped", async () => {
     __setPersonalDrainForTest(async () => ["not-an-object", { status: "open" }]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "montecarlo.api_id": "id" }));
+    const ctx = syncTestContext(db, createStubVault({ "montecarlo.api_id": "id" }), "montecarlo");
 
     const r = await createMonteCarloSyncable().sync(ctx, null);
 

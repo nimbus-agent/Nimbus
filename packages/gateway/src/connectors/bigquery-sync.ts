@@ -8,7 +8,6 @@ import {
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { mapBigqueryTableToItem } from "./bigquery-table-mapping.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -70,9 +69,8 @@ interface BigqueryCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<BigqueryCreds | null> {
-  const credPath =
-    (await readConnectorSecret(ctx.vault, "gcp", "credentials_json_path"))?.trim() ?? "";
-  const project = (await readConnectorSecret(ctx.vault, "gcp", "project_id"))?.trim() ?? "";
+  const credPath = (await ctx.getSharedSecret("gcp", "credentials_json_path"))?.trim() ?? "";
+  const project = (await ctx.getSharedSecret("gcp", "project_id"))?.trim() ?? "";
   if (credPath === "" || project === "") {
     return null;
   }

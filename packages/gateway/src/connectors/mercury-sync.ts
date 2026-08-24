@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapMercuryAccountToItem } from "./mercury-account-mapping.ts";
 import { mapMercuryTransactionToItem } from "./mercury-transaction-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -45,7 +44,7 @@ interface MercuryCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<MercuryCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "mercury", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }

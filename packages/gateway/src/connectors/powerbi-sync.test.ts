@@ -38,7 +38,7 @@ describe("powerbi-sync (unified spawn transport)", () => {
   test("personal: indexes reports drained from powerbi_list", async () => {
     __setPersonalDrainForTest(async () => [report("r1")]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "powerbi.tenant_id": "t" }));
+    const ctx = syncTestContext(db, createStubVault({ "powerbi.tenant_id": "t" }), "powerbi");
 
     const r = await createPowerBiSyncable().sync(ctx, null);
 
@@ -50,7 +50,7 @@ describe("powerbi-sync (unified spawn transport)", () => {
     const db = createMemoryIndexDb();
     let listReq: unknown;
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "powerbi"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-powerbi" }),
       runTeamList: async (req: unknown) => {
         listReq = req;
@@ -74,7 +74,7 @@ describe("powerbi-sync (unified spawn transport)", () => {
     const SECRET = "tv-secret-do-not-leak";
     const db = createMemoryIndexDb();
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "powerbi"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-powerbi" }),
       runTeamList: async () => [report("r1")],
     };
@@ -94,7 +94,7 @@ describe("powerbi-sync (unified spawn transport)", () => {
   test("a report missing its id is skipped", async () => {
     __setPersonalDrainForTest(async () => [{ name: "No Id", datasetTables: [] }]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "powerbi.tenant_id": "t" }));
+    const ctx = syncTestContext(db, createStubVault({ "powerbi.tenant_id": "t" }), "powerbi");
 
     const r = await createPowerBiSyncable().sync(ctx, null);
 

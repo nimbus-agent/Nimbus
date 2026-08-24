@@ -3,7 +3,6 @@ import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { mapCanvaDesignToItem } from "./canva-design-mapping.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
 
@@ -27,7 +26,7 @@ interface CanvaCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<CanvaCreds | null> {
-  const raw = await readConnectorSecret(ctx.vault, "canva", "oauth");
+  const raw = await ctx.getSecret("oauth");
   if (raw === null || raw === "") {
     return null;
   }

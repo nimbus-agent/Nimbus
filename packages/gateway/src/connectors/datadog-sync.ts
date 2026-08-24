@@ -6,7 +6,6 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
 
@@ -117,12 +116,12 @@ export function createDatadogSyncable(options: DatadogSyncableOptions): Syncable
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureDatadogMcpRunning();
-      const apiKey = (await readConnectorSecret(ctx.vault, "datadog", "api_key"))?.trim() ?? "";
-      const appKey = (await readConnectorSecret(ctx.vault, "datadog", "app_key"))?.trim() ?? "";
+      const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
+      const appKey = (await ctx.getSecret("app_key"))?.trim() ?? "";
       if (apiKey === "" || appKey === "") {
         return syncNoopResult(cursor, t0);
       }
-      const siteRaw = await readConnectorSecret(ctx.vault, "datadog", "site");
+      const siteRaw = await ctx.getSecret("site");
       const site = siteRaw !== null && siteRaw.trim() !== "" ? siteRaw.trim() : "datadoghq.com";
 
       await ctx.rateLimiter.acquire("datadog");

@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSnykAggregatedIssueToItem } from "./snyk-issue-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -163,7 +162,7 @@ export function createSnykSyncable(options: SnykSyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureSnykMcpRunning();
-      const token = (await readConnectorSecret(ctx.vault, "snyk", "token"))?.trim() ?? "";
+      const token = (await ctx.getSecret("token"))?.trim() ?? "";
       if (token === "") {
         return syncNoopResult(cursor, t0);
       }

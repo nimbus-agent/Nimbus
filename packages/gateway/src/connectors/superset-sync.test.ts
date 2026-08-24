@@ -55,6 +55,7 @@ describeWithFetchRestore("superset-sync", () => {
       syncTestContext(
         db,
         createStubVault({ "superset.username": "admin", "superset.password": "secret" }),
+        "superset",
       ),
       null,
     );
@@ -71,6 +72,7 @@ describeWithFetchRestore("superset-sync", () => {
           "superset.url": "https://s.example.com",
           "superset.password": "secret",
         }),
+        "superset",
       ),
       null,
     );
@@ -86,6 +88,7 @@ describeWithFetchRestore("superset-sync", () => {
           "superset.url": "https://s.example.com",
           "superset.username": "admin",
         }),
+        "superset",
       ),
       null,
     );
@@ -102,6 +105,7 @@ describeWithFetchRestore("superset-sync", () => {
           "superset.username": "admin",
           "superset.password": "secret",
         }),
+        "superset",
       ),
       null,
     );
@@ -122,6 +126,7 @@ describeWithFetchRestore("superset-sync", () => {
       syncTestContext(
         db,
         createStubVault({ ...FULL_CREDS, "superset.url": "https://s.example.com/" }),
+        "superset",
       ),
       null,
     );
@@ -139,14 +144,17 @@ describeWithFetchRestore("superset-sync", () => {
       }
       return new Response(JSON.stringify({ result: [] }), { status: 200 });
     });
-    await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS), "superset"), null);
     expect(loginUrl).toBe("https://superset.example.com/api/v1/security/login");
   });
 
   test("login http_error → http-empty pass cursor", async () => {
     const db = createMemoryIndexDb();
     installFetch(() => new Response("nope", { status: 401 }));
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-superset1:");
     expectServiceItemCount(db, "superset", 0);
@@ -159,7 +167,10 @@ describeWithFetchRestore("superset-sync", () => {
         ? new Response("not-json{", { status: 200 })
         : new Response(JSON.stringify({ result: [] }), { status: 200 }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-superset1:");
   });
@@ -171,7 +182,10 @@ describeWithFetchRestore("superset-sync", () => {
         ? new Response(JSON.stringify({ access_token: "" }), { status: 200 })
         : new Response(JSON.stringify({ result: [] }), { status: 200 }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -180,7 +194,10 @@ describeWithFetchRestore("superset-sync", () => {
     installFetch((url) =>
       url.includes("/security/login") ? loginOk() : new Response("boom", { status: 500 }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-superset1:");
   });
@@ -190,7 +207,10 @@ describeWithFetchRestore("superset-sync", () => {
     installFetch((url) =>
       url.includes("/security/login") ? loginOk() : new Response("garbage{", { status: 200 }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -201,7 +221,10 @@ describeWithFetchRestore("superset-sync", () => {
         ? loginOk()
         : new Response(JSON.stringify({ result: [dashboard(1), dashboard(2)] }), { status: 200 }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "superset", 2);
   });
@@ -213,7 +236,10 @@ describeWithFetchRestore("superset-sync", () => {
         ? loginOk()
         : new Response(JSON.stringify([dashboard(7)]), { status: 200 }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -226,7 +252,10 @@ describeWithFetchRestore("superset-sync", () => {
             status: 200,
           }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -237,7 +266,10 @@ describeWithFetchRestore("superset-sync", () => {
         ? loginOk()
         : new Response(JSON.stringify({ result: [] }), { status: 200 }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-superset1:");
   });
@@ -254,7 +286,10 @@ describeWithFetchRestore("superset-sync", () => {
       }
       return new Response(JSON.stringify({ result: [dashboard(101)] }), { status: 200 });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(101);
     expect(page).toBe(2);
   });
@@ -271,7 +306,10 @@ describeWithFetchRestore("superset-sync", () => {
       }
       return new Response("err", { status: 500 });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, createStubVault(FULL_CREDS), "superset"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(100);
     expect(page).toBe(2);
   });

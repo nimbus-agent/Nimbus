@@ -45,7 +45,10 @@ describe("storybook-sync", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-sb-empty-")); // cross-platform-ok
     const db = createMemoryIndexDb();
     const sync = createStorybookSyncable(noopOptions);
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "storybook.dir": dir })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "storybook.dir": dir }), "storybook"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-storybook1:");
     expectServiceItemCount(db, "storybook", 0);
@@ -76,7 +79,10 @@ describe("storybook-sync", () => {
     const dir = writeManifestDir(manifest, "stories.json");
     const db = createMemoryIndexDb();
     const sync = createStorybookSyncable(noopOptions);
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "storybook.dir": dir })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "storybook.dir": dir }), "storybook"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(2);
     expect(r.cursor).toContain("nimbus-storybook1:");
     expectServiceItemCount(db, "storybook", 2);
@@ -107,7 +113,10 @@ describe("storybook-sync", () => {
     const dir = writeManifestDir(manifest, "index.json");
     const db = createMemoryIndexDb();
     const sync = createStorybookSyncable(noopOptions);
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "storybook.dir": dir })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "storybook.dir": dir }), "storybook"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(2);
     expect(r.cursor).toContain("nimbus-storybook1:");
     expectServiceItemCount(db, "storybook", 2);
@@ -139,7 +148,10 @@ describe("storybook-sync", () => {
     const dir = writeManifestDir(manifest, "index.json");
     const db = createMemoryIndexDb();
     const sync = createStorybookSyncable(noopOptions);
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "storybook.dir": dir })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "storybook.dir": dir }), "storybook"),
+      null,
+    );
     // Only the valid story is upserted; the blank-id one is silently skipped.
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "storybook", 1);
@@ -169,7 +181,10 @@ describe("storybook-sync", () => {
     const dir = writeManifestDir(manifest, "index.json");
     const db = createMemoryIndexDb();
     const sync = createStorybookSyncable(noopOptions);
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "storybook.dir": dir })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "storybook.dir": dir }), "storybook"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
     // Verify the row was stored with a non-null modified_at (normal manifest-metadata path).
     const row = db
@@ -191,7 +206,10 @@ describe("storybook-sync", () => {
     const dir = writeManifestDir(manifest, "index.json");
     const db = createMemoryIndexDb();
     const sync = createStorybookSyncable(noopOptions);
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "storybook.dir": dir })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "storybook.dir": dir }), "storybook"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "storybook", 1);
     const row = db.prepare("SELECT title FROM item WHERE service = 'storybook' LIMIT 1").get() as
@@ -207,7 +225,10 @@ describe("storybook-sync", () => {
     const dir = writeManifestDir(manifest, "index.json");
     const db = createMemoryIndexDb();
     const sync = createStorybookSyncable(noopOptions);
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "storybook.dir": dir })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "storybook.dir": dir }), "storybook"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "storybook", 0);
   });

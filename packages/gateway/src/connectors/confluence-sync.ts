@@ -8,7 +8,6 @@ import {
   normalizeAtlassianSiteBaseUrl,
   stringField,
 } from "./atlassian-api-sync-helpers.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { isoMs, maxIso } from "./sync-iso-helpers.ts";
 import {
   decodeWatermarkCursorV1,
@@ -274,9 +273,9 @@ export function createConfluenceSyncable(options: ConfluenceSyncableOptions): Sy
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureConfluenceMcpRunning();
-      const token = await readConnectorSecret(ctx.vault, "confluence", "api_token");
-      const email = await readConnectorSecret(ctx.vault, "confluence", "email");
-      const baseRaw = await readConnectorSecret(ctx.vault, "confluence", "base_url");
+      const token = await ctx.getSecret("api_token");
+      const email = await ctx.getSecret("email");
+      const baseRaw = await ctx.getSecret("base_url");
       if (
         token === null ||
         token === "" ||

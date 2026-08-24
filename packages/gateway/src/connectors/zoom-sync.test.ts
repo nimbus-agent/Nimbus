@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -182,7 +183,7 @@ describeWithFetchRestore("zoom-sync", () => {
   test("noop when zoom.oauth is absent", async () => {
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+    const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "zoom"), null);
     expectSyncNoopResult(r);
     expectServiceItemCount(db, "zoom", 0);
   });
@@ -193,7 +194,7 @@ describeWithFetchRestore("zoom-sync", () => {
     ]);
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const baseCtx = syncTestContext(db, makeZoomVault());
+    const baseCtx = syncTestContext(db, makeZoomVault(), "zoom");
     const { ctx, acquireProviders } = withAcquireTracking(baseCtx);
 
     const r = await sync.sync(ctx, null);
@@ -217,7 +218,7 @@ describeWithFetchRestore("zoom-sync", () => {
     ]);
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const baseCtx = syncTestContext(db, makeZoomVault());
+    const baseCtx = syncTestContext(db, makeZoomVault(), "zoom");
     const { ctx, acquireProviders } = withAcquireTracking(baseCtx);
 
     const r = await sync.sync(ctx, null);
@@ -234,7 +235,7 @@ describeWithFetchRestore("zoom-sync", () => {
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
     const priorCursor = "nimbus-zoom1:cHJpb3I=";
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), priorCursor);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), priorCursor);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toBe(priorCursor);
@@ -256,7 +257,7 @@ describeWithFetchRestore("zoom-sync", () => {
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
 
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).not.toBeNull();
@@ -298,6 +299,7 @@ describeWithFetchRestore("zoom-sync", () => {
       db,
       vault: makeZoomVault(),
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, makeZoomVault(), "zoom"),
       rateLimiter: fastLimiter,
     };
 
@@ -318,7 +320,7 @@ describeWithFetchRestore("zoom-sync", () => {
     });
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(2); // meeting + transcript
     expectServiceItemCount(db, "zoom", 2);
     const txRow = db
@@ -343,7 +345,7 @@ describeWithFetchRestore("zoom-sync", () => {
     });
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
     const meetingRow = db
       .prepare("SELECT id FROM item WHERE service = 'zoom' AND type = 'meeting'")
       .get() as { id: string };
@@ -367,7 +369,7 @@ describeWithFetchRestore("zoom-sync", () => {
                'cached', 'cached', 0, 0)`,
     );
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // No download fetch should have happened — the download_url was never visited.
     const downloadHit = stub.loggedUrls.some((u) => u.includes("transcript-download"));
@@ -384,7 +386,7 @@ describeWithFetchRestore("zoom-sync", () => {
     });
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
     const txCount = db
       .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
       .get() as { c: number };
@@ -415,7 +417,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault("test-access-token")), null);
+    await sync.sync(syncTestContext(db, makeZoomVault("test-access-token"), "zoom"), null);
 
     const downloadCall = observed.find((o) => o.url.includes("transcript-download"));
     expect(downloadCall).toBeDefined();
@@ -447,7 +449,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     expect(downloadCallCount).toBe(1); // one 429 → break
     // The transcript was NOT upserted.
@@ -470,7 +472,7 @@ describeWithFetchRestore("zoom-sync", () => {
     });
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     expect(r.cursor).not.toBeNull();
     const decoded = JSON.parse(
@@ -503,7 +505,7 @@ describeWithFetchRestore("zoom-sync", () => {
     ).toString("base64url")}`;
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), priorCursor);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), priorCursor);
 
     const recordingsUrl = urls.find((u) => u.includes("/v2/users/me/recordings"));
     expect(recordingsUrl).toBeDefined();
@@ -531,10 +533,14 @@ describeWithFetchRestore("zoom-sync", () => {
     }) as typeof fetch;
 
     const db = createMemoryIndexDb();
+    const ctxVault = makeZoomVault("supersecrettoken");
     // A logger that records every formatted log line into `logged`.
     const ctx = {
       db,
-      vault: makeZoomVault("supersecrettoken"),
+      vault: ctxVault,
+      // This literal is cast with `as unknown as`, so the compiler cannot tell it is missing a
+      // capability — it was the ONLY site in the migration the type system could not catch.
+      ...boundTestCapabilities(db, ctxVault, "zoom"),
       rateLimiter: new ProviderRateLimiter(),
       depth: "full",
       logger: {
@@ -574,7 +580,7 @@ describeWithFetchRestore("zoom-sync", () => {
     // No HTTP stub — getValidZoomAccessToken will throw when it attempts refresh
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "zoom"), null);
     expectSyncNoopResult(r);
     expectServiceItemCount(db, "zoom", 0);
   });
@@ -584,7 +590,7 @@ describeWithFetchRestore("zoom-sync", () => {
     const vault = createStubVault({ "zoom.oauth": "" });
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "zoom"), null);
     expectSyncNoopResult(r);
   });
 
@@ -594,7 +600,7 @@ describeWithFetchRestore("zoom-sync", () => {
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
     // Pass empty string — should not throw and should return a valid cursor
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), "");
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), "");
     expect(r.cursor).not.toBeNull();
     expect((r.cursor as string).startsWith(CURSOR_PREFIX)).toBe(true);
   });
@@ -607,7 +613,7 @@ describeWithFetchRestore("zoom-sync", () => {
     stubAllZoomUrls({ meetings: [], recordingsMeetings: [] });
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), badCursor);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), badCursor);
     // Should not throw; should return a valid cursor (treated as initial sync)
     expect(r.cursor).not.toBeNull();
     expect((r.cursor as string).startsWith(CURSOR_PREFIX)).toBe(true);
@@ -631,7 +637,7 @@ describeWithFetchRestore("zoom-sync", () => {
     const cursor = `${CURSOR_PREFIX}${emptyStringToPayload}`;
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), cursor);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), cursor);
 
     // Since lastRecordingsTo is treated as null, the initial-sync 30-day window
     // is used → recordings URL should have a 'from' param (not a future date).
@@ -660,7 +666,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), futCursor);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), futCursor);
 
     // No recordings URL should have been fetched — Walk B was skipped
     expect(urls.some((u) => u.includes("/v2/users/me/recordings"))).toBe(false);
@@ -687,7 +693,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), badDateCursor);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), badDateCursor);
 
     // Walk B must have been skipped (no recordings URL hit)
     expect(urls.some((u) => u.includes("/v2/users/me/recordings"))).toBe(false);
@@ -723,7 +729,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // Walk A page 1 gave us one meeting
     expect(r.itemsUpserted).toBe(1);
@@ -752,7 +758,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // extractPage returned empty → 0 meetings upserted from Walk A, Walk B no-op
     expect(r.itemsUpserted).toBe(0);
@@ -781,7 +787,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "zoom", 0);
@@ -809,7 +815,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // The cycle should complete (error was swallowed), transcript was not upserted
     expect(r.cursor).not.toBeNull();
@@ -846,7 +852,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // Cycle completed, no transcript upserted, meeting was upserted
     expect(r.cursor).not.toBeNull();
@@ -880,7 +886,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // No transcript row (empty body → mapper returned null)
     const txCount = db
@@ -922,7 +928,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // No transcript rows; parent meeting was upserted
     const txCount = db
@@ -968,7 +974,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // No transcripts; meeting was upserted (meeting has id=950)
     const txCount = db
@@ -1014,7 +1020,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     const txCount = db
       .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
@@ -1058,7 +1064,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     const txCount = db
       .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
@@ -1071,7 +1077,7 @@ describeWithFetchRestore("zoom-sync", () => {
     stubAllZoomUrls({ meetings: [], recordingsStatus: 500 });
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // Walk completed without error but advancedTo stays null → cursor lastRecordingsTo stays null
     expect(r.cursor).not.toBeNull();
@@ -1114,7 +1120,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     expect(recordingsPage).toBe(2);
     // The second page URL should contain the page token
@@ -1150,7 +1156,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // Zero items; walk should have advanced (empty result = clean finish)
     expect(r.itemsUpserted).toBe(0);
@@ -1186,7 +1192,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // The valid meeting (+ transcript) should have been upserted; null entry skipped
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
@@ -1213,7 +1219,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // Walk broke cleanly (no rate-limit) → advancedTo was still set
     expect(r.cursor).not.toBeNull();
@@ -1257,7 +1263,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+    await sync.sync(syncTestContext(db, makeZoomVault(), "zoom"), null);
 
     // Second recordings URL must contain the next_page_token param
     const page2Url = urls.find(

@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapFlagsmithFeatureToItem } from "./flagsmith-feature-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -33,11 +32,11 @@ interface FlagsmithCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<FlagsmithCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "flagsmith", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }
-  const baseRaw = (await readConnectorSecret(ctx.vault, "flagsmith", "api_base"))?.trim() ?? "";
+  const baseRaw = (await ctx.getSecret("api_base"))?.trim() ?? "";
   return {
     token,
     apiBase: baseRaw === "" ? DEFAULT_API_BASE : baseRaw,

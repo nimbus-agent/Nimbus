@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField } from "./unknown-record.ts";
 import { mapVercelDeploymentToItem } from "./vercel-deployment-mapping.ts";
@@ -28,11 +27,11 @@ interface VercelCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<VercelCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "vercel", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }
-  const teamRaw = (await readConnectorSecret(ctx.vault, "vercel", "team_id"))?.trim() ?? "";
+  const teamRaw = (await ctx.getSecret("team_id"))?.trim() ?? "";
   return { token, teamId: teamRaw === "" ? null : teamRaw };
 }
 

@@ -102,6 +102,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com/",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -129,6 +130,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -155,6 +157,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -185,6 +188,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -216,6 +220,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -243,6 +248,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -274,6 +280,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -313,6 +320,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -354,6 +362,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -388,6 +397,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -418,6 +428,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -446,6 +457,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -481,6 +493,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -517,6 +530,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -559,6 +573,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -603,6 +618,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -647,6 +663,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -686,6 +703,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -721,6 +739,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -753,6 +772,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -780,6 +800,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -813,6 +834,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -841,6 +863,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       null,
     );
@@ -868,6 +891,7 @@ describeWithFetchRestore("databricks-sync", () => {
           "databricks.host": "https://my.databricks.com",
           "databricks.token": "dapi-abc",
         }),
+        "databricks",
       ),
       "nimbus-databricks1:eyJwYXNzIjoxfQ", // pre-built valid cursor
     );

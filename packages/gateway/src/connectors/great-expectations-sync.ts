@@ -3,7 +3,6 @@ import { join, resolve } from "node:path";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import {
   type GreatExpectationsMappingContext,
   mapGreatExpectationsResultToItem,
@@ -32,8 +31,7 @@ export type GreatExpectationsSyncableOptions = {
 };
 
 async function loadResultsDir(ctx: SyncContext): Promise<string | null> {
-  const raw =
-    (await readConnectorSecret(ctx.vault, "great_expectations", "results_dir"))?.trim() ?? "";
+  const raw = (await ctx.getSecret("results_dir"))?.trim() ?? "";
   return raw === "" ? null : resolve(raw);
 }
 

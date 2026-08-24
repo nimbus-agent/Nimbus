@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSupersetDashboardToItem } from "./superset-dashboard-mapping.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -37,9 +36,9 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<SupersetCreds | null> {
-  const url = (await readConnectorSecret(ctx.vault, "superset", "url"))?.trim() ?? "";
-  const username = (await readConnectorSecret(ctx.vault, "superset", "username"))?.trim() ?? "";
-  const password = (await readConnectorSecret(ctx.vault, "superset", "password"))?.trim() ?? "";
+  const url = (await ctx.getSecret("url"))?.trim() ?? "";
+  const username = (await ctx.getSecret("username"))?.trim() ?? "";
+  const password = (await ctx.getSecret("password"))?.trim() ?? "";
   if (url === "" || username === "" || password === "") {
     return null;
   }

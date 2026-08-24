@@ -6,7 +6,6 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { nextPageUrl } from "./link-header.ts";
 import { mapMendeleyDocumentToItem } from "./mendeley-reference-mapping.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -116,7 +115,7 @@ async function loadAccessToken(
   options: MendeleySyncableOptions,
 ): Promise<string | null> {
   await options.ensureMendeleyMcpRunning();
-  const raw = await readConnectorSecret(ctx.vault, "mendeley", "oauth");
+  const raw = await ctx.getSecret("oauth");
   if (raw === null || raw === "") {
     return null;
   }

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -21,6 +22,14 @@ function ctxWithPat(
       ...(apiBase !== undefined ? { "gitlab.api_base": apiBase } : {}),
     }),
     ...silentSyncContextExtras(),
+    ...boundTestCapabilities(
+      db,
+      createStubVault({
+        "gitlab.pat": pat,
+        ...(apiBase !== undefined ? { "gitlab.api_base": apiBase } : {}),
+      }),
+      "gitlab",
+    ),
   };
 }
 

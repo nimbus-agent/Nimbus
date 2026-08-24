@@ -79,7 +79,10 @@ describeWithFetchRestore("dependencytrack-sync", () => {
 
     const sync = makeDTSyncable();
     // Pass base_url WITH trailing slash — trimTrailingSlash takes the s.slice branch
-    const r = await sync.sync(syncTestContext(db, makeStubVault(`${BASE_URL}/`, API_KEY)), null);
+    const r = await sync.sync(
+      syncTestContext(db, makeStubVault(`${BASE_URL}/`, API_KEY), "dependencytrack"),
+      null,
+    );
     expect(capturedUrl).not.toContain("//api"); // no double-slash
     expect(capturedUrl).toContain(BASE_URL);
     expect(r.itemsUpserted).toBe(1);
@@ -99,7 +102,10 @@ describeWithFetchRestore("dependencytrack-sync", () => {
     }) as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault(BASE_URL, API_KEY)), null);
+    const r = await sync.sync(
+      syncTestContext(db, makeStubVault(BASE_URL, API_KEY), "dependencytrack"),
+      null,
+    );
     expect(capturedUrl).toContain(BASE_URL);
     expect(r.itemsUpserted).toBe(1);
   });
@@ -114,7 +120,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-dependencytrack1:");
     expectServiceItemCount(db, "dependencytrack", 1);
@@ -135,7 +141,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
     }) as typeof fetch;
 
     const sync = makeDTSyncable();
-    await sync.sync(syncTestContext(db, makeStubVault()), null);
+    await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(capturedKey).toBe(API_KEY);
   });
 
@@ -150,7 +156,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "dependencytrack", 0);
     expect(r.cursor).toContain("nimbus-dependencytrack1:");
@@ -166,7 +172,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-dependencytrack1:");
   });
@@ -187,7 +193,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     // Only the valid project is upserted
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "dependencytrack", 1);
@@ -207,7 +213,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "dependencytrack", 0);
   });
@@ -224,7 +230,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -254,7 +260,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
     }) as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(callCount).toBe(2);
     // Page 1 upserted all 100 items; page 2 errored → break → returns success cursor
     expect(r.itemsUpserted).toBe(100);
@@ -273,7 +279,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(0);
     // syncPassCursorParseEmpty always uses the defaultCursor (pass1Cursor), never null
     expect(r.cursor).toContain("nimbus-dependencytrack1:");
@@ -287,7 +293,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       Promise.resolve(new Response("Server Error", { status: 500 }))) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(0);
     // syncPassCursorHttpEmpty preserves the incoming cursor (null → defaultCursor)
     expect(r.cursor).toContain("nimbus-dependencytrack1:");
@@ -302,7 +308,10 @@ describeWithFetchRestore("dependencytrack-sync", () => {
 
     const sync = makeDTSyncable();
     const existingCursor = "nimbus-dependencytrack1:some-cursor";
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), existingCursor);
+    const r = await sync.sync(
+      syncTestContext(db, makeStubVault(), "dependencytrack"),
+      existingCursor,
+    );
     expect(r.itemsUpserted).toBe(0);
     // syncPassCursorHttpEmpty: incomingCursor ?? defaultCursor → returns existingCursor
     expect(r.cursor).toBe(existingCursor);
@@ -333,7 +342,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
     }) as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(callCount).toBe(2);
     expect(r.itemsUpserted).toBe(100);
     expect(r.cursor).toContain("nimbus-dependencytrack1:");
@@ -361,7 +370,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
     }) as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(3);
     expectServiceItemCount(db, "dependencytrack", 3);
@@ -379,7 +388,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "dependencytrack", 1);
   });
@@ -398,7 +407,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -416,7 +425,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -447,7 +456,7 @@ describeWithFetchRestore("dependencytrack-sync", () => {
     }) as typeof fetch;
 
     const sync = makeDTSyncable();
-    const r = await sync.sync(syncTestContext(db, makeStubVault()), null);
+    const r = await sync.sync(syncTestContext(db, makeStubVault(), "dependencytrack"), null);
     expect(callCount).toBe(2);
     expect(r.itemsUpserted).toBe(101);
     expectServiceItemCount(db, "dependencytrack", 101);

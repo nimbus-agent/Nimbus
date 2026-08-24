@@ -92,6 +92,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.account_id": "42",
           "dbt.api_base": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -125,6 +126,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.account_id": "7",
           "dbt.api_base": "https://custom.dbt.example/", // trailing slash
         }),
+        "dbt",
       ),
       null,
     );
@@ -153,6 +155,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.account_id": "8",
           "dbt.api_base": "https://nodeslash.dbt.example", // no trailing slash
         }),
+        "dbt",
       ),
       null,
     );
@@ -191,6 +194,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.account_id": null,
           "dbt.api_base": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -228,6 +232,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.account_id": null,
           "dbt.api_base": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -256,6 +261,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -294,6 +300,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -328,6 +335,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -361,6 +369,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": "42",
         }),
+        "dbt",
       ),
       null,
     );
@@ -390,6 +399,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": "42",
         }),
+        "dbt",
       ),
       null,
     );
@@ -417,6 +427,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -449,6 +460,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -485,6 +497,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -529,6 +542,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": null,
         }),
+        "dbt",
       ),
       null,
     );
@@ -563,6 +577,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": "not-a-number",
         }),
+        "dbt",
       ),
       null,
     );
@@ -589,6 +604,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": "42",
         }),
+        "dbt",
       ),
       null,
     );
@@ -632,6 +648,7 @@ describeWithFetchRestore("dbt-sync", () => {
           "dbt.token": "tok",
           "dbt.account_id": null,
         }),
+        "dbt",
       ),
       null,
     );

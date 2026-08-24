@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -26,6 +27,7 @@ describeWithFetchRestore("iac-sync", () => {
       vault: createStubVault({ "iac.enabled": "1" }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, createStubVault({ "iac.enabled": "1" }), "iac"),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -41,7 +43,10 @@ describeWithFetchRestore("iac-sync", () => {
   test("no-op when iac enabled key is '0' (not '1')", async () => {
     const sync = createIacSyncable({ ensureIacMcpRunning: async () => {} });
     const db = createMemoryIndexDb();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "iac.enabled": "0" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "iac.enabled": "0" }), "iac"),
+      null,
+    );
     expectSyncNoopResult(r);
   });
 
@@ -51,7 +56,7 @@ describeWithFetchRestore("iac-sync", () => {
     const db = createMemoryIndexDb();
     const existingCursor = "nimbus-iac1:abc123";
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "iac.enabled": "0" })),
+      syncTestContext(db, createStubVault({ "iac.enabled": "0" }), "iac"),
       existingCursor,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -77,7 +82,10 @@ describeWithFetchRestore("iac-sync", () => {
     }
 
     const sync = createIacSyncable({ ensureIacMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "iac.enabled": "1" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "iac.enabled": "1" }), "iac"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
 
     const row = db
@@ -111,7 +119,10 @@ describeWithFetchRestore("iac-sync", () => {
     }) as unknown as typeof real;
 
     const sync = createIacSyncable({ ensureIacMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "iac.enabled": "1" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "iac.enabled": "1" }), "iac"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
 
     const row = real
@@ -129,7 +140,10 @@ describeWithFetchRestore("iac-sync", () => {
     const sync = createIacSyncable({ ensureIacMcpRunning: async () => {} });
     const db = createMemoryIndexDb();
     const before = Date.now();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "iac.enabled": "1" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "iac.enabled": "1" }), "iac"),
+      null,
+    );
     const after = Date.now();
 
     expect(r.cursor).toMatch(/^nimbus-iac1:/);
@@ -145,7 +159,10 @@ describeWithFetchRestore("iac-sync", () => {
   test("sync result has hasMore=false and itemsDeleted=0", async () => {
     const sync = createIacSyncable({ ensureIacMcpRunning: async () => {} });
     const db = createMemoryIndexDb();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "iac.enabled": "1" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "iac.enabled": "1" }), "iac"),
+      null,
+    );
     expect(r.hasMore).toBe(false);
     expect(r.itemsDeleted).toBe(0);
     expect(r.durationMs).toBeGreaterThanOrEqual(0);
@@ -160,7 +177,7 @@ describeWithFetchRestore("iac-sync", () => {
     });
     const db = createMemoryIndexDb();
     await expect(
-      sync.sync(syncTestContext(db, createStubVault({ "iac.enabled": "1" })), null),
+      sync.sync(syncTestContext(db, createStubVault({ "iac.enabled": "1" }), "iac"), null),
     ).rejects.toThrow("MCP startup failure");
   });
 
@@ -175,7 +192,7 @@ describeWithFetchRestore("iac-sync", () => {
     });
     const db = createMemoryIndexDb();
     // Even with empty vault (would be noop), the MCP runner is called first
-    await expect(sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null)).rejects.toThrow(
+    await expect(sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "iac"), null)).rejects.toThrow(
       "startup fail",
     );
     expect(called).toBe(true);

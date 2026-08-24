@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapDatabricksJobToItem, type RunSummary } from "./databricks-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -37,8 +36,8 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<DatabricksCreds | null> {
-  const host = (await readConnectorSecret(ctx.vault, "databricks", "host"))?.trim() ?? "";
-  const token = (await readConnectorSecret(ctx.vault, "databricks", "token"))?.trim() ?? "";
+  const host = (await ctx.getSecret("host"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (host === "" || token === "") {
     return null;
   }

@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapZoteroReferenceToItem } from "./zotero-reference-mapping.ts";
 
@@ -27,8 +26,8 @@ interface ZoteroCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<ZoteroCreds | null> {
-  const apiKey = (await readConnectorSecret(ctx.vault, "zotero", "api_key"))?.trim() ?? "";
-  const library = (await readConnectorSecret(ctx.vault, "zotero", "library"))?.trim() ?? "";
+  const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
+  const library = (await ctx.getSecret("library"))?.trim() ?? "";
   if (apiKey === "" || library === "") {
     return null;
   }

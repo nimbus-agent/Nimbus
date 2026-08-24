@@ -74,7 +74,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-prefect1:");
@@ -100,7 +100,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    await sync.sync(syncTestContext(db, vault), null);
+    await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     // The URL must not contain a double-slash before /deployments
     expect(capturedUrl).not.toContain("//deployments");
@@ -125,7 +125,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-prefect1:");
@@ -149,7 +149,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     // Only the valid deployment is upserted
     expect(r.itemsUpserted).toBe(1);
@@ -170,7 +170,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "prefect", 1);
@@ -192,7 +192,7 @@ describeWithFetchRestore("prefect-sync", () => {
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
     // Pass a cursor so we can confirm syncPassCursorHttpEmpty returns it unchanged
     const incomingCursor = "nimbus-prefect1:aGVsbG8=";
-    const r = await sync.sync(syncTestContext(db, vault), incomingCursor);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), incomingCursor);
 
     expect(r.itemsUpserted).toBe(0);
     // syncPassCursorHttpEmpty returns incomingCursor ?? defaultCursor
@@ -218,7 +218,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     expect(r.itemsUpserted).toBe(0);
     // syncPassCursorParseEmpty always returns the default cursor
@@ -256,7 +256,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     expect(callCount).toBe(2);
     // All page-0 deployments are upserted; page-1 error triggers break
@@ -278,7 +278,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-prefect1:");
@@ -298,7 +298,7 @@ describeWithFetchRestore("prefect-sync", () => {
       "prefect.api_key": "pnu_test_key",
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "prefect", 1);
@@ -316,7 +316,7 @@ describeWithFetchRestore("prefect-sync", () => {
     });
     const sync = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
     // null cursor → syncPassCursorHttpEmpty returns defaultCursor
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "prefect"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-prefect1:");

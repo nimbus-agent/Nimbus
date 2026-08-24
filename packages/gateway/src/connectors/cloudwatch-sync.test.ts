@@ -116,7 +116,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     const sync = createCloudwatchSyncable({
       ensureCloudwatchMcpRunning: async () => {},
     });
-    const r = await sync.sync(syncTestContext(db, emptyAwsVault()), null);
+    const r = await sync.sync(syncTestContext(db, emptyAwsVault(), "cloudwatch"), null);
     expectSyncNoopResult(r);
     expectServiceItemCount(db, "cloudwatch", 0);
   });
@@ -132,7 +132,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
       return { ok: true, text: streamsPage(2, Date.now() - 1000) };
     };
     const sync = createCloudwatchSyncable({ ...opts(runner), runAwsCli: runner });
-    const r = await sync.sync(syncTestContext(db, profileOnlyVault()), null);
+    const r = await sync.sync(syncTestContext(db, profileOnlyVault(), "cloudwatch"), null);
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-cw1:");
   });
@@ -143,7 +143,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     const db = createMemoryIndexDb();
     const runner = stubRunner(false, "access denied");
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-cw1:");
     expectServiceItemCount(db, "cloudwatch", 0);
@@ -163,7 +163,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-cw1:");
@@ -180,7 +180,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-cw1:");
   });
@@ -191,7 +191,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     const db = createMemoryIndexDb();
     const runner = stubRunner(true, "not valid json {{{{");
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-cw1:");
   });
@@ -215,7 +215,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(logGroupCall).toBe(2);
     expect(r.itemsUpserted).toBe(2);
@@ -250,7 +250,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
     // Empty nextToken → only one page fetched
     expect(logGroupCall).toBe(1);
     expect(r.itemsUpserted).toBe(1);
@@ -274,7 +274,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     // First page had group-1 → 1 upsert; second page failed → break (not empty pass)
     expect(r.itemsUpserted).toBe(1);
@@ -295,7 +295,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     // Group is still indexed (summary.streamCount = 0, no lastEventTimestamp)
     expect(r.itemsUpserted).toBe(1);
@@ -315,7 +315,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "cloudwatch", 1);
@@ -334,7 +334,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(r.itemsUpserted).toBe(1);
   });
@@ -358,7 +358,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(r.itemsUpserted).toBe(1);
   });
@@ -388,7 +388,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(r.itemsUpserted).toBe(1);
 
@@ -421,7 +421,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     // Still indexed; lastEventTimestamp should be absent from metadata
     expect(r.itemsUpserted).toBe(1);
@@ -450,7 +450,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(r.itemsUpserted).toBe(0);
   });
@@ -473,7 +473,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(r.itemsUpserted).toBe(0);
   });
@@ -503,7 +503,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     // MAX_LOG_GROUPS = 500
     expect(r.itemsUpserted).toBe(500);
@@ -522,7 +522,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(r.itemsUpserted).toBe(3);
     expectServiceItemCount(db, "cloudwatch", 3);
@@ -534,7 +534,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     const db = createMemoryIndexDb();
     const runner = stubRunner(true, JSON.stringify({ logGroups: "should-be-array" }));
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-cw1:");
   });
@@ -554,7 +554,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     };
 
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
 
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(1);
@@ -588,7 +588,7 @@ describeWithFetchRestore("cloudwatch-sync", () => {
     // Valid JSON but parsed is an array, not a record
     const runner = stubRunner(true, JSON.stringify([]));
     const sync = createCloudwatchSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "cloudwatch"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-cw1:");
   });

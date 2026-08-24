@@ -2,7 +2,6 @@ import { type AppStoreConnectJwtParams, signAppStoreConnectJwt } from "@nimbus-d
 
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { runPerAppPollSync } from "./_lib/per-app-poll-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapTestflightAppToItem, mapTestflightBuildToItem } from "./testflight-build-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -54,9 +53,9 @@ function resourceId(row: Record<string, unknown>): string | undefined {
 }
 
 async function readJwtParams(ctx: SyncContext): Promise<AppStoreConnectJwtParams | null> {
-  const issuerId = (await readConnectorSecret(ctx.vault, "testflight", "issuer_id"))?.trim() ?? "";
-  const keyId = (await readConnectorSecret(ctx.vault, "testflight", "key_id"))?.trim() ?? "";
-  const privateKeyPem = (await readConnectorSecret(ctx.vault, "testflight", "private_key")) ?? "";
+  const issuerId = (await ctx.getSecret("issuer_id"))?.trim() ?? "";
+  const keyId = (await ctx.getSecret("key_id"))?.trim() ?? "";
+  const privateKeyPem = (await ctx.getSecret("private_key")) ?? "";
   if (issuerId === "" || keyId === "" || privateKeyPem.trim() === "") {
     return null;
   }

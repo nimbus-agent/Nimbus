@@ -73,7 +73,11 @@ describe("great-expectations-sync", () => {
   test("no-op when results_dir vault key is empty string", async () => {
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": "" })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": "" }),
+        "great_expectations",
+      ),
       null,
     );
     expectSyncNoopResult(r);
@@ -82,7 +86,11 @@ describe("great-expectations-sync", () => {
   test("no-op when results_dir vault key is whitespace only", async () => {
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": "   " })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": "   " }),
+        "great_expectations",
+      ),
       null,
     );
     expectSyncNoopResult(r);
@@ -96,7 +104,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -111,7 +123,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -126,6 +142,7 @@ describe("great-expectations-sync", () => {
       syncTestContext(
         db,
         createStubVault({ "great_expectations.results_dir": "/nonexistent/gx-test-path-xyz" }),
+        "great_expectations",
       ),
       null,
     );
@@ -146,7 +163,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -161,7 +182,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -175,7 +200,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -189,7 +218,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -203,7 +236,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -216,7 +253,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -239,7 +280,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -261,7 +306,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -288,7 +337,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     // Only the valid entry is indexed
@@ -313,7 +366,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(2);
@@ -330,7 +387,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -350,7 +411,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -371,7 +436,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -396,7 +465,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -416,7 +489,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -445,7 +522,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -470,7 +551,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -499,7 +584,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -529,7 +618,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -559,7 +652,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -584,7 +681,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -613,7 +714,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -642,7 +747,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -671,7 +780,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -700,7 +813,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -729,7 +846,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -758,7 +879,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -783,7 +908,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -813,7 +942,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -847,7 +980,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -874,7 +1011,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -895,7 +1036,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -920,7 +1065,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -941,7 +1090,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -977,7 +1130,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -1011,7 +1168,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -1045,7 +1206,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -1079,7 +1244,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -1110,7 +1279,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -1141,7 +1314,11 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -1155,11 +1332,19 @@ describe("great-expectations-sync", () => {
 
     const db = createMemoryIndexDb();
     const r1 = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       null,
     );
     const r2 = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "great_expectations.results_dir": dir })),
+      syncTestContext(
+        db,
+        createStubVault({ "great_expectations.results_dir": dir }),
+        "great_expectations",
+      ),
       r1.cursor,
     );
     expect(r2.cursor).toContain("nimbus-gx1:");

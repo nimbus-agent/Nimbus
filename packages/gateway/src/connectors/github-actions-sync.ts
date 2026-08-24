@@ -1,6 +1,5 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { listGithubReposFromIndex } from "./github-index-repos.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -217,7 +216,7 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
       const t0 = performance.now();
       await options.ensureGithubMcpRunning();
 
-      const pat = await readConnectorSecret(ctx.vault, "github", "pat");
+      const pat = await ctx.getSharedSecret("github", "pat");
       if (pat === null || pat.trim() === "") {
         return syncNoopResult(cursor, t0);
       }

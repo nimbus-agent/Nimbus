@@ -4,6 +4,7 @@ import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { PR_FILES_PAGE_SIZE } from "../prfiles/pr-file-fetch.ts";
 import { RateLimitError, UnauthenticatedError } from "../sync/types.ts";
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -29,6 +30,7 @@ function ctxWithPat(db: ReturnType<typeof createMemoryIndexDb>, pat: string | nu
     db,
     vault: createStubVault({ "github.pat": pat }),
     ...silentSyncContextExtras(),
+    ...boundTestCapabilities(db, createStubVault({ "github.pat": pat }), "github"),
   };
 }
 
@@ -380,7 +382,7 @@ function reviewEvent(): Record<string, unknown> {
 
 test("a PullRequestReviewEvent indexes both the review and its PR", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const now = Date.now();
 
   expect(processEvent(ctx, reviewEvent(), now)).toBe(true);
@@ -405,7 +407,7 @@ test("a PullRequestReviewEvent indexes both the review and its PR", () => {
 
 test("the reviewer resolves to a different person than the PR author", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const now = Date.now();
   processEvent(ctx, reviewEvent(), now);
 
@@ -422,7 +424,7 @@ test("the reviewer resolves to a different person than the PR author", () => {
 
 test("a review event missing its pull_request is skipped without throwing", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const ev = {
     type: "PullRequestReviewEvent",
     repo: { full_name: "acme/app" },
@@ -436,7 +438,7 @@ test("a review event missing its pull_request is skipped without throwing", () =
 
 test("a review missing a usable id writes the PR but skips the review, and processEvent reports false", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const ev = {
     type: "PullRequestReviewEvent",
     repo: { full_name: "acme/app" },
@@ -461,7 +463,7 @@ test("a review missing a usable id writes the PR but skips the review, and proce
 
 test("a review id sent as a string (not a number) writes the PR but skips the review", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const ev = {
     type: "PullRequestReviewEvent",
     repo: { full_name: "acme/app" },
@@ -485,7 +487,7 @@ test("a review id sent as a string (not a number) writes the PR but skips the re
 
 test("a review event whose pull_request has no usable number is skipped without throwing", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const ev = {
     type: "PullRequestReviewEvent",
     repo: { full_name: "acme/app" },
@@ -536,7 +538,7 @@ test("PR stats are absent, not null, when the payload omits them", () => {
 
 test("I-2: an events-path upsert after enrichment preserves stats and does not re-queue the PR", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const now = Date.now();
 
   // Simulate `enrichPrDetail`'s single-PR response: real title + full stats.
@@ -599,7 +601,7 @@ test("I-2: an events-path upsert after enrichment preserves stats and does not r
 
 test("a 403 with retry-after is rate limiting even when remaining is non-zero", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const res = new Response("secondary rate limit", {
     status: 403,
     headers: { "retry-after": "60", "x-ratelimit-remaining": "4999" },
@@ -611,7 +613,7 @@ test("a 403 with retry-after is rate limiting even when remaining is non-zero", 
 
 test("a 403 with no retry-after and remaining left is not rate limiting", () => {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "github");
   const res = new Response("forbidden", {
     status: 403,
     headers: { "x-ratelimit-remaining": "4999" },

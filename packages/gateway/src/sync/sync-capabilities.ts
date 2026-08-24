@@ -15,6 +15,34 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
  * caller supplies — a caller-supplied id would make `getSecret` a vault handle with extra steps,
  * which is the thing this exists to prevent.
  */
+
+/**
+ * The ONLY cross-service credential reads in the codebase, enumerated rather than inferred.
+ *
+ * Four connectors legitimately authenticate with a SHARED credential family: BigQuery, Cloud
+ * Logging and Vertex AI all use one `gcp.*` service account, and GitHub Actions uses the same
+ * `github.pat` as the GitHub connector. `isConnectorConfigured`'s DERIVED_CONFIGURED_CHECKS already
+ * encodes the same relationships for I29's egress gating.
+ *
+ * Scoping `getSecret` to the calling service alone would have broken all four. Granting them a
+ * blanket vault handle would have un-done the narrowing. This is the third option: a named,
+ * checked grant, so a NEW cross-service read is a deliberate edit here rather than an accident.
+ */
+export const SHARED_CREDENTIAL_GRANTS = {
+  bigquery: ["gcp"],
+  cloud_logging: ["gcp"],
+  vertex_ai: ["gcp"],
+  github_actions: ["github"],
+} as const satisfies Partial<Record<ConnectorServiceId, readonly ConnectorServiceId[]>>;
+
+function grantsFor(serviceId: ConnectorServiceId): readonly ConnectorServiceId[] {
+  return (
+    (
+      SHARED_CREDENTIAL_GRANTS as Partial<Record<ConnectorServiceId, readonly ConnectorServiceId[]>>
+    )[serviceId] ?? []
+  );
+}
+
 export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServiceId> {
   /**
    * Resolves `<serviceId>.<keyName>` against the vault. A syncable cannot name another service's
@@ -23,6 +51,16 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
    * to `string`.
    */
   getSecret(keyName: ConnectorSecretKeyOf<S>): Promise<string | null>;
+  /**
+   * Reads a SHARED credential family — `gcp.*` for the three GCP connectors, `github.*` for GitHub
+   * Actions. Throws when the bound service has no grant for that family, so an ungranted
+   * cross-service read fails loudly at the call rather than silently returning null and looking
+   * like an unconfigured connector.
+   */
+  getSharedSecret<F extends ConnectorServiceId>(
+    family: F,
+    keyName: ConnectorSecretKeyOf<F>,
+  ): Promise<string | null>;
   /** The V48/V49 body-depth chokepoint, unmoved — this only routes to it. */
   upsertItem(row: BodyRow): void;
   /** SYNCHRONOUS, and returns the id: callers set it as `authorId` on the item they build. */
@@ -48,6 +86,15 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
 ): SyncCapabilities<S> {
   return {
     getSecret: (keyName) => readConnectorSecret(deps.vault, serviceId, keyName),
+    getSharedSecret: (family, keyName) => {
+      if (!grantsFor(serviceId).includes(family)) {
+        throw new Error(
+          `${serviceId} has no shared-credential grant for "${family}". Add one to ` +
+            "SHARED_CREDENTIAL_GRANTS in sync/sync-capabilities.ts if that is intended.",
+        );
+      }
+      return readConnectorSecret(deps.vault, family, keyName);
+    },
     upsertItem: (row) => {
       upsertIndexedItemForSync(deps, row);
     },
@@ -75,6 +122,7 @@ export function unboundSyncCapabilities(): SyncCapabilities {
   };
   return {
     getSecret: () => refuse("getSecret"),
+    getSharedSecret: () => refuse("getSharedSecret"),
     upsertItem: () => refuse("upsertItem"),
     resolvePerson: () => refuse("resolvePerson"),
   };

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -27,7 +28,15 @@ function credVault(overrides: Record<string, string | null> = {}) {
 // Helper: build a sync context with credentials
 function credCtx(overrides: Record<string, string | null> = {}) {
   const db = createMemoryIndexDb();
-  return { db, ctx: { db, vault: credVault(overrides), ...silentSyncContextExtras() } };
+  return {
+    db,
+    ctx: {
+      db,
+      vault: credVault(overrides),
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, credVault(overrides), "jira"),
+    },
+  };
 }
 
 // Helper: make a Jira issue fixture
@@ -99,7 +108,12 @@ describeWithFetchRestore("jira-sync", () => {
   ])("no-op when %s", async (_label, key, value) => {
     const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const db = createMemoryIndexDb();
-    const ctx = { db, vault: credVault({ [key]: value }), ...silentSyncContextExtras() };
+    const ctx = {
+      db,
+      vault: credVault({ [key]: value }),
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, credVault({ [key]: value }), "jira"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toBeNull();
@@ -154,6 +168,15 @@ describeWithFetchRestore("jira-sync", () => {
       }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({
+          "jira.email": "u@example.com",
+          "jira.api_token": "tok",
+          "jira.base_url": "https://example.atlassian.net",
+        }),
+        "jira",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -821,7 +844,12 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
 
   test("reports no_credential when credentials are missing", async () => {
     const db = createMemoryIndexDb();
-    const ctx = { db, vault: credVault({ "jira.email": "" }), ...silentSyncContextExtras() };
+    const ctx = {
+      db,
+      vault: credVault({ "jira.email": "" }),
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, credVault({ "jira.email": "" }), "jira"),
+    };
 
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");

@@ -106,7 +106,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     // On http_error the incoming cursor (null) is kept or defaulted to pass1
     expect(r.itemsUpserted).toBe(0);
@@ -126,7 +126,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-testflight1:");
@@ -145,7 +145,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-testflight1:");
@@ -178,7 +178,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     // GoodApp is upserted as an app item; no id app is not upserted either (null from mapper)
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
@@ -211,7 +211,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     // Empty-id app: mapTestflightAppToItem returns null (id=="" check) → not upserted;
     // and resourceId returns undefined → no builds fetch
@@ -237,7 +237,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     // App was upserted, builds were skipped
     expect(r.itemsUpserted).toBe(1);
@@ -267,7 +267,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     // app upserted, unmappable build skipped
     expect(r.itemsUpserted).toBe(1);
@@ -308,7 +308,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     // 2 apps + 3 builds = 5 items
     expect(r.itemsUpserted).toBe(5);
@@ -332,7 +332,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     // app-minimal has no name/bundleId but a valid id → falls back to id as title
     expect(r.itemsUpserted).toBe(1);
@@ -355,7 +355,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "testflight", 1);
@@ -384,7 +384,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     // Only the one valid app is indexed
     expect(r.itemsUpserted).toBe(1);
@@ -403,7 +403,7 @@ describeWithFetchRestore("testflight-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), null);
+    const r = await sync.sync(syncTestContext(db, credentialedVault(), "testflight"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "testflight", 0);
@@ -419,7 +419,10 @@ describeWithFetchRestore("testflight-sync", () => {
 
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
     const existingCursor = "nimbus-testflight1:some-prior-cursor";
-    const r = await sync.sync(syncTestContext(db, credentialedVault()), existingCursor);
+    const r = await sync.sync(
+      syncTestContext(db, credentialedVault(), "testflight"),
+      existingCursor,
+    );
 
     // syncPassCursorHttpEmpty returns incomingCursor ?? defaultCursor
     expect(r.cursor).toBe(existingCursor);

@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 import { mapZendeskTicketToItem } from "./zendesk-ticket-mapping.ts";
@@ -38,9 +37,9 @@ function zendeskBasicAuthHeader(email: string, apiToken: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<ZendeskCreds | null> {
-  const url = (await readConnectorSecret(ctx.vault, "zendesk", "url"))?.trim() ?? "";
-  const email = (await readConnectorSecret(ctx.vault, "zendesk", "email"))?.trim() ?? "";
-  const apiToken = (await readConnectorSecret(ctx.vault, "zendesk", "api_token"))?.trim() ?? "";
+  const url = (await ctx.getSecret("url"))?.trim() ?? "";
+  const email = (await ctx.getSecret("email"))?.trim() ?? "";
+  const apiToken = (await ctx.getSecret("api_token"))?.trim() ?? "";
   if (url === "" || email === "" || apiToken === "") {
     return null;
   }

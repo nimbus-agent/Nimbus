@@ -1,7 +1,6 @@
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapReadwiseBookToItem } from "./readwise-book-mapping.ts";
 import { mapReadwiseHighlightToItem } from "./readwise-highlight-mapping.ts";
@@ -28,7 +27,7 @@ interface ReadwiseCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<ReadwiseCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "readwise", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }

@@ -91,6 +91,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "mytoken",
         }),
+        "dagster",
       ),
       null,
     );
@@ -116,6 +117,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud/",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -140,6 +142,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -162,6 +165,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -185,6 +189,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       incomingCursor,
     );
@@ -212,6 +217,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -237,6 +243,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -262,6 +269,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -287,6 +295,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -316,6 +325,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -366,6 +376,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -410,6 +421,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       null,
     );
@@ -434,6 +446,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "tok",
         }),
+        "dagster",
       ),
       "nimbus-dagster1:oldcursor",
     );
@@ -461,6 +474,7 @@ describeWithFetchRestore("dagster-sync", () => {
           "dagster.base_url": "https://acme.dagster.cloud",
           "dagster.api_token": "secret-token-123",
         }),
+        "dagster",
       ),
       null,
     );

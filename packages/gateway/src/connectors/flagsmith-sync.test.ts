@@ -83,6 +83,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
           "flagsmith.token": "tok",
           "flagsmith.api_base": "https://my-flagsmith.example.com",
         }),
+        "flagsmith",
       ),
       null,
     );
@@ -103,7 +104,11 @@ describeWithFetchRestore("flagsmith-sync", () => {
 
     const sync = makeSyncable();
     await sync.sync(
-      syncTestContext(db, createStubVault({ "flagsmith.token": "tok", "flagsmith.api_base": "" })),
+      syncTestContext(
+        db,
+        createStubVault({ "flagsmith.token": "tok", "flagsmith.api_base": "" }),
+        "flagsmith",
+      ),
       null,
     );
     expect(seenUrl).toContain("api.flagsmith.com");
@@ -130,7 +135,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
 
     // 2 projects × 2 features each = 4 upserted
     expect(r.itemsUpserted).toBe(4);
@@ -155,7 +160,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -178,7 +183,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -199,7 +204,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -218,7 +223,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     // No projects extracted → 0 upserted, cursor still set
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-flagsmith1:");
@@ -243,7 +248,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     // Only the valid project's 1 feature is indexed
     expect(r.itemsUpserted).toBe(1);
   });
@@ -265,7 +270,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -290,7 +295,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -318,7 +323,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -333,7 +338,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
 
     const sync = makeSyncable();
     const prevCursor = "prev-cursor-value";
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), prevCursor);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), prevCursor);
 
     // http_error → syncPassCursorHttpEmpty → cursor = incomingCursor ?? defaultCursor
     expect(r.itemsUpserted).toBe(0);
@@ -349,7 +354,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
       Promise.resolve(new Response("Bad Gateway", { status: 502 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-flagsmith1:");
@@ -368,7 +373,10 @@ describeWithFetchRestore("flagsmith-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), "any-old-cursor");
+    const r = await sync.sync(
+      syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"),
+      "any-old-cursor",
+    );
 
     // parse_error → syncPassCursorParseEmpty → cursor = pass1Cursor()
     expect(r.itemsUpserted).toBe(0);
@@ -394,7 +402,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     // Feature still gets upserted even though tags failed
     expect(r.itemsUpserted).toBe(1);
   });
@@ -421,7 +429,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     // Only 1 page fetched because features.length (3) < PAGE_SIZE (100)
     expect(pagesFetched).toBe(1);
     expect(r.itemsUpserted).toBe(3);
@@ -445,7 +453,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(pagesFetched).toBe(1);
     expect(r.itemsUpserted).toBe(1);
   });
@@ -466,7 +474,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-flagsmith1:");
   });
@@ -491,7 +499,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     // The nameless feature is skipped; only 1 upserted
     expect(r.itemsUpserted).toBe(1);
   });
@@ -513,7 +521,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -539,7 +547,7 @@ describeWithFetchRestore("flagsmith-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, STUB_VAULT_WITH_TOKEN, "flagsmith"), null);
     expect(r.itemsUpserted).toBe(3);
     expectServiceItemCount(db, "flagsmith", 3);
   });

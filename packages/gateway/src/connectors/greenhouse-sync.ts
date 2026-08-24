@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapGreenhouseJobToItem } from "./greenhouse-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -26,7 +25,7 @@ interface GreenhouseCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<GreenhouseCreds | null> {
-  const apiKey = (await readConnectorSecret(ctx.vault, "greenhouse", "api_key"))?.trim() ?? "";
+  const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
   if (apiKey === "") {
     return null;
   }

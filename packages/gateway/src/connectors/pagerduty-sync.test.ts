@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import type { SyncResult } from "../sync/types.ts";
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -127,7 +128,7 @@ async function runOneSync(incidents: unknown[]): Promise<Database> {
   const db = createMemoryIndexDb();
   const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   const vault = createStubVault({ "pagerduty.api_token": "test-token" });
-  await sync.sync(syncTestContext(db, vault), null);
+  await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
   return db;
 }
 
@@ -138,7 +139,7 @@ async function runOneSyncWithResult(
   const db = createMemoryIndexDb();
   const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
   const vault = createStubVault({ "pagerduty.api_token": "test-token" });
-  const result = await sync.sync(syncTestContext(db, vault), null);
+  const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
   return { db, result };
 }
 
@@ -151,10 +152,13 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
   test("no-op when token is empty string", async () => {
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const ctxDb = createMemoryIndexDb();
+    const ctxVault = createStubVault({ "pagerduty.api_token": "" });
     const ctx = {
-      vault: createStubVault({ "pagerduty.api_token": "" }),
-      db: createMemoryIndexDb(),
+      vault: ctxVault,
+      db: ctxDb,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(ctxDb, ctxVault, "pagerduty"),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
@@ -393,7 +397,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const vault = createStubVault({ "pagerduty.api_token": "test-token" });
     const before = Date.now();
-    await sync.sync(syncTestContext(db, vault), null);
+    await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     const after = Date.now();
     expect(capturedUrl).toBeDefined();
     const since = new URL(capturedUrl as string).searchParams.get("since"); // NOSONAR S4325: capturedUrl is string|undefined (narrowed by the toBeDefined above)
@@ -456,7 +460,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const db = createMemoryIndexDb();
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const vault = createStubVault({ "pagerduty.api_token": "test-token" });
-    const result = await sync.sync(syncTestContext(db, vault), null);
+    const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(calls).toHaveLength(3);
     expect(new URL(calls[0] as string).searchParams.get("sort_by")).toBe("updated_at:asc"); // NOSONAR S4325: calls[N] is string|undefined under noUncheckedIndexedAccess
     expect(new URL(calls[1] as string).searchParams.get("offset")).toBe("100"); // NOSONAR S4325: calls[N] is string|undefined under noUncheckedIndexedAccess
@@ -522,7 +526,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
       maxPagesPerSync: 2,
     });
     const vault = createStubVault({ "pagerduty.api_token": "test-token" });
-    const result = await sync.sync(syncTestContext(db, vault), null);
+    const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(calls).toHaveLength(2);
     expect(result.itemsUpserted).toBe(2);
     expect(result.hasMore).toBe(true);
@@ -560,7 +564,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const db = createMemoryIndexDb();
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const vault = createStubVault({ "pagerduty.api_token": "test-token" });
-    const result = await sync.sync(syncTestContext(db, vault), null);
+    const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(result.itemsUpserted).toBe(1);
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
@@ -610,12 +614,12 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
 
     // First sync — null cursor, produces a cursor based on floorIso
-    const r1 = await sync.sync(syncTestContext(db, vault), null);
+    const r1 = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(r1.cursor).not.toBeNull();
 
     capturedUrls = [];
     // Second sync with the valid cursor returned from first sync
-    const r2 = await sync.sync(syncTestContext(db, vault), r1.cursor);
+    const r2 = await sync.sync(syncTestContext(db, vault, "pagerduty"), r1.cursor);
     expect(r2.itemsUpserted).toBe(0);
     expect(capturedUrls).toHaveLength(1);
     // The "since" from the second call should be the cursor's lastUpdated (not the 30d floor)
@@ -637,7 +641,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const before = Date.now();
-    await sync.sync(syncTestContext(db, vault), "");
+    await sync.sync(syncTestContext(db, vault, "pagerduty"), "");
     const after = Date.now();
 
     expect(capturedUrl).toBeDefined();
@@ -662,7 +666,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const before = Date.now();
     // A cursor with the wrong prefix is treated as invalid → falls back to floor
-    await sync.sync(syncTestContext(db, vault), "nimbus-wrongprefix:AAAA");
+    await sync.sync(syncTestContext(db, vault, "pagerduty"), "nimbus-wrongprefix:AAAA");
     const after = Date.now();
 
     expect(capturedUrl).toBeDefined();
@@ -690,7 +694,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const before = Date.now();
-    await sync.sync(syncTestContext(db, vault), badCursor);
+    await sync.sync(syncTestContext(db, vault, "pagerduty"), badCursor);
     const after = Date.now();
 
     expect(capturedUrl).toBeDefined();
@@ -717,7 +721,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const before = Date.now();
-    await sync.sync(syncTestContext(db, vault), badCursor);
+    await sync.sync(syncTestContext(db, vault, "pagerduty"), badCursor);
     const after = Date.now();
 
     expect(capturedUrl).toBeDefined();
@@ -746,7 +750,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const before = Date.now();
-    await sync.sync(syncTestContext(db, vault), badCursor);
+    await sync.sync(syncTestContext(db, vault, "pagerduty"), badCursor);
     const after = Date.now();
 
     expect(capturedUrl).toBeDefined();
@@ -773,7 +777,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const before = Date.now();
-    await sync.sync(syncTestContext(db, vault), badCursor);
+    await sync.sync(syncTestContext(db, vault, "pagerduty"), badCursor);
     const after = Date.now();
 
     expect(capturedUrl).toBeDefined();
@@ -814,7 +818,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const db = createMemoryIndexDb();
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
-    const result = await sync.sync(syncTestContext(db, vault), null);
+    const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(result.itemsUpserted).toBe(1);
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
@@ -834,7 +838,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const db = createMemoryIndexDb();
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
-    const result = await sync.sync(syncTestContext(db, vault), null);
+    const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(result.itemsUpserted).toBe(0);
     expect(result.hasMore).toBe(false);
   });
@@ -850,7 +854,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const db = createMemoryIndexDb();
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
-    const result = await sync.sync(syncTestContext(db, vault), null);
+    const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(result.itemsUpserted).toBe(0);
     expect(result.hasMore).toBe(false);
   });
@@ -859,7 +863,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
   test("syncPagerdutyIncidentItems: skips non-object items in incidents array", () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }));
+    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }), "pagerduty");
     const since = isoHoursAgo(24);
     const { upserted } = syncPagerdutyIncidentItems(
       ctx,
@@ -874,7 +878,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
   test("syncPagerdutyIncidentItems: skips items with missing or empty-string id", () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }));
+    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }), "pagerduty");
     const since = isoHoursAgo(24);
     const { upserted } = syncPagerdutyIncidentItems(
       ctx,
@@ -894,7 +898,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
   test("syncPagerdutyIncidentItems: updated_at not advancing maxUpdated when older than since", () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }));
+    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }), "pagerduty");
     const recentSince = isoHoursAgo(5);
     const olderThanSince = isoHoursAgo(10);
     const { maxUpdated } = syncPagerdutyIncidentItems(
@@ -1045,7 +1049,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
       maxPagesPerSync: 0,
     });
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
-    const result = await sync.sync(syncTestContext(db, vault), null);
+    const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(calls).toHaveLength(1);
     expect(result.itemsUpserted).toBe(1);
     // pdHasMore=true and pagesFetched(1) >= clampedMax(1) → hasMore=true
@@ -1076,7 +1080,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
       maxPagesPerSync: 200,
     });
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
-    const result = await sync.sync(syncTestContext(db, vault), null);
+    const result = await sync.sync(syncTestContext(db, vault, "pagerduty"), null);
     expect(result.itemsUpserted).toBe(1);
     // more=false so hasMore is false regardless of the cap
     expect(result.hasMore).toBe(false);
@@ -1087,6 +1091,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const ctx = syncTestContext(
       createMemoryIndexDb(),
       createStubVault({ "pagerduty.api_token": "   " }),
+      "pagerduty",
     );
     const result = await sync.sync(ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -1097,7 +1102,10 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const { calls } = stubPagerdutyPages([{ incidents: [], more: false }]);
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
-    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+    await syncable.sync(
+      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
+      null,
+    );
 
     const url = calls[0] ?? "";
     expect(url).toContain("include%5B%5D=assignees");
@@ -1121,7 +1129,10 @@ describeWithFetchRestore("pagerduty-sync", () => {
     ]);
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
-    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+    await syncable.sync(
+      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
+      null,
+    );
 
     const meta = readIncidentMetadata(db, "PD-1");
     expect(meta.assignee_emails).toEqual(["jane@example.com"]);
@@ -1145,7 +1156,10 @@ describeWithFetchRestore("pagerduty-sync", () => {
     ]);
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
-    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+    await syncable.sync(
+      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
+      null,
+    );
 
     const meta = readIncidentMetadata(db, "PD-2");
     expect(meta.resolved_by_email).toBeNull();
@@ -1165,7 +1179,10 @@ describeWithFetchRestore("pagerduty-sync", () => {
     ]);
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
-    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+    await syncable.sync(
+      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
+      null,
+    );
 
     const row = db
       .query("SELECT author_id FROM item WHERE service = 'pagerduty' AND external_id = 'PD-3'")
@@ -1181,7 +1198,10 @@ describeWithFetchRestore("pagerduty-sync", () => {
     });
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
-    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+    await syncable.sync(
+      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
+      null,
+    );
 
     expect(userCalls).toHaveLength(1);
     expect(readIncidentMetadata(db, "PD-1").resolved_by_email).toBe("jane@example.com");
@@ -1194,7 +1214,10 @@ describeWithFetchRestore("pagerduty-sync", () => {
     );
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
-    await syncable.sync(syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })), null);
+    await syncable.sync(
+      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
+      null,
+    );
     expect(userCalls).toHaveLength(1);
   });
 
@@ -1213,7 +1236,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const result: SyncResult = await syncable.sync(
-      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
+      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
       null,
     );
 
@@ -1250,7 +1273,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const db = createMemoryIndexDb();
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const result: SyncResult = await syncable.sync(
-      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
+      syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
       null,
     );
 
@@ -1291,6 +1314,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
       db,
       vault: createStubVault({ "pagerduty.api_token": "t" }),
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
       rateLimiter: fastLimiter,
     };
     await syncable.sync(ctx, null);
@@ -1316,7 +1340,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const db = createMemoryIndexDb();
     const floorMs = Date.now() - 200 * 86_400_000;
     const ctx = {
-      ...syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
+      ...syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
       historyFloorMs: floorMs,
     };
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
@@ -1331,7 +1355,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const { calls } = stubPagerdutyPages([{ incidents: [], more: false }]);
     const db = createMemoryIndexDb();
     const ctx = {
-      ...syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" })),
+      ...syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
       historyFloorMs: Date.now() - 200 * 86_400_000,
     };
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });

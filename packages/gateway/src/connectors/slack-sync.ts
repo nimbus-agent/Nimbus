@@ -2,7 +2,6 @@ import { getValidSlackAccessToken } from "../auth/slack-access-token.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { shortIndexedMessageTitleFromPreview } from "./sync-message-preview-title.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -397,7 +396,7 @@ export function createSlackSyncable(options: SlackSyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureSlackMcpRunning();
-      const rawVault = await readConnectorSecret(ctx.vault, "slack", "oauth");
+      const rawVault = await ctx.getSecret("oauth");
       if (rawVault === null || rawVault === "") {
         return syncNoopResult(cursor, t0);
       }

@@ -60,7 +60,7 @@ describe("data-profile-sync — no-op paths", () => {
   test("no-op when dataprofile.dir is null (vault key missing)", async () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
-    const r = await sync.sync(syncTestContext(db, createStubVault({})), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault({}), "dataprofile"), null);
     expectSyncNoopResult(r);
     expectServiceItemCount(db, "dataprofile", 0);
   });
@@ -69,7 +69,7 @@ describe("data-profile-sync — no-op paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": "" })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": "" }), "dataprofile"),
       null,
     );
     expectSyncNoopResult(r);
@@ -79,7 +79,7 @@ describe("data-profile-sync — no-op paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": "   " })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": "   " }), "dataprofile"),
       null,
     );
     expectSyncNoopResult(r);
@@ -98,7 +98,7 @@ describe("data-profile-sync — ensureDataprofileMcpRunning", () => {
       },
       readParquetMetadata: nullParquetReader,
     });
-    await sync.sync(syncTestContext(db, createStubVault({})), null);
+    await sync.sync(syncTestContext(db, createStubVault({}), "dataprofile"), null);
     expect(called).toBe(true);
   });
 });
@@ -123,7 +123,7 @@ describe("data-profile-sync — CSV happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -140,7 +140,7 @@ describe("data-profile-sync — CSV happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     // empty header CSV — parseCsvHeader returns [], still gets upserted with 0 columns
@@ -156,7 +156,7 @@ describe("data-profile-sync — CSV happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(2);
@@ -184,7 +184,7 @@ describe("data-profile-sync — JSONL happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -205,7 +205,7 @@ describe("data-profile-sync — JSONL happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -238,7 +238,7 @@ describe("data-profile-sync — JSON happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -253,7 +253,7 @@ describe("data-profile-sync — JSON happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -267,7 +267,7 @@ describe("data-profile-sync — JSON happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -281,7 +281,7 @@ describe("data-profile-sync — JSON happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -319,7 +319,7 @@ describe("data-profile-sync — Parquet happy path", () => {
       }),
     );
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -334,7 +334,7 @@ describe("data-profile-sync — Parquet happy path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions({ readParquetMetadata: nullParquetReader }));
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     // profileParquet returns null → skipped
@@ -360,7 +360,7 @@ describe("data-profile-sync — Parquet happy path", () => {
       }),
     );
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -383,7 +383,7 @@ describe("data-profile-sync — Parquet happy path", () => {
       }),
     );
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -401,7 +401,7 @@ describe("data-profile-sync — Parquet happy path", () => {
       }),
     );
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -425,7 +425,7 @@ describe("data-profile-sync — Parquet happy path", () => {
       }),
     );
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -449,7 +449,7 @@ describe("data-profile-sync — directory walk error paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": nonExistentDir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": nonExistentDir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -467,7 +467,7 @@ describe("data-profile-sync — directory walk error paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     // Only the .csv file should be indexed
@@ -485,7 +485,7 @@ describe("data-profile-sync — directory walk error paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(2);
@@ -500,7 +500,7 @@ describe("data-profile-sync — directory walk error paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -532,7 +532,7 @@ describe("data-profile-sync — profileFile edge paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions({ readParquetMetadata: throwingReader }));
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     // profileFile catches the error and returns null → file skipped
@@ -549,7 +549,7 @@ describe("data-profile-sync — profileFile edge paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -569,7 +569,7 @@ describe("data-profile-sync — profileFile edge paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -591,7 +591,7 @@ describe("data-profile-sync — profileFile edge paths", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions({ readParquetMetadata: nullParquetReader }));
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -619,7 +619,7 @@ describe("data-profile-sync — cursor", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -637,7 +637,7 @@ describe("data-profile-sync — cursor", () => {
       "nimbus-dataprofile1:" +
       Buffer.from(JSON.stringify({ pass: 1 }), "utf8").toString("base64url");
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       existingCursor,
     );
     expect(r.cursor).toContain("nimbus-dataprofile1:");
@@ -666,7 +666,7 @@ describe("data-profile-sync — text files without newline", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -708,7 +708,7 @@ describe("data-profile-sync — JSON truncated (too large)", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     // JSON.parse throws → profileFile catch → returns null → file skipped
@@ -746,7 +746,7 @@ describe("data-profile-sync — MAX_WALK_DEPTH guard", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     // Only the root-level csv is within depth limits
@@ -797,7 +797,7 @@ describe("data-profile-sync — profileTextFile slurp null path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions({ readParquetMetadata: nullParquetReader }));
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -837,7 +837,7 @@ describe("data-profile-sync — profileParquet statViaHandle null path", () => {
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions({ readParquetMetadata: racingReader }));
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     // statViaHandle returns null (file gone) → profileParquet returns null → skipped
@@ -890,7 +890,7 @@ describe("data-profile-sync — default parquet reader path", () => {
       // readParquetMetadata intentionally omitted → defaultReadParquetMetadata used
     });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
+      syncTestContext(db, createStubVault({ "dataprofile.dir": dir }), "dataprofile"),
       null,
     );
     // hyparquet fails on invalid data → defaultReadParquetMetadata returns null → skipped

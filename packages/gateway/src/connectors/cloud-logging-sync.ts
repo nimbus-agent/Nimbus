@@ -2,7 +2,6 @@ import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { runSinglePassCliShellSync } from "./_lib/cli-shell-sync.ts";
 import { runGcloudCommand } from "./_lib/gcloud-runner.ts";
 import { mapCloudLoggingSinkToItem } from "./cloud-logging-sink-mapping.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const SERVICE_ID = "cloud_logging";
@@ -57,9 +56,8 @@ interface CloudLoggingCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<CloudLoggingCreds | null> {
-  const credPath =
-    (await readConnectorSecret(ctx.vault, "gcp", "credentials_json_path"))?.trim() ?? "";
-  const project = (await readConnectorSecret(ctx.vault, "gcp", "project_id"))?.trim() ?? "";
+  const credPath = (await ctx.getSharedSecret("gcp", "credentials_json_path"))?.trim() ?? "";
+  const project = (await ctx.getSharedSecret("gcp", "project_id"))?.trim() ?? "";
   if (credPath === "" || project === "") {
     return null;
   }

@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapDependencyTrackProjectToItem } from "./dependencytrack-project-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -30,9 +29,8 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<DependencyTrackCreds | null> {
-  const baseUrl =
-    (await readConnectorSecret(ctx.vault, "dependencytrack", "base_url"))?.trim() ?? "";
-  const apiKey = (await readConnectorSecret(ctx.vault, "dependencytrack", "api_key"))?.trim() ?? "";
+  const baseUrl = (await ctx.getSecret("base_url"))?.trim() ?? "";
+  const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
   if (baseUrl === "" || apiKey === "") {
     return null;
   }

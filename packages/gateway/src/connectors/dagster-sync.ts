@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { type DagsterFlatJob, mapDagsterJobToItem } from "./dagster-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -54,8 +53,8 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<DagsterCreds | null> {
-  const baseUrl = (await readConnectorSecret(ctx.vault, "dagster", "base_url"))?.trim() ?? "";
-  const apiToken = (await readConnectorSecret(ctx.vault, "dagster", "api_token"))?.trim() ?? "";
+  const baseUrl = (await ctx.getSecret("base_url"))?.trim() ?? "";
+  const apiToken = (await ctx.getSecret("api_token"))?.trim() ?? "";
   // Both keys are required for spawn/sync to keep wiring uniform — a keyless
   // self-hosted OSS Dagster still gets a placeholder api_token.
   if (baseUrl === "" || apiToken === "") {

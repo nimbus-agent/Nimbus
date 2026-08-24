@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import {
   flattenMappingFields,
   mapElasticsearchIndexToItem,
@@ -43,8 +42,8 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<ElasticsearchCreds | null> {
-  const baseUrl = (await readConnectorSecret(ctx.vault, "elasticsearch", "url"))?.trim() ?? "";
-  const apiKey = (await readConnectorSecret(ctx.vault, "elasticsearch", "api_key"))?.trim() ?? "";
+  const baseUrl = (await ctx.getSecret("url"))?.trim() ?? "";
+  const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
   if (baseUrl === "" || apiKey === "") {
     return null;
   }

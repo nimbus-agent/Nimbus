@@ -6,7 +6,6 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
 
@@ -36,8 +35,8 @@ export function createGrafanaSyncable(options: GrafanaSyncableOptions): Syncable
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureGrafanaMcpRunning();
-      const base = (await readConnectorSecret(ctx.vault, "grafana", "url"))?.trim() ?? "";
-      const tok = (await readConnectorSecret(ctx.vault, "grafana", "api_token"))?.trim() ?? "";
+      const base = (await ctx.getSecret("url"))?.trim() ?? "";
+      const tok = (await ctx.getSecret("api_token"))?.trim() ?? "";
       if (base === "" || tok === "") {
         return syncNoopResult(cursor, t0);
       }

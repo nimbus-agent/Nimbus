@@ -69,7 +69,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "lin_api_test" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "lin_api_test" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -93,7 +93,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       "", // empty string cursor — decodeCursor line 44 branch
     );
     expect(r.itemsUpserted).toBe(0);
@@ -111,7 +111,7 @@ describeWithFetchRestore("linear-sync", () => {
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     // "nimbus-bad:" prefix → decodeNimbusJsonCursorPayload returns undefined → decodeCursor returns null
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       "nimbus-bad:aGVsbG8=",
     );
     expect(r.itemsUpserted).toBe(0);
@@ -133,7 +133,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       badCursor,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -156,7 +156,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       badCursor,
     );
     expect(r.cursor).toContain("nimbus-lnr1:");
@@ -176,7 +176,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       badCursor,
     );
     expect(r.cursor).toContain("nimbus-lnr1:");
@@ -196,7 +196,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       badCursor,
     );
     expect(r.cursor).toContain("nimbus-lnr1:");
@@ -210,7 +210,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" })), null),
+      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"), null),
     ).rejects.toThrow("rate limited");
   });
 
@@ -224,7 +224,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" })), null),
+      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"), null),
     ).rejects.toThrow("Linear sync HTTP 500");
   });
 
@@ -243,7 +243,7 @@ describeWithFetchRestore("linear-sync", () => {
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     // ok=true but json=null → linearRequireIssuesData throws "Linear sync HTTP 200"
     await expect(
-      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" })), null),
+      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"), null),
     ).rejects.toThrow("Linear sync HTTP 200");
   });
 
@@ -258,7 +258,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" })), null),
+      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"), null),
     ).rejects.toThrow("Access denied; Invalid query");
   });
 
@@ -271,7 +271,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" })), null),
+      sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"), null),
     ).rejects.toThrow("Linear sync: missing data");
   });
 
@@ -289,7 +289,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     // Only the valid issue should be upserted
@@ -309,7 +309,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -327,7 +327,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -348,7 +348,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -369,7 +369,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -393,7 +393,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -422,7 +422,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -451,7 +451,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -481,7 +481,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -511,7 +511,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -540,7 +540,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -567,7 +567,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     // Only the valid one is upserted
@@ -629,7 +629,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       null,
     );
     expect(callCount).toBe(2);
@@ -675,7 +675,7 @@ describeWithFetchRestore("linear-sync", () => {
 
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "linear.api_key": "key" })),
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
       startCursor,
     );
     expect(r.itemsUpserted).toBe(2);
@@ -712,7 +712,10 @@ describeWithFetchRestore("linear-sync", () => {
     const validCursor =
       prefix + Buffer.from(JSON.stringify({ since: sinceDateStr }), "utf8").toString("base64url");
 
-    await sync.sync(syncTestContext(db, createStubVault({ "linear.api_key": "key" })), validCursor);
+    await sync.sync(
+      syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
+      validCursor,
+    );
     expect(capturedGt).toBe(sinceDateStr);
   });
 });
@@ -749,7 +752,7 @@ function depthCtx(): {
   ctx: Parameters<ReturnType<typeof createLinearSyncable>["sync"]>[0];
 } {
   const db = createMemoryIndexDb();
-  return { db, ctx: syncTestContext(db, createStubVault({ "linear.api_key": "key" })) };
+  return { db, ctx: syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear") };
 }
 
 function storedMetadata(db: ReturnType<typeof createMemoryIndexDb>, externalId: string) {

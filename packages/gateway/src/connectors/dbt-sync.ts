@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapDbtJobToItem } from "./dbt-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField } from "./unknown-record.ts";
@@ -38,12 +37,12 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<DbtCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "dbt", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }
-  const baseRaw = (await readConnectorSecret(ctx.vault, "dbt", "api_base"))?.trim() ?? "";
-  const accountRaw = (await readConnectorSecret(ctx.vault, "dbt", "account_id"))?.trim() ?? "";
+  const baseRaw = (await ctx.getSecret("api_base"))?.trim() ?? "";
+  const accountRaw = (await ctx.getSecret("account_id"))?.trim() ?? "";
   const parsedAccount = accountRaw === "" ? Number.NaN : Number.parseInt(accountRaw, 10);
   return {
     token,

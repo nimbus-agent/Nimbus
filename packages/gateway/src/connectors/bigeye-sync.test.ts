@@ -21,7 +21,7 @@ describe("bigeye-sync (unified spawn transport)", () => {
   test("personal: maps + indexes issues drained from bigeye_list", async () => {
     __setPersonalDrainForTest(async () => [rawIssue("42", "ANALYTICS.PUBLIC.REVENUE")]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "bigeye.base_url": "https://b" }));
+    const ctx = syncTestContext(db, createStubVault({ "bigeye.base_url": "https://b" }), "bigeye");
 
     const r = await createBigeyeSyncable().sync(ctx, null);
 
@@ -42,7 +42,7 @@ describe("bigeye-sync (unified spawn transport)", () => {
     const db = createMemoryIndexDb();
     let listReq: unknown;
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "bigeye"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-bigeye" }),
       runTeamList: async (req: unknown) => {
         listReq = req;
@@ -65,7 +65,7 @@ describe("bigeye-sync (unified spawn transport)", () => {
     const SECRET = "tv-secret-do-not-leak";
     const db = createMemoryIndexDb();
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "bigeye"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-bigeye" }),
       runTeamList: async () => [rawIssue("42", "ANALYTICS.PUBLIC.REVENUE")],
     };
@@ -85,7 +85,7 @@ describe("bigeye-sync (unified spawn transport)", () => {
   test("a non-object row and an issue missing its issueId are both skipped", async () => {
     __setPersonalDrainForTest(async () => ["not-an-object", { slaStatus: "breached" }]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "bigeye.base_url": "https://b" }));
+    const ctx = syncTestContext(db, createStubVault({ "bigeye.base_url": "https://b" }), "bigeye");
 
     const r = await createBigeyeSyncable().sync(ctx, null);
 

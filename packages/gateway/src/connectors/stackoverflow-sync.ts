@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapStackOverflowQuestionToItem } from "./stackoverflow-question-mapping.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -28,8 +27,8 @@ interface StackOverflowCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<StackOverflowCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "stackoverflow", "token"))?.trim() ?? "";
-  const team = (await readConnectorSecret(ctx.vault, "stackoverflow", "team"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
+  const team = (await ctx.getSecret("team"))?.trim() ?? "";
   if (token === "" || team === "") {
     return null;
   }

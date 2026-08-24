@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -71,6 +72,11 @@ describeWithFetchRestore("figma-sync", () => {
       vault: createStubVault({ "figma.oauth": "NOT-JSON", "figma.team_id": "TEAM123" }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({ "figma.oauth": "NOT-JSON", "figma.team_id": "TEAM123" }),
+        "figma",
+      ),
     };
     const r = await sync.sync(ctx, null);
     // noop: cursor preserved (null in, null out), no upserts
@@ -88,7 +94,12 @@ describeWithFetchRestore("figma-sync", () => {
       Promise.resolve(new Response("Unauthorized", { status: 401 }))) as unknown as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, "prev-cursor");
     // http_error → syncPassCursorHttpEmpty preserves incoming cursor
     expect(r.cursor).toBe("prev-cursor");
@@ -104,7 +115,12 @@ describeWithFetchRestore("figma-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     // parse_error → syncPassCursorParseEmpty uses defaultCursor (pass1Cursor)
     expect(r.cursor).toContain("nimbus-figma1:");
@@ -122,7 +138,12 @@ describeWithFetchRestore("figma-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.cursor).toContain("nimbus-figma1:");
     expect(r.itemsUpserted).toBe(0);
@@ -154,7 +175,12 @@ describeWithFetchRestore("figma-sync", () => {
     }) as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.cursor).toContain("nimbus-figma1:");
     expect(r.itemsUpserted).toBe(1);
@@ -183,7 +209,12 @@ describeWithFetchRestore("figma-sync", () => {
     }) as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "figma", 0);
@@ -221,7 +252,12 @@ describeWithFetchRestore("figma-sync", () => {
     }) as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "figma", 1);
@@ -245,7 +281,12 @@ describeWithFetchRestore("figma-sync", () => {
     }) as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "figma", 0);
@@ -275,7 +316,12 @@ describeWithFetchRestore("figma-sync", () => {
     }) as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "figma", 1);
@@ -299,7 +345,12 @@ describeWithFetchRestore("figma-sync", () => {
     }) as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "figma", 1);
@@ -353,7 +404,12 @@ describeWithFetchRestore("figma-sync", () => {
     }) as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
 
     expect(r.itemsUpserted).toBe(3);
@@ -402,7 +458,12 @@ describeWithFetchRestore("figma-sync", () => {
     }) as typeof fetch;
 
     const sync = createFigmaSyncable({ ensureFigmaMcpRunning: async () => {} });
-    const ctx = { vault: FIGMA_VAULT_WITH_CREDENTIALS, db, ...silentSyncContextExtras() };
+    const ctx = {
+      vault: FIGMA_VAULT_WITH_CREDENTIALS,
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(db, FIGMA_VAULT_WITH_CREDENTIALS, "figma"),
+    };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "figma", 0);

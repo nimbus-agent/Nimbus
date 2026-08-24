@@ -22,7 +22,7 @@ describe("tableau-sync (unified spawn transport)", () => {
   test("personal: reshapes + indexes views drained from tableau_list", async () => {
     __setPersonalDrainForTest(async () => [rawView("v1", "Sales")]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }));
+    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }), "tableau");
 
     const r = await createTableauSyncable().sync(ctx, null);
 
@@ -34,7 +34,7 @@ describe("tableau-sync (unified spawn transport)", () => {
     const db = createMemoryIndexDb();
     let listReq: unknown;
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "tableau"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-tableau" }),
       runTeamList: async (req: unknown) => {
         listReq = req;
@@ -57,7 +57,7 @@ describe("tableau-sync (unified spawn transport)", () => {
     const SECRET = "tv-secret-do-not-leak";
     const db = createMemoryIndexDb();
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "tableau"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-tableau" }),
       runTeamList: async () => [rawView("v1", "Sales")],
     };
@@ -77,7 +77,7 @@ describe("tableau-sync (unified spawn transport)", () => {
   test("a non-object row and a view missing its luid are both skipped", async () => {
     __setPersonalDrainForTest(async () => ["not-an-object", { name: "No Luid" }]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }));
+    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }), "tableau");
 
     const r = await createTableauSyncable().sync(ctx, null);
 
@@ -90,7 +90,7 @@ describe("tableau-sync (unified spawn transport)", () => {
     // `name` (stringField → undefined → ""), so the workbook's name is used as the dashboard title.
     __setPersonalDrainForTest(async () => [{ luid: "v9", workbook: { name: "Quarterly WB" } }]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }));
+    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }), "tableau");
 
     const r = await createTableauSyncable().sync(ctx, null);
 
@@ -106,7 +106,7 @@ describe("tableau-sync (unified spawn transport)", () => {
     // still reshapes cleanly (author=null) and is indexed.
     __setPersonalDrainForTest(async () => [{ luid: "v10", name: "Bare View" }]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }));
+    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }), "tableau");
 
     const r = await createTableauSyncable().sync(ctx, null);
 

@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { type ParsedPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapStripeInvoiceToItem } from "./stripe-invoice-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -27,7 +26,7 @@ interface StripeCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<StripeCreds | null> {
-  const apiKey = (await readConnectorSecret(ctx.vault, "stripe", "api_key"))?.trim() ?? "";
+  const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
   if (apiKey === "") {
     return null;
   }

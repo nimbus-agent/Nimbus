@@ -70,7 +70,7 @@ describeWithFetchRestore("discord-sync", () => {
     const db = createMemoryIndexDb();
     globalThis.fetch = routedFetch({ guilds: { body: [] } });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.hasMore).toBe(false);
     expect(r.cursor).toContain("nimbus-dsc1:");
@@ -104,7 +104,7 @@ describeWithFetchRestore("discord-sync", () => {
           : { body: [] },
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(2);
     // Two distinct messages (m1, m2) are indexed; m0 (no author) is skipped. Repeated
     // ticks re-upsert the same externalIds so the distinct DB row count stays 2.
@@ -121,7 +121,7 @@ describeWithFetchRestore("discord-sync", () => {
     globalThis.fetch = routedFetch({ guilds: { status: 429, body: { retry_after: 2 } } });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord guilds 429/);
   });
 
@@ -130,7 +130,7 @@ describeWithFetchRestore("discord-sync", () => {
     globalThis.fetch = routedFetch({ guilds: { status: 500, body: { message: "boom" } } });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord guilds 500/);
   });
 
@@ -142,7 +142,7 @@ describeWithFetchRestore("discord-sync", () => {
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord channels 429/);
   });
 
@@ -154,7 +154,7 @@ describeWithFetchRestore("discord-sync", () => {
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord channels 403/);
   });
 
@@ -166,7 +166,7 @@ describeWithFetchRestore("discord-sync", () => {
       messages: () => ({ body: [] }),
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -177,7 +177,7 @@ describeWithFetchRestore("discord-sync", () => {
       channels: () => ({ body: [{ id: "c1", type: 2 }] }), // voice only → no text channels
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -190,7 +190,7 @@ describeWithFetchRestore("discord-sync", () => {
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord messages 429/);
   });
 
@@ -202,7 +202,7 @@ describeWithFetchRestore("discord-sync", () => {
       messages: () => ({ status: 404, body: {} }),
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -214,7 +214,7 @@ describeWithFetchRestore("discord-sync", () => {
       messages: () => ({ body: { not: "an array" } }),
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -239,7 +239,10 @@ describeWithFetchRestore("discord-sync", () => {
       lastMsgByChannel: { c1: "999" },
     };
     const encoded = `nimbus-dsc1:${Buffer.from(JSON.stringify(cursorState)).toString("base64")}`;
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), encoded);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"),
+      encoded,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(messagesUrl).toContain("after=999");
   });
@@ -249,7 +252,7 @@ describeWithFetchRestore("discord-sync", () => {
     globalThis.fetch = routedFetch({ guilds: { body: [] } });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     const r = await sync.sync(
-      syncTestContext(db, createStubVault(ENABLED_VAULT)),
+      syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"),
       "nimbus-dsc1:!!!not-base64-json",
     );
     expect(r.itemsUpserted).toBe(0);
@@ -351,7 +354,10 @@ describeWithFetchRestore("discord-sync", () => {
       globalThis.fetch = routedFetch({ guilds: { body: [] } });
       const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
       const encoded = `nimbus-dsc1:${Buffer.from(JSON.stringify(bc.state)).toString("base64")}`;
-      const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), encoded);
+      const r = await sync.sync(
+        syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"),
+        encoded,
+      );
       expect(r.itemsUpserted).toBe(0);
       expect(r.cursor).toContain("nimbus-dsc1:");
     });
@@ -362,7 +368,7 @@ describeWithFetchRestore("discord-sync", () => {
     globalThis.fetch = routedFetch({ guilds: { status: 429, body: { retry_after: "3.5" } } });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord guilds 429/);
   });
 
@@ -371,7 +377,7 @@ describeWithFetchRestore("discord-sync", () => {
     globalThis.fetch = routedFetch({ guilds: { status: 429, body: { retry_after: "soon" } } });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord guilds 429/);
   });
 
@@ -380,7 +386,7 @@ describeWithFetchRestore("discord-sync", () => {
     globalThis.fetch = routedFetch({ guilds: { status: 429, body: "plain text" } });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord guilds 429/);
   });
 
@@ -390,7 +396,7 @@ describeWithFetchRestore("discord-sync", () => {
       new Response("not json at all", { status: 200 })) as unknown as typeof fetch;
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord guilds/);
   });
 
@@ -405,7 +411,7 @@ describeWithFetchRestore("discord-sync", () => {
           : { body: [] },
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
     const row = db
       .prepare("SELECT title FROM item WHERE service = 'discord' AND external_id = 'c1:m1'")
@@ -429,7 +435,7 @@ describeWithFetchRestore("discord-sync", () => {
           : { body: [] },
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
   });
 
@@ -445,7 +451,10 @@ describeWithFetchRestore("discord-sync", () => {
       lastMsgByChannel: {},
     };
     const encoded = `nimbus-dsc1:${Buffer.from(JSON.stringify(cursorState)).toString("base64")}`;
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), encoded);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"),
+      encoded,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -461,7 +470,10 @@ describeWithFetchRestore("discord-sync", () => {
       lastMsgByChannel: {},
     };
     const encoded = `nimbus-dsc1:${Buffer.from(JSON.stringify(cursorState)).toString("base64")}`;
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), encoded);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"),
+      encoded,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -477,7 +489,10 @@ describeWithFetchRestore("discord-sync", () => {
       lastMsgByChannel: {},
     };
     const encoded = `nimbus-dsc1:${Buffer.from(JSON.stringify(cursorState)).toString("base64")}`;
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), encoded);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"),
+      encoded,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -486,7 +501,7 @@ describeWithFetchRestore("discord-sync", () => {
     globalThis.fetch = routedFetch({ guilds: { status: 429, body: { retry_after: true } } });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
     await expect(
-      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null),
+      sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null),
     ).rejects.toThrow(/Discord guilds 429/);
   });
 
@@ -502,7 +517,7 @@ describeWithFetchRestore("discord-sync", () => {
           : { body: [] },
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
     const row = db
       .prepare("SELECT title FROM item WHERE service = 'discord' AND external_id = 'c1:m1'")
@@ -523,7 +538,7 @@ describeWithFetchRestore("discord-sync", () => {
           : { body: [] },
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
   });
 
@@ -538,7 +553,7 @@ describeWithFetchRestore("discord-sync", () => {
           : { body: [] },
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
     const row = db
       .prepare("SELECT author_id FROM item WHERE service = 'discord' AND external_id = 'c1:m1'")
@@ -554,7 +569,7 @@ describeWithFetchRestore("discord-sync", () => {
       channels: () => ({ body: [] }), // no text channels → advance guild each tick
     });
     const sync = createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} });
-    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT)), null);
+    const r = await sync.sync(syncTestContext(db, createStubVault(ENABLED_VAULT), "discord"), null);
     expect(r.hasMore).toBe(true);
     expect(r.cursor).toContain("nimbus-dsc1:");
   });

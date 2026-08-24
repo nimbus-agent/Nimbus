@@ -71,6 +71,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.project_key": "my-project",
           "launchdarkly.base_url": "",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -97,6 +98,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.project_key": "proj",
           "launchdarkly.base_url": "https://custom.ld.example",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -127,6 +129,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": null,
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -151,6 +154,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": null,
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -174,6 +178,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": null,
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -196,6 +201,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -219,6 +225,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -241,6 +248,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -281,6 +289,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -309,6 +318,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -332,6 +342,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -356,6 +367,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -378,6 +390,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -408,6 +421,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": null,
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -438,6 +452,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": null,
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -465,6 +480,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": null,
         }),
+        "launchdarkly",
       ),
       null,
     );
@@ -492,6 +508,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       existingCursor,
     );
@@ -520,6 +537,7 @@ describeWithFetchRestore("launchdarkly-sync", () => {
           "launchdarkly.token": "sdk-test",
           "launchdarkly.project_key": "proj",
         }),
+        "launchdarkly",
       ),
       null,
     );

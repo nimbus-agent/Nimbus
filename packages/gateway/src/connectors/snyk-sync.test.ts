@@ -80,7 +80,10 @@ describeWithFetchRestore("snyk-sync", () => {
       Promise.resolve(new Response("Unauthorized", { status: 401 }))) as unknown as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     // http_error → syncPassCursorHttpEmpty → itemsUpserted 0, cursor advances
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-snyk1:");
@@ -98,7 +101,10 @@ describeWithFetchRestore("snyk-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     // parse_error → syncPassCursorParseEmpty → itemsUpserted 0
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-snyk1:");
@@ -114,7 +120,10 @@ describeWithFetchRestore("snyk-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "snyk", 0);
     expect(r.cursor).toContain("nimbus-snyk1:");
@@ -130,7 +139,10 @@ describeWithFetchRestore("snyk-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -153,7 +165,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     // "not-an-object" skipped; org-1 processed (no projects → 0 items)
     expect(r.itemsUpserted).toBe(0);
     // /v1/orgs call + /projects for org-1 = 2 calls
@@ -176,7 +191,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     // No org ids extracted → no project calls
     expect(projectCallMade).toBe(false);
@@ -196,7 +214,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "snyk", 0);
   });
@@ -219,7 +240,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     // primitive skipped, proj-1 processed → 1 issue
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "snyk", 1);
@@ -244,7 +268,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(issueCallMade).toBe(false);
   });
@@ -266,7 +293,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     // http_error on issues → upserted 0 for that project → total 0
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "snyk", 0);
@@ -293,7 +323,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "snyk", 0);
   });
@@ -312,7 +345,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     // http_error on projects → upserted 0
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "snyk", 0);
@@ -336,7 +372,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "snyk", 0);
   });
@@ -358,7 +397,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -379,7 +421,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -399,7 +444,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "snyk", 1);
     expect(r.cursor).toContain("nimbus-snyk1:");
@@ -427,7 +475,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     // 2 orgs × 2 projects × 1 issue = 4
     expect(r.itemsUpserted).toBe(4);
     expectServiceItemCount(db, "snyk", 4);
@@ -454,7 +505,10 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     // Only SNYK-VALID mapped; no_id and primitive both return null → skipped
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "snyk", 1);
@@ -470,7 +524,10 @@ describeWithFetchRestore("snyk-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeFactory();
-    const r = await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    const r = await sync.sync(
+      syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "snyk", 0);
     expect(r.cursor).toContain("nimbus-snyk1:");
@@ -491,7 +548,7 @@ describeWithFetchRestore("snyk-sync", () => {
         mcpCalled = true;
       },
     });
-    await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"), null);
     expect(mcpCalled).toBe(true);
   });
 
@@ -514,7 +571,7 @@ describeWithFetchRestore("snyk-sync", () => {
     }) as typeof fetch;
 
     const sync = makeFactory();
-    await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
+    await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" }), "snyk"), null);
 
     // encodeURIComponent("org a/b") === "org%20a%2Fb"; encodeURIComponent("proj?xyz") === "proj%3Fxyz"
     expect(capturedUrls.some((u) => u.includes("/v1/org/org%20a%2Fb/projects"))).toBe(true);

@@ -7,7 +7,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 import { mapZoomMeetingToItem } from "./zoom-meeting-mapping.ts";
@@ -458,7 +457,7 @@ export function createZoomSyncable(options: ZoomSyncableOptions): Syncable {
       const t0 = performance.now();
       await options.ensureZoomMcpRunning();
 
-      const raw = await readConnectorSecret(ctx.vault, "zoom", "oauth");
+      const raw = await ctx.getSecret("oauth");
       if (raw === null || raw === "") {
         return syncNoopResult(cursor, t0);
       }

@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapRampTransactionToItem } from "./ramp-transaction-mapping.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -35,9 +34,8 @@ interface RampCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<RampCreds | null> {
-  const clientId = (await readConnectorSecret(ctx.vault, "ramp", "client_id"))?.trim() ?? "";
-  const clientSecret =
-    (await readConnectorSecret(ctx.vault, "ramp", "client_secret"))?.trim() ?? "";
+  const clientId = (await ctx.getSecret("client_id"))?.trim() ?? "";
+  const clientSecret = (await ctx.getSecret("client_secret"))?.trim() ?? "";
   if (clientId === "" || clientSecret === "") {
     return null;
   }

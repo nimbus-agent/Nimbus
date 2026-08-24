@@ -8,7 +8,6 @@ import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { type FirebaseMappedRow, mapFirebaseReleaseToItem } from "./firebase-release-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -43,8 +42,8 @@ interface FirebaseConfig {
 }
 
 async function readConfig(ctx: SyncContext): Promise<FirebaseConfig | null> {
-  const saJson = (await readConnectorSecret(ctx.vault, "firebase", "service_account_json")) ?? "";
-  const appIdsRaw = (await readConnectorSecret(ctx.vault, "firebase", "app_ids")) ?? "";
+  const saJson = (await ctx.getSecret("service_account_json")) ?? "";
+  const appIdsRaw = (await ctx.getSecret("app_ids")) ?? "";
   if (saJson.trim() === "" || appIdsRaw.trim() === "") {
     return null;
   }

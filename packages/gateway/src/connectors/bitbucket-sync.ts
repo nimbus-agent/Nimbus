@@ -13,7 +13,6 @@ import {
   type SyncResult,
   syncNoopResult,
 } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -301,8 +300,8 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
     return { status: "unsupported_url" };
   }
   const { workspace, repoSlug, num: requestedNum } = parsedUrl;
-  const user = await readConnectorSecret(ctx.vault, "bitbucket", "username");
-  const pass = await readConnectorSecret(ctx.vault, "bitbucket", "app_password");
+  const user = await ctx.getSecret("username");
+  const pass = await ctx.getSecret("app_password");
   if (user === null || user === "" || pass === null || pass === "") {
     return { status: "not_found", reason: "no_credential" };
   }
@@ -449,8 +448,8 @@ export function createBitbucketSyncable(options: BitbucketSyncableOptions): Sync
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureBitbucketMcpRunning();
-      const user = await readConnectorSecret(ctx.vault, "bitbucket", "username");
-      const pass = await readConnectorSecret(ctx.vault, "bitbucket", "app_password");
+      const user = await ctx.getSecret("username");
+      const pass = await ctx.getSecret("app_password");
       if (user === null || user === "" || pass === null || pass === "") {
         return syncNoopResult(cursor, t0);
       }

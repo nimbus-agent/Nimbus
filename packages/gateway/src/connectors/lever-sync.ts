@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapLeverPostingToItem } from "./lever-posting-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -27,7 +26,7 @@ interface LeverCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<LeverCreds | null> {
-  const apiKey = (await readConnectorSecret(ctx.vault, "lever", "api_key"))?.trim() ?? "";
+  const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
   if (apiKey === "") {
     return null;
   }

@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { isSafeCliArg, runSinglePassCliShellSync } from "./_lib/cli-shell-sync.ts";
 import { runGcloudCommand } from "./_lib/gcloud-runner.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapVertexAiModelToItem } from "./vertex-ai-model-mapping.ts";
 
@@ -74,14 +73,13 @@ interface VertexAiCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<VertexAiCreds | null> {
-  const credPath =
-    (await readConnectorSecret(ctx.vault, "gcp", "credentials_json_path"))?.trim() ?? "";
-  const project = (await readConnectorSecret(ctx.vault, "gcp", "project_id"))?.trim() ?? "";
+  const credPath = (await ctx.getSharedSecret("gcp", "credentials_json_path"))?.trim() ?? "";
+  const project = (await ctx.getSharedSecret("gcp", "project_id"))?.trim() ?? "";
   if (credPath === "" || project === "") {
     return null;
   }
   // Region is an OPTIONAL non-secret gcp config key; default + flag-guard it.
-  const rawRegion = (await readConnectorSecret(ctx.vault, "gcp", "region"))?.trim() ?? "";
+  const rawRegion = (await ctx.getSharedSecret("gcp", "region"))?.trim() ?? "";
   const region = rawRegion === "" ? DEFAULT_REGION : rawRegion;
   if (!isSafeCliArg(region)) {
     return null;

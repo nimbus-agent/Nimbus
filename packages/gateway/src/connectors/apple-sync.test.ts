@@ -152,7 +152,7 @@ describe("loadMailConfig", () => {
       "apple.icloud_email": null,
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
     });
-    const result = await loadMailConfig(syncTestContext(db, vault));
+    const result = await loadMailConfig(syncTestContext(db, vault, "apple"));
     expect(result).toBeNull();
   });
 
@@ -162,7 +162,7 @@ describe("loadMailConfig", () => {
       "apple.icloud_email": "user@icloud.com",
       "apple.icloud_app_password": null,
     });
-    const result = await loadMailConfig(syncTestContext(db, vault));
+    const result = await loadMailConfig(syncTestContext(db, vault, "apple"));
     expect(result).toBeNull();
   });
 
@@ -172,7 +172,7 @@ describe("loadMailConfig", () => {
       "apple.icloud_email": "",
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
     });
-    const result = await loadMailConfig(syncTestContext(db, vault));
+    const result = await loadMailConfig(syncTestContext(db, vault, "apple"));
     expect(result).toBeNull();
   });
 
@@ -182,14 +182,14 @@ describe("loadMailConfig", () => {
       "apple.icloud_email": "user@icloud.com",
       "apple.icloud_app_password": "",
     });
-    const result = await loadMailConfig(syncTestContext(db, vault));
+    const result = await loadMailConfig(syncTestContext(db, vault, "apple"));
     expect(result).toBeNull();
   });
 
   test("returns fixed iCloud IMAP config when both secrets are present", async () => {
     const db = createMemoryIndexDb();
     const vault = credsVault();
-    const result = await loadMailConfig(syncTestContext(db, vault));
+    const result = await loadMailConfig(syncTestContext(db, vault, "apple"));
     expect(result).not.toBeNull();
     expect(result?.host).toBe("imap.mail.me.com");
     expect(result?.port).toBe(993);
@@ -201,7 +201,7 @@ describe("loadMailConfig", () => {
   test("defaults mailbox to INBOX when apple.mailbox is absent", async () => {
     const db = createMemoryIndexDb();
     const vault = credsVault();
-    const result = await loadMailConfig(syncTestContext(db, vault));
+    const result = await loadMailConfig(syncTestContext(db, vault, "apple"));
     expect(result?.mailbox).toBe("INBOX");
   });
 
@@ -212,7 +212,7 @@ describe("loadMailConfig", () => {
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
       "apple.mailbox": "Archive",
     });
-    const result = await loadMailConfig(syncTestContext(db, vault));
+    const result = await loadMailConfig(syncTestContext(db, vault, "apple"));
     expect(result?.mailbox).toBe("Archive");
   });
 });
@@ -236,7 +236,7 @@ describe("createAppleSyncable (mail path)", () => {
       fetchMessages: fakeFetcher([makeMessage()]),
       fetchEvents: noopEventFetcher(),
     });
-    const r = await syncable.sync(syncTestContext(db, emptyVault()), null);
+    const r = await syncable.sync(syncTestContext(db, emptyVault(), "apple"), null);
     expectSyncNoopResult(r);
     expectServiceItemCount(db, "apple", 0);
   });
@@ -252,7 +252,7 @@ describe("createAppleSyncable (mail path)", () => {
       fetchMessages: fakeFetcher(messages),
       fetchEvents: noopEventFetcher(),
     });
-    const r = await syncable.sync(syncTestContext(db, credsVault()), null);
+    const r = await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "apple", 2);
   });
@@ -264,7 +264,7 @@ describe("createAppleSyncable (mail path)", () => {
       fetchMessages: fakeFetcher([makeMessage({ messageId: "<unique@icloud.com>" })]),
       fetchEvents: noopEventFetcher(),
     });
-    await syncable.sync(syncTestContext(db, credsVault()), null);
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     const row = db
       .prepare("SELECT external_id FROM item WHERE service = 'apple' AND type = 'email' LIMIT 1")
       .get() as { external_id: string } | undefined;
@@ -280,7 +280,7 @@ describe("createAppleSyncable (mail path)", () => {
       ]),
       fetchEvents: noopEventFetcher(),
     });
-    await syncable.sync(syncTestContext(db, credsVault()), null);
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     const row = db
       .prepare("SELECT external_id FROM item WHERE service = 'apple' AND type = 'email' LIMIT 1")
       .get() as { external_id: string } | undefined;
@@ -295,7 +295,7 @@ describe("createAppleSyncable (mail path)", () => {
       fetchMessages: fakeFetcher([makeMessage({ preview: longPreview })]),
       fetchEvents: noopEventFetcher(),
     });
-    await syncable.sync(syncTestContext(db, credsVault()), null);
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     const row = db
       .prepare("SELECT body_preview FROM item WHERE service = 'apple' AND type = 'email' LIMIT 1")
       .get() as { body_preview: string } | undefined;
@@ -309,7 +309,7 @@ describe("createAppleSyncable (mail path)", () => {
       fetchMessages: fakeFetcher([makeMessage()]),
       fetchEvents: noopEventFetcher(),
     });
-    await syncable.sync(syncTestContext(db, credsVault()), null);
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     const rows = db.prepare("SELECT service FROM item WHERE service = 'apple'").all() as {
       service: string;
     }[];
@@ -324,7 +324,7 @@ describe("createAppleSyncable (mail path)", () => {
       fetchMessages: fakeFetcher([]),
       fetchEvents: noopEventFetcher(),
     });
-    const r = await syncable.sync(syncTestContext(db, credsVault()), null);
+    const r = await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     expect(typeof r.cursor).toBe("string");
     expect(r.cursor).toContain("nimbus-apple1:");
   });
@@ -336,7 +336,7 @@ describe("createAppleSyncable (mail path)", () => {
       fetchMessages: errorFetcher(),
       fetchEvents: noopEventFetcher(),
     });
-    const r = await syncable.sync(syncTestContext(db, credsVault()), "existing-cursor");
+    const r = await syncable.sync(syncTestContext(db, credsVault(), "apple"), "existing-cursor");
     expect(r.itemsUpserted).toBe(0);
     // On {ok:false} with an existing cursor, the cursor is preserved.
     expect(r.cursor).toBe("existing-cursor");
@@ -350,7 +350,7 @@ describe("createAppleSyncable (mail path)", () => {
       fetchMessages: fakeFetcher([makeMessage({ uid: 0, messageId: null })]),
       fetchEvents: noopEventFetcher(),
     });
-    const r = await syncable.sync(syncTestContext(db, credsVault()), null);
+    const r = await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "apple", 0);
   });
@@ -368,7 +368,7 @@ describe("createAppleSyncable (mail path)", () => {
       },
       fetchEvents: noopEventFetcher(),
     });
-    await syncable.sync(syncTestContext(db, credsVault()), null);
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     expect(calls[0]).toBe("ensure");
     expect(calls[1]).toBe("fetch");
   });
@@ -387,7 +387,7 @@ describe("createAppleSyncable (calendar path)", () => {
         { calendar: "Personal", ics: PERSONAL_ICS },
       ]),
     });
-    const r = await syncable.sync(syncTestContext(db, credsVault()), null);
+    const r = await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
 
     // 1 email + 3 events (work-1, personal-1 master, personal-1 override)
     expect(r.itemsUpserted).toBe(4);
@@ -410,7 +410,7 @@ describe("createAppleSyncable (calendar path)", () => {
       fetchMessages: fakeFetcher([]),
       fetchEvents: fakeEventFetcher([{ calendar: "Personal", ics: PERSONAL_ICS }]),
     });
-    await syncable.sync(syncTestContext(db, credsVault()), null);
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
 
     const rows = db
       .prepare("SELECT external_id FROM item WHERE service = 'apple' AND type = 'event'")
@@ -427,7 +427,7 @@ describe("createAppleSyncable (calendar path)", () => {
       fetchMessages: fakeFetcher([]),
       fetchEvents: fakeEventFetcher([{ calendar: "Work", ics: WORK_ICS }]),
     });
-    await syncable.sync(syncTestContext(db, credsVault()), null);
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
 
     const row = db
       .prepare(
@@ -447,7 +447,7 @@ describe("createAppleSyncable (calendar path)", () => {
       fetchMessages: fakeFetcher([]),
       fetchEvents: fakeEventFetcher([{ calendar: "Work", ics: WORK_ICS }]),
     });
-    await syncable.sync(syncTestContext(db, credsVault()), null);
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
 
     const row = db
       .prepare("SELECT metadata FROM item WHERE service = 'apple' AND type = 'event' LIMIT 1")
@@ -486,7 +486,7 @@ describe("createAppleSyncable (calendar path)", () => {
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
       "apple.cal_max_instances": "1",
     });
-    await syncable.sync(syncTestContext(db, vault), null);
+    await syncable.sync(syncTestContext(db, vault, "apple"), null);
 
     const eventRows = db
       .prepare("SELECT external_id FROM item WHERE service = 'apple' AND type = 'event'")
@@ -501,7 +501,7 @@ describe("createAppleSyncable (calendar path)", () => {
       fetchMessages: fakeFetcher([makeMessage({ messageId: "<m1@icloud.com>" })]),
       fetchEvents: errorEventFetcher(),
     });
-    const r = await syncable.sync(syncTestContext(db, credsVault()), null);
+    const r = await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
 
     // Mail pass succeeded: 1 email upserted, cursor is set
     expect(r.itemsUpserted).toBe(1);
@@ -522,7 +522,7 @@ describe("createAppleSyncable (calendar path)", () => {
       fetchEvents: noopEventFetcher(),
     });
     // emptyVault has no creds → mail pass is noop, cal pass is skipped
-    const r = await syncable.sync(syncTestContext(db, emptyVault()), null);
+    const r = await syncable.sync(syncTestContext(db, emptyVault(), "apple"), null);
     expectSyncNoopResult(r);
     expectServiceItemCount(db, "apple", 0);
   });
@@ -537,7 +537,7 @@ describe("createAppleSyncable (calendar path)", () => {
         { calendar: "Personal", ics: PERSONAL_ICS },
       ]),
     });
-    const r = await syncable.sync(syncTestContext(db, credsVault()), null);
+    const r = await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
     // 1 from Work + 2 from Personal (master + override)
     expect(r.itemsUpserted).toBe(3);
     expectServiceItemCount(db, "apple", 3);
@@ -572,7 +572,7 @@ describe("createAppleSyncable (calendar path)", () => {
       fetchMessages: fakeFetcher([]),
       fetchEvents: fakeEventFetcher([{ calendar: "Test", ics: manyIcs }]),
     });
-    const r = await syncable.sync(syncTestContext(db, vault), null);
+    const r = await syncable.sync(syncTestContext(db, vault, "apple"), null);
     // Only 2 of the 3 events should be indexed due to the cap
     expect(r.itemsUpserted).toBe(2);
   });

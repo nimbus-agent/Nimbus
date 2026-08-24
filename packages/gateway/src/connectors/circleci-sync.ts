@@ -1,7 +1,6 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { listGithubReposFromIndex } from "./github-index-repos.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -213,7 +212,7 @@ export function createCircleciSyncable(options: CircleciSyncableOptions): Syncab
       const t0 = performance.now();
       await options.ensureCircleciMcpRunning();
 
-      const apiTok = await readConnectorSecret(ctx.vault, "circleci", "api_token");
+      const apiTok = await ctx.getSecret("api_token");
       if (apiTok === null || apiTok.trim() === "") {
         return syncNoopResult(cursor, t0);
       }

@@ -104,9 +104,9 @@ type SearchEnvelope = {
 type JiraVaultCreds = { token: string; email: string; baseUrl: string };
 
 async function loadJiraVaultCreds(ctx: SyncContext): Promise<JiraVaultCreds | null> {
-  const token = await readConnectorSecret(ctx.vault, "jira", "api_token");
-  const email = await readConnectorSecret(ctx.vault, "jira", "email");
-  const baseRaw = await readConnectorSecret(ctx.vault, "jira", "base_url");
+  const token = await ctx.getSecret("api_token");
+  const email = await ctx.getSecret("email");
+  const baseRaw = await ctx.getSecret("base_url");
   if (
     token === null ||
     token === "" ||

@@ -121,7 +121,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(callCount).toBe(2);
     expect(r.itemsUpserted).toBe(1);
@@ -151,6 +151,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
           "sonarqube.url": null,
           "sonarqube.organization": null,
         }),
+        "sonarqube",
       ),
       null,
     );
@@ -180,6 +181,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
           "sonarqube.url": "https://sonar.example.com///",
           "sonarqube.organization": null,
         }),
+        "sonarqube",
       ),
       null,
     );
@@ -205,7 +207,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    await sync.sync(syncTestContext(db, VAULT_WITH_ORG), null);
+    await sync.sync(syncTestContext(db, VAULT_WITH_ORG, "sonarqube"), null);
 
     expect(componentsUrl).toContain("organization=my-org");
   });
@@ -218,7 +220,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
       Promise.resolve(new Response("Forbidden", { status: 403 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-sonarqube1:");
@@ -234,7 +236,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
 
     const sync = makeSyncable();
     const incoming = "nimbus-sonarqube1:prev";
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), incoming);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), incoming);
 
     // syncPassCursorHttpEmpty: returns incomingCursor when non-null
     expect(r.cursor).toBe(incoming);
@@ -251,7 +253,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-sonarqube1:");
@@ -268,7 +270,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-sonarqube1:");
@@ -288,7 +290,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-sonarqube1:");
@@ -309,7 +311,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     // Only the valid FULL_ISSUE is upserted; badIssue is skipped
     expect(r.itemsUpserted).toBe(1);
@@ -334,7 +336,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     // null and string are skipped; only FULL_ISSUE upserted
     expect(r.itemsUpserted).toBe(1);
@@ -355,7 +357,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "sonarqube", 0);
@@ -375,7 +377,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(0);
   });
@@ -406,7 +408,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     // Only "valid-proj" passes → 1 issues call
     expect(issueCallCount).toBe(1);
@@ -433,7 +435,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "sonarqube", 0);
@@ -469,7 +471,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     // Should stop after one page since total=0 and page*PAGE_SIZE(100) >= 0
     expect(callCount).toBe(1);
@@ -503,7 +505,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(100);
@@ -525,7 +527,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(1);
@@ -563,7 +565,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(callCount).toBe(2);
     expect(r.itemsUpserted).toBe(150);
@@ -593,7 +595,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(100);
@@ -631,7 +633,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "sonarqube", 2);
@@ -656,7 +658,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
 
     const sync = makeSyncable();
     const before = Date.now();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
     const after = Date.now();
 
     expect(r.itemsUpserted).toBe(1);
@@ -685,7 +687,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    await sync.sync(syncTestContext(db, VAULT_WITH_ORG), null);
+    await sync.sync(syncTestContext(db, VAULT_WITH_ORG, "sonarqube"), null);
 
     const row = db
       .prepare("SELECT url FROM item WHERE service = 'sonarqube' AND external_id = 'AXZ-001'")
@@ -706,7 +708,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     const row = db
       .prepare("SELECT url FROM item WHERE service = 'sonarqube' AND external_id = 'AXZ-001'")
@@ -731,7 +733,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     // parse_error outcome.kind !== "ok" → break → upserted = 0
     expect(r.itemsUpserted).toBe(0);
@@ -752,7 +754,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN, "sonarqube"), null);
 
     expect(r.itemsUpserted).toBe(0);
   });
@@ -769,6 +771,7 @@ describeWithFetchRestore("sonarqube-sync", () => {
           "sonarqube.url": null,
           "sonarqube.organization": null,
         }),
+        "sonarqube",
       ),
       "some-previous-cursor",
     );

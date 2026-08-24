@@ -20,7 +20,6 @@ import {
   webOriginFromApiBase,
 } from "./_lib/gitlab/events.ts";
 import { syncGitlabPipelinesForIndexedProjects } from "./_lib/gitlab/pipelines.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -96,11 +95,11 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
     return { status: "unsupported_url" };
   }
   const { pathWithNamespace, iid: requestedIid } = parsedUrl;
-  const pat = await readConnectorSecret(ctx.vault, "gitlab", "pat");
+  const pat = await ctx.getSecret("pat");
   if (pat === null || pat === "") {
     return { status: "not_found", reason: "no_credential" };
   }
-  const apiBase = normalisedApiBase(await readConnectorSecret(ctx.vault, "gitlab", "api_base"));
+  const apiBase = normalisedApiBase(await ctx.getSecret("api_base"));
   const detailUrl = `${apiBase}/projects/${encodeURIComponent(pathWithNamespace)}/merge_requests/${requestedIid}`;
   let res: Response;
   try {
@@ -280,12 +279,12 @@ export function createGitlabSyncable(options: GitlabSyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureGitlabMcpRunning();
-      const pat = await readConnectorSecret(ctx.vault, "gitlab", "pat");
+      const pat = await ctx.getSecret("pat");
       if (pat === null || pat === "") {
         return syncNoopResult(cursor, t0);
       }
 
-      const apiBase = normalisedApiBase(await readConnectorSecret(ctx.vault, "gitlab", "api_base"));
+      const apiBase = normalisedApiBase(await ctx.getSecret("api_base"));
       const webOrigin = webOriginFromApiBase(apiBase);
 
       const prev = decodeGitlabCursor(cursor);

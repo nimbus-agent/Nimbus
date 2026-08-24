@@ -75,7 +75,7 @@ function makeTableDetailResponse(datasetId: string, tableId: string): string {
  */
 function unlimitedSyncTestContext(db: Database, vault: NimbusVault): SyncContext {
   return {
-    ...syncTestContext(db, vault),
+    ...syncTestContext(db, vault, "bigquery"),
     rateLimiter: new ProviderRateLimiter({
       bigquery: { requestsPerMinute: 1_000_000, burstSize: 100_000 },
       gcp: { requestsPerMinute: 1_000_000, burstSize: 100_000 },
@@ -136,7 +136,10 @@ describeWithFetchRestore("bigquery-sync — token mint failure", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: failMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     // cursor is preserved (null → null for httpEmpty with null prior cursor)
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-bq1:");
@@ -150,7 +153,7 @@ describeWithFetchRestore("bigquery-sync — token mint failure", () => {
       mintAccessToken: failMint,
     });
     const r = await sync.sync(
-      syncTestContext(db, gcpVault("/creds.json", "my-project")),
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
       "nimbus-bq1:somecursor",
     );
     // Original cursor preserved in syncPassCursorHttpEmpty
@@ -189,7 +192,10 @@ describeWithFetchRestore("bigquery-sync — happy path", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-bq1:");
     expectServiceItemCount(db, "bigquery", 1);
@@ -223,7 +229,10 @@ describeWithFetchRestore("bigquery-sync — happy path", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "bigquery", 2);
   });
@@ -242,7 +251,10 @@ describeWithFetchRestore("bigquery-sync — dataset fetch http error", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-bq1:");
     expectServiceItemCount(db, "bigquery", 0);
@@ -262,7 +274,10 @@ describeWithFetchRestore("bigquery-sync — dataset fetch parse error", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-bq1:");
     expectServiceItemCount(db, "bigquery", 0);
@@ -306,7 +321,10 @@ describeWithFetchRestore("bigquery-sync — dataset pagination", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(datasetCallCount).toBe(2);
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "bigquery", 2);
@@ -339,7 +357,10 @@ describeWithFetchRestore("bigquery-sync — dataset pagination", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     // ds1 was collected before page 2 error, so 1 table upserted
     expect(datasetCallCount).toBe(2);
     expect(r.itemsUpserted).toBe(1);
@@ -382,7 +403,10 @@ describeWithFetchRestore("bigquery-sync — tables pagination", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(tableListCallCount).toBe(2);
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "bigquery", 2);
@@ -407,7 +431,10 @@ describeWithFetchRestore("bigquery-sync — tables pagination", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-bq1:");
     expectServiceItemCount(db, "bigquery", 0);
@@ -433,7 +460,10 @@ describeWithFetchRestore("bigquery-sync — empty/malformed datasets", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "bigquery", 0);
   });
@@ -454,7 +484,10 @@ describeWithFetchRestore("bigquery-sync — empty/malformed datasets", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -486,7 +519,10 @@ describeWithFetchRestore("bigquery-sync — empty/malformed datasets", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     // ds1 from first page is still processed
     expect(r.cursor).toContain("nimbus-bq1:");
   });
@@ -525,7 +561,10 @@ describeWithFetchRestore("bigquery-sync — datasetIdOf malformed entries", () =
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -558,7 +597,10 @@ describeWithFetchRestore("bigquery-sync — datasetIdOf malformed entries", () =
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -592,7 +634,10 @@ describeWithFetchRestore("bigquery-sync — datasetIdOf malformed entries", () =
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
   });
 });
@@ -632,7 +677,10 @@ describeWithFetchRestore("bigquery-sync — tableIdOf malformed entries", () => 
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     // Only the valid table is upserted; the primitive is skipped
     // tableId=null → resolveTableSource returns entry, mapBigqueryTableToItem returns null for primitive
     // For valid entry: upserted = 1
@@ -671,7 +719,10 @@ describeWithFetchRestore("bigquery-sync — tableIdOf malformed entries", () => 
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -708,7 +759,10 @@ describeWithFetchRestore("bigquery-sync — tableIdOf malformed entries", () => 
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
   });
 });
@@ -785,7 +839,10 @@ describeWithFetchRestore("bigquery-sync — resolveTableSource branches", () => 
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     // tableId null → no detail fetch, mapper returns null → 0 upserted
     expect(detailFetchCount).toBe(0);
     expect(r.itemsUpserted).toBe(0);
@@ -875,7 +932,10 @@ describeWithFetchRestore("bigquery-sync — mapped null skipped", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     // detail response has no tableReference → mapper returns null → 0 upserted
     expect(r.itemsUpserted).toBe(0);
   });
@@ -947,7 +1007,10 @@ describeWithFetchRestore("bigquery-sync — extractArray non-array", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -970,7 +1033,10 @@ describeWithFetchRestore("bigquery-sync — extractArray non-array", () => {
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     expect(r.itemsUpserted).toBe(0);
   });
 });
@@ -1000,7 +1066,10 @@ describeWithFetchRestore("bigquery-sync — detail fetch failure fallback", () =
       ensureBigqueryMcpRunning: async () => {},
       mintAccessToken: stubMint,
     });
-    const r = await sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null);
+    const r = await sync.sync(
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
+      null,
+    );
     // fallback entry has valid tableReference → mapper succeeds → 1 upserted
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "bigquery", 1);
@@ -1032,7 +1101,7 @@ describeWithFetchRestore("bigquery-sync — cursor round-trip", () => {
       mintAccessToken: stubMint,
     });
     const r = await sync.sync(
-      syncTestContext(db, gcpVault("/creds.json", "my-project")),
+      syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"),
       "nimbus-bq1:existingcursor",
     );
     expect(r.cursor).toContain("nimbus-bq1:");
@@ -1053,7 +1122,7 @@ describeWithFetchRestore("bigquery-sync — ensureBigqueryMcpRunning", () => {
     });
     const db = createMemoryIndexDb();
     // Use null creds so it returns noop quickly
-    await sync.sync(syncTestContext(db, createStubVault({})), null);
+    await sync.sync(syncTestContext(db, createStubVault({}), "bigquery"), null);
     expect(called).toBe(true);
   });
 });
@@ -1077,7 +1146,7 @@ describeWithFetchRestore("bigquery-sync — mintAccessToken throws", () => {
     // The graceful degradation is INSIDE gcloudPrintAccessToken itself (lines 53-54).
     // Via DI, a throwing mint propagates. That's fine — we test it propagates.
     await expect(
-      sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project")), null),
+      sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"), null),
     ).rejects.toThrow("gcloud not found");
   });
 });

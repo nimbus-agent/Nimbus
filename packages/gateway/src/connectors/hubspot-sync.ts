@@ -2,7 +2,6 @@ import { getValidHubspotAccessToken } from "../auth/hubspot-access-token.ts";
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapHubspotDealToItem } from "./hubspot-deal-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -30,7 +29,7 @@ interface HubspotCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<HubspotCreds | null> {
-  const raw = await readConnectorSecret(ctx.vault, "hubspot", "oauth");
+  const raw = await ctx.getSecret("oauth");
   if (raw === null || raw === "") {
     return null;
   }

@@ -58,7 +58,7 @@ describeWithFetchRestore("codemagic-sync", () => {
   test("apps http_error → returns pass cursor with 0 upserts", async () => {
     const db = createMemoryIndexDb();
     installFetch(() => new Response("Unauthorized", { status: 401 }));
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-codemagic1:");
     expectServiceItemCount(db, "codemagic", 0);
@@ -69,7 +69,10 @@ describeWithFetchRestore("codemagic-sync", () => {
     const db = createMemoryIndexDb();
     installFetch(() => new Response("Service Unavailable", { status: 503 }));
     const existing = "nimbus-codemagic1:existing";
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), existing);
+    const r = await makeSyncable().sync(
+      syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"),
+      existing,
+    );
     expect(r.cursor).toBe(existing);
     expect(r.itemsUpserted).toBe(0);
   });
@@ -78,7 +81,7 @@ describeWithFetchRestore("codemagic-sync", () => {
   test("apps parse_error → returns parse-empty pass cursor", async () => {
     const db = createMemoryIndexDb();
     installFetch(() => new Response("not-valid-json{{", { status: 200 }));
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-codemagic1:");
     expectServiceItemCount(db, "codemagic", 0);
@@ -91,7 +94,7 @@ describeWithFetchRestore("codemagic-sync", () => {
     installFetch(
       () => new Response(JSON.stringify({ applications: "not-an-array" }), { status: 200 }),
     );
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-codemagic1:");
     expectServiceItemCount(db, "codemagic", 0);
@@ -111,7 +114,7 @@ describeWithFetchRestore("codemagic-sync", () => {
       // builds endpoint: empty builds
       return new Response(JSON.stringify({ builds: [] }), { status: 200 });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     // app1 and app2 are valid; 42 and null are skipped by extractRows
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "codemagic", 2);
@@ -131,7 +134,7 @@ describeWithFetchRestore("codemagic-sync", () => {
         status: 200,
       });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     expect(r.itemsUpserted).toBe(0);
     // builds endpoint should NOT be called since appId is ""
     expect(buildsFetched).toBe(false);
@@ -154,7 +157,7 @@ describeWithFetchRestore("codemagic-sync", () => {
       // _id absent → mapCodemagicAppToItem null + appId undefined
       return new Response(JSON.stringify({ applications: [{ appName: "NoId" }] }), { status: 200 });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(buildsFetched).toBe(false);
     expectServiceItemCount(db, "codemagic", 0);
@@ -170,7 +173,7 @@ describeWithFetchRestore("codemagic-sync", () => {
       // builds endpoint → HTTP error
       return new Response("Internal Server Error", { status: 500 });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     // app42 was upserted, but the build fetch failed → only 1 item
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "codemagic", 1);
@@ -187,7 +190,7 @@ describeWithFetchRestore("codemagic-sync", () => {
       // builds endpoint → invalid JSON
       return new Response("{{invalid", { status: 200 });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "codemagic", 1);
   });
@@ -210,7 +213,7 @@ describeWithFetchRestore("codemagic-sync", () => {
         { status: 200 },
       );
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     // app + 1 valid build (unmappable skipped)
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "codemagic", 2);
@@ -231,7 +234,7 @@ describeWithFetchRestore("codemagic-sync", () => {
         status: 200,
       });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     // 1 app + 2 builds
     expect(r.itemsUpserted).toBe(3);
     expect(r.cursor).toContain("nimbus-codemagic1:");
@@ -250,7 +253,7 @@ describeWithFetchRestore("codemagic-sync", () => {
       // Return 1 build per app
       return new Response(JSON.stringify({ builds: [makeBuild("bld-x")] }), { status: 200 });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     // 2 apps + 2 builds = 4
     expect(r.itemsUpserted).toBe(4);
     expectServiceItemCount(db, "codemagic", 4);
@@ -267,7 +270,7 @@ describeWithFetchRestore("codemagic-sync", () => {
         status: 200,
       });
     });
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     // app + 1 valid build (2 non-record skipped)
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "codemagic", 2);
@@ -277,7 +280,7 @@ describeWithFetchRestore("codemagic-sync", () => {
   test("null parsed body → asRecord returns undefined → ?? {} → empty rows", async () => {
     const db = createMemoryIndexDb();
     installFetch(() => new Response(JSON.stringify(null), { status: 200 }));
-    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT), null);
+    const r = await makeSyncable().sync(syncTestContext(db, VALID_TOKEN_VAULT, "codemagic"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "codemagic", 0);
   });

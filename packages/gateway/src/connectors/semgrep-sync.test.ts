@@ -94,6 +94,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       syncTestContext(
         db,
         createStubVault({ "semgrep.token": "", "semgrep.deployment_slug": null }),
+        "semgrep",
       ),
       null,
     );
@@ -112,7 +113,7 @@ describeWithFetchRestore("semgrep-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-semgrep1:");
     expectServiceItemCount(db, "semgrep", 1);
@@ -128,7 +129,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
     expectServiceItemCount(db, "semgrep", 0);
@@ -145,7 +146,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "semgrep", 0);
   });
@@ -159,7 +160,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       Promise.resolve(new Response("Server Error", { status: 500 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
     expectServiceItemCount(db, "semgrep", 0);
@@ -179,7 +180,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
   });
@@ -193,7 +194,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     // Only FULL_FINDING is valid
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "semgrep", 1);
@@ -208,7 +209,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "semgrep", 0);
   });
@@ -222,7 +223,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db
       .prepare("SELECT external_id FROM item WHERE service = 'semgrep' LIMIT 1")
@@ -242,7 +243,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
   });
@@ -258,7 +259,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
   });
@@ -281,7 +282,7 @@ describeWithFetchRestore("semgrep-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-semgrep1:");
@@ -314,7 +315,7 @@ describeWithFetchRestore("semgrep-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(callCount).toBe(2);
     expect(r.itemsUpserted).toBe(101); // 100 + 1
     expect(r.cursor).toContain("nimbus-semgrep1:");
@@ -345,7 +346,7 @@ describeWithFetchRestore("semgrep-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), null);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), null);
     expect(deploymentsHit).toBe(true);
     expect(findingsHit).toBe(true);
     expect(r.itemsUpserted).toBe(1);
@@ -361,7 +362,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       Promise.resolve(new Response("Forbidden", { status: 403 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), null);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     // cursor is null (incoming) → defaultCursor (pass1Cursor)
     expect(r.cursor).toContain("nimbus-semgrep1:");
@@ -378,7 +379,7 @@ describeWithFetchRestore("semgrep-sync", () => {
 
     const existingCursor = "nimbus-semgrep1:existing";
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), existingCursor);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), existingCursor);
     expect(r.cursor).toBe(existingCursor);
     expect(r.itemsUpserted).toBe(0);
   });
@@ -397,7 +398,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), null);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
     expectServiceItemCount(db, "semgrep", 0);
@@ -414,7 +415,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), null);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
     expectServiceItemCount(db, "semgrep", 0);
@@ -430,7 +431,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), null);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
   });
@@ -456,7 +457,7 @@ describeWithFetchRestore("semgrep-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), null);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), null);
     expect(deploymentsHit).toBe(true);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
@@ -480,7 +481,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), null);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), null);
     // null slug → syncPassCursorSuccess(0)
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
@@ -498,7 +499,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultTokenOnly()), null);
+    const r = await sync.sync(syncTestContext(db, vaultTokenOnly(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-semgrep1:");
   });
@@ -513,7 +514,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vaultWithSlug()), null);
+    const r = await sync.sync(syncTestContext(db, vaultWithSlug(), "semgrep"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db.prepare("SELECT metadata FROM item WHERE service = 'semgrep' LIMIT 1").get() as
       | { metadata: string }
@@ -544,6 +545,7 @@ describeWithFetchRestore("semgrep-sync", () => {
       syncTestContext(
         db,
         createStubVault({ "semgrep.token": "tok", "semgrep.deployment_slug": "   " }),
+        "semgrep",
       ),
       null,
     );

@@ -1,6 +1,5 @@
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { parsePortSecret, runImapLikeSync } from "./_lib/imap-sync-core.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import type { ImapConnectionConfig, ImapMessageFetcher } from "./imap-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapProtonmailEmailToItem } from "./protonmail-email-mapping.ts";
@@ -29,20 +28,14 @@ export type ProtonmailSyncableOptions = {
 async function loadConfig(ctx: SyncContext): Promise<ImapConnectionConfig | null> {
   // ProtonMail Bridge generates a per-machine username + password; the IMAP
   // host/port default to the Bridge loopback listener.
-  const username = (await readConnectorSecret(ctx.vault, "protonmail", "username"))?.trim() ?? "";
-  const password = (await readConnectorSecret(ctx.vault, "protonmail", "password"))?.trim() ?? "";
+  const username = (await ctx.getSecret("username"))?.trim() ?? "";
+  const password = (await ctx.getSecret("password"))?.trim() ?? "";
   if (username === "" || password === "") {
     return null;
   }
-  const host =
-    (await readConnectorSecret(ctx.vault, "protonmail", "imap_host"))?.trim() ||
-    DEFAULT_BRIDGE_HOST;
-  const port = parsePortSecret(
-    await readConnectorSecret(ctx.vault, "protonmail", "imap_port"),
-    DEFAULT_IMAP_PORT,
-  );
-  const mailbox =
-    (await readConnectorSecret(ctx.vault, "protonmail", "mailbox"))?.trim() || DEFAULT_MAILBOX;
+  const host = (await ctx.getSecret("imap_host"))?.trim() || DEFAULT_BRIDGE_HOST;
+  const port = parsePortSecret(await ctx.getSecret("imap_port"), DEFAULT_IMAP_PORT);
+  const mailbox = (await ctx.getSecret("mailbox"))?.trim() || DEFAULT_MAILBOX;
   // Bridge uses STARTTLS on a local port with a self-signed cert.
   return { host, port, username, password, mailbox, secure: false, tlsRejectUnauthorized: false };
 }

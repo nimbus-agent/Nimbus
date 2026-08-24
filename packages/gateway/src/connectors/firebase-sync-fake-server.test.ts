@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -89,10 +90,15 @@ describeWithFetchRestore("firebase-sync (fake server)", () => {
 
   test("no-op when only the service account is set", async () => {
     const sync = createFirebaseSyncable({ ensureFirebaseMcpRunning: async () => {} });
+    const ctxDb = createMemoryIndexDb();
+    const ctxVault = createStubVault({
+      "firebase.service_account_json": validServiceAccountJson(),
+    });
     const ctx = {
-      vault: createStubVault({ "firebase.service_account_json": validServiceAccountJson() }),
-      db: createMemoryIndexDb(),
+      vault: ctxVault,
+      db: ctxDb,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(ctxDb, ctxVault, "firebase"),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
@@ -101,13 +107,16 @@ describeWithFetchRestore("firebase-sync (fake server)", () => {
 
   test("no-op when the service account JSON is malformed", async () => {
     const sync = createFirebaseSyncable({ ensureFirebaseMcpRunning: async () => {} });
+    const ctxDb = createMemoryIndexDb();
+    const ctxVault = createStubVault({
+      "firebase.service_account_json": "{not json",
+      "firebase.app_ids": APP_ID,
+    });
     const ctx = {
-      vault: createStubVault({
-        "firebase.service_account_json": "{not json",
-        "firebase.app_ids": APP_ID,
-      }),
-      db: createMemoryIndexDb(),
+      vault: ctxVault,
+      db: ctxDb,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(ctxDb, ctxVault, "firebase"),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
@@ -119,7 +128,10 @@ describeWithFetchRestore("firebase-sync (fake server)", () => {
       ensureFirebaseMcpRunning: async () => {},
       mintToken: async () => null,
     });
-    const result = await sync.sync(syncTestContext(createMemoryIndexDb(), fullVault()), null);
+    const result = await sync.sync(
+      syncTestContext(createMemoryIndexDb(), fullVault(), "firebase"),
+      null,
+    );
     expect(result.itemsUpserted).toBe(0);
     expect((result.cursor as string).startsWith("nimbus-firebase1:")).toBe(true);
   });
@@ -127,7 +139,7 @@ describeWithFetchRestore("firebase-sync (fake server)", () => {
   test("upserts the app's releases", async () => {
     const { calls } = stubReleases();
     const db = createMemoryIndexDb();
-    const result = await syncable().sync(syncTestContext(db, fullVault()), null);
+    const result = await syncable().sync(syncTestContext(db, fullVault(), "firebase"), null);
     expect(result.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "firebase", 2);
     expect(calls[0]).toContain("firebaseappdistribution.googleapis.com");
@@ -145,7 +157,10 @@ describeWithFetchRestore("firebase-sync (fake server)", () => {
 
   test("advances the pass cursor", async () => {
     stubReleases();
-    const result = await syncable().sync(syncTestContext(createMemoryIndexDb(), fullVault()), null);
+    const result = await syncable().sync(
+      syncTestContext(createMemoryIndexDb(), fullVault(), "firebase"),
+      null,
+    );
     const cursor = result.cursor as string;
     expect(cursor.startsWith("nimbus-firebase1:")).toBe(true);
     const decoded = Buffer.from(cursor.slice("nimbus-firebase1:".length), "base64url").toString(
@@ -158,7 +173,7 @@ describeWithFetchRestore("firebase-sync (fake server)", () => {
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0]) =>
       new Response("nope", { status: 500 })) as typeof fetch;
     const db = createMemoryIndexDb();
-    const result = await syncable().sync(syncTestContext(db, fullVault()), null);
+    const result = await syncable().sync(syncTestContext(db, fullVault(), "firebase"), null);
     expect(result.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "firebase", 0);
     expect((result.cursor as string).startsWith("nimbus-firebase1:")).toBe(true);
@@ -181,6 +196,7 @@ describeWithFetchRestore("firebase-sync (fake server)", () => {
         "firebase.service_account_json": validServiceAccountJson(),
         "firebase.app_ids": "nocolons",
       }),
+      "firebase",
     );
     const result = await sync.sync(ctx, null);
     expect(result.itemsUpserted).toBe(0);

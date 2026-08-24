@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapPrefectDeploymentToItem } from "./prefect-deployment-mapping.ts";
 
@@ -30,8 +29,8 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<PrefectCreds | null> {
-  const apiUrl = (await readConnectorSecret(ctx.vault, "prefect", "api_url"))?.trim() ?? "";
-  const apiKey = (await readConnectorSecret(ctx.vault, "prefect", "api_key"))?.trim() ?? "";
+  const apiUrl = (await ctx.getSecret("api_url"))?.trim() ?? "";
+  const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
   // Both keys are required for spawn/sync to keep wiring uniform — a keyless
   // self-hosted Prefect Server still gets a placeholder api_key.
   if (apiUrl === "" || apiKey === "") {

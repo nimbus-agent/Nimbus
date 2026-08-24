@@ -28,7 +28,11 @@ describe("snowflake-sync (unified spawn transport)", () => {
   test("personal: indexes items drained from snowflake_list", async () => {
     __setPersonalDrainForTest(async () => [tableRow("ORDERS")]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "snowflake.account": "acme-xy12345" }));
+    const ctx = syncTestContext(
+      db,
+      createStubVault({ "snowflake.account": "acme-xy12345" }),
+      "snowflake",
+    );
 
     const r = await createSnowflakeSyncable().sync(ctx, null);
 
@@ -41,7 +45,7 @@ describe("snowflake-sync (unified spawn transport)", () => {
     const db = createMemoryIndexDb();
     let listReq: unknown;
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "snowflake"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-snowflake" }),
       runTeamList: async (req: unknown) => {
         listReq = req;
@@ -64,7 +68,7 @@ describe("snowflake-sync (unified spawn transport)", () => {
     const SECRET = "tv-secret-do-not-leak";
     const db = createMemoryIndexDb();
     const ctx = {
-      ...syncTestContext(db, createStubVault({})),
+      ...syncTestContext(db, createStubVault({}), "snowflake"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-snowflake" }),
       // The transport returns only mapped raw items; the team secret is never in this array.
       runTeamList: async () => [tableRow("ORDERS")],
@@ -88,7 +92,11 @@ describe("snowflake-sync (unified spawn transport)", () => {
       { database_name: "DB", schema_name: "PUBLIC" }, // no table_name → mapper returns null
     ]);
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({ "snowflake.account": "acme-xy12345" }));
+    const ctx = syncTestContext(
+      db,
+      createStubVault({ "snowflake.account": "acme-xy12345" }),
+      "snowflake",
+    );
 
     const r = await createSnowflakeSyncable().sync(ctx, null);
 

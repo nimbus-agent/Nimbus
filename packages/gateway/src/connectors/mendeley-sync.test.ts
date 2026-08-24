@@ -19,11 +19,19 @@ function makeCtx(hasSecret: boolean): SyncContext {
         scopes: ["all"],
       })
     : null;
-  return syncTestContext(createMemoryIndexDb(), createStubVault({ "mendeley.oauth": secret }));
+  return syncTestContext(
+    createMemoryIndexDb(),
+    createStubVault({ "mendeley.oauth": secret }),
+    "mendeley",
+  );
 }
 
 function makeCtxWithSecret(secret: string): SyncContext {
-  return syncTestContext(createMemoryIndexDb(), createStubVault({ "mendeley.oauth": secret }));
+  return syncTestContext(
+    createMemoryIndexDb(),
+    createStubVault({ "mendeley.oauth": secret }),
+    "mendeley",
+  );
 }
 
 function jsonResponse(body: unknown, link?: string): Response {

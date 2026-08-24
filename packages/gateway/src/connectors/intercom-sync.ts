@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapIntercomConversationToItem } from "./intercom-conversation-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -27,7 +26,7 @@ interface IntercomCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<IntercomCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "intercom", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }

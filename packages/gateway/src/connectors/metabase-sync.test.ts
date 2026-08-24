@@ -93,7 +93,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
 
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-metabase1:");
@@ -119,7 +119,7 @@ describeWithFetchRestore("metabase-sync", () => {
     }) as typeof fetch;
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    await sync.sync(syncTestContext(db, vault), null);
+    await sync.sync(syncTestContext(db, vault, "metabase"), null);
 
     // None of the URLs should have a double slash (// after the host)
     for (const u of seenUrls) {
@@ -142,7 +142,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -163,7 +163,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "metabase", 1);
   });
@@ -185,7 +185,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "metabase", 0);
   });
@@ -216,7 +216,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     // Dashboard with collection_id=10 still gets indexed (collection name resolved)
     expect(r.itemsUpserted).toBe(1);
   });
@@ -241,7 +241,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -265,7 +265,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -290,7 +290,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     // Dashboard still indexed even without collection name
     expect(r.itemsUpserted).toBe(1);
   });
@@ -315,7 +315,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -338,7 +338,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     // Only the valid dashboard gets upserted
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "metabase", 1);
@@ -362,7 +362,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -380,7 +380,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-metabase1:");
@@ -401,7 +401,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-metabase1:");
@@ -422,7 +422,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
 
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-metabase1:");
@@ -442,7 +442,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     // Dashboard still indexed even without collection names
     expect(r.itemsUpserted).toBe(1);
   });
@@ -461,7 +461,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -482,7 +482,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "metabase", 1);
   });
@@ -502,11 +502,11 @@ describeWithFetchRestore("metabase-sync", () => {
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
     // First run to get a cursor
-    const r1 = await sync.sync(syncTestContext(db, vault), null);
+    const r1 = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r1.cursor).toContain("nimbus-metabase1:");
 
     // Second run with the prior cursor
-    const r2 = await sync.sync(syncTestContext(db, vault), r1.cursor);
+    const r2 = await sync.sync(syncTestContext(db, vault, "metabase"), r1.cursor);
     expect(r2.itemsUpserted).toBe(1);
     expect(r2.cursor).toContain("nimbus-metabase1:");
   });
@@ -527,7 +527,7 @@ describeWithFetchRestore("metabase-sync", () => {
     });
 
     const sync = createMetabaseSyncable(NO_OP_OPTIONS);
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "metabase"), null);
     expect(r.itemsUpserted).toBe(1);
 
     const row = db

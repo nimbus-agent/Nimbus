@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import type { FetchOutcome } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapPipedriveDealToItem } from "./pipedrive-deal-mapping.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -30,7 +29,7 @@ interface PipedriveCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<PipedriveCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "pipedrive", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }

@@ -34,7 +34,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -51,7 +51,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -68,7 +68,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -85,7 +85,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     expect(r.itemsUpserted).toBe(0);
@@ -113,7 +113,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     // Only the apps fetch was made
@@ -141,7 +141,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     // app is upserted; builds were skipped
@@ -167,7 +167,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     expect(r.itemsUpserted).toBe(1);
@@ -212,7 +212,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     // 1 app + 1 valid build = 2 upserted
@@ -268,7 +268,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "tok-xyz" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "tok-xyz" }), "bitrise"),
       null,
     );
     // 1 app + 1 build
@@ -307,7 +307,7 @@ describeWithFetchRestore("bitrise-sync", () => {
 
     const sync = makeSyncable();
     const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" })),
+      syncTestContext(db, createStubVault({ "bitrise.token": "test-token" }), "bitrise"),
       null,
     );
     // Only the apps call, no builds call

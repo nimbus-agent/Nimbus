@@ -99,7 +99,7 @@ describeWithFetchRestore("athena-sync", () => {
       ensureAthenaMcpRunning: async () => {},
       // no runAwsCli needed — credential check short-circuits first
     });
-    const r = await sync.sync(syncTestContext(db, emptyAwsVault()), null);
+    const r = await sync.sync(syncTestContext(db, emptyAwsVault(), "athena"), null);
     expectSyncNoopResult(r);
     expectServiceItemCount(db, "athena", 0);
   });
@@ -110,7 +110,7 @@ describeWithFetchRestore("athena-sync", () => {
     const db = createMemoryIndexDb();
     const runner = stubRunner(false, "");
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // syncPassCursorParseEmpty returns cursor = pass1Cursor(), 0 upserted
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-athena1:");
@@ -141,7 +141,7 @@ describeWithFetchRestore("athena-sync", () => {
     };
 
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
 
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-athena1:");
@@ -154,7 +154,7 @@ describeWithFetchRestore("athena-sync", () => {
     const db = createMemoryIndexDb();
     const runner = stubRunner(true, catalogsPage([]));
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-athena1:");
   });
@@ -169,7 +169,7 @@ describeWithFetchRestore("athena-sync", () => {
     // extractArray(undefined, ...) → [] → no catalogs; nextToken(undefined) → null
     const runner = stubRunner(true, "not valid json {{{}");
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-athena1:");
   });
@@ -182,7 +182,7 @@ describeWithFetchRestore("athena-sync", () => {
     const badBody = JSON.stringify({ DataCatalogsSummary: ["not-an-object", 42, null] });
     const runner = stubRunner(true, badBody);
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -207,7 +207,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // Only "valid-catalog" proceeds to list-databases
     expect(dbCallCount).toBe(1);
     expect(r.itemsUpserted).toBe(0);
@@ -224,7 +224,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -244,7 +244,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -263,7 +263,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // Only MAX_CATALOGS=50 entries are accepted, 51st is dropped
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-athena1:");
@@ -287,7 +287,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // Only "real-cat" proceeded → 1 table upserted
     expect(r.itemsUpserted).toBe(1);
   });
@@ -312,7 +312,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // cat1/db1/tbl1 was collected from the first page before second-page error
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-athena1:");
@@ -329,7 +329,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-athena1:");
     expectServiceItemCount(db, "athena", 0);
@@ -353,7 +353,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // Only the valid table is upserted
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "athena", 1);
@@ -376,7 +376,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // MAX_TABLES_PER_DATABASE = 500, 501st is dropped
     expect(r.itemsUpserted).toBe(500);
     expectServiceItemCount(db, "athena", 500);
@@ -397,7 +397,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // cat1 + cat2 both contribute 1 table each = 2 upserts
     expect(catalogCall).toBe(2);
     expect(r.itemsUpserted).toBe(2);
@@ -418,7 +418,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(tableCall).toBe(2);
     expect(r.itemsUpserted).toBe(2);
   });
@@ -431,7 +431,7 @@ describeWithFetchRestore("athena-sync", () => {
     const badBody = JSON.stringify({ DataCatalogsSummary: "should-be-array" });
     const runner = stubRunner(true, badBody);
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-athena1:");
   });
@@ -451,7 +451,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     expect(r.itemsUpserted).toBe(3);
     expectServiceItemCount(db, "athena", 3);
   });
@@ -474,7 +474,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, awsVault()), null);
+    const r = await sync.sync(syncTestContext(db, awsVault(), "athena"), null);
     // Loop should NOT fetch a second page since NextToken="" → null
     expect(catalogCall).toBe(1);
     expect(r.itemsUpserted).toBe(0);
@@ -496,7 +496,7 @@ describeWithFetchRestore("athena-sync", () => {
       return { ok: false, text: "" };
     };
     const sync = createAthenaSyncable(opts(runner));
-    const r = await sync.sync(syncTestContext(db, profileVault), null);
+    const r = await sync.sync(syncTestContext(db, profileVault, "athena"), null);
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-athena1:");
   });

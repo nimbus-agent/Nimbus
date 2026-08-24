@@ -5,7 +5,11 @@ import pino from "pino";
 
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
-import { buildSyncCapabilities, unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
+import {
+  buildSyncCapabilities,
+  type SyncCapabilities,
+  unboundSyncCapabilities,
+} from "../sync/sync-capabilities.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ConnectorServiceId } from "./connector-catalog.ts";
@@ -41,13 +45,14 @@ export function silentSyncContextExtras(): Pick<
   | "runTeamList"
   | "depth"
   | "getSecret"
+  | "getSharedSecret"
   | "upsertItem"
   | "resolvePerson"
 > {
   return {
     // UNBOUND by default: these throw a named error if a test reaches one without having said
-    // which service it is. A test that needs a working capability builds its context with
-    // `syncTestContext(db, vault, serviceId)`, which binds the real ones.
+    // which service it is. Callers that DO have a db and vault should pass them — see the
+    // overload below — or build the context with `syncTestContext(db, vault, serviceId)`.
     ...unboundSyncCapabilities(),
     logger: pino({ level: "silent" }),
     rateLimiter: new ProviderRateLimiter(),
@@ -66,6 +71,19 @@ export function silentSyncContextExtras(): Pick<
  * the unbound set THROWS a named error rather than returning undefined, so a test that does reach
  * one fails loudly instead of silently reading no secret and asserting a happy path.
  */
+/**
+ * The capability half of a test context, bound to a real service. For tests that build their
+ * context as an object literal rather than through `syncTestContext` — spread it AFTER
+ * `silentSyncContextExtras()`, whose defaults are the throwing unbound set.
+ */
+export function boundTestCapabilities(
+  db: Database,
+  vault: NimbusVault,
+  serviceId: ConnectorServiceId,
+): SyncCapabilities {
+  return buildSyncCapabilities({ vault, db, depth: "full" }, serviceId);
+}
+
 export function syncTestContext(
   db: Database,
   vault: NimbusVault,
@@ -76,7 +94,10 @@ export function syncTestContext(
     serviceId === undefined
       ? unboundSyncCapabilities()
       : buildSyncCapabilities({ vault, db, depth: extras.depth }, serviceId);
-  return { db, vault, ...caps, ...extras };
+  // `extras` carries the UNBOUND capability set as its default, so it must be spread FIRST — the
+  // bound `caps` are the override, not the other way round. Reversed, every test silently got the
+  // throwing capabilities back and 889 of them failed at once.
+  return { db, vault, ...extras, ...caps };
 }
 
 export function expectSyncNoopResult(
@@ -105,7 +126,12 @@ export function testConnectorSyncNoop(
   test(name, async () => {
     const db = createMemoryIndexDb();
     const sync = createSyncable();
-    const r = await sync.sync(syncTestContext(db, noopVault), null);
+    // Bind to the syncable's OWN declared service rather than a name derived from the test file:
+    // the syncable is the authority on which connector it is.
+    const r = await sync.sync(
+      syncTestContext(db, noopVault, sync.serviceId as ConnectorServiceId),
+      null,
+    );
     expectSyncNoopResult(r);
   });
 }

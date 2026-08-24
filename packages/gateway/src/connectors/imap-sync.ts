@@ -1,6 +1,5 @@
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { parsePortSecret, runImapLikeSync } from "./_lib/imap-sync-core.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { type ImapMessageInput, mapImapMessageToItem } from "./imap-email-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -62,15 +61,14 @@ export type ImapSyncableOptions = {
 };
 
 async function loadConfig(ctx: SyncContext): Promise<ImapConnectionConfig | null> {
-  const host = (await readConnectorSecret(ctx.vault, "imap", "host"))?.trim() ?? "";
-  const username = (await readConnectorSecret(ctx.vault, "imap", "username"))?.trim() ?? "";
-  const password = (await readConnectorSecret(ctx.vault, "imap", "password"))?.trim() ?? "";
+  const host = (await ctx.getSecret("host"))?.trim() ?? "";
+  const username = (await ctx.getSecret("username"))?.trim() ?? "";
+  const password = (await ctx.getSecret("password"))?.trim() ?? "";
   if (host === "" || username === "" || password === "") {
     return null;
   }
-  const port = parsePortSecret(await readConnectorSecret(ctx.vault, "imap", "port"), 993);
-  const mailbox =
-    (await readConnectorSecret(ctx.vault, "imap", "mailbox"))?.trim() || DEFAULT_MAILBOX;
+  const port = parsePortSecret(await ctx.getSecret("port"), 993);
+  const mailbox = (await ctx.getSecret("mailbox"))?.trim() || DEFAULT_MAILBOX;
   return { host, port, username, password, mailbox };
 }
 

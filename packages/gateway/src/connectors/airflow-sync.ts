@@ -2,7 +2,6 @@ import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { mapAirflowDagToItem } from "./airflow-dag-mapping.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const SERVICE_ID = "airflow";
@@ -31,9 +30,9 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<AirflowCreds | null> {
-  const baseUrl = (await readConnectorSecret(ctx.vault, "airflow", "base_url"))?.trim() ?? "";
-  const username = (await readConnectorSecret(ctx.vault, "airflow", "username"))?.trim() ?? "";
-  const password = (await readConnectorSecret(ctx.vault, "airflow", "password"))?.trim() ?? "";
+  const baseUrl = (await ctx.getSecret("base_url"))?.trim() ?? "";
+  const username = (await ctx.getSecret("username"))?.trim() ?? "";
+  const password = (await ctx.getSecret("password"))?.trim() ?? "";
   if (baseUrl === "" || username === "" || password === "") {
     return null;
   }

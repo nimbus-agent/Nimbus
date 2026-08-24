@@ -6,7 +6,6 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSonarIssueToItem, stripTrailingSlashes } from "./sonarqube-issue-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -79,15 +78,13 @@ interface SonarCreds {
 }
 
 async function loadSonarCreds(ctx: SyncContext): Promise<SonarCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "sonarqube", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }
-  const urlRaw = await readConnectorSecret(ctx.vault, "sonarqube", "url");
+  const urlRaw = await ctx.getSecret("url");
   const base = stripTrailingSlashes(urlRaw?.trim() ?? "") || DEFAULT_API;
-  const organization = (
-    (await readConnectorSecret(ctx.vault, "sonarqube", "organization")) ?? ""
-  ).trim();
+  const organization = ((await ctx.getSecret("organization")) ?? "").trim();
   return { token, base, organization };
 }
 

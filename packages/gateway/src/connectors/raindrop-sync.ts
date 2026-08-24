@@ -1,7 +1,6 @@
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { type ParsedPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapRaindropBookmarkToItem } from "./raindrop-bookmark-mapping.ts";
 import { mapRaindropCollectionToItem } from "./raindrop-collection-mapping.ts";
@@ -38,7 +37,7 @@ interface RaindropCreds {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<RaindropCreds | null> {
-  const token = (await readConnectorSecret(ctx.vault, "raindrop", "token"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (token === "") {
     return null;
   }

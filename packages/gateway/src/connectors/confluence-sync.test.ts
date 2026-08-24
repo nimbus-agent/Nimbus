@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import { confluenceBodyText, createConfluenceSyncable } from "./confluence-sync.ts";
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -57,7 +58,12 @@ function makeCtx(vaultOverrides: Record<string, string | null> = {}) {
     "confluence.base_url": "https://example.atlassian.net",
     ...vaultOverrides,
   });
-  return { db, vault, ...silentSyncContextExtras() };
+  return {
+    db,
+    vault,
+    ...silentSyncContextExtras(),
+    ...boundTestCapabilities(db, vault, "confluence"),
+  };
 }
 
 // Encode a valid cursor pointing to a watermark timestamp
@@ -80,14 +86,24 @@ describeWithFetchRestore("confluence-sync", () => {
   // -------------------------------------------------------------------------
   test("no-op when base_url normalises to empty string", async () => {
     // normalizeAtlassianSiteBaseUrl strips slashes; "/" → "" → wikiApiBase → ""
+    const ctxDb = createMemoryIndexDb();
     const ctx = {
-      db: createMemoryIndexDb(),
+      db: ctxDb,
       vault: createStubVault({
         "confluence.email": "u@example.com",
         "confluence.api_token": "tok",
         "confluence.base_url": "/",
       }),
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        ctxDb,
+        createStubVault({
+          "confluence.email": "u@example.com",
+          "confluence.api_token": "tok",
+          "confluence.base_url": "/",
+        }),
+        "confluence",
+      ),
     };
     globalThis.fetch = (() =>
       Promise.resolve(
@@ -142,6 +158,15 @@ describeWithFetchRestore("confluence-sync", () => {
       }),
       db,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({
+          "confluence.email": "u@example.com",
+          "confluence.api_token": "tok",
+          "confluence.base_url": "https://example.atlassian.net",
+        }),
+        "confluence",
+      ),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -157,14 +182,24 @@ describeWithFetchRestore("confluence-sync", () => {
   // wikiApiBase: base url already ends with /wiki (line 26 branch)
   // -------------------------------------------------------------------------
   test("handles base_url that already ends with /wiki", async () => {
+    const ctxDb = createMemoryIndexDb();
     const ctx = {
-      db: createMemoryIndexDb(),
+      db: ctxDb,
       vault: createStubVault({
         "confluence.email": "u@example.com",
         "confluence.api_token": "tok",
         "confluence.base_url": "https://example.atlassian.net/wiki",
       }),
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        ctxDb,
+        createStubVault({
+          "confluence.email": "u@example.com",
+          "confluence.api_token": "tok",
+          "confluence.base_url": "https://example.atlassian.net/wiki",
+        }),
+        "confluence",
+      ),
     };
     // We just need to capture the URL that was fetched; return a valid empty page
     let fetchedUrl = "";
@@ -692,14 +727,24 @@ describeWithFetchRestore("confluence-sync", () => {
   // No-op: individual credential absent (lines 265-272): only token missing
   // -------------------------------------------------------------------------
   test("no-op when api_token is empty string", async () => {
+    const ctxDb = createMemoryIndexDb();
     const ctx = {
-      db: createMemoryIndexDb(),
+      db: ctxDb,
       vault: createStubVault({
         "confluence.email": "u@example.com",
         "confluence.api_token": "",
         "confluence.base_url": "https://example.atlassian.net",
       }),
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        ctxDb,
+        createStubVault({
+          "confluence.email": "u@example.com",
+          "confluence.api_token": "",
+          "confluence.base_url": "https://example.atlassian.net",
+        }),
+        "confluence",
+      ),
     };
     globalThis.fetch = (() =>
       Promise.resolve(new Response("nope", { status: 200 }))) as unknown as typeof fetch;

@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { mapMlflowModelToItem } from "./mlflow-model-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -31,8 +30,8 @@ function trimTrailingSlash(s: string): string {
 }
 
 async function loadCreds(ctx: SyncContext): Promise<MlflowCreds | null> {
-  const host = (await readConnectorSecret(ctx.vault, "mlflow", "host"))?.trim() ?? "";
-  const token = (await readConnectorSecret(ctx.vault, "mlflow", "token"))?.trim() ?? "";
+  const host = (await ctx.getSecret("host"))?.trim() ?? "";
+  const token = (await ctx.getSecret("token"))?.trim() ?? "";
   if (host === "" || token === "") {
     return null;
   }

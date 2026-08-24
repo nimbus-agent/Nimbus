@@ -52,7 +52,15 @@ describe("getSecret is scoped to the calling service", () => {
 describe("the capability set exposes no raw handle", () => {
   test("neither vault nor db is reachable from the returned object", () => {
     const caps = buildSyncCapabilities(deps({}), "jira");
-    expect(Object.keys(caps).sort()).toEqual(["getSecret", "resolvePerson", "upsertItem"]);
+    // Pinned deliberately: adding a capability should be a considered act, so this list is the
+    // review surface. `getSharedSecret` was added for the four connectors that authenticate with a
+    // shared gcp.*/github.* credential, and this assertion is what made that visible.
+    expect(Object.keys(caps).sort()).toEqual([
+      "getSecret",
+      "getSharedSecret",
+      "resolvePerson",
+      "upsertItem",
+    ]);
   });
 });
 
@@ -63,5 +71,30 @@ describe("resolvePerson", () => {
     const caps = buildSyncCapabilities(deps({}), "jira");
     const out = caps.resolvePerson({ githubLogin: "octocat", displayName: "octocat" });
     expect(typeof out).toBe("string");
+  });
+});
+
+describe("shared-credential grants", () => {
+  test("a granted family resolves that family's key", async () => {
+    const d = deps({ "gcp.project_id": "acme-prod" });
+    const caps = buildSyncCapabilities(d, "bigquery");
+    expect(await caps.getSharedSecret("gcp", "project_id")).toBe("acme-prod");
+  });
+
+  test("an UNGRANTED family throws rather than returning null", async () => {
+    // Returning null would be indistinguishable from an unconfigured connector, which is how a
+    // missing grant would go unnoticed for a release. The throw names the fix.
+    const caps = buildSyncCapabilities(deps({ "gcp.project_id": "acme-prod" }), "jira");
+    expect(() => caps.getSharedSecret("gcp", "project_id")).toThrow(
+      /no shared-credential grant for "gcp"/,
+    );
+  });
+
+  test("the grant is per service, not global", async () => {
+    const d = deps({ "github.pat": "p" });
+    expect(await buildSyncCapabilities(d, "github_actions").getSharedSecret("github", "pat")).toBe(
+      "p",
+    );
+    expect(() => buildSyncCapabilities(d, "bigquery").getSharedSecret("github", "pat")).toThrow();
   });
 });

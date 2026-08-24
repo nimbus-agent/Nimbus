@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import crypto from "node:crypto";
 
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -98,10 +99,13 @@ describeWithFetchRestore("testflight-sync (fake server)", () => {
 
   test("no-op when only some credentials are set", async () => {
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
+    const ctxDb = createMemoryIndexDb();
+    const ctxVault = createStubVault({ "testflight.issuer_id": "i", "testflight.key_id": "k" });
     const ctx = {
-      vault: createStubVault({ "testflight.issuer_id": "i", "testflight.key_id": "k" }),
-      db: createMemoryIndexDb(),
+      vault: ctxVault,
+      db: ctxDb,
       ...silentSyncContextExtras(),
+      ...boundTestCapabilities(ctxDb, ctxVault, "testflight"),
     };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
@@ -112,7 +116,7 @@ describeWithFetchRestore("testflight-sync (fake server)", () => {
     const { calls } = stubAppStore();
     const db = createMemoryIndexDb();
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const result = await sync.sync(syncTestContext(db, fullVault()), null);
+    const result = await sync.sync(syncTestContext(db, fullVault(), "testflight"), null);
 
     expect(result.itemsUpserted).toBe(3); // 1 app + 2 builds
     expectServiceItemCount(db, "testflight", 3);
@@ -133,7 +137,7 @@ describeWithFetchRestore("testflight-sync (fake server)", () => {
     stubAppStore();
     const db: Database = createMemoryIndexDb();
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const result = await sync.sync(syncTestContext(db, fullVault()), null);
+    const result = await sync.sync(syncTestContext(db, fullVault(), "testflight"), null);
     expect(result.cursor).not.toBeNull();
     const cursor = result.cursor as string;
     expect(cursor.startsWith("nimbus-testflight1:")).toBe(true);
@@ -148,7 +152,7 @@ describeWithFetchRestore("testflight-sync (fake server)", () => {
       new Response("nope", { status: 401 })) as typeof fetch;
     const db = createMemoryIndexDb();
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const result = await sync.sync(syncTestContext(db, fullVault()), null);
+    const result = await sync.sync(syncTestContext(db, fullVault(), "testflight"), null);
     expect(result.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "testflight", 0);
   });
@@ -163,7 +167,7 @@ describeWithFetchRestore("testflight-sync (fake server)", () => {
     }) as typeof fetch;
     const db = createMemoryIndexDb();
     const sync = createTestflightSyncable({ ensureTestflightMcpRunning: async () => {} });
-    const result = await sync.sync(syncTestContext(db, fullVault()), null);
+    const result = await sync.sync(syncTestContext(db, fullVault(), "testflight"), null);
     expect(result.itemsUpserted).toBe(1); // just the app
     expectServiceItemCount(db, "testflight", 1);
   });

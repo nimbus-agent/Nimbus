@@ -136,7 +136,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, vault), null);
+    const r = await sync.sync(syncTestContext(db, vault, "fastmail"), null);
     expect(r.cursor).toContain("nimbus-fastmail1:");
     // The trailing slash in base_url must be trimmed → session endpoint has no `//`.
     expect(urls[0]).toBe("https://custom.fastmail.example/jmap/session");
@@ -159,7 +159,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    await sync.sync(syncTestContext(db, tokenVault()), null);
+    await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     // base_url absent → DEFAULT_BASE_URL (api.fastmail.com) is used for the session endpoint.
     expect(urls[0]).toBe("https://api.fastmail.com/jmap/session");
   });
@@ -171,7 +171,7 @@ describeWithFetchRestore("fastmail-sync", () => {
       Promise.resolve(new Response("Unauthorized", { status: 401 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
     expectServiceItemCount(db, "fastmail", 0);
@@ -189,7 +189,7 @@ describeWithFetchRestore("fastmail-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
   });
@@ -201,7 +201,7 @@ describeWithFetchRestore("fastmail-sync", () => {
       Promise.resolve(new Response("null", { status: 200 }))) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
   });
@@ -220,7 +220,7 @@ describeWithFetchRestore("fastmail-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
   });
@@ -235,7 +235,7 @@ describeWithFetchRestore("fastmail-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
   });
@@ -255,7 +255,7 @@ describeWithFetchRestore("fastmail-sync", () => {
       )) as unknown as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
   });
@@ -266,7 +266,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), {}, 200, 503);
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
     expectServiceItemCount(db, "fastmail", 0);
@@ -291,7 +291,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
   });
@@ -302,7 +302,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([makeEmail()]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     expect(r.cursor).toContain("nimbus-fastmail1:");
     expectServiceItemCount(db, "fastmail", 1);
@@ -319,7 +319,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse(emails));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(3);
     expectServiceItemCount(db, "fastmail", 3);
   });
@@ -331,7 +331,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), noResponses);
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "fastmail", 0);
   });
@@ -348,7 +348,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), noEmailGet);
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "fastmail", 0);
   });
@@ -362,7 +362,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), badList);
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -376,7 +376,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([badEmail]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "fastmail", 0);
   });
@@ -388,7 +388,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([badEmail]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -399,7 +399,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     // id is present so it should still index
     expect(r.itemsUpserted).toBe(1);
   });
@@ -413,7 +413,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), response);
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     // Only the valid makeEmail() entry should be upserted
     expect(r.itemsUpserted).toBe(1);
   });
@@ -427,7 +427,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -440,7 +440,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db.prepare("SELECT metadata FROM item WHERE service = 'fastmail' LIMIT 1").get() as
       | { metadata: string }
@@ -458,7 +458,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db.prepare("SELECT metadata FROM item WHERE service = 'fastmail' LIMIT 1").get() as
       | { metadata: string }
@@ -474,7 +474,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -485,7 +485,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db.prepare("SELECT metadata FROM item WHERE service = 'fastmail' LIMIT 1").get() as
       | { metadata: string }
@@ -503,7 +503,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -516,7 +516,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -529,7 +529,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db.prepare("SELECT metadata FROM item WHERE service = 'fastmail' LIMIT 1").get() as
       | { metadata: string }
@@ -551,7 +551,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db
       .prepare("SELECT body_preview FROM item WHERE service = 'fastmail' LIMIT 1")
@@ -570,7 +570,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db
       .prepare("SELECT body_preview FROM item WHERE service = 'fastmail' LIMIT 1")
@@ -589,7 +589,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db
       .prepare("SELECT body_preview FROM item WHERE service = 'fastmail' LIMIT 1")
@@ -608,7 +608,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db
       .prepare("SELECT body_preview FROM item WHERE service = 'fastmail' LIMIT 1")
@@ -627,7 +627,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db
       .prepare("SELECT body_preview FROM item WHERE service = 'fastmail' LIMIT 1")
@@ -647,7 +647,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
     const row = db
       .prepare("SELECT body_preview FROM item WHERE service = 'fastmail' LIMIT 1")
@@ -664,7 +664,10 @@ describeWithFetchRestore("fastmail-sync", () => {
 
     const sync = makeSyncable();
     // Pass an existing cursor — it's stored but fastmail always returns pass1Cursor
-    const r = await sync.sync(syncTestContext(db, tokenVault()), "nimbus-fastmail1:previous");
+    const r = await sync.sync(
+      syncTestContext(db, tokenVault(), "fastmail"),
+      "nimbus-fastmail1:previous",
+    );
     expect(r.cursor).toContain("nimbus-fastmail1:");
     expect(r.itemsUpserted).toBe(0);
   });
@@ -690,7 +693,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault("my-secret-token")), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault("my-secret-token"), "fastmail"), null);
     expect(capturedHeaders.length).toBeGreaterThanOrEqual(2);
     for (const h of capturedHeaders) {
       expect(h).toBe("Bearer my-secret-token");
@@ -716,7 +719,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), response);
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -739,7 +742,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([badEmail]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
   });
 
@@ -759,7 +762,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -770,7 +773,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([email]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(1);
   });
 
@@ -782,7 +785,7 @@ describeWithFetchRestore("fastmail-sync", () => {
 
     const beforeSync = Date.now();
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     const afterSync = Date.now();
     expect(r.itemsUpserted).toBe(1);
     const row = db
@@ -798,7 +801,7 @@ describeWithFetchRestore("fastmail-sync", () => {
     globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([]));
 
     const sync = makeSyncable();
-    const r = await sync.sync(syncTestContext(db, tokenVault()), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault(), "fastmail"), null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toContain("nimbus-fastmail1:");
     expectServiceItemCount(db, "fastmail", 0);

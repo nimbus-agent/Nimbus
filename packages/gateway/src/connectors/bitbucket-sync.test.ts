@@ -6,6 +6,7 @@ import {
   prDiffstatUrl,
 } from "./bitbucket-sync.ts";
 import {
+  boundTestCapabilities,
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
@@ -22,6 +23,11 @@ function ctxWithCreds(
     db,
     vault: createStubVault({ "bitbucket.username": user, "bitbucket.app_password": pass }),
     ...silentSyncContextExtras(),
+    ...boundTestCapabilities(
+      db,
+      createStubVault({ "bitbucket.username": user, "bitbucket.app_password": pass }),
+      "bitbucket",
+    ),
   };
 }
 

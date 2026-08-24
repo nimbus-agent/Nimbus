@@ -20,7 +20,7 @@ function fetchStub(map: Record<string, unknown>): typeof fetch {
 describe("createWorkdaySyncable", () => {
   test("maps workers + time-off + job-postings into upserts", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     const syncable = createWorkdaySyncable({
       ensureWorkdayMcpRunning: async () => {},
@@ -66,7 +66,7 @@ describe("createWorkdaySyncable", () => {
 
   test("a domain that 404s does not abort the others", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     const syncable = createWorkdaySyncable({
       ensureWorkdayMcpRunning: async () => {},
@@ -86,7 +86,7 @@ describe("createWorkdaySyncable", () => {
 
   test("no-ops when loadAccessToken throws", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     const syncable = createWorkdaySyncable({
       ensureWorkdayMcpRunning: async () => {},
@@ -104,7 +104,7 @@ describe("createWorkdaySyncable", () => {
 
   test("returns hasMore=false and a valid cursor on an empty response", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     const syncable = createWorkdaySyncable({
       ensureWorkdayMcpRunning: async () => {},
@@ -125,7 +125,7 @@ describe("createWorkdaySyncable", () => {
 
   test("a domain that throws does not abort the others (outer catch)", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     // /timeOff throws a network error; /workers and /jobRequisitions succeed
     const throwingFetchFn = (async (url: string | URL) => {
@@ -151,7 +151,7 @@ describe("createWorkdaySyncable", () => {
 
   test("decodeCursor resume: a non-null cursor resumes the workers walk at a non-zero offset", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     // First pass returns a full page of 50 workers (advancing the worker offset),
     // then an empty page to terminate. Capture every fetched URL, tagged by pass.
@@ -200,7 +200,7 @@ describe("createWorkdaySyncable", () => {
 
   test("indexes RaaS report rows from a same-host report url", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     const syncable = createWorkdaySyncable({
       ensureWorkdayMcpRunning: async () => {},
@@ -241,7 +241,7 @@ describe("createWorkdaySyncable", () => {
 
   test("rejects a report url whose host != tenant host (no fetch, no upsert)", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     let evilFetched = false;
     const guardedFetch = (async (url: string | URL) => {
@@ -274,7 +274,7 @@ describe("createWorkdaySyncable", () => {
 
   test("a report fetch that returns non-ok skips that report but continues sync", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
 
     const syncable = createWorkdaySyncable({
       ensureWorkdayMcpRunning: async () => {},
@@ -305,7 +305,7 @@ describe("createWorkdaySyncable", () => {
 
   test("falls back to DEFAULT config + globalThis.fetch when neither is injected", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ data: [] }), { status: 200 })) as unknown as typeof fetch;
@@ -324,7 +324,7 @@ describe("createWorkdaySyncable", () => {
 
   test("skips rows that map to null (worker without an id)", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
     const syncable = createWorkdaySyncable({
       ensureWorkdayMcpRunning: async () => {},
       loadAccessToken: async () => "tok",
@@ -342,7 +342,7 @@ describe("createWorkdaySyncable", () => {
 
   test("tolerates malformed domain payloads (bare array + non-array data field)", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
     const malformedFetch = (async (url: string | URL) => {
       const u = String(url);
       // /workers: a BARE array (no {data} wrapper) → exercises the "no data key → parsed" arm.
@@ -369,7 +369,7 @@ describe("createWorkdaySyncable", () => {
 
   test("reportRowsFrom handles a bare-array report and a non-array report body", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "workday");
     const reportFetch = (async (url: string | URL) => {
       const u = String(url);
       // bare array report (no Report_Entry wrapper) → reportRowsFrom returns the array
