@@ -2,7 +2,12 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
 
-import { buildSyncCapabilities, type SyncCapabilityDeps } from "./sync-capabilities.ts";
+import {
+  buildLocalOnlySyncCapabilities,
+  buildSyncCapabilities,
+  type SyncCapabilityDeps,
+  unboundSyncCapabilities,
+} from "./sync-capabilities.ts";
 
 function deps(entries: Record<string, string>): SyncCapabilityDeps {
   const asked: string[] = [];
@@ -111,5 +116,170 @@ describe("shared-credential grants", () => {
       "p",
     );
     expect(() => buildSyncCapabilities(d, "bigquery").getSharedSecret("github", "pat")).toThrow();
+  });
+});
+
+describe("every capability routes to its gateway function", () => {
+  // The wrappers are one-liners, which is exactly why they need calling: a typo in any of them
+  // (wrong argument order, wrong helper) is invisible until a connector misbehaves at runtime.
+  function caps() {
+    const d = deps({});
+    return { caps: buildSyncCapabilities(d, "github"), db: d.db };
+  }
+
+  test("upsertItem writes through the depth chokepoint", () => {
+    const { caps: c, db } = caps();
+    c.upsertItem({
+      service: "github",
+      type: "pull_request",
+      externalId: "o/r#1",
+      title: "PR",
+      bodyPreview: "b",
+      modifiedAt: 1,
+      metadata: {},
+      syncedAt: 1,
+    });
+    expect(db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 1 });
+  });
+
+  test("deleteItem removes what upsertItem wrote", () => {
+    const { caps: c, db } = caps();
+    const row = {
+      service: "github",
+      type: "pull_request",
+      externalId: "o/r#2",
+      title: "PR",
+      bodyPreview: "b",
+      modifiedAt: 1,
+      metadata: {},
+      syncedAt: 1,
+    };
+    c.upsertItem(row);
+    c.deleteItem("github", "o/r#2");
+    expect(db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 0 });
+  });
+
+  test("countItems and itemExists agree with what was written", () => {
+    const { caps: c } = caps();
+    expect(c.countItems("github", "pull_request")).toBe(0);
+    expect(c.itemExists("github:nope")).toBe(false);
+    c.upsertItem({
+      service: "github",
+      type: "pull_request",
+      externalId: "o/r#3",
+      title: "PR",
+      bodyPreview: "b",
+      modifiedAt: 1,
+      metadata: {},
+      syncedAt: 1,
+    });
+    expect(c.countItems("github", "pull_request")).toBe(1);
+    expect(c.countItems("github", "issue")).toBe(0);
+  });
+
+  test("itemMetadata returns the stored JSON, and null for an absent item", () => {
+    const { caps: c } = caps();
+    expect(c.itemMetadata("github:missing")).toBeNull();
+    c.upsertItem({
+      service: "github",
+      type: "pull_request",
+      externalId: "o/r#4",
+      title: "PR",
+      bodyPreview: "b",
+      modifiedAt: 1,
+      metadata: { repo: "o/r" },
+      syncedAt: 1,
+    });
+    expect(c.itemMetadata("github:o/r#4")).toContain("o/r");
+  });
+
+  test("bodyFetchState is null until an item exists", () => {
+    const { caps: c } = caps();
+    expect(c.bodyFetchState("github:absent")).toBeNull();
+  });
+
+  test("listIndexedMetadataValues returns distinct non-empty values", () => {
+    const { caps: c } = caps();
+    for (const [i, repo] of ["o/a", "o/a", "o/b"].entries()) {
+      c.upsertItem({
+        service: "github",
+        type: "pull_request",
+        externalId: `o/r#${String(10 + i)}`,
+        title: "PR",
+        bodyPreview: "b",
+        modifiedAt: 1,
+        metadata: { repo },
+        syncedAt: 1,
+      });
+    }
+    expect(c.listIndexedMetadataValues("github", "repo").sort()).toEqual(["o/a", "o/b"]);
+  });
+
+  test("listIndexedMetadataValues refuses a metadata key it cannot bind", () => {
+    // The key is interpolated into a JSON path, the one place a bound parameter cannot do the job.
+    const { caps: c } = caps();
+    expect(() => c.listIndexedMetadataValues("github", "a'; DROP TABLE item; --")).toThrow(
+      /unsafe metadata key/,
+    );
+  });
+
+  test("prEnrichCandidates and prFileCandidates return empty on an empty index", () => {
+    const { caps: c } = caps();
+    expect(c.prEnrichCandidates(10)).toEqual([]);
+    expect(c.prFileCandidates("github", 10)).toEqual([]);
+  });
+
+  test("the blame writers round-trip", () => {
+    const { caps: c, db } = caps();
+    c.upsertBlameLines("/repo", "a.ts", [
+      { lineNo: 1, commitSha: "abc", authorName: "A", authorEmail: "a@b.c", authorTimeMs: 1 },
+    ]);
+    expect(db.query("SELECT COUNT(*) AS n FROM git_blame_line").get()).toEqual({ n: 1 });
+    c.pruneBlameForFile("/repo", "a.ts");
+    expect(db.query("SELECT COUNT(*) AS n FROM git_blame_line").get()).toEqual({ n: 0 });
+  });
+
+  test("scopedVaultView is scoped to the service it was asked for", () => {
+    const { caps: c } = caps();
+    expect(c.scopedVaultView("github")).toBeDefined();
+  });
+});
+
+describe("unbound and local-only capability sets", () => {
+  test("EVERY unbound capability throws, and names itself in the message", () => {
+    // Iterating the whole set rather than a sample: the property is meant to hold for every
+    // member, and a sampled test would let a newly added capability ship silently returning
+    // undefined — which is the exact fail-open this design exists to remove.
+    const u = unboundSyncCapabilities() as unknown as Record<string, (...a: unknown[]) => unknown>;
+    const names = Object.keys(u);
+    expect(names.length).toBeGreaterThan(15);
+    for (const name of names) {
+      expect(() => u[name]?.()).toThrow(
+        new RegExp(`^${name} was called on an unbound SyncContext`),
+      );
+    }
+  });
+
+  test("a local-only syncable gets the db capabilities but no credentials", () => {
+    const d = deps({});
+    const c = buildLocalOnlySyncCapabilities(d, "obsidian");
+    // Local-only means no outbound request, therefore no credentials at all — and that must hold
+    // for every credential capability, not just the one a test happened to pick.
+    const asAny = c as unknown as Record<string, (...a: unknown[]) => unknown>;
+    for (const name of ["getSecret", "getSharedSecret", "accessToken"]) {
+      expect(() => asAny[name]?.()).toThrow(/local-only syncable/);
+    }
+    // ...but it still writes to the index, which is its whole job.
+    c.upsertItem({
+      service: "obsidian",
+      type: "obsidian_note",
+      externalId: "v1/a.md",
+      title: "a",
+      body: "x",
+      modifiedAt: 1,
+      metadata: {},
+      syncedAt: 1,
+    });
+    expect(d.db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 1 });
   });
 });
