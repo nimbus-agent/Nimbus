@@ -42,10 +42,11 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
- * same MCP server also exposes six read-only index tools — `searchIndex`, `getConnectorStatus`,
- * `getRecentIncidents` / `getRecentPullRequests` / `getRecentDeployments`, `getDoraMetrics` — that
- * hand raw index rows to the same editor model and append NO row at all, and the same socket's
- * `ask` / `search.query` / `glossary.*` calls append nothing either.
+ * same MCP server also exposes nine read-only index tools — `searchIndex`, `getConnectorStatus`,
+ * `getRecentIncidents` / `getRecentPullRequests` / `getRecentDeployments`, `getDoraMetrics`, and
+ * the three W6-B.2 negation tools `findPrsNotTouching` / `findDeploymentsWithoutIncident` /
+ * `findPeopleWithoutReviews` — that hand raw index rows to the same editor model and append NO row
+ * at all, and the same socket's `ask` / `search.query` / `glossary.*` calls append nothing either.
  *
  * That narrowing is recorded HERE, in the machine-readable claim, because this vector — not any
  * prose about it — is what gets serialized into a boot marker's HASHED `source_id` and read by

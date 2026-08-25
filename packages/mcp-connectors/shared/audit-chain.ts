@@ -41,12 +41,23 @@ export const GENESIS_HASH = "0".repeat(64);
  * Two structurally identical entries must hash identically regardless of insertion order —
  * otherwise re-serialising during verification could break a chain that was never tampered with.
  */
+/**
+ * Key order for `canonicalJson`. Plain code-unit comparison, NOT `localeCompare`: the order has to
+ * be the same on every machine and locale, or a chain written on one host fails to verify on
+ * another.
+ */
+function compareKeys(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const rec = value as Record<string, unknown>;
   const body = Object.keys(rec)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(compareKeys)
     .map((k) => `${JSON.stringify(k)}:${canonicalJson(rec[k])}`)
     .join(",");
   return `{${body}}`;

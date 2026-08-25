@@ -18,6 +18,7 @@ import { materializeMigratedDb } from "../index/migrated-db-template.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createSeededTokenVault } from "../ipc/test-token-vault.ts";
+import { runQuietly } from "../testing/harness-teardown.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { IndexHit, IndexSearch } from "./brief-registry.ts";
 import { buildRegistry } from "./brief-registry.ts";
@@ -162,21 +163,11 @@ export async function startBriefTestServer(opts?: {
       clockMs += ms;
     },
     stop(): void {
-      try {
-        handle.stop();
-      } catch {
-        /* ignore */
-      }
-      try {
-        db.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
+      runQuietly([
+        () => handle.stop(),
+        () => db.close(),
+        () => rmSync(tmpDir, { recursive: true, force: true }),
+      ]);
     },
   };
 }

@@ -107,6 +107,56 @@ const DOCS_FILES = [
  */
 export const DOCS_GLOBS = [".claude/commands/*.md", ".claude/agents/*.md"];
 
+/**
+ * The rest of `docs/`, in ADDITION to `DOCS_FILES` above.
+ *
+ * `DOCS_FILES` is a hand-maintained list of 16 paths, and a doc only joins it
+ * when someone remembers to add it — so `docs/testing.md`, `docs/sandbox.md`,
+ * `docs/schema-reference.md`, `docs/internals/**` and ~30 others were never
+ * opened by this gate at all. `docs/internals/test-fixtures.md` pointed at
+ * `packages/gateway/test/unit/engine/`, a directory that does not exist,
+ * for as long as nobody read it.
+ *
+ * Kept separate from `DOCS_GLOBS` because that constant carries its own
+ * regression test asserting every pattern is a dot-directory (the `dot: true`
+ * defect); folding a `docs/` pattern in would make those assertions false for
+ * an unrelated reason.
+ */
+export const DOCS_TREE_GLOBS = ["docs/**/*.md"];
+
+/**
+ * Paths under `DOCS_TREE_GLOBS` this gate does NOT open, each for a reason that
+ * is about the document's job, not about it being inconvenient. A file is
+ * skipped when its path references are legitimately expected not to resolve
+ * against the CURRENT tree:
+ *
+ * - `docs/CHANGELOG.md` and `docs/superpowers/` — dated records. Every path in
+ *   them was true on the day it was written; `packages/mcp-launcher` really did
+ *   exist before the satellite extraction, and rewriting history to keep a
+ *   link-checker happy would be the actual error.
+ * - `docs/roadmap.md` — forward-looking. Naming `docs/compliance/samples/` in an
+ *   acceptance criterion for unbuilt work is the criterion doing its job.
+ * - `docs/ci-secrets.md` — its workflow paths are inside the upstream
+ *   `microsoft/winget-pkgs` repository, not this one.
+ * - `docs/structure-audit/baseline.md` — cites generated audit artifacts
+ *   (`file-loc.json`, `knip-report.json`, …) that are produced on demand and
+ *   deliberately not committed.
+ *
+ * Everything else in `docs/` describes the tree as it is now and is gated.
+ */
+export const DOCS_EXCLUDED_PREFIXES = [
+  "docs/CHANGELOG.md",
+  "docs/superpowers/",
+  "docs/roadmap.md",
+  "docs/ci-secrets.md",
+  "docs/structure-audit/baseline.md",
+];
+
+/** True when `rel` is inside the stated-reason exclusion set above. */
+export function isExcludedDoc(rel: string): boolean {
+  return DOCS_EXCLUDED_PREFIXES.some((p) => (p.endsWith("/") ? rel.startsWith(p) : rel === p));
+}
+
 function hasRejectChar(s: string): boolean {
   for (const ch of PATH_REJECT_CHARS) if (s.includes(ch)) return true;
   return false;
@@ -301,6 +351,15 @@ async function gatherDocs(): Promise<string[]> {
     // and without it Glob.scan silently matches nothing.
     for await (const rel of new Glob(pattern).scan({ cwd: REPO_ROOT, dot: true })) {
       docs.push(rel.replaceAll("\\", "/"));
+    }
+  }
+  const seen = new Set(docs);
+  for (const pattern of DOCS_TREE_GLOBS) {
+    for await (const raw of new Glob(pattern).scan({ cwd: REPO_ROOT })) {
+      const rel = raw.replaceAll("\\", "/");
+      if (isExcludedDoc(rel) || seen.has(rel)) continue;
+      seen.add(rel);
+      docs.push(rel);
     }
   }
   return docs;

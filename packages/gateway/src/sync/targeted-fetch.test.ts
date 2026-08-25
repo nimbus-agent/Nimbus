@@ -17,13 +17,24 @@ type EgressRow = {
   readonly sourceId?: string | undefined;
 };
 
+/** The outcome marker's row, as the write site hands it to the injected appender. */
+type OutcomeRow = {
+  readonly destination: FetchableService;
+  readonly authorizingRowHash: string;
+  readonly status: string;
+  readonly itemId?: string | undefined;
+  readonly reason?: string | undefined;
+};
+
 type DepsOverrides = {
   hostMap?: ReadonlyMap<string, FetchableService>;
   /** Full override — takes precedence over `syncable` when both are given. */
   syncableFor?: (service: FetchableService) => Syncable | undefined;
   /** Shorthand: builds a trivial fixture `Syncable` with this `fetchOne` (or none at all). */
   syncable?: { fetchOne?: Syncable["fetchOne"] };
-  appendEgress?: (row: EgressRow) => undefined;
+  appendEgress?: (row: EgressRow) => { rowHash: string } | undefined;
+  appendOutcome?: (row: OutcomeRow) => undefined;
+  warn?: (err: unknown, message: string) => void;
   sleep?: (ms: number) => Promise<void>;
   /** Fake for `ctx.rateLimiter.tryAcquire`. Defaults to always-succeeds-immediately. */
   tryAcquire?: (service: FetchableService) => Promise<boolean>;
@@ -91,12 +102,127 @@ function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
     contextFor: () => fakeCtx,
     httpOriginFor: overrides.httpOriginFor ?? (() => null),
     appendEgress: overrides.appendEgress ?? (() => undefined),
+    appendOutcome: overrides.appendOutcome ?? (() => undefined),
+    warn: overrides.warn ?? (() => undefined),
     sleep: overrides.sleep ?? (() => Promise.resolve()),
     urlIsSupported: overrides.urlIsSupported ?? (() => true),
   };
 }
 
 describe("targetedFetch", () => {
+  test("an indexed fetch writes one outcome row naming the authorising row, with the item id", async () => {
+    const outcomes: OutcomeRow[] = [];
+    const deps = depsWith({
+      hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+      appendEgress: () => ({ rowHash: "d".repeat(64) }),
+      appendOutcome: (r) => {
+        outcomes.push(r);
+        return undefined;
+      },
+      syncableFor: (service) => ({
+        serviceId: service,
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync() {
+          throw new Error("not exercised");
+        },
+        fetchOne: async (): Promise<FetchOneResult> => ({
+          status: "indexed",
+          itemId: "github:acme/web#482",
+        }),
+      }),
+    });
+
+    await targetedFetch(deps, "https://github.com/acme/web/pull/482");
+
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({
+      destination: "github",
+      authorizingRowHash: "d".repeat(64),
+      status: "indexed",
+      itemId: "github:acme/web#482",
+    });
+  });
+
+  test("a miss writes an outcome carrying the reason and no item id", async () => {
+    const outcomes: OutcomeRow[] = [];
+    const deps = depsWith({
+      hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+      appendEgress: () => ({ rowHash: "d".repeat(64) }),
+      appendOutcome: (r) => {
+        outcomes.push(r);
+        return undefined;
+      },
+      syncableFor: (service) => ({
+        serviceId: service,
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync() {
+          throw new Error("not exercised");
+        },
+        fetchOne: async (): Promise<FetchOneResult> => ({
+          status: "not_found",
+          reason: "absent",
+        }),
+      }),
+    });
+
+    await targetedFetch(deps, "https://github.com/acme/web/pull/482");
+
+    expect(outcomes[0]).toMatchObject({ status: "not_found", reason: "absent" });
+    expect(outcomes[0]?.itemId).toBeUndefined();
+  });
+
+  test("the arms that return BEFORE the authorising append write no outcome row", async () => {
+    // There is nothing for an outcome to name: no egress row was written,
+    // because nothing left the machine.
+    const outcomes: OutcomeRow[] = [];
+    const deps = depsWith({
+      hostMap: new Map(),
+      appendOutcome: (r) => {
+        outcomes.push(r);
+        return undefined;
+      },
+    });
+
+    const out = await targetedFetch(deps, "https://unclaimed.example/o/r/pull/1");
+
+    expect(out).toEqual({ status: "not_configured" });
+    expect(outcomes).toHaveLength(0);
+  });
+
+  test("a throwing outcome append does not fail the fetch, and warns", async () => {
+    // The request has already left the machine. Propagating would turn a fetch
+    // that genuinely succeeded into a 500, and the caller would retry — causing
+    // MORE egress than the failure it reports.
+    const warnings: unknown[] = [];
+    const deps = depsWith({
+      hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+      appendEgress: () => ({ rowHash: "d".repeat(64) }),
+      appendOutcome: () => {
+        throw new Error("disk full");
+      },
+      warn: (err, message) => void warnings.push({ err, message }),
+      syncableFor: (service) => ({
+        serviceId: service,
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync() {
+          throw new Error("not exercised");
+        },
+        fetchOne: async (): Promise<FetchOneResult> => ({
+          status: "indexed",
+          itemId: "github:acme/web#482",
+        }),
+      }),
+    });
+
+    const out = await targetedFetch(deps, "https://github.com/acme/web/pull/482");
+
+    expect(out).toEqual({ status: "indexed", itemId: "github:acme/web#482" });
+    expect(warnings).toHaveLength(1);
+  });
+
   test("the caller's label reaches the egress row, and its absence leaves it unattributed", async () => {
     // Typecheck cannot catch this: a closure taking only `url` stays assignable
     // to `(url, callerLabel?)`, so a dropped label compiles clean and silently

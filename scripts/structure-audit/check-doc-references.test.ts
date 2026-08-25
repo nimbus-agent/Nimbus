@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { Glob } from "bun";
-import { DOCS_GLOBS, extractMarkdownLinks, maskInlineCode } from "./check-doc-references.ts";
+import {
+  DOCS_EXCLUDED_PREFIXES,
+  DOCS_GLOBS,
+  DOCS_TREE_GLOBS,
+  extractMarkdownLinks,
+  isExcludedDoc,
+  maskInlineCode,
+} from "./check-doc-references.ts";
 
 const REPO_ROOT = new URL("../..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
@@ -33,6 +40,50 @@ describe("DOCS_GLOBS — dot-directory scanning", () => {
     // brittle count would fail for the wrong reason. Zero is the failure mode
     // that matters.
     expect(total).toBeGreaterThan(10);
+  });
+});
+
+/**
+ * `DOCS_FILES` was a hand-maintained list of 16 paths, so ~40 files under
+ * `docs/` were never opened by this gate — long enough for
+ * `docs/internals/test-fixtures.md` to point at a directory that does not
+ * exist. `DOCS_TREE_GLOBS` closes that; `DOCS_EXCLUDED_PREFIXES` is the small,
+ * reasoned set that stays out.
+ */
+describe("DOCS_TREE_GLOBS — the rest of docs/", () => {
+  test("scans the docs tree, which is NOT a dot-directory", () => {
+    expect(DOCS_TREE_GLOBS.length).toBeGreaterThan(0);
+    for (const pattern of DOCS_TREE_GLOBS) expect(pattern.startsWith("docs/")).toBe(true);
+  });
+
+  test("finds substantially more than the 16 hand-listed docs", () => {
+    // A floor, not an equality: docs come and go. The failure mode that
+    // matters is the glob silently matching nothing, as DOCS_GLOBS once did.
+    let total = 0;
+    for (const pattern of DOCS_TREE_GLOBS) {
+      total += [...new Glob(pattern).scanSync({ cwd: REPO_ROOT })].length;
+    }
+    expect(total).toBeGreaterThan(40);
+  });
+
+  test("excludes exactly the reasoned set, by exact path or directory prefix", () => {
+    expect(isExcludedDoc("docs/CHANGELOG.md")).toBe(true);
+    expect(isExcludedDoc("docs/superpowers/plans/anything.md")).toBe(true);
+    expect(isExcludedDoc("docs/roadmap.md")).toBe(true);
+    expect(isExcludedDoc("docs/structure-audit/baseline.md")).toBe(true);
+    // Not excluded: a sibling of an excluded file must not be swept in with it.
+    expect(isExcludedDoc("docs/structure-audit/sonarqube-rule-tuning.md")).toBe(false);
+    expect(isExcludedDoc("docs/testing.md")).toBe(false);
+    expect(isExcludedDoc("docs/internals/test-fixtures.md")).toBe(false);
+  });
+
+  test("an exact-path exclusion does not act as a prefix", () => {
+    // "docs/roadmap.md" must not silence a hypothetical "docs/roadmap.md.bak".
+    expect(isExcludedDoc("docs/roadmap.md.bak")).toBe(false);
+  });
+
+  test("the exclusion set stays small — every entry needs a stated reason", () => {
+    expect(DOCS_EXCLUDED_PREFIXES.length).toBeLessThanOrEqual(8);
   });
 });
 

@@ -25,6 +25,7 @@ import { addApiToken, generateClipToken } from "../clips/clip-token-store.ts";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { runQuietly } from "../testing/harness-teardown.ts";
 import type { ReadOnlyHttpServerHandle, ReadOnlyHttpServerOptions } from "./http-server.ts";
 import { startReadOnlyHttpServer } from "./http-server.ts";
 
@@ -70,21 +71,11 @@ export async function startServerWithClipToken(
     token,
     db,
     stop(): void {
-      try {
-        handle.stop();
-      } catch {
-        /* ignore */
-      }
-      try {
-        db.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
+      runQuietly([
+        () => handle.stop(),
+        () => db.close(),
+        () => rmSync(tmpDir, { recursive: true, force: true }),
+      ]);
     },
   };
 }
@@ -115,21 +106,11 @@ export async function startServerWithoutClipsVault(
     port: handle.port,
     db,
     stop(): void {
-      try {
-        handle.stop();
-      } catch {
-        /* ignore */
-      }
-      try {
-        db.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
+      runQuietly([
+        () => handle.stop(),
+        () => db.close(),
+        () => rmSync(tmpDir, { recursive: true, force: true }),
+      ]);
     },
   };
 }

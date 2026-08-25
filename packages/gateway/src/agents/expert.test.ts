@@ -291,6 +291,72 @@ describe("subPrReviewed", () => {
     expect(result.stream?.evidence).toHaveLength(1);
     expect(result.stream?.evidence[0]?.type).toBe("pr_reviewed");
     expect(result.stream?.evidence[0]?.itemId).toBe("github:acme/app#1");
+    // The lane's weight is what `rankExpertFindings` ranks on. It became a
+    // call-site argument when the five identical merge blocks were folded into
+    // `topLaneStream`, so pin it here: a swapped lane weight silently re-orders
+    // every expert brief and no other assertion in this file would notice.
+    expect(result.stream?.evidence[0]?.weight).toBe(0.6);
+    db.close();
+  });
+
+  // The winner rule now lives in ONE place (`topLaneStream`) shared by all five
+  // lanes, so a regression in it re-orders every expert brief at once. Two
+  // reviewers, one with more evidence than the other: the busier one wins and
+  // carries all of their own evidence.
+  test("the person with the most evidence in a lane wins, carrying all of it", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    const people: Array<[string, string]> = [
+      ["person:author", "Author"],
+      ["person:busy", "Busy"],
+      ["person:quiet", "Quiet"],
+    ];
+    for (const [id, name] of people) {
+      db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", [id, name]);
+    }
+
+    // PR 1 carries an over-long title so the same test also pins the lane title
+    // cap, which the extraction moved into `LANE_TITLE_MAX`.
+    for (const n of [1, 2, 3]) {
+      upsertIndexedItem(db, {
+        service: "github",
+        type: "pr",
+        externalId: `acme/app#${n}`,
+        title: n === 1 ? `Add rate limiter ${"x".repeat(900)}` : "Add rate limiter",
+        bodyPreview: "",
+        modifiedAt: now - n,
+        syncedAt: now,
+        authorId: "person:author",
+        metadata: { repo: "acme/app", number: n },
+      });
+    }
+    // Busy reviews PRs 1 and 2; Quiet reviews PR 3.
+    for (const [n, reviewer] of [
+      [1, "person:busy"],
+      [2, "person:busy"],
+      [3, "person:quiet"],
+    ] as Array<[number, string]>) {
+      upsertIndexedItem(db, {
+        service: "github",
+        type: "review",
+        externalId: `acme/app#${n}#review-${n}`,
+        title: `Review on acme/app#${n}`,
+        bodyPreview: "",
+        modifiedAt: now - n,
+        syncedAt: now,
+        authorId: reviewer,
+        metadata: { repo: "acme/app", pr_number: n },
+      });
+    }
+
+    const result = await subPrReviewed(db, "rate limiter");
+
+    expect(result.gap).toBeUndefined();
+    expect(result.stream?.personId).toBe("person:busy");
+    expect(result.stream?.evidence).toHaveLength(2);
+    // Rows come back newest-first, so evidence[0] is the over-long PR 1 title.
+    expect(result.stream?.evidence[0]?.title).toHaveLength(512);
     db.close();
   });
 
@@ -415,6 +481,7 @@ describe("subIncidentResolved", () => {
     expect(result.stream?.evidence).toHaveLength(1);
     expect(result.stream?.evidence[0]?.type).toBe("incident_resolved");
     expect(result.stream?.evidence[0]?.itemId).toBe("pagerduty:PD-1");
+    expect(result.stream?.evidence[0]?.weight).toBe(0.8);
     db.close();
   });
 

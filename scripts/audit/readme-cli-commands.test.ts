@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { extractReadmeCliCommands, validateReadmeCommands } from "./readme-cli-commands.ts";
+import { readFileSync } from "node:fs";
+import {
+  extractReadmeCliCommands,
+  GATED_CLI_DOCS,
+  readRegisteredCommands,
+  validateReadmeCommands,
+} from "./readme-cli-commands.ts";
 
 describe("extractReadmeCliCommands", () => {
   test("finds every `nimbus <subcommand>` literal", () => {
@@ -59,5 +65,32 @@ describe("validateReadmeCommands", () => {
     const result = validateReadmeCommands(["ask", "delete-everything"], ["ask", "diag"]);
     expect(result.missing).toEqual(["delete-everything"]);
     expect(result.ok).toBe(false);
+  });
+});
+
+/**
+ * The gate read only `docs/README.md` for as long as it existed, so
+ * `docs/cli-reference.md` — the canonical CLI doc, with twice as many
+ * invocations — was never checked, and it documented `nimbus mcp` when the
+ * binary registers `mcp-server`.
+ */
+describe("GATED_CLI_DOCS", () => {
+  test("covers the CLI reference, not just the landing page", () => {
+    expect(GATED_CLI_DOCS).toContain("docs/README.md");
+    expect(GATED_CLI_DOCS).toContain("docs/cli-reference.md");
+  });
+
+  test("does NOT gate the roadmap, which names unbuilt commands on purpose", () => {
+    expect(GATED_CLI_DOCS).not.toContain("docs/roadmap.md");
+  });
+
+  test("every gated doc's invocations resolve against the live registry", async () => {
+    const registered = await readRegisteredCommands();
+    expect(registered.length).toBeGreaterThan(0);
+    for (const doc of GATED_CLI_DOCS) {
+      const cmds = extractReadmeCliCommands(readFileSync(doc, "utf-8"));
+      expect(cmds.length).toBeGreaterThan(0);
+      expect(validateReadmeCommands(cmds, registered).missing).toEqual([]);
+    }
   });
 });

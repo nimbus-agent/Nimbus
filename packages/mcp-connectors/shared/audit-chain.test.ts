@@ -72,4 +72,31 @@ describe("audit chain", () => {
     });
     expect(await verifyAuditChain(p)).toEqual({ ok: true, count: 1 });
   });
+
+  test("two entries differing ONLY in key insertion order hash identically", async () => {
+    // The case above verifies a chain against ITSELF, so any self-consistent key order passes it —
+    // including one that preserves insertion order. The property that actually matters is that the
+    // order is CANONICAL: the same entry written on two hosts, or built by two code paths that
+    // happened to assign `detail` keys in different orders, must produce the same digest, or a
+    // chain written by one fails to verify against the other. Two independent chains, compared.
+    async function firstHash(detail: Record<string, unknown>): Promise<string> {
+      const p = await tempLog();
+      await appendAuditEntry(p, {
+        ts: "2026-08-23T00:00:00.000Z",
+        connector: "github",
+        tool: "t",
+        outcome: "executed",
+        detail,
+      });
+      const line = (await readFile(p, "utf8")).trimEnd();
+      return (JSON.parse(line) as { hash: string }).hash;
+    }
+    // Single-character keys on purpose: a comparator that sorted by anything other than the key
+    // text — length, say — leaves these in insertion order and the two digests diverge.
+    const forward = await firstHash({ a: 1, b: 2, z: 3 });
+    const shuffled = await firstHash({ z: 3, b: 2, a: 1 });
+    expect(shuffled).toBe(forward);
+    // Nested objects go through the same comparator, so pin that too.
+    expect(await firstHash({ o: { p: 1, q: 2 } })).toBe(await firstHash({ o: { q: 2, p: 1 } }));
+  });
 });

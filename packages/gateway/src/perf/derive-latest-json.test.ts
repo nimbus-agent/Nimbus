@@ -177,3 +177,66 @@ describe("deriveLatestJson (end-to-end)", () => {
     ).toThrow(/not found/);
   });
 });
+
+describe("selectLatestReferenceLine — malformed input is skipped, not fatal", () => {
+  // A history file is appended to by a long-running bench; a crash or a full
+  // disk mid-append leaves a truncated last line. Throwing on it would take the
+  // perf gate down for a reason that has nothing to do with performance.
+  test("walks past a truncated trailing line to the last complete one", () => {
+    const got = selectLatestReferenceLine(
+      `${JSON.stringify(referenceLine)}\n{"schema_version":2,"runner":"refer`,
+    );
+    expect(got).toEqual(referenceLine);
+  });
+
+  // A well-formed JSON line that is not an object at all — `null` most of all,
+  // which is the shape that turns a missing type guard into a TypeError rather
+  // than a quiet `false`.
+  test("walks past JSON lines that are not objects", () => {
+    const got = selectLatestReferenceLine(
+      `${[JSON.stringify(referenceLine), "42", `"a string"`, "null"].join("\n")}\n`,
+    );
+    expect(got).toEqual(referenceLine);
+  });
+
+  test("ignores blank and whitespace-only lines between entries", () => {
+    const got = selectLatestReferenceLine(`\n   \n${JSON.stringify(referenceLine)}\n\n\t\n\n`);
+    expect(got).toEqual(referenceLine);
+  });
+
+  test("throws when every line is malformed", () => {
+    expect(() => selectLatestReferenceLine("{oops\nnot json\n")).toThrow();
+  });
+
+  test("throws on an entirely empty history body", () => {
+    expect(() => selectLatestReferenceLine("")).toThrow();
+  });
+});
+
+describe("deriveLatestJson — malformed history", () => {
+  test("skips a truncated trailing line and still writes the last complete run", () => {
+    const historyPath = join(tmpDir, "history.jsonl");
+    writeFileSync(
+      historyPath,
+      `${JSON.stringify(referenceLine)}\n{"schema_version":2,"runn`,
+      "utf8",
+    );
+    const outputPath = join(tmpDir, "latest.json");
+    deriveLatestJson({ historyPath, outputPath });
+    expect(JSON.parse(readFileSync(outputPath, "utf8"))).toEqual(referenceLine);
+  });
+
+  test("reports NoQualifyingLineError naming the history path when nothing qualifies", () => {
+    const historyPath = writeHistory("{oops", placeholderLine);
+    const outputPath = join(tmpDir, "latest.json");
+    let caught: unknown;
+    try {
+      deriveLatestJson({ historyPath, outputPath });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(NoQualifyingLineError);
+    expect((caught as Error).message).toContain(historyPath);
+    expect((caught as Error).cause).toBeInstanceOf(Error);
+  });
+});

@@ -6,7 +6,7 @@ Rationale for non-obvious test fixture and isolation choices, migrated from inli
 
 ### HITL subscription wiring test is shallow by design
 
-**Source:** `test/node-compat.test.ts:206` in the standalone [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) repo (formerly `packages/client/test/node-compat.test.ts` before the client extraction) — added 2026-05-28
+**Source:** `test/node-compat.test.ts:206` in the standalone [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) repo — added 2026-05-28, while the client workspace still lived in this monorepo (extracted in #758)
 **Original comment (excerpt):** `The Gateway in test mode does not naturally fire HITL on a passive socket connection; this test only asserts the subscription wires up without throwing. A full HITL roundtrip is covered by the integration test in the gateway package.`
 
 The `subscribeHitl` node-compat test intentionally stops at verifying that the returned subscription object exposes a `dispose` function. Triggering a live HITL event would require a full Gateway subprocess and a write action — that scenario is owned by the integration tests in `packages/gateway/test/integration/`.
@@ -18,7 +18,7 @@ The `subscribeHitl` node-compat test intentionally stops at verifying that the r
 **Source:** `packages/gateway/src/ipc/data-rpc.test.ts:25` — added 2026-05-28
 **Original comment (excerpt):** `Auto-approving stub executor that bypasses HITL for tests that just want to exercise the post-gate code path.`
 
-`data-rpc` tests need to reach the code that runs after HITL approval without wiring a full consent round-trip. The `approvingExecutor` stub short-circuits `gate()` to always return `"proceed"`, allowing the test to focus on the data-export/import logic rather than the consent channel. Tests that verify the HITL gate itself live in `packages/gateway/test/unit/engine/`.
+`data-rpc` tests need to reach the code that runs after HITL approval without wiring a full consent round-trip. The `approvingExecutor` stub short-circuits `gate()` to always return `"proceed"`, allowing the test to focus on the data-export/import logic rather than the consent channel. Tests that verify the HITL gate itself live in `packages/gateway/src/engine/` — `executor.test.ts` and its siblings, co-located with the gate.
 
 ---
 

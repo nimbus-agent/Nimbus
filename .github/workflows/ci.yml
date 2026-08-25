@@ -30,6 +30,10 @@ jobs:
   filter:
     name: Detect changes
     runs-on: ubuntu-24.04
+    # A paths-filter that decides the rest of the run. Without a cap it
+    # inherits GitHub's 360-minute default, and every downstream job `needs:`
+    # it — so one wedged filter holds the whole workflow's slot for six hours.
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:

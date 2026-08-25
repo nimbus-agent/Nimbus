@@ -334,11 +334,9 @@ bun test packages/gateway/src/engine/executor.test.ts
 # There is NO test:e2e:desktop script; CI runs the directory directly.
 bun test packages/ui/test/e2e/
 
-# Query latency benchmark (strict mode)
+# Query latency benchmark (strict mode) — the only opt-in benchmark env var
+# that exists. Read in packages/gateway/test/benchmark/item-query-latency.test.ts.
 NIMBUS_RUN_QUERY_BENCH=1 bun test
-
-# LLM local benchmark gate
-NIMBUS_RUN_LOCAL_BENCH=1 bun test
 ```
 
 ---

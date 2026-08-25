@@ -81,11 +81,11 @@ export function recordSyncEgress(
      */
     readonly sourceId?: string | undefined;
   },
-): undefined {
+): { rowHash: string } | undefined {
   if (LOCAL_ONLY_SYNC_SERVICES.has(args.destination)) {
     return undefined;
   }
-  appendEgressEntry(db, {
+  return appendEgressEntry(db, {
     timestamp: args.now,
     sourceType: "sync",
     // Empty collapses to null: an empty string would read as "attributed to a
@@ -97,5 +97,4 @@ export function recordSyncEgress(
     hitlStatus: "not_required",
     resultStatus: "authorized",
   });
-  return undefined;
 }

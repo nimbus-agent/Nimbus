@@ -447,6 +447,21 @@ function negationResult<Row, Gaps>(
   };
 }
 
+/**
+ * The optional half of a query's time window. An absent bound is OMITTED from the object rather
+ * than passed as `undefined`, which is what the callee's optional properties expect. One
+ * definition for all three call sites below, which each built it inline before.
+ */
+function timeWindow(
+  sinceMs: number | undefined,
+  untilMs: number | undefined,
+): { sinceMs?: number; untilMs?: number } {
+  return {
+    ...(sinceMs === undefined ? {} : { sinceMs }),
+    ...(untilMs === undefined ? {} : { untilMs }),
+  };
+}
+
 function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
   const { sinceMs, untilMs, limit, services, types, notTouching, noDownstreamIncident, explain } =
     parseQueryItemsParams(params);
@@ -455,8 +470,7 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
     services,
     types,
     limit,
-    ...(sinceMs === undefined ? {} : { sinceMs }),
-    ...(untilMs === undefined ? {} : { untilMs }),
+    ...timeWindow(sinceMs, untilMs),
   };
 
   const db = requireDb(ctx);
@@ -472,8 +486,7 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
       // The caller's own `types` filter, reproducing the pre-refactor composed SQL exactly —
       // ANDed with the predicate's own `i.type = 'pr'` restriction, never a replacement for it.
       types,
-      ...(sinceMs === undefined ? {} : { sinceMs }),
-      ...(untilMs === undefined ? {} : { untilMs }),
+      ...timeWindow(sinceMs, untilMs),
       limit,
       explain,
     });
@@ -486,8 +499,7 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
       ...(services.length > 0 ? { services } : {}),
       // Same reasoning as `runNotTouchingQuery`'s call above.
       types,
-      ...(sinceMs === undefined ? {} : { sinceMs }),
-      ...(untilMs === undefined ? {} : { untilMs }),
+      ...timeWindow(sinceMs, untilMs),
       limit,
       explain,
     });

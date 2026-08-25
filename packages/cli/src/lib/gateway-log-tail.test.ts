@@ -100,3 +100,65 @@ describe("GatewayLogTailer", () => {
     expect(t.pollLatest(path)).toBe("sync scheduler started");
   });
 });
+
+describe("truncatePreview — default cap", () => {
+  test("leaves a string at the default 80-char cap unchanged", () => {
+    const s = "x".repeat(80);
+    expect(truncatePreview(s)).toBe(s);
+  });
+
+  test("truncates past the default cap to 79 chars plus an ellipsis", () => {
+    const out = truncatePreview("x".repeat(200));
+    expect(out).toHaveLength(80);
+    expect(out.endsWith("…")).toBe(true);
+  });
+});
+
+describe("GatewayLogTailer — skips and error propagation", () => {
+  let dir: string;
+  let path: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-tailer-edge-"));
+    path = join(dir, "gateway.log");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A flush can leave blank separator lines after the last real message. The
+  // preview must show that message, not go blank as if nothing had happened.
+  test("walks back past trailing blank lines to the last real message", () => {
+    const t = new GatewayLogTailer();
+    appendFileSync(path, "sync scheduler started\n\n   \n");
+    expect(t.pollLatest(path)).toBe("sync scheduler started");
+  });
+
+  test("returns null when the whole new chunk is blank lines", () => {
+    const t = new GatewayLogTailer();
+    appendFileSync(path, "\n  \n\t\n");
+    expect(t.pollLatest(path)).toBeNull();
+  });
+
+  // Blank lines must still be CONSUMED: leaving the offset behind would make
+  // the next poll re-read and re-report an already-shown message.
+  test("consumes a blank-only chunk so the next real line is reported once", () => {
+    const t = new GatewayLogTailer();
+    appendFileSync(path, "\n\n");
+    expect(t.pollLatest(path)).toBeNull();
+    appendFileSync(path, "ready\n");
+    expect(t.pollLatest(path)).toBe("ready");
+    expect(t.pollLatest(path)).toBeNull();
+  });
+
+  // Only "the log does not exist yet" is a normal condition. Any other open
+  // failure must surface: swallowing it leaves the caller polling a file it
+  // can never read, showing nothing and reporting no problem.
+  test("propagates an open failure that is not ENOENT", () => {
+    const t = new GatewayLogTailer();
+    // A NUL byte is rejected by node:fs on every platform, with a code that is
+    // not ENOENT — no OS-specific path trickery needed.
+    expect(() => t.pollLatest(join(dir, "gate\0way.log"))).toThrow();
+  });
+});

@@ -92,6 +92,25 @@ export function detectBunSpawn(g: unknown = globalThis): boolean {
   return typeof bun?.spawn === "function";
 }
 
+/** The shape both implementations share, and what `selectSpawnImpl` hands back. */
+export type SpawnImpl = (
+  command: readonly string[],
+  env: Record<string, string | undefined>,
+) => Promise<SpawnResult>;
+
+/**
+ * Which implementation a given global calls for.
+ *
+ * Returning the FUNCTION rather than taking a `useBun` flag is deliberate: a boolean selector
+ * argument makes one entry point mean two things, and the two implementations are already exported
+ * as the two things it selected between. Injecting the global — for the same
+ * non-writable/non-configurable reason `detectBunSpawn` takes one — is what keeps the Node side
+ * reachable from a suite that runs under Bun.
+ */
+export function selectSpawnImpl(g: unknown = globalThis): SpawnImpl {
+  return detectBunSpawn(g) ? spawnViaBun : spawnViaNode;
+}
+
 /**
  * Spawn a CLI and collect its output, on Bun or Node.
  *
@@ -104,7 +123,6 @@ export function detectBunSpawn(g: unknown = globalThis): boolean {
 export function nimbusSpawn(
   command: readonly string[],
   env: Record<string, string | undefined>,
-  useBun: boolean = detectBunSpawn(),
 ): Promise<SpawnResult> {
-  return useBun ? spawnViaBun(command, env) : spawnViaNode(command, env);
+  return selectSpawnImpl()(command, env);
 }

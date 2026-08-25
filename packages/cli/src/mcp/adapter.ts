@@ -208,7 +208,7 @@ export function createDeps(env: ConnectionEnv): AdapterDeps {
   let cached: IpcCallable | null = null;
   let connecting: Promise<IpcCallable> | null = null;
   // Owner decision: a gateway that rejects `session.declareKind` as an unsupported method serves
-  // briefs it cannot attribute, so the agent tools are withdrawn and the six read-only index tools
+  // briefs it cannot attribute, so the agent tools are withdrawn and the nine read-only index tools
   // — which were never ledgered and never claimed to be — keep working. Warning on stderr alone was
   // not enough: editor-spawned MCP servers usually discard stderr, so the operator got unrecorded
   // briefs while `nimbus prove` reported a clean scope.
@@ -549,7 +549,7 @@ export async function agentToolsSupported(deps: AdapterDeps): Promise<boolean> {
 /**
  * Build the MCP server.
  *
- * `includeAgentTools: false` registers ONLY the six read-only index tools — the fail-closed shape
+ * `includeAgentTools: false` registers ONLY the nine read-only index tools — the fail-closed shape
  * for a gateway that rejects `session.declareKind`. Serving unrecorded briefs while `nimbus prove`
  * reports a clean scope is the exact failure this feature exists to close, so the honest answer is
  * to withhold the surface, not to warn about it on a stream the editor discards.

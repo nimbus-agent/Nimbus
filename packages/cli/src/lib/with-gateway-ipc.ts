@@ -50,7 +50,7 @@ export interface WithGatewayIpcOptions {
 }
 
 /**
- * Connect to the Gateway, run `fn`, disconnect — the one implementation.
+ * Connect to the Gateway, run `fn`, disconnect — the shared implementation.
  *
  * A connection made here can ALWAYS answer a HITL prompt — unconditionally, with no option
  * that turns it off. That closes a failure which had recurred three times: `connector reindex
@@ -59,9 +59,17 @@ export interface WithGatewayIpcOptions {
  * doing it. The Gateway's broker has no timer, so the symptom is a flat 30s client timeout and
  * a mutation that silently did not happen.
  *
- * Every `nimbus` command that talks to the Gateway goes through here. It used to be
- * eleven near-identical local helpers (`withIpc` in audit / clip / people / share /
- * vault / watch / connector / workflow / prove, `withConsentIpc`, `withClient` in data),
+ * This is the path to PREFER for a command that talks to the Gateway, and the only one that
+ * carries the consent handler — but it is not the only one, and the comment that used to claim
+ * it was has been wrong for a while. `chatops` / `identity` / `policy` / `tribal` share
+ * `run-gateway-cli-command.ts` instead (no consent handler, and a missing gateway exits the
+ * process rather than throwing `GatewayNotRunningError`), and a number of commands still build
+ * an `IPCClient` directly. Moving those here changes observable behaviour rather than just
+ * structure, so it is its own decision, not a de-duplication.
+ *
+ * What this helper DID replace was eleven near-identical local helpers (`withIpc` in audit /
+ * clip / people / share / vault / watch / connector / workflow / prove, `withConsentIpc`,
+ * `withClient` in data),
  * each re-deriving read-state -> construct -> connect -> try/finally disconnect. Six were
  * byte-identical; the rest differed only in which options they exposed. That is now this
  * options object, and `with-gateway-ipc.test.ts` is the single place the lifecycle is tested

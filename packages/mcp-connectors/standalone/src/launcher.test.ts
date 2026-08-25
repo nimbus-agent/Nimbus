@@ -75,6 +75,55 @@ describe("standaloneEligibility", () => {
   });
 });
 
+describe("the hardened-registration scan runs in linear time", () => {
+  function fixture(serverTs: string): string {
+    const root = mkdtempSync(join(tmpdir(), "redos-"));
+    mkdirSync(join(root, "c", "src"), { recursive: true });
+    writeFileSync(
+      join(root, "c", "nimbus.extension.json"),
+      JSON.stringify({ hitlRequired: ["write"] }),
+    );
+    writeFileSync(join(root, "c", "src", "server.ts"), serverTs);
+    return root;
+  }
+
+  test("a source file that is one long run of newlines does not stall the scan", () => {
+    // TIME-BOUNDED ON PURPOSE. The verdict below is the SAME under the old pattern and the new
+    // one, so a correctness assertion cannot see this bug at all — only the clock can.
+    //
+    // The old `^\s*` under /m gave the engine one start position per newline, each able to consume
+    // the whole remaining run before failing: quadratic — measured on that pattern, 32k newlines
+    // took 1.2s, 64k took 4.3s and 128k took 21.7s, i.e. 4x per doubling. This exact case, run
+    // against the old pattern, took 24.2s. The new pattern cannot cross a line terminator, so the
+    // same inputs are 0.08ms / 0.33ms / 0.91ms.
+    const root = fixture("\n".repeat(120_000));
+    const started = performance.now();
+    const verdict = standaloneEligibility("c", root);
+    const elapsed = performance.now() - started;
+    expect(verdict.eligible).toBe(false);
+    // Generous by three orders of magnitude against the measured new-pattern cost, so a slow or
+    // contended CI runner cannot flake it, while the old pattern misses by ~10x.
+    expect(elapsed).toBeLessThan(2_000);
+  }, 60_000);
+
+  test("blank lines before a registration call still count as hardened", () => {
+    // The semantic half: `\s*` could span newlines and `[^\S\r\n]*` cannot, so this is the shape
+    // that would regress if the narrower class changed which sources match.
+    const root = fixture("import x;\n\n\n\t  registerJiraWriteTool(server, {});\n");
+    expect(standaloneEligibility("c", root)).toEqual({ eligible: true, reason: "hardened" });
+  });
+
+  test("the registrar-passed-to-a-kit form still counts as hardened", () => {
+    const root = fixture("runKit({\n\n  registerWriteTool,\n});\n");
+    expect(standaloneEligibility("c", root)).toEqual({ eligible: true, reason: "hardened" });
+  });
+
+  test("a bare mention that is not a call is still not hardened", () => {
+    const root = fixture("const registerWriteTool = makeRegistrar();\n");
+    expect(standaloneEligibility("c", root).eligible).toBe(false);
+  });
+});
+
 describe("runStandalone", () => {
   test("exits non-zero with usage when no id is given", async () => {
     expect(await runStandalone([])).toBe(2);

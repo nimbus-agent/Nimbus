@@ -20,7 +20,9 @@ afterEach(() => db.close());
 describe("recordSyncEgress", () => {
   test("appends one authorized, not_required `sync` row destined at the service id", () => {
     const out = recordSyncEgress(db, { destination: "github", method: "sync.run", now: 1_000 });
-    expect(out).toBeUndefined();
+    // Was `toBeUndefined()` before the appender started returning its row hash,
+    // which an outcome marker needs in order to name the row it describes.
+    expect(out?.rowHash).toMatch(/^[0-9a-f]{64}$/);
     const rows = listEgress(db, {});
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -31,6 +33,19 @@ describe("recordSyncEgress", () => {
       resultStatus: "authorized",
     });
     expect(rows[0]?.sourceId).toBeNull();
+  });
+
+  test("returns the appended row's hash", () => {
+    const out = recordSyncEgress(db, { destination: "github", method: "items.fetch", now: 1_000 });
+    expect(out?.rowHash).toBe(listEgress(db, {})[0]?.rowHash);
+  });
+
+  test("returns undefined for a local-only destination, because no row was written", () => {
+    // The caller uses this to decide whether an outcome row may be written at
+    // all: with no authorising row there is nothing for one to name.
+    expect(
+      recordSyncEgress(db, { destination: "filesystem", method: "items.fetch", now: 1_000 }),
+    ).toBeUndefined();
   });
 
   test("a caller-initiated row carries the caller's label", () => {

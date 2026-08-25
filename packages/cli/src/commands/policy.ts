@@ -1,8 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { REAL_GATEWAY_CLI_IO, runGatewayCliCommand } from "../lib/run-gateway-cli-command.ts";
 
 export type PolicyCommand =
   | { kind: "show" }
@@ -77,23 +75,9 @@ export async function runPolicyCommand(client: PolicyIpc, cmd: PolicyCommand): P
 }
 
 export async function runPolicy(argv: string[]): Promise<void> {
-  let cmd: PolicyCommand;
-  try {
-    cmd = parsePolicyArgs(argv);
-  } catch (e) {
-    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
-    process.exit(1);
-  }
-  const state = await readGatewayState(getCliPlatformPaths());
-  if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
-    process.exit(1);
-  }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  try {
-    await runPolicyCommand(client, cmd);
-  } finally {
-    await client.disconnect().catch(() => {});
-  }
+  await runGatewayCliCommand(argv, {
+    parse: parsePolicyArgs,
+    dispatch: runPolicyCommand,
+    io: REAL_GATEWAY_CLI_IO,
+  });
 }

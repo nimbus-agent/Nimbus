@@ -5,6 +5,21 @@ import { fileURLToPath } from "node:url";
 /** Connector ids are directory names: lowercase letters, digits and hyphens only. */
 const ID_RE = /^[a-z0-9-]+$/;
 
+/**
+ * A registration CALL, or the registrar handed to a shared kit — not a bare substring, which the
+ * registrar's own `const registerWriteTool = ...` would satisfy even with nothing registered.
+ * Kept in step with check-connector-consent.ts's WRITE_CALL_RE.
+ *
+ * The indentation class is `[^\S\r\n]` (horizontal whitespace), NOT `\s`. `\s` matches a newline,
+ * and under `/m` the engine restarts the match at every line start — so a run of n newlines gave n
+ * start positions each able to consume the whole run, which is quadratic: measured on this exact
+ * pattern, 32k newlines took ~1.2s and 128k took ~21s, growing 4x per doubling. A class that cannot
+ * cross a line terminator bounds each attempt to that line's own indentation, which is linear (the
+ * same inputs: 0.08ms and 0.9ms). The set of strings matched is unchanged — a position `\s*` could
+ * only reach by spanning newlines is reachable from the following line start anyway.
+ */
+const WRITE_CALL_RE = /^[^\S\r\n]*register[A-Za-z]*WriteTool\(|^[^\S\r\n]*registerWriteTool,$/m;
+
 function connectorsDir(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
@@ -83,10 +98,7 @@ export function standaloneEligibility(
     }
   }
 
-  // A registration CALL, or the registrar handed to a shared kit — not a bare substring, which
-  // the registrar's own `const registerWriteTool = ...` would satisfy even with nothing registered.
-  // Kept in step with check-connector-consent.ts's WRITE_CALL_RE.
-  if (/^\s*register[A-Za-z]*WriteTool\(|^\s*registerWriteTool,$/m.test(src)) {
+  if (WRITE_CALL_RE.test(src)) {
     return { eligible: true, reason: "hardened" };
   }
 

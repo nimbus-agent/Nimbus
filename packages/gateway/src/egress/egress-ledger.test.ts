@@ -28,6 +28,15 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 describe("appendEgressEntry", () => {
+  test("returns the row hash it stored, so a later row can name this one", () => {
+    const out = appendEgressEntry(db, entry({ method: "a.x", timestamp: 1 }));
+    const stored = db.query(`SELECT row_hash FROM egress_ledger ORDER BY id ASC`).get() as {
+      row_hash: string;
+    };
+    expect(out.rowHash).toBe(stored.row_hash);
+    expect(out.rowHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   test("the first row chains from GENESIS_HASH with a 64-char hex row_hash", () => {
     appendEgressEntry(db, entry());
     const row = db.query(`SELECT prev_hash, row_hash FROM egress_ledger ORDER BY id ASC`).get() as {

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   __resetJenkinsCrumbCacheForTests,
   getJenkinsCrumb,
+  isSafeHeaderName,
   jenkinsAuthHeader,
   jenkinsBaseUrl,
   jenkinsFetchJson,
@@ -158,5 +159,51 @@ describe("jenkinsPost", () => {
     }) as unknown as typeof fetch;
     await jenkinsPost("https://ci/do", "Basic x", null);
     expect(Object.keys(seen)).toEqual(["Authorization"]);
+  });
+});
+
+describe("a hostile crumb field name never reaches the header object", () => {
+  test("isSafeHeaderName rejects prototype keys and non-token names", () => {
+    expect(isSafeHeaderName("Jenkins-Crumb")).toBe(true);
+    expect(isSafeHeaderName("X-CSRF")).toBe(true);
+    expect(isSafeHeaderName("__proto__")).toBe(false);
+    expect(isSafeHeaderName("constructor")).toBe(false);
+    expect(isSafeHeaderName("prototype")).toBe(false);
+    expect(isSafeHeaderName("")).toBe(false);
+    // A `:` or a CR/LF in a field name is header injection on an authenticated POST.
+    expect(isSafeHeaderName("X-Evil: v\r\nX-Other")).toBe(false);
+    expect(isSafeHeaderName("has space")).toBe(false);
+  });
+
+  test.each([
+    ["constructor", "constructor"],
+    ["__proto__", "__proto__"],
+    ["header injection", "X-Evil: v\r\nX-Other"],
+  ])("jenkinsPost drops a %s crumb field", async (_label, field) => {
+    let seen: Record<string, string> = {};
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      seen = init.headers as Record<string, string>;
+      return { ok: true, status: 200, text: async () => "" } as Response;
+    }) as unknown as typeof fetch;
+    await jenkinsPost("https://ci/do", "Basic x", { field, value: "pwned" });
+    expect(Object.keys(seen)).toEqual(["Authorization"]);
+    // Nothing reached Object.prototype either.
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>)["pwned"]).toBeUndefined();
+  });
+
+  test("getJenkinsCrumb refuses a crumb whose field name is a prototype key", async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse({ crumb: "abc", crumbRequestField: "__proto__" })) as unknown as typeof fetch;
+    expect(await getJenkinsCrumb("https://ci", "Basic x")).toBeNull();
+  });
+
+  test("getJenkinsCrumb refuses a crumb field name that is not an RFC 7230 token", async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        crumb: "abc",
+        crumbRequestField: "X-Evil: v\r\nX-Other",
+      })) as unknown as typeof fetch;
+    expect(await getJenkinsCrumb("https://ci", "Basic x")).toBeNull();
   });
 });

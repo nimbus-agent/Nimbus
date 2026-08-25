@@ -22,6 +22,13 @@ on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
 
+# `edited` fires on every title keystroke-save, so fixing a malformed title
+# queues a run per edit. Only the newest one says anything useful about the
+# title as it now stands, so supersede the rest.
+concurrency:
+  group: pr-title-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

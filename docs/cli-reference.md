@@ -676,7 +676,7 @@ Like `nimbus owners`/`nimbus pre-mortem`, `nimbus negotiate` **hard-rejects** an
 
 The brief is also recomputed fresh on every invocation rather than cached, so two runs a window apart can legitimately disagree as the underlying index changes.
 
-**Not reachable over the local HTTP API, nor as an MCP tool.** `agents.negotiate` is served on the CLI/Tauri socket only — it is excluded from the HTTP agent surface (`POST /v1/agents/{agent}`) and it defines no MCP tool, so a model driving `nimbus mcp` cannot invoke it either. Unlike `agents.preflight`/`agents.premortem` (excluded for their side effects) it writes nothing, but combined with `--person` an exposed version would let any holder of the `agents` bearer token — or any model driving the tool server — assemble a contribution dossier on any indexed person without the local owner initiating it. The CLI and Tauri renderer are same-machine, owner-initiated surfaces; the local HTTP API and the MCP tool server are not.
+**Not reachable over the local HTTP API, nor as an MCP tool.** `agents.negotiate` is served on the CLI/Tauri socket only — it is excluded from the HTTP agent surface (`POST /v1/agents/{agent}`) and it defines no MCP tool, so a model driving `nimbus mcp-server` cannot invoke it either. Unlike `agents.preflight`/`agents.premortem` (excluded for their side effects) it writes nothing, but combined with `--person` an exposed version would let any holder of the `agents` bearer token — or any model driving the tool server — assemble a contribution dossier on any indexed person without the local owner initiating it. The CLI and Tauri renderer are same-machine, owner-initiated surfaces; the local HTTP API and the MCP tool server are not.
 
 **Configuration — `[negotiate]` in `nimbus.toml`:**
 

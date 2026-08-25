@@ -97,8 +97,13 @@ function codeOnly(src: string): string {
  * Deliberately not a bare substring match: the registrar's own `const registerWriteTool = ...`
  * satisfies that, so a connector kept passing this gate after every one of its write
  * registrations had been reverted. Red-proving caught it.
+ *
+ * The indentation class is `[^\S\r\n]` (horizontal whitespace), NOT `\s`, for the reason spelled
+ * out on `standalone/src/launcher.ts`'s copy: `\s` matches a newline, so under `/m` a run of n
+ * newlines gave n start positions each able to consume the whole run — quadratic. Same matched
+ * language, linear time. Change both copies together.
  */
-const WRITE_CALL_RE = /^\s*register[A-Za-z]*WriteTool\(|^\s*registerWriteTool,$/m;
+const WRITE_CALL_RE = /^[^\S\r\n]*register[A-Za-z]*WriteTool\(|^[^\S\r\n]*registerWriteTool,$/m;
 
 /** `packages/mcp-connectors/<name>/...` → `<name>`. */
 function connectorOf(rel: string): string {

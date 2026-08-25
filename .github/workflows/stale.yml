@@ -9,6 +9,7 @@ permissions:
 jobs:
   stale:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       issues: write
       pull-requests: write

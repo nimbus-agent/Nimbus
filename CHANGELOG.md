@@ -2,6 +2,25 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.18.0](https://github.com/nimbus-agent/Nimbus/compare/v2.17.0...v2.18.0) (2026-08-24)
+
+
+### Features
+
+* **egress:** record how a targeted fetch ended (U3a) ([#1325](https://github.com/nimbus-agent/Nimbus/issues/1325)) ([68db7d6](https://github.com/nimbus-agent/Nimbus/commit/68db7d63555782b7bb4f8c547c06e561fc8d75dd))
+
+## [2.17.0](https://github.com/nimbus-agent/Nimbus/compare/v2.16.0...v2.17.0) (2026-08-24)
+
+
+### Features
+
+* **egress:** a targeted fetch names the client that asked for it (U2a) ([#1322](https://github.com/nimbus-agent/Nimbus/issues/1322)) ([8611b5c](https://github.com/nimbus-agent/Nimbus/commit/8611b5c72afab10338e93b438ecd27aeec3ec966))
+
+
+### Bug Fixes
+
+* **docs:** correct the standalone connector install path, and measure client support ([#1323](https://github.com/nimbus-agent/Nimbus/issues/1323)) ([bdc6abf](https://github.com/nimbus-agent/Nimbus/commit/bdc6abf2bc44ad53933191f35537fdf1ea56c737))
+
 ## [2.16.0](https://github.com/nimbus-agent/Nimbus/compare/v2.15.0...v2.16.0) (2026-08-23)
 
 

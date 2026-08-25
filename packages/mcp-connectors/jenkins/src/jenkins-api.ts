@@ -20,6 +20,31 @@ export function jenkinsAuthHeader(): string {
 
 export type JenkinsCrumb = { field: string; value: string };
 
+/** RFC 7230 `token`: the only characters an HTTP header field name may contain. */
+const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * Whether `name` is safe to use as a header field name.
+ *
+ * The crumb field name is chosen by the REMOTE Jenkins (`crumbRequestField` in the crumb-issuer
+ * response), so it is attacker-controlled input on a compromised or hostile server — and it lands
+ * in a computed property write. Two things are refused:
+ *
+ *  - anything that is not an RFC 7230 token, which is what stops a name carrying `:` or CR/LF from
+ *    injecting extra headers into an authenticated POST;
+ *  - `__proto__` / `constructor` / `prototype`, which reach `Object.prototype` through a computed
+ *    assignment rather than creating an own property.
+ *
+ * No real crumb field is named any of those, so nothing legitimate is lost.
+ */
+export function isSafeHeaderName(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower === "__proto__" || lower === "constructor" || lower === "prototype") {
+    return false;
+  }
+  return HEADER_NAME_RE.test(name);
+}
+
 let crumbCache: JenkinsCrumb | null | undefined;
 
 export function __resetJenkinsCrumbCacheForTests(): void {
@@ -54,7 +79,10 @@ export async function getJenkinsCrumb(
   const o = parsed as Record<string, unknown>;
   const crumb = typeof o["crumb"] === "string" ? o["crumb"] : "";
   const field = typeof o["crumbRequestField"] === "string" ? o["crumbRequestField"] : "";
-  if (crumb === "" || field === "") {
+  // A field name the crumb cannot legally carry is treated exactly like a missing one: no crumb.
+  // The POST then goes out without it and Jenkins answers 403, which is the safe outcome — far
+  // better than letting the server name an arbitrary header on our authenticated request.
+  if (crumb === "" || !isSafeHeaderName(field)) {
     crumbCache = null;
     return null;
   }
@@ -108,7 +136,10 @@ export async function jenkinsPost(
   const headers: Record<string, string> = {
     Authorization: authHeader,
   };
-  if (crumb !== null) {
+  // Guarded again at the sink, not only where the crumb is parsed: this function is exported and
+  // takes the crumb as an argument, so the write below must be safe for any caller, not only for
+  // one that went through `getJenkinsCrumb`.
+  if (crumb !== null && isSafeHeaderName(crumb.field)) {
     headers[crumb.field] = crumb.value;
   }
   const res = await fetch(url, { method: "POST", headers });

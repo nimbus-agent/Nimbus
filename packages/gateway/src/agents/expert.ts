@@ -82,6 +82,62 @@ type SubAgentResult = {
   gap?: GapNote;
 };
 
+/**
+ * The row shape every expert lane's SQL projects. All five lanes select the
+ * same six columns under the same aliases; naming the shape once is what lets
+ * `topLaneStream` be shared between them.
+ */
+type ExpertLaneRow = {
+  person_id: string;
+  display_name: string;
+  item_id: string;
+  title: string;
+  modified_at: number;
+  service_id: string;
+};
+
+/** Titles are indexed at full length; an expert brief only ever shows a lead. */
+const LANE_TITLE_MAX = 512;
+
+/**
+ * Fold one lane's rows into the single person carrying the most evidence in it.
+ *
+ * Every lane did this identically and inline, differing only in the evidence
+ * `type` tag and its `weight` — five copies of the same twenty lines. The tie
+ * break is `Array.prototype.sort`'s stability over Map insertion order, i.e.
+ * the person whose first matching row came back earliest from the query, which
+ * is what the inline copies did and is why the rows must not be re-ordered here.
+ */
+function topLaneStream(
+  rows: readonly ExpertLaneRow[],
+  type: Evidence["type"],
+  weight: number,
+): SubAgentResult {
+  const merged = new Map<string, ExpertEvidenceStream>();
+  for (const r of rows) {
+    const ev: Evidence = {
+      itemId: r.item_id,
+      type,
+      serviceId: r.service_id,
+      title: r.title.slice(0, LANE_TITLE_MAX),
+      modifiedAt: r.modified_at,
+      weight,
+    };
+    const existing = merged.get(r.person_id);
+    if (existing === undefined) {
+      merged.set(r.person_id, {
+        personId: r.person_id,
+        displayName: r.display_name,
+        evidence: [ev],
+      });
+    } else {
+      existing.evidence.push(ev);
+    }
+  }
+  const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
+  return winner === undefined ? {} : { stream: winner };
+}
+
 function makeSubAgent(
   taskType: "agent_step",
   fn: (db: Database, input: string) => Promise<SubAgentResult>,
@@ -184,43 +240,14 @@ async function subBlame(db: Database, input: string): Promise<SubAgentResult> {
        ORDER BY i.modified_at DESC
        LIMIT 50`,
     )
-    .all(input, input) as Array<{
-    person_id: string;
-    display_name: string;
-    item_id: string;
-    title: string;
-    modified_at: number;
-    service_id: string;
-  }>;
+    .all(input, input) as ExpertLaneRow[];
 
   if (commits.length === 0) {
     const gap = detectMissingConnector(db, "github");
     return gap === null ? {} : { gap };
   }
 
-  const merged = new Map<string, ExpertEvidenceStream>();
-  for (const c of commits) {
-    const ev: Evidence = {
-      itemId: c.item_id,
-      type: "commit_authored",
-      serviceId: c.service_id,
-      title: c.title.slice(0, 512),
-      modifiedAt: c.modified_at,
-      weight: 1,
-    };
-    const existing = merged.get(c.person_id);
-    if (existing === undefined) {
-      merged.set(c.person_id, {
-        personId: c.person_id,
-        displayName: c.display_name,
-        evidence: [ev],
-      });
-    } else {
-      existing.evidence.push(ev);
-    }
-  }
-  const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
-  return winner === undefined ? {} : { stream: winner };
+  return topLaneStream(commits, "commit_authored", 1);
 }
 
 async function subPrAuthored(db: Database, input: string): Promise<SubAgentResult> {
@@ -242,40 +269,11 @@ async function subPrAuthored(db: Database, input: string): Promise<SubAgentResul
        ORDER BY i.modified_at DESC
        LIMIT 50`,
     )
-    .all(ninetyDaysAgo, input, input) as Array<{
-    person_id: string;
-    display_name: string;
-    item_id: string;
-    title: string;
-    modified_at: number;
-    service_id: string;
-  }>;
+    .all(ninetyDaysAgo, input, input) as ExpertLaneRow[];
 
   if (rows.length === 0) return {};
 
-  const merged = new Map<string, ExpertEvidenceStream>();
-  for (const r of rows) {
-    const ev: Evidence = {
-      itemId: r.item_id,
-      type: "pr_authored",
-      serviceId: r.service_id,
-      title: r.title.slice(0, 512),
-      modifiedAt: r.modified_at,
-      weight: 0.8,
-    };
-    const existing = merged.get(r.person_id);
-    if (existing === undefined) {
-      merged.set(r.person_id, {
-        personId: r.person_id,
-        displayName: r.display_name,
-        evidence: [ev],
-      });
-    } else {
-      existing.evidence.push(ev);
-    }
-  }
-  const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
-  return winner === undefined ? {} : { stream: winner };
+  return topLaneStream(rows, "pr_authored", 0.8);
 }
 
 /**
@@ -355,43 +353,14 @@ export async function subPrReviewed(db: Database, input: string): Promise<SubAge
        ORDER BY i.modified_at DESC
        LIMIT 50`,
     )
-    .all(input, input) as Array<{
-    person_id: string;
-    display_name: string;
-    item_id: string;
-    title: string;
-    modified_at: number;
-    service_id: string;
-  }>;
+    .all(input, input) as ExpertLaneRow[];
 
   if (rows.length === 0) {
     const gap = detectUnresolvedReviewedRelation(db);
     return gap === null ? {} : { gap };
   }
 
-  const merged = new Map<string, ExpertEvidenceStream>();
-  for (const r of rows) {
-    const ev: Evidence = {
-      itemId: r.item_id,
-      type: "pr_reviewed",
-      serviceId: r.service_id,
-      title: r.title.slice(0, 512),
-      modifiedAt: r.modified_at,
-      weight: 0.6,
-    };
-    const existing = merged.get(r.person_id);
-    if (existing === undefined) {
-      merged.set(r.person_id, {
-        personId: r.person_id,
-        displayName: r.display_name,
-        evidence: [ev],
-      });
-    } else {
-      existing.evidence.push(ev);
-    }
-  }
-  const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
-  return winner === undefined ? {} : { stream: winner };
+  return topLaneStream(rows, "pr_reviewed", 0.6);
 }
 
 /**
@@ -427,14 +396,7 @@ export async function subIncidentResolved(db: Database, input: string): Promise<
        ORDER BY i.modified_at DESC
        LIMIT 50`,
     )
-    .all(input, input) as Array<{
-    person_id: string;
-    display_name: string;
-    item_id: string;
-    title: string;
-    modified_at: number;
-    service_id: string;
-  }>;
+    .all(input, input) as ExpertLaneRow[];
 
   if (rows.length === 0) {
     const missingEntityGap = detectMissingEntityType(db, "incident");
@@ -456,29 +418,7 @@ export async function subIncidentResolved(db: Database, input: string): Promise<
     return {};
   }
 
-  const merged = new Map<string, ExpertEvidenceStream>();
-  for (const r of rows) {
-    const ev: Evidence = {
-      itemId: r.item_id,
-      type: "incident_resolved",
-      serviceId: r.service_id,
-      title: r.title.slice(0, 512),
-      modifiedAt: r.modified_at,
-      weight: 0.8,
-    };
-    const existing = merged.get(r.person_id);
-    if (existing === undefined) {
-      merged.set(r.person_id, {
-        personId: r.person_id,
-        displayName: r.display_name,
-        evidence: [ev],
-      });
-    } else {
-      existing.evidence.push(ev);
-    }
-  }
-  const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
-  return winner === undefined ? {} : { stream: winner };
+  return topLaneStream(rows, "incident_resolved", 0.8);
 }
 
 async function subChatMentions(db: Database, input: string): Promise<SubAgentResult> {
@@ -501,40 +441,11 @@ async function subChatMentions(db: Database, input: string): Promise<SubAgentRes
        ORDER BY i.modified_at DESC
        LIMIT 50`,
     )
-    .all(input, input) as Array<{
-    person_id: string;
-    display_name: string;
-    item_id: string;
-    title: string;
-    modified_at: number;
-    service_id: string;
-  }>;
+    .all(input, input) as ExpertLaneRow[];
   if (rows.length === 0) {
     const gap = detectMissingConnector(db, "slack");
     return gap === null ? {} : { gap };
   }
 
-  const merged = new Map<string, ExpertEvidenceStream>();
-  for (const r of rows) {
-    const ev: Evidence = {
-      itemId: r.item_id,
-      type: "chat_post",
-      serviceId: r.service_id,
-      title: r.title.slice(0, 512),
-      modifiedAt: r.modified_at,
-      weight: 0.4,
-    };
-    const existing = merged.get(r.person_id);
-    if (existing === undefined) {
-      merged.set(r.person_id, {
-        personId: r.person_id,
-        displayName: r.display_name,
-        evidence: [ev],
-      });
-    } else {
-      existing.evidence.push(ev);
-    }
-  }
-  const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
-  return winner === undefined ? {} : { stream: winner };
+  return topLaneStream(rows, "chat_post", 0.4);
 }

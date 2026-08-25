@@ -16,9 +16,13 @@ You are the Nimbus pre-push guard. Goal: reproduce locally every gate CI would f
 ```bash
 git rev-parse --abbrev-ref HEAD            # confirm a dev/* branch
 git status --short                          # know what changed
-bun run preflight:fast 2>&1 | tail -22      # the 18 static gates: typecheck, biome, lint:markdown, audit:{doc-refs,openapi-drift,boundaries,invariants,any,release-please,js-licenses,svg-assets,readme-cli,package-readmes,cross-platform,status-drift,action-sha-pins,exclusion-parity}, duplication
+bun run preflight:fast 2>&1 | tail -40      # the fast tier: build:console, typecheck, typecheck:tests, biome, lint:markdown, duplication, and 27 audit:* gates
 ```
-All 18 must be ✓. If `bun.lock` was touched (or any dep change), also: `bun install --frozen-lockfile` must exit 0 (else CI's "Setup Nimbus CI" fails for every job).
+Every gate must be ✓. Do not hard-code the gate count here —
+`scripts/lib/preflight-gates.ts` is the manifest, and a drift test fails when a
+CI gate is missing from it. This line used to carry a literal count, went stale
+at "18", and stayed wrong long enough that the `tail` window above no longer
+showed the whole run; widen the window rather than trusting a number in prose. If `bun.lock` was touched (or any dep change), also: `bun install --frozen-lockfile` must exit 0 (else CI's "Setup Nimbus CI" fails for every job).
 
 ## Step 2 — scoped tests for the changed surface
 From `git status`, run `bun test` on the test files for the changed source (and their direct consumers). e.g. policy change → `bun test packages/gateway/src/policy …`. Confirm 0 fails + **clean exit** (a hanging run = a leaked `setInterval` from a sidecar test — `.unref()` on an awaited timer spins 100% CPU forever on Windows; flag it). For gateway changes also run `cd packages/gateway && bun run typecheck` (bun test ≠ tsc — a passing test can still have a type error CI rejects). For CLI changes, `cd packages/cli && bun run typecheck`.

@@ -51,7 +51,14 @@ function readHeadHash(db: Database): string {
  * camelCase EgressEntry fields are mapped explicitly to snake_case columns; the spread is NEVER
  * used to avoid silently writing camelCase keys as column names.
  */
-export function appendEgressEntry(db: Database, entry: EgressEntry): void {
+/**
+ * Append one chained row, and return the hash it was stored under.
+ *
+ * The hash is returned because a later MARKER row may need to name this one — see
+ * `outcome-egress.ts`. It is the value the chain already commits to, so a correlation key built on
+ * it cannot drift from the row it points at.
+ */
+export function appendEgressEntry(db: Database, entry: EgressEntry): { rowHash: string } {
   const prevHash = readHeadHash(db);
   const rowHash = computeEgressRowHash({
     prevHash,
@@ -81,6 +88,7 @@ export function appendEgressEntry(db: Database, entry: EgressEntry): void {
       prevHash,
     ],
   );
+  return { rowHash };
 }
 
 /** The DI seam wired into `ToolExecutor` — appends to the given DB. */

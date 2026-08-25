@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { detectBunSpawn, nimbusSpawn, spawnViaBun, spawnViaNode } from "./nimbus-spawn.ts";
+import {
+  detectBunSpawn,
+  nimbusSpawn,
+  selectSpawnImpl,
+  spawnViaBun,
+  spawnViaNode,
+} from "./nimbus-spawn.ts";
 
 const IMPLS = [
   ["nimbusSpawn (runtime-selected)", nimbusSpawn],
@@ -51,7 +57,7 @@ describe.each(IMPLS)("%s", (_label, nimbusSpawn) => {
       {},
     );
     expect(r.code).toBe(0);
-    expect(r.stdout.length).toBe(2_000_000);
+    expect(r.stdout).toHaveLength(2_000_000);
   });
 
   test("multi-byte UTF-8 spanning chunk boundaries is not corrupted", async () => {
@@ -62,7 +68,7 @@ describe.each(IMPLS)("%s", (_label, nimbusSpawn) => {
       {},
     );
     expect(r.code).toBe(0);
-    expect(r.stdout.length).toBe(400_000);
+    expect(r.stdout).toHaveLength(400_000);
     // U+FFFD REPLACEMENT CHARACTER is what per-chunk decoding produces at a split boundary.
     expect(r.stdout).not.toContain("�");
   });
@@ -79,14 +85,24 @@ describe("runtime selection", () => {
     expect(detectBunSpawn()).toBe(true); // the real global, under Bun
   });
 
-  test("routes to the Node implementation when told Bun is unavailable", async () => {
-    const r = await nimbusSpawn([process.execPath, "-e", "console.log('via-node')"], {}, false);
+  test("routes to the Node implementation on a global without Bun.spawn", async () => {
+    const impl = selectSpawnImpl({});
+    expect(impl).toBe(spawnViaNode);
+    const r = await impl([process.execPath, "-e", "console.log('via-node')"], {});
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe("via-node");
   });
 
-  test("routes to the Bun implementation when told it is available", async () => {
-    const r = await nimbusSpawn([process.execPath, "-e", "console.log('via-bun')"], {}, true);
+  test("routes to the Bun implementation on a global that has Bun.spawn", async () => {
+    const impl = selectSpawnImpl({ Bun: { spawn: () => undefined } });
+    expect(impl).toBe(spawnViaBun);
+    const r = await impl([process.execPath, "-e", "console.log('via-bun')"], {});
     expect(r.stdout.trim()).toBe("via-bun");
+  });
+
+  test("nimbusSpawn routes through the real global", async () => {
+    const r = await nimbusSpawn([process.execPath, "-e", "console.log('via-default')"], {});
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe("via-default");
   });
 });

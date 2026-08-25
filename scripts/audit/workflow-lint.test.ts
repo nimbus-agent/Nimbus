@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
   bashRunBodies,
   findColumnZeroEscapes,
+  jobsWithoutTimeout,
   lintWorkflow,
   TOP_LEVEL_KEYS,
 } from "./workflow-lint.ts";
@@ -13,6 +14,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Say hi
         shell: bash
@@ -141,9 +143,71 @@ jobs:
   });
 });
 
+describe("jobsWithoutTimeout", () => {
+  it("accepts a job that declares timeout-minutes", () => {
+    expect(jobsWithoutTimeout(CLEAN)).toEqual([]);
+  });
+
+  it("flags a job with steps and no timeout-minutes", () => {
+    const text = `name: demo
+on:
+  pull_request:
+jobs:
+  capped:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: echo hi
+  uncapped:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo hi
+`;
+    expect(jobsWithoutTimeout(text)).toEqual(["uncapped"]);
+  });
+
+  it("skips a reusable-workflow caller, which cannot carry timeout-minutes", () => {
+    // GitHub rejects `timeout-minutes` on a `uses:` job outright — the cap
+    // belongs on the jobs inside the called workflow, which this gate sees
+    // when it lints that file.
+    const text = `name: demo
+on:
+  pull_request:
+jobs:
+  call:
+    uses: ./.github/workflows/_structure.yml
+`;
+    expect(jobsWithoutTimeout(text)).toEqual([]);
+  });
+
+  it("returns nothing for unparsable YAML rather than piling onto the parse error", () => {
+    expect(jobsWithoutTimeout("name: [unclosed\n")).toEqual([]);
+  });
+
+  it("returns nothing when the file has no jobs block", () => {
+    expect(jobsWithoutTimeout("name: demo\non: push\n")).toEqual([]);
+  });
+});
+
 describe("lintWorkflow", () => {
   it("reports nothing for a clean file", () => {
     expect(lintWorkflow("a.yml", CLEAN, () => null)).toEqual([]);
+  });
+
+  it("reports a job that would inherit the 360-minute default", () => {
+    const text = `name: demo
+on:
+  pull_request:
+jobs:
+  uncapped:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo hi
+`;
+    const findings = lintWorkflow("a.yml", text, () => null);
+    expect(findings.length).toBe(1);
+    expect(findings[0]).toContain("uncapped");
+    expect(findings[0]).toContain("timeout-minutes");
   });
 
   it("reports unparsable YAML", () => {

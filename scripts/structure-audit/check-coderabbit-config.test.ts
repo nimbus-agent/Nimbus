@@ -83,7 +83,7 @@ describe("the monorepo's .coderabbit.yaml", () => {
     // have let `enforce I31` or `(I30/I31)` through — precisely the stale
     // guidance this test exists to catch. Parsing also scopes the scan to
     // instructions, so the file's header comment (which legitimately mentions
-    // the I1-I30 range and the reserved I28) is not swept in.
+    // the I1-I33 range and the reserved I28) is not swept in.
     const cited = new Set(
       instructionEntries().flatMap((e) =>
         [...e.instructions.matchAll(/\bI\d+\b/g)].map((m) => m[0]),

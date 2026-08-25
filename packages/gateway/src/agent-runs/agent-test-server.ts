@@ -16,6 +16,7 @@ import { materializeMigratedDb } from "../index/migrated-db-template.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createSeededTokenVault } from "../ipc/test-token-vault.ts";
+import { runQuietly } from "../testing/harness-teardown.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { buildAgentHttpInvoker } from "./agent-http-invoke.ts";
 import { AgentRunController, MAX_CONCURRENT_AGENT_RUNS } from "./agent-run-store.ts";
@@ -106,21 +107,11 @@ export async function startAgentTestServer(opts?: {
       for (let i = 0; i < MAX_CONCURRENT_AGENT_RUNS; i++) runs.admit();
     },
     stop(): void {
-      try {
-        handle.stop();
-      } catch {
-        /* ignore */
-      }
-      try {
-        db.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
+      runQuietly([
+        () => handle.stop(),
+        () => db.close(),
+        () => rmSync(tmpDir, { recursive: true, force: true }),
+      ]);
     },
   };
 }

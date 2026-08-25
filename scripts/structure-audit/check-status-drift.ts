@@ -95,8 +95,25 @@ function canonicalInvariant(repoRoot: string): { value: number; errors: string[]
   return { value, errors };
 }
 
-/** Spelled-out forms this doc actually uses for counts, so "twelve entries" can be checked. */
+/**
+ * Spelled-out forms used for counts, so "twelve entries" can be checked.
+ *
+ * One through nine were missing, and that was invisible in BOTH directions. A doc spelling a
+ * small count ("Two entries") matched no pattern, so `statesWriteRouteCount` never attributed
+ * the claim and the count was never checked at all — a stale claim passed in silence. And once
+ * the pattern did match it, `SPELLED[2]` was `undefined`, which the comparison read as "stale"
+ * and reported a false drift. A guard that cannot see a claim does not fail; it passes.
+ */
 const SPELLED: Readonly<Record<number, string>> = {
+  1: "one",
+  2: "two",
+  3: "three",
+  4: "four",
+  5: "five",
+  6: "six",
+  7: "seven",
+  8: "eight",
+  9: "nine",
   10: "ten",
   11: "eleven",
   12: "twelve",
@@ -120,12 +137,58 @@ const SPELLED: Readonly<Record<number, string>> = {
  * landed. Nothing read the two sides against each other, which is the only reason a doc can call
  * itself complete while omitting the two most recently added — and most contested — routes.
  */
+/**
+ * Docs that commit to something about the I13 write surface.
+ *
+ * `enumerates` marks the ones that CLAIM to list every route, and only those get the per-route
+ * presence check — `nimbus-federation-identity.md` states a count in passing and names no routes,
+ * so demanding all fourteen there would flag a document that is not lying about anything.
+ *
+ * The two skills were added after both drifted while the two `docs/` files were being kept
+ * honest by this gate: `nimbus-http-write-surface.md` — the file the checklist tells contributors
+ * to read BEFORE adding a route — said "Fourteen entries" over a code block listing twelve, and
+ * `nimbus-federation-identity.md` said "3 of 6 routes". A gate scoped to `docs/` cannot see the
+ * `.claude/` copy of the same claim.
+ */
+const WRITE_SURFACE_DOCS: readonly { readonly rel: string; readonly enumerates: boolean }[] = [
+  { rel: "docs/SECURITY-INVARIANTS.md", enumerates: true },
+  { rel: "docs/cli-reference.md", enumerates: true },
+  { rel: ".claude/commands/nimbus-http-write-surface.md", enumerates: true },
+  { rel: ".claude/commands/nimbus-federation-identity.md", enumerates: false },
+];
+
+/**
+ * DERIVED from `SPELLED`, never written out beside it. The two were hand-kept copies before, and
+ * a second copy is exactly how a list goes stale — here both copies stopped at ten together.
+ * Longest-first so the alternation never settles on a prefix of a longer word ("nine" inside
+ * "nineteen"); a tie is broken alphabetically so the pattern is stable across runs.
+ */
+const COUNT_WORD = Object.values(SPELLED)
+  .sort((a, b) => b.length - a.length || a.localeCompare(b))
+  .join("|");
+
+/** Numeric and spelled forms alike — "3 of 6 routes" went stale in exactly the numeric form. */
+const STATED_COUNT_RE = new RegExp(`\\b(${COUNT_WORD}|\\d+)\\s+(?:entries|routes)\\b`, "gi");
+
+/**
+ * Does this line commit to a count of write routes?
+ *
+ * Two shapes: the count sits on a line that names `WRITE_ROUTE_ALLOWLIST`, or the line OPENS with
+ * the count ("Fourteen entries (…)"), which is how the skill introduces its code block — there the
+ * constant name is on the next line, inside the fence.
+ */
+function statesWriteRouteCount(line: string): boolean {
+  return (
+    line.includes("WRITE_ROUTE_ALLOWLIST") ||
+    new RegExp(`^(${COUNT_WORD}|\\d+)\\s+(?:entries|routes)\\b`, "i").test(line)
+  );
+}
+
 function auditWriteRouteSurface(repoRoot: string): string[] {
   const errors: string[] = [];
   const sources = readAll(repoRoot, [
     "packages/gateway/src/ipc/http-write-routes.ts",
-    "docs/SECURITY-INVARIANTS.md",
-    "docs/cli-reference.md",
+    ...WRITE_SURFACE_DOCS.map((d) => d.rel),
   ]);
   if (sources === undefined) return [];
   const src = sources[0] as string;
@@ -144,20 +207,22 @@ function auditWriteRouteSurface(repoRoot: string): string[] {
   if (routes.length === 0) return [...errors, "resolved zero write routes — the scan is broken"];
 
   const word = SPELLED[routes.length];
-  for (const rel of ["docs/SECURITY-INVARIANTS.md", "docs/cli-reference.md"]) {
+  for (const { rel, enumerates } of WRITE_SURFACE_DOCS) {
     const text = read(repoRoot, rel);
     // A stated count, spelled or numeric, must match — but ONLY where the sentence is about this
     // allowlist. Scanning the whole document flags "Eleven entries" in the I7 section, which
-    // counts renderer-allowlist additions and has nothing to do with write routes. Requiring
-    // `WRITE_ROUTE_ALLOWLIST` on the same line is what makes the count claim attributable.
+    // counts renderer-allowlist additions and has nothing to do with write routes. Attributing
+    // the claim (see `statesWriteRouteCount`) is what keeps that separation.
     for (const line of text.split("\n")) {
-      if (!line.includes("WRITE_ROUTE_ALLOWLIST")) continue;
-      for (const m of line.matchAll(
-        /\b(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s+(?:entries|routes)\b/gi,
-      )) {
-        if (word !== undefined && m[1]?.toLowerCase() !== word) {
+      if (!statesWriteRouteCount(line)) continue;
+      for (const m of line.matchAll(new RegExp(STATED_COUNT_RE.source, "gi"))) {
+        const stated = m[1]?.toLowerCase() ?? "";
+        const matches = /^\d+$/.test(stated)
+          ? Number(stated) === routes.length
+          : word !== undefined && stated === word;
+        if (!matches) {
           errors.push(
-            `${rel}: "${m[0]}" is stale — WRITE_ROUTE_ALLOWLIST has ${routes.length} (${word})`,
+            `${rel}: "${m[0]}" is stale — WRITE_ROUTE_ALLOWLIST has ${routes.length}${word === undefined ? "" : ` (${word})`}`,
           );
         }
       }
@@ -174,6 +239,7 @@ function auditWriteRouteSurface(repoRoot: string): string[] {
     // and also mentions individual routes elsewhere (the token-scope table names
     // `POST /v1/items/fetch`), so a document-wide `includes` reports clean while the "complete"
     // table is missing an entry — which is exactly the state it was in.
+    if (!enumerates) continue;
     const scope = enumerationScope(rel, text);
     const missing = routes.filter((r) => !scope.includes(r));
     if (missing.length > 0) {
@@ -184,11 +250,24 @@ function auditWriteRouteSurface(repoRoot: string): string[] {
 }
 
 /**
- * The slice of a doc that claims to list every write route. For `cli-reference.md` that is the
- * table under the "**Write endpoints**" heading, up to the paragraph that follows it; elsewhere the
- * whole file, since `SECURITY-INVARIANTS.md` enumerates them inline in two places.
+ * The slice of a doc that claims to list every write route.
+ *
+ * For `cli-reference.md` that is the table under the "**Write endpoints**" heading, up to the
+ * paragraph that follows it. For `nimbus-http-write-surface.md` it is the transcribed
+ * `Object.freeze([…])` block — narrowing matters there for the same reason it does in
+ * `cli-reference.md`: that skill also carries a per-route auth table, so a document-wide
+ * `includes` finds `POST /v1/agents/{agent}` in the table and reports the transcribed constant
+ * complete while it is two entries short. Measured: with whole-file scope, deleting both new
+ * routes from the code block left this gate green.
+ *
+ * Everywhere else the whole file, since `SECURITY-INVARIANTS.md` enumerates them inline in two
+ * places.
  */
 function enumerationScope(rel: string, text: string): string {
+  if (rel.endsWith("nimbus-http-write-surface.md")) {
+    const m = /WRITE_ROUTE_ALLOWLIST[^=]*=\s*Object\.freeze\(\[([\s\S]*?)\]\s*\)/.exec(text);
+    return m?.[1] ?? text;
+  }
   if (!rel.endsWith("cli-reference.md")) return text;
   const start = text.indexOf("**Write endpoints**");
   if (start === -1) return text;

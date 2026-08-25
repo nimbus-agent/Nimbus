@@ -155,3 +155,48 @@ describe("mapAppleEventToItem", () => {
     expect(row?.metadata["recurrence"]).toBe("FREQ=WEEKLY;BYDAY=MO");
   });
 });
+
+// ─── iCalendar date parsing (reached through `modifiedAt`) ───────────────────
+
+describe("mapAppleEventToItem — DTSTAMP / DTSTART parsing", () => {
+  test("accepts an ISO-8601 timestamp directly", () => {
+    // CalDAV servers are not uniform: some emit the RFC 5545 compact form,
+    // some an ISO-8601 string. Both must resolve to the same instant.
+    const iso = mapAppleEventToItem(makeEvent({ dtstamp: "2026-05-31T12:00:00Z" }), CTX);
+    const compact = mapAppleEventToItem(makeEvent({ dtstamp: "20260531T120000Z" }), CTX);
+    expect(iso?.modifiedAt).toBe(Date.parse("2026-05-31T12:00:00Z"));
+    expect(iso?.modifiedAt).toBe(compact?.modifiedAt);
+  });
+
+  test("treats an all-day DATE value as midnight UTC", () => {
+    const row = mapAppleEventToItem(makeEvent({ dtstamp: "20260601", allDay: true }), CTX);
+    expect(row?.modifiedAt).toBe(Date.parse("2026-06-01T00:00:00Z"));
+  });
+
+  test("treats a floating (no-Z) datetime as UTC", () => {
+    const row = mapAppleEventToItem(makeEvent({ dtstamp: "20260601T090000" }), CTX);
+    expect(row?.modifiedAt).toBe(Date.parse("2026-06-01T09:00:00Z"));
+  });
+
+  // An unparseable DTSTAMP must fall through the chain rather than poison
+  // `modified_at` with NaN — a NaN there sorts unpredictably and makes the
+  // item invisible to every `--since` window.
+  test("falls through to DTSTART when DTSTAMP is unparseable", () => {
+    const row = mapAppleEventToItem(
+      makeEvent({ dtstamp: "garbage", start: "20260601T090000Z" }),
+      CTX,
+    );
+    expect(row?.modifiedAt).toBe(Date.parse("2026-06-01T09:00:00Z"));
+  });
+
+  // Compact-SHAPED but not a real date: the regex matches, `Date.parse` does not.
+  test("rejects a compact-form value that is not a real date", () => {
+    const row = mapAppleEventToItem(makeEvent({ dtstamp: "20261332", start: null }), CTX);
+    expect(row?.modifiedAt).toBe(CTX.syncedAt);
+  });
+
+  test("falls all the way through to syncedAt when both values are unparseable", () => {
+    const row = mapAppleEventToItem(makeEvent({ dtstamp: "garbage", start: "also-garbage" }), CTX);
+    expect(row?.modifiedAt).toBe(CTX.syncedAt);
+  });
+});

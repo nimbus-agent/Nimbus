@@ -64,10 +64,19 @@ export async function readRegisteredCommands(): Promise<string[]> {
   return [...names];
 }
 
+/**
+ * Docs that show `nimbus <cmd>` invocations a reader is expected to be able to run.
+ *
+ * `docs/cli-reference.md` joined `docs/README.md` after it documented `nimbus mcp` — the binary
+ * registers `mcp-server`, so the sentence named a command that does not exist. The landing page
+ * was gated and the CLI reference, which carries twice as many invocations, was not.
+ *
+ * `docs/roadmap.md` is deliberately absent: it names ~50 unbuilt commands on purpose, which is
+ * what an acceptance criterion for unbuilt work looks like.
+ */
+export const GATED_CLI_DOCS = ["docs/README.md", "docs/cli-reference.md"] as const;
+
 if (import.meta.main) {
-  const readmePath = "docs/README.md";
-  const readme = await readFile(readmePath, "utf-8");
-  const readmeCmds = extractReadmeCliCommands(readme);
   const registered = await readRegisteredCommands();
 
   if (registered.length === 0) {
@@ -79,14 +88,21 @@ if (import.meta.main) {
     process.exit(2);
   }
 
-  const result = validateReadmeCommands(readmeCmds, registered);
-  if (!result.ok) {
-    console.error(`README references ${result.missing.length} unregistered command(s):`);
-    for (const c of result.missing) console.error(`   - nimbus ${c}`);
-    console.error(`\nEither register the command, or remove the reference from docs/README.md.`);
-    process.exit(1);
+  let total = 0;
+  let failed = false;
+  for (const docPath of GATED_CLI_DOCS) {
+    const cmds = extractReadmeCliCommands(await readFile(docPath, "utf-8"));
+    total += cmds.length;
+    const result = validateReadmeCommands(cmds, registered);
+    if (!result.ok) {
+      failed = true;
+      console.error(`${docPath} references ${result.missing.length} unregistered command(s):`);
+      for (const c of result.missing) console.error(`   - nimbus ${c}`);
+      console.error(`Either register the command, or correct the reference in ${docPath}.`);
+    }
   }
+  if (failed) process.exit(1);
   console.log(
-    `All ${readmeCmds.length} README \`nimbus <cmd>\` references match the CLI registry.`,
+    `All ${total} \`nimbus <cmd>\` references across ${GATED_CLI_DOCS.length} docs match the CLI registry.`,
   );
 }

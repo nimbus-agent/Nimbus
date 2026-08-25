@@ -146,6 +146,43 @@ export function bashRunBodies(text: string): BashBody[] {
 }
 
 /**
+ * Jobs that run steps on a runner without declaring `timeout-minutes`.
+ *
+ * WHY THIS IS A GATE. A job with no `timeout-minutes` inherits GitHub's
+ * 360-minute default, so a step that wedges rather than fails holds a runner
+ * slot for six hours and, when downstream jobs `needs:` it, holds the whole
+ * workflow with it. That is not hypothetical here: on 2026-08-19 the Sandbox
+ * leg of `coverage-gates-pal` wedged in its apt step on two concurrent runs —
+ * a job that normally finishes in 1-4 minutes — and the fix (`_test-suite.yml`,
+ * see the comment above its `timeout-minutes: 30`) capped that one job while
+ * seven others across the tree still had no cap at all.
+ *
+ * Reusable-workflow callers (`uses:` at job level) are skipped, not exempted:
+ * GitHub rejects `timeout-minutes` on them outright, and the timeout belongs
+ * on the jobs inside the called workflow.
+ */
+export function jobsWithoutTimeout(text: string): string[] {
+  let doc: unknown;
+  try {
+    doc = yaml.load(text);
+  } catch {
+    // Unparsable YAML is already reported by `lintWorkflow`; do not pile on.
+    return [];
+  }
+  if (!isRecord(doc)) return [];
+  const jobs = doc["jobs"];
+  if (!isRecord(jobs)) return [];
+
+  const out: string[] = [];
+  for (const [name, jobRaw] of Object.entries(jobs)) {
+    if (!isRecord(jobRaw)) continue;
+    if (typeof jobRaw["uses"] === "string") continue;
+    if (jobRaw["timeout-minutes"] === undefined) out.push(name);
+  }
+  return out;
+}
+
+/**
  * `checkScript` returns an error message, or null when the script is valid.
  * Injected so the pure lint logic is testable without a shell on PATH; the CLI
  * passes a `bash -n` implementation. Omitting it skips the shell check.
@@ -172,6 +209,14 @@ export function lintWorkflow(
         `(${esc.content.slice(0, 60)}) — this terminates the enclosing block scalar and ` +
         `makes the workflow invalid; GitHub will record a run with zero jobs. If this is a ` +
         `heredoc body, use printf and keep every line indented.`,
+    );
+  }
+
+  for (const job of jobsWithoutTimeout(text)) {
+    findings.push(
+      `${file}: job "${job}" declares no \`timeout-minutes\`, so it inherits GitHub's ` +
+        `360-minute default — a wedged step holds a runner slot for six hours instead of ` +
+        `failing. Add a cap a few times the job's normal runtime.`,
     );
   }
 

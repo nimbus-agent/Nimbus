@@ -111,6 +111,7 @@ import { createDecisionRefresher, type DecisionRefresher } from "../decisions/de
 import { appendBootMarker } from "../egress/egress-boot-marker.ts";
 import { type CoverageVector, THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
+import { recordFetchOutcomeEgress } from "../egress/outcome-egress.ts";
 import { recordSyncEgress } from "../egress/sync-egress.ts";
 import { createEmbeddingRuntimeNonBlocking } from "../embedding/create-embedding-runtime.ts";
 import {
@@ -2218,8 +2219,11 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
   vault: NimbusVault;
   syncScheduler: SyncScheduler;
   httpSidecarOpts: HttpSidecarOpts;
+  /** Narrowed to the one method used, as `appendBootMarkerOrWarn` does: this is only ever the
+   *  destination for a swallowed outcome-append failure. */
+  logger: Pick<Logger, "warn">;
 }): void {
-  const { db, vault, syncScheduler } = deps;
+  const { db, vault, syncScheduler, logger } = deps;
   // `callerLabel` is threaded, not dropped. A closure taking only `url` stays ASSIGNABLE to the
   // surface's `(url, callerLabel?)` type — TypeScript permits fewer parameters — so omitting it
   // here would typecheck cleanly and silently leave every targeted-fetch row unattributed.
@@ -2240,6 +2244,8 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
         httpOriginFor: (service) => httpOrigins.get(service) ?? null,
         urlIsSupported: (service, u) => fetchOneUrlIsSupported(service, u, jiraBaseUrl),
         appendEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
+        appendOutcome: (row) => recordFetchOutcomeEgress(db, { ...row, now: Date.now() }),
+        warn: (err, message) => logger.warn(err, message),
         sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       },
       url,
@@ -2586,7 +2592,13 @@ export async function assemblePlatformServices(
 
   // Targeted fetch-on-miss (Task 11). Unconditional, like agents: reaching it requires the
   // `fetch` scope, which no legacy token carries and `nimbus clip pair --scopes` must name.
-  bootTargetedFetchIntoHttpSidecar({ db, vault, syncScheduler, httpSidecarOpts });
+  bootTargetedFetchIntoHttpSidecar({
+    db,
+    vault,
+    syncScheduler,
+    httpSidecarOpts,
+    logger: syncLogger,
+  });
 
   // IMPORTANT 1 fix: wires `GET /v1/items/resolve`'s `fetchable` predicate. Unconditional, same
   // as the fetch seam above — the route itself still requires the `resolve` scope.

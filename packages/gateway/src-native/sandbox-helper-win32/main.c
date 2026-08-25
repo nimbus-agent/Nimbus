@@ -13,7 +13,6 @@
 #include <userenv.h>
 #include <aclapi.h>
 #include <stdio.h>
-#include <stdarg.h>
 #include <wchar.h>
 
 #define PROFILE_PREFIX L"nimbus-"
@@ -25,20 +24,29 @@
 #define MAPPINGS_KEY   L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\" \
                        L"CurrentVersion\\AppContainer\\Mappings"
 
-/* NOSONAR c:S923 — the variadic is deliberate and is the SAFER option here. This is the single
- * audited wrapper over vfwprintf for all 26 diagnostic sites, each with its own format string and
- * argument types (`%s` paths, `%lu` Win32 codes, `%08lx` HRESULTs). Removing the ellipsis means
- * every one of those sites pre-formats into its own stack buffer, replacing one reviewed call
- * with 26 hand-managed buffers in security-sensitive C — more attack surface, not less, for a
- * rule aimed at unchecked variadic APIs rather than a fixed-format logger. */
-static void err(const wchar_t *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    fwprintf(stderr, L"nimbus-sandbox-helper: ");
-    vfwprintf(stderr, fmt, ap);
-    fwprintf(stderr, L"\n");
-    va_end(ap);
-}
+/*
+ * The single diagnostic sink for all 26 error sites: prefix, message, newline.
+ *
+ * A MACRO, not a variadic function (c:S923 / MISRA C 2012 Rule 17.1). It was `static void
+ * err(const wchar_t *fmt, ...)` forwarding to vfwprintf, which is the type-unsafe construction
+ * those rules exist to remove: va_arg cannot check that the arguments match the format, so a
+ * mismatched `%s` reads a Win32 error code as a pointer. Forwarding to fwprintf textually instead
+ * removes <stdarg.h> entirely AND puts a literal format string directly in front of its arguments
+ * at every call site, so MSVC's own format checking (C4477 under the /W4 /WX this is built with)
+ * applies where it previously could not see past the wrapper. Call sites are unchanged.
+ *
+ * Rewriting each site to pre-format into its own stack buffer would have been the other way to
+ * drop the ellipsis, and is worse: 26 hand-managed buffers in security-sensitive C, none of them
+ * type-checked either.
+ *
+ * `do { ... } while (0)` so `err(...)` is a statement everywhere, including as an unbraced `if`
+ * body. Safe under /W4: the same idiom already compiles here as `PUT` in append_quoted.
+ */
+#define err(...) do {                                    \
+        fwprintf(stderr, L"nimbus-sandbox-helper: ");     \
+        fwprintf(stderr, __VA_ARGS__);                    \
+        fwprintf(stderr, L"\n");                          \
+    } while (0)
 
 /* Create the profile, or derive its SID if it already exists. Caller frees with FreeSid.
  * When `created` is non-NULL it reports which of the two happened — only --check-caps needs
@@ -217,6 +225,22 @@ typedef struct {
     int child_argv_start;
 } spawn_opts;
 
+/* Consume ONE option token at argv[*i], advancing *i past its value. Returns 0, or the process
+ * exit code the caller must return verbatim — every failure path has already emitted its own
+ * diagnostic. Split out of parse_spawn_args for cognitive complexity (S3776): the chain below is
+ * the same chain, with `argv[i]`/`++i` written against the caller's index. The accepted grammar is
+ * unchanged — in particular a known flag that is the LAST token still fails its `*i + 1 < argc`
+ * guard and falls through to the same "unexpected arg" refusal it did before. */
+static int parse_spawn_option(int argc, wchar_t **argv, int *i, spawn_opts *o) {
+    if (wcscmp(argv[*i], L"--profile") == 0 && *i + 1 < argc)          { o->profile = argv[++(*i)]; }
+    else if (wcscmp(argv[*i], L"--cwd") == 0 && *i + 1 < argc)         { o->cwd = argv[++(*i)]; }
+    else if (wcscmp(argv[*i], L"--capability") == 0 && *i + 1 < argc)  { ++(*i); if (wcscmp(argv[*i], L"internetClient") == 0) o->want_net = TRUE; }
+    else if (wcscmp(argv[*i], L"--grant-read") == 0 && *i + 1 < argc)  { if (o->nread  >= MAX_GRANTS) { err(L"too many --grant-read");  return 64; } o->reads[o->nread++]   = argv[++(*i)]; }
+    else if (wcscmp(argv[*i], L"--grant-write") == 0 && *i + 1 < argc) { if (o->nwrite >= MAX_GRANTS) { err(L"too many --grant-write"); return 64; } o->writes[o->nwrite++] = argv[++(*i)]; }
+    else { err(L"unexpected arg: %s", argv[*i]); return 64; }
+    return 0;
+}
+
 /* Parse argv into `o`. Returns 0, or the process exit code the caller must return verbatim —
  * every failure path has already emitted its own diagnostic. Split out of mode_spawn for
  * cognitive complexity (S3776); the accepted grammar is unchanged. */
@@ -230,12 +254,8 @@ static int parse_spawn_args(int argc, wchar_t **argv, spawn_opts *o) {
     int i = 1;
     for (; i < argc; i++) {
         if (wcscmp(argv[i], L"--") == 0) { i++; break; }
-        if (wcscmp(argv[i], L"--profile") == 0 && i + 1 < argc)          { o->profile = argv[++i]; }
-        else if (wcscmp(argv[i], L"--cwd") == 0 && i + 1 < argc)         { o->cwd = argv[++i]; }
-        else if (wcscmp(argv[i], L"--capability") == 0 && i + 1 < argc)  { i++; if (wcscmp(argv[i], L"internetClient") == 0) o->want_net = TRUE; }
-        else if (wcscmp(argv[i], L"--grant-read") == 0 && i + 1 < argc)  { if (o->nread  >= MAX_GRANTS) { err(L"too many --grant-read");  return 64; } o->reads[o->nread++]   = argv[++i]; }
-        else if (wcscmp(argv[i], L"--grant-write") == 0 && i + 1 < argc) { if (o->nwrite >= MAX_GRANTS) { err(L"too many --grant-write"); return 64; } o->writes[o->nwrite++] = argv[++i]; }
-        else { err(L"unexpected arg: %s", argv[i]); return 64; }
+        int rc = parse_spawn_option(argc, argv, &i, o);
+        if (rc != 0) return rc;
     }
     o->child_argv_start = i;
 

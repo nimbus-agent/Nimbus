@@ -1,6 +1,4 @@
-import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { REAL_GATEWAY_CLI_IO, runGatewayCliCommand } from "../lib/run-gateway-cli-command.ts";
 
 export type IdentityCommand =
   | { kind: "login" }
@@ -138,23 +136,9 @@ export async function runIdentityCommand(client: IdentityIpc, cmd: IdentityComma
 }
 
 export async function runIdentity(argv: string[]): Promise<void> {
-  let cmd: IdentityCommand;
-  try {
-    cmd = parseIdentityArgs(argv);
-  } catch (e) {
-    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
-    process.exit(1);
-  }
-  const state = await readGatewayState(getCliPlatformPaths());
-  if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
-    process.exit(1);
-  }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  try {
-    await runIdentityCommand(client, cmd);
-  } finally {
-    await client.disconnect().catch(() => {});
-  }
+  await runGatewayCliCommand(argv, {
+    parse: parseIdentityArgs,
+    dispatch: runIdentityCommand,
+    io: REAL_GATEWAY_CLI_IO,
+  });
 }

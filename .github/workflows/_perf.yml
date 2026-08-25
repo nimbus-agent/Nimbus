@@ -37,6 +37,7 @@ jobs:
   detect-trigger:
     name: Decide whether to run the bench matrix
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
