@@ -72,7 +72,3 @@ export function resolveAccessTokenForService(
   }
   return resolver(vault);
 }
-
-export function hasAccessTokenResolver(serviceId: ConnectorServiceId): boolean {
-  return RESOLVERS[serviceId] !== undefined;
-}
