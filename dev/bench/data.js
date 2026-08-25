@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787675502575,
+  "lastUpdate": 1787677756471,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15707,6 +15707,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 334.8796850499999,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "23233d5b4ccecfcf92ab481d2e93a9315d5527f7",
+          "message": "feat(sync): connectors reach credentials and the index only through scoped capabilities (#1333)\n\n## What this does\n\n`SyncContext` — what every connector's `sync()` receives — no longer\ncarries a `vault` or a `db`\nhandle. It carries a scoped capability set instead.\n\nBefore this, any of ~90 connectors could read **any other connector's\ncredentials** and write **any\ntable**. `jira-sync.ts` could call `ctx.vault.get(\"slack.token\")` and\nnothing would notice. Now\n`getSecret(\"api_token\")` resolves `jira.api_token` and cannot name\nanother service's key.\n\n**83 vault users → 0. 20 raw-db users → 0.**\n\nThat is a real tightening of non-negotiable #3, and it arrived as the\nfirst step of the connector\nextraction rather than as a security project. It stands alone: it is\nworth having whether or not the\nextraction ever happens.\n\nPlan: `docs/superpowers/plans/2026-08-24-sync-context-narrowing.md`\n(Plan 1 of 2).\nDesign:\n`docs/superpowers/specs/2026-08-24-connector-extraction-design.md`.\n\n## How it is built\n\n- **Bound per service, in one place.** `sync/scheduler.ts`\n`contextForService` is the only builder;\nboth `runJob` and `syncContextFor` route through it so they cannot\ndrift. `assemble.ts`'s shared\ncontext deliberately does NOT bind — it is built once for every service,\nso a `getSecret` bound\n  there would be scoped to the wrong connector for all but one.\n- **Unbound capabilities THROW.** An optional capability turns a missed\nbinding into a silent\n`undefined`: the syncable reads no secret, writes no item, and reports\nsuccess. Fail-loud beats\n  fail-open for the only route to a credential.\n- **Cross-service reads are granted, not inferred.** Four connectors\nlegitimately share a credential\nfamily — BigQuery/Cloud Logging/Vertex AI on one `gcp.*` account, GitHub\nActions on `github.pat`,\nplus the AWS trio. `getSharedSecret(family, key)` checks a named grant\nmap and throws otherwise,\n  so a new cross-service read is a deliberate edit.\n- **Compile-time key checking is preserved**, not widened to `string`:\n`SyncCapabilities` is generic\nover `ConnectorServiceId` and keys are `ConnectorSecretKeyOf<S>`. It\ncaught two of my own errors\nduring the work — Linear's key is `api_key`, GCP's are\n`credentials_json_path`/`project_id`/`region`.\n- **Static rule D24** forbids `ctx.vault` / `ctx.db` in a syncable,\ndocumented in\n`SECURITY-INVARIANTS.md` and listed in `CLAUDE.md` + `GEMINI.md`, with\nsix enforcement tests.\n\n## Three things worth reading the diff for\n\n**The static rule did not work when first written.** Its regex began\nwith a literal BACKSPACE byte\ninstead of a `\\b` escape — a script authored the line — so it matched\nnothing and the audit passed\nsilently. Red-proving it is the only reason that surfaced. Once working\nit immediately found a real\nremaining `ctx.vault` in `connector-write-transport.ts` **and** its own\nscope error, flagging\n`lazy-mesh`, which holds a vault by design.\n\n**One site the type system could not catch.** `zoom-sync.test.ts` builds\nits context with\n`as unknown as`, so a missing capability surfaced only at runtime.\nEverything else in a 300-file\nchange was compiler-enforced; the cast was the single hole.\n\n**A two-sources-of-truth bug this introduced, and how it was caught.**\nThe capability closes over\n`depth`, so `{ ...ctx, depth: \"metadata_only\" }` yields a context whose\nfield and whose `upsertItem`\ndisagree — and the field loses. An obsidian test does exactly that and\ncaught full note bodies being\nindexed into a `metadata_only` vault. Production cannot hit it, since\n`contextForService` sets both\nfrom one variable, but the trap was real: `syncTestContext` now takes\n`depth` and `resolveServiceId`\nas parameters, and `SyncCapabilityDeps` says why overriding them\nafterwards does not work.\n\n## Recorded, not resolved\n\nThe design spec said that if `SyncContext` needed more than roughly a\ndozen members, the sync layer\nis more entangled with the gateway than the import census suggested, and\nthe **thin** repo boundary\nbecomes the right one for the extraction. It has **19**, and six serve\nonly one or two connectors.\n\nThat does not change this PR. It is evidence to weigh when the\nextraction's fat-vs-thin boundary is\nrevisited, and it is in the commit messages rather than buried here.\n\n## Verification\n\n- Full suite incl. `scripts`: **13,946 tests, 0 fail**\n- `bun run preflight:fast`: PASSED\n- `audit:invariants` green, and D24 red-proved by reintroducing\n`ctx.vault`\n- Up to date with `main` (merged `6d828c5c`), lockfile clean under\n`--frozen-lockfile`",
+          "timestamp": "2026-08-25T16:57:38Z",
+          "tree_id": "a6f53a626a5d9fc9a08ca607e5a3015b1c8db931",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/23233d5b4ccecfcf92ab481d2e93a9315d5527f7"
+        },
+        "date": 1787677754063,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 322.9388955999988,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 325.2456801999986,
             "unit": "ms"
           }
         ]
