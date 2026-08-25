@@ -78,7 +78,7 @@ describe("classifyIntent — empty input", () => {
       return jsonResponse({});
     });
 
-    const result = await classifyIntent("");
+    const result = await classifyIntent("", { enforceAirGap: false });
     expect(result).toEqual({
       intent: "unknown",
       entities: {},
@@ -96,7 +96,7 @@ describe("classifyIntent — empty input", () => {
       return jsonResponse({});
     });
 
-    const result = await classifyIntent("   \n\t  ");
+    const result = await classifyIntent("   \n\t  ", { enforceAirGap: false });
     expect(result.intent).toBe("unknown");
     expect(result.confidence).toBe(1);
     expect(fetchCalled).toBe(false);
@@ -117,7 +117,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("find markdown files");
+    const result = await classifyIntent("find markdown files", { enforceAirGap: false });
     expect(result.intent).toBe("file_search");
     expect(result.entities).toEqual({ pattern: "*.md" });
     expect(result.requiresHITL).toBe(false);
@@ -134,7 +134,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       );
     });
 
-    await classifyIntent("hi");
+    await classifyIntent("hi", { enforceAirGap: false });
     expect(capturedReq).toBeDefined();
     expect(capturedReq?.url).toBe("https://api.anthropic.com/v1/messages");
     expect(capturedReq?.method).toBe("POST");
@@ -149,7 +149,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       '```json\n{"intent":"file_organize","entities":{"source":"a","destination":"b"},"requiresHITL":true,"confidence":0.7}\n```';
     stubFetch(async () => anthropicTextResponse(fenced));
 
-    const result = await classifyIntent("move a to b");
+    const result = await classifyIntent("move a to b", { enforceAirGap: false });
     expect(result.intent).toBe("file_organize");
     expect(result.entities).toEqual({ source: "a", destination: "b" });
     expect(result.requiresHITL).toBe(true);
@@ -161,7 +161,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       '```\n{"intent":"file_search","entities":{"pattern":"x"},"requiresHITL":false,"confidence":0.5}\n```';
     stubFetch(async () => anthropicTextResponse(fenced));
 
-    const result = await classifyIntent("find x");
+    const result = await classifyIntent("find x", { enforceAirGap: false });
     expect(result.intent).toBe("file_search");
     expect(result.entities).toEqual({ pattern: "x" });
   });
@@ -172,7 +172,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       'Sure, here is the classification: {"intent":"unknown","entities":{},"requiresHITL":false,"confidence":0.3} hope this helps.';
     stubFetch(async () => anthropicTextResponse(prose));
 
-    const result = await classifyIntent("?");
+    const result = await classifyIntent("?", { enforceAirGap: false });
     expect(result.intent).toBe("unknown");
     expect(result.confidence).toBeCloseTo(0.3, 5);
   });
@@ -189,7 +189,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("move x to y");
+    const result = await classifyIntent("move x to y", { enforceAirGap: false });
     expect(result.intent).toBe("file_organize");
     expect(result.requiresHITL).toBe(true);
   });
@@ -206,7 +206,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("find foo");
+    const result = await classifyIntent("find foo", { enforceAirGap: false });
     expect(result.requiresHITL).toBe(false);
   });
 
@@ -223,7 +223,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("hi");
+    const result = await classifyIntent("hi", { enforceAirGap: false });
     expect(result.confidence).toBe(0);
   });
 
@@ -240,7 +240,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("hi");
+    const result = await classifyIntent("hi", { enforceAirGap: false });
     expect(result.confidence).toBe(1);
   });
 
@@ -257,7 +257,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("hi");
+    const result = await classifyIntent("hi", { enforceAirGap: false });
     expect(result.confidence).toBe(0);
   });
 
@@ -274,7 +274,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("find foo");
+    const result = await classifyIntent("find foo", { enforceAirGap: false });
     expect(result.entities).toEqual({ pattern: "foo", ok: "yes" });
   });
 
@@ -291,7 +291,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("find foo");
+    const result = await classifyIntent("find foo", { enforceAirGap: false });
     expect(result.entities).toEqual({});
   });
 
@@ -308,7 +308,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("find foo");
+    const result = await classifyIntent("find foo", { enforceAirGap: false });
     expect(result.entities).toEqual({});
   });
 
@@ -325,7 +325,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("?");
+    const result = await classifyIntent("?", { enforceAirGap: false });
     expect(result.intent).toBe("unknown");
   });
 
@@ -341,7 +341,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
       );
     });
 
-    await classifyIntent("hi");
+    await classifyIntent("hi", { enforceAirGap: false });
     const body = JSON.parse(capturedBody) as { model: string };
     expect(body.model).toBe("claude-haiku-4-5");
   });
@@ -358,7 +358,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
     });
 
     const longInput = "x".repeat(10_000);
-    await classifyIntent(longInput);
+    await classifyIntent(longInput, { enforceAirGap: false });
     const body = JSON.parse(capturedBody) as { messages: Array<{ content: string }> };
     expect(body.messages[0]?.content).toHaveLength(8000);
   });
@@ -371,7 +371,7 @@ describe("classifyIntent — Anthropic error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -386,7 +386,7 @@ describe("classifyIntent — Anthropic error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -402,7 +402,7 @@ describe("classifyIntent — Anthropic error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -419,7 +419,7 @@ describe("classifyIntent — Anthropic error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -433,7 +433,7 @@ describe("classifyIntent — Anthropic error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -447,7 +447,7 @@ describe("classifyIntent — Anthropic error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -464,7 +464,7 @@ describe("classifyIntent — Anthropic error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -478,7 +478,7 @@ describe("classifyIntent — Anthropic error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -501,7 +501,7 @@ describe("classifyIntent — OpenAI happy paths", () => {
       ),
     );
 
-    const result = await classifyIntent("find ts files");
+    const result = await classifyIntent("find ts files", { enforceAirGap: false });
     expect(result.intent).toBe("file_search");
     expect(result.entities).toEqual({ pattern: "*.ts" });
     expect(result.confidence).toBeCloseTo(0.85, 5);
@@ -519,7 +519,7 @@ describe("classifyIntent — OpenAI happy paths", () => {
       );
     });
 
-    await classifyIntent("hi");
+    await classifyIntent("hi", { enforceAirGap: false });
     expect(capturedReq).toBeDefined();
     expect(capturedReq?.url).toBe("https://api.openai.com/v1/chat/completions");
     expect(capturedReq?.method).toBe("POST");
@@ -546,7 +546,7 @@ describe("classifyIntent — OpenAI happy paths", () => {
       '```json\n{"intent":"file_organize","entities":{"source":"a","destination":"b"},"requiresHITL":true,"confidence":0.6}\n```';
     stubFetch(async () => openaiChatResponse(fenced));
 
-    const result = await classifyIntent("move a to b");
+    const result = await classifyIntent("move a to b", { enforceAirGap: false });
     expect(result.intent).toBe("file_organize");
     expect(result.requiresHITL).toBe(true);
   });
@@ -559,7 +559,7 @@ describe("classifyIntent — OpenAI error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -574,7 +574,7 @@ describe("classifyIntent — OpenAI error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -590,7 +590,7 @@ describe("classifyIntent — OpenAI error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -605,7 +605,7 @@ describe("classifyIntent — OpenAI error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -619,7 +619,7 @@ describe("classifyIntent — OpenAI error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -633,7 +633,7 @@ describe("classifyIntent — OpenAI error paths", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -655,7 +655,7 @@ describe("classifyIntent — provider selection", () => {
       );
     });
 
-    await classifyIntent("hi");
+    await classifyIntent("hi", { enforceAirGap: false });
     expect(capturedUrl).toBe("https://api.anthropic.com/v1/messages");
   });
 
@@ -671,7 +671,7 @@ describe("classifyIntent — provider selection", () => {
       );
     });
 
-    await classifyIntent("hi");
+    await classifyIntent("hi", { enforceAirGap: false });
     expect(capturedUrl).toBe("https://api.openai.com/v1/chat/completions");
   });
 });
@@ -686,7 +686,7 @@ describe("classifyIntent — no API key", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
@@ -700,11 +700,89 @@ describe("classifyIntent — no API key", () => {
 
     let caught: unknown;
     try {
-      await classifyIntent("hi");
+      await classifyIntent("hi", { enforceAirGap: false });
     } catch (e) {
       caught = e;
     }
     expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
     expect((caught as GatewayAgentUnavailableError).reason).toBe("no_api_key");
+  });
+});
+
+describe("classifyIntent — [llm] enforce_air_gap", () => {
+  test("refuses WITHOUT making any network call, with a live key configured", async () => {
+    // The bug this pins. `enforce_air_gap` was consulted nowhere on this path, so an owner who set
+    // it and had ANTHROPIC_API_KEY in the environment shipped every `ask` to Anthropic anyway.
+    //
+    // Asserting only that it throws would NOT catch a version that calls out first and throws
+    // afterwards — by then the user's text has already left the machine, which is the entire thing
+    // air-gap exists to prevent. So the load-bearing assertion here is the call count, not the
+    // rejection.
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-live-key-not-real");
+    let calls = 0;
+    stubFetch(async () => {
+      calls += 1;
+      return jsonResponse({});
+    });
+
+    await expect(
+      classifyIntent("what changed this week", { enforceAirGap: true }),
+    ).rejects.toBeInstanceOf(GatewayAgentUnavailableError);
+    expect(calls).toBe(0);
+  });
+
+  test("reports air_gap, not no_api_key — a key IS present and we refuse to use it", async () => {
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-live-key-not-real");
+    stubFetch(async () => jsonResponse({}));
+
+    const err = await classifyIntent("hi", { enforceAirGap: true }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(GatewayAgentUnavailableError);
+    expect((err as GatewayAgentUnavailableError).reason).toBe("air_gap");
+  });
+
+  test("refuses on the OpenAI arm too, not just the first provider checked", async () => {
+    // Anthropic is tried first, so a guard placed inside the Anthropic branch alone would pass the
+    // test above and still egress for an OpenAI-only user.
+    setEnv("ANTHROPIC_API_KEY", undefined);
+    setEnv("OPENAI_API_KEY", "sk-openai-not-real");
+    let calls = 0;
+    stubFetch(async () => {
+      calls += 1;
+      return jsonResponse({});
+    });
+
+    const err = await classifyIntent("hi", { enforceAirGap: true }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect((err as GatewayAgentUnavailableError).reason).toBe("air_gap");
+    expect(calls).toBe(0);
+  });
+
+  test("air-gap OFF still egresses — the guard is the flag, not a blanket refusal", async () => {
+    // Without this, deleting the whole remote path would satisfy every assertion above.
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-live-key-not-real");
+    let calls = 0;
+    stubFetch(async (url: string) => {
+      calls += 1;
+      expect(url).toContain("api.anthropic.com");
+      return jsonResponse({
+        content: [{ type: "text", text: JSON.stringify({ intent: "search", entities: {} }) }],
+      });
+    });
+
+    await classifyIntent("find markdown files", { enforceAirGap: false });
+    expect(calls).toBe(1);
+  });
+
+  test("empty input answers locally under air-gap rather than refusing", async () => {
+    // Nothing would have egressed, so there is nothing to refuse. Turning air-gap on must not
+    // convert a purely local answer into an error.
+    const result = await classifyIntent("   	 ", { enforceAirGap: true });
+    expect(result.intent).toBe("unknown");
+    expect(result.confidence).toBe(1);
   });
 });

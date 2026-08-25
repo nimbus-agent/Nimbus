@@ -9,7 +9,9 @@ By default the only outbound traffic Nimbus generates is connector OAuth flows (
 
 Telemetry is **opt-in and disabled by default** (`[telemetry] enabled = false` in `nimbus.toml`). When enabled it sends aggregate counters only — sync durations, error rates, query latency percentiles. No content, no file names, no identifiers are ever included in telemetry payloads.
 
-Air-gap mode (`[llm] enforce_air_gap = true`) blocks all outbound HTTP for the duration of an `ask` round-trip, including connector API calls. This makes Nimbus operate entirely on already-indexed data. A local LLM (Ollama or llama.cpp) is required to make air-gap mode useful — without one, queries fall back to the configured remote provider and `enforce_air_gap` prevents that call from completing.
+Air-gap mode (`[llm] enforce_air_gap = true`) refuses every remote LLM call on the `ask` path. The intent classifier and the provider router both decline rather than reach a vendor, so your question text does not leave the machine. A local LLM (Ollama or llama.cpp) is what makes the mode useful — without one, `ask` answers from the already-indexed context alone instead of falling back to a remote provider.
+
+What air-gap mode does **not** cover, stated plainly because this answer used to claim otherwise: it does not stop connector syncs, and it does not stop embedding uploads when `openai.api_key` is set. Those are separate outbound paths on their own schedules rather than part of an `ask` round-trip, and a flag scoped to one round-trip was never able to govern them. Use `nimbus prove` to see what actually left the machine.
 
 ### Can I run Nimbus offline?
 

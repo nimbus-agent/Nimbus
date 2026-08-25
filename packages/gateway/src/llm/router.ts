@@ -89,6 +89,19 @@ export class LlmRouter {
     return this.config.preferLocal;
   }
 
+  /**
+   * Whether `[llm] enforce_air_gap` is set.
+   *
+   * Mirrors {@link prefersLocal}, and the distinction between the two is the whole point:
+   * `preferLocal` is a PREFERENCE and is allowed to fall back to a remote provider, while this is
+   * a REFUSAL. `selectProvider` already honours it by skipping every non-local provider; this
+   * accessor exists so paths that do NOT go through the router — `engine/router.ts`
+   * `classifyIntent` is the one that mattered — can be held to the same rule.
+   */
+  enforcesAirGap(): boolean {
+    return this.config.enforceAirGap;
+  }
+
   // `opts.preferLocal` overrides `config.preferLocal` for this call only (e.g. research briefs
   // honoring `[briefs].prefer_local` independently of `[llm].prefer_local` — source text is
   // privacy-sensitive enough to warrant its own knob). Omitted, behavior is unchanged.

@@ -24,7 +24,7 @@ import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { indexCountFor, indexCountLine } from "./index-count-question.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
 import { fallbackSearchTerms, questionSearchTerms } from "./question-search-terms.ts";
-import { type ClassifiedIntent, classifyIntent } from "./router.ts";
+import { type ClassifiedIntent, type ClassifierEgressPolicy, classifyIntent } from "./router.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 import type { ConnectorDispatcher, PlannedAction } from "./types.ts";
@@ -134,9 +134,12 @@ function emptyIndexGuidanceIfNeeded(
   return { reply: EMPTY_INDEX_GUIDANCE };
 }
 
-async function classifyIntentForAsk(input: string): Promise<ClassifiedIntent> {
+async function classifyIntentForAsk(
+  input: string,
+  policy: ClassifierEgressPolicy,
+): Promise<ClassifiedIntent> {
   try {
-    return await classifyIntent(input);
+    return await classifyIntent(input, policy);
   } catch (e) {
     if (e instanceof GatewayAgentUnavailableError) {
       throw e;
@@ -214,8 +217,14 @@ function shouldAnswerFromLocalIndexedContext(p: RunAskParams): boolean {
 }
 
 async function classifyIntentForAskWithLocalFallback(p: RunAskParams): Promise<ClassifiedIntent> {
+  // Resolved from the router, which owns `[llm]`. Absent a router there is no configuration to
+  // read, so the policy is the permissive one — the same posture that shipped before this guard
+  // existed. Every production path builds a router (`platform/assemble.ts`).
+  const policy: ClassifierEgressPolicy = {
+    enforceAirGap: p.llmRouter?.enforcesAirGap() ?? false,
+  };
   try {
-    return await (p.classify ?? classifyIntentForAsk)(p.input);
+    return await (p.classify ?? ((input) => classifyIntentForAsk(input, policy)))(p.input);
   } catch (e) {
     if (
       p.llmRouter === undefined ||
@@ -224,7 +233,10 @@ async function classifyIntentForAskWithLocalFallback(p: RunAskParams): Promise<C
     ) {
       throw e;
     }
-    if (e.reason !== "no_api_key" && e.reason !== "invalid_api_key") {
+    // `air_gap` joins the two key-shaped reasons: all three mean "no remote classification is
+    // going to happen", and the caller's recovery is identical — answer from the local index.
+    // Without it, turning air-gap ON would turn a working local ask into a hard error.
+    if (e.reason !== "no_api_key" && e.reason !== "invalid_api_key" && e.reason !== "air_gap") {
       throw e;
     }
     runAskLog.warn(

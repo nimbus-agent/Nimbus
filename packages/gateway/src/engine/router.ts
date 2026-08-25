@@ -184,7 +184,28 @@ async function llmClassify(
   return classifiedFromObject(o);
 }
 
-export async function classifyIntent(userText: string): Promise<ClassifiedIntent> {
+/**
+ * What this classifier is permitted to reach.
+ *
+ * REQUIRED, and deliberately not an optional parameter defaulting to permissive. This function
+ * reads `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` straight from the process environment and POSTs the
+ * user's text to a vendor — it is the one path in the gateway that egresses without going through
+ * `LlmRouter`, which has honoured `enforceAirGap` all along. A default would make "forgot to pass
+ * the policy" indistinguishable from "policy says egress is fine", and the first is the bug that
+ * shipped: `[llm] enforce_air_gap = true` did nothing here, while the published FAQ said it
+ * "blocks all outbound HTTP for the duration of an `ask` round-trip".
+ *
+ * Required means a new caller is a COMPILE error rather than a silent hole.
+ */
+export type ClassifierEgressPolicy = {
+  /** `[llm] enforce_air_gap`. True refuses the call outright — see {@link LlmRouter.enforcesAirGap}. */
+  readonly enforceAirGap: boolean;
+};
+
+export async function classifyIntent(
+  userText: string,
+  policy: ClassifierEgressPolicy,
+): Promise<ClassifiedIntent> {
   const trimmed = userText.trim();
   if (trimmed.length === 0) {
     return {
@@ -193,6 +214,14 @@ export async function classifyIntent(userText: string): Promise<ClassifiedIntent
       requiresHITL: false,
       confidence: 1,
     };
+  }
+
+  // BEFORE the environment is read, not after. Reading the key first and refusing later would
+  // still be correct, but this ordering makes the refusal impossible to get wrong when a future
+  // provider arm is added below: a new arm added under this guard cannot egress, and one added
+  // above it would have to step over the guard visibly.
+  if (policy.enforceAirGap) {
+    throw new GatewayAgentUnavailableError({ reason: "air_gap" });
   }
 
   const anthropicKey = processEnvGet("ANTHROPIC_API_KEY");
