@@ -64,6 +64,8 @@ export function silentSyncContextExtras(): Pick<
   | "listIndexedGithubRepos"
   | "prEnrichCandidates"
   | "upsertBlameLines"
+  | "writeObsidianVault"
+  | "writeApiEndpointsForSpec"
   | "pruneBlameForFile"
   | "upsertItem"
   | "resolvePerson"
@@ -107,16 +109,15 @@ export function syncTestContext(
   db: Database,
   vault: NimbusVault,
   serviceId?: ConnectorServiceId | LocalOnlySyncServiceId,
+  /** Pass depth HERE, never by overriding `.depth` on the result — see SyncCapabilityDeps.depth. */
+  depth: "metadata_only" | "summary" | "full" = "full",
 ): SyncContext {
-  const extras = silentSyncContextExtras();
+  const extras = { ...silentSyncContextExtras(), depth };
   const caps =
     serviceId === undefined
       ? unboundSyncCapabilities()
       : LOCAL_ONLY_SYNC_SERVICE_IDS.includes(serviceId as LocalOnlySyncServiceId)
-        ? buildLocalOnlySyncCapabilities(
-            { vault, db, depth: extras.depth },
-            serviceId as LocalOnlySyncServiceId,
-          )
+        ? buildLocalOnlySyncCapabilities({ vault, db, depth }, serviceId as LocalOnlySyncServiceId)
         : buildSyncCapabilities(
             { vault, db, depth: extras.depth },
             serviceId as ConnectorServiceId,

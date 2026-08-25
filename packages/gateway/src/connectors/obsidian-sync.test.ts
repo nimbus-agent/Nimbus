@@ -111,10 +111,9 @@ test("metadata_only depth suppresses note bodies (routed through the depth choke
     ],
   });
   const db = createMemoryIndexDb();
-  const ctx = {
-    ...syncTestContext(db, EMPTY_NIMBUS_VAULT, "obsidian"),
-    depth: "metadata_only" as const,
-  };
+  // depth goes THROUGH the builder: overriding `.depth` on the result leaves the capability bound
+  // to the old value, which is how this test caught a real regression.
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "obsidian", "metadata_only");
   const r = await sync.sync(ctx, null);
   expect(r.itemsUpserted).toBe(2);
   const items = db

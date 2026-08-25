@@ -1,9 +1,7 @@
-import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
-import { dbRun } from "../db/write.ts";
-import { deleteItemByPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
+import type { ApiEndpointWrite } from "../index/api-endpoint-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { syncNoopResult } from "../sync/types.ts";
 import { DEFAULT_OPENAPI_CONFIG, type OpenapiConfig } from "./openapi-indexer-config.ts";
@@ -54,89 +52,50 @@ function externalIdFor(specPath: string, ep: ParsedEndpoint): string {
   return `${sha12}#${ep.method}:${ep.path}`;
 }
 
-function upsertEndpoint(
-  ctx: SyncContext,
-  args: {
-    specPath: string;
-    serviceName: string;
-    specVersion: string;
-    ep: ParsedEndpoint;
-    mtimeMs: number;
-    syncedAt: number;
-  },
-): string {
+function buildEndpointWrite(args: {
+  specPath: string;
+  serviceName: string;
+  specVersion: string;
+  ep: ParsedEndpoint;
+  mtimeMs: number;
+  syncedAt: number;
+}): ApiEndpointWrite {
   const externalId = externalIdFor(args.specPath, args.ep);
-  upsertIndexedItemForSync(ctx, {
-    service: SERVICE_ID,
-    type: "api_endpoint",
-    externalId,
-    title: `${args.ep.method} ${args.ep.path}`,
-    bodyPreview:
-      args.ep.operationId === undefined
-        ? args.ep.tags.join(" ").trim()
-        : `${args.ep.operationId} ${args.ep.tags.join(" ")}`.trim(),
-    modifiedAt: args.mtimeMs,
-    metadata: {
-      service_name: args.serviceName,
-      spec_file: args.specPath,
-      operation_id: args.ep.operationId ?? null,
+  const id = `${SERVICE_ID}:${externalId}`;
+  return {
+    item: {
+      service: SERVICE_ID,
+      type: "api_endpoint",
+      externalId,
+      title: `${args.ep.method} ${args.ep.path}`,
+      bodyPreview:
+        args.ep.operationId === undefined
+          ? args.ep.tags.join(" ").trim()
+          : `${args.ep.operationId} ${args.ep.tags.join(" ")}`.trim(),
+      modifiedAt: args.mtimeMs,
+      metadata: {
+        service_name: args.serviceName,
+        spec_file: args.specPath,
+        operation_id: args.ep.operationId ?? null,
+        tags: args.ep.tags,
+        deprecated: args.ep.deprecated,
+        spec_version: args.specVersion,
+      },
+      syncedAt: args.syncedAt,
+    },
+    endpoint: {
+      id,
+      serviceName: args.serviceName,
+      path: args.ep.path,
+      method: args.ep.method,
+      operationId: args.ep.operationId ?? null,
       tags: args.ep.tags,
       deprecated: args.ep.deprecated,
-      spec_version: args.specVersion,
+      specPath: args.specPath,
+      specVersion: args.specVersion,
+      mtimeMs: args.mtimeMs,
     },
-    syncedAt: args.syncedAt,
-  });
-  const id = `${SERVICE_ID}:${externalId}`;
-  dbRun(
-    ctx.db,
-    `INSERT INTO api_endpoint (
-      id, service_name, path, method, operation_id, tags_json, deprecated, spec_file, spec_version, last_modified, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      service_name = excluded.service_name,
-      path = excluded.path,
-      method = excluded.method,
-      operation_id = excluded.operation_id,
-      tags_json = excluded.tags_json,
-      deprecated = excluded.deprecated,
-      spec_file = excluded.spec_file,
-      spec_version = excluded.spec_version,
-      last_modified = excluded.last_modified`,
-    [
-      id,
-      args.serviceName,
-      args.ep.path,
-      args.ep.method,
-      args.ep.operationId ?? null,
-      JSON.stringify(args.ep.tags),
-      args.ep.deprecated ? 1 : 0,
-      args.specPath,
-      args.specVersion,
-      args.mtimeMs,
-      args.syncedAt,
-    ],
-  );
-  return id;
-}
-
-function deleteEndpointsAbsentFromSpec(
-  db: Database,
-  specPath: string,
-  keepIds: ReadonlySet<string>,
-): number {
-  const existing = db
-    .query("SELECT id FROM api_endpoint WHERE spec_file = ?")
-    .all(specPath) as Array<{ id: string }>;
-  let deleted = 0;
-  for (const row of existing) {
-    if (keepIds.has(row.id)) {
-      continue;
-    }
-    deleteItemByPrimaryKey(db, row.id);
-    dbRun(db, "DELETE FROM api_endpoint WHERE id = ?", [row.id]);
-    deleted++;
-  }
-  return deleted;
+  };
 }
 
 function readSpecIfNewer(
@@ -203,23 +162,25 @@ function ingestSpecPath(
   }
   const serviceName = inferServiceName({ specPath, infoTitle: parsed.infoTitle, rootPath: root });
   const keep = new Set<string>();
-  let perSpecUpserted = 0;
-  let perSpecDeleted = 0;
-  ctx.db.transaction(() => {
-    for (const ep of parsed.endpoints) {
-      const id = upsertEndpoint(ctx, {
-        specPath,
-        serviceName,
-        specVersion: parsed.specVersion,
-        ep,
-        mtimeMs: read.mtimeMs,
-        syncedAt: now,
-      });
-      keep.add(id);
-      perSpecUpserted++;
-    }
-    perSpecDeleted = deleteEndpointsAbsentFromSpec(ctx.db, specPath, keep);
-  })();
+  const writes: ApiEndpointWrite[] = [];
+  for (const ep of parsed.endpoints) {
+    const write = buildEndpointWrite({
+      specPath,
+      serviceName,
+      specVersion: parsed.specVersion,
+      ep,
+      mtimeMs: read.mtimeMs,
+      syncedAt: now,
+    });
+    keep.add(write.endpoint.id);
+    writes.push(write);
+  }
+  const { upserted: perSpecUpserted, deleted: perSpecDeleted } = ctx.writeApiEndpointsForSpec({
+    specPath,
+    endpoints: writes,
+    keepIds: keep,
+    syncedAt: now,
+  });
   totals.upserted += perSpecUpserted;
   totals.deleted += perSpecDeleted;
   if (read.mtimeMs > totals.nextTip) {

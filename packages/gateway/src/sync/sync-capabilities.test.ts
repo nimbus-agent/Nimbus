@@ -70,6 +70,8 @@ describe("the capability set exposes no raw handle", () => {
       "resolvePerson",
       "upsertBlameLines",
       "upsertItem",
+      "writeApiEndpointsForSpec",
+      "writeObsidianVault",
     ]);
   });
 });

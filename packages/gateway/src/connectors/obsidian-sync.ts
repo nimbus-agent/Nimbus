@@ -1,9 +1,7 @@
-import type { Database } from "bun:sqlite";
 import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
-import { dbRun } from "../db/write.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import type { ObsidianNoteWrite } from "../index/obsidian-notes-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 
 import { discoverNotesInVault, discoverVaults } from "./obsidian-discovery.ts";
@@ -61,94 +59,47 @@ type IndexedNote = {
   mtimeMs: number;
 };
 
-function upsertNote(
-  ctx: SyncContext,
+function buildNoteWrite(
   note: IndexedNote,
   resolvedWikilinkIds: readonly string[],
   syncedAt: number,
-): void {
-  // Routed through the depth chokepoint (upsertIndexedItemForSync), not the raw
-  // upsertIndexedItem — a `metadata_only`/`summary` vault must not keep getting
-  // full note bodies indexed on every sync.
-  upsertIndexedItemForSync(ctx, {
-    service: SERVICE_ID,
-    type: "obsidian_note",
-    externalId: externalIdFor(note.vaultId, note.relPath),
-    title: note.title,
-    body: note.body,
-    modifiedAt: note.mtimeMs,
-    metadata: {
-      vault_id: note.vaultId,
-      vault_name: note.vaultName,
-      path: note.relPath,
-      tags: note.tags,
-      aliases: note.aliases,
-      frontmatter: note.frontmatter,
-      daily_note_date: note.dailyNoteDate ?? null,
-      resolved_wikilink_ids: resolvedWikilinkIds,
-    },
-    syncedAt,
-  });
-  const db = ctx.db;
-  dbRun(
-    db,
-    `INSERT INTO obsidian_notes (
-      id, vault_id, vault_name, path, title, frontmatter_json, tags_json, wikilinks_json, daily_note_date, last_modified, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      vault_id = excluded.vault_id,
-      vault_name = excluded.vault_name,
-      path = excluded.path,
-      title = excluded.title,
-      frontmatter_json = excluded.frontmatter_json,
-      tags_json = excluded.tags_json,
-      wikilinks_json = excluded.wikilinks_json,
-      daily_note_date = excluded.daily_note_date,
-      last_modified = excluded.last_modified`,
-    [
-      note.itemId,
-      note.vaultId,
-      note.vaultName,
-      note.relPath,
-      note.title,
-      JSON.stringify(note.frontmatter),
-      JSON.stringify(note.tags),
-      JSON.stringify(note.rawWikilinks),
-      note.dailyNoteDate ?? null,
-      note.mtimeMs,
+): ObsidianNoteWrite {
+  return {
+    // Routed through the depth chokepoint by the STORE (upsertIndexedItemForSync), not the raw
+    // upsertIndexedItem — a `metadata_only`/`summary` vault must not keep getting full note bodies
+    // indexed on every sync.
+    item: {
+      service: SERVICE_ID,
+      type: "obsidian_note",
+      externalId: externalIdFor(note.vaultId, note.relPath),
+      title: note.title,
+      body: note.body,
+      modifiedAt: note.mtimeMs,
+      metadata: {
+        vault_id: note.vaultId,
+        vault_name: note.vaultName,
+        path: note.relPath,
+        tags: note.tags,
+        aliases: note.aliases,
+        frontmatter: note.frontmatter,
+        daily_note_date: note.dailyNoteDate ?? null,
+        resolved_wikilink_ids: resolvedWikilinkIds,
+      },
       syncedAt,
-    ],
-  );
-}
-
-function deleteNotesAbsentFromVault(
-  db: Database,
-  vaultId: string,
-  keepIds: ReadonlySet<string>,
-): number {
-  const existing = db
-    .query("SELECT id FROM obsidian_notes WHERE vault_id = ?")
-    .all(vaultId) as Array<{ id: string }>;
-  let deleted = 0;
-  for (const row of existing) {
-    if (keepIds.has(row.id)) {
-      continue;
-    }
-    dbRun(db, "DELETE FROM item WHERE id = ?", [row.id]);
-    dbRun(db, "DELETE FROM obsidian_notes WHERE id = ?", [row.id]);
-    dbRun(
-      db,
-      `DELETE FROM graph_relation
-       WHERE from_id IN (SELECT id FROM graph_entity WHERE type = 'obsidian_note' AND external_id = ?)
-          OR to_id   IN (SELECT id FROM graph_entity WHERE type = 'obsidian_note' AND external_id = ?)`,
-      [row.id, row.id],
-    );
-    dbRun(db, "DELETE FROM graph_entity WHERE type = 'obsidian_note' AND external_id = ?", [
-      row.id,
-    ]);
-    deleted++;
-  }
-  return deleted;
+    },
+    note: {
+      itemId: note.itemId,
+      vaultId: note.vaultId,
+      vaultName: note.vaultName,
+      relPath: note.relPath,
+      title: note.title,
+      frontmatter: note.frontmatter,
+      tags: note.tags,
+      rawWikilinks: note.rawWikilinks,
+      dailyNoteDate: note.dailyNoteDate,
+      mtimeMs: note.mtimeMs,
+    },
+  };
 }
 
 function readNoteSource(abs: string): { source: string; mtimeMs: number } | null {
@@ -236,25 +187,26 @@ function ingestVault(
   );
   const { byFilenameLower, byTitleLower } = buildWikilinkIndexes(parsedNotes);
 
-  let upserted = 0;
   let nextTip = tip;
   const keepIds = new Set<string>();
-  let deleted = 0;
-  ctx.db.transaction(() => {
-    for (const n of parsedNotes) {
-      keepIds.add(n.itemId);
-      if (n.mtimeMs <= startTip) {
-        continue;
-      }
-      const { resolved } = resolveWikilinks(n.rawWikilinks, byFilenameLower, byTitleLower);
-      upsertNote(ctx, n, resolved, now);
-      upserted++;
-      if (n.mtimeMs > nextTip) {
-        nextTip = n.mtimeMs;
-      }
+  const writes: ObsidianNoteWrite[] = [];
+  for (const n of parsedNotes) {
+    keepIds.add(n.itemId);
+    if (n.mtimeMs <= startTip) {
+      continue;
     }
-    deleted = deleteNotesAbsentFromVault(ctx.db, vaultId, keepIds);
-  })();
+    const { resolved } = resolveWikilinks(n.rawWikilinks, byFilenameLower, byTitleLower);
+    writes.push(buildNoteWrite(n, resolved, now));
+    if (n.mtimeMs > nextTip) {
+      nextTip = n.mtimeMs;
+    }
+  }
+  const { upserted, deleted } = ctx.writeObsidianVault({
+    vaultId,
+    notes: writes,
+    keepIds,
+    syncedAt: now,
+  });
   return { upserted, deleted, nextTip };
 }
 

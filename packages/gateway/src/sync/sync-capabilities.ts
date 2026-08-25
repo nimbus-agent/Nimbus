@@ -5,6 +5,7 @@ import { type ConnectorSecretKeyOf, readConnectorSecret } from "../connectors/co
 import { listGithubReposFromIndex } from "../connectors/github-index-repos.ts";
 import { type FallbackPrCandidate, selectPrEnrichCandidates } from "../connectors/github-sync.ts";
 import type { ResolveServiceId } from "../graph/graph-populator.ts";
+import { type ApiEndpointWrite, writeApiEndpointsForSpec } from "../index/api-endpoint-store.ts";
 import {
   type BodyRow,
   countIndexedItems,
@@ -15,6 +16,7 @@ import {
   selectItemMetadataJson,
   upsertIndexedItemForSync,
 } from "../index/item-store.ts";
+import { type ObsidianNoteWrite, writeObsidianVault } from "../index/obsidian-notes-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { type BlameRow, pruneBlameForFile, upsertBlameLines } from "../security/blame-store.ts";
@@ -100,6 +102,24 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
   listIndexedGithubRepos(): string[];
   /** PR rows still missing enrichment. GitHub-only, and the narrowest member here. */
   prEnrichCandidates(limit: number): FallbackPrCandidate[];
+  /**
+   * Writes one Obsidian vault's notes and prunes the departed ones in ONE transaction. Batched
+   * deliberately: a per-note capability would issue N autocommitted writes and a partial sync would
+   * leave `obsidian_notes` half-updated while still reporting success.
+   */
+  writeObsidianVault(input: {
+    readonly vaultId: string;
+    readonly notes: readonly ObsidianNoteWrite[];
+    readonly keepIds: ReadonlySet<string>;
+    readonly syncedAt: number;
+  }): { upserted: number; deleted: number };
+  /** One spec's endpoints plus its prune, in one transaction. Same argument as the vault writer. */
+  writeApiEndpointsForSpec(input: {
+    readonly specPath: string;
+    readonly endpoints: readonly ApiEndpointWrite[];
+    readonly keepIds: ReadonlySet<string>;
+    readonly syncedAt: number;
+  }): { upserted: number; deleted: number };
   upsertBlameLines(repoRoot: string, filePath: string, rows: readonly BlameRow[]): void;
   pruneBlameForFile(repoRoot: string, filePath: string): void;
 }
@@ -112,6 +132,16 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
 export interface SyncCapabilityDeps {
   vault: NimbusVault;
   db: Database;
+  /**
+   * The run's index depth. CAPABILITIES AND `SyncContext.depth` MUST BE BUILT TOGETHER: the
+   * capability closes over this value, so `{ ...ctx, depth: "metadata_only" }` produces a context
+   * whose `depth` field and whose `upsertItem` disagree, and the field is the one that loses.
+   *
+   * Production cannot hit that — `sync/scheduler.ts` `contextForService` is the only builder and
+   * sets both from one variable. Tests must pass `depth` to `syncTestContext` rather than
+   * overriding it on the result; one did, and silently indexed full bodies into a
+   * `metadata_only` vault until this comment's test caught it.
+   */
   depth: "metadata_only" | "summary" | "full";
   resolveServiceId?: ResolveServiceId;
   scheduleItemEmbedding?: (itemId: string) => void;
@@ -146,6 +176,8 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     bodyFetchState: (itemId) => selectItemBodyFetchState(deps.db, itemId),
     listIndexedGithubRepos: () => listGithubReposFromIndex(deps.db),
     prEnrichCandidates: (limit) => selectPrEnrichCandidates(deps.db, limit),
+    writeObsidianVault: (input) => writeObsidianVault(deps, input),
+    writeApiEndpointsForSpec: (input) => writeApiEndpointsForSpec(deps, input),
     upsertBlameLines: (repoRoot, filePath, rows) => {
       upsertBlameLines(deps.db, repoRoot, filePath, rows);
     },
@@ -214,6 +246,8 @@ export function unboundSyncCapabilities(): SyncCapabilities {
     bodyFetchState: () => refuse("bodyFetchState"),
     listIndexedGithubRepos: () => refuse("listIndexedGithubRepos"),
     prEnrichCandidates: () => refuse("prEnrichCandidates"),
+    writeObsidianVault: () => refuse("writeObsidianVault"),
+    writeApiEndpointsForSpec: () => refuse("writeApiEndpointsForSpec"),
     upsertBlameLines: () => refuse("upsertBlameLines"),
     pruneBlameForFile: () => refuse("pruneBlameForFile"),
     upsertItem: () => refuse("upsertItem"),
