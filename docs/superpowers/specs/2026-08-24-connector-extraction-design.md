@@ -17,16 +17,51 @@ order of importance:
    path-resolving gates and 209 connector test files.
 3. **Monorepo hygiene** — the gateway repo gets smaller and faster to navigate.
 
-Goal 2 is why this design takes the **fat move** (§4). A thin extraction would deliver 1 and 3 and
-leave "add a connector" as majority-gateway work, which is most of what makes it slow today.
+**Goal 2 is only partly delivered, and that is now a deliberate choice.** This design originally
+took the **fat move** — relocating the per-service sync and mapping code too — precisely so that
+"add a connector" would stop being majority-gateway work. §11's pre-registered condition then fired
+against it (see §4a), and the boundary is now **thin**. Adding a connector still touches both
+repos.
 
 ## 2. Decisions already taken
 
 | Decision | Choice | Consequence |
 | --- | --- | --- |
+| **Destination repo** | **`nimbus-agent/nimbus-mcp-servers`** — no new repo | It already exists for exactly this and has been an empty scaffold since 2026-06-18. See §2a. |
 | Package granularity | **One package**, `@nimbus-dev/connectors`, with a launcher | One version, one release, one changelog. `shared/` never crosses a package boundary, which deletes §12's largest objection outright. |
-| Repo boundary | **Fat** — sync and mapping move too | A connector becomes self-contained. Requires the injection design in §5. |
+| Repo boundary | **Thin** — only the MCP tool surface moves | Reversed from fat on the evidence in §4a. Sync/mapping stay in the gateway, so `SyncContext` stays an INTERNAL interface rather than a published contract. |
 | Entry point | `npx @nimbus-dev/connectors <connector-id>` | Single discoverable command. |
+
+## 2a. The destination already exists — and this design nearly missed it
+
+An earlier draft of this section said "its own repo" and named none, because it was written without
+checking the organisation first. That was a real gap: **`nimbus-agent/nimbus-mcp-servers`** was
+created on 2026-06-18 for precisely this purpose — *"Standalone MCP servers from Nimbus connectors,
+usable by any MCP client"* — and has sat empty ever since. Creating `nimbus-connectors` alongside it
+would have left two repos with one purpose and no way to tell which was real.
+
+The organisation has **20 repos, six of them scaffolds from that same 2026-06-18 batch**
+(`nimbus-mcp-servers`, `nimbus-connector-registry`, `nimbus-statuspage`, `nimbus-raycast`,
+`nimbus-recipes`, `nimbus-benchmarks`), none built. Project A is not "add a repo"; it is **filling
+in one that already exists**. The other five deserve a build-or-archive decision on their own
+schedule — `nimbus-connector-registry` in particular overlaps the S3 marketplace row and may be a
+real destination rather than dead weight.
+
+**That scaffold's README is stale in a way that misleads.** It still says *"Status: SCAFFOLD — not
+yet built"* and lists "the decision to make first" — share-vs-vendor-vs-fork, the credential model
+outside the Vault, and the AGPL implications for downstream clients. All three were answered by
+Project B and shipped in #1318 / #1321: the connectors are consent-gated standalone, credentials
+come from the environment, and `mcp-connectors/NOTICE` states the security tiering. Its "candidate
+first connectors: github, linear" is overtaken too — all 94 are standalone-eligible. Refreshing it
+is part of this work, not a follow-up, because a reader today is told the project is blocked on
+questions that are closed.
+
+**One packaging conflict, resolved deliberately rather than quietly.** That README proposes
+`npx @nimbus/mcp-github` — a package per connector. This design chooses ONE package. The scaffold is
+the older statement of intent, so the override is recorded here rather than left implicit: 94
+packages means 94 releases and 94 changelogs, and it forces `shared/` to become a versioned
+dependency that 166 files currently import by relative path. The discovery argument that motivated
+per-connector packages is also weaker than it looks — see the discovery note below.
 
 **Discovery note.** A single package is weaker on npm search than 94 packages would be. That
 matters less than it appears: MCP servers are discovered through the **MCP Registry**, where this
@@ -52,16 +87,47 @@ loaded gun; §9 disarms it.
 
 ## 4. What moves, and what does not
 
-**Moves to the connector repo:**
+## 4a. Why the boundary reversed from fat to thin
+
+§11 of the first draft pre-registered the condition that would make the fat move wrong:
+
+> If step 3 shows `SyncContext` needs more than roughly a dozen members, the sync code is more
+> entangled with the gateway than the census suggests, and the thin move becomes correct.
+
+**It needs 19.** Plan 1 shipped (#1333) and the final count is in `sync/sync-capabilities.ts`.
+Six of the nineteen serve only one or two connectors each — `prEnrichCandidates` and
+`itemMetadata` are GitHub-only, `listIndexedMetadataValues` serves CircleCI, GitHub Actions and
+GitLab, `writeObsidianVault` and `writeApiEndpointsForSpec` serve one connector apiece.
+
+Under the fat move those nineteen become a **published SDK contract**: third parties depend on
+them, we version them, and every future capability is a breaking-change decision made in public.
+Under the thin move they stay internal and free to change. That is the whole difference, and it is
+not a small one for an interface that grew from five to nineteen inside a single plan.
+
+**The narrowing was not wasted work, and this reversal does not diminish it.** Plan 1's value was
+never the extraction — it was that `ctx.vault` went from 83 users to zero, so a connector can no
+longer read another connector's credentials. That shipped, it is enforced by static rule D24, and
+it stands whether or not a single file ever moves repositories.
+
+**What this costs:** goal 2. A connector author still edits `<service>-sync.ts` and
+`<service>-mapping.ts` in the gateway repo. The honest framing is that the extraction delivers
+third-party distribution and monorepo hygiene, and improves contributor velocity only for the MCP
+tool surface.
+
+## 4b. What moves
+
+**Moves to `nimbus-agent/nimbus-mcp-servers`:**
 
 - `packages/mcp-connectors/**` — 188 source files, 209 test files, plus `shared/` and `standalone/`.
-- `packages/gateway/src/connectors/<service>-sync.ts` and `<service>-mapping.ts` — the per-service
-  sync intelligence, the bulk of the 351 files in that directory.
+  That is the whole move. Nothing under `packages/gateway/src/` relocates.
 
 **Stays in the gateway, deliberately:**
 
-- Every security-invariant enforcement site. Named explicitly because this is the risk the fat move
-  creates and the design's job is to neutralise it:
+- **`packages/gateway/src/connectors/<service>-sync.ts` and `<service>-mapping.ts`** — the
+  per-service sync intelligence, roughly 351 files. Under the fat boundary these moved; under thin
+  they do not, which is what keeps `SyncContext` an internal interface. §4a.
+- Every security-invariant enforcement site — unchanged by the reversal, and worth naming because
+  they are what a reader will check first:
   - `index/item-store.ts` — `upsertIndexedItemForSync`, the **V48/V49** body-depth chokepoint.
   - `db/write.ts` — **I14**.
   - `egress/sync-egress.ts` — **I29**'s per-run sync appender.
@@ -108,7 +174,7 @@ The static import surface, for completeness — accurate, but not the whole coup
 scoped capabilities.** The connector repo declares the interface; the gateway implements it.
 
 ```ts
-// @nimbus-dev/sdk — declared in the connector repo, implemented by the gateway
+// @nimbus-dev/sdk — declared in nimbus-mcp-servers, implemented by the gateway
 export interface SyncContext {
   // --- unchanged, already safe to expose ---
   logger: Logger;
@@ -267,7 +333,7 @@ Each step ends green and independently reviewable. No step both moves files and 
    land first even if A stalls.
 4. **Prove the seam** — `test:connector-boot` against a locally-packed tarball of the new package,
    before any repo exists.
-5. **Move** — create the repo, move files, rewrite the 84 references and five gates.
+5. **Move** — populate `nimbus-mcp-servers` (it exists, empty), move files, rewrite the path references and five gates.
 6. **Consume** — gateway depends on the published package; delete the monorepo copy **last**, only
    once step 4's gate is green against the published artifact.
 
@@ -297,9 +363,10 @@ by the existing test suite.
 
 Recorded so the decision can be revisited on evidence rather than sentiment:
 
-- If step 3 shows `SyncContext` needs more than roughly a dozen members, the sync code is more
-  entangled with the gateway than the census suggests, and the thin move becomes correct. Note the
-  first census was wrong in exactly this direction — it read static imports and missed the context —
-  so the bar for "one more member" should be suspicion, not accommodation.
+- ~~If step 3 shows `SyncContext` needs more than roughly a dozen members … the thin move becomes
+  correct.~~ **FIRED.** It needed 19; the boundary reversed to thin. Recorded in §4a. Worth noting
+  that this is the pre-registered condition working as intended: it was written before the count was
+  knowable and it changed the decision when the evidence arrived, rather than being explained away.
 - If the two-repo release sequence produces skew incidents in its first quarter despite the §8 gate,
-  the single-repo property was worth more than contributor velocity.
+  the single-repo property was worth more than contributor velocity — which the thin boundary now
+  only partly delivers anyway, making the single-repo option cheaper to fall back to.
