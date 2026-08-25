@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787684192557,
+  "lastUpdate": 1787692065916,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15911,6 +15911,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 252.240347449997,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "829db8c1499ac131f0f998084d94beefc0cdb046",
+          "message": "fix(init): --no-sync no longer ends by naming two commands that cannot work (#1341)\n\nFound by running the documented first run on a clean Windows sandbox\nagainst the\nreleased `v2.18.1` binary, with `APPDATA` / `LOCALAPPDATA` /\n`NIMBUS_CONFIG_DIR` and the\npipe name all redirected so nothing touched the real data dir.\n\n## The first-run defect\n\n`nimbus init --no-sync` exits 0 and prints:\n\n```\nNext:\n  nimbus connector sync filesystem\n  nimbus why <file>:<line>\n```\n\nBoth of those then fail:\n\n```\nGateway is not running. Start with: nimbus start\n```\n\n`--no-sync` returns `config-only` without ever starting a gateway, and\nthe guidance never\nsays so. A first run that succeeds and then names two commands that both\nexit 1 is worse\nthan one that ends silently.\n\n`nextStepLines` served two callers in genuinely different states — one\nhad just indexed\nthrough a live gateway, the other deliberately started nothing — and\ngave both the same\nlist. It now takes a **required** `gatewayRunning`, so a third caller is\na compile error\nrather than a silent wrong answer. Both directions are tested: `nimbus\nstart` is named\nwhen the gateway is down, and **not** named when it is up, so the fix\ncannot be satisfied\nby always printing it.\n\n**The documented path was never broken.** Plain `nimbus init` starts the\ngateway and\nindexes, and `nimbus why` then renders a real `## Authorship` section.\nThat was verified\nin the same sandbox and is Gate 1's Windows row, which had never been\nrun.\n\n## The hero demo is pulled\n\nSame session, chasing the same command sequence, turned up something\nlarger. The README's\nanimated demo was rendered from a **fake-gateway** recording whose brief\nwas hand-written\nrather than captured:\n\n```\n| Lane | Evidence |\n| Commit | a1b2c3d — harden token check |\n| Pull request | #214 — Reject empty bearer tokens |\n| Ticket | AUTH-88 — Empty token accepted on /session |\n| Incident | INC-31 — auth bypass reported by on-call |\n```\n\n`Lane | Evidence` appears in **exactly one file in this repository** —\nits own fixture —\nand nowhere in production source. The real `nimbus why` emits `# Why`\nthen `## Authorship`\nthen `## Gaps`. So the front page showed a format the product has never\nproduced, citing a\nPR, ticket and incident that do not exist, and omitting the `## Gaps`\ndisclosures the real\nbrief carries. The recorded command sequence is the failing one above.\n\nThe second demo, `incident-response`, is the same shape — `##\nInvestigation` with a p95\nthat rose 120ms to 380ms — and `## Investigation` is likewise in no\nproduction file. It\nwas never embedded anywhere.\n\nSo: the `<picture>` block is removed, and so is the `Watch the 15-second\ncast` link, which\npointed at the same recording on asciinema.org. **That upload is still\nlive and returns\nHTTP 200** — removing the link does not unpublish it, and it needs\ndeleting from the\naccount that owns it.\n\nNothing is deleted from the repo. The harness is working, tested\ninfrastructure that\nbecomes correct as soon as it is fed real captures; the defect is that\nthe fixtures were\nwritten rather than recorded. Both demo scripts,\n`docs/assets/README.md`, and the README\nitself now carry the reason and the bar for restoring: **rebuild from\noutput captured\nagainst a real gateway.**\n\n## The gate caught the coupling\n\n`record-casts --check` went red the moment the `init` output changed,\nbecause the cast\nrecords that command — which is the gate working. The snapshot is\nupdated and now shows\nthe corrected guidance. `incident-response.cast` was reverted after\nre-recording rewrote\nonly its event timings, leaving the text byte-identical: pure churn that\nwould have made\nthis diff look like it touched an unrelated demo.\n\n## Verified\n\n- `bun run typecheck:no-docs` — exit 0\n- `bun run lint` — exit 0\n- `bun run record-casts` (check mode) — exit 0\n- `bun run preflight:fast` — PASSED\n- whole suite — see the run recorded in the PR checks\n\n## Not done\n\n- The asciinema.org upload cannot be removed from here; it needs the\nowning account.\n- The fixtures are marked, not rebuilt. A truthful demo needs a capture\nfrom a repo with\nGitHub, a ticket tracker and an incident tool actually synced — which\nonly a real\n  install can produce.\n- No CI gate yet compares a recording against real output. That is the\nthing that would\nstop this recurring, and it belongs with the rebuild rather than with\nthis fix.\n\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+          "timestamp": "2026-08-25T23:55:50+03:00",
+          "tree_id": "3465f80d376859ab7353a7f4e1d794cd85f00c94",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/829db8c1499ac131f0f998084d94beefc0cdb046"
+        },
+        "date": 1787692062991,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 323.7162721500023,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 324.75663180000413,
             "unit": "ms"
           }
         ]
