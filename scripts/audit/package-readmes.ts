@@ -49,7 +49,9 @@ async function discoverConnectors(
     const entries = await readdir(connectorsPath, { withFileTypes: true });
     const connectors: { path: string; tier: "public" | "internal" }[] = [];
     for (const entry of entries) {
-      if (entry.isDirectory() && entry.name !== "shared") {
+      // `node_modules` is not a connector, and once `packages/mcp-connectors` is a package in its
+      // own right it always has one — so this exclusion is permanent, not defensive.
+      if (entry.isDirectory() && entry.name !== "shared" && entry.name !== "node_modules") {
         connectors.push({ path: `packages/mcp-connectors/${entry.name}`, tier: "public" });
       }
     }

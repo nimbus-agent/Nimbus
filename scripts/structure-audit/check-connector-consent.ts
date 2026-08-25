@@ -160,7 +160,15 @@ export function checkConnectorConsent(
   // Per CONNECTOR, not per file: a connector's write registration lives in one of its files and
   // its verb literals may live in another.
   for (const name of readdirSync(join(root, "packages/mcp-connectors"), { withFileTypes: true })) {
-    if (!name.isDirectory() || name.name === "shared" || name.name === "standalone") continue;
+    // `node_modules` is excluded for the same reason `walk()` excludes it, and the exclusion
+    // becomes load-bearing once `packages/mcp-connectors` is a package in its own right: it then
+    // ALWAYS has one. Without this the audit reads a dependency directory as a connector, finds no
+    // manifest, and — because an unreadable manifest deliberately fails SAFE — reports it as a
+    // connector declaring ungated writes.
+    if (!name.isDirectory()) continue;
+    if (name.name === "shared" || name.name === "standalone" || name.name === "node_modules") {
+      continue;
+    }
     const rel = `packages/mcp-connectors/${name.name}/src/server.ts`;
     if (!connectorDeclaresWrite(root, rel)) continue;
     if (hardened.has(name.name)) continue;

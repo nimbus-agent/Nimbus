@@ -91,6 +91,30 @@ Expected: PASS, booting the SAME number of connectors as Step 1.
 
 **If it fails, stop and report.** The likely causes, in order: `bun build --compile` not embedding a bare-specifier dynamic import (the assumption under test); the `exports` map not resolving subpaths; or a connector reaching a file the package does not ship. Each is a design problem, not a packaging detail.
 
+- [ ] **Step 4a: RESULT — the assumption holds (recorded 2026-08-25)**
+
+Baseline, relative specifiers: `94 connectors — 89 answered, 5 refused without credentials, 0 failed`.
+Package specifiers, via a real installed tarball: **identical**. `bun build --compile` embeds a
+bare-specifier dynamic import as reliably as a relative one, so the extraction's central assumption
+is verified before anything moved.
+
+Two things the proof surfaced that the plan did not anticipate:
+
+- **`packages/mcp-connectors` cannot be a bun workspace member.** A workspace package may not
+  contain 94 other workspace packages; `bun install` silently reports "no changes" rather than
+  erroring. This does not affect the extraction — after the move it is not a workspace at all — but
+  it rules out workspace-linking as a shortcut for testing, which is why the tarball route in Step 3
+  is the only one that works.
+- **Two audits treat every directory as a connector**, and giving the folder a `package.json` gives
+  it a `node_modules`, which they then read as a connector. `check-connector-consent.ts` reports it
+  as declaring ungated writes — because an unreadable manifest deliberately fails SAFE — and
+  `package-readmes.ts` demands a README of it. Both fixed here; the exclusion is permanent, not
+  defensive, since the package will always have a `node_modules` after extraction.
+- **Seven scripts independently answer "which directories are connectors?"** and they disagree. Five
+  are naturally safe because they require `src/server.ts` or a manifest to EXIST; the two that broke
+  are the two where a missing file means something. A shared predicate would prevent the whole
+  class — worth doing, but as its own change rather than smuggled into the move.
+
 - [ ] **Step 5: Revert the generator to relative paths and commit only the flag**
 
 The flag stays; the default does not change until Task 6.

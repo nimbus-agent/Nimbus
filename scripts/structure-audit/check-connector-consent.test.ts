@@ -118,3 +118,23 @@ describe("the real repository", () => {
     expect(blocking).toEqual([]);
   });
 });
+
+describe("dependency directories are not connectors", () => {
+  test("node_modules under packages/mcp-connectors is skipped, not read as a connector", async () => {
+    // Once `packages/mcp-connectors` is a publishable package it always has a node_modules. An
+    // unreadable manifest fails SAFE by design, so without the skip that directory reports as a
+    // connector declaring ungated writes — a false positive that would block every PR.
+    const root = await fixture();
+    await manifest(root, []);
+    await writeFile(
+      join(root, "packages/mcp-connectors/evil/src/server.ts"),
+      "export const ok = 1;\n",
+    );
+    await mkdir(join(root, "packages/mcp-connectors/node_modules/some-dep"), { recursive: true });
+    await writeFile(
+      join(root, "packages/mcp-connectors/node_modules/some-dep/index.ts"),
+      "export const dep = 1;\n",
+    );
+    expect(checkConnectorConsent(root)).toEqual([]);
+  });
+});
