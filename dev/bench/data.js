@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787671538146,
+  "lastUpdate": 1787672267809,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15605,6 +15605,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 311.7748507499979,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c778e22d83ac005e1c5127ddd9e62fa7074f1382",
+          "message": "chore(deps): bump log from 0.4.33 to 0.4.34 in /packages/ui/src-tauri in the cargo-all-minor-patch group (#1330)\n\nBumps the cargo-all-minor-patch group in /packages/ui/src-tauri with 1\nupdate: [log](https://github.com/rust-lang/log).\n\nUpdates `log` from 0.4.33 to 0.4.34\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/rust-lang/log/releases\">log's\nreleases</a>.</em></p>\n<blockquote>\n<h2>0.4.34</h2>\n<h2>What's Changed</h2>\n<ul>\n<li>doc: Add context-logger utility to README by <a\nhref=\"https://github.com/alekseysidorov\"><code>@​alekseysidorov</code></a>\nin <a\nhref=\"https://redirect.github.com/rust-lang/log/pull/735\">rust-lang/log#735</a></li>\n<li>Add alloc support for boxed loggers by <a\nhref=\"https://github.com/malezjaa\"><code>@​malezjaa</code></a> in <a\nhref=\"https://redirect.github.com/rust-lang/log/pull/737\">rust-lang/log#737</a></li>\n</ul>\n<h2>New Contributors</h2>\n<ul>\n<li><a\nhref=\"https://github.com/alekseysidorov\"><code>@​alekseysidorov</code></a>\nmade their first contribution in <a\nhref=\"https://redirect.github.com/rust-lang/log/pull/735\">rust-lang/log#735</a></li>\n<li><a href=\"https://github.com/malezjaa\"><code>@​malezjaa</code></a>\nmade their first contribution in <a\nhref=\"https://redirect.github.com/rust-lang/log/pull/737\">rust-lang/log#737</a></li>\n</ul>\n<p><strong>Full Changelog</strong>: <a\nhref=\"https://github.com/rust-lang/log/compare/0.4.33...0.4.34\">https://github.com/rust-lang/log/compare/0.4.33...0.4.34</a></p>\n</blockquote>\n</details>\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/rust-lang/log/blob/master/CHANGELOG.md\">log's\nchangelog</a>.</em></p>\n<blockquote>\n<h2>[0.4.34] - 2026-08-22</h2>\n<h2>What's Changed</h2>\n<ul>\n<li>doc: Add context-logger utility to README by <a\nhref=\"https://github.com/alekseysidorov\"><code>@​alekseysidorov</code></a>\nin <a\nhref=\"https://redirect.github.com/rust-lang/log/pull/735\">rust-lang/log#735</a></li>\n<li>Add alloc support for boxed loggers by <a\nhref=\"https://github.com/malezjaa\"><code>@​malezjaa</code></a> in <a\nhref=\"https://redirect.github.com/rust-lang/log/pull/737\">rust-lang/log#737</a></li>\n</ul>\n<h2>New Contributors</h2>\n<ul>\n<li><a\nhref=\"https://github.com/alekseysidorov\"><code>@​alekseysidorov</code></a>\nmade their first contribution in <a\nhref=\"https://redirect.github.com/rust-lang/log/pull/735\">rust-lang/log#735</a></li>\n<li><a href=\"https://github.com/malezjaa\"><code>@​malezjaa</code></a>\nmade their first contribution in <a\nhref=\"https://redirect.github.com/rust-lang/log/pull/737\">rust-lang/log#737</a></li>\n</ul>\n<p><strong>Full Changelog</strong>: <a\nhref=\"https://github.com/rust-lang/log/compare/0.4.33...0.4.34\">https://github.com/rust-lang/log/compare/0.4.33...0.4.34</a></p>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/rust-lang/log/commit/8034743dd9d7f7583bd9a670271483d176130911\"><code>8034743</code></a>\nMerge pull request <a\nhref=\"https://redirect.github.com/rust-lang/log/issues/738\">#738</a>\nfrom rust-lang/cargo/0.4.34</li>\n<li><a\nhref=\"https://github.com/rust-lang/log/commit/7d1e24e3506d4ffa1badf6c9ea357779877adaf0\"><code>7d1e24e</code></a>\nprepare for 0.4.34 release</li>\n<li><a\nhref=\"https://github.com/rust-lang/log/commit/3b939b6714616dc32193c12019861c7c518c5edb\"><code>3b939b6</code></a>\nMerge pull request <a\nhref=\"https://redirect.github.com/rust-lang/log/issues/737\">#737</a>\nfrom malezjaa/master</li>\n<li><a\nhref=\"https://github.com/rust-lang/log/commit/b88266cfed8b287f8c35b2015808b09b056f61af\"><code>b88266c</code></a>\nAdd alloc support for boxed loggers</li>\n<li><a\nhref=\"https://github.com/rust-lang/log/commit/037d7a58f6ad184abb3afc4db81d37c43a5696ec\"><code>037d7a5</code></a>\ndoc: Add context-logger utility to README</li>\n<li>See full diff in <a\nhref=\"https://github.com/rust-lang/log/compare/0.4.33...0.4.34\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n\n[![Dependabot compatibility\nscore](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=log&package-manager=cargo&previous-version=0.4.33&new-version=0.4.34)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't\nalter it yourself. You can also trigger a rebase manually by commenting\n`@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits\nthat have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all\nof the ignore conditions of the specified dependency\n- `@dependabot ignore <dependency name> major version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's major version (unless you unignore this specific\ndependency's major version or upgrade to it yourself)\n- `@dependabot ignore <dependency name> minor version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's minor version (unless you unignore this specific\ndependency's minor version or upgrade to it yourself)\n- `@dependabot ignore <dependency name>` will close this group update PR\nand stop Dependabot creating any more for the specific dependency\n(unless you unignore this specific dependency or upgrade to it yourself)\n- `@dependabot unignore <dependency name>` will remove all of the ignore\nconditions of the specified dependency\n- `@dependabot unignore <dependency name> <ignore condition>` will\nremove the ignore condition of the specified dependency and ignore\nconditions\n\n\n</details>\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
+          "timestamp": "2026-08-25T18:28:46+03:00",
+          "tree_id": "d6c041bfe4d7dd48a68ac094c4595e4cfd44edf9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c778e22d83ac005e1c5127ddd9e62fa7074f1382"
+        },
+        "date": 1787672261715,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 258.5145049500017,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 257.05748430000057,
             "unit": "ms"
           }
         ]
