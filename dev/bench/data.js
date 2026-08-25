@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787679252109,
+  "lastUpdate": 1787679967861,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15775,6 +15775,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 311.417613100008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8edb94f6d178cd7479ffc4ec71e59e6fbe5a4d6a",
+          "message": "fix(jenkins): build headers with Headers so a hostile crumb cannot reach a prototype (#1336)\n\nClears the one open **security** finding on `main`, and the one code\nsmell that\n`#1327` left behind on the same subject. Two findings, opposite\nconclusions.\n\n## The BLOCKER was real, and `#1327` did not clear it\n\n`tssecurity:S6109` at `jenkins-api.ts` is a **taint** rule. `#1327`\nadded\n`isSafeHeaderName` and guarded the write at both the parse site and the\nsink, which does\nclose the vulnerability — but a taint analyser cannot see that an\narbitrary predicate\nsanitises, so it kept reporting.\n\nThis was checked rather than assumed. SonarCloud's analysis at 15:59\ntoday re-mapped the\nissue from line 112 to line **143**, which is the guarded code, so it\nwas re-analysed and\nre-flagged rather than left stale.\n\n`jenkinsPost` now builds a `Headers` instance and calls\n`headers.set(...)`. The crumb\nfield name is chosen by the **remote** Jenkins, so it is\nattacker-controlled on a hostile\nor compromised server, and writing it as `obj[name] = value` reaches\n`Object.prototype`\nthrough the `__proto__` accessor. A header map is not an object, so the\nclass of bug is\ngone **by construction** rather than behind a guard the analyser has to\ntrust.\n\n`isSafeHeaderName` stays in front of it deliberately. `Headers.set`\nvalidates names per\nRFC 7230 and **throws** on an invalid one — and a hostile crumb should\nmean \"no crumb\",\nnot a `TypeError` thrown out of `jenkinsPost`. The predicate also still\nguards the parse\nsite, where it decides the crumb is unusable in the first place.\n\nFive tests asserted on a plain object. They now assert\n`headers.get(...)` and\n`[...headers.keys()]`, which is the shape actually put on the wire — a\nstronger check\nthan the one they replaced.\n\n## The ReDoS report: measured linear, and the construct removed anyway\n\n`typescript:S8786` on the standalone launcher regex was a **true**\npositive before `#1327`\nand did not reproduce as a real defect after it. Measured rather than\nargued, because the\nprevious PR claimed it fixed:\n\n| input | time |\n| --- | --- |\n| 8,000 trailing letters | 0.078 ms |\n| 128,000 trailing letters | 0.270 ms |\n| 2,000 near-miss lines | 0.172 ms |\n| 8,000 near-miss lines | 0.733 ms |\n\nDoubling the input doubles the time — linear on V8.\n\nBounding the quantifier to `{0,40}` did **not** clear the rule, and that\nis the useful\ncorrection: `S8786` objects to the *shape* — a star immediately followed\nby a literal built\nfrom the same character class — not to the star being unbounded. Being\nlinear on this\nengine does not make the shape safe on engines that do backtrack.\n\nSo the construct is gone rather than re-argued. `registersWriteTool()`\nscans line by line\nwith `trimStart` / `startsWith` / `indexOf`; the only regex remaining is\n`/^[A-Za-z]*$/`,\nanchored at both ends with nothing following, which carries no ambiguity\nat all.\n\nThis is the third change to these seven lines, so the accepted language\nwas **proved, not\nassumed**: the old pattern and the new function were run side by side\nover every connector\nsource — **411 files, zero verdict differences**.\n`audit:connector-consent` decides which\nconnectors count as hardened from this, so a silent language change\nwould be worse than\nthe smell it replaced.\n\nNothing was marked \"won't fix\" and no suppression was added.\n\n## Verified\n\n- `bun run typecheck:no-docs` — exit 0\n- `bun run lint` — exit 0\n- `bun run preflight:fast` — PASSED\n- `bun run audit:connector-consent` — exit 0\n- whole suite — **20357 pass, 161 skip, 0 fail**\n\n## Not in this PR\n\n`typescript:S3776` in `sync/targeted-fetch.ts` — cognitive complexity 20\nagainst 15, from\nthe recent `U2a`/`U3a` egress work. Clearing it takes the project to\nzero open Sonar\nissues, but it is a refactor of freshly-shipped code and does not belong\ninside a security\nfix. Worth its own PR.\n\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+          "timestamp": "2026-08-25T20:26:07+03:00",
+          "tree_id": "33c03fd109e78b609b7dc7f7d3aa833a0e072c12",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8edb94f6d178cd7479ffc4ec71e59e6fbe5a4d6a"
+        },
+        "date": 1787679964856,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 320.04789720000116,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 319.61020009999993,
             "unit": "ms"
           }
         ]
