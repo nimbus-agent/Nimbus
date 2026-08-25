@@ -133,14 +133,22 @@ export async function jenkinsPost(
   authHeader: string,
   crumb: JenkinsCrumb | null,
 ): Promise<{ ok: boolean; status: number; text: string }> {
-  const headers: Record<string, string> = {
-    Authorization: authHeader,
-  };
-  // Guarded again at the sink, not only where the crumb is parsed: this function is exported and
-  // takes the crumb as an argument, so the write below must be safe for any caller, not only for
-  // one that went through `getJenkinsCrumb`.
+  // A `Headers` instance, NOT a plain object with a computed write.
+  //
+  // The crumb field name is chosen by the REMOTE Jenkins, so it is attacker-controlled on a hostile
+  // server. Writing it as `obj[name] = value` on an object literal reaches `Object.prototype`
+  // through the accessor for `__proto__` — the shape `tssecurity:S6109` exists to catch, and which
+  // it still reported against the guarded version of this code because a taint analyser cannot see
+  // that `isSafeHeaderName` sanitises.
+  //
+  // `Headers.set` cannot write a prototype: the name goes into the header map, never onto an
+  // object, so the class of bug is gone by construction rather than by a guard the analyser has to
+  // recognise. It also validates the name itself per RFC 7230 and THROWS on an invalid one, which
+  // is why `isSafeHeaderName` stays in front of it — a hostile crumb should mean "no crumb", not a
+  // thrown TypeError out of `jenkinsPost`.
+  const headers = new Headers({ Authorization: authHeader });
   if (crumb !== null && isSafeHeaderName(crumb.field)) {
-    headers[crumb.field] = crumb.value;
+    headers.set(crumb.field, crumb.value);
   }
   const res = await fetch(url, { method: "POST", headers });
   const text = await res.text();

@@ -102,8 +102,17 @@ function codeOnly(src: string): string {
  * out on `standalone/src/launcher.ts`'s copy: `\s` matches a newline, so under `/m` a run of n
  * newlines gave n start positions each able to consume the whole run — quadratic. Same matched
  * language, linear time. Change both copies together.
+ *
+ * The {0,40} bound is not decoration. An UNBOUNDED [A-Za-z]* immediately followed by the
+ * literal WriteTool, whose characters are themselves in [A-Za-z], is the shape
+ * typescript:S8786 flags: the star and the literal compete for the same characters.
+ * Measured on V8 it is linear -- 8k to 128k trailing letters ran 0.078 ms to 0.270 ms,
+ * doubling with the input -- so that report was a FALSE POSITIVE rather than a live ReDoS.
+ * A bounded quantifier is provably linear instead of measurably linear, and costs nothing:
+ * the longest real middle segment is "Onedrive" at 8 characters, against a bound of 40.
  */
-const WRITE_CALL_RE = /^[^\S\r\n]*register[A-Za-z]*WriteTool\(|^[^\S\r\n]*registerWriteTool,$/m;
+const WRITE_CALL_RE =
+  /^[^\S\r\n]*register[A-Za-z]{0,40}WriteTool\(|^[^\S\r\n]*registerWriteTool,$/m;
 
 /** `packages/mcp-connectors/<name>/...` → `<name>`. */
 function connectorOf(rel: string): string {

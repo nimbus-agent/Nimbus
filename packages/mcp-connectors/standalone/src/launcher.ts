@@ -17,8 +17,17 @@ const ID_RE = /^[a-z0-9-]+$/;
  * cross a line terminator bounds each attempt to that line's own indentation, which is linear (the
  * same inputs: 0.08ms and 0.9ms). The set of strings matched is unchanged — a position `\s*` could
  * only reach by spanning newlines is reachable from the following line start anyway.
+ *
+ * The {0,40} bound is not decoration. An UNBOUNDED [A-Za-z]* immediately followed by the
+ * literal WriteTool, whose characters are themselves in [A-Za-z], is the shape
+ * typescript:S8786 flags: the star and the literal compete for the same characters.
+ * Measured on V8 it is linear -- 8k to 128k trailing letters ran 0.078 ms to 0.270 ms,
+ * doubling with the input -- so that report was a FALSE POSITIVE rather than a live ReDoS.
+ * A bounded quantifier is provably linear instead of measurably linear, and costs nothing:
+ * the longest real middle segment is "Onedrive" at 8 characters, against a bound of 40.
  */
-const WRITE_CALL_RE = /^[^\S\r\n]*register[A-Za-z]*WriteTool\(|^[^\S\r\n]*registerWriteTool,$/m;
+const WRITE_CALL_RE =
+  /^[^\S\r\n]*register[A-Za-z]{0,40}WriteTool\(|^[^\S\r\n]*registerWriteTool,$/m;
 
 function connectorsDir(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
