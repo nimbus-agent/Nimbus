@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   clampSyncTitle,
   syncPassCursorHttpEmpty,
@@ -75,7 +74,7 @@ export function createNewrelicSyncable(options: NewrelicSyncableOptions): Syncab
           continue;
         }
         const title = name ?? ext;
-        upsertIndexedItemForSync(ctx, {
+        ctx.upsertItem({
           service: SERVICE_ID,
           type: "application",
           externalId: ext,

@@ -1,4 +1,4 @@
-import { type IndexedItemBodyInput, upsertIndexedItemForSync } from "../index/item-store.ts";
+import type { IndexedItemBodyInput } from "../index/item-store.ts";
 import { stripQuotedTail } from "../string/email-quoted-text.ts";
 import { plainTextFromHtmlLines } from "../string/html-plain-text-lines.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
@@ -86,7 +86,7 @@ function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
         })
       : null;
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "email",
     externalId: id,

@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { mapPowerBiReportToItem } from "./powerbi-dashboard-mapping.ts";
 import { listConnectorItems } from "./warehouse-sync-transport.ts";
@@ -26,7 +25,7 @@ export function createPowerBiSyncable(): Syncable {
       for (const report of raw) {
         const mapped = mapPowerBiReportToItem(report, { syncedAt: now });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

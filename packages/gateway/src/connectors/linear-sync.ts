@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -232,7 +231,7 @@ function linearUpsertSingleIssue(
   const creatorEmail = creator === undefined ? undefined : stringField(creator, "email");
   const creatorName = creator === undefined ? undefined : stringField(creator, "name");
   const authorId = resolveLinearIssueAuthorId(ctx, creatorEmail, creatorId, creatorName);
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "issue",
     externalId: identifier,

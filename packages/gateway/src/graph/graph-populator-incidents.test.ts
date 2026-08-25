@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { EMPTY_NIMBUS_VAULT, syncTestContext } from "../connectors/connector-sync-test-helpers.ts";
 import { syncPagerdutyIncidentItems } from "../connectors/pagerduty-sync.ts";
 import { mapVercelDeploymentToItem } from "../connectors/vercel-deployment-mapping.ts";
-import { upsertIndexedItem, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
@@ -483,10 +483,15 @@ const CHECKOUT_SERVICE_CONFIG: ServiceConfig = {
 };
 
 function ctxWithResolver(db: Database, configs: Map<string, ServiceConfig>): SyncContext {
-  return {
-    ...syncTestContext(db, EMPTY_NIMBUS_VAULT),
-    resolveServiceId: buildServiceIdentityResolver(configs),
-  };
+  // resolveServiceId goes THROUGH the builder: `upsertItem` closes over it, so setting it on the
+  // result afterwards would leave the capability using the old value — the same trap as `depth`.
+  return syncTestContext(
+    db,
+    EMPTY_NIMBUS_VAULT,
+    "pagerduty",
+    "full",
+    buildServiceIdentityResolver(configs),
+  );
 }
 
 test("a PagerDuty incident (pagerduty_service_id) and a Vercel deployment (repo) bind to the same nimbus service via resolveServiceId and correlate", () => {
@@ -532,7 +537,7 @@ test("a PagerDuty incident (pagerduty_service_id) and a Vercel deployment (repo)
   };
   const mapped = mapVercelDeploymentToItem(deploymentRaw, { syncedAt: t });
   if (mapped === null) throw new Error("mapVercelDeploymentToItem returned null");
-  upsertIndexedItemForSync(ctx, mapped);
+  ctx.upsertItem(mapped);
 
   expect(correlations(db)).toEqual([
     { from: "deployment:vercel:dpl_123", to: "incident:pagerduty:PD-1" },
@@ -544,7 +549,9 @@ test("without resolveServiceId wired, the same PagerDuty/Vercel pair emits no co
   const t = Date.now();
   // No `resolveServiceId` on the context: exercises the pre-fix production
   // shape, `syncTestContext` builds a SyncContext with the field absent.
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  // Bound, but with NO resolver — the point of these two tests is the absent resolver, not an
+  // absent capability.
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "pagerduty");
 
   const incidentRaw = {
     id: "PD-1",
@@ -567,7 +574,7 @@ test("without resolveServiceId wired, the same PagerDuty/Vercel pair emits no co
   };
   const mapped = mapVercelDeploymentToItem(deploymentRaw, { syncedAt: t });
   if (mapped === null) throw new Error("mapVercelDeploymentToItem returned null");
-  upsertIndexedItemForSync(ctx, mapped);
+  ctx.upsertItem(mapped);
 
   expect(correlations(db)).toEqual([]);
 });
@@ -575,10 +582,12 @@ test("without resolveServiceId wired, the same PagerDuty/Vercel pair emits no co
 test("fallback preserved: with no resolver supplied, metadata.service still correlates exactly as before", () => {
   const db = freshDb();
   const t = Date.now();
-  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  // Bound, but with NO resolver — the point of these two tests is the absent resolver, not an
+  // absent capability.
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "pagerduty");
   expect(ctx.resolveServiceId).toBeUndefined();
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "github",
     type: "deployment",
     externalId: "deploy-fallback",
@@ -588,7 +597,7 @@ test("fallback preserved: with no resolver supplied, metadata.service still corr
     syncedAt: t,
     metadata: { service: "checkout" },
   });
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "pagerduty",
     type: "incident",
     externalId: "PD-fallback",
@@ -638,7 +647,7 @@ test("I-1: a Vercel preview deployment does not correlate, but a production depl
   };
   const previewMapped = mapVercelDeploymentToItem(previewRaw, { syncedAt: t });
   if (previewMapped === null) throw new Error("mapVercelDeploymentToItem returned null");
-  upsertIndexedItemForSync(ctx, previewMapped);
+  ctx.upsertItem(previewMapped);
 
   const prodRaw = {
     uid: "dpl_prod",
@@ -650,7 +659,7 @@ test("I-1: a Vercel preview deployment does not correlate, but a production depl
   };
   const prodMapped = mapVercelDeploymentToItem(prodRaw, { syncedAt: t });
   if (prodMapped === null) throw new Error("mapVercelDeploymentToItem returned null");
-  upsertIndexedItemForSync(ctx, prodMapped);
+  ctx.upsertItem(prodMapped);
 
   expect(correlations(db)).toEqual([
     { from: "deployment:vercel:dpl_prod", to: "incident:pagerduty:PD-1" },
@@ -667,7 +676,7 @@ test("F2: a deployment with no environment signal at all does not correlate (fai
   const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
   const ctx = ctxWithResolver(db, configs);
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "github",
     type: "deployment",
     externalId: "deploy-no-env-signal",
@@ -677,7 +686,7 @@ test("F2: a deployment with no environment signal at all does not correlate (fai
     syncedAt: t,
     metadata: { repo: "acme/checkout" },
   });
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "pagerduty",
     type: "incident",
     externalId: "PD-no-env-signal",
@@ -700,7 +709,7 @@ test("F2: a deployment with an explicit production environment still correlates"
   const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
   const ctx = ctxWithResolver(db, configs);
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "github",
     type: "deployment",
     externalId: "deploy-with-env-signal",
@@ -710,7 +719,7 @@ test("F2: a deployment with an explicit production environment still correlates"
     syncedAt: t,
     metadata: { repo: "acme/checkout", environment: "prod" },
   });
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "pagerduty",
     type: "incident",
     externalId: "PD-with-env-signal",
@@ -745,7 +754,7 @@ test("F1: a Vercel preview deployment carrying metadata.service does not correla
   const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
   const ctx = ctxWithResolver(db, configs);
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "vercel",
     type: "deployment",
     externalId: "dpl_preview",
@@ -755,7 +764,7 @@ test("F1: a Vercel preview deployment carrying metadata.service does not correla
     syncedAt: t,
     metadata: { repo: "acme/checkout", target: "preview", service: "checkout" },
   });
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "pagerduty",
     type: "incident",
     externalId: "PD-f1",
@@ -777,7 +786,7 @@ test("F1: a deployment resolveServiceId can't claim (unknown) still falls back t
   const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
   const ctx = ctxWithResolver(db, configs);
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "github",
     type: "deployment",
     externalId: "deploy-unknown-binding",
@@ -787,7 +796,7 @@ test("F1: a deployment resolveServiceId can't claim (unknown) still falls back t
     syncedAt: t,
     metadata: { service: "other-service" },
   });
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "pagerduty",
     type: "incident",
     externalId: "PD-unknown-binding",

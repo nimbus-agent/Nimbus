@@ -1,5 +1,4 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -249,7 +248,7 @@ async function upsertTablesPage(
     const source = await resolveTableSource(ctx, token, project, datasetId, entry, state);
     const mapped = mapBigqueryTableToItem(source, { project, syncedAt: now });
     if (mapped !== null) {
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       state.upserted += 1;
     }
   }

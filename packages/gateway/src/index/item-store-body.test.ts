@@ -1,8 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import type { SyncContext } from "../sync/types.ts";
 import { BODY_MAX_PROSE } from "./body-caps.ts";
+import type { UpsertSyncDeps } from "./item-store.ts";
 import {
   selectItemBodyFetchState,
   upsertIndexedItem,
@@ -200,10 +199,10 @@ test("selectItemBodyFetchState returns null for an unknown id", () => {
   d.close();
 });
 
-function ctxAt(d: Database, depth: "metadata_only" | "summary" | "full") {
-  // Minimal SyncContext for the store call — mirror the shape the file's
-  // neighbours use; only db + depth are read by upsertIndexedItemForSync.
-  return { db: d, depth } as unknown as SyncContext;
+function ctxAt(d: Database, depth: "metadata_only" | "summary" | "full"): UpsertSyncDeps {
+  // `UpsertSyncDeps` is now exactly what the store call needs, so this no longer has to lie with a
+  // cast about being a whole SyncContext.
+  return { db: d, depth };
 }
 
 test("metadata_only writes no body even when the connector passes body:", () => {
@@ -285,7 +284,8 @@ test("an unrecognised depth passes the body through rather than clamping it", ()
   // to 512 characters. `imap-sync-core.test.ts`'s `fakeCtx()` casts past the
   // required field, so a shape like this really can reach the chokepoint.
   const d = db();
-  const unknownDepthCtx = { db: d } as unknown as SyncContext;
+  // A deps object with NO depth at all — the pass-through arm.
+  const unknownDepthCtx = { db: d } as unknown as UpsertSyncDeps;
   upsertIndexedItemForSync(unknownDepthCtx, {
     ...base,
     externalId: "u1",

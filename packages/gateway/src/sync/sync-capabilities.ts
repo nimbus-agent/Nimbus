@@ -2,8 +2,8 @@ import type { Database } from "bun:sqlite";
 
 import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
 import { type ConnectorSecretKeyOf, readConnectorSecret } from "../connectors/connector-vault.ts";
-import { listGithubReposFromIndex } from "../connectors/github-index-repos.ts";
 import { type FallbackPrCandidate, selectPrEnrichCandidates } from "../connectors/github-sync.ts";
+import { createServiceScopedVaultView } from "../connectors/service-scoped-vault-view.ts";
 import type { ResolveServiceId } from "../graph/graph-populator.ts";
 import { type ApiEndpointWrite, writeApiEndpointsForSpec } from "../index/api-endpoint-store.ts";
 import {
@@ -12,6 +12,7 @@ import {
   deleteItemByServiceExternal,
   type ItemBodyFetchState,
   indexedItemExists,
+  listDistinctMetadataValues,
   selectItemBodyFetchState,
   selectItemMetadataJson,
   upsertIndexedItemForSync,
@@ -19,6 +20,8 @@ import {
 import { type ObsidianNoteWrite, writeObsidianVault } from "../index/obsidian-notes-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
+import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
+import { selectPrFileCandidates } from "../prfiles/pr-file-fetch.ts";
 import { type BlameRow, pruneBlameForFile, upsertBlameLines } from "../security/blame-store.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { resolveAccessTokenForService } from "./access-token-registry.ts";
@@ -48,6 +51,10 @@ export const SHARED_CREDENTIAL_GRANTS = {
   cloud_logging: ["gcp"],
   vertex_ai: ["gcp"],
   github_actions: ["github"],
+  athena: ["aws"],
+  cloudwatch: ["aws"],
+  sagemaker: ["aws"],
+  aws: ["aws"],
 } as const satisfies Partial<Record<ConnectorServiceId, readonly ConnectorServiceId[]>>;
 
 function grantsFor(serviceId: ConnectorServiceId): readonly ConnectorServiceId[] {
@@ -76,6 +83,12 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
     family: F,
     keyName: ConnectorSecretKeyOf<F>,
   ): Promise<string | null>;
+  /**
+   * A vault view already scoped to ONE service, for the connector-session transport. Not a handle:
+   * `createServiceScopedVaultView` is the same scoping guarantee `getSecret` gives, expressed as an
+   * object because `withConnectorSession` takes one.
+   */
+  scopedVaultView(service: string): ReturnType<typeof createServiceScopedVaultView>;
   /** The V48/V49 body-depth chokepoint, unmoved — this only routes to it. */
   upsertItem(row: BodyRow): void;
   /**
@@ -98,8 +111,12 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
   itemMetadata(itemId: string): string | null;
   /** Body-fetch state for one item, for connectors that decide whether to re-fetch a body. */
   bodyFetchState(itemId: string): ItemBodyFetchState | null;
-  /** Distinct GitHub repos already in the index — CircleCI and GitHub Actions scope their sync. */
-  listIndexedGithubRepos(): string[];
+  /**
+   * Distinct non-empty values of one `metadata` key across a service's items — GitHub's `$.repo`
+   * for CircleCI and GitHub Actions, GitLab's `$.project` for its pipelines. One member rather than
+   * one per connector, because the two queries were byte-identical apart from the key.
+   */
+  listIndexedMetadataValues(service: string, metadataKey: string): string[];
   /** PR rows still missing enrichment. GitHub-only, and the narrowest member here. */
   prEnrichCandidates(limit: number): FallbackPrCandidate[];
   /**
@@ -120,6 +137,10 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
     readonly keepIds: ReadonlySet<string>;
     readonly syncedAt: number;
   }): { upserted: number; deleted: number };
+  /** PR rows whose changed-file list has not been fetched yet (S1-B, V55). */
+  prFileCandidates(service: string, limit: number): ReturnType<typeof selectPrFileCandidates>;
+  /** Records one PR's changed files. */
+  recordPrChangedFiles(input: Parameters<typeof recordPrChangedFiles>[1]): void;
   upsertBlameLines(repoRoot: string, filePath: string, rows: readonly BlameRow[]): void;
   pruneBlameForFile(repoRoot: string, filePath: string): void;
 }
@@ -153,6 +174,7 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
 ): SyncCapabilities<S> {
   return {
     getSecret: (keyName) => readConnectorSecret(deps.vault, serviceId, keyName),
+    scopedVaultView: (service) => createServiceScopedVaultView(deps.vault, service),
     getSharedSecret: (family, keyName) => {
       if (!grantsFor(serviceId).includes(family)) {
         throw new Error(
@@ -174,10 +196,14 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     itemExists: (itemId) => indexedItemExists(deps.db, itemId),
     itemMetadata: (itemId) => selectItemMetadataJson(deps.db, itemId),
     bodyFetchState: (itemId) => selectItemBodyFetchState(deps.db, itemId),
-    listIndexedGithubRepos: () => listGithubReposFromIndex(deps.db),
+    listIndexedMetadataValues: (service, key) => listDistinctMetadataValues(deps.db, service, key),
     prEnrichCandidates: (limit) => selectPrEnrichCandidates(deps.db, limit),
     writeObsidianVault: (input) => writeObsidianVault(deps, input),
     writeApiEndpointsForSpec: (input) => writeApiEndpointsForSpec(deps, input),
+    prFileCandidates: (service, limit) => selectPrFileCandidates(deps.db, service, limit),
+    recordPrChangedFiles: (input) => {
+      recordPrChangedFiles(deps.db, input);
+    },
     upsertBlameLines: (repoRoot, filePath, rows) => {
       upsertBlameLines(deps.db, repoRoot, filePath, rows);
     },
@@ -238,16 +264,19 @@ export function unboundSyncCapabilities(): SyncCapabilities {
   return {
     getSecret: () => refuse("getSecret"),
     getSharedSecret: () => refuse("getSharedSecret"),
+    scopedVaultView: () => refuse("scopedVaultView"),
     accessToken: () => refuse("accessToken"),
     deleteItem: () => refuse("deleteItem"),
     countItems: () => refuse("countItems"),
     itemExists: () => refuse("itemExists"),
     itemMetadata: () => refuse("itemMetadata"),
     bodyFetchState: () => refuse("bodyFetchState"),
-    listIndexedGithubRepos: () => refuse("listIndexedGithubRepos"),
+    listIndexedMetadataValues: () => refuse("listIndexedMetadataValues"),
     prEnrichCandidates: () => refuse("prEnrichCandidates"),
     writeObsidianVault: () => refuse("writeObsidianVault"),
     writeApiEndpointsForSpec: () => refuse("writeApiEndpointsForSpec"),
+    prFileCandidates: () => refuse("prFileCandidates"),
+    recordPrChangedFiles: () => refuse("recordPrChangedFiles"),
     upsertBlameLines: () => refuse("upsertBlameLines"),
     pruneBlameForFile: () => refuse("pruneBlameForFile"),
     upsertItem: () => refuse("upsertItem"),

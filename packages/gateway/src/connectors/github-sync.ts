@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey } from "../index/item-store.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
 import { mapGithubPrFiles } from "../prfiles/pr-file-mapping.ts";
@@ -327,7 +327,7 @@ export function upsertPr(
     extractPrMetadataForIndex(repoFull, pr, now),
     externalId,
   );
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "pr",
     externalId,
@@ -376,7 +376,7 @@ function upsertReview(
   const modified = submitted === undefined ? now : Date.parse(submitted);
   const htmlUrl = stringField(review, "html_url");
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "review",
     externalId: githubReviewExternalId(repoFull, prNum, reviewId),
@@ -422,7 +422,7 @@ function upsertFromIssue(
     user: login,
   };
   const externalId = `${repoFull}#issue-${String(num)}`;
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "issue",
     externalId,

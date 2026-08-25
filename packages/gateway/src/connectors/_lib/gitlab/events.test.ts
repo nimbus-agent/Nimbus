@@ -110,7 +110,7 @@ describeWithFetchRestore("syncGitlabEventsPages — MergeRequest event", () => {
   test("upserts a MergeRequest event into the DB", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({});
-    const ctx = syncTestContext(db, vault);
+    const ctx = syncTestContext(db, vault, "gitlab");
 
     const event = makeMrEvent();
     globalThis.fetch = (() =>
@@ -142,7 +142,7 @@ describeWithFetchRestore("syncGitlabEventsPages — MergeRequest event", () => {
 describeWithFetchRestore("syncGitlabEventsPages — Issue event", () => {
   test("upserts an Issue event into the DB", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const event = makeIssueEvent();
     globalThis.fetch = (() =>
@@ -176,7 +176,7 @@ describeWithFetchRestore("syncGitlabEventsPages — Issue event", () => {
 describeWithFetchRestore("processEvent — unknown targetType is skipped", () => {
   test("event with unknown target_type is not upserted", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeMrEvent({ target_type: "Commit" }); // not MergeRequest or Issue
@@ -201,7 +201,7 @@ describeWithFetchRestore("processEvent — unknown targetType is skipped", () =>
 describeWithFetchRestore("processEvent — missing project field is skipped", () => {
   test("event without project field is not upserted", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeMrEvent({ project: undefined });
@@ -225,7 +225,7 @@ describeWithFetchRestore("processEvent — missing project field is skipped", ()
 describeWithFetchRestore("processEvent — project is a non-object primitive", () => {
   test("event where project is a string (asRecord returns undefined) is skipped", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeMrEvent({ project: "not-an-object" });
@@ -249,7 +249,7 @@ describeWithFetchRestore("processEvent — project is a non-object primitive", (
 describeWithFetchRestore("processEvent — missing target_iid is skipped", () => {
   test("event without target_iid is not upserted", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     // target_iid must be a number — set to undefined
@@ -275,7 +275,7 @@ describeWithFetchRestore("processEvent — missing target_iid is skipped", () =>
 describeWithFetchRestore("processEvent — empty path_with_namespace is skipped", () => {
   test("event with empty path_with_namespace is not upserted", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeMrEvent({ project: { path_with_namespace: "" } });
@@ -303,7 +303,7 @@ describeWithFetchRestore("processEvent — empty path_with_namespace is skipped"
 describeWithFetchRestore("MR event — author_username absent → null authorId", () => {
   test("MR without author_username resolves to null authorId", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeMrEvent({ author_username: undefined, author_name: undefined });
@@ -331,7 +331,7 @@ describeWithFetchRestore("MR event — author_username absent → null authorId"
 describeWithFetchRestore("MR event — empty author_username → null authorId", () => {
   test("MR with empty-string author_username resolves to null authorId", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeMrEvent({ author_username: "" });
@@ -360,7 +360,7 @@ describeWithFetchRestore(
   () => {
     test("MR with author_username but no author_name uses username as displayName", async () => {
       const db = createMemoryIndexDb();
-      const ctx = syncTestContext(db, createStubVault({}));
+      const ctx = syncTestContext(db, createStubVault({}), "gitlab");
       const now = Date.now();
 
       const event = makeMrEvent({ author_username: "charlie", author_name: undefined });
@@ -394,7 +394,7 @@ describeWithFetchRestore(
 describeWithFetchRestore("MR event — title longer than 512 chars is truncated", () => {
   test("title > 512 characters is truncated to 512", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const longTitle = "A".repeat(600);
@@ -426,7 +426,7 @@ describeWithFetchRestore("MR event — title longer than 512 chars is truncated"
 describeWithFetchRestore("MR event — invalid created_at falls back to now", () => {
   test("MR with unparseable created_at uses current time as modifiedAt", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const t0 = Date.now();
 
     const event = makeMrEvent({ created_at: "not-a-date" });
@@ -458,7 +458,7 @@ describeWithFetchRestore("MR event — invalid created_at falls back to now", ()
 describeWithFetchRestore("Issue event — title longer than 512 chars is truncated", () => {
   test("Issue title > 512 chars is truncated to 512", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const longTitle = "B".repeat(700);
@@ -486,7 +486,7 @@ describeWithFetchRestore("Issue event — title longer than 512 chars is truncat
 describeWithFetchRestore("Issue event — author_username absent → null authorId", () => {
   test("Issue without author_username resolves to null authorId", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeIssueEvent({ author_username: undefined });
@@ -514,7 +514,7 @@ describeWithFetchRestore("Issue event — author_username absent → null author
 describeWithFetchRestore("Issue event — invalid created_at falls back to now", () => {
   test("Issue with unparseable created_at uses current time as modifiedAt", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const t0 = Date.now();
 
     const event = makeIssueEvent({ created_at: "bad-date" });
@@ -545,7 +545,7 @@ describeWithFetchRestore("Issue event — invalid created_at falls back to now",
 describeWithFetchRestore("processEvent — target_title absent → falls back to '(no title)'", () => {
   test("MR event without target_title gets title '(no title)'", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const { target_title: _removed, ...rest } = makeMrEvent();
@@ -573,7 +573,7 @@ describeWithFetchRestore("processEvent — target_title absent → falls back to
 describeWithFetchRestore("processEvent — created_at absent → uses generated ISO string", () => {
   test("MR event without created_at uses now-based ISO for modified_at", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const t0 = Date.now();
 
     const { created_at: _removed, ...rest } = makeMrEvent();
@@ -606,7 +606,7 @@ describeWithFetchRestore("processEvent — created_at absent → uses generated 
 describeWithFetchRestore("gitlabApplyEventsPage — non-record array items are skipped", () => {
   test("array items that are not objects are skipped (asRecord returns undefined)", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     // mix: one primitive, one valid event
@@ -631,7 +631,7 @@ describeWithFetchRestore("gitlabApplyEventsPage — non-record array items are s
 describeWithFetchRestore("gitlabApplyEventsPage — created_at advances newestIso", () => {
   test("newestIso advances when event created_at is newer than floor", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const newerDate = new Date(now - 600_000).toISOString(); // 10 min ago
@@ -661,7 +661,7 @@ describeWithFetchRestore(
   () => {
     test("newestIso stays at floor when all events are older", async () => {
       const db = createMemoryIndexDb();
-      const ctx = syncTestContext(db, createStubVault({}));
+      const ctx = syncTestContext(db, createStubVault({}), "gitlab");
       const now = Date.now();
 
       // floor is recent; event is older than the floor
@@ -694,7 +694,7 @@ describeWithFetchRestore(
 describeWithFetchRestore("gitlabFetchEventsPage — 429 throws and penalises", () => {
   test("429 response throws with message containing '429'", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     globalThis.fetch = (() =>
@@ -724,7 +724,7 @@ describeWithFetchRestore(
   () => {
     test("429 without retry-after header still throws", async () => {
       const db = createMemoryIndexDb();
-      const ctx = syncTestContext(db, createStubVault({}));
+      const ctx = syncTestContext(db, createStubVault({}), "gitlab");
       const now = Date.now();
 
       // No retry-after header → ra === null → sec defaults to 60
@@ -753,7 +753,7 @@ describeWithFetchRestore(
   () => {
     test("429 with non-numeric retry-after still throws", async () => {
       const db = createMemoryIndexDb();
-      const ctx = syncTestContext(db, createStubVault({}));
+      const ctx = syncTestContext(db, createStubVault({}), "gitlab");
       const now = Date.now();
 
       // retry-after = "abc" → parseInt returns NaN → isFinite(NaN) false → 60_000
@@ -783,7 +783,7 @@ describeWithFetchRestore(
 describeWithFetchRestore("gitlabFetchEventsPage — non-ok (500) throws", () => {
   test("500 response throws with status in message", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     globalThis.fetch = (() =>
@@ -808,7 +808,7 @@ describeWithFetchRestore("gitlabFetchEventsPage — non-ok (500) throws", () => 
 describeWithFetchRestore("gitlabFetchEventsPage — invalid JSON throws", () => {
   test("non-JSON body throws 'GitLab events: invalid JSON'", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     globalThis.fetch = (() =>
@@ -831,7 +831,7 @@ describeWithFetchRestore("gitlabFetchEventsPage — invalid JSON throws", () => 
 describeWithFetchRestore("gitlabFetchEventsPage — non-array JSON throws", () => {
   test("JSON object body throws 'GitLab events: expected array'", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     globalThis.fetch = (() =>
@@ -860,7 +860,7 @@ describeWithFetchRestore("gitlabFetchEventsPage — non-array JSON throws", () =
 describeWithFetchRestore("gitlabShouldContinuePaging — no x-next-page header stops paging", () => {
   test("response without x-next-page header → hasMore false, single page", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     globalThis.fetch = (() =>
@@ -886,7 +886,7 @@ describeWithFetchRestore(
   () => {
     test("response with empty x-next-page header → hasMore false", async () => {
       const db = createMemoryIndexDb();
-      const ctx = syncTestContext(db, createStubVault({}));
+      const ctx = syncTestContext(db, createStubVault({}), "gitlab");
       const now = Date.now();
 
       globalThis.fetch = (() =>
@@ -917,7 +917,7 @@ describeWithFetchRestore(
   () => {
     test("x-next-page equals current page number → hasMore false", async () => {
       const db = createMemoryIndexDb();
-      const ctx = syncTestContext(db, createStubVault({}));
+      const ctx = syncTestContext(db, createStubVault({}), "gitlab");
       const now = Date.now();
 
       // x-next-page = "1" (same as startPage=1) → nextPageRaw !== String(page) is false
@@ -947,7 +947,7 @@ describeWithFetchRestore(
 describeWithFetchRestore("gitlabShouldContinuePaging — empty items array stops paging", () => {
   test("empty items array with x-next-page header → hasMore false", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     // itemCount = 0 → hasNext is false even with a valid x-next-page
@@ -978,7 +978,7 @@ describeWithFetchRestore(
   () => {
     test("x-next-page 'abc' → parseInt returns NaN → stops paging", async () => {
       const db = createMemoryIndexDb();
-      const ctx = syncTestContext(db, createStubVault({}));
+      const ctx = syncTestContext(db, createStubVault({}), "gitlab");
       const now = Date.now();
 
       globalThis.fetch = (() =>
@@ -1007,7 +1007,7 @@ describeWithFetchRestore(
 describeWithFetchRestore("gitlabShouldContinuePaging — x-next-page zero stops paging", () => {
   test("x-next-page = '0' (np <= 0) → stops paging", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     globalThis.fetch = (() =>
@@ -1039,7 +1039,7 @@ describeWithFetchRestore("gitlabShouldContinuePaging — x-next-page zero stops 
 describeWithFetchRestore("syncGitlabEventsPages — multi-page: follows x-next-page", () => {
   test("follows x-next-page through two pages then stops", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     let callCount = 0;
@@ -1077,7 +1077,7 @@ describeWithFetchRestore("syncGitlabEventsPages — multi-page: follows x-next-p
 describeWithFetchRestore("syncGitlabEventsPages — MAX_PAGES_PER_SYNC cap → hasMore true", () => {
   test("stops with hasMore=true after MAX_PAGES_PER_SYNC (8) pages", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     let callCount = 0;
@@ -1112,7 +1112,7 @@ describeWithFetchRestore("syncGitlabEventsPages — MAX_PAGES_PER_SYNC cap → h
 describeWithFetchRestore("syncGitlabEventsPages — bytesTransferred accumulates", () => {
   test("bytesTransferred reflects total text length across pages", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const body = JSON.stringify([makeMrEvent()]);
@@ -1136,7 +1136,7 @@ describeWithFetchRestore("syncGitlabEventsPages — bytesTransferred accumulates
 describeWithFetchRestore("syncGitlabEventsPages — durationMs is non-negative", () => {
   test("durationMs is a non-negative number", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     globalThis.fetch = (() => Promise.resolve(makeEventsResponse([]))) as unknown as typeof fetch;
@@ -1162,7 +1162,7 @@ describeWithFetchRestore("syncGitlabEventsPages — durationMs is non-negative",
 describeWithFetchRestore("upsertFromMergeRequestEvent — URL uses webOrigin", () => {
   test("MR item URL contains webOrigin and project path", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeMrEvent();
@@ -1190,7 +1190,7 @@ describeWithFetchRestore("upsertFromMergeRequestEvent — URL uses webOrigin", (
 describeWithFetchRestore("upsertFromIssueEvent — URL uses webOrigin", () => {
   test("Issue item URL contains webOrigin and issue path", async () => {
     const db = createMemoryIndexDb();
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
     const now = Date.now();
 
     const event = makeIssueEvent();

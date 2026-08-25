@@ -1,6 +1,8 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-
+import { buildSyncCapabilities } from "../../sync/sync-capabilities.ts";
 import type { SyncContext } from "../../sync/types.ts";
+import { EMPTY_NIMBUS_VAULT } from "../connector-sync-test-helpers.ts";
 import { type ImapLikeFetchOutcome, parsePortSecret, runImapLikeSync } from "./imap-sync-core.ts";
 import type { SyncUpsertRow } from "./paginated-sync.ts";
 
@@ -30,6 +32,12 @@ function fakeCtx(): { ctx: SyncContext; warns: unknown[]; acquired: string[] } {
   const warns: unknown[] = [];
   const acquired: string[] = [];
   const ctx = {
+    // A real capability set over a throwaway db: this fixture has no db of its own, and the cast
+    // below would otherwise hide the missing capabilities exactly as it hid the missing `depth`.
+    ...buildSyncCapabilities(
+      { vault: EMPTY_NIMBUS_VAULT, db: new Database(":memory:"), depth: "full" },
+      "imap",
+    ),
     logger: { warn: (obj: unknown, _msg?: string) => warns.push(obj) },
     rateLimiter: {
       acquire: async (p: string) => {

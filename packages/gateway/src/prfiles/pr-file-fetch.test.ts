@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-
+import { EMPTY_NIMBUS_VAULT } from "../connectors/connector-sync-test-helpers.ts";
 import { PR_CHANGED_FILE_V55_SQL } from "../index/pr-changed-file-v55-sql.ts";
+import { buildSyncCapabilities } from "../sync/sync-capabilities.ts";
 import { RateLimitError, type SyncContext, UnauthenticatedError } from "../sync/types.ts";
 import type { ChangedFileRow } from "./pr-changed-file-store.ts";
 import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
@@ -107,7 +108,7 @@ type WarnRecord = { readonly fields: Record<string, unknown>; readonly msg: stri
 /** Only the two fields the driver touches; cast keeps the fake honest about that. */
 function fakeCtx(db: Database, acquired: string[], warns?: WarnRecord[]): SyncContext {
   return {
-    db,
+    ...buildSyncCapabilities({ vault: EMPTY_NIMBUS_VAULT, db, depth: "full" }, "github"),
     logger: {
       warn: (fields: Record<string, unknown>, msg: string) => {
         warns?.push({ fields, msg });
@@ -126,7 +127,7 @@ function fakeCtx(db: Database, acquired: string[], warns?: WarnRecord[]): SyncCo
 /** A `tryAcquire` that always reports the provider penalised/exhausted — never grants a token. */
 function fakeCtxRateLimited(db: Database): SyncContext {
   return {
-    db,
+    ...buildSyncCapabilities({ vault: EMPTY_NIMBUS_VAULT, db, depth: "full" }, "github"),
     logger: { warn: () => undefined, info: () => undefined } as unknown as SyncContext["logger"],
     rateLimiter: {
       tryAcquire: async () => false,

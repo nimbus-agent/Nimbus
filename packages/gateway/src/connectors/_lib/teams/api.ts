@@ -1,5 +1,3 @@
-import { upsertIndexedItemForSync } from "../../../index/item-store.ts";
-import { resolvePersonForSync } from "../../../people/linker.ts";
 import { plainTextFromHtml } from "../../../string/html-plain-text.ts";
 import type { SyncContext } from "../../../sync/types.ts";
 import { asUnknownObjectRecord } from "../../json-unknown.ts";
@@ -74,13 +72,13 @@ export function upsertChannelMessage(
   const graphUserId = m.from?.user?.id;
   const authorId =
     graphUserId !== undefined && graphUserId !== ""
-      ? resolvePersonForSync(ctx.db, {
+      ? ctx.resolvePerson({
           microsoftUserId: graphUserId,
           displayName: fromName ?? graphUserId,
         })
       : null;
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: TEAMS_SERVICE_ID,
     type: "message",
     externalId,

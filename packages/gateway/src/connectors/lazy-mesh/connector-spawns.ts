@@ -19,7 +19,10 @@ import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.
 import { getValidMiroAccessToken } from "../../auth/miro-access-token.ts";
 import { getValidNotionAccessToken } from "../../auth/notion-access-token.ts";
 import { readMicrosoftOAuthScopesForOutlookEnv } from "../../auth/oauth-vault-tokens.ts";
-import { getValidSalesforceAuth } from "../../auth/salesforce-access-token.ts";
+import {
+  getValidSalesforceAccessToken,
+  getValidSalesforceAuth,
+} from "../../auth/salesforce-access-token.ts";
 import { getValidSlackAccessToken } from "../../auth/slack-access-token.ts";
 import { getValidWorkdayAccessToken } from "../../auth/workday-access-token.ts";
 import { getValidZoomAccessToken } from "../../auth/zoom-access-token.ts";
@@ -1084,7 +1087,10 @@ export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> 
   }
   let auth: { accessToken: string; instanceUrl: string };
   try {
-    auth = await getValidSalesforceAuth(ctx.vault);
+    auth = await getValidSalesforceAuth(
+      () => getValidSalesforceAccessToken(ctx.vault),
+      () => readConnectorSecret(ctx.vault, "salesforce", "oauth"),
+    );
   } catch {
     return;
   }

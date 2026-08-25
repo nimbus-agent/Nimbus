@@ -1,5 +1,3 @@
-import { upsertIndexedItemForSync } from "../../../index/item-store.ts";
-import { resolvePersonForSync } from "../../../people/linker.ts";
 import { stripTrailingSlashes } from "../../../string/strip-trailing-slashes.ts";
 import type { SyncContext } from "../../../sync/types.ts";
 import { asRecord, numberField, stringField } from "../../unknown-record.ts";
@@ -98,14 +96,14 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
   };
   const authorId =
     authorUsername !== undefined && authorUsername !== ""
-      ? resolvePersonForSync(ctx.db, {
+      ? ctx.resolvePerson({
           gitlabLogin: authorUsername,
           displayName: authorName ?? authorUsername,
         })
       : null;
   const rawUrl = `${webOrigin}/${pathWithNamespace}/-/${urlPath}`;
   const canonicalFallback = `${webOrigin}/${encPath}/-/${urlPath}`;
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: shape.type,
     externalId,

@@ -1,4 +1,4 @@
-import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey } from "../index/item-store.ts";
 import {
   FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
@@ -439,7 +439,7 @@ function jiraIndexOneIssue(p: {
   const d = jiraIssueDerivedFromFields(fields, key, syncTime, maxUpdatedIso);
   const browseUrl = `${baseUrl}/browse/${key}`;
   const authorId = resolveJiraIssueAuthorId(ctx, d.accountId, d.creatorEmail, d.creatorName);
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "issue",
     externalId: key,

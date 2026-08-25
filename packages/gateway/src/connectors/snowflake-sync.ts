@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { mapSnowflakeTableToItem } from "./snowflake-data-model-mapping.ts";
 import { listConnectorItems } from "./warehouse-sync-transport.ts";
@@ -26,7 +25,7 @@ export function createSnowflakeSyncable(): Syncable {
       for (const row of raw) {
         const mapped = mapSnowflakeTableToItem(row, { syncedAt: now });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

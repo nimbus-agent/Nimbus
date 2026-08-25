@@ -1,4 +1,3 @@
-import { deleteItemByServiceExternal } from "../../../index/item-store.ts";
 import type { SyncContext } from "../../../sync/types.ts";
 import {
   extractErrorMessage,
@@ -65,7 +64,7 @@ function gmailHistoryApplyDeleted(
   for (const d of deleted) {
     const mid = d.message?.id;
     if (typeof mid === "string" && mid !== "") {
-      deleteItemByServiceExternal(ctx.db, GMAIL_SERVICE_ID, mid);
+      ctx.deleteItem(GMAIL_SERVICE_ID, mid);
       n += 1;
     }
   }

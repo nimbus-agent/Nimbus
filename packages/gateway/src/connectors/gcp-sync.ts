@@ -1,5 +1,4 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   clampSyncTitle,
   syncPassCursorHttpEmpty,
@@ -79,7 +78,7 @@ export function createGcpSyncable(options: GcpSyncableOptions): Syncable {
       const rec = asRecord(root);
       const name = stringField(rec ?? {}, "name") ?? projectId;
       const now = Date.now();
-      upsertIndexedItemForSync(ctx, {
+      ctx.upsertItem({
         service: SERVICE_ID,
         type: "project",
         externalId: projectId,

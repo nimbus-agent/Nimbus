@@ -5,7 +5,6 @@ import type { ConnectorToolSession } from "../teamvault/connector-session.ts";
 import { withConnectorSession } from "../teamvault/connector-session.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { drainPagedList } from "./connector-list-page.ts";
-import { createServiceScopedVaultView } from "./service-scoped-vault-view.ts";
 
 type PersonalDrain = (ctx: SyncContext, service: string, listToolId: string) => Promise<unknown[]>;
 
@@ -13,7 +12,7 @@ const realPersonalDrain: PersonalDrain = (ctx, service, listToolId) =>
   withConnectorSession(
     {
       service,
-      vaultView: createServiceScopedVaultView(ctx.vault, service),
+      vaultView: ctx.scopedVaultView(service),
       sandboxCwd: ctx.sandboxCwd,
     },
     (session) => drainPagedList(session, listToolId),

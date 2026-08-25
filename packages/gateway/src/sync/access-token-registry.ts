@@ -6,6 +6,7 @@ import { getValidMendeleyAccessToken } from "../auth/mendeley-access-token.ts";
 import { getValidMicrosoftAccessToken } from "../auth/microsoft-access-token.ts";
 import { getValidMiroAccessToken } from "../auth/miro-access-token.ts";
 import { getValidNotionAccessToken } from "../auth/notion-access-token.ts";
+import { getValidSalesforceAccessToken } from "../auth/salesforce-access-token.ts";
 import { getValidSlackAccessToken } from "../auth/slack-access-token.ts";
 import { getValidWorkdayAccessToken } from "../auth/workday-access-token.ts";
 import { getValidZoomAccessToken } from "../auth/zoom-access-token.ts";
@@ -25,11 +26,10 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
  * than in `sync-capabilities.ts` stops the capability layer from depending on fourteen auth
  * modules.
  *
- * NOT REGISTERED — `salesforce`. `getValidSalesforceAuth` returns `{ accessToken, instanceUrl }`
- * rather than a token, because the instance URL is per-tenant and comes out of the same OAuth
- * exchange. It does not fit a `Promise<string>` capability and is deliberately left needing
- * `ctx.vault` for now; Task 7 removes that handle and will surface this as a compile error, which
- * is the right moment to decide between a second capability and reshaping the helper.
+ * `salesforce` is registered for its TOKEN only. It needs a second value from the same OAuth
+ * exchange — the per-tenant instance URL — so `getValidSalesforceAuth` takes this resolver plus the
+ * connector's scoped `getSecret` rather than a vault handle. Removing the handle in the final task
+ * turned that into a compile error exactly as predicted, which is the intended forcing function.
  */
 const RESOLVERS: Partial<Record<ConnectorServiceId, (vault: NimbusVault) => Promise<string>>> = {
   canva: getValidCanvaAccessToken,
@@ -44,6 +44,7 @@ const RESOLVERS: Partial<Record<ConnectorServiceId, (vault: NimbusVault) => Prom
   notion: getValidNotionAccessToken,
   onedrive: getValidMicrosoftAccessToken,
   outlook: getValidMicrosoftAccessToken,
+  salesforce: getValidSalesforceAccessToken,
   slack: getValidSlackAccessToken,
   teams: getValidMicrosoftAccessToken,
   workday: getValidWorkdayAccessToken,

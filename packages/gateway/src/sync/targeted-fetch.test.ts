@@ -6,7 +6,7 @@ import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-
 import type { FetchableService } from "./fetch-host-boundary.ts";
 import { unboundSyncCapabilities } from "./sync-capabilities.ts";
 import { type TargetedFetchDeps, targetedFetch } from "./targeted-fetch.ts";
-import type { FetchOneResult, Syncable, SyncContext } from "./types.ts";
+import type { FetchOneResult, Syncable, SyncRuntimeContext } from "./types.ts";
 
 type EgressRow = {
   readonly destination: FetchableService;
@@ -37,7 +37,7 @@ type DepsOverrides = {
  * nothing previously closed — ~28 leaked handles across this file's test run. Tracked here and
  * closed in the module-level `afterEach` below.
  */
-const openedDbs: SyncContext["db"][] = [];
+const openedDbs: SyncRuntimeContext["db"][] = [];
 
 afterEach(() => {
   for (const db of openedDbs.splice(0)) {
@@ -50,15 +50,15 @@ function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
   const tryAcquire = overrides.tryAcquire ?? (async () => true);
   const db = openMemoryIndexDatabase();
   openedDbs.push(db);
-  const fakeCtx: SyncContext = {
+  const fakeCtx: SyncRuntimeContext = {
     ...unboundSyncCapabilities(),
     db,
     vault: createMemoryVault(),
     logger: pino({ level: "silent" }),
-    // A plain object structurally satisfies `SyncContext["rateLimiter"]` for the fields this
+    // A plain object structurally satisfies `SyncRuntimeContext["rateLimiter"]` for the fields this
     // module actually calls (`tryAcquire`) — the same pattern used elsewhere for a fake rate
     // limiter (see connectors/mendeley-sync.test.ts).
-    rateLimiter: { tryAcquire } as unknown as SyncContext["rateLimiter"],
+    rateLimiter: { tryAcquire } as unknown as SyncRuntimeContext["rateLimiter"],
     // Repo convention (matches scheduler.test.ts): os.tmpdir(), never a hardcoded POSIX path — the
     // Windows CI matrix has no `/tmp`. `targetedFetch` itself never reads this field, but the
     // fixture should still hold a real cross-platform value rather than a platform-specific one.

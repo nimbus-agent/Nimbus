@@ -3,7 +3,6 @@ import type { Database } from "bun:sqlite";
 import type { Provider } from "../sync/rate-limiter.ts";
 import { RateLimitError, type SyncContext, UnauthenticatedError } from "../sync/types.ts";
 import type { ChangedFileRow } from "./pr-changed-file-store.ts";
-import { recordPrChangedFiles } from "./pr-changed-file-store.ts";
 
 /** Matches `MAX_ENRICH_PER_TICK` in `connectors/github-sync.ts`, which drains the same way. */
 export const MAX_PRS_PER_TICK = 10;
@@ -224,8 +223,7 @@ export async function runPrFilePass(
     readonly nowMs: number;
   },
 ): Promise<number> {
-  const candidates = selectPrFileCandidates(
-    ctx.db,
+  const candidates = ctx.prFileCandidates(
     args.service,
     MAX_PRS_PER_TICK * PR_ATTEMPT_BUDGET_MULTIPLIER,
   );
@@ -256,7 +254,7 @@ export async function runPrFilePass(
         // slipped past `dedupeFileRowsByPath`) must cost only this candidate, same as a fetch
         // failure — never escape `runPrFilePass` and strand every later candidate this tick.
         const { kept, truncated } = applyFileCap(dedupeFileRowsByPath(collected));
-        recordPrChangedFiles(ctx.db, {
+        ctx.recordPrChangedFiles({
           itemId: c.itemId,
           repoFull: c.repoFull,
           files: kept,

@@ -664,6 +664,65 @@ export function checkShareConsentBrokerConfinement(files: readonly FileEntry[]):
   return out;
 }
 
+// D24: a SYNCABLE may not reach a raw `vault` or `db` handle through its `SyncContext`.
+//
+// Before the narrowing, `SyncContext` carried both, so any of ~90 connectors could read any other
+// connector's credentials and write any table. They are gone from the type, which makes a
+// reintroduction a compile error — but only for as long as nobody adds them back, and a cast
+// (`as unknown as SyncContext`) defeats the compiler entirely. That cast is not hypothetical: it
+// was the ONE site in the 122-file migration the type system could not catch.
+//
+// Rule ids here are short kebab naming the PROPERTY, never the `D<N>` label — `db-run`,
+// `wrap-spec`, `vault-key` — which is the docs-side name. The two coexist by design.
+//
+// `sync/sync-capabilities.ts` is the sole exemption: it is where a capability is minted, and it
+// holds the handles so that nothing else has to.
+const D24_SYNC_HANDLE_ALLOWED = [
+  // Where a capability is minted. It holds the handles so nothing else has to.
+  "packages/gateway/src/sync/sync-capabilities.ts",
+  // FALSE POSITIVE, exempted knowingly: its `ctx` is a `ConnectorWriteContext` — the executor's
+  // gateway-side write path with its own vault — not a `SyncContext`. A textual rule cannot tell
+  // two identically-named parameters apart, and narrowing it by type would mean parsing. The
+  // exemption is the honest form of that limit; the same reasoning applies to any future file
+  // whose `ctx` is not a syncable's.
+  "packages/gateway/src/connectors/connector-write-transport.ts",
+];
+// Written as a constructor rather than a literal: an earlier version of this line was authored
+// through a script and its leading `\b` became a literal BACKSPACE byte, so the rule matched
+// nothing and passed silently. Red-proving it — reintroducing `ctx.vault` and expecting a
+// violation — is what caught that; a gate that cannot fail is worse than no gate.
+const D24_SYNC_HANDLE_PATTERN = String.raw`\bctx\s*\.\s*(?:vault|db)\b`;
+const D24_SYNC_HANDLE_RE = new RegExp(D24_SYNC_HANDLE_PATTERN);
+
+export function checkSyncContextNoRawHandles(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    // SYNCABLES only. `connectors/lazy-mesh/*` is the gateway-side spawn and credential path: it
+    // holds a real vault by design and is what MINTS the environment a connector runs in, so it is
+    // out of scope. The rule flagged it on its first working run — which is also the first evidence
+    // the rule works at all.
+    const isSyncable =
+      f.relPath.startsWith("packages/gateway/src/connectors/") &&
+      !f.relPath.startsWith("packages/gateway/src/connectors/lazy-mesh/");
+    if (!isSyncable) continue;
+    if (D24_SYNC_HANDLE_ALLOWED.includes(f.relPath)) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (D24_SYNC_HANDLE_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "sync-context-no-raw-handles",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // D23 (I33): `runConfined` — the confined-spawn primitive that turns user-supplied code into a
 // running process — may be CALLED only from the exec gate (which performs the config/policy checks,
 // the sandbox-posture assertion and the owner-HITL approval first) plus its own definition file.
@@ -1219,6 +1278,13 @@ async function run(): Promise<void> {
     if (v.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
+    const handleViolations = checkSyncContextNoRawHandles(files);
+    for (const e of handleViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D24 a syncable reached a raw vault/db handle — capabilities are the only route: ${e.snippet}`,
+      );
+    }
+    if (handleViolations.length > 0) exit = 1;
     const v = checkRunConfinedConfinement(files);
     for (const e of v) {
       console.error(

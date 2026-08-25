@@ -88,8 +88,10 @@ test("syncTestContext composes db + vault + extras into a SyncContext", () => {
   const db = createMemoryIndexDb();
   const vault = createStubVault({ k: "v" });
   const ctx: SyncContext = syncTestContext(db, vault);
-  expect(ctx.db).toBe(db);
-  expect(ctx.vault).toBe(vault);
+  // No handles on a SyncContext any more — that IS the narrowing. What a test can assert now is
+  // that the capabilities are present and scoped.
+  expect(typeof ctx.getSecret).toBe("function");
+  expect(typeof ctx.upsertItem).toBe("function");
   expect(ctx.logger).toBeDefined();
   expect(ctx.rateLimiter).toBeDefined();
   db.close();

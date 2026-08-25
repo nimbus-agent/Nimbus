@@ -1,6 +1,5 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { type LocalDbQueryInput, mapLocalDbQueryToItem } from "./localdb-query-mapping.ts";
@@ -112,7 +111,7 @@ export function createLocaldbSyncable(options: LocalDbSyncableOptions): Syncable
         }
         const mapped = mapLocalDbQueryToItem(input, { syncedAt: now });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

@@ -17,7 +17,6 @@
  *    untestable network bit — and delegates; it is excluded from coverage.
  */
 import type { SyncContext } from "../../sync/types.ts";
-import { readConnectorSecret } from "../connector-vault.ts";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -252,9 +251,8 @@ function parsePositiveInt(raw: string, fallback: number): number {
  *  - apple.cal_exclude_calendars  (comma-separated displayNames; default: none)
  */
 export async function loadCalConfig(ctx: SyncContext): Promise<AppleCalConfig | null> {
-  const email = (await readConnectorSecret(ctx.vault, "apple", "icloud_email"))?.trim() ?? "";
-  const appPw =
-    (await readConnectorSecret(ctx.vault, "apple", "icloud_app_password"))?.trim() ?? "";
+  const email = (await ctx.getSecret("icloud_email"))?.trim() ?? "";
+  const appPw = (await ctx.getSecret("icloud_app_password"))?.trim() ?? "";
   if (email === "" || appPw === "") {
     return null;
   }
@@ -262,15 +260,11 @@ export async function loadCalConfig(ctx: SyncContext): Promise<AppleCalConfig | 
   // Optional calendar config keys. Read via readConnectorSecret (the approved
   // allow-list path) — they are listed in CONNECTOR_VAULT_SECRET_KEYS["apple"] so
   // they are cleared on connector removal and pass the D11 vault-key audit.
-  const pastRaw =
-    (await readConnectorSecret(ctx.vault, "apple", "cal_window_past_days"))?.trim() ?? "";
-  const futureRaw =
-    (await readConnectorSecret(ctx.vault, "apple", "cal_window_future_days"))?.trim() ?? "";
-  const maxRaw = (await readConnectorSecret(ctx.vault, "apple", "cal_max_instances"))?.trim() ?? "";
-  const includeRaw =
-    (await readConnectorSecret(ctx.vault, "apple", "cal_include_calendars"))?.trim() ?? "";
-  const excludeRaw =
-    (await readConnectorSecret(ctx.vault, "apple", "cal_exclude_calendars"))?.trim() ?? "";
+  const pastRaw = (await ctx.getSecret("cal_window_past_days"))?.trim() ?? "";
+  const futureRaw = (await ctx.getSecret("cal_window_future_days"))?.trim() ?? "";
+  const maxRaw = (await ctx.getSecret("cal_max_instances"))?.trim() ?? "";
+  const includeRaw = (await ctx.getSecret("cal_include_calendars"))?.trim() ?? "";
+  const excludeRaw = (await ctx.getSecret("cal_exclude_calendars"))?.trim() ?? "";
 
   function parseCommaSeparated(raw: string): readonly string[] | undefined {
     if (raw === "") return undefined;

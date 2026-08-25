@@ -1,5 +1,4 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   clampSyncTitle,
   syncPassCursorHttpEmpty,
@@ -83,7 +82,7 @@ export function createAzureSyncable(options: AzureSyncableOptions): Syncable {
       const id = subId ?? "default";
       const now = Date.now();
       const titleRaw = name ?? id;
-      upsertIndexedItemForSync(ctx, {
+      ctx.upsertItem({
         service: SERVICE_ID,
         type: "subscription",
         externalId: id,

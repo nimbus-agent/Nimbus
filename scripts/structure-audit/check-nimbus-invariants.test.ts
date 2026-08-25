@@ -13,6 +13,7 @@ import {
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
   checkSpawnInvariant,
+  checkSyncContextNoRawHandles,
   checkVaultKeyAllowList,
   checkWrapServerSpecInvariant,
   collectDbRunCensus,
@@ -22,7 +23,7 @@ import {
   RULE_ANCHORS,
   VAULT_KEY_ALLOW_LIST,
 } from "./check-nimbus-invariants.ts";
-import { REPO_ROOT, stripComments } from "./lib.ts";
+import { iterateSourceFiles, REPO_ROOT, stripComments } from "./lib.ts";
 
 describe("D10-wrap-spec — every ServerSpec literal reaches the sandbox (per SITE, not per file)", () => {
   const LM = "packages/gateway/src/connectors/lazy-mesh";
@@ -1114,5 +1115,55 @@ describe("D23 — runConfined confinement (I33)", () => {
       },
     ]);
     expect(v).toHaveLength(0);
+  });
+});
+
+describe("D24 — a syncable cannot reach a raw vault or db handle", () => {
+  const syncable = (contents: string) => [
+    { relPath: "packages/gateway/src/connectors/evil-sync.ts", contents },
+  ];
+
+  test("flags ctx.vault in a syncable", () => {
+    const v = checkSyncContextNoRawHandles(syncable('const t = ctx.vault.get("slack.token");\n'));
+    expect(v.map((x) => x.rule)).toEqual(["sync-context-no-raw-handles"]);
+  });
+
+  test("flags ctx.db in a syncable", () => {
+    expect(checkSyncContextNoRawHandles(syncable("ctx.db.query('SELECT 1');\n"))).toHaveLength(1);
+  });
+
+  test("a capability call is clean", () => {
+    expect(checkSyncContextNoRawHandles(syncable('await ctx.getSecret("api_token");\n'))).toEqual(
+      [],
+    );
+  });
+
+  test("lazy-mesh is out of scope — it holds a real vault by design", () => {
+    const v = checkSyncContextNoRawHandles([
+      {
+        relPath: "packages/gateway/src/connectors/lazy-mesh/credential-orchestration.ts",
+        contents: 'const t = ctx.vault.get("figma.team_id");\n',
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  test("the capability factory itself is exempt — it is what holds the handles", () => {
+    const v = checkSyncContextNoRawHandles([
+      {
+        relPath: "packages/gateway/src/sync/sync-capabilities.ts",
+        contents: "readConnectorSecret(deps.vault, serviceId, keyName);\nctx.db;\n",
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  test("no syncable in the real repository reaches a handle", async () => {
+    // The fixtures above prove the rule can fire; this proves the repository satisfies it.
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkSyncContextNoRawHandles(files)).toEqual([]);
   });
 });

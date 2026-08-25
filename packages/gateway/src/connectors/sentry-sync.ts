@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
@@ -194,7 +193,7 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
           continue;
         }
         const title = name ?? id;
-        upsertIndexedItemForSync(ctx, {
+        ctx.upsertItem({
           service: SERVICE_ID,
           type: "project",
           externalId: id,

@@ -1,30 +1,8 @@
-import type { Database } from "bun:sqlite";
-import { upsertIndexedItemForSync } from "../../../index/item-store.ts";
 import type { SyncContext } from "../../../sync/types.ts";
 import { asRecord, numberField, stringField } from "../../unknown-record.ts";
 
 const SERVICE_ID = "gitlab";
 const MAX_PIPELINE_PROJECTS_PER_SYNC = 15;
-
-function listGitlabProjectsFromIndex(db: Database): string[] {
-  const rows = db
-    .query(
-      `SELECT DISTINCT json_extract(metadata, '$.project') AS p
-       FROM item
-       WHERE service = ?
-         AND json_extract(metadata, '$.project') IS NOT NULL
-         AND length(trim(json_extract(metadata, '$.project'))) > 0`,
-    )
-    .all(SERVICE_ID) as { p: string | null }[];
-  const out: string[] = [];
-  for (const r of rows) {
-    const p = typeof r.p === "string" ? r.p.trim() : "";
-    if (p !== "" && !out.includes(p)) {
-      out.push(p);
-    }
-  }
-  return out;
-}
 
 type GitlabPipelineItemUpsertResult =
   | { kind: "skip" }
@@ -75,7 +53,7 @@ function tryUpsertGitlabPipelineItem(
     duration: duration ?? null,
     sha: sha ?? null,
   };
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",
     externalId,
@@ -180,7 +158,7 @@ export async function syncGitlabPipelinesForIndexedProjects(
   pipelineCursor: Record<string, number>,
   floorMs: number,
 ): Promise<{ upserted: number; bytes: number; pipelines: Record<string, number> }> {
-  const projects = listGitlabProjectsFromIndex(ctx.db);
+  const projects = ctx.listIndexedMetadataValues(SERVICE_ID, "project");
   const next: Record<string, number> = { ...pipelineCursor };
   let upserted = 0;
   let bytes = 0;

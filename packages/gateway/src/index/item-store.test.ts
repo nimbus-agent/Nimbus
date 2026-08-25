@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { EMPTY_NIMBUS_VAULT, syncTestContext } from "../connectors/connector-sync-test-helpers.ts";
 import { upsertIndexedItem, upsertIndexedItemForSync } from "./item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "./local-index.ts";
 import { runIndexedSchemaMigrations } from "./migrations/runner.ts";
@@ -87,7 +86,7 @@ test("metadata survives every index depth", () => {
   const db = freshIndexedDb();
   for (const depth of ["metadata_only", "summary", "full"] as const) {
     upsertIndexedItemForSync(
-      { ...syncTestContext(db, EMPTY_NIMBUS_VAULT), depth },
+      { db, depth },
       {
         service: "jira",
         type: "issue",

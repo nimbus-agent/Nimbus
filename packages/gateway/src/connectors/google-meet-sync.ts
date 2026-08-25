@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { UnauthenticatedError } from "../sync/types.ts";
 import {
@@ -179,7 +178,7 @@ export function createGoogleMeetSyncable(options: GoogleMeetSyncableOptions): Sy
         if (mapped === null) {
           continue;
         }
-        upsertIndexedItemForSync(ctx, mapped);
+        ctx.upsertItem(mapped);
         upserted += 1;
       }
 

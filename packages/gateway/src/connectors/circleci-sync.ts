@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -138,7 +137,7 @@ function tryUpsertCircleciPipeline(
     revision,
     githubRepo: full,
   };
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",
     externalId,
@@ -216,7 +215,7 @@ export function createCircleciSyncable(options: CircleciSyncableOptions): Syncab
         return syncNoopResult(cursor, t0);
       }
 
-      const repos = ctx.listIndexedGithubRepos();
+      const repos = ctx.listIndexedMetadataValues("github", "repo");
       if (repos.length === 0) {
         return syncNoopResult(cursor, t0);
       }

@@ -15,7 +15,6 @@
  *     (warning log, mail cursor preserved) rather than crashing the cycle.
  */
 import { parseICalendar } from "@nimbus-dev/sdk";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
   type AppleCalConfig,
@@ -136,7 +135,7 @@ async function runCalendarPass(
       }
       const row = mapAppleEventToItem(ev, { calendar, syncedAt });
       if (row !== null) {
-        upsertIndexedItemForSync(ctx, row);
+        ctx.upsertItem(row);
         upserted += 1;
         calCount += 1;
       }

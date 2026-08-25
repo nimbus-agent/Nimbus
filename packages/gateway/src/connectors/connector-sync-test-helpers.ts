@@ -9,6 +9,7 @@ import {
   buildLocalOnlySyncCapabilities,
   buildSyncCapabilities,
   type SyncCapabilities,
+  type SyncCapabilityDeps,
   unboundSyncCapabilities,
 } from "../sync/sync-capabilities.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
@@ -55,15 +56,18 @@ export function silentSyncContextExtras(): Pick<
   | "depth"
   | "getSecret"
   | "getSharedSecret"
+  | "scopedVaultView"
   | "accessToken"
   | "deleteItem"
   | "countItems"
   | "itemExists"
   | "bodyFetchState"
   | "itemMetadata"
-  | "listIndexedGithubRepos"
+  | "listIndexedMetadataValues"
   | "prEnrichCandidates"
   | "upsertBlameLines"
+  | "prFileCandidates"
+  | "recordPrChangedFiles"
   | "writeObsidianVault"
   | "writeApiEndpointsForSpec"
   | "pruneBlameForFile"
@@ -111,21 +115,30 @@ export function syncTestContext(
   serviceId?: ConnectorServiceId | LocalOnlySyncServiceId,
   /** Pass depth HERE, never by overriding `.depth` on the result — see SyncCapabilityDeps.depth. */
   depth: "metadata_only" | "summary" | "full" = "full",
+  /** Likewise: `upsertItem` closes over this, so overriding it on the result does not reach it. */
+  resolveServiceId?: SyncCapabilityDeps["resolveServiceId"],
 ): SyncContext {
-  const extras = { ...silentSyncContextExtras(), depth };
+  const extras = {
+    ...silentSyncContextExtras(),
+    depth,
+    ...(resolveServiceId === undefined ? {} : { resolveServiceId }),
+  };
+  const capDeps = {
+    vault,
+    db,
+    depth,
+    ...(resolveServiceId === undefined ? {} : { resolveServiceId }),
+  };
   const caps =
     serviceId === undefined
       ? unboundSyncCapabilities()
       : LOCAL_ONLY_SYNC_SERVICE_IDS.includes(serviceId as LocalOnlySyncServiceId)
-        ? buildLocalOnlySyncCapabilities({ vault, db, depth }, serviceId as LocalOnlySyncServiceId)
-        : buildSyncCapabilities(
-            { vault, db, depth: extras.depth },
-            serviceId as ConnectorServiceId,
-          );
+        ? buildLocalOnlySyncCapabilities(capDeps, serviceId as LocalOnlySyncServiceId)
+        : buildSyncCapabilities(capDeps, serviceId as ConnectorServiceId);
   // `extras` carries the UNBOUND capability set as its default, so it must be spread FIRST — the
   // bound `caps` are the override, not the other way round. Reversed, every test silently got the
   // throwing capabilities back and 889 of them failed at once.
-  return { db, vault, ...extras, ...caps };
+  return { ...extras, ...caps };
 }
 
 export function expectSyncNoopResult(

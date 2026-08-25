@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -179,7 +178,7 @@ export function createDagsterSyncable(options: DagsterSyncableOptions): Syncable
         if (mapped === null) {
           continue;
         }
-        upsertIndexedItemForSync(ctx, mapped);
+        ctx.upsertItem(mapped);
         totalUpserted += 1;
       }
 

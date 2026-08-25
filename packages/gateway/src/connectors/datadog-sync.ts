@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   clampSyncTitle,
   syncPassCursorHttpEmpty,
@@ -51,7 +50,7 @@ function upsertDatadogMonitorRows(ctx: SyncContext, list: unknown[], now: number
       continue;
     }
     const name = typeof nameVal === "string" && nameVal !== "" ? nameVal : `monitor ${id}`;
-    upsertIndexedItemForSync(ctx, {
+    ctx.upsertItem({
       service: SERVICE_ID,
       type: "monitor",
       externalId: id,

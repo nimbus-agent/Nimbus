@@ -1,4 +1,4 @@
-import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
   fetchNotionPageText,
@@ -230,7 +230,7 @@ async function notionConsumeSearchResultRow(
     fetched.outcome === "errored"
       ? { notionPageId: id }
       : { notionPageId: id, bodyFetch: fetched.outcome };
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "page",
     externalId: id,

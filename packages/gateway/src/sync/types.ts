@@ -6,20 +6,20 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ProviderRateLimiter } from "./rate-limiter.ts";
 import type { SyncCapabilities } from "./sync-capabilities.ts";
 
-export interface SyncContext<S extends ConnectorServiceId = ConnectorServiceId>
-  extends SyncCapabilities<S> {
-  /**
-   * TEMPORARY, and the whole point of the narrowing (spec §5). `vault` and `db` are raw handles: a
-   * syncable holding them can read ANY connector's secrets and write ANY table. They are being
-   * replaced by the scoped members above and removed in the final task of the plan.
-   *
-   * The capabilities are `Partial` only while the 103 call sites migrate — that is what lets the
-   * migration proceed in reviewable batches. It is also the one thing that can hide a mistake: a
-   * consumer of the SHARED context that never goes through `runJob` gets `undefined` capabilities
-   * and fails silently rather than at compile time. `Partial` comes off with the handles.
-   */
+/**
+ * What the GATEWAY holds: a sync context plus the raw handles needed to BUILD capabilities.
+ *
+ * Only `platform/assemble.ts` and `sync/scheduler.ts` see this. Connectors see `SyncContext`, which
+ * has no handles at all — that asymmetry is the narrowing: the gateway can mint a capability, a
+ * connector can only use one.
+ */
+export interface SyncRuntimeContext extends SyncContext {
   vault: NimbusVault;
   db: Database;
+}
+
+export interface SyncContext<S extends ConnectorServiceId = ConnectorServiceId>
+  extends SyncCapabilities<S> {
   logger: Logger;
   rateLimiter: ProviderRateLimiter;
   scheduleItemEmbedding?: (itemId: string) => void;

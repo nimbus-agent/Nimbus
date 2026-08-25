@@ -3,7 +3,6 @@ import {
   type NimbusWorkdayToml,
 } from "../config/nimbus-toml-workday.ts";
 import { Config } from "../config.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -166,7 +165,7 @@ async function walkDomain(args: WalkDomainArgs): Promise<DomainResult> {
     for (const raw of rows) {
       const mapped = mapper(raw, mapCtx);
       if (mapped !== null) {
-        upsertIndexedItemForSync(ctx, mapped);
+        ctx.upsertItem(mapped);
         upserted += 1;
       }
     }
@@ -249,7 +248,7 @@ async function syncRaasReports(
       for (const row of reportRowsFrom(parsed)) {
         const mapped = mapReportRowToItem(row, report, mapCtx);
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

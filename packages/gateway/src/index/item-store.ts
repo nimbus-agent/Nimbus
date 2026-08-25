@@ -345,3 +345,43 @@ export function selectItemMetadataJson(db: Database, itemId: string): string | n
     .get(itemId);
   return row?.metadata ?? null;
 }
+
+/**
+ * Distinct non-empty values of one `metadata` key across a service's indexed items.
+ *
+ * Generalises two byte-identical queries — GitHub's `$.repo` and GitLab's `$.project` — that
+ * existed as separate module-private helpers. One capability serves both, and a third connector
+ * wanting the same shape needs no new member.
+ *
+ * `metadataKey` is interpolated into a JSON path, so it is restricted to a conservative identifier
+ * charset. It is never caller-supplied at runtime — every call site passes a literal — but the
+ * guard is here rather than in a comment, because a JSON path is the one place in this file where
+ * a bound parameter cannot do the job.
+ */
+export function listDistinctMetadataValues(
+  db: Database,
+  service: string,
+  metadataKey: string,
+): string[] {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(metadataKey)) {
+    throw new Error(`unsafe metadata key ${JSON.stringify(metadataKey)}`);
+  }
+  const path = `$.${metadataKey}`;
+  const rows = db
+    .query<{ v: string | null }, [string, string, string, string]>(
+      `SELECT DISTINCT json_extract(metadata, ?) AS v
+       FROM item
+       WHERE service = ?
+         AND json_extract(metadata, ?) IS NOT NULL
+         AND length(trim(json_extract(metadata, ?))) > 0`,
+    )
+    .all(path, service, path, path);
+  const out: string[] = [];
+  for (const r of rows) {
+    const v = r.v?.trim() ?? "";
+    if (v !== "") {
+      out.push(v);
+    }
+  }
+  return out;
+}

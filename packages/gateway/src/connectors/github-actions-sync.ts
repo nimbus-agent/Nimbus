@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -137,7 +136,7 @@ function tryUpsertGithubActionsRun(
     durationMs,
     status: status ?? null,
   };
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",
     externalId,
@@ -220,7 +219,7 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
         return syncNoopResult(cursor, t0);
       }
 
-      const repos = ctx.listIndexedGithubRepos();
+      const repos = ctx.listIndexedMetadataValues("github", "repo");
       if (repos.length === 0) {
         return syncNoopResult(cursor, t0);
       }

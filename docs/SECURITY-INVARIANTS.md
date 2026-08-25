@@ -728,6 +728,44 @@ The whitelist is the load-bearing half, and the reason this is an invariant rath
 
 ---
 
+## D24 — a syncable reaches credentials and the index only through capabilities
+
+**Not an invariant of its own; a static rule serving I9, I14 and non-negotiable #3.**
+
+**Statement:** `SyncContext` — what a connector's `sync()` receives — carries no `vault` and no `db`
+handle. It carries a scoped capability set instead: `getSecret` resolves `<serviceId>.<key>` for the
+CALLING service only, `getSharedSecret` reads a named shared family behind an explicit four-entry
+grant, `accessToken` resolves that service's OAuth token from a registry, and the index operations
+(`upsertItem`, `resolvePerson`, `deleteItem`, the two batch writers, …) route to the same gateway
+functions they always did. The gateway-side `SyncRuntimeContext` still holds the handles, because
+something has to mint a capability; only `platform/assemble.ts` and `sync/scheduler.ts` see it.
+
+**Why:** before this, any of ~90 connectors could read any other connector's credentials and write
+any table. `jira-sync.ts` could call `ctx.vault.get("slack.token")` and nothing would notice. The
+narrowing makes that a compile error, and D24 makes it a static error too, because a cast
+(`as unknown as SyncContext`) defeats the compiler — that was the one site in a 122-file migration
+the type system could not catch.
+
+**Wired at:** `sync/sync-capabilities.ts` (the only file holding handles, and the rule's sole
+functional exemption); bound per service in `sync/scheduler.ts` `contextForService`, which both
+`runJob` and `syncContextFor` route through so the two cannot diverge.
+
+**Anti-patterns:**
+
+- Adding `vault` or `db` back "just for one connector". The capability set exists so that the
+  answer is a named method the gateway implements, not a handle.
+- A raw-SQL escape hatch on the context. Considered and rejected: I9's bound parameters and I14's
+  `dbRun` are enforced by *what the gateway will execute*, and arbitrary SQL hands that judgement to
+  the caller. Two connectors were issuing their own `SELECT`s; both became named operations
+  (`countItems`, `itemExists`) with no loss.
+- Overriding `depth` or `resolveServiceId` on a context after building it. The capability closes
+  over them, so `{ ...ctx, depth: "metadata_only" }` produces a context whose field and whose
+  `upsertItem` disagree — and the field loses. Build them together; `syncTestContext` takes both.
+
+**Known bound:** the rule is textual, so it cannot distinguish a syncable's `ctx` from an
+identically-named parameter of another type. `connectors/connector-write-transport.ts` is exempted
+for exactly that reason — its `ctx` is a `ConnectorWriteContext`, the executor's own write path.
+
 ## I33 — user-supplied code executes only through the exec gate, behind the owner's HITL approval of the exact bytes
 
 **Statement:** arbitrary code reaches a running process only via `packages/gateway/src/exec/exec-gate.ts` `runExecution()`. That function, in this order: refuses when the capability is off by local config (`[code_execution] enabled`) or by resolved org policy (`EnforcedPolicy.capabilitiesDisabled`, I22); asserts the platform sandbox will actually confine; resolves the runtime from the `ExecRuntime` **registry** rather than any caller-supplied argv; reads the script **once**; builds a `SandboxPolicy` whose `permissions.network` is empty **by construction**, rejecting a requested network grant rather than dropping it; obtains the LOCAL owner's approval of the verbatim body and the resolved capability set; and only then spawns. A denied or timed-out approval spawns nothing (fail-closed). Every outcome appends exactly one `code.execute` audit row.

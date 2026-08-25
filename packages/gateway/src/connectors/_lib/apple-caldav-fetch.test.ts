@@ -320,7 +320,7 @@ describe("loadCalConfig", () => {
       "apple.icloud_email": null,
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result).toBeNull();
   });
 
@@ -330,7 +330,7 @@ describe("loadCalConfig", () => {
       "apple.icloud_email": "user@icloud.com",
       "apple.icloud_app_password": null,
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result).toBeNull();
   });
 
@@ -340,7 +340,7 @@ describe("loadCalConfig", () => {
       "apple.icloud_email": "",
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result).toBeNull();
   });
 
@@ -350,7 +350,7 @@ describe("loadCalConfig", () => {
       "apple.icloud_email": "user@icloud.com",
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result).not.toBeNull();
     expect(result?.email).toBe("user@icloud.com");
     expect(result?.appPw).toBe("xxxx-yyyy-zzzz-aaaa");
@@ -370,7 +370,7 @@ describe("loadCalConfig", () => {
       "apple.cal_window_future_days": "180",
       "apple.cal_max_instances": "500",
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result?.windowPastDays).toBe(30);
     expect(result?.windowFutureDays).toBe(180);
     expect(result?.maxInstancesPerCalendar).toBe(500);
@@ -383,7 +383,7 @@ describe("loadCalConfig", () => {
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
       "apple.cal_include_calendars": "Work, Personal",
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result?.includeCalendars).toEqual(["Work", "Personal"]);
   });
 
@@ -394,7 +394,7 @@ describe("loadCalConfig", () => {
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
       "apple.cal_exclude_calendars": "Holidays,Birthdays",
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result?.excludeCalendars).toEqual(["Holidays", "Birthdays"]);
   });
 
@@ -405,7 +405,7 @@ describe("loadCalConfig", () => {
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
       "apple.cal_window_past_days": "not-a-number",
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result?.windowPastDays).toBe(90);
   });
 
@@ -416,7 +416,7 @@ describe("loadCalConfig", () => {
       "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
       "apple.cal_window_past_days": "-5",
     });
-    const result = await loadCalConfig(syncTestContext(db, vault));
+    const result = await loadCalConfig(syncTestContext(db, vault, "apple"));
     expect(result?.windowPastDays).toBe(90);
   });
 });

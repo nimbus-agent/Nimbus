@@ -1,4 +1,4 @@
-import { type IndexedItemBodyInput, upsertIndexedItemForSync } from "../index/item-store.ts";
+import type { IndexedItemBodyInput } from "../index/item-store.ts";
 import { plainTextFromHtml } from "../string/html-plain-text.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
@@ -146,7 +146,7 @@ function confluenceUpsertOneSearchHit(
   const authorId = by === null ? null : resolveConfluenceAuthorId(ctx, by);
   const text = confluenceBodyText(row);
   const bodyInput: IndexedItemBodyInput = text === null ? { bodyPreview: "" } : { body: text };
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "page",
     externalId: id,

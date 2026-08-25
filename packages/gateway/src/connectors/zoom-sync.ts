@@ -1,4 +1,4 @@
-import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -107,7 +107,7 @@ function upsertMeetings(ctx: SyncContext, meetings: readonly unknown[], now: num
     if (mapped === null) {
       continue;
     }
-    upsertIndexedItemForSync(ctx, mapped);
+    ctx.upsertItem(mapped);
     upserted += 1;
   }
   return upserted;
@@ -253,7 +253,7 @@ async function processTranscriptFile(
   if (row === null) {
     return { kind: "done", bytes: text.length, upserted: 0 };
   }
-  upsertIndexedItemForSync(ctx, row);
+  ctx.upsertItem(row);
   return { kind: "done", bytes: text.length, upserted: 1 };
 }
 
@@ -315,7 +315,7 @@ async function processRecordingsMeeting(
   // same external_id = String(<meeting_id>), so a single row covers both.
   const meetingRow = mapZoomMeetingToItem(meeting, { syncedAt: nowMs });
   if (meetingRow !== null) {
-    upsertIndexedItemForSync(ctx, meetingRow);
+    ctx.upsertItem(meetingRow);
     upserted += 1;
   }
   const transcripts = await processTranscriptsForMeeting(ctx, token, meeting, nowMs);

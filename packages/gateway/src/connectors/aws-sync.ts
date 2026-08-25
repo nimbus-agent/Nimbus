@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { clampSyncTitle, syncPassCursorParseEmpty } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { awsCliJson, awsCredentialsExtra } from "./_lib/aws-cli.ts";
@@ -86,7 +85,7 @@ async function syncAwsLambdaListPage(
       continue;
     }
     const title = name ?? id;
-    upsertIndexedItemForSync(ctx, {
+    ctx.upsertItem({
       service: SERVICE_ID,
       type: "lambda_function",
       externalId: id,

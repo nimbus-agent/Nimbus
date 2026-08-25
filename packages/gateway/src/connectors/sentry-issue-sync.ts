@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { nextPageUrl } from "./link-header.ts";
 import { mapSentryIssueToItem } from "./sentry-issue-mapping.ts";
@@ -128,7 +127,7 @@ function upsertSentryIssuePage(
     if (input.cursorLastSeenMs !== null && row.modifiedAt <= input.cursorLastSeenMs) {
       continue;
     }
-    upsertIndexedItemForSync(input.ctx, row);
+    input.ctx.upsertItem(row);
     upserted += 1;
     if (runningMaxMs === null || row.modifiedAt > runningMaxMs) {
       runningMaxMs = row.modifiedAt;

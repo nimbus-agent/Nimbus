@@ -19,6 +19,7 @@ import type {
   Syncable,
   SyncContext,
   SyncResult,
+  SyncRuntimeContext,
   SyncSchedulerConfig,
   SyncStatus,
 } from "./types.ts";
@@ -87,7 +88,7 @@ function toRejectionError(err: unknown): Error {
 export class SyncScheduler {
   private readonly db: Database;
   private readonly sched: SchedulerStateRepository;
-  private readonly ctx: SyncContext;
+  private readonly ctx: SyncRuntimeContext;
   private readonly config: SyncSchedulerConfig;
   private readonly notify: ((title: string, body: string) => Promise<void>) | undefined;
   private readonly rand: () => number;
@@ -124,7 +125,7 @@ export class SyncScheduler {
     | undefined;
 
   constructor(
-    syncContext: SyncContext,
+    syncContext: SyncRuntimeContext,
     config?: Partial<SyncSchedulerConfig>,
     options?: {
       notify?: (title: string, body: string) => Promise<void>;

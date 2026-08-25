@@ -1,7 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { open, readdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
@@ -287,7 +286,7 @@ export function createDataProfileSyncable(options: DataProfileSyncableOptions): 
         }
         const mapped = mapDataModelToItem(profile, { syncedAt: now });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

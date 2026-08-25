@@ -49,8 +49,6 @@ export function createSyncTestContext(
     ...(serviceId === undefined
       ? unboundSyncCapabilities()
       : buildSyncCapabilities({ vault, db, depth: "full" }, serviceId)),
-    db,
-    vault,
     logger: pino({ level: "silent" }),
     rateLimiter: new ProviderRateLimiter(),
     // Wave 7b SyncContext members — personal-credential defaults for sync tests.

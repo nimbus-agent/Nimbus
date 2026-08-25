@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { mapBigeyeIssueToItem } from "./bigeye-dq-mapping.ts";
 import { listConnectorItems } from "./warehouse-sync-transport.ts";
@@ -27,7 +26,7 @@ export function createBigeyeSyncable(): Syncable {
       for (const rawIssue of raw) {
         const mapped = mapBigeyeIssueToItem(rawIssue, { syncedAt: now });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

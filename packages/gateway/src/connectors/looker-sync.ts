@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { mapLookerDashboardToItem, mapLookerViewToItem } from "./looker-content-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -63,7 +62,7 @@ function upsertDashboards(ctx: SyncContext, parsed: unknown, now: number): numbe
   for (const rawDashboard of dashboardsFromResponse(parsed)) {
     const mapped = mapLookerDashboardToItem(rawDashboard, { syncedAt: now });
     if (mapped !== null) {
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       upserted += 1;
     }
   }
@@ -75,7 +74,7 @@ function upsertModelViews(ctx: SyncContext, parsed: unknown, now: number): numbe
   for (const rawView of viewsFromModelsResponse(parsed)) {
     const mapped = mapLookerViewToItem(rawView, { syncedAt: now });
     if (mapped !== null) {
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       upserted += 1;
     }
   }

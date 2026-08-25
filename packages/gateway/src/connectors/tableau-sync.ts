@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { mapTableauViewToItem } from "./tableau-dashboard-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -50,7 +49,7 @@ export function createTableauSyncable(): Syncable {
       for (const rawView of raw) {
         const mapped = mapTableauViewToItem(shapeTableauView(rawView), { syncedAt: now });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

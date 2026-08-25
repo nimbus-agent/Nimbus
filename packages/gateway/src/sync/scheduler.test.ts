@@ -9,6 +9,7 @@ import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
 import { loadSchedulerState } from "./scheduler-store.ts";
 import { unboundSyncCapabilities } from "./sync-capabilities.ts";
+import type { SyncRuntimeContext } from "./types.ts";
 import {
   RateLimitError,
   type Syncable,
@@ -45,7 +46,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function testContext(db: Database): SyncContext {
+function testContext(db: Database): SyncRuntimeContext {
   return {
     ...unboundSyncCapabilities(),
     db,
@@ -1148,14 +1149,14 @@ describe("per-service capability binding", () => {
   // The scoping MUST bind per service, not per gateway: `syncBase` in assemble.ts is built once and
   // shared by every connector, so binding there would scope all of them to whichever id was passed
   // first. `runJob` and `syncContextFor` are the first points that know the service.
-  function ctxWithVaultSpy(db: Database): { ctx: SyncContext; asked: string[] } {
+  function ctxWithVaultSpy(db: Database): { ctx: SyncRuntimeContext; asked: string[] } {
     const asked: string[] = [];
     const vault = {
       get: (key: string) => {
         asked.push(key);
         return Promise.resolve(null);
       },
-    } as unknown as SyncContext["vault"];
+    } as unknown as SyncRuntimeContext["vault"];
     return { ctx: { ...testContext(db), vault }, asked };
   }
 

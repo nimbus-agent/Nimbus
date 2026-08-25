@@ -224,7 +224,7 @@ import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import { type TargetedFetchOutcome, targetedFetch } from "../sync/targeted-fetch.ts";
-import type { SyncContext } from "../sync/types.ts";
+import type { SyncContext, SyncRuntimeContext } from "../sync/types.ts";
 import { withConnectorSession } from "../teamvault/connector-session.ts";
 import {
   drainTeamListSession,
@@ -479,7 +479,7 @@ interface SchedulerWithMeshOpts {
   paths: PlatformPaths;
   vault: NimbusVault;
   db: Database;
-  syncContext: SyncContext;
+  syncContext: SyncRuntimeContext;
   localIndex: LocalIndex;
   notifications: NotificationService;
   syncLogger: Logger;
@@ -2368,7 +2368,7 @@ export async function assemblePlatformServices(
   // chosen and be scoped to the wrong connector for all but one of them. They bind per service in
   // `sync/scheduler.ts` `contextForService`, which both `runJob` and `syncContextFor` route
   // through — the first points that know which connector is running.
-  const syncBase: SyncContext = {
+  const syncBase: SyncRuntimeContext = {
     ...unboundSyncCapabilities(),
     vault,
     db,
@@ -2381,7 +2381,7 @@ export async function assemblePlatformServices(
     depth: "full",
     ...teamCredentialExtras,
   };
-  const syncContext: SyncContext = scheduleItemEmbedding
+  const syncContext: SyncRuntimeContext = scheduleItemEmbedding
     ? { ...syncBase, scheduleItemEmbedding }
     : syncBase;
 

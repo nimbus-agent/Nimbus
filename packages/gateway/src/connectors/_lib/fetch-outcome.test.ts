@@ -37,8 +37,6 @@ function makeCtx(opts: {
   };
   return {
     ...unboundSyncCapabilities(),
-    vault: {} as SyncContext["vault"],
-    db: {} as SyncContext["db"],
     logger,
     rateLimiter: rateLimiter as SyncContext["rateLimiter"],
     ...PERSONAL_SYNC_EXTRAS,
@@ -124,8 +122,6 @@ describe("connectorFetch", () => {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     }) as unknown as typeof fetch;
     const ctx = {
-      vault: {} as SyncContext["vault"],
-      db: {} as SyncContext["db"],
       logger: { warn() {} } as unknown as Logger,
       rateLimiter: rateLimiter as SyncContext["rateLimiter"],
       ...PERSONAL_SYNC_EXTRAS,

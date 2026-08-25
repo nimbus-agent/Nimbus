@@ -6,7 +6,6 @@ import {
   createMemoryIndexDb,
   EMPTY_NIMBUS_VAULT,
   expectServiceItemCount,
-  silentSyncContextExtras,
   syncTestContext,
   testConnectorSyncNoop,
 } from "./connector-sync-test-helpers.ts";
@@ -82,7 +81,7 @@ test("indexes exported symbol from a TypeScript file", async () => {
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync({ db, vault: EMPTY_NIMBUS_VAULT, ...silentSyncContextExtras() }, null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
   const row = db
     .query("SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol' LIMIT 1")
@@ -318,7 +317,7 @@ export function renewCredentials() {
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync({ db, vault: EMPTY_NIMBUS_VAULT, ...silentSyncContextExtras() }, null);
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
   const row = db
     .query(
@@ -790,7 +789,7 @@ test("code_symbol with empty excerpt uses relNorm as bodyPreview (startLine null
     ],
   });
   const db = createMemoryIndexDb();
-  await sync.sync({ db, vault: EMPTY_NIMBUS_VAULT, ...silentSyncContextExtras() }, null);
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   const row = db
     .query(
       `SELECT body_preview FROM item WHERE service = 'filesystem' AND type = 'code_symbol' AND title LIKE '%myUtil%'`,

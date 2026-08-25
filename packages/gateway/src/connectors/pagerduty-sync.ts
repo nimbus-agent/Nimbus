@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { usableActorEmail } from "./actor-email.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -106,7 +105,7 @@ function upsertPagerdutyIncident(
   const updated = stringField(row, "updated_at") ?? stringField(row, "created_at");
   const modifiedAt = updated === undefined ? now : Date.parse(updated);
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "incident",
     externalId: id,

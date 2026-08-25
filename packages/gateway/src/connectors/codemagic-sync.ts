@@ -1,7 +1,6 @@
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { runPerAppPollSync } from "./_lib/per-app-poll-sync.ts";
 import { mapCodemagicAppToItem, mapCodemagicBuildToItem } from "./codemagic-build-mapping.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -55,7 +54,7 @@ export function createCodemagicSyncable(options: CodemagicSyncableOptions): Sync
         serviceId: SERVICE_ID,
         ensureRunning: options.ensureCodemagicMcpRunning,
         async loadCreds(c: SyncContext) {
-          const token = (await readConnectorSecret(c.vault, "codemagic", "token"))?.trim() ?? "";
+          const token = (await c.getSecret("token"))?.trim() ?? "";
           return token === "" ? null : token;
         },
         pass1Cursor,

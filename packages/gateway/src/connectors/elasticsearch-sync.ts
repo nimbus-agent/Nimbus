@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -162,7 +161,7 @@ async function walkIndices(
 
     const mapped = mapElasticsearchIndexToItem(row, { fields, syncedAt: now });
     if (mapped !== null) {
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       upserted += 1;
     }
   }

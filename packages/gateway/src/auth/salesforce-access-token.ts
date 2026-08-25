@@ -18,8 +18,8 @@ export interface SalesforceAuth {
  * time we read it back to extract the instance_url. The instance_url is
  * required — there is no silent fallback; a missing one means re-authorization.
  */
-export async function getValidSalesforceAuth(vault: NimbusVault): Promise<SalesforceAuth> {
-  const accessToken = await getValidVaultAccessToken({
+export async function getValidSalesforceAccessToken(vault: NimbusVault): Promise<string> {
+  return getValidVaultAccessToken({
     descriptor: OAUTH_PROVIDERS.salesforce,
     vault,
     clientId: Config.oauthSalesforceClientId,
@@ -39,8 +39,20 @@ export async function getValidSalesforceAuth(vault: NimbusVault): Promise<Salesf
     emptyClientIdError:
       "Set NIMBUS_OAUTH_SALESFORCE_CLIENT_ID and NIMBUS_OAUTH_SALESFORCE_CLIENT_SECRET for Salesforce token refresh",
   });
+}
 
-  const raw = await vault.get(OAUTH_PROVIDERS.salesforce.vaultKey);
+/**
+ * Salesforce needs TWO values from one OAuth exchange: the token and the per-tenant instance URL.
+ * That is why it does not fit the `accessToken(): Promise<string>` capability on its own, and why
+ * it takes the two capability pieces rather than a vault handle — the token from the registry, the
+ * stored payload from the connector's own scoped `getSecret`.
+ */
+export async function getValidSalesforceAuth(
+  accessTokenFor: () => Promise<string>,
+  rawOAuthPayload: () => Promise<string | null>,
+): Promise<SalesforceAuth> {
+  const accessToken = await accessTokenFor();
+  const raw = await rawOAuthPayload();
   if (raw === null || raw === "") {
     throw new Error("Salesforce OAuth not configured; run: nimbus connector auth salesforce");
   }

@@ -82,7 +82,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — no projects"
   test("returns empty result when no gitlab projects in index", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({});
-    const ctx = syncTestContext(db, vault);
+    const ctx = syncTestContext(db, vault, "gitlab");
 
     // fetch should never be called
     globalThis.fetch = (() => {
@@ -108,7 +108,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — happy path",
   test("upserts pipelines and updates cursor", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {
       const u = urlFromFetchInput(input);
@@ -134,7 +134,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — happy path",
   test("respects existing pipeline cursor — skips pipelines with id <= lastSeen", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (() =>
       Promise.resolve(
@@ -157,7 +157,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — happy path",
   test("cursor defaults to 0 for projects not in pipelineCursor (??0 branch)", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/new-proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (() =>
       Promise.resolve(
@@ -186,7 +186,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — MAX project 
     for (let i = 1; i <= 17; i++) {
       seedGitlabProject(db, `group/p${i}`, `group/p${i}#mr-1`);
     }
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     let fetchCount = 0;
     globalThis.fetch = (() => {
@@ -205,7 +205,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — HTTP error p
   test("handles 429 rate-limit without retry-after header — uses 60s default", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (() =>
       Promise.resolve(new Response("", { status: 429 }))) as unknown as typeof fetch;
@@ -226,7 +226,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — HTTP error p
   test("handles 429 rate-limit with numeric retry-after header", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (() =>
       Promise.resolve(
@@ -251,7 +251,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — HTTP error p
   test("handles non-200/non-429 HTTP error status", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (() =>
       Promise.resolve(new Response("Not Found", { status: 404 }))) as unknown as typeof fetch;
@@ -272,7 +272,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — HTTP error p
   test("handles non-JSON response body gracefully (JSON parse failure)", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (() =>
       Promise.resolve(new Response("not-json!!!", { status: 200 }))) as unknown as typeof fetch;
@@ -292,7 +292,7 @@ describeWithFetchRestore("syncGitlabPipelinesForIndexedProjects — HTTP error p
   test("handles non-array JSON response (object instead of array)", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (() =>
       Promise.resolve(
@@ -316,7 +316,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("skips null / non-object item (asRecord returns undefined)", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     // null element in the array
     globalThis.fetch = (() =>
@@ -339,7 +339,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("skips item with no numeric id field", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (() =>
       Promise.resolve(
@@ -361,7 +361,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("skips pipeline older than floorMs (createdMs < floorMs)", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     // created 2 days ago; floor is 1 day ago → should be skipped
     const oldCreatedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
@@ -389,7 +389,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("uses now as modifiedAt when created_at is missing (NaN branch)", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     // No created_at field → createdRaw === undefined → createdMs = NaN
     // → not finite → modifiedAt = now
@@ -419,7 +419,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("title uses Pipeline #id when ref is absent", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const pipeline = {
       id: 8888,
@@ -444,7 +444,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("title uses Pipeline on <ref> when ref is present", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const pipeline = {
       id: 9999,
@@ -470,7 +470,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("title omits status suffix when status is empty string", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const pipeline = {
       id: 1234,
@@ -495,7 +495,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("canonicalUrl falls back to webOrigin+path when web_url absent", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const pipeline = {
       id: 4321,
@@ -524,7 +524,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("truncates title exceeding 512 characters", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const longRef = "a".repeat(600);
     const pipeline = {
@@ -550,7 +550,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("multiple pipelines: accumulates upserted count and picks highest id as maxId", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const now = Date.now();
     const pipelines = [
@@ -582,7 +582,7 @@ describeWithFetchRestore("tryUpsertGitlabPipelineItem — item shape branches", 
   test("break stops processing further items when id <= lastSeen", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const now = Date.now();
     const pipelines = [
@@ -618,7 +618,7 @@ describeWithFetchRestore("listGitlabProjectsFromIndex — project deduplication"
     // Insert two rows with the same project path
     seedGitlabProject(db, "group/dup", "group/dup#mr-1");
     seedGitlabProject(db, "group/dup", "group/dup#mr-2");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     let fetchCount = 0;
     globalThis.fetch = (() => {
@@ -657,7 +657,7 @@ describeWithFetchRestore("listGitlabProjectsFromIndex — project deduplication"
         0,
       ],
     );
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     let fetchCount = 0;
     globalThis.fetch = (() => {
@@ -677,7 +677,7 @@ describeWithFetchRestore("multiple projects — bytes accumulate", () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/a", "group/a#mr-1");
     seedGitlabProject(db, "group/b", "group/b#mr-1");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {
       const u = urlFromFetchInput(input);
@@ -705,7 +705,7 @@ describe("syncGitlabPipelinesForIndexedProjects — 429 retry-after NaN (non-num
   test("treats non-numeric retry-after as 60s default", async () => {
     const db = createMemoryIndexDb();
     seedGitlabProject(db, "group/proj");
-    const ctx = syncTestContext(db, createStubVault({}));
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
 
     const origFetch = globalThis.fetch;
     globalThis.fetch = (() =>

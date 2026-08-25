@@ -12,7 +12,6 @@ import {
   previewFor,
 } from "@nimbus-dev/sdk";
 
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -193,7 +192,7 @@ export function createFastmailSyncable(options: FastmailSyncableOptions): Syncab
         }
         const mapped = mapFastmailEmailToItem(normalized, { syncedAt: now });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

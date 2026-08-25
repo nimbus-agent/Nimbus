@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../../index/item-store.ts";
 import {
   syncPassCursorParseEmpty,
   syncPassCursorSuccess,
@@ -110,7 +109,7 @@ export async function runSinglePassCliShellSync<C>(
       if (mapped === null) {
         continue;
       }
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       totalUpserted += 1;
     }
     if (!parsed.hasMore) {

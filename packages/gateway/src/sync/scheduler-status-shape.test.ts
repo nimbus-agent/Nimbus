@@ -7,13 +7,13 @@ import { createMemoryVault } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
 import { unboundSyncCapabilities } from "./sync-capabilities.ts";
-import type { Syncable, SyncContext, SyncResult } from "./types.ts";
+import type { Syncable, SyncResult, SyncRuntimeContext } from "./types.ts";
 
 function setup(): { idx: LocalIndex; sched: SyncScheduler; db: Database } {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
   const idx = new LocalIndex(db);
-  const ctx: SyncContext = {
+  const ctx: SyncRuntimeContext = {
     ...unboundSyncCapabilities(),
     db,
     vault: createMemoryVault(),

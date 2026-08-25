@@ -1,6 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -87,7 +86,7 @@ export function createStorybookSyncable(options: StorybookSyncableOptions): Sync
           modifiedAtMs: manifest.modifiedAtMs,
         });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

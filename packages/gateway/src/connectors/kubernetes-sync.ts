@@ -1,5 +1,4 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorParseEmpty } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -73,7 +72,7 @@ async function syncKubernetesDeploymentsList(
       continue;
     }
     const extId = `deploy:${ns}/${name}`;
-    upsertIndexedItemForSync(ctx, {
+    ctx.upsertItem({
       service: SERVICE_ID,
       type: "k8s_workload",
       externalId: extId,

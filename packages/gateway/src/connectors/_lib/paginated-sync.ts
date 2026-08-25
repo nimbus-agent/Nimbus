@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -8,7 +7,7 @@ import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/ty
 import type { FetchOutcome } from "./fetch-outcome.ts";
 
 /** The row shape accepted by {@link upsertIndexedItemForSync}. */
-export type SyncUpsertRow = Parameters<typeof upsertIndexedItemForSync>[1];
+export type SyncUpsertRow = Parameters<SyncContext["upsertItem"]>[0];
 
 /**
  * Map each raw item and upsert the non-null results, returning the count
@@ -25,7 +24,7 @@ export function upsertMapped(
     if (mapped === null) {
       continue;
     }
-    upsertIndexedItemForSync(ctx, mapped);
+    ctx.upsertItem(mapped);
     upserted += 1;
   }
   return upserted;

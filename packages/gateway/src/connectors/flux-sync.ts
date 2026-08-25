@@ -1,5 +1,4 @@
 import { FLUX_KINDS, trimTrailingSlash } from "@nimbus-dev/sdk";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
@@ -78,7 +77,7 @@ export function createFluxSyncable(options: FluxSyncableOptions): Syncable {
           if (mapped === null) {
             continue;
           }
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           totalUpserted += 1;
         }
       }

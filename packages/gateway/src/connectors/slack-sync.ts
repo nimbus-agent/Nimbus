@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { shortIndexedMessageTitleFromPreview } from "./sync-message-preview-title.ts";
@@ -269,7 +268,7 @@ function slackTryUpsertIndexedHistoryMessage(
   const url = permalink(state.teamSubdomain, ch, ts);
   const authorId =
     typeof user === "string" && user !== "" ? ctx.resolvePerson({ slackHandle: user }) : null;
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "message",
     externalId,

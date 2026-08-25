@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -131,7 +130,7 @@ function upsertDocs(ctx: SyncContext, docs: readonly unknown[]): number {
   for (const d of docs) {
     const mapped = mapMendeleyDocumentToItem(d, { syncedAt: Date.now() });
     if (mapped !== null) {
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       upserted += 1;
     }
   }

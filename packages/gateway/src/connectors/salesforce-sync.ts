@@ -39,7 +39,10 @@ async function loadCreds(ctx: SyncContext): Promise<SalesforceCreds | null> {
   let accessToken: string;
   let instanceUrl: string;
   try {
-    const auth = await getValidSalesforceAuth(ctx.vault);
+    const auth = await getValidSalesforceAuth(
+      () => ctx.accessToken(),
+      () => ctx.getSecret("oauth"),
+    );
     accessToken = auth.accessToken;
     instanceUrl = auth.instanceUrl;
   } catch {

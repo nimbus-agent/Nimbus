@@ -1,5 +1,4 @@
-import { type IndexedItemBodyInput, upsertIndexedItemForSync } from "../../../index/item-store.ts";
-import { resolvePersonForSync } from "../../../people/linker.ts";
+import type { IndexedItemBodyInput } from "../../../index/item-store.ts";
 import { parseFromHeaderForPerson } from "../../../people/parse-from-header.ts";
 import { stripQuotedTail } from "../../../string/email-quoted-text.ts";
 import type { SyncContext } from "../../../sync/types.ts";
@@ -175,7 +174,7 @@ export function upsertGmailMessage(ctx: SyncContext, m: GmailMessageResource, no
   const authorId =
     fromParsed.email === undefined
       ? null
-      : resolvePersonForSync(ctx.db, {
+      : ctx.resolvePerson({
           canonicalEmail: fromParsed.email,
           ...(fromParsed.displayName === undefined ? {} : { displayName: fromParsed.displayName }),
         });
@@ -184,7 +183,7 @@ export function upsertGmailMessage(ctx: SyncContext, m: GmailMessageResource, no
       ? `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(id)}`
       : `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(threadId)}`;
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: GMAIL_SERVICE_ID,
     type: "email",
     externalId: id,

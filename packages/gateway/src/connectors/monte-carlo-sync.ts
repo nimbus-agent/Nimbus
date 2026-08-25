@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { mapMonteCarloIncidentToItem } from "./monte-carlo-dq-mapping.ts";
 import { listConnectorItems } from "./warehouse-sync-transport.ts";
@@ -26,7 +25,7 @@ export function createMonteCarloSyncable(): Syncable {
       for (const rawIncident of raw) {
         const mapped = mapMonteCarloIncidentToItem(rawIncident, { syncedAt: now });
         if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
+          ctx.upsertItem(mapped);
           upserted += 1;
         }
       }

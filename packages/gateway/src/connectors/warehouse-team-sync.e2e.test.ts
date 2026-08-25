@@ -91,7 +91,7 @@ describe("warehouse team-credential sync (e2e via sink seam)", () => {
     };
 
     const ctx = {
-      ...syncTestContext(db, vault),
+      ...syncTestContext(db, vault, "snowflake"),
       credentialFor: () => ({ credential: "team" as const, teamEntry: ENTRY }),
       runTeamList: (req: { entry: string; service: string; listToolId: string }) =>
         answerLocalOperatorList(localOpListCtx, req).then((r) => {

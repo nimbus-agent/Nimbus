@@ -1,4 +1,4 @@
-import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey } from "../index/item-store.ts";
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import {
@@ -176,7 +176,7 @@ function upsertJenkinsBuildRowIfNew(
     building,
     duration_ms: duration ?? null,
   };
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",
     externalId,

@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { fetchGoogleJson } from "./google-sync-shared.ts";
 import { asUnknownObjectRecord } from "./json-unknown.ts";
@@ -80,7 +79,7 @@ function upsertPhoto(ctx: SyncContext, item: MediaItem, now: number): void {
     height: item.mediaMetadata?.height,
   };
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "photo",
     externalId: id,

@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { normalizeEmail } from "../people/person-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
@@ -93,7 +92,7 @@ function upsertDriveItem(ctx: SyncContext, d: DriveItem, now: number): void {
               : lmEmail,
         });
 
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type,
     externalId: id,

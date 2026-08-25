@@ -1,6 +1,5 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
@@ -173,7 +172,7 @@ function ingestArtefact(ctx: SyncContext, artefact: ParsedArtefact, syncedAt: nu
   for (const entry of results) {
     const mapped = mapGreatExpectationsResultToItem(entry, mappingCtx);
     if (mapped !== null) {
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       upserted += 1;
     }
   }

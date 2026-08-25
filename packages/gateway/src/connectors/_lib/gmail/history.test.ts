@@ -34,7 +34,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L79: hist.history is undefined → empty records loop, returns zero counts
   test("no history property → returns zeros and empty hist", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const histJson: unknown = { historyId: "500" };
     const result = await applyGmailHistoryRecords(ctx, "tok", Date.now(), histJson);
     expect(result.itemsUpserted).toBe(0);
@@ -44,7 +44,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L83: messagesAdded undefined → treated as []
   test("history record with no messagesAdded/messagesDeleted → zeros", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const histJson: unknown = {
       history: [{ id: "1" }],
       historyId: "501",
@@ -56,7 +56,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L26: message entry where message is undefined → skipped (continue branch)
   test("messagesAdded entry with undefined message → skipped", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const histJson: unknown = {
       history: [
         {
@@ -74,7 +74,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L30: message.id is undefined → skipped
   test("messagesAdded entry with message but no id → skipped", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const histJson: unknown = {
       history: [
         {
@@ -92,7 +92,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L30: message.id is "" → skipped
   test("messagesAdded entry with empty string id → skipped", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const histJson: unknown = {
       history: [
         {
@@ -108,7 +108,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L33/L35: message has payload with Subject → hasSubject=true → use m directly (no fetch)
   test("messagesAdded entry with payload+Subject → upserted without fetch", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     let fetchCalled = false;
     globalThis.fetch = (async () => {
       fetchCalled = true;
@@ -148,7 +148,7 @@ describe("applyGmailHistoryRecords", () => {
   // L35 false branch: message has no payload → hasSubject=false → fetch is called
   // Also covers L33's false path for hasSubject
   test("messagesAdded entry without payload → fetches metadata", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
 
     globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
@@ -196,7 +196,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L35 false branch + 404 fetch → warn + continue
   test("messagesAdded fetch returns 404 → warns and skips", async () => {
-    const setup = await createOAuthConnectorTestSetup("google");
+    const setup = await createOAuthConnectorTestSetup("google", "gmail");
     const { logger, warns } = capturingLogger(setup.ctx.logger);
     const ctx = { ...setup.ctx, logger };
 
@@ -231,7 +231,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L60: deleted entry where message.id is undefined → not counted (false branch of typeof check)
   test("messagesDeleted entry with no message id → not counted", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const histJson: unknown = {
       history: [
         {
@@ -251,7 +251,7 @@ describe("applyGmailHistoryRecords", () => {
 
   // L60 true branch: deleted entry with valid message.id → counted
   test("messagesDeleted entry with valid id → counted", async () => {
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const histJson: unknown = {
       history: [
         {
@@ -280,7 +280,7 @@ describe("fetchGmailHistoryOrReset", () => {
       });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const result = await fetchGmailHistoryOrReset(ctx, "tok", {
       startHistoryId: "100",
       pageToken: "myPageToken",
@@ -300,7 +300,7 @@ describe("fetchGmailHistoryOrReset", () => {
       });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const result = await fetchGmailHistoryOrReset(ctx, "tok", {
       startHistoryId: "100",
       pageToken: null,
@@ -320,7 +320,7 @@ describe("fetchGmailHistoryOrReset", () => {
       });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const result = await fetchGmailHistoryOrReset(ctx, "tok", {
       startHistoryId: "100",
       pageToken: "",
@@ -338,7 +338,7 @@ describe("fetchGmailHistoryOrReset", () => {
       });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const result = await fetchGmailHistoryOrReset(ctx, "tok", {
       startHistoryId: "100",
       pageToken: null,
@@ -355,7 +355,7 @@ describe("fetchGmailHistoryOrReset", () => {
       );
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     await expect(
       fetchGmailHistoryOrReset(ctx, "tok", {
         startHistoryId: "100",
@@ -371,7 +371,7 @@ describe("fetchGmailHistoryOrReset", () => {
       throw "Gmail sync failed: 404 history expired" as unknown;
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const result = await fetchGmailHistoryOrReset(ctx, "tok", {
       startHistoryId: "100",
       pageToken: null,
@@ -385,7 +385,7 @@ describe("fetchGmailHistoryOrReset", () => {
       throw "some transient failure" as unknown;
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     await expect(
       fetchGmailHistoryOrReset(ctx, "tok", {
         startHistoryId: "100",
@@ -406,7 +406,7 @@ describe("resolveDeltaHistoryId", () => {
       return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const result = await resolveDeltaHistoryId(ctx, "tok", "12345");
     expect(result).toBe("12345");
     expect(fetchCalled).toBe(false);
@@ -425,7 +425,7 @@ describe("resolveDeltaHistoryId", () => {
       return new Response("unexpected", { status: 500 });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const result = await resolveDeltaHistoryId(ctx, "tok", undefined);
     expect(result).toBe("99999");
   });
@@ -443,7 +443,7 @@ describe("resolveDeltaHistoryId", () => {
       return new Response("unexpected", { status: 500 });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     const result = await resolveDeltaHistoryId(ctx, "tok", "");
     expect(result).toBe("88888");
   });
@@ -461,7 +461,7 @@ describe("resolveDeltaHistoryId", () => {
       return new Response("unexpected", { status: 500 });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     await expect(resolveDeltaHistoryId(ctx, "tok", undefined)).rejects.toThrow(
       "Gmail sync failed: history response missing historyId",
     );
@@ -480,7 +480,7 @@ describe("resolveDeltaHistoryId", () => {
       return new Response("unexpected", { status: 500 });
     }) as unknown as typeof fetch;
 
-    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const { ctx } = await createOAuthConnectorTestSetup("google", "gmail");
     await expect(resolveDeltaHistoryId(ctx, "tok", undefined)).rejects.toThrow(
       "Gmail sync failed: history response missing historyId",
     );

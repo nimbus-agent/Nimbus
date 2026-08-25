@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../../index/item-store.ts";
 import { syncPassCursorSuccess } from "../../sync/pass-cursor-sync-result.ts";
 import type { Provider } from "../../sync/rate-limiter.ts";
 import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/types.ts";
@@ -91,7 +90,7 @@ export async function runImapLikeSync<Cfg, Msg>(
   for (const msg of outcome.messages) {
     const mapped = opts.mapMessage(msg, now);
     if (mapped !== null) {
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       upserted += 1;
     }
   }

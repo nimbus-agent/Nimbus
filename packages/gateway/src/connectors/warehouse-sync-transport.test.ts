@@ -1,8 +1,10 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
+import { buildSyncCapabilities } from "../sync/sync-capabilities.ts";
 import { __setSessionSpawnerForTest } from "../teamvault/connector-session.ts";
+import { EMPTY_NIMBUS_VAULT } from "./connector-sync-test-helpers.ts";
 import { __setPersonalDrainForTest, listConnectorItems } from "./warehouse-sync-transport.ts";
 
 // Opaque cwd handed to the (faked) spawner — built cross-platform per repo convention.
@@ -12,14 +14,10 @@ function ctx(
   over: Partial<Parameters<typeof listConnectorItems>[0]>,
 ): Parameters<typeof listConnectorItems>[0] {
   return {
-    ...unboundSyncCapabilities(),
-    vault: {
-      get: async () => "x",
-      set: async () => {},
-      delete: async () => {},
-      listKeys: async () => [],
-    },
-    db: {} as Parameters<typeof listConnectorItems>[0]["db"],
+    ...buildSyncCapabilities(
+      { vault: EMPTY_NIMBUS_VAULT, db: new Database(":memory:"), depth: "full" },
+      "snowflake",
+    ),
     logger: {} as Parameters<typeof listConnectorItems>[0]["logger"],
     rateLimiter: {} as Parameters<typeof listConnectorItems>[0]["rateLimiter"],
     sandboxCwd: SANDBOX_CWD,

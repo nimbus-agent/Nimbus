@@ -1,4 +1,4 @@
-import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey } from "../index/item-store.ts";
 import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
 import { mapBitbucketPrFiles } from "../prfiles/pr-file-mapping.ts";
 import { plainTextFromHtml } from "../string/html-plain-text.ts";
@@ -161,7 +161,7 @@ function upsertFromPullRequest(
     author: displayName,
   };
   const externalId = bitbucketPrExternalId(repoFull, id);
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: SERVICE_ID,
     type: "pr",
     externalId,

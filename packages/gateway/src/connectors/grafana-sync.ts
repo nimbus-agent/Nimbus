@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   clampSyncTitle,
   syncPassCursorHttpEmpty,
@@ -75,7 +74,7 @@ export function createGrafanaSyncable(options: GrafanaSyncableOptions): Syncable
           continue;
         }
         const t = typeof title === "string" && title !== "" ? title : uid;
-        upsertIndexedItemForSync(ctx, {
+        ctx.upsertItem({
           service: SERVICE_ID,
           type: "dashboard",
           externalId: uid,

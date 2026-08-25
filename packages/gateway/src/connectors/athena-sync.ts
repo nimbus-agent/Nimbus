@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorParseEmpty,
   syncPassCursorSuccess,
@@ -170,7 +169,7 @@ function upsertTablePage(
     seen += 1;
     const mapped = mapAthenaTableToItem(entry, { catalog, database, syncedAt: now });
     if (mapped !== null) {
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       upserted += 1;
     }
   }

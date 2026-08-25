@@ -4,7 +4,6 @@ import pino from "pino";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { SyncContext } from "../sync/types.ts";
-import { createMemoryIndexDb, EMPTY_NIMBUS_VAULT } from "./connector-sync-test-helpers.ts";
 import { createUserMcpSyncable } from "./user-mcp-sync.ts";
 
 interface CapturedWarn {
@@ -16,7 +15,6 @@ function makeCapturingContext(): {
   ctx: SyncContext;
   warns: CapturedWarn[];
 } {
-  const db = createMemoryIndexDb();
   const warns: CapturedWarn[] = [];
   const baseLogger = pino({ level: "silent" });
   const logger = Object.create(baseLogger) as typeof baseLogger;
@@ -32,8 +30,6 @@ function makeCapturingContext(): {
   return {
     ctx: {
       ...unboundSyncCapabilities(),
-      db,
-      vault: EMPTY_NIMBUS_VAULT,
       logger,
       rateLimiter: new ProviderRateLimiter(),
       sandboxCwd: os.tmpdir(),

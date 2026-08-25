@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -31,7 +30,7 @@ export function createIacSyncable(options: IacSyncableOptions): Syncable {
       await ctx.rateLimiter.acquire("iac");
       const now = Date.now();
       const lambdaCount = ctx.countItems("aws", "lambda_function");
-      upsertIndexedItemForSync(ctx, {
+      ctx.upsertItem({
         service: SERVICE_ID,
         type: "sync_heartbeat",
         externalId: "drift_baseline",

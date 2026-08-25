@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import pino from "pino";
 import { LocalIndex } from "../../index/local-index.ts";
 import { ProviderRateLimiter } from "../../sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../sync/sync-capabilities.ts";
 import type { SyncContext } from "../../sync/types.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import {
@@ -21,6 +22,7 @@ function makeCtx(): { ctx: SyncContext; db: Database; cleanup: () => void } {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
   const ctx = {
+    ...buildSyncCapabilities({ vault: createMockVault(), db, depth: "full" }, "github"),
     vault: createMockVault(),
     db,
     logger: pino({ level: "silent" }),

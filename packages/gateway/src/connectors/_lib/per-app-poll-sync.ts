@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -9,7 +8,7 @@ import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/ty
 import { connectorFetch } from "./fetch-outcome.ts";
 
 /** The row shape accepted by {@link upsertIndexedItemForSync}. */
-type SyncUpsertRow = Parameters<typeof upsertIndexedItemForSync>[1];
+type SyncUpsertRow = Parameters<SyncContext["upsertItem"]>[0];
 
 /**
  * Spec for a "list apps → for each app fetch builds" HTTP sync pattern.
@@ -102,7 +101,7 @@ export async function runPerAppPollSync<C>(
   for (const appRow of apps) {
     const mappedApp = spec.mapApp(appRow, now);
     if (mappedApp !== null) {
-      upsertIndexedItemForSync(ctx, mappedApp);
+      ctx.upsertItem(mappedApp);
       upserted += 1;
     }
     const appId = spec.getAppId(appRow);
@@ -121,7 +120,7 @@ export async function runPerAppPollSync<C>(
       if (mapped === null) {
         continue;
       }
-      upsertIndexedItemForSync(ctx, mapped);
+      ctx.upsertItem(mapped);
       upserted += 1;
     }
   }

@@ -1,4 +1,3 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
   awsCliJson,
@@ -120,7 +119,7 @@ async function processLogGroup(
     ...(lastEventTimestamp === undefined ? {} : { lastEventTimestamp }),
   });
   if (mapped !== null) {
-    upsertIndexedItemForSync(ctx, mapped);
+    ctx.upsertItem(mapped);
     state.upserted += 1;
   }
 }

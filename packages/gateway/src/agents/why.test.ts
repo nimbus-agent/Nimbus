@@ -9,7 +9,7 @@ import { EMPTY_NIMBUS_VAULT, syncTestContext } from "../connectors/connector-syn
 import { syncPagerdutyIncidentItems } from "../connectors/pagerduty-sync.ts";
 import { mapVercelDeploymentToItem } from "../connectors/vercel-deployment-mapping.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
-import { upsertIndexedItem, upsertIndexedItemForSync } from "../index/item-store.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
@@ -525,10 +525,13 @@ describe("runWhy", () => {
   };
 
   function ctxWithResolver(db: Database, configs: Map<string, ServiceConfig>): SyncContext {
-    return {
-      ...syncTestContext(db, EMPTY_NIMBUS_VAULT),
-      resolveServiceId: buildServiceIdentityResolver(configs),
-    };
+    return syncTestContext(
+      db,
+      EMPTY_NIMBUS_VAULT,
+      "pagerduty",
+      "full",
+      buildServiceIdentityResolver(configs),
+    );
   }
 
   test("driver lane: incident within 48h before the commit, enriched with its correlated deployment", async () => {
@@ -573,7 +576,7 @@ describe("runWhy", () => {
     };
     const mapped = mapVercelDeploymentToItem(deploymentRaw, { syncedAt: t });
     if (mapped === null) throw new Error("mapVercelDeploymentToItem returned null");
-    upsertIndexedItemForSync(ctx, mapped);
+    ctx.upsertItem(mapped);
 
     // Blame anchors the commit 1h after the incident — within the 48h driver window.
     upsertBlameLines(db, ROOT, "src/retry.ts", [

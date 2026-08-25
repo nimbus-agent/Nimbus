@@ -8,7 +8,6 @@ import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { Syncable, SyncContext } from "../sync/types.ts";
-import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 
 interface RegisteredCall {
@@ -19,13 +18,6 @@ interface CapturedWarn {
   obj: Record<string, unknown>;
   msg: string | undefined;
 }
-
-const EMPTY_VAULT: NimbusVault = {
-  set: async () => {},
-  get: async () => null,
-  delete: async () => {},
-  listKeys: async () => [],
-};
 
 /** Scheduler that captures the full Syncable objects for post-registration inspection. */
 function fakeSchedulerFull(): {
@@ -84,7 +76,7 @@ function fakeStringErrorMesh(errValue: string): LazyConnectorMesh {
 }
 
 /** SyncContext with a capturing warn logger. */
-function makeSyncContext(db: Database): { ctx: SyncContext; warns: CapturedWarn[] } {
+function makeSyncContext(_db: Database): { ctx: SyncContext; warns: CapturedWarn[] } {
   const warns: CapturedWarn[] = [];
   const baseLogger = pino({ level: "silent" });
   const logger = Object.create(baseLogger) as typeof baseLogger;
@@ -100,8 +92,6 @@ function makeSyncContext(db: Database): { ctx: SyncContext; warns: CapturedWarn[
   return {
     ctx: {
       ...unboundSyncCapabilities(),
-      db,
-      vault: EMPTY_VAULT,
       logger,
       rateLimiter: new ProviderRateLimiter(),
       sandboxCwd: os.tmpdir(),
