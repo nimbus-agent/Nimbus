@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@nimbus-dev/sdk": "^1.8.1",
-    "imapflow": "^1.7.1",
+    "@nimbus-dev/sdk": "^1.19.0",
+    "imapflow": "^1.7.2",
     "nodemailer": "^9.0.5",
     "zod": "^4.4.2"
   },
