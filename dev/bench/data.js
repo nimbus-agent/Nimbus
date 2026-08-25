@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787672267809,
+  "lastUpdate": 1787673393716,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15639,6 +15639,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 257.05748430000057,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1d5dd7cc166f53e9fc3dd67e451e680d19460683",
+          "message": "chore(deps): bump the all-minor-patch group across 1 directory with 13 updates (#1331)\n\nBumps the all-minor-patch group with 13 updates across the workspace.\n\n| package | from | to |\n| --- | --- | --- |\n| `@nimbus-dev/client` | 0.17.2 | 0.17.3 |\n| `@nimbus-dev/sdk` | 1.16.0 | 1.19.0 |\n| `astro` | 7.2.2 | 7.2.4 |\n| `@biomejs/biome` | 2.5.8 | 2.5.10 |\n| `@types/bun` | 1.3.14 | 1.4.0 |\n| `jscpd` | 5.0.15 | 5.0.16 |\n| `@mastra/core` | 1.59.0 | 1.61.0 |\n| `@mastra/mcp` | 1.16.0 | 1.17.1 |\n\n## Two root `overrides` pins moved with it\n\nDependabot edits `dependencies`; it has no notion of root `overrides`,\nand the\noverride outranks every declared range. So this bump moved the gateway\nmanifest\nto `^1.61.0` and `^1.17.1` while the pins still held 1.59.0 and 1.16.0 —\nthe\nmanifest would have moved and the installed version would not.\n\n`audit:override-drift` exists for exactly that case and is why this PR\nwas red.\nBoth pins now match, and the gateway resolves 1.61.0 and 1.17.1 for\nreal.\n\n## Why the upstream release notes are gone\n\nThis body becomes the squash commit body. The generated notes carried a\ncode\nsample whose opening bracket and its closing pair land on different\nlines once\nGitHub hard-wraps the body at 72 columns, and release-please cannot\nparse that.\nA commit it cannot parse is dropped from the changelog silently, and the\ntag is\nimmutable afterwards. `check-pr-message-parses.ts` caught it here\ninstead.\n\n---------\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: AsafGolombek <asafgolombek@gmail.com>",
+          "timestamp": "2026-08-25T15:47:30Z",
+          "tree_id": "3d6f0a67623cccd25a01125d8ddec781dd6dbc33",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1d5dd7cc166f53e9fc3dd67e451e680d19460683"
+        },
+        "date": 1787673391006,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 256.1532257000013,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 253.98129075000543,
             "unit": "ms"
           }
         ]
