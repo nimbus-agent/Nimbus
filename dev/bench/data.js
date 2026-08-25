@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787680595111,
+  "lastUpdate": 1787681676055,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15843,6 +15843,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 284.00072925000313,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ab912be9643730a00010ca3ad673eefdf7c80863",
+          "message": "chore: release main (#1339)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.19.1</summary>\n\n##\n[2.19.1](https://github.com/nimbus-agent/Nimbus/compare/v2.19.0...v2.19.1)\n(2026-08-25)\n\n\n### Bug Fixes\n\n* **jenkins:** build headers with Headers so a hostile crumb cannot\nreach a prototype\n([#1336](https://github.com/nimbus-agent/Nimbus/issues/1336))\n([8edb94f](https://github.com/nimbus-agent/Nimbus/commit/8edb94f6d178cd7479ffc4ec71e59e6fbe5a4d6a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
+          "timestamp": "2026-08-25T21:02:57+03:00",
+          "tree_id": "bb0996b81ca6d3b3e484dc26e5dc3bbd483a4bb8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ab912be9643730a00010ca3ad673eefdf7c80863"
+        },
+        "date": 1787681669143,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 321.62988720000067,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 323.27001089998885,
             "unit": "ms"
           }
         ]
