@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-08-25T15:32:03.122Z",
+  "generated_at": "2026-08-25T15:46:19.053Z",
   "files": {
     "packages/gateway/test/benchmark/item-list-query-latency.test.ts": {
       "TS4111": 2
@@ -24,14 +24,8 @@
     "packages/gateway/test/e2e/share-e2e.test.ts": {
       "TS2769": 1
     },
-    "packages/gateway/test/fixtures/dora/payment-service/seed.ts": {
-      "TS6133": 1
-    },
     "packages/gateway/test/fixtures/pagerduty/build-incident.ts": {
       "TS4111": 4
-    },
-    "packages/gateway/test/fixtures/preflight/payment-service/seed.ts": {
-      "TS6133": 1
     },
     "packages/gateway/test/helpers/mock-fetch.ts": {
       "TS2304": 1,
@@ -236,9 +230,6 @@
     },
     "packages/gateway/test/integration/extensions/sync-with-mock-registry.test.ts": {
       "TS2314": 1
-    },
-    "packages/gateway/test/integration/filesystem-v2-semantic-search.integration.test.ts": {
-      "TS6133": 1
     },
     "packages/gateway/test/integration/http/deployments-post-route.test.ts": {
       "TS2532": 2
