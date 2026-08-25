@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@nimbus-dev/sdk": "^1.8.1",
-    "hyparquet": "^1.28.2",
+    "@nimbus-dev/sdk": "^1.19.0",
+    "hyparquet": "^1.29.1",
     "zod": "^4.4.2"
   },
   "devDependencies": {
