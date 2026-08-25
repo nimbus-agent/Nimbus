@@ -1,3 +1,12 @@
+# NOT EMBEDDED ANYWHERE — pulled from docs/README.md on 2026-08-25.
+# The scripted brief this replays is hand-written, not captured: a
+# "| Lane | Evidence |" table citing PR #214, ticket AUTH-88 and incident INC-31,
+# in a format the `why` renderer does not produce. That string appears in exactly
+# one file in this repo — the fixture beside this one — and nowhere in production.
+# Rebuild the fixture from output captured against a REAL gateway before
+# re-embedding. The fake gateway is fine as a transport; a hand-written brief is
+# not fine as a demo.
+
 name: zero-config
 description: |
   The credential-free first run: `nimbus init` registers the repo you are

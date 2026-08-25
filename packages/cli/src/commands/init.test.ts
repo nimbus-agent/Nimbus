@@ -84,16 +84,35 @@ test("applyInitPlan writes the root with code indexing enabled", () => {
 // ----------------------------------------------------------- nextStepLines
 
 test("prints a real file:line when the index yielded a symbol", () => {
-  const lines = nextStepLines({ file: "src/auth.ts", line: 42, name: "verifyToken" });
+  const lines = nextStepLines({ file: "src/auth.ts", line: 42, name: "verifyToken" }, true);
   expect(lines.join("\n")).toContain("nimbus why src/auth.ts:42");
   expect(lines.join("\n")).toContain("verifyToken");
 });
 
 test("falls back to a generic next step when there is no symbol", () => {
-  const text = nextStepLines(null).join("\n");
+  const text = nextStepLines(null, true).join("\n");
   expect(text).toContain("nimbus why <file>:<line>");
   // The plan's hard rule: never promise a concrete location we cannot produce.
   expect(text).not.toContain("nimbus why src/");
+});
+
+test("names `nimbus start` first when nothing has started the gateway", () => {
+  // The defect this pins, reproduced on a clean Windows sandbox against v2.18.1:
+  // `nimbus init --no-sync` exited 0 and printed exactly these two commands, and BOTH then
+  // failed with "Gateway is not running". A first run that ends by naming commands which
+  // cannot work is worse than one that ends silently.
+  const lines = nextStepLines(null, false);
+  expect(lines.join("\n")).toContain("nimbus start");
+  // Order is the whole point: start has to come before the commands that need it.
+  expect(lines.indexOf("  nimbus start")).toBeLessThan(
+    lines.indexOf("  nimbus connector sync filesystem"),
+  );
+});
+
+test("does NOT name `nimbus start` when the gateway is already up", () => {
+  // Without this, the fix above could be satisfied by always printing `nimbus start`, which
+  // would tell someone who just indexed through a live gateway to start one they already have.
+  expect(nextStepLines(null, true).join("\n")).not.toContain("nimbus start");
 });
 
 // ------------------------------------------------------------------ runInit

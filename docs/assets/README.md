@@ -4,6 +4,23 @@ Every artifact here is a committed render — CI verifies the OG card stays in s
 
 ## Hero cast (`hero-cast-{light,dark}.svg`)
 
+> **NOT EMBEDDED — pulled from `docs/README.md` on 2026-08-25.** The SVGs and the
+> `.cast` they render from are still here, and `record-casts` still checks them, but
+> nothing displays them.
+>
+> The recording is driven by a fake gateway, and the brief it replays was written by
+> hand rather than captured: a `| Lane | Evidence |` table citing PR #214, ticket
+> AUTH-88 and incident INC-31. None of that comes from the product — the string
+> `Lane | Evidence` appears in exactly one file in this repository,
+> `scripts/cast-driver/fixtures/zero-config/events.json`, and nowhere in production
+> source. A real `nimbus why` emits `# Why` -> `## Authorship` -> `## Gaps`, and the
+> recorded sequence itself fails on a real machine, because `nimbus init --no-sync`
+> starts no gateway.
+>
+> Re-embed only after the fixture is rebuilt from output captured against a REAL
+> gateway. The fake gateway is fine as a transport; the brief it replays is not fine
+> as prose someone wrote.
+
 Rendered from [`../demos/zero-config.cast`](../demos/zero-config.cast) (an [asciinema](https://asciinema.org/) recording) into two animated standalone SVGs. The README embeds them via `<picture>` with `prefers-color-scheme` to switch between solarized-light and solarized-dark palettes.
 
 ### Rerendering

@@ -16,13 +16,17 @@
 [![Release](https://img.shields.io/github/v/release/nimbus-agent/Nimbus?label=release&color=brightgreen)](https://github.com/nimbus-agent/Nimbus/releases/latest)
 [![Discussions](https://img.shields.io/badge/community-GitHub%20Discussions-238636.svg)](https://github.com/nimbus-agent/Nimbus/discussions)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-cast-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./assets/hero-cast-light.svg">
-  <img alt="Nimbus zero-config demo: nimbus init registers the current git repository for code indexing, the filesystem connector syncs it, and nimbus why traces a line back to its commit and author from local git history — with no credentials, no API key and no LLM configured. Connecting GitHub, a ticket tracker and an incident tool extends the same command with the pull request, ticket and incident." src="./assets/hero-cast-light.svg" width="720">
-</picture>
+<!-- HERO DEMO PULLED 2026-08-25 — do not re-add without a real capture.
+     The cast was rendered from a fake-gateway recording and depicted output the
+     product does not produce: a "| Lane | Evidence |" table with a fabricated PR
+     #214, ticket AUTH-88 and incident INC-31. That string appears nowhere in
+     production source — only in scripts/cast-driver/fixtures/zero-config/events.json.
+     The real `nimbus why` emits "# Why" -> "## Authorship" -> "## Gaps", and the
+     recorded command sequence (init --no-sync -> connector sync -> why) fails on a
+     real machine with "Gateway is not running".
+     Restore only from output captured against a REAL gateway. -->
 
-[**Install**](#quick-start) · [**Docs**](https://nimbus-agent.dev) · [**Watch the 15-second cast**](https://asciinema.org/a/HBEHmA2twRB7pPzI) · [**Architecture**](./architecture.md) · [**Roadmap**](./roadmap.md)
+[**Install**](#quick-start) · [**Docs**](https://nimbus-agent.dev) · [**Architecture**](./architecture.md) · [**Roadmap**](./roadmap.md)
 
 </div>
 

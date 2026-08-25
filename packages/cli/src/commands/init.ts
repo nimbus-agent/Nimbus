@@ -147,11 +147,27 @@ export function applyInitPlan(plan: InitPlan, opts: InitOptions): void {
  * Anything else falls back to the placeholder form — promising a location the
  * command cannot produce is the specific failure this shape exists to prevent.
  */
-export function nextStepLines(demo: DemoSymbolLike | null): string[] {
-  if (demo === null) {
-    return ["", "Next:", "  nimbus connector sync filesystem", "  nimbus why <file>:<line>"];
+export function nextStepLines(demo: DemoSymbolLike | null, gatewayRunning: boolean): string[] {
+  if (demo !== null) {
+    return ["", "Try it:", `  nimbus why ${demo.file}:${String(demo.line)}   # ${demo.name}`];
   }
-  return ["", "Try it:", `  nimbus why ${demo.file}:${String(demo.line)}   # ${demo.name}`];
+  // `nimbus start` FIRST when nothing started the gateway, because both commands below need one
+  // and neither says so. `--no-sync` returns `config-only` without ever starting it, so this list
+  // used to end a successful `nimbus init --no-sync` by naming two commands that both exit 1 with
+  // "Gateway is not running" — verified on a clean Windows sandbox against v2.18.1.
+  //
+  // `gatewayRunning` is a REQUIRED parameter rather than an optional flag defaulting to true: the
+  // two callers sit in genuinely different states — one has just indexed through a live gateway,
+  // the other deliberately started nothing — and a default would silently give the wrong list to
+  // whichever caller forgot. Required makes a third caller a compile error instead.
+  const steps = gatewayRunning ? [] : ["  nimbus start"];
+  return [
+    "",
+    "Next:",
+    ...steps,
+    "  nimbus connector sync filesystem",
+    "  nimbus why <file>:<line>",
+  ];
 }
 
 /**
@@ -407,7 +423,8 @@ function reportIndexed(deps: InitDeps, demo: DemoSymbolLike | null): void {
     deps.log("");
     deps.log("Indexed this repository — no symbol to suggest yet.");
   }
-  for (const line of nextStepLines(demo)) {
+  // The gateway is necessarily up here — this path only runs after indexing through it.
+  for (const line of nextStepLines(demo, true)) {
     deps.log(line);
   }
 }
@@ -419,7 +436,9 @@ function reportOutcome(outcome: InitOutcome, deps: InitDeps): void {
       deps.error("nimbus init: run this inside a git repository.");
       return;
     case "config-only":
-      for (const line of nextStepLines(null)) {
+      // `--no-sync` wrote the config and deliberately started nothing, so the reader needs
+      // `nimbus start` before either of the commands below will work.
+      for (const line of nextStepLines(null, false)) {
         deps.log(line);
       }
       return;

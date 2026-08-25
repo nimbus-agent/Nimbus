@@ -1,3 +1,10 @@
+# NOT EMBEDDED ANYWHERE, and do not publish it. Like zero-config beside it, the
+# brief this replays is hand-written rather than captured: "## Investigation" with
+# a p95 that rose 120ms -> 380ms, three slow queries on `orders` and a retry storm.
+# "## Investigation" appears in no production file — the expert renderer does not
+# emit that section. Rebuild from output captured against a REAL gateway before
+# rendering or uploading this anywhere.
+
 name: incident-response
 description: |
   Investigate a Slack-reported p95 latency regression with `nimbus expert`,

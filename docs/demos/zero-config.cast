@@ -1,5 +1,5 @@
 {"version":2,"width":120,"height":40,"timestamp":1700000000,"env":{"SHELL":"/bin/sh","TERM":"dumb"}}
 [3,"o","Added <TMP>/sample-repo to nimbus.toml (code indexing on).\n"]
-[6,"o","\nNext:\n  nimbus connector sync filesystem\n  nimbus why <file>:<line>\n"]
+[6,"o","\nNext:\n  nimbus start\n  nimbus connector sync filesystem\n  nimbus why <file>:<line>\n"]
 [9,"o","Sync requested: filesystem\n"]
 [12,"o","## Why: src/auth.ts:2\n\n**verifyToken** — introduced in `a1b2c3d` \"harden token check\"\n\n| Lane | Evidence |\n| --- | --- |\n| Commit | `a1b2c3d` — harden token check |\n| Pull request | #214 — Reject empty bearer tokens |\n| Ticket | AUTH-88 — Empty token accepted on /session |\n| Incident | INC-31 — auth bypass reported by on-call |\n| Downstream | 4 call sites across 2 packages |\n\n_Rendered deterministically — configure an LLM for prose synthesis._\n\n"]

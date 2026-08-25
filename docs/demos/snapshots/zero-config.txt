@@ -1,6 +1,7 @@
 Added <TMP>/sample-repo to nimbus.toml (code indexing on).
 
 Next:
+  nimbus start
   nimbus connector sync filesystem
   nimbus why <file>:<line>
 Sync requested: filesystem
