@@ -142,23 +142,26 @@ describe("jenkinsFetchJson", () => {
 });
 
 describe("jenkinsPost", () => {
+  // `jenkinsPost` builds a `Headers`, not a plain object, so the crumb name can never be a
+  // computed property write. These assertions read the real transport shape rather than an object
+  // literal; `Headers` lower-cases field names, hence "authorization".
   test("adds the crumb header when a crumb is provided", async () => {
-    let seen: Record<string, string> = {};
+    let seen = new Headers();
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
-      seen = init.headers as Record<string, string>;
+      seen = init.headers as Headers;
       return { ok: true, status: 200, text: async () => "" } as Response;
     }) as unknown as typeof fetch;
     await jenkinsPost("https://ci/do", "Basic x", { field: "Jenkins-Crumb", value: "abc" });
-    expect(seen["Jenkins-Crumb"]).toBe("abc");
+    expect(seen.get("Jenkins-Crumb")).toBe("abc");
   });
   test("omits the crumb header when crumb is null", async () => {
-    let seen: Record<string, string> = {};
+    let seen = new Headers();
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
-      seen = init.headers as Record<string, string>;
+      seen = init.headers as Headers;
       return { ok: true, status: 200, text: async () => "" } as Response;
     }) as unknown as typeof fetch;
     await jenkinsPost("https://ci/do", "Basic x", null);
-    expect(Object.keys(seen)).toEqual(["Authorization"]);
+    expect([...seen.keys()]).toEqual(["authorization"]);
   });
 });
 
@@ -180,13 +183,13 @@ describe("a hostile crumb field name never reaches the header object", () => {
     ["__proto__", "__proto__"],
     ["header injection", "X-Evil: v\r\nX-Other"],
   ])("jenkinsPost drops a %s crumb field", async (_label, field) => {
-    let seen: Record<string, string> = {};
+    let seen = new Headers();
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
-      seen = init.headers as Record<string, string>;
+      seen = init.headers as Headers;
       return { ok: true, status: 200, text: async () => "" } as Response;
     }) as unknown as typeof fetch;
     await jenkinsPost("https://ci/do", "Basic x", { field, value: "pwned" });
-    expect(Object.keys(seen)).toEqual(["Authorization"]);
+    expect([...seen.keys()]).toEqual(["authorization"]);
     // Nothing reached Object.prototype either.
     expect(Object.getPrototypeOf({})).toBe(Object.prototype);
     expect(({} as Record<string, unknown>)["pwned"]).toBeUndefined();
