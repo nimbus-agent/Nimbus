@@ -6,6 +6,10 @@ export type AgentUnavailableReason =
   | "model_not_found"
   | "provider_error"
   | "network_error"
+  // The owner set `[llm] enforce_air_gap = true`. Distinct from `no_api_key`: a key may well be
+  // configured and reachable — we refuse to use it. Callers that degrade to a local answer treat
+  // this the same as a missing key, which is why it is a reason and not a thrown TypeError.
+  | "air_gap"
   | "unknown";
 
 export type AgentProviderName = "anthropic" | "openai";
@@ -88,6 +92,8 @@ function buildAgentErrorMessage(init: AgentUnavailableInit): string {
     }
     case "network_error":
       return `Could not reach ${provider}. Check your network connection.`;
+    case "air_gap":
+      return "Air-gap mode is on ([llm] enforce_air_gap = true), so the remote intent classifier was not called. Configure a local model ([llm] local_model with Ollama or llama.cpp) to answer without leaving the machine, or unset enforce_air_gap.";
     case "unknown":
       return "Agent unavailable. Check the gateway log for details.";
   }

@@ -519,9 +519,17 @@ Handlers: `packages/gateway/src/ipc/clip-rpc.ts`. CLI: `nimbus clip pair|status|
 | -32002 | `ERR_GAS_LIMIT` | `maxToolCallsPerSession` exceeded |
 | -32003 | `ERR_VAULT_LOCKED` | Vault unavailable (e.g. screen locked on macOS) |
 | -32004 | `ERR_CONNECTOR_UNAVAILABLE` | Connector not running or unauthenticated |
-| -32005 | `ERR_AIR_GAP` | Outbound HTTP blocked by `enforce_air_gap = true` |
+| -32005 | `ERR_AIR_GAP` | *Reserved, not implemented.* Air-gap refusal on the `ask` path surfaces as a `GatewayAgentUnavailableError` with `reason: "air_gap"`, not as this code. |
 | -32021 | `EMBEDDING_WARMING_RPC_CODE` | The local embedding model is still loading, so a semantic request cannot be answered YET. Carries `data.code = "embedding_warming"` + `data.readiness` (state / elapsedMs / model / dims / download progress / reason). Raised by `index.searchRanked` when `semantic` is not `false`; retry, or pass `semantic: false` for keyword-only results. Transient by definition — `disabled`/`unavailable` are served normally. |
 
+
+**Five of the codes above are RESERVED, not implemented** — verified by grepping
+`packages/gateway/src` and `packages/cli/src` for each name: `ERR_HITL_REJECTED`,
+`ERR_GAS_LIMIT`, `ERR_VAULT_LOCKED`, `ERR_CONNECTOR_UNAVAILABLE` and `ERR_AIR_GAP`
+appear in no production file. Only `ERR_METHOD_NOT_ALLOWED` and
+`EMBEDDING_WARMING_RPC_CODE` are wired. Do not write a client branch against a reserved
+code expecting it to fire; check the condition you actually care about instead. If you
+implement one, delete its "reserved" mention here in the same commit.
 ---
 
 ## Tauri UI Allowlist

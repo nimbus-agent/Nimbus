@@ -62,9 +62,19 @@ function fakeConversationalAgent(reply = "agent reply"): Agent {
   } as unknown as Agent;
 }
 
-function fakeLocalRouter(calls: string[], reply = "local reply", preferLocal = true): LlmRouter {
+function fakeLocalRouter(
+  calls: string[],
+  reply = "local reply",
+  preferLocal = true,
+  enforceAirGap = false,
+): LlmRouter {
   return {
     prefersLocal: () => preferLocal,
+    // Added when `classifyIntent` grew a required egress policy. A double that omits a method the
+    // production caller invokes does not fail typecheck — this object reaches `LlmRouter` through
+    // an `as unknown as` cast — it fails at runtime, which is how 20 tests in this file went red
+    // at once. Keep this in step with LlmRouter.
+    enforcesAirGap: () => enforceAirGap,
     generate: async (opts: { prompt: string }) => {
       calls.push(opts.prompt);
       return {
@@ -190,6 +200,59 @@ describe("runAsk", () => {
 
     expect(appended).toHaveLength(0);
     localIndex.close();
+  });
+
+  test("air-gap ON answers locally and makes no remote call", async () => {
+    // The integration half of the guard in `router.ts`. `classify` is deliberately NOT injected,
+    // so the REAL classifyIntent runs and the policy has to travel router -> run-ask -> guard for
+    // this to pass. Injecting a stub would test the stub.
+    //
+    // ANTHROPIC_API_KEY is SET on purpose. The test preload blanks it, and with it blank this test
+    // would go green through the `no_api_key` path without air-gap doing anything at all — passing
+    // for the wrong reason. With a key present, air-gap is the only thing that can stop the call.
+    //
+    // This file has no lifecycle hooks, so the env and fetch are restored here.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+       VALUES ('github:zaalgol/helpdesk#issue-1', 'github', 'issue', 'zaalgol/helpdesk#issue-1', 'add a smoke test', 'Create a basic smoke test for the helpdesk app.', 'https://github.com/zaalgol/helpdesk/issues/1', 1, 1)`,
+    );
+    const localIndex = new LocalIndex(db);
+    const prompts: string[] = [];
+    const reached: string[] = [];
+
+    const originalFetch = globalThis.fetch;
+    const originalKey = process.env["ANTHROPIC_API_KEY"];
+    process.env["ANTHROPIC_API_KEY"] = "sk-ant-not-real";
+    globalThis.fetch = (async (input: unknown) => {
+      reached.push(String(input));
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    try {
+      const out = await runAsk({
+        input: "What should I do for the smoke test issue?",
+        stream: false,
+        clientId: "test-client",
+        paths: stubPaths,
+        consentCoordinator: stubConsent,
+        localIndex,
+        dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
+        sendChunk: () => {},
+        llmRouter: fakeLocalRouter(prompts, "Answered from the local index.", true, true),
+      });
+
+      expect(out.reply).toBe("Answered from the local index.");
+      expect(out.modelMeta?.isLocal).toBe(true);
+      // The assertion the whole fix exists for.
+      expect(reached).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalKey === undefined) delete process.env["ANTHROPIC_API_KEY"];
+      else process.env["ANTHROPIC_API_KEY"] = originalKey;
+    }
   });
 
   test("uses local LLM router when remote classifier has no API key", async () => {
