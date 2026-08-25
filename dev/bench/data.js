@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787679967861,
+  "lastUpdate": 1787680595111,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15809,6 +15809,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 319.61020009999993,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3db5e5ee05ee89d0904896980fc741535e6a4c3c",
+          "message": "docs: extraction lands in nimbus-mcp-servers, boundary reverses to thin, Plan 2 (#1338)\n\n## Answers \"do we need another repo?\" — no\n\n`nimbus-agent/nimbus-mcp-servers` **already exists for exactly this**\nand has been empty since\n2026-06-18: *\"Standalone MCP servers from Nimbus connectors, usable by\nany MCP client.\"* The design\nsaid \"its own repo\" and named none, because I wrote it without checking\nthe organisation first.\nCreating `nimbus-connectors` alongside it would have left two repos with\none purpose.\n\nThe org has **20 repos and six are scaffolds from that same day** —\n`nimbus-mcp-servers`,\n`nimbus-connector-registry`, `nimbus-statuspage`, `nimbus-raycast`,\n`nimbus-recipes`,\n`nimbus-benchmarks`. Project A is not \"add a repo\", it is filling in one\nthat exists. The other five\ndeserve a build-or-archive decision on their own schedule.\n\n**That scaffold's README actively misleads.** It says \"Status: SCAFFOLD\n— not yet built\" and lists\nthree decisions \"to make first\" that Project B already answered and\nshipped:\n\n| Its open question | Shipped in |\n| --- | --- |\n| Share vs vendor vs fork | this plan |\n| Credential model outside the Vault | #1318 |\n| AGPL implications downstream | #1318 (`NOTICE`) |\n| \"Candidate first connectors: github, linear\" | #1321 — all 94 are\neligible |\n\nIt also proposes a package per connector (`npx @nimbus/mcp-github`).\nThis design overrides that in\nfavour of one package, and the override is now **recorded** rather than\nleft implicit — the scaffold\nis the older statement of intent and deserved an explicit answer.\n\n## The boundary reversed: fat → thin\n\n§11 of the design pre-registered the condition that would make the fat\nmove wrong:\n\n> If `SyncContext` needs more than roughly a dozen members, the sync\ncode is more entangled with the\n> gateway than the census suggests, and the thin move becomes correct.\n\n**Plan 1 finished at nineteen**, six of them serving one or two\nconnectors each — `prEnrichCandidates`\nis GitHub-only, `writeObsidianVault` serves one. Under the fat move\nthose become a **published SDK\ncontract** third parties depend on and we version; under thin they stay\ninternal and mutable.\n\nThe condition worked as designed: written before the count was knowable,\nand it changed the decision\nwhen the evidence arrived rather than being explained away.\n\n**This does not diminish Plan 1.** Its value was never the extraction —\n`ctx.vault` went from 83\nusers to zero, enforced by static rule D24, and that stands whether or\nnot a file ever moves. What\nthin costs is goal 2: a connector author still edits sync and mapping in\nthe gateway repo. The\ndesign now says so plainly instead of claiming velocity it will not\ndeliver.\n\n## Plan 2\n\nThe whole runtime coupling turns out to be **one generated file** —\n`bundled-connector-registry.ts`, mapping each id to a relative dynamic\n`import()`. The extraction\nchanges those specifiers to `@nimbus-dev/connectors/<id>` and changes\nnothing else about how a\nconnector spawns, which makes the move far more tractable than 188\nsource files suggests.\n\nSo the plan brackets itself with its two irreversible steps:\n\n- **Task 1 proves the risky assumption first** — bare-specifier dynamic\nimports surviving\n`bun build --compile` — via `test:connector-boot` against a\nlocally-packed tarball, before any\nfile moves, any repo is populated, or anything is published. If it\nfails, the design is wrong and\n  nothing should move.\n- **Task 8 deletes the monorepo copy last**, only after the *published*\nartifact has booted a\n  connector from a compiled binary.\n\nEverything between is reversible. Those two are not.\n\n## Verification\n\n- `preflight:fast` PASSED\n- Every factual claim in the plan re-derived rather than inherited: 188\nsource / 209 test files,\n190 relative `shared/` importers, 92 path references (the spec's older\n\"84\" is explicitly called\nout as not-a-checklist), and the six `audit:connector-*` / `gen:` /\n`test:connector-boot` gates.",
+          "timestamp": "2026-08-25T20:35:21+03:00",
+          "tree_id": "e09c56d293060902e6cebe4d77171c3fa937f01d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/3db5e5ee05ee89d0904896980fc741535e6a4c3c"
+        },
+        "date": 1787680590611,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 283.62274220000216,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 284.00072925000313,
             "unit": "ms"
           }
         ]
