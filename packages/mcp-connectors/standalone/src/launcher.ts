@@ -6,28 +6,39 @@ import { fileURLToPath } from "node:url";
 const ID_RE = /^[a-z0-9-]+$/;
 
 /**
+ * Does this source register a write tool?
+ *
  * A registration CALL, or the registrar handed to a shared kit — not a bare substring, which the
  * registrar's own `const registerWriteTool = ...` would satisfy even with nothing registered.
- * Kept in step with check-connector-consent.ts's WRITE_CALL_RE.
+ * Kept in step with the twin in check-connector-consent.ts.
  *
- * The indentation class is `[^\S\r\n]` (horizontal whitespace), NOT `\s`. `\s` matches a newline,
- * and under `/m` the engine restarts the match at every line start — so a run of n newlines gave n
- * start positions each able to consume the whole run, which is quadratic: measured on this exact
- * pattern, 32k newlines took ~1.2s and 128k took ~21s, growing 4x per doubling. A class that cannot
- * cross a line terminator bounds each attempt to that line's own indentation, which is linear (the
- * same inputs: 0.08ms and 0.9ms). The set of strings matched is unchanged — a position `\s*` could
- * only reach by spanning newlines is reachable from the following line start anyway.
+ * Deliberately NOT a regular expression. The previous pattern was
+ * `^\s*register[A-Za-z]*WriteTool\(` under `/m`, and it drew two rounds of ReDoS reports. The
+ * first was real: `\s` matches a newline, so under `/m` a run of n newlines gave n start
+ * positions each able to consume the whole run — quadratic, measured at 21s for 128k newlines.
+ * Narrowing the class to horizontal whitespace made it linear, and bounding the star to
+ * `{0,40}` kept it linear, but `typescript:S8786` reported both: a star immediately followed by
+ * a literal built from the same character class is the shape the rule looks for, bounded or not,
+ * and the shape is worth avoiding even where this engine happens not to backtrack.
  *
- * The {0,40} bound is not decoration. An UNBOUNDED [A-Za-z]* immediately followed by the
- * literal WriteTool, whose characters are themselves in [A-Za-z], is the shape
- * typescript:S8786 flags: the star and the literal compete for the same characters.
- * Measured on V8 it is linear -- 8k to 128k trailing letters ran 0.078 ms to 0.270 ms,
- * doubling with the input -- so that report was a FALSE POSITIVE rather than a live ReDoS.
- * A bounded quantifier is provably linear instead of measurably linear, and costs nothing:
- * the longest real middle segment is "Onedrive" at 8 characters, against a bound of 40.
+ * Scanning line by line removes the construct rather than arguing with the analyser. Each line is
+ * bounded work, no star sits next to an overlapping literal, and the accepted language is
+ * unchanged — including the trailing-comma form, which still requires the comma to end the line.
  */
-const WRITE_CALL_RE =
-  /^[^\S\r\n]*register[A-Za-z]{0,40}WriteTool\(|^[^\S\r\n]*registerWriteTool,$/m;
+function registersWriteTool(src: string): boolean {
+  for (const line of src.split("\n")) {
+    const t = line.trimStart();
+    if (t === "registerWriteTool,") return true;
+    if (!t.startsWith("register")) continue;
+    const at = t.indexOf("WriteTool(");
+    if (at < 0) continue;
+    // Everything between `register` and `WriteTool(` must be letters, so `registerFoo.WriteTool(`
+    // does not count. Anchored at BOTH ends with nothing following, so it carries none of the
+    // ambiguity the old pattern did.
+    if (/^[A-Za-z]*$/.test(t.slice("register".length, at))) return true;
+  }
+  return false;
+}
 
 function connectorsDir(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -107,7 +118,7 @@ export function standaloneEligibility(
     }
   }
 
-  if (WRITE_CALL_RE.test(src)) {
+  if (registersWriteTool(src)) {
     return { eligible: true, reason: "hardened" };
   }
 
