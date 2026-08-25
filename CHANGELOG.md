@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [2.18.2](https://github.com/nimbus-agent/Nimbus/compare/v2.18.1...v2.18.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **llm:** enforce_air_gap now refuses the remote classifier instead of doing nothing ([#1334](https://github.com/nimbus-agent/Nimbus/issues/1334)) ([be9841c](https://github.com/nimbus-agent/Nimbus/commit/be9841cbda3746e5c727caaf131b9013dfaec697))
+
 ## [2.18.1](https://github.com/nimbus-agent/Nimbus/compare/v2.18.0...v2.18.1) (2026-08-25)
 
 
