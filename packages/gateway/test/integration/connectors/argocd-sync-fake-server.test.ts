@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createArgocdSyncable } from "../../../src/connectors/argocd-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -68,6 +68,7 @@ function startFakeAg(config: FakeAgConfig): FakeAg {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeAg;
@@ -81,14 +82,14 @@ function startHarness(config: FakeAgConfig): Harness {
   const fake = startFakeAg(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "argocd"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         argocd: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -141,8 +142,8 @@ describe("argocd-sync against Bun.serve fake API", () => {
         app("billing-api", { project: "team-billing", sync: "OutOfSync", health: "Degraded" }),
       ],
     });
-    await h.ctx.vault.set("argocd.url", h.fake.baseUrl);
-    await h.ctx.vault.set("argocd.token", "jwt-test-token");
+    await h.vault.set("argocd.url", h.fake.baseUrl);
+    await h.vault.set("argocd.token", "jwt-test-token");
 
     const syncable = createArgocdSyncable({ ensureArgocdMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -172,7 +173,7 @@ describe("argocd-sync against Bun.serve fake API", () => {
 
   test("noop when argocd.url set but argocd.token unset — no requests", async () => {
     h = startHarness({ applications: [app("x")] });
-    await h.ctx.vault.set("argocd.url", h.fake.baseUrl);
+    await h.vault.set("argocd.url", h.fake.baseUrl);
     const syncable = createArgocdSyncable({ ensureArgocdMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -181,7 +182,7 @@ describe("argocd-sync against Bun.serve fake API", () => {
 
   test("noop when argocd.token set but argocd.url unset — no requests", async () => {
     h = startHarness({ applications: [app("x")] });
-    await h.ctx.vault.set("argocd.token", "tok");
+    await h.vault.set("argocd.token", "tok");
     const syncable = createArgocdSyncable({ ensureArgocdMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -190,8 +191,8 @@ describe("argocd-sync against Bun.serve fake API", () => {
 
   test("a 5xx on /applications degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ applications: [app("x")], applicationsStatus: 503 });
-    await h.ctx.vault.set("argocd.url", h.fake.baseUrl);
-    await h.ctx.vault.set("argocd.token", "tok");
+    await h.vault.set("argocd.url", h.fake.baseUrl);
+    await h.vault.set("argocd.token", "tok");
     const syncable = createArgocdSyncable({ ensureArgocdMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -200,8 +201,8 @@ describe("argocd-sync against Bun.serve fake API", () => {
 
   test("a 429 on /applications degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ applications: [app("x")], applicationsStatus: 429 });
-    await h.ctx.vault.set("argocd.url", h.fake.baseUrl);
-    await h.ctx.vault.set("argocd.token", "tok");
+    await h.vault.set("argocd.url", h.fake.baseUrl);
+    await h.vault.set("argocd.token", "tok");
     const syncable = createArgocdSyncable({ ensureArgocdMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -212,8 +213,8 @@ describe("argocd-sync against Bun.serve fake API", () => {
     h = startHarness({
       applications: [app("bare-app", { spec: null, status: null })],
     });
-    await h.ctx.vault.set("argocd.url", h.fake.baseUrl);
-    await h.ctx.vault.set("argocd.token", "tok");
+    await h.vault.set("argocd.url", h.fake.baseUrl);
+    await h.vault.set("argocd.token", "tok");
     const syncable = createArgocdSyncable({ ensureArgocdMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(1);

@@ -5,6 +5,7 @@ import pino from "pino";
 import { createGreenhouseSyncable } from "../../../src/connectors/greenhouse-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -61,6 +62,7 @@ function startFakeGreenhouse(config: FakeGreenhouseConfig): FakeGreenhouse {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeGreenhouse;
@@ -74,14 +76,14 @@ function startHarness(config: FakeGreenhouseConfig): Harness {
   const fake = startFakeGreenhouse(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "greenhouse"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         greenhouse: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -131,7 +133,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
   test("happy path: single page → upserts with greenhouse:<id> ids + Basic (key-as-username) auth", async () => {
     h = startHarness({ pages: [[job(4001), job(4002)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("greenhouse.api_key", "greenhouse_api_key_secret");
+    await h.vault.set("greenhouse.api_key", "greenhouse_api_key_secret");
 
     const syncable = createGreenhouseSyncable({ ensureGreenhouseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -163,7 +165,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
     const full2 = Array.from({ length: 100 }, (_, i) => job(2000 + i));
     h = startHarness({ pages: [full1, full2, [job(3000)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("greenhouse.api_key", "k");
+    await h.vault.set("greenhouse.api_key", "k");
 
     const syncable = createGreenhouseSyncable({ ensureGreenhouseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -183,7 +185,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
     );
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("greenhouse.api_key", "k");
+    await h.vault.set("greenhouse.api_key", "k");
 
     const syncable = createGreenhouseSyncable({ ensureGreenhouseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -196,7 +198,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
   test("canonical_url is always null (no per-job public URL)", async () => {
     h = startHarness({ pages: [[job(4001)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("greenhouse.api_key", "k");
+    await h.vault.set("greenhouse.api_key", "k");
 
     const syncable = createGreenhouseSyncable({ ensureGreenhouseMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -215,7 +217,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
     const stringId = job(0, { id: "abc" });
     h = startHarness({ pages: [[job(4001), noId, stringId]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("greenhouse.api_key", "k");
+    await h.vault.set("greenhouse.api_key", "k");
 
     const syncable = createGreenhouseSyncable({ ensureGreenhouseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -234,7 +236,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
   test("empty job list → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: [[]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("greenhouse.api_key", "k");
+    await h.vault.set("greenhouse.api_key", "k");
     const syncable = createGreenhouseSyncable({ ensureGreenhouseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -244,7 +246,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("greenhouse.api_key", "k");
+    await h.vault.set("greenhouse.api_key", "k");
     const syncable = createGreenhouseSyncable({ ensureGreenhouseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -254,7 +256,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("greenhouse.api_key", "k");
+    await h.vault.set("greenhouse.api_key", "k");
     const syncable = createGreenhouseSyncable({ ensureGreenhouseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

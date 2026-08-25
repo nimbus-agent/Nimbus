@@ -26,29 +26,35 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
  * than in `sync-capabilities.ts` stops the capability layer from depending on fourteen auth
  * modules.
  *
+ * EVERY entry is an arrow, including the ones that could be a bare reference. A bare
+ * `slack: getValidSlackAccessToken` captures the function at module-init time, which defeats
+ * `mock.module` — and 25 slack tests stub exactly that module. Deferring the lookup to call time
+ * keeps those tests able to intercept it. CLAUDE.md prefers DI over mock.module for this reason;
+ * this is the cheapest way to not break the tests that already chose otherwise.
+ *
  * `salesforce` is registered for its TOKEN only. It needs a second value from the same OAuth
  * exchange — the per-tenant instance URL — so `getValidSalesforceAuth` takes this resolver plus the
  * connector's scoped `getSecret` rather than a vault handle. Removing the handle in the final task
  * turned that into a compile error exactly as predicted, which is the intended forcing function.
  */
 const RESOLVERS: Partial<Record<ConnectorServiceId, (vault: NimbusVault) => Promise<string>>> = {
-  canva: getValidCanvaAccessToken,
-  figma: getValidFigmaAccessToken,
+  canva: (v) => getValidCanvaAccessToken(v),
+  figma: (v) => getValidFigmaAccessToken(v),
   gmail: (v) => getValidGoogleAccessToken(v, "gmail"),
   google_drive: (v) => getValidGoogleAccessToken(v, "google_drive"),
   google_meet: (v) => getValidGoogleAccessToken(v, "google_meet"),
   google_photos: (v) => getValidGoogleAccessToken(v, "google_photos"),
-  hubspot: getValidHubspotAccessToken,
-  mendeley: getValidMendeleyAccessToken,
-  miro: getValidMiroAccessToken,
-  notion: getValidNotionAccessToken,
-  onedrive: getValidMicrosoftAccessToken,
-  outlook: getValidMicrosoftAccessToken,
-  salesforce: getValidSalesforceAccessToken,
-  slack: getValidSlackAccessToken,
-  teams: getValidMicrosoftAccessToken,
-  workday: getValidWorkdayAccessToken,
-  zoom: getValidZoomAccessToken,
+  hubspot: (v) => getValidHubspotAccessToken(v),
+  mendeley: (v) => getValidMendeleyAccessToken(v),
+  miro: (v) => getValidMiroAccessToken(v),
+  notion: (v) => getValidNotionAccessToken(v),
+  onedrive: (v) => getValidMicrosoftAccessToken(v),
+  outlook: (v) => getValidMicrosoftAccessToken(v),
+  salesforce: (v) => getValidSalesforceAccessToken(v),
+  slack: (v) => getValidSlackAccessToken(v),
+  teams: (v) => getValidMicrosoftAccessToken(v),
+  workday: (v) => getValidWorkdayAccessToken(v),
+  zoom: (v) => getValidZoomAccessToken(v),
 };
 
 export function resolveAccessTokenForService(

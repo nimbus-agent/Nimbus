@@ -44,7 +44,7 @@ describe("data-profile-sync", () => {
   }
 
   test("no dir → noop, preserves cursor, still ensures the mesh", async () => {
-    const res = await makeSyncable().sync(fx.createSyncContext(), "prev");
+    const res = await makeSyncable().sync(fx.createSyncContext("dataprofile"), "prev");
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
     expect(ensureCalls).toHaveLength(1);
@@ -65,7 +65,7 @@ describe("data-profile-sync", () => {
     await writeFile(join(dir, "orders.parquet"), "PAR1-not-real-bytes", "utf8");
     await fx.vault.set("dataprofile.dir", dir);
 
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("dataprofile"), null);
     expect(res.itemsUpserted).toBe(4);
     expect(res.cursor).toBe(PASS_1_CURSOR);
 
@@ -102,7 +102,7 @@ describe("data-profile-sync", () => {
     await writeFile(join(dir, "secret.csv"), "ssn,name\n123-45-6789,Ada\n", "utf8");
     await writeFile(join(dir, "secret.jsonl"), '{"email":"victim@x.com","amount":999}\n', "utf8");
     await fx.vault.set("dataprofile.dir", dir);
-    await makeSyncable().sync(fx.createSyncContext(), null);
+    await makeSyncable().sync(fx.createSyncContext("dataprofile"), null);
 
     const serialized = JSON.stringify(
       fx.db
@@ -124,7 +124,7 @@ describe("data-profile-sync", () => {
     await writeFile(join(dir, "notes.txt"), "ignore", "utf8");
     await writeFile(join(dir, "bad.parquet"), "x", "utf8"); // reader returns null for non-orders
     await fx.vault.set("dataprofile.dir", dir);
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("dataprofile"), null);
     expect(res.itemsUpserted).toBe(0);
   });
 });

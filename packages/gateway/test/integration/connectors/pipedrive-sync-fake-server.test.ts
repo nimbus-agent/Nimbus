@@ -5,6 +5,7 @@ import pino from "pino";
 import { createPipedriveSyncable } from "../../../src/connectors/pipedrive-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -80,6 +81,7 @@ interface CapturedLog {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakePipedrive;
@@ -108,6 +110,7 @@ function startHarness(config: FakePipedriveConfig): Harness {
   );
   return {
     db,
+    vault,
     fake,
     logs,
     cleanup: () => {
@@ -115,8 +118,7 @@ function startHarness(config: FakePipedriveConfig): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "pipedrive"),
       logger,
       rateLimiter: new ProviderRateLimiter({
         pipedrive: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -178,7 +180,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   test("happy path: single short page → upserts with pipedrive:<id> ids + token in query string", async () => {
     h = startHarness({ pages: [[deal(1), deal(2)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
 
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -205,7 +207,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   test("offset walk: continues while more_items_in_collection is true, follows next_start", async () => {
     h = startHarness({ pages: [fullPage(1), [deal(1000)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
 
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -222,7 +224,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
     const pages = Array.from({ length: 25 }, (_, i) => fullPage(i * 100 + 1));
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
 
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -235,7 +237,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   test("null `data` → zero upserts, pass-1 cursor (Pipedrive returns null for empty)", async () => {
     h = startHarness({ nullData: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
 
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -246,7 +248,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   test("the canonical url is always null", async () => {
     h = startHarness({ pages: [[deal(1)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
 
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -271,7 +273,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   test("empty deal list → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: [[]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -281,7 +283,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -291,7 +293,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully AND never leaks the token in logs/result", async () => {
     h = startHarness({ status: 500 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
 
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -309,7 +311,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   test("the token never appears in any upserted item row or metadata", async () => {
     h = startHarness({ pages: [[deal(1), deal(2)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("pipedrive.token", TOKEN);
+    await h.vault.set("pipedrive.token", TOKEN);
 
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);

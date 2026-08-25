@@ -50,7 +50,7 @@ describe("cloud-logging-sync — credential short-circuit", () => {
   test("no gcp vault keys → noop, runner never called, cursor preserved", async () => {
     const { run, calls } = makeRunner([]);
     const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloud_logging"),
       "prev",
     );
     expect(res.itemsUpserted).toBe(0);
@@ -62,7 +62,7 @@ describe("cloud-logging-sync — credential short-circuit", () => {
     await fx.vault.set("gcp.credentials_json_path", "/etc/gcp.json");
     const { run, calls } = makeRunner([]);
     await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloud_logging"),
       null,
     );
     expect(calls).toHaveLength(0);
@@ -94,7 +94,7 @@ describe("cloud-logging-sync — sink metadata walk", () => {
       },
     ]);
     const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloud_logging"),
       null,
     );
     expect(res.itemsUpserted).toBe(2);
@@ -128,7 +128,7 @@ describe("cloud-logging-sync — sink metadata walk", () => {
   test("gcloud failure → parse-empty pass cursor, 0 upserts, no throw", async () => {
     const { run } = makeRunner([{ ok: false }]);
     const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloud_logging"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -138,7 +138,7 @@ describe("cloud-logging-sync — sink metadata walk", () => {
   test("non-array gcloud output → 0 upserts, success cursor", async () => {
     const { run } = makeRunner([{ body: { error: "unexpected" } }]);
     const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloud_logging"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -148,7 +148,7 @@ describe("cloud-logging-sync — sink metadata walk", () => {
   test("skips entries with no sink name", async () => {
     const { run } = makeRunner([{ body: [{ destination: "x" }, { name: "good-sink" }] }]);
     const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloud_logging"),
       null,
     );
     expect(res.itemsUpserted).toBe(1);
@@ -157,7 +157,7 @@ describe("cloud-logging-sync — sink metadata walk", () => {
   test("emits no notifications and reports bytesTransferred", async () => {
     const { run } = makeRunner([{ body: [{ name: "s" }] }]);
     const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloud_logging"),
       null,
     );
     expect(fx.notifications.emitted).toHaveLength(0);
@@ -175,7 +175,7 @@ describe("cloud-logging-sync — sink metadata walk", () => {
       },
     ]);
     const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloud_logging"),
       null,
     );
     expect(res.itemsUpserted).toBe(3);
@@ -203,7 +203,10 @@ describe("cloud-logging-sync — default gcloud runner (hermetic Bun.spawn mock)
     ];
     const spy = spyOn(Bun, "spawn").mockReturnValue(fakeProc(0, JSON.stringify(sinks)));
     try {
-      const res = await createCloudLoggingSyncable(ENSURE).sync(fx.createSyncContext(), null);
+      const res = await createCloudLoggingSyncable(ENSURE).sync(
+        fx.createSyncContext("cloud_logging"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       expect(spy).toHaveBeenCalled();
     } finally {
@@ -216,7 +219,10 @@ describe("cloud-logging-sync — default gcloud runner (hermetic Bun.spawn mock)
       throw new Error("ENOENT: gcloud not found");
     });
     try {
-      const res = await createCloudLoggingSyncable(ENSURE).sync(fx.createSyncContext(), null);
+      const res = await createCloudLoggingSyncable(ENSURE).sync(
+        fx.createSyncContext("cloud_logging"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).toBe(PASS_1_CURSOR);
     } finally {

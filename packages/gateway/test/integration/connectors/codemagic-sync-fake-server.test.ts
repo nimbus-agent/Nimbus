@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createCodemagicSyncable } from "../../../src/connectors/codemagic-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -82,6 +82,7 @@ function startFakeCodemagic(): FakeCodemagic {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeCodemagic;
@@ -102,6 +103,7 @@ function startHarness(): Harness {
   };
   return {
     db,
+    vault,
     fake,
     originalFetch,
     cleanup: () => {
@@ -110,8 +112,7 @@ function startHarness(): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "codemagic"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter(),
     },
@@ -122,7 +123,7 @@ describe("codemagic-sync against Bun.serve fake API", () => {
   let h: Harness;
   beforeEach(async () => {
     h = startHarness();
-    await h.ctx.vault.set("codemagic.token", "fake-codemagic-token");
+    await h.vault.set("codemagic.token", "fake-codemagic-token");
   });
   afterEach(() => h.cleanup());
 
@@ -174,7 +175,7 @@ describe("codemagic-sync against Bun.serve fake API", () => {
   });
 
   test("no-op when codemagic.token is unset", async () => {
-    await h.ctx.vault.delete("codemagic.token");
+    await h.vault.delete("codemagic.token");
     const syncable = createCodemagicSyncable({ ensureCodemagicMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

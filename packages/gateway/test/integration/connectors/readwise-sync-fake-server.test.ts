@@ -5,6 +5,7 @@ import pino from "pino";
 import { createReadwiseSyncable } from "../../../src/connectors/readwise-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -81,6 +82,7 @@ function startFakeReadwise(config: FakeReadwiseConfig): FakeReadwise {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeReadwise;
@@ -94,14 +96,14 @@ function startHarness(config: FakeReadwiseConfig): Harness {
   const fake = startFakeReadwise(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "readwise"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         readwise: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -172,7 +174,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("happy path: single page → upserts with readwise:<id> ids + Token auth", async () => {
     h = startHarness({ pages: [[highlight(1), highlight(2)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "readwise_test_token");
+    await h.vault.set("readwise.token", "readwise_test_token");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -202,7 +204,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
       pages: [[highlight(1), highlight(2)], [highlight(3)]],
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -219,7 +221,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
     const pages = Array.from({ length: 25 }, (_, i) => [highlight(i + 1)]);
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -232,7 +234,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("the source url is the canonical url; book highlights (null url) → null", async () => {
     h = startHarness({ pages: [[highlight(1), highlight(2, { url: null })]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -263,7 +265,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("empty highlight list → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: [[]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -273,7 +275,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -283,7 +285,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -293,7 +295,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("a valid-JSON but non-object page body degrades to zero items", async () => {
     h = startHarness({ highlightsBody: [], bookPages: [[book(9001)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -306,7 +308,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("a page envelope with no `results` array degrades to zero items", async () => {
     h = startHarness({ highlightsBody: { count: 0, next: null, previous: null } });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -318,7 +320,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("books walk: `/api/v2/books/` upserts readwise:book/<id> rows with Token auth", async () => {
     h = startHarness({ pages: [[highlight(1)]], bookPages: [[book(9001), book(9002)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "readwise_test_token");
+    await h.vault.set("readwise.token", "readwise_test_token");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -342,7 +344,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("a book and a highlight sharing the numeric id both survive the sync", async () => {
     h = startHarness({ pages: [[highlight(9001)]], bookPages: [[book(9001)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -365,7 +367,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
       bookPages: [[book(9001)]],
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -387,7 +389,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
       bookPages: [[book(9001)], [book(9002)], [book(9003)]],
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -404,7 +406,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("an empty books page leaves the highlight upserts untouched", async () => {
     h = startHarness({ pages: [[highlight(1), highlight(2)]], bookPages: [[]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -421,7 +423,7 @@ describe("readwise-sync against Bun.serve fake API", () => {
   test("book rows carry epoch-ms timestamps and the Readwise book-review canonical url", async () => {
     h = startHarness({ pages: [[]], bookPages: [[book(9001)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("readwise.token", "k");
+    await h.vault.set("readwise.token", "k");
 
     const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);

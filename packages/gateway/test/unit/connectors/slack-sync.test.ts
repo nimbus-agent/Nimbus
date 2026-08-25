@@ -47,7 +47,7 @@ describe("slack-sync — credential short-circuits", () => {
     empty.fetchMock.install();
     try {
       const syncable = createSlackSyncable(ENSURE_MCP);
-      const res = await syncable.sync(empty.createSyncContext(), null);
+      const res = await syncable.sync(empty.createSyncContext("slack"), null);
       expect(res.hasMore).toBe(false);
       expect(res.itemsUpserted).toBe(0);
       expect(res.itemsDeleted).toBe(0);
@@ -63,7 +63,7 @@ describe("slack-sync — credential short-circuits", () => {
     try {
       await empty.vault.set("slack.oauth", "");
       const syncable = createSlackSyncable(ENSURE_MCP);
-      const res = await syncable.sync(empty.createSyncContext(), null);
+      const res = await syncable.sync(empty.createSyncContext("slack"), null);
       expect(res.hasMore).toBe(false);
       expect(empty.fetchMock.calls).toHaveLength(0);
     } finally {
@@ -74,7 +74,7 @@ describe("slack-sync — credential short-circuits", () => {
   test("returns noop when token getter throws", async () => {
     tokenState.throwNext = true;
     const syncable = createSlackSyncable(ENSURE_MCP);
-    const res = await syncable.sync(fixture.createSyncContext(), null);
+    const res = await syncable.sync(fixture.createSyncContext("slack"), null);
     expect(res.hasMore).toBe(false);
     expect(res.itemsUpserted).toBe(0);
     expect(fixture.fetchMock.calls).toHaveLength(0);
@@ -93,21 +93,24 @@ function stageListEmpty(): void {
 describe("slack-sync — cursor decode", () => {
   test("null cursor falls back to default list-phase state", async () => {
     stageListEmpty();
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     expect(fixture.fetchMock.calls).toHaveLength(2);
   });
 
   test("empty string cursor falls back to default", async () => {
     stageListEmpty();
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), "");
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), "");
     expect(res.hasMore).toBe(false);
   });
 
   test("wrong-prefix cursor falls back to default", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       "nimbus-other:abc",
     );
     expect(res.hasMore).toBe(false);
@@ -116,7 +119,7 @@ describe("slack-sync — cursor decode", () => {
   test("non-base64 cursor body falls back to default", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       `${CURSOR_PREFIX}!!!not-base64!!!`,
     );
     expect(res.hasMore).toBe(false);
@@ -125,7 +128,7 @@ describe("slack-sync — cursor decode", () => {
   test("cursor decoding to non-object falls back", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor("string-not-object"),
     );
     expect(res.hasMore).toBe(false);
@@ -134,7 +137,7 @@ describe("slack-sync — cursor decode", () => {
   test("cursor decoding to array falls back", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor([1, 2, 3]),
     );
     expect(res.hasMore).toBe(false);
@@ -143,7 +146,7 @@ describe("slack-sync — cursor decode", () => {
   test("cursor with bad phase falls back", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({ phase: "bogus", floorTs: "0", ids: [], nextIdx: 0, hw: {} }),
     );
     expect(res.hasMore).toBe(false);
@@ -152,7 +155,7 @@ describe("slack-sync — cursor decode", () => {
   test("cursor with non-string floorTs falls back", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({ phase: "list", floorTs: 42, ids: [], nextIdx: 0, hw: {} }),
     );
     expect(res.hasMore).toBe(false);
@@ -161,7 +164,7 @@ describe("slack-sync — cursor decode", () => {
   test("cursor with empty floorTs falls back", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({ phase: "list", floorTs: "", ids: [], nextIdx: 0, hw: {} }),
     );
     expect(res.hasMore).toBe(false);
@@ -170,7 +173,7 @@ describe("slack-sync — cursor decode", () => {
   test("cursor with non-string-array ids falls back", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({ phase: "list", floorTs: "1.0", ids: [1, 2], nextIdx: 0, hw: {} }),
     );
     expect(res.hasMore).toBe(false);
@@ -179,7 +182,7 @@ describe("slack-sync — cursor decode", () => {
   test("cursor with negative nextIdx falls back", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({ phase: "list", floorTs: "1.0", ids: [], nextIdx: -1, hw: {} }),
     );
     expect(res.hasMore).toBe(false);
@@ -188,7 +191,7 @@ describe("slack-sync — cursor decode", () => {
   test("cursor with non-integer nextIdx falls back", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({ phase: "list", floorTs: "1.0", ids: [], nextIdx: 1.5, hw: {} }),
     );
     expect(res.hasMore).toBe(false);
@@ -202,7 +205,7 @@ describe("slack-sync — cursor decode", () => {
       response_metadata: { next_cursor: "" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({
         phase: "history",
         floorTs: "1.0",
@@ -226,7 +229,7 @@ describe("slack-sync — cursor decode", () => {
       response_metadata: { next_cursor: "" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({
         phase: "history",
         floorTs: "1.0",
@@ -255,7 +258,7 @@ describe("slack-sync — cursor decode", () => {
       response_metadata: { next_cursor: "" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({
         phase: "history",
         floorTs: "not-a-number",
@@ -288,7 +291,7 @@ describe("slack-sync — slackWebApi error shapes", () => {
       "<html>500</html>",
     );
     await expect(
-      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), null),
     ).rejects.toThrow(/conversations\.list/);
   });
 
@@ -299,7 +302,10 @@ describe("slack-sync — slackWebApi error shapes", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
   });
 
@@ -315,7 +321,10 @@ describe("slack-sync — slackWebApi error shapes", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
   });
 });
@@ -337,7 +346,10 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       response_metadata: { next_cursor: "" },
     });
 
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
 
     const row = fixture.db
@@ -358,7 +370,10 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       messages: [{ ts: "1700000000.000200", text: "hi", user: "U1" }],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ url: string | null }, []>("SELECT url FROM item WHERE service = 'slack' LIMIT 1")
@@ -376,7 +391,10 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
   });
 
@@ -390,7 +408,10 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
   });
 
@@ -401,7 +422,10 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
   });
 
@@ -412,7 +436,10 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
   });
 
@@ -423,7 +450,7 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       response_metadata: { next_cursor: "" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({
         phase: "list",
         floorTs: "1.0",
@@ -455,7 +482,10 @@ describe("slack-sync — list phase", () => {
       ],
       response_metadata: { next_cursor: "page2" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(true);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toStartWith("nimbus-slk1:");
@@ -468,7 +498,7 @@ describe("slack-sync — list phase", () => {
       error: "ratelimited",
     });
     await expect(
-      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), null),
     ).rejects.toThrow(/conversations.list.*ratelimited/);
   });
 
@@ -479,7 +509,7 @@ describe("slack-sync — list phase", () => {
       error: "internal_error",
     });
     await expect(
-      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), null),
     ).rejects.toThrow(/conversations.list/);
   });
 
@@ -500,7 +530,10 @@ describe("slack-sync — list phase", () => {
       response_metadata: { next_cursor: "" },
     });
 
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(true);
     const histCalls = fixture.fetchMock.bodiesFor(
       "POST",
@@ -517,7 +550,10 @@ describe("slack-sync — list phase", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     expect(res.itemsUpserted).toBe(0);
   });
@@ -533,7 +569,10 @@ describe("slack-sync — list phase", () => {
       messages: [],
       response_metadata: { next_cursor: "" },
     });
-    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("slack"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     expect(res.itemsUpserted).toBe(0);
   });
@@ -546,7 +585,7 @@ describe("slack-sync — list phase", () => {
       response_metadata: { next_cursor: "" },
     });
     await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({
         phase: "list",
         floorTs: "1.0",
@@ -590,7 +629,7 @@ describe("slack-sync — history phase", () => {
   test("ids=[''] (empty channel slot) -> early return with hasMore=false", async () => {
     fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor({ ids: [""] }),
     );
     expect(res.hasMore).toBe(false);
@@ -607,7 +646,7 @@ describe("slack-sync — history phase", () => {
       error: "ratelimited",
     });
     await expect(
-      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor({})),
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), historyCursor({})),
     ).rejects.toThrow(/conversations\.history.*ratelimited/);
   });
 
@@ -618,7 +657,7 @@ describe("slack-sync — history phase", () => {
       error: "boom",
     });
     await expect(
-      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor({})),
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), historyCursor({})),
     ).rejects.toThrow(/conversations\.history/);
   });
 
@@ -630,7 +669,7 @@ describe("slack-sync — history phase", () => {
       response_metadata: { next_cursor: "" },
     });
     await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor({ hw: { C1: "999.0" } }),
     );
     const body = fixture.fetchMock.bodiesFor(
@@ -649,7 +688,7 @@ describe("slack-sync — history phase", () => {
       response_metadata: { next_cursor: "" },
     });
     await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor({ histCursor: "next-hist-page" }),
     );
     const body = fixture.fetchMock.bodiesFor(
@@ -668,7 +707,7 @@ describe("slack-sync — history phase", () => {
       response_metadata: { next_cursor: "hist-page-2" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor({}),
     );
     expect(res.hasMore).toBe(true);
@@ -683,7 +722,7 @@ describe("slack-sync — history phase", () => {
       response_metadata: { next_cursor: "" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor({ ids: ["C1", "C2"], nextIdx: 0 }),
     );
     expect(res.hasMore).toBe(true);
@@ -698,7 +737,7 @@ describe("slack-sync — history phase", () => {
       response_metadata: { next_cursor: "" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor({ ids: ["C1"], nextIdx: 0 }),
     );
     expect(res.hasMore).toBe(false);
@@ -718,7 +757,7 @@ describe("slack-sync — message indexing skip paths", () => {
   test("messages not an array -> 0 upserts", async () => {
     stageHistory("not-array" as unknown as unknown[]);
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor(),
     );
     expect(res.itemsUpserted).toBe(0);
@@ -727,7 +766,7 @@ describe("slack-sync — message indexing skip paths", () => {
   test("non-record array entries skipped", async () => {
     stageHistory(["string-entry", 42, null]);
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor(),
     );
     expect(res.itemsUpserted).toBe(0);
@@ -739,7 +778,7 @@ describe("slack-sync — message indexing skip paths", () => {
       { ts: "", text: "empty ts", user: "U1" },
     ]);
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor(),
     );
     expect(res.itemsUpserted).toBe(0);
@@ -748,7 +787,7 @@ describe("slack-sync — message indexing skip paths", () => {
   test("subtype other than thread_broadcast skipped", async () => {
     stageHistory([{ ts: "100.0", text: "join", user: "U1", subtype: "channel_join" }]);
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor(),
     );
     expect(res.itemsUpserted).toBe(0);
@@ -757,7 +796,7 @@ describe("slack-sync — message indexing skip paths", () => {
   test("subtype=thread_broadcast indexed", async () => {
     stageHistory([{ ts: "100.0", text: "broadcast", user: "U1", subtype: "thread_broadcast" }]);
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       historyCursor(),
     );
     expect(res.itemsUpserted).toBe(1);
@@ -765,7 +804,7 @@ describe("slack-sync — message indexing skip paths", () => {
 
   test("non-string text -> preview empty, title is '(no text)'", async () => {
     stageHistory([{ ts: "100.0", text: 42, user: "U1" }]);
-    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), historyCursor());
     const row = fixture.db
       .query<{ title: string; body_preview: string | null }, []>(
         "SELECT title, body_preview FROM item WHERE service = 'slack' LIMIT 1",
@@ -777,7 +816,7 @@ describe("slack-sync — message indexing skip paths", () => {
 
   test("non-string user -> authorId null", async () => {
     stageHistory([{ ts: "100.0", text: "hi", user: 42 }]);
-    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), historyCursor());
     const row = fixture.db
       .query<{ author_id: string | null }, []>(
         "SELECT author_id FROM item WHERE service = 'slack' LIMIT 1",
@@ -788,7 +827,7 @@ describe("slack-sync — message indexing skip paths", () => {
 
   test("empty user string -> authorId null", async () => {
     stageHistory([{ ts: "100.0", text: "hi", user: "" }]);
-    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), historyCursor());
     const row = fixture.db
       .query<{ author_id: string | null }, []>(
         "SELECT author_id FROM item WHERE service = 'slack' LIMIT 1",
@@ -800,7 +839,7 @@ describe("slack-sync — message indexing skip paths", () => {
   test("non-finite ts number -> modifiedAt falls back to now", async () => {
     stageHistory([{ ts: "abc", text: "hi", user: "U1" }]);
     const beforeMs = Date.now();
-    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), historyCursor());
     const afterMs = Date.now();
     const row = fixture.db
       .query<{ modified_at: number }, []>(
@@ -816,7 +855,7 @@ describe("slack-sync — message indexing skip paths", () => {
       { ts: "100.0", text: "in-thread", user: "U1", thread_ts: "99.0" },
       { ts: "101.0", text: "no-thread", user: "U1", thread_ts: 42 },
     ]);
-    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), historyCursor());
     const rows = fixture.db
       .query<{ metadata: string }, []>(
         "SELECT metadata FROM item WHERE service = 'slack' ORDER BY external_id",
@@ -832,7 +871,7 @@ describe("slack-sync — message indexing skip paths", () => {
   test("title sliced to 512 chars on very long messages", async () => {
     const long = "x".repeat(1024);
     stageHistory([{ ts: "100.0", text: long, user: "U1" }]);
-    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext("slack"), historyCursor());
     const row = fixture.db
       .query<{ title: string; body_preview: string | null }, []>(
         "SELECT title, body_preview FROM item WHERE service = 'slack' LIMIT 1",
@@ -854,7 +893,7 @@ describe("slack-sync — message indexing skip paths", () => {
       response_metadata: { next_cursor: "" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("slack"),
       encodeCursor({
         phase: "history",
         floorTs: "1.0",

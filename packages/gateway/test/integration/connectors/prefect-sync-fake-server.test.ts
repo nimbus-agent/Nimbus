@@ -5,6 +5,7 @@ import pino from "pino";
 import { createPrefectSyncable } from "../../../src/connectors/prefect-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -74,6 +75,7 @@ function startFakePrefect(config: FakePrefectConfig): FakePrefect {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakePrefect;
@@ -87,14 +89,14 @@ function startHarness(config: FakePrefectConfig): Harness {
   const fake = startFakePrefect(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "prefect"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         prefect: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -126,8 +128,8 @@ function fullPage(prefix: string): unknown[] {
 }
 
 async function setCreds(h: Harness): Promise<void> {
-  await h.ctx.vault.set("prefect.api_url", h.fake.baseUrl);
-  await h.ctx.vault.set("prefect.api_key", "pnu_test");
+  await h.vault.set("prefect.api_url", h.fake.baseUrl);
+  await h.vault.set("prefect.api_key", "pnu_test");
 }
 
 describe("prefect-sync against Bun.serve fake API", () => {
@@ -218,8 +220,8 @@ describe("prefect-sync against Bun.serve fake API", () => {
 
   test("a 401 (auth failure) on page 1 degrades gracefully (no throw, zero upserts)", async () => {
     h = startHarness({ pages: { "0": [deployment("x")] }, status: 401 });
-    await h.ctx.vault.set("prefect.api_url", h.fake.baseUrl);
-    await h.ctx.vault.set("prefect.api_key", "bad");
+    await h.vault.set("prefect.api_url", h.fake.baseUrl);
+    await h.vault.set("prefect.api_key", "bad");
     const syncable = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

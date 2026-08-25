@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createZendeskSyncable } from "../../../src/connectors/zendesk-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -67,6 +67,7 @@ function startFakeZendesk(config: FakeZendeskConfig): FakeZendesk {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeZendesk;
@@ -80,14 +81,14 @@ function startHarness(config: FakeZendeskConfig): Harness {
   const fake = startFakeZendesk(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "zendesk"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         zendesk: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -119,9 +120,9 @@ function fullPage(base: number): unknown[] {
 }
 
 async function seedCreds(h: Harness): Promise<void> {
-  await h.ctx.vault.set("zendesk.url", h.fake.baseUrl);
-  await h.ctx.vault.set("zendesk.email", "agent@acme.com");
-  await h.ctx.vault.set("zendesk.api_token", "zd_test_token");
+  await h.vault.set("zendesk.url", h.fake.baseUrl);
+  await h.vault.set("zendesk.email", "agent@acme.com");
+  await h.vault.set("zendesk.api_token", "zd_test_token");
 }
 
 describe("zendesk-sync against Bun.serve fake API", () => {
@@ -191,8 +192,8 @@ describe("zendesk-sync against Bun.serve fake API", () => {
 
   test("noop when zendesk.url set but api_token unset — no requests", async () => {
     h = startHarness({ pages: [[ticket(1)]] });
-    await h.ctx.vault.set("zendesk.url", h.fake.baseUrl);
-    await h.ctx.vault.set("zendesk.email", "agent@acme.com");
+    await h.vault.set("zendesk.url", h.fake.baseUrl);
+    await h.vault.set("zendesk.email", "agent@acme.com");
     const syncable = createZendeskSyncable({ ensureZendeskMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -201,8 +202,8 @@ describe("zendesk-sync against Bun.serve fake API", () => {
 
   test("noop when email unset — no requests", async () => {
     h = startHarness({ pages: [[ticket(1)]] });
-    await h.ctx.vault.set("zendesk.url", h.fake.baseUrl);
-    await h.ctx.vault.set("zendesk.api_token", "tok");
+    await h.vault.set("zendesk.url", h.fake.baseUrl);
+    await h.vault.set("zendesk.api_token", "tok");
     const syncable = createZendeskSyncable({ ensureZendeskMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

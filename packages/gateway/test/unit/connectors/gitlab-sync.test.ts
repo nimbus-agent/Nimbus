@@ -128,7 +128,7 @@ describe("gitlab-sync — credential short-circuits", () => {
   test("returns noop when gitlab.pat is not set", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createGitlabSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("gitlab"), null);
       expect(res.hasMore).toBe(false);
       expect(res.itemsUpserted).toBe(0);
       expect(res.itemsDeleted).toBe(0);
@@ -140,7 +140,7 @@ describe("gitlab-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("gitlab.pat", "");
       const syncable = createGitlabSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("gitlab"), null);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
@@ -148,7 +148,7 @@ describe("gitlab-sync — credential short-circuits", () => {
 
   test("api_base missing defaults to https://gitlab.com/api/v4", async () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
-    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null);
 
     const eventCalls = fixture.fetchMock.calls.filter((c) =>
       c.url.startsWith(EVENTS_PREFIX_DEFAULT),
@@ -166,7 +166,10 @@ describe("gitlab-sync — cursor decode", () => {
   test("v2 cursor round-trips (happy path)", async () => {
     stageEmptyEvents();
     const v2 = encodeCursor({ v: 2, after: "2026-04-01T00:00:00.000Z", page: 1, pipelines: {} });
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v2);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      v2,
+    );
     expect(res.hasMore).toBe(false);
     const eventCalls = fixture.fetchMock.calls.filter((c) =>
       c.url.startsWith(EVENTS_PREFIX_DEFAULT),
@@ -178,7 +181,10 @@ describe("gitlab-sync — cursor decode", () => {
   test("v1 cursor upgrades to v2 (preserves after + page; pipelines map is empty)", async () => {
     stageEmptyEvents();
     const v1 = encodeCursor({ after: "2026-03-15T00:00:00.000Z", page: 2 });
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v1);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      v1,
+    );
     expect(res.hasMore).toBe(false);
     const eventCalls = fixture.fetchMock.calls.filter((c) =>
       c.url.startsWith(EVENTS_PREFIX_DEFAULT),
@@ -195,7 +201,10 @@ describe("gitlab-sync — cursor decode", () => {
 
   test("null cursor falls back to default initial-since (events fetched at default base)", async () => {
     stageEmptyEvents();
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     const eventCalls = fixture.fetchMock.calls.filter((c) =>
       c.url.startsWith(EVENTS_PREFIX_DEFAULT),
@@ -206,7 +215,10 @@ describe("gitlab-sync — cursor decode", () => {
 
   test("empty string cursor falls back to default", async () => {
     stageEmptyEvents();
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), "");
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      "",
+    );
     expect(res.hasMore).toBe(false);
     const eventCalls = fixture.fetchMock.calls.filter((c) =>
       c.url.startsWith(EVENTS_PREFIX_DEFAULT),
@@ -217,7 +229,7 @@ describe("gitlab-sync — cursor decode", () => {
   test("wrong-prefix cursor falls back to default", async () => {
     stageEmptyEvents();
     const res = await createGitlabSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("gitlab"),
       "nimbus-other:abc",
     );
     expect(res.hasMore).toBe(false);
@@ -231,7 +243,7 @@ describe("gitlab-sync — cursor decode", () => {
   test("non-base64 / garbage cursor body falls back to default", async () => {
     stageEmptyEvents();
     const res = await createGitlabSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("gitlab"),
       `${CURSOR_PREFIX}!!!not-base64!!!`,
     );
     expect(res.hasMore).toBe(false);
@@ -244,7 +256,7 @@ describe("gitlab-sync — cursor decode", () => {
   test("cursor JSON parses to array → falls back", async () => {
     stageEmptyEvents();
     const res = await createGitlabSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("gitlab"),
       encodeCursor([1, 2, 3]),
     );
     expect(res.hasMore).toBe(false);
@@ -258,7 +270,7 @@ describe("gitlab-sync — cursor decode", () => {
   test("v=2 with empty after → falls back to default", async () => {
     stageEmptyEvents();
     const res = await createGitlabSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("gitlab"),
       encodeCursor({ v: 2, after: "", page: 1, pipelines: {} }),
     );
     expect(res.hasMore).toBe(false);
@@ -272,7 +284,7 @@ describe("gitlab-sync — cursor decode", () => {
   test("v=2 with page < 1 → clamps to 1 (page validator)", async () => {
     stageEmptyEvents();
     const res = await createGitlabSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("gitlab"),
       encodeCursor({ v: 2, after: "2026-04-01T00:00:00.000Z", page: 0, pipelines: {} }),
     );
     expect(res.hasMore).toBe(false);
@@ -286,7 +298,7 @@ describe("gitlab-sync — cursor decode", () => {
   test("pipelines map: non-finite values are dropped, finite values preserved", async () => {
     stageEmptyEvents();
     const res = await createGitlabSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("gitlab"),
       encodeCursor({
         v: 2,
         after: "2026-04-01T00:00:00.000Z",
@@ -305,7 +317,7 @@ describe("gitlab-sync — cursor decode", () => {
 describe("gitlab-sync — HTTP request paths (events)", () => {
   test("sends PRIVATE-TOKEN header on events fetch", async () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
-    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null);
 
     const eventCalls = fixture.fetchMock.calls.filter((c) =>
       c.url.startsWith(EVENTS_PREFIX_DEFAULT),
@@ -322,7 +334,7 @@ describe("gitlab-sync — HTTP request paths (events)", () => {
       page: 3,
       pipelines: {},
     });
-    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v2);
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), v2);
 
     const eventCalls = fixture.fetchMock.calls.filter((c) =>
       c.url.startsWith(EVENTS_PREFIX_DEFAULT),
@@ -343,21 +355,21 @@ describe("gitlab-sync — HTTP request paths (events)", () => {
       { status: 429, headers: { "retry-after": "30" } },
     );
     await expect(
-      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null),
     ).rejects.toThrow(/GitLab events 429/);
   });
 
   test("non-200 non-429 throws with status code surfaced", async () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, { error: "server" }, { status: 500 });
     await expect(
-      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null),
     ).rejects.toThrow(/GitLab events 500/);
   });
 
   test("invalid JSON in events response body throws", async () => {
     fixture.fetchMock.respondWithText("GET", EVENTS_RE_DEFAULT, "<html>not json</html>");
     await expect(
-      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null),
     ).rejects.toThrow(/GitLab events: invalid JSON/);
   });
 });
@@ -368,7 +380,7 @@ describe("gitlab-sync — HTTP request paths (pipelines)", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null);
 
     const pipelineCalls = fixture.fetchMock.calls.filter((c) => PIPELINES_RE_ANY.test(c.url));
     expect(pipelineCalls).toHaveLength(1);
@@ -383,7 +395,7 @@ describe("gitlab-sync — HTTP request paths (pipelines)", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null);
 
     const pipelineCalls = fixture.fetchMock.calls.filter((c) => PIPELINES_RE_ANY.test(c.url));
     expect(pipelineCalls).toHaveLength(1);
@@ -401,7 +413,10 @@ describe("gitlab-sync — HTTP request paths (pipelines)", () => {
       { status: 429, headers: { "retry-after": "30" } },
     );
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.hasMore).toBe(false);
   });
@@ -411,7 +426,10 @@ describe("gitlab-sync — HTTP request paths (pipelines)", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respondWithText("GET", PIPELINES_RE_ANY, "<html>not json</html>");
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.hasMore).toBe(false);
   });
@@ -434,7 +452,10 @@ describe("gitlab-sync — events branch (indexing)", () => {
     ]);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string; type: string }, []>(
@@ -461,7 +482,10 @@ describe("gitlab-sync — events branch (indexing)", () => {
     ]);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string; type: string }, []>(
@@ -494,7 +518,10 @@ describe("gitlab-sync — events branch (indexing)", () => {
     ]);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'gitlab'")
@@ -525,7 +552,10 @@ describe("gitlab-sync — events branch (indexing)", () => {
     ]);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'gitlab'")
@@ -545,7 +575,10 @@ describe("gitlab-sync — events branch (indexing)", () => {
         project: { path_with_namespace: "acme/app" },
       },
     ]);
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     const rows = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'gitlab'")
@@ -570,7 +603,10 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
       },
     ]);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string; type: string; metadata: string }, []>(
@@ -618,7 +654,10 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
       page: 1,
       pipelines: { "acme/app": 100 },
     });
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v2);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      v2,
+    );
     expect(res.itemsUpserted).toBe(1);
     const rows = fixture.db
       .query<{ external_id: string }, []>(
@@ -642,7 +681,10 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
       },
     ]);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     const rows = fixture.db
       .query<{ external_id: string }, []>(
@@ -663,7 +705,7 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
         created_at: new Date(Date.now() - 60 * 1000).toISOString(),
       },
     ]);
-    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null);
     const row = fixture.db
       .query<{ metadata: string }, []>(
         "SELECT metadata FROM item WHERE service = 'gitlab' AND external_id = 'acme/app#pipeline-777'",
@@ -694,7 +736,10 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
       },
     ]);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.cursor).not.toBeNull();
     if (res.cursor === null) throw new Error("expected cursor");
     const decoded = decodeCursor<{ pipelines: Record<string, number> }>(res.cursor);
@@ -731,7 +776,10 @@ describe("gitlab-sync — phase machine + cycle", () => {
       },
     ]);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(3);
     expect(res.hasMore).toBe(false);
     expect(res.bytesTransferred).toBeGreaterThan(0);
@@ -773,7 +821,10 @@ describe("gitlab-sync — phase machine + cycle", () => {
     };
 
     try {
-      const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGitlabSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("gitlab"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       expect(pageCalls).toBe(2);
       expect(pipelineCalls).toBe(1);
@@ -787,7 +838,10 @@ describe("gitlab-sync — phase machine + cycle", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     expect(res.itemsUpserted).toBe(0);
     expect(res.itemsDeleted).toBe(0);
@@ -810,7 +864,7 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
       { old_path: "docs/old.md", new_path: "docs/new.md", renamed_file: true },
     ]);
 
-    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null);
 
     const diffCalls = fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url));
     expect(diffCalls).toHaveLength(1);
@@ -851,7 +905,10 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
       { status: 404 },
     );
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
 
     // Assert the request HAPPENED before asserting nothing was written — otherwise "zero coverage
@@ -890,7 +947,7 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
     // NOTE: no MR_DIFFS stub — that fetch rejects.
 
     const lines: string[] = [];
-    const ctx = { ...fixture.createSyncContext(), logger: capturingLogger(lines) };
+    const ctx = { ...fixture.createSyncContext("gitlab"), logger: capturingLogger(lines) };
     // Must not throw: the rejection is caught in the closure, `null` flows to the driver as an
     // ordinary "page unavailable", and the best-effort wrapper is never reached.
     const res = await createGitlabSyncable(ENSURE_MCP).sync(ctx, null);
@@ -924,7 +981,7 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
     // Rate limiting is the ONE failure the best-effort wrapper deliberately re-raises, so the
     // scheduler can honour the backoff instead of the pass hammering a limited API.
     await expect(
-      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null),
     ).rejects.toBeInstanceOf(RateLimitError);
 
     const covered = fixture.db
@@ -944,7 +1001,10 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
     fixture.fetchMock.respondWithText("GET", MR_DIFFS_RE_ANY, "not json{{{");
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
 
     expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(1);
@@ -971,7 +1031,7 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
       { old_path: "src/last.ts", new_path: "src/last.ts" },
     ]);
 
-    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gitlab"), null);
 
     const diffCalls = fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url));
     expect(diffCalls.some((c) => c.url.includes("?page=1&"))).toBe(true);
@@ -995,7 +1055,10 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
 
     // No request at all — the malformed id is rejected before any network call.
@@ -1011,7 +1074,10 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
 
     // `Number("notanumber")` is NaN. Without the `Number.isFinite` guard the URL would carry
@@ -1032,7 +1098,10 @@ describe("gitlab-sync — PR changed-file pass (end-to-end)", () => {
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
     fixture.db.exec("DROP TABLE pr_files_state");
 
-    const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGitlabSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("gitlab"),
+      null,
+    );
     // The events sync's own result survives: the changed-file pass is best-effort by design.
     expect(res.hasMore).toBe(false);
     expect(fixture.fetchMock.calls.filter((c) => MR_DIFFS_RE_ANY.test(c.url))).toHaveLength(0);

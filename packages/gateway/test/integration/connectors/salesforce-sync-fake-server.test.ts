@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import pino from "pino";
-
 import { createSalesforceSyncable } from "../../../src/connectors/salesforce-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { installHostInterceptFetch } from "../../helpers/host-intercept-fetch.ts";
@@ -74,6 +74,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeServer;
@@ -87,14 +88,14 @@ function startHarness(config: FakeConfig): Harness {
   const fake = installFakeFetch(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.restore();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "salesforce"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         salesforce: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -125,7 +126,7 @@ function opp(id: string, name: string): unknown {
  * the instance host back from the blob.
  */
 async function setOAuth(h: Harness): Promise<void> {
-  await h.ctx.vault.set(
+  await h.vault.set(
     "salesforce.oauth",
     JSON.stringify({
       accessToken: "sf-access",
@@ -201,7 +202,7 @@ describe("salesforce-sync against a fake instance host", () => {
 
   test("noop when instance_url missing from the stored blob (no silent fallback)", async () => {
     h = startHarness({ first: { records: [opp("0061", "Alpha")], done: true } });
-    await h.ctx.vault.set(
+    await h.vault.set(
       "salesforce.oauth",
       JSON.stringify({
         accessToken: "sf-access",

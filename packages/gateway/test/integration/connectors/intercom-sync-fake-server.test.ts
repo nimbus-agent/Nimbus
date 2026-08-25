@@ -5,6 +5,7 @@ import pino from "pino";
 import { createIntercomSyncable } from "../../../src/connectors/intercom-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -80,6 +81,7 @@ function startFakeIntercom(config: FakeIntercomConfig): FakeIntercom {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeIntercom;
@@ -93,14 +95,14 @@ function startHarness(config: FakeIntercomConfig): Harness {
   const fake = startFakeIntercom(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "intercom"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         intercom: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -164,7 +166,7 @@ describe("intercom-sync against Bun.serve fake API", () => {
       pages: { "": { conversations: [conversation("11"), conversation("22")] } },
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("intercom.token", "tok_live_xyz");
+    await h.vault.set("intercom.token", "tok_live_xyz");
 
     const syncable = createIntercomSyncable({ ensureIntercomMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -196,7 +198,7 @@ describe("intercom-sync against Bun.serve fake API", () => {
       },
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("intercom.token", "k");
+    await h.vault.set("intercom.token", "k");
 
     const syncable = createIntercomSyncable({ ensureIntercomMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -211,7 +213,7 @@ describe("intercom-sync against Bun.serve fake API", () => {
   test("MAX_PAGES cap: a perpetual next cursor stops after 20 pages", async () => {
     h = startHarness({});
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("intercom.token", "k");
+    await h.vault.set("intercom.token", "k");
 
     h.fake.stop();
     let serial = 0;
@@ -260,7 +262,7 @@ describe("intercom-sync against Bun.serve fake API", () => {
   test("empty list → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: { "": { conversations: [] } } });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("intercom.token", "k");
+    await h.vault.set("intercom.token", "k");
     const syncable = createIntercomSyncable({ ensureIntercomMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -270,7 +272,7 @@ describe("intercom-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("intercom.token", "k");
+    await h.vault.set("intercom.token", "k");
     const syncable = createIntercomSyncable({ ensureIntercomMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -280,7 +282,7 @@ describe("intercom-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("intercom.token", "k");
+    await h.vault.set("intercom.token", "k");
     const syncable = createIntercomSyncable({ ensureIntercomMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

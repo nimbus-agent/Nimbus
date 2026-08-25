@@ -1,8 +1,12 @@
 import { Database } from "bun:sqlite";
 import pino, { type Logger } from "pino";
-
+import type { ConnectorServiceId } from "../../src/connectors/connector-catalog.ts";
 import { LocalIndex } from "../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../src/sync/rate-limiter.ts";
+import {
+  buildSyncCapabilities,
+  unboundSyncCapabilities,
+} from "../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../src/sync/types.ts";
 import { createMockVault } from "../../src/vault/mock.ts";
 import type { NimbusVault } from "../../src/vault/nimbus-vault.ts";
@@ -19,7 +23,11 @@ export interface ConnectorSyncFixture {
   readonly logger: Logger;
   readonly rateLimiter: ProviderRateLimiter;
 
-  createSyncContext(): SyncContext;
+  /**
+   * @param serviceId The connector this context belongs to. Capabilities are scoped to it, so a
+   * fixture that omits it gets the throwing unbound set rather than silently reading nothing.
+   */
+  createSyncContext(serviceId?: ConnectorServiceId): SyncContext;
 
   cleanup(): void;
 }
@@ -43,13 +51,14 @@ export function createConnectorSyncFixture(): ConnectorSyncFixture {
     notifications,
     logger,
     rateLimiter,
-    createSyncContext(): SyncContext {
+    createSyncContext(serviceId?: ConnectorServiceId): SyncContext {
       return {
-        vault,
-        db,
+        ...(serviceId === undefined
+          ? unboundSyncCapabilities()
+          : buildSyncCapabilities({ vault, db, depth: "full" }, serviceId)),
         logger,
         rateLimiter,
-      };
+      } as SyncContext;
     },
     cleanup(): void {
       fetchMock.restore();

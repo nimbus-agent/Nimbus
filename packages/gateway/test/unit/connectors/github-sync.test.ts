@@ -50,7 +50,7 @@ describe("github-sync — credential short-circuits", () => {
   test("returns noop when github.pat is not set", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createGithubSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("github"), null);
       expect(res.hasMore).toBe(false);
       expect(res.itemsUpserted).toBe(0);
       expect(res.itemsDeleted).toBe(0);
@@ -62,7 +62,7 @@ describe("github-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("github.pat", "");
       const syncable = createGithubSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("github"), null);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
@@ -72,7 +72,7 @@ describe("github-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       const incomingCursor = "nimbus-ghub1:opaque-cursor-value";
       const syncable = createGithubSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), incomingCursor);
+      const res = await syncable.sync(iso.createSyncContext("github"), incomingCursor);
       expect(res.cursor).toBe(incomingCursor);
     });
   });
@@ -86,7 +86,10 @@ function stageHappyPath(): void {
 describe("github-sync — cursor decode failures", () => {
   test("null cursor falls back to default; fetches /user then events", async () => {
     stageHappyPath();
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     expect(fixture.fetchMock.calls).toHaveLength(2);
     expect(fixture.fetchMock.calls[0].url).toBe(USER_URL);
@@ -95,7 +98,10 @@ describe("github-sync — cursor decode failures", () => {
 
   test("empty string cursor falls back to default", async () => {
     stageHappyPath();
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), "");
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      "",
+    );
     expect(res.hasMore).toBe(false);
     expect(fixture.fetchMock.calls).toHaveLength(2);
   });
@@ -103,7 +109,7 @@ describe("github-sync — cursor decode failures", () => {
   test("wrong-prefix cursor falls back to default", async () => {
     stageHappyPath();
     const res = await createGithubSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("github"),
       "nimbus-other:abc",
     );
     expect(res.hasMore).toBe(false);
@@ -113,7 +119,7 @@ describe("github-sync — cursor decode failures", () => {
   test("non-base64 / garbage cursor body falls back to default", async () => {
     stageHappyPath();
     const res = await createGithubSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("github"),
       `${CURSOR_PREFIX}!!!not-base64!!!`,
     );
     expect(res.hasMore).toBe(false);
@@ -123,7 +129,7 @@ describe("github-sync — cursor decode failures", () => {
   test("cursor JSON parses to array → falls back", async () => {
     stageHappyPath();
     const res = await createGithubSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("github"),
       encodeCursor([1, 2, 3]),
     );
     expect(res.hasMore).toBe(false);
@@ -133,7 +139,7 @@ describe("github-sync — cursor decode failures", () => {
   test("cursor JSON parses to null → falls back", async () => {
     stageHappyPath();
     const res = await createGithubSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("github"),
       encodeCursor(null),
     );
     expect(res.hasMore).toBe(false);
@@ -143,7 +149,7 @@ describe("github-sync — cursor decode failures", () => {
   test("cursor missing login (legacy shape) re-resolves via /user", async () => {
     stageHappyPath();
     const res = await createGithubSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("github"),
       encodeCursor({ etag: '"legacy"' }),
     );
     expect(res.hasMore).toBe(false);
@@ -157,7 +163,7 @@ describe("github-sync — HTTP request paths", () => {
   test("sends Bearer Authorization header on /user and events", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
 
     expect(fixture.fetchMock.calls).toHaveLength(2);
     expect(fixture.fetchMock.calls[0].headers["authorization"]).toBe("Bearer github-stub-pat");
@@ -167,7 +173,7 @@ describe("github-sync — HTTP request paths", () => {
   test("sends Accept: application/vnd.github+json on both requests", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
 
     for (const call of fixture.fetchMock.calls) {
       expect(call.headers["accept"]).toBe("application/vnd.github+json");
@@ -177,12 +183,15 @@ describe("github-sync — HTTP request paths", () => {
   test("passes prior etag via If-None-Match on subsequent events fetch", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"first"' } });
-    const first = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const first = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(first.cursor).not.toBeNull();
     if (first.cursor === null) throw new Error("expected cursor after first sync");
 
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"second"' } });
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), first.cursor);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), first.cursor);
 
     const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE.test(c.url));
     expect(eventCalls).toHaveLength(2);
@@ -192,12 +201,15 @@ describe("github-sync — HTTP request paths", () => {
   test("304 returns noop with preserved etag and no items", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"keep"' } });
-    const first = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const first = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     if (first.cursor === null) throw new Error("expected cursor after first sync");
 
     fixture.fetchMock.respondWithText("GET", EVENTS_RE, "", { status: 304 });
     const second = await createGithubSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("github"),
       first.cursor,
     );
     expect(second.itemsUpserted).toBe(0);
@@ -208,14 +220,14 @@ describe("github-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, { message: "bad creds" }, { status: 401 });
     await expect(
-      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null),
     ).rejects.toBeInstanceOf(UnauthenticatedError);
   });
 
   test("401 on /user throws UnauthenticatedError", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { message: "bad creds" }, { status: 401 });
     await expect(
-      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null),
     ).rejects.toBeInstanceOf(UnauthenticatedError);
   });
 
@@ -231,7 +243,7 @@ describe("github-sync — HTTP request paths", () => {
       },
     );
     try {
-      await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
       expect.unreachable();
     } catch (e: unknown) {
       expect(e).toBeInstanceOf(RateLimitError);
@@ -251,7 +263,7 @@ describe("github-sync — HTTP request paths", () => {
       { status: 403, headers: { "x-ratelimit-remaining": "5" } },
     );
     await expect(
-      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null),
     ).rejects.toThrow(/GitHub events 403/);
   });
 
@@ -264,7 +276,7 @@ describe("github-sync — HTTP request paths", () => {
       { status: 429, headers: { "retry-after": "30" } },
     );
     try {
-      await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
       expect.unreachable();
     } catch (e: unknown) {
       expect(e).toBeInstanceOf(RateLimitError);
@@ -279,7 +291,7 @@ describe("github-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, { error: "server" }, { status: 500 });
     await expect(
-      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null),
     ).rejects.toThrow(/GitHub events 500/);
   });
 
@@ -287,7 +299,7 @@ describe("github-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respondWithText("GET", EVENTS_RE, "<html>not json</html>");
     await expect(
-      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null),
     ).rejects.toThrow(/GitHub events: invalid JSON/);
   });
 
@@ -295,21 +307,21 @@ describe("github-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, { not: "an-array" });
     await expect(
-      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null),
     ).rejects.toThrow(/GitHub events: expected array/);
   });
 
   test("/user response missing login throws", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { id: 1 });
     await expect(
-      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null),
     ).rejects.toThrow(/GitHub \/user: response missing login/);
   });
 
   test("/user invalid JSON throws", async () => {
     fixture.fetchMock.respondWithText("GET", USER_URL, "<html>not json</html>");
     await expect(
-      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null),
     ).rejects.toThrow(/GitHub \/user: invalid JSON/);
   });
 });
@@ -318,7 +330,7 @@ describe("github-sync — login resolution", () => {
   test("first sync resolves login from /user before fetching events", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
 
     expect(fixture.fetchMock.calls).toHaveLength(2);
     expect(fixture.fetchMock.calls[0].url).toBe(USER_URL);
@@ -328,11 +340,14 @@ describe("github-sync — login resolution", () => {
   test("subsequent sync with cached login skips /user", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
-    const first = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const first = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     if (first.cursor === null) throw new Error("expected cursor after first sync");
 
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e2"' } });
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), first.cursor);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), first.cursor);
 
     const userCalls = fixture.fetchMock.calls.filter((c) => c.url === USER_URL);
     expect(userCalls).toHaveLength(1);
@@ -366,7 +381,10 @@ describe("github-sync — event filtering", () => {
       ],
       { headers: { etag: '"e1"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string; type: string }, []>(
@@ -401,7 +419,10 @@ describe("github-sync — event filtering", () => {
       ],
       { headers: { etag: '"e2"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string; type: string }, []>(
@@ -435,7 +456,10 @@ describe("github-sync — event filtering", () => {
       ],
       { headers: { etag: '"e3"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const rows = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'github'")
@@ -461,7 +485,7 @@ describe("github-sync — event filtering", () => {
       ],
       { headers: { etag: '"e5"' } },
     );
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     const rows = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'github'")
       .all();
@@ -495,7 +519,10 @@ describe("github-sync — event filtering", () => {
       ],
       { headers: { etag: '"e6"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'github'")
@@ -533,7 +560,10 @@ describe("github-sync — event filtering", () => {
       ],
       { headers: { etag: '"e7"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'github'")
@@ -556,7 +586,10 @@ describe("github-sync — event filtering", () => {
       ],
       { headers: { etag: '"e8"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'github'")
@@ -587,7 +620,7 @@ describe("github-sync — item indexing", () => {
       ],
       { headers: { etag: '"t1"' } },
     );
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     const pr = fixture.db
       .query<{ title: string }, []>(
         "SELECT title FROM item WHERE service = 'github' AND external_id = 'acme/app#7'",
@@ -624,7 +657,7 @@ describe("github-sync — item indexing", () => {
       ],
       { headers: { etag: '"t2"' } },
     );
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     const pr = fixture.db
       .query<{ title: string }, []>(
         "SELECT title FROM item WHERE service = 'github' AND external_id = 'acme/app#100'",
@@ -655,7 +688,7 @@ describe("github-sync — item indexing", () => {
       ],
       { headers: { etag: '"t3"' } },
     );
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     const row = fixture.db
       .query<{ body_preview: string }, []>(
         "SELECT body_preview FROM item WHERE service = 'github' AND external_id = 'acme/app#200'",
@@ -680,7 +713,7 @@ describe("github-sync — item indexing", () => {
       { headers: { etag: '"t4"' } },
     );
     const beforeMs = Date.now();
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     const afterMs = Date.now();
     const row = fixture.db
       .query<{ modified_at: number }, []>(
@@ -713,7 +746,7 @@ describe("github-sync — item indexing", () => {
       ],
       { headers: { etag: '"t5"' } },
     );
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     const row = fixture.db
       .query<{ modified_at: number }, []>(
         "SELECT modified_at FROM item WHERE service = 'github' AND external_id = 'acme/app#301'",
@@ -743,7 +776,7 @@ describe("github-sync — item indexing", () => {
       ],
       { headers: { etag: '"t6"' } },
     );
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     const row = fixture.db
       .query<{ author_id: string | null }, []>(
         "SELECT author_id FROM item WHERE service = 'github' AND external_id = 'acme/app#400'",
@@ -767,7 +800,7 @@ describe("github-sync — item indexing", () => {
       ],
       { headers: { etag: '"t7"' } },
     );
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     const row = fixture.db
       .query<{ author_id: string | null }, []>(
         "SELECT author_id FROM item WHERE service = 'github' AND external_id = 'acme/app#401'",
@@ -781,7 +814,10 @@ describe("github-sync — full-cycle integration", () => {
   test("empty events array → noop with preserved etag (no items, hasMore=false)", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"empty1"' } });
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.itemsDeleted).toBe(0);
     expect(res.hasMore).toBe(false);
@@ -819,7 +855,10 @@ describe("github-sync — full-cycle integration", () => {
       ],
       { headers: { etag: '"mixed1"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(2);
     const rows = fixture.db
       .query<{ external_id: string }, []>(
@@ -839,7 +878,7 @@ describe("github-sync — full-cycle integration", () => {
   test("notifications log records nothing — github-sync emits no notifications", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"n1"' } });
-    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
     expect(fixture.notifications.emitted).toHaveLength(0);
   });
 });
@@ -856,7 +895,10 @@ describe("github-sync — non-event-type drops", () => {
       ],
       { headers: { etag: '"push1"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     const rows = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'github'")
@@ -888,7 +930,10 @@ describe("github-sync — non-event-type drops", () => {
       ],
       { headers: { etag: '"mix2"' } },
     );
-    const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createGithubSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("github"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(2);
     const rows = fixture.db
       .query<{ external_id: string; type: string }, []>(

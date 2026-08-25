@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import pino from "pino";
-
 import { createFigmaSyncable } from "../../../src/connectors/figma-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { installHostInterceptFetch } from "../../helpers/host-intercept-fetch.ts";
@@ -56,6 +56,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeServer;
@@ -69,14 +70,14 @@ function startHarness(config: FakeConfig): Harness {
   const fake = installFakeFetch(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.restore();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "figma"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         figma: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -104,7 +105,7 @@ function fileObj(key: string, name: string): unknown {
 
 /** Set a non-expired figma.oauth payload + the team id so both keys are present. */
 async function setCreds(h: Harness): Promise<void> {
-  await h.ctx.vault.set(
+  await h.vault.set(
     "figma.oauth",
     JSON.stringify({
       accessToken: "figma-access",
@@ -113,7 +114,7 @@ async function setCreds(h: Harness): Promise<void> {
       scopes: ["files:read"],
     }),
   );
-  await h.ctx.vault.set("figma.team_id", TEAM_ID);
+  await h.vault.set("figma.team_id", TEAM_ID);
 }
 
 describe("figma-sync against a fake api.figma.com", () => {
@@ -165,7 +166,7 @@ describe("figma-sync against a fake api.figma.com", () => {
 
   test("noop when figma.oauth set but figma.team_id missing — no requests", async () => {
     h = startHarness({ routes: { [projectsPath()]: { projects: [] } } });
-    await h.ctx.vault.set(
+    await h.vault.set(
       "figma.oauth",
       JSON.stringify({
         accessToken: "a",

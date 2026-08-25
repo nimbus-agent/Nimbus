@@ -81,7 +81,7 @@ describe("great-expectations-sync", () => {
   }
 
   test("no results_dir → noop, preserves cursor", async () => {
-    const res = await makeSyncable().sync(fx.createSyncContext(), "prev");
+    const res = await makeSyncable().sync(fx.createSyncContext("great_expectations"), "prev");
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
     expect(ensureCalls).toHaveLength(1);
@@ -91,7 +91,7 @@ describe("great-expectations-sync", () => {
     await writeFile(join(dir, "result-a.json"), JSON.stringify(validationDoc()), "utf8");
     await fx.vault.set("great_expectations.results_dir", dir);
 
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("great_expectations"), null);
     expect(res.itemsUpserted).toBe(2);
     expect(res.cursor).toBe(PASS_1_CURSOR);
     expect(res.hasMore).toBe(false);
@@ -110,7 +110,7 @@ describe("great-expectations-sync", () => {
   test("NEVER lets an unexpected-sample value reach the DB (no row data)", async () => {
     await writeFile(join(dir, "result-a.json"), JSON.stringify(validationDoc()), "utf8");
     await fx.vault.set("great_expectations.results_dir", dir);
-    await makeSyncable().sync(fx.createSyncContext(), null);
+    await makeSyncable().sync(fx.createSyncContext("great_expectations"), null);
 
     const all = fx.db
       .query<{ metadata: string; title: string; body_preview: string }, []>(
@@ -138,7 +138,7 @@ describe("great-expectations-sync", () => {
     await writeFile(join(dir, "broken.json"), "{ not json", "utf8");
     await fx.vault.set("great_expectations.results_dir", dir);
 
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("great_expectations"), null);
     expect(res.itemsUpserted).toBe(2);
   });
 
@@ -149,7 +149,7 @@ describe("great-expectations-sync", () => {
       "utf8",
     );
     await fx.vault.set("great_expectations.results_dir", dir);
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("great_expectations"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });

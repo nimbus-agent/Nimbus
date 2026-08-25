@@ -31,7 +31,7 @@ async function withIsolatedFixture(
 describe("azure-sync — credential short-circuits", () => {
   test("no vault keys → noop, no spawn", async () => {
     await withIsolatedFixture(async (iso) => {
-      const res = await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      const res = await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext("azure"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(iso.spawnMock.calls).toHaveLength(0);
       expect(res.cursor).toBeNull();
@@ -43,7 +43,7 @@ describe("azure-sync — credential short-circuits", () => {
       await iso.vault.set("azure.tenant_id", "   ");
       await iso.vault.set("azure.client_id", "az-stub-client-id");
       await iso.vault.set("azure.client_secret", "az-stub-client-secret");
-      await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext("azure"), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
     });
   });
@@ -53,7 +53,7 @@ describe("azure-sync — credential short-circuits", () => {
       await iso.vault.set("azure.tenant_id", "az-stub-tenant");
       await iso.vault.set("azure.client_secret", "az-stub-client-secret");
       const res = await createAzureSyncable(ENSURE_MCP).sync(
-        iso.createSyncContext(),
+        iso.createSyncContext("azure"),
         "preserved-cursor",
       );
       expect(iso.spawnMock.calls).toHaveLength(0);
@@ -66,7 +66,7 @@ describe("azure-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("azure.tenant_id", "az-stub-tenant");
       await iso.vault.set("azure.client_id", "az-stub-client-id");
-      const res = await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      const res = await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext("azure"), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).toBe(PASS_1_CURSOR);
@@ -79,7 +79,7 @@ describe("azure-sync — credential short-circuits", () => {
       await iso.vault.set("azure.client_id", "az-stub-client-id");
       await iso.vault.set("azure.client_secret", "az-stub-client-secret");
       iso.spawnMock.respond("az", { exitCode: 0, stdout: "{}" });
-      await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext("azure"), null);
       expect(iso.spawnMock.calls).toHaveLength(1);
     });
   });
@@ -104,14 +104,14 @@ describe("azure-sync — with shared fixture", () => {
   describe("spawn invocation", () => {
     test("binary is `az`; argv is account show -o json", async () => {
       fixture.spawnMock.respond("az", { exitCode: 0, stdout: "{}" });
-      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext("azure"), null);
       expect(fixture.spawnMock.calls[0]!.binary).toBe("az");
       expect(fixture.spawnMock.calls[0]!.argv).toEqual(["account", "show", "-o", "json"]);
     });
 
     test("env contains AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET", async () => {
       fixture.spawnMock.respond("az", { exitCode: 0, stdout: "{}" });
-      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext("azure"), null);
       const env = fixture.spawnMock.calls[0]!.env;
       expect(env["AZURE_TENANT_ID"]).toBe("az-stub-tenant");
       expect(env["AZURE_CLIENT_ID"]).toBe("az-stub-client-id");
@@ -121,7 +121,7 @@ describe("azure-sync — with shared fixture", () => {
     test("non-zero exit → http-empty pass cursor (preserves prior cursor)", async () => {
       fixture.spawnMock.respond("az", { exitCode: 1, stderr: "InvalidCredentials" });
       const res = await createAzureSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("azure"),
         "preserved-cursor",
       );
       expect(res.itemsUpserted).toBe(0);
@@ -130,13 +130,19 @@ describe("azure-sync — with shared fixture", () => {
 
     test("non-zero exit + null cursor → falls back to pass-1 default", async () => {
       fixture.spawnMock.respond("az", { exitCode: 1 });
-      const res = await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAzureSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("azure"),
+        null,
+      );
       expect(res.cursor).toBe(PASS_1_CURSOR);
     });
 
     test("invalid JSON → parse-empty pass cursor", async () => {
       fixture.spawnMock.respond("az", { exitCode: 0, stdout: "not-json" });
-      const res = await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAzureSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("azure"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).toBe(PASS_1_CURSOR);
     });
@@ -151,7 +157,10 @@ describe("azure-sync — with shared fixture", () => {
           name: "Production Subscription",
         }),
       });
-      const res = await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAzureSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("azure"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<
@@ -171,7 +180,7 @@ describe("azure-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ name: "No-ID Subscription" }),
       });
-      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext("azure"), null);
       const row = fixture.db
         .query<{ external_id: string; title: string; metadata: string }, []>(
           "SELECT external_id, title, metadata FROM item WHERE service = 'azure'",
@@ -188,7 +197,7 @@ describe("azure-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ id: "sub-only-id" }),
       });
-      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext("azure"), null);
       const row = fixture.db
         .query<{ external_id: string; title: string }, []>(
           "SELECT external_id, title FROM item WHERE service = 'azure'",
@@ -203,7 +212,7 @@ describe("azure-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ unrelatedKey: "x" }),
       });
-      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext("azure"), null);
       const row = fixture.db
         .query<{ external_id: string; title: string }, []>(
           "SELECT external_id, title FROM item WHERE service = 'azure'",
@@ -215,7 +224,10 @@ describe("azure-sync — with shared fixture", () => {
 
     test("non-record root → still upserts a 'default' subscription", async () => {
       fixture.spawnMock.respond("az", { exitCode: 0, stdout: "[1,2,3]" });
-      const res = await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAzureSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("azure"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'azure'")
@@ -228,7 +240,10 @@ describe("azure-sync — with shared fixture", () => {
     test("success → cursor is pass-1 default; emits no notifications; bytesTransferred = stdout length", async () => {
       const stdout = JSON.stringify({ id: "sub-123", name: "Prod" });
       fixture.spawnMock.respond("az", { exitCode: 0, stdout });
-      const res = await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAzureSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("azure"),
+        null,
+      );
       expect(res.cursor).toBe(PASS_1_CURSOR);
       expect(res.hasMore).toBe(false);
       expect(res.bytesTransferred).toBe(stdout.length);

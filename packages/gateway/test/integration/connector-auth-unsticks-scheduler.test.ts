@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-
 import { getConnectorHealth, transitionHealth } from "../../src/connectors/health.ts";
 import { LocalIndex } from "../../src/index/local-index.ts";
 import { handleConnectorAuth } from "../../src/ipc/connector-rpc-handlers/auth.ts";
 import type { ConnectorRpcHandlerContext } from "../../src/ipc/connector-rpc-handlers/context.ts";
 import { SyncScheduler } from "../../src/sync/scheduler.ts";
-import type { Syncable, SyncResult } from "../../src/sync/types.ts";
+import type { Syncable, SyncResult, SyncRuntimeContext } from "../../src/sync/types.ts";
 import {
   createMemoryVault,
   createSyncTestContext,
@@ -64,7 +63,13 @@ describe("connector re-auth unsticks a scheduler stuck on unauthenticated health
     const db = openMemoryIndexDatabase();
     const vault = createMemoryVault();
     const localIndex = new LocalIndex(db);
-    const syncCtx = createSyncTestContext(db, vault);
+    // A SyncScheduler takes the GATEWAY-side context: it holds the handles because it is what
+    // MINTS a capability per service. A connector-facing SyncContext has neither.
+    const syncCtx: SyncRuntimeContext = {
+      ...createSyncTestContext(db, vault, "github"),
+      db,
+      vault,
+    };
 
     const counter = { runs: 0 };
     const scheduler = new SyncScheduler(syncCtx);

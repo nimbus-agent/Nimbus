@@ -53,7 +53,7 @@ describe("athena-sync — credential short-circuit", () => {
   test("no aws vault keys → noop, runner never called, cursor preserved", async () => {
     const { run, calls } = makeRunner({});
     const res = await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("athena"),
       "prev",
     );
     expect(res.itemsUpserted).toBe(0);
@@ -65,7 +65,10 @@ describe("athena-sync — credential short-circuit", () => {
     await fx.vault.set("aws.access_key_id", "AKIA");
     await fx.vault.set("aws.secret_access_key", "S");
     const { run, calls } = makeRunner({});
-    await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(fx.createSyncContext(), null);
+    await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(
+      fx.createSyncContext("athena"),
+      null,
+    );
     expect(calls).toHaveLength(0);
   });
 });
@@ -100,7 +103,7 @@ describe("athena-sync — metadata walk", () => {
       ],
     });
     const res = await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("athena"),
       null,
     );
     expect(res.itemsUpserted).toBe(2);
@@ -128,7 +131,7 @@ describe("athena-sync — metadata walk", () => {
   test("first-page list-data-catalogs failure → parse-empty pass cursor, 0 upserts", async () => {
     const { run } = makeRunner({ "list-data-catalogs": [{ ok: false }] });
     const res = await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("athena"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -143,7 +146,10 @@ describe("athena-sync — metadata walk", () => {
       ],
       "list-databases": [{ body: { DatabaseList: [] } }],
     });
-    await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(fx.createSyncContext(), null);
+    await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(
+      fx.createSyncContext("athena"),
+      null,
+    );
     const catalogCalls = calls.filter((c) => c[1] === "list-data-catalogs");
     expect(catalogCalls).toHaveLength(2);
     expect(catalogCalls[1]).toContain("--next-token");
@@ -160,7 +166,7 @@ describe("athena-sync — metadata walk", () => {
       ],
     });
     const res = await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("athena"),
       null,
     );
     expect(res.itemsUpserted).toBe(2);
@@ -177,7 +183,7 @@ describe("athena-sync — metadata walk", () => {
       "list-databases": [{ ok: false }],
     });
     const res = await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("athena"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -192,7 +198,7 @@ describe("athena-sync — metadata walk", () => {
       "list-table-metadata": [{ body: { TableMetadataList: [{ Name: "t" }] } }],
     });
     const res = await createAthenaSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("athena"),
       null,
     );
     expect(fx.notifications.emitted).toHaveLength(0);

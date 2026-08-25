@@ -31,7 +31,7 @@ describe("newrelic-sync — credential short-circuits", () => {
   test("returns noop when api_key is not set", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createNewrelicSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("newrelic"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
@@ -43,7 +43,7 @@ describe("newrelic-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("newrelic.api_key", "   ");
       const syncable = createNewrelicSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("newrelic"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
       expect(res.itemsUpserted).toBe(0);
     });
@@ -52,7 +52,7 @@ describe("newrelic-sync — credential short-circuits", () => {
   test("noop preserves incoming cursor", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createNewrelicSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), "preserved-cursor");
+      const res = await syncable.sync(iso.createSyncContext("newrelic"), "preserved-cursor");
       expect(res.cursor).toBe("preserved-cursor");
     });
   });
@@ -74,7 +74,7 @@ describe("newrelic-sync — with shared fixture", () => {
   describe("HTTP request path", () => {
     test("sends X-Api-Key header (NOT Authorization) and Accept: application/json", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: [] });
-      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext("newrelic"), null);
       const call = fixture.fetchMock.firstCall();
       expect(call.headers["x-api-key"]).toBe("newrelic-stub-key");
       expect(call.headers["accept"]).toBe("application/json");
@@ -83,13 +83,16 @@ describe("newrelic-sync — with shared fixture", () => {
 
     test("requests the exact apps URL with no query params", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: [] });
-      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext("newrelic"), null);
       expect(fixture.fetchMock.firstCall().url).toBe(APPS_URL);
     });
 
     test("non-200 → no upserts, returns http-empty pass cursor", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { error: "boom" }, { status: 500 });
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -97,7 +100,10 @@ describe("newrelic-sync — with shared fixture", () => {
 
     test("invalid JSON → returns parse-empty pass cursor", async () => {
       fixture.fetchMock.respondWithText("GET", APPS_URL, "<html>not json</html>");
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -105,7 +111,10 @@ describe("newrelic-sync — with shared fixture", () => {
 
     test("non-record root JSON (bare array) → 0 upserts, success pass cursor", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, []);
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -115,7 +124,10 @@ describe("newrelic-sync — with shared fixture", () => {
   describe("indexing skip paths", () => {
     test("applications field missing → 0 upserts", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { other: "field" });
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -123,20 +135,26 @@ describe("newrelic-sync — with shared fixture", () => {
 
     test("applications: null → 0 upserts (non-array branch)", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: null });
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
     });
 
     test("empty applications array → 0 upserts, success cursor", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: [] });
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
     });
 
     test("id-only → external_id = 'app:' + id; title falls back to ext", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: [{ id: "abc" }] });
-      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext("newrelic"), null);
       const row = fixture.db
         .query<{ external_id: string; title: string }, []>(
           "SELECT external_id, title FROM item WHERE service = 'newrelic'",
@@ -148,7 +166,7 @@ describe("newrelic-sync — with shared fixture", () => {
 
     test("name-only (id missing) → external_id = name (no prefix); title = name", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: [{ name: "MyApp" }] });
-      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext("newrelic"), null);
       const row = fixture.db
         .query<{ external_id: string; title: string }, []>(
           "SELECT external_id, title FROM item WHERE service = 'newrelic'",
@@ -162,7 +180,10 @@ describe("newrelic-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", APPS_URL, {
         applications: [42, "string", null, { id: "kept", name: "Kept" }],
       });
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const rows = fixture.db
         .query<{ external_id: string }, []>(
@@ -176,7 +197,10 @@ describe("newrelic-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", APPS_URL, {
         applications: [{ other: "field" }, { id: "kept", name: "Kept" }],
       });
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
   });
@@ -184,7 +208,10 @@ describe("newrelic-sync — with shared fixture", () => {
   describe("cursor decode", () => {
     test("null cursor returns success pass cursor with pass:1", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: [] });
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
       const decoded = JSON.parse(
@@ -196,7 +223,7 @@ describe("newrelic-sync — with shared fixture", () => {
     test("any incoming cursor is replaced on success (pass cursor)", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: [] });
       const res = await createNewrelicSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("newrelic"),
         encodeCursor({ arbitrary: true }),
       );
       expect(res.cursor).not.toBeNull();
@@ -213,7 +240,10 @@ describe("newrelic-sync — with shared fixture", () => {
           { id: "a3", name: "App Three" },
         ],
       });
-      const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createNewrelicSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("newrelic"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(3);
       const rows = fixture.db
         .query<{ external_id: string }, []>(
@@ -229,7 +259,7 @@ describe("newrelic-sync — with shared fixture", () => {
 
     test("emits no notifications", async () => {
       fixture.fetchMock.respond("GET", APPS_URL, { applications: [] });
-      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext("newrelic"), null);
       expect(fixture.notifications.emitted).toHaveLength(0);
     });
   });

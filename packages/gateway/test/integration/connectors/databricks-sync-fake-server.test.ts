@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createDatabricksSyncable } from "../../../src/connectors/databricks-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -70,6 +70,7 @@ function startFakeDbx(config: FakeDbxConfig): FakeDbx {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeDbx;
@@ -83,14 +84,14 @@ function startHarness(config: FakeDbxConfig): Harness {
   const fake = startFakeDbx(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "databricks"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         databricks: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -143,8 +144,8 @@ describe("databricks-sync against Bun.serve fake API", () => {
       ],
       jobsPages: { "": { jobs: [job(10, { name: "Revenue ETL" }), job(20)], has_more: false } },
     });
-    await h.ctx.vault.set("databricks.host", h.fake.baseUrl);
-    await h.ctx.vault.set("databricks.token", "dapi-test-token");
+    await h.vault.set("databricks.host", h.fake.baseUrl);
+    await h.vault.set("databricks.token", "dapi-test-token");
 
     const syncable = createDatabricksSyncable({ ensureDatabricksMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -187,8 +188,8 @@ describe("databricks-sync against Bun.serve fake API", () => {
       jobsPages: { "": { jobs: [job(1)] } },
       jobsStatus: 503,
     });
-    await h.ctx.vault.set("databricks.host", h.fake.baseUrl);
-    await h.ctx.vault.set("databricks.token", "t");
+    await h.vault.set("databricks.host", h.fake.baseUrl);
+    await h.vault.set("databricks.token", "t");
     const syncable = createDatabricksSyncable({ ensureDatabricksMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -200,8 +201,8 @@ describe("databricks-sync against Bun.serve fake API", () => {
       runsStatus: 500,
       jobsPages: { "": { jobs: [job(10, { name: "Revenue ETL" })], has_more: false } },
     });
-    await h.ctx.vault.set("databricks.host", h.fake.baseUrl);
-    await h.ctx.vault.set("databricks.token", "t");
+    await h.vault.set("databricks.host", h.fake.baseUrl);
+    await h.vault.set("databricks.token", "t");
     const syncable = createDatabricksSyncable({ ensureDatabricksMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(1);
@@ -223,8 +224,8 @@ describe("databricks-sync against Bun.serve fake API", () => {
         PAGE2: { jobs: [job(2)], has_more: false },
       },
     });
-    await h.ctx.vault.set("databricks.host", h.fake.baseUrl);
-    await h.ctx.vault.set("databricks.token", "t");
+    await h.vault.set("databricks.host", h.fake.baseUrl);
+    await h.vault.set("databricks.token", "t");
     const syncable = createDatabricksSyncable({ ensureDatabricksMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
 

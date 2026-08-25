@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+import type { ConnectorServiceId } from "../../../src/connectors/connector-catalog.ts";
 
 import {
   createMemoryIndexDb,
@@ -23,7 +24,15 @@ test("e2e: fixture vault produces queryable obsidian_note rows + daily-note flag
     ],
   });
   const db = createMemoryIndexDb();
-  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const r = await sync.sync(
+    syncTestContext(
+      db,
+      EMPTY_NIMBUS_VAULT,
+      sync.serviceId as ConnectorServiceId,
+      sync.serviceId as ConnectorServiceId,
+    ),
+    null,
+  );
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(10);
 
   const byType = db.query("SELECT COUNT(*) AS n FROM item WHERE type = 'obsidian_note'").get() as {

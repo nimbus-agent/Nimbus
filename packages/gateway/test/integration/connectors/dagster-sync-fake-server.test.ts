@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createDagsterSyncable } from "../../../src/connectors/dagster-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -82,6 +82,7 @@ function startFakeDagster(config: FakeDagsterConfig): FakeDagster {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeDagster;
@@ -95,14 +96,14 @@ function startHarness(config: FakeDagsterConfig): Harness {
   const fake = startFakeDagster(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "dagster"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         dagster: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -127,8 +128,8 @@ function repo(name: string, location: string, pipelines: unknown[]): RepoNode {
 }
 
 async function setCreds(h: Harness): Promise<void> {
-  await h.ctx.vault.set("dagster.base_url", h.fake.baseUrl);
-  await h.ctx.vault.set("dagster.api_token", "tok_test");
+  await h.vault.set("dagster.base_url", h.fake.baseUrl);
+  await h.vault.set("dagster.api_token", "tok_test");
 }
 
 describe("dagster-sync against Bun.serve fake API", () => {
@@ -214,8 +215,8 @@ describe("dagster-sync against Bun.serve fake API", () => {
 
   test("a 401 (auth failure) degrades gracefully (no throw, zero upserts)", async () => {
     h = startHarness({ status: 401 });
-    await h.ctx.vault.set("dagster.base_url", h.fake.baseUrl);
-    await h.ctx.vault.set("dagster.api_token", "bad");
+    await h.vault.set("dagster.base_url", h.fake.baseUrl);
+    await h.vault.set("dagster.api_token", "bad");
     const syncable = createDagsterSyncable({ ensureDagsterMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

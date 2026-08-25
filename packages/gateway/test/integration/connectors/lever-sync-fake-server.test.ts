@@ -5,6 +5,7 @@ import pino from "pino";
 import { createLeverSyncable } from "../../../src/connectors/lever-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -66,6 +67,7 @@ function startFakeLever(config: FakeLeverConfig): FakeLever {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeLever;
@@ -79,14 +81,14 @@ function startHarness(config: FakeLeverConfig): Harness {
   const fake = startFakeLever(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "lever"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         lever: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -142,7 +144,7 @@ describe("lever-sync against Bun.serve fake API", () => {
   test("happy path: single page → upserts with lever:<id> ids + Basic (key-as-username) auth", async () => {
     h = startHarness({ pages: [[posting("uuid-1"), posting("uuid-2")]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("lever.api_key", "lever_api_key_secret");
+    await h.vault.set("lever.api_key", "lever_api_key_secret");
 
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -174,7 +176,7 @@ describe("lever-sync against Bun.serve fake API", () => {
       pages: [[posting("a")], [posting("b")], [posting("c")]],
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("lever.api_key", "k");
+    await h.vault.set("lever.api_key", "k");
 
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -192,7 +194,7 @@ describe("lever-sync against Bun.serve fake API", () => {
     const pages = Array.from({ length: 25 }, (_, i) => [posting(`id-${String(i)}`)]);
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("lever.api_key", "k");
+    await h.vault.set("lever.api_key", "k");
 
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -208,7 +210,7 @@ describe("lever-sync against Bun.serve fake API", () => {
     delete noUrl["applyUrl"];
     h = startHarness({ pages: [[posting("uuid-1"), noUrl]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("lever.api_key", "k");
+    await h.vault.set("lever.api_key", "k");
 
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -232,7 +234,7 @@ describe("lever-sync against Bun.serve fake API", () => {
     delete noId["id"];
     h = startHarness({ pages: [[posting("uuid-1"), noId]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("lever.api_key", "k");
+    await h.vault.set("lever.api_key", "k");
 
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -251,7 +253,7 @@ describe("lever-sync against Bun.serve fake API", () => {
   test("empty posting list → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: [[]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("lever.api_key", "k");
+    await h.vault.set("lever.api_key", "k");
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -261,7 +263,7 @@ describe("lever-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("lever.api_key", "k");
+    await h.vault.set("lever.api_key", "k");
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -271,7 +273,7 @@ describe("lever-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("lever.api_key", "k");
+    await h.vault.set("lever.api_key", "k");
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

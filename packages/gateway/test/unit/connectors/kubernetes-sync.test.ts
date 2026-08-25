@@ -32,7 +32,10 @@ async function withIsolatedFixture(
 describe("kubernetes-sync — credential short-circuits", () => {
   test("no vault keys → noop, no spawn", async () => {
     await withIsolatedFixture(async (iso) => {
-      const res = await createKubernetesSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      const res = await createKubernetesSyncable(ENSURE_MCP).sync(
+        iso.createSyncContext("kubernetes"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(iso.spawnMock.calls).toHaveLength(0);
       expect(res.cursor).toBeNull();
@@ -42,7 +45,7 @@ describe("kubernetes-sync — credential short-circuits", () => {
   test("empty kubeconfig → noop", async () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("kubernetes.kubeconfig", "");
-      await createKubernetesSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createKubernetesSyncable(ENSURE_MCP).sync(iso.createSyncContext("kubernetes"), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
     });
   });
@@ -50,7 +53,7 @@ describe("kubernetes-sync — credential short-circuits", () => {
   test("whitespace kubeconfig → noop", async () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("kubernetes.kubeconfig", "   ");
-      await createKubernetesSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createKubernetesSyncable(ENSURE_MCP).sync(iso.createSyncContext("kubernetes"), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
     });
   });
@@ -58,7 +61,7 @@ describe("kubernetes-sync — credential short-circuits", () => {
   test("noop preserves incoming cursor", async () => {
     await withIsolatedFixture(async (iso) => {
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        iso.createSyncContext(),
+        iso.createSyncContext("kubernetes"),
         "preserved-cursor",
       );
       expect(res.cursor).toBe("preserved-cursor");
@@ -83,7 +86,10 @@ describe("kubernetes-sync — with shared fixture", () => {
   describe("spawn invocation", () => {
     test("argv without --context: get deployments -A -o json", async () => {
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout: '{"items":[]}' });
-      await createKubernetesSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createKubernetesSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("kubernetes"),
+        null,
+      );
       expect(fixture.spawnMock.calls[0]!.binary).toBe("kubectl");
       expect(fixture.spawnMock.calls[0]!.argv).toEqual(["get", "deployments", "-A", "-o", "json"]);
     });
@@ -91,7 +97,10 @@ describe("kubernetes-sync — with shared fixture", () => {
     test("argv with --context when kubernetes.context is set", async () => {
       await fixture.vault.set("kubernetes.context", "prod-cluster");
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout: '{"items":[]}' });
-      await createKubernetesSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createKubernetesSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("kubernetes"),
+        null,
+      );
       expect(fixture.spawnMock.calls[0]!.argv).toEqual([
         "--context",
         "prod-cluster",
@@ -106,7 +115,10 @@ describe("kubernetes-sync — with shared fixture", () => {
     test("whitespace context is trimmed and used", async () => {
       await fixture.vault.set("kubernetes.context", "  prod-cluster  ");
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout: '{"items":[]}' });
-      await createKubernetesSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createKubernetesSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("kubernetes"),
+        null,
+      );
       expect(fixture.spawnMock.calls[0]!.argv).toEqual([
         "--context",
         "prod-cluster",
@@ -121,27 +133,36 @@ describe("kubernetes-sync — with shared fixture", () => {
     test("whitespace-only context → --context omitted", async () => {
       await fixture.vault.set("kubernetes.context", "   ");
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout: '{"items":[]}' });
-      await createKubernetesSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createKubernetesSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("kubernetes"),
+        null,
+      );
       expect(fixture.spawnMock.calls[0]!.argv).not.toContain("--context");
     });
 
     test("env contains KUBECONFIG = kubeconfig path", async () => {
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout: '{"items":[]}' });
-      await createKubernetesSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createKubernetesSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("kubernetes"),
+        null,
+      );
       expect(fixture.spawnMock.calls[0]!.env["KUBECONFIG"]).toBe(KUBECONFIG_PATH);
     });
 
     test("kubeconfig is trimmed before being passed to env", async () => {
       await fixture.vault.set("kubernetes.kubeconfig", `  ${KUBECONFIG_PATH}  `);
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout: '{"items":[]}' });
-      await createKubernetesSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createKubernetesSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("kubernetes"),
+        null,
+      );
       expect(fixture.spawnMock.calls[0]!.env["KUBECONFIG"]).toBe(KUBECONFIG_PATH);
     });
 
     test("non-zero exit → preserves prior cursor", async () => {
       fixture.spawnMock.respond("kubectl", { exitCode: 1, stderr: "AuthError" });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         "preserved-cursor",
       );
       expect(res.itemsUpserted).toBe(0);
@@ -151,7 +172,7 @@ describe("kubernetes-sync — with shared fixture", () => {
     test("non-zero exit + null cursor → zero-rv cursor fallback", async () => {
       fixture.spawnMock.respond("kubectl", { exitCode: 1 });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.cursor).toBe(ZERO_RV_CURSOR);
@@ -160,7 +181,7 @@ describe("kubernetes-sync — with shared fixture", () => {
     test("invalid JSON → parse-empty with zero-rv cursor", async () => {
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout: "not-json" });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(0);
@@ -182,7 +203,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -212,7 +233,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -228,7 +249,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.cursor).toBe(ZERO_RV_CURSOR);
@@ -240,7 +261,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         stdout: JSON.stringify({ metadata: { resourceVersion: "9" } }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(0);
@@ -253,7 +274,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         stdout: JSON.stringify({ items: "not-array" }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(0);
@@ -270,7 +291,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -293,7 +314,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -307,7 +328,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -321,7 +342,7 @@ describe("kubernetes-sync — with shared fixture", () => {
         }),
       });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -330,7 +351,7 @@ describe("kubernetes-sync — with shared fixture", () => {
     test("non-record root (array) → 0 upserts; zero-rv cursor", async () => {
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout: "[1,2,3]" });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(0);
@@ -350,7 +371,7 @@ describe("kubernetes-sync — with shared fixture", () => {
       });
       fixture.spawnMock.respond("kubectl", { exitCode: 0, stdout });
       const res = await createKubernetesSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("kubernetes"),
         null,
       );
       expect(res.itemsUpserted).toBe(3);

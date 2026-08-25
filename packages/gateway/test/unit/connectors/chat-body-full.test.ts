@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import type { ConnectorServiceId } from "../../../src/connectors/connector-catalog.ts";
 
 // Must be registered before `slack-sync.ts` is imported (mirrors the pattern in
 // test/unit/connectors/slack-sync.test.ts) so the module-level import inside
@@ -80,7 +81,7 @@ describe("chat connectors — full body storage keeps title short (task 9)", () 
       });
 
       const res = await createSlackSyncable(ENSURE_SLACK_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("slack"),
         cursor,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -135,7 +136,10 @@ describe("chat connectors — full body storage keeps title short (task 9)", () 
 
       const sync = createDiscordSyncable(ENSURE_DISCORD_MCP);
       const vault = createStubVault({ "discord.enabled": "1", "discord.bot_token": "bot-tok" });
-      const res = await sync.sync(syncTestContext(db, vault), null);
+      const res = await sync.sync(
+        syncTestContext(db, vault, sync.serviceId as ConnectorServiceId),
+        null,
+      );
       // Discord's single sync() tick can re-poll the same channel more than once
       // (see discord-sync.test.ts's own "full flow" test, which asserts
       // `toBeGreaterThanOrEqual`, not an exact count) — every re-poll re-upserts
@@ -164,7 +168,7 @@ describe("chat connectors — full body storage keeps title short (task 9)", () 
   });
 
   test("teams: full 4000-char message body is stored complete; title stays the short preview-derived value", async () => {
-    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "teams");
     const originalFetch = globalThis.fetch;
     try {
       const teamsContent = "y".repeat(4000); // no whitespace/HTML: survives plainTextPreviewFromHtml unchanged

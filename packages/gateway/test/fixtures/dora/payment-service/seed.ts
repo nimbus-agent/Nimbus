@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import {
   EMPTY_NIMBUS_VAULT,
-  silentSyncContextExtras,
+  syncTestContext,
 } from "../../../../src/connectors/connector-sync-test-helpers.ts";
 import { syncPagerdutyIncidentItems } from "../../../../src/connectors/pagerduty-sync.ts";
 import type { ServiceConfig } from "../../../../src/metrics/dora-config.ts";
@@ -200,7 +200,7 @@ export async function seedPaymentServiceFixture(db: Database): Promise<{ config:
   );
 
   syncPagerdutyIncidentItems(
-    { db, vault: EMPTY_NIMBUS_VAULT, ...silentSyncContextExtras() },
+    syncTestContext(db, EMPTY_NIMBUS_VAULT, "pagerduty"),
     pdIncidents,
     new Date(FIXTURE_NOW_MS - 30 * DAY).toISOString(),
     FIXTURE_NOW_MS,

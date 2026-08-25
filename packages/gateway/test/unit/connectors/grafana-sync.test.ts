@@ -31,7 +31,7 @@ describe("grafana-sync — credential short-circuits", () => {
   test("returns noop when neither vault key is set", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createGrafanaSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("grafana"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
@@ -42,7 +42,7 @@ describe("grafana-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("grafana.url", "https://grafana.example.com");
       const syncable = createGrafanaSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("grafana"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
       expect(res.cursor).toBeNull();
     });
@@ -52,7 +52,7 @@ describe("grafana-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("grafana.api_token", "grafana-stub-token");
       const syncable = createGrafanaSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("grafana"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -62,7 +62,7 @@ describe("grafana-sync — credential short-circuits", () => {
       await iso.vault.set("grafana.url", "   ");
       await iso.vault.set("grafana.api_token", "grafana-stub-token");
       const syncable = createGrafanaSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("grafana"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -72,7 +72,7 @@ describe("grafana-sync — credential short-circuits", () => {
       await iso.vault.set("grafana.url", "https://grafana.example.com");
       await iso.vault.set("grafana.api_token", "   ");
       const syncable = createGrafanaSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("grafana"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -80,7 +80,7 @@ describe("grafana-sync — credential short-circuits", () => {
   test("noop preserves incoming cursor", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createGrafanaSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), "preserved-cursor");
+      const res = await syncable.sync(iso.createSyncContext("grafana"), "preserved-cursor");
       expect(res.cursor).toBe("preserved-cursor");
     });
   });
@@ -103,7 +103,7 @@ describe("grafana-sync — with shared fixture", () => {
   describe("HTTP request path", () => {
     test("sends Authorization: Bearer <token> and Accept: application/json", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, []);
-      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext("grafana"), null);
       const call = fixture.fetchMock.firstCall();
       expect(call.headers["authorization"]).toBe("Bearer grafana-stub-token");
       expect(call.headers["accept"]).toBe("application/json");
@@ -112,7 +112,7 @@ describe("grafana-sync — with shared fixture", () => {
     test("strips trailing slash from base url", async () => {
       await fixture.vault.set("grafana.url", "https://grafana.example.com/");
       fixture.fetchMock.respond("GET", SEARCH_RE, []);
-      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext("grafana"), null);
       expect(fixture.fetchMock.firstCall().url).toBe(
         "https://grafana.example.com/api/search?type=dash-db&limit=30",
       );
@@ -120,7 +120,10 @@ describe("grafana-sync — with shared fixture", () => {
 
     test("non-200 → no upserts, returns http-empty pass cursor", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, { error: "boom" }, { status: 500 });
-      const res = await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGrafanaSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("grafana"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -129,7 +132,10 @@ describe("grafana-sync — with shared fixture", () => {
 
     test("invalid JSON → returns parse-empty pass cursor", async () => {
       fixture.fetchMock.respondWithText("GET", SEARCH_RE, "<html>not json</html>");
-      const res = await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGrafanaSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("grafana"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -138,7 +144,10 @@ describe("grafana-sync — with shared fixture", () => {
 
     test("non-array JSON body → 0 upserts, success pass cursor", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, { dashboards: [] });
-      const res = await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGrafanaSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("grafana"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -152,7 +161,10 @@ describe("grafana-sync — with shared fixture", () => {
         { title: "no uid" },
         { uid: "kept", title: "kept" },
       ]);
-      const res = await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGrafanaSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("grafana"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const rows = fixture.db
         .query<{ external_id: string }, []>(
@@ -164,19 +176,25 @@ describe("grafana-sync — with shared fixture", () => {
 
     test("empty uid is skipped", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, [{ uid: "" }, { uid: "k" }]);
-      const res = await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGrafanaSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("grafana"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
 
     test("non-record entry is skipped", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, [42, "string", null, { uid: "k" }]);
-      const res = await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGrafanaSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("grafana"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
 
     test("title falls back to uid when missing", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, [{ uid: "abc" }]);
-      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext("grafana"), null);
       const row = fixture.db
         .query<{ title: string }, []>(
           "SELECT title FROM item WHERE service = 'grafana' AND external_id = 'abc'",
@@ -187,7 +205,7 @@ describe("grafana-sync — with shared fixture", () => {
 
     test("title falls back to uid when title is empty string", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, [{ uid: "abc", title: "" }]);
-      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext("grafana"), null);
       const row = fixture.db
         .query<{ title: string }, []>(
           "SELECT title FROM item WHERE service = 'grafana' AND external_id = 'abc'",
@@ -198,7 +216,7 @@ describe("grafana-sync — with shared fixture", () => {
 
     test("metadata.uid is set on upserted row", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, [{ uid: "u1", title: "T1" }]);
-      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext("grafana"), null);
       const row = fixture.db
         .query<{ metadata: string }, []>(
           "SELECT metadata FROM item WHERE service = 'grafana' AND external_id = 'u1'",
@@ -212,7 +230,10 @@ describe("grafana-sync — with shared fixture", () => {
   describe("cursor decode", () => {
     test("null cursor returns success pass cursor with pass:1", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, []);
-      const res = await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGrafanaSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("grafana"),
+        null,
+      );
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
       expect(res.cursor.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -225,7 +246,7 @@ describe("grafana-sync — with shared fixture", () => {
     test("any incoming cursor is replaced on success (pass cursor)", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, []);
       const res = await createGrafanaSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("grafana"),
         encodeCursor({ arbitrary: true }),
       );
       expect(res.cursor).not.toBeNull();
@@ -241,7 +262,10 @@ describe("grafana-sync — with shared fixture", () => {
         { uid: "d2", title: "Staging" },
         { uid: "d3", title: "Dev" },
       ]);
-      const res = await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createGrafanaSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("grafana"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(3);
       const rows = fixture.db
         .query<{ external_id: string }, []>(
@@ -253,7 +277,7 @@ describe("grafana-sync — with shared fixture", () => {
 
     test("emits no notifications", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, []);
-      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext("grafana"), null);
       expect(fixture.notifications.emitted).toHaveLength(0);
     });
   });

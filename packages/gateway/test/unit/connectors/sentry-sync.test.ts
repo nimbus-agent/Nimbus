@@ -36,7 +36,7 @@ describe("sentry-sync — credential short-circuits", () => {
   test("returns noop when neither vault key is set", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createSentrySyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("sentry"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
@@ -47,7 +47,7 @@ describe("sentry-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("sentry.auth_token", "sentry-stub-token");
       const syncable = createSentrySyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("sentry"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
       expect(res.cursor).toBeNull();
     });
@@ -57,7 +57,7 @@ describe("sentry-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("sentry.org_slug", "test-org");
       const syncable = createSentrySyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("sentry"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -67,7 +67,7 @@ describe("sentry-sync — credential short-circuits", () => {
       await iso.vault.set("sentry.auth_token", "   ");
       await iso.vault.set("sentry.org_slug", "test-org");
       const syncable = createSentrySyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("sentry"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -77,7 +77,7 @@ describe("sentry-sync — credential short-circuits", () => {
       await iso.vault.set("sentry.auth_token", "sentry-stub-token");
       await iso.vault.set("sentry.org_slug", "   ");
       const syncable = createSentrySyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("sentry"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -85,7 +85,7 @@ describe("sentry-sync — credential short-circuits", () => {
   test("noop preserves incoming cursor", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createSentrySyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), "preserved-cursor");
+      const res = await syncable.sync(iso.createSyncContext("sentry"), "preserved-cursor");
       expect(res.cursor).toBe("preserved-cursor");
     });
   });
@@ -112,7 +112,7 @@ describe("sentry-sync — with shared fixture", () => {
   describe("HTTP request path", () => {
     test("uses default sentry.io base when sentry.url is unset", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, []);
-      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext("sentry"), null);
       expect(fixture.fetchMock.firstCall().url).toBe(
         "https://sentry.io/api/0/organizations/test-org/projects/",
       );
@@ -121,7 +121,7 @@ describe("sentry-sync — with shared fixture", () => {
     test("uses custom base when sentry.url is set", async () => {
       await fixture.vault.set("sentry.url", "https://sentry.example.com");
       fixture.fetchMock.respond("GET", PROJECTS_CUSTOM_RE, []);
-      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext("sentry"), null);
       expect(fixture.fetchMock.firstCall().url).toBe(
         "https://sentry.example.com/api/0/organizations/test-org/projects/",
       );
@@ -130,7 +130,7 @@ describe("sentry-sync — with shared fixture", () => {
     test("strips trailing slash from custom base url", async () => {
       await fixture.vault.set("sentry.url", "https://sentry.example.com/");
       fixture.fetchMock.respond("GET", PROJECTS_CUSTOM_RE, []);
-      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext("sentry"), null);
       expect(fixture.fetchMock.firstCall().url).toBe(
         "https://sentry.example.com/api/0/organizations/test-org/projects/",
       );
@@ -138,7 +138,7 @@ describe("sentry-sync — with shared fixture", () => {
 
     test("sends Authorization: Bearer <token> and Accept: application/json", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, []);
-      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext("sentry"), null);
       const call = fixture.fetchMock.firstCall();
       expect(call.headers["authorization"]).toBe("Bearer sentry-stub-token");
       expect(call.headers["accept"]).toBe("application/json");
@@ -146,7 +146,10 @@ describe("sentry-sync — with shared fixture", () => {
 
     test("non-200 → no upserts, returns http-empty pass cursor", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, { error: "boom" }, { status: 500 });
-      const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createSentrySyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("sentry"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -155,7 +158,10 @@ describe("sentry-sync — with shared fixture", () => {
 
     test("invalid JSON → returns parse-empty pass cursor", async () => {
       fixture.fetchMock.respondWithText("GET", PROJECTS_DEFAULT_RE, "<html>not json</html>");
-      const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createSentrySyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("sentry"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -164,7 +170,10 @@ describe("sentry-sync — with shared fixture", () => {
 
     test("non-array JSON body → 0 upserts, success pass cursor", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, { projects: [] });
-      const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createSentrySyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("sentry"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -182,7 +191,7 @@ describe("sentry-sync — with shared fixture", () => {
       const validCursor = encodeCursor({ lastSeenMs: 1_700_000_000_000 });
       fixture.fetchMock.respondWithText("GET", PROJECTS_DEFAULT_RE, "<html>nope</html>");
       const res = await createSentrySyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("sentry"),
         validCursor,
       );
       expect(res.cursor).toBe(validCursor);
@@ -195,7 +204,10 @@ describe("sentry-sync — with shared fixture", () => {
         { other: "field" },
         { slug: "kept", name: "Kept" },
       ]);
-      const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createSentrySyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("sentry"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const rows = fixture.db
         .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'sentry'")
@@ -208,19 +220,25 @@ describe("sentry-sync — with shared fixture", () => {
         { slug: "", name: "" },
         { slug: "k", name: "K" },
       ]);
-      const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createSentrySyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("sentry"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
 
     test("non-record entry is skipped", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, [42, "string", null, { slug: "k" }]);
-      const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createSentrySyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("sentry"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
 
     test("slug-only → upserted with id == slug; title falls back to id", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, [{ slug: "abc" }]);
-      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext("sentry"), null);
       const row = fixture.db
         .query<{ external_id: string; title: string }, []>(
           "SELECT external_id, title FROM item WHERE service = 'sentry'",
@@ -232,7 +250,7 @@ describe("sentry-sync — with shared fixture", () => {
 
     test("name-only → upserted with id == name; title == name", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, [{ name: "MyProject" }]);
-      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext("sentry"), null);
       const row = fixture.db
         .query<{ external_id: string; title: string }, []>(
           "SELECT external_id, title FROM item WHERE service = 'sentry'",
@@ -247,7 +265,7 @@ describe("sentry-sync — with shared fixture", () => {
         { slug: "with-slug", name: "WithSlug" },
         { name: "OnlyName" },
       ]);
-      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext("sentry"), null);
       const rowWithSlug = fixture.db
         .query<{ metadata: string }, [string]>(
           "SELECT metadata FROM item WHERE service = 'sentry' AND external_id = ?",
@@ -276,7 +294,10 @@ describe("sentry-sync — with shared fixture", () => {
   describe("cursor decode", () => {
     test("null cursor with no issues found returns a v2 cursor with lastSeenMs:0", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, []);
-      const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createSentrySyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("sentry"),
+        null,
+      );
       expect(res.cursor).not.toBeNull();
       if (res.cursor === null) throw new Error("unexpected null cursor");
       expect(res.cursor.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -295,7 +316,7 @@ describe("sentry-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, []);
       const incoming = encodeCursor({ arbitrary: true });
       const res = await createSentrySyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("sentry"),
         incoming,
       );
       expect(res.cursor).not.toBeNull();
@@ -316,7 +337,10 @@ describe("sentry-sync — with shared fixture", () => {
         { slug: "p2", name: "Staging" },
         { slug: "p3", name: "Dev" },
       ]);
-      const res = await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createSentrySyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("sentry"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(3);
       const rows = fixture.db
         .query<{ external_id: string }, []>(
@@ -328,7 +352,7 @@ describe("sentry-sync — with shared fixture", () => {
 
     test("emits no notifications", async () => {
       fixture.fetchMock.respond("GET", PROJECTS_DEFAULT_RE, []);
-      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createSentrySyncable(ENSURE_MCP).sync(fixture.createSyncContext("sentry"), null);
       expect(fixture.notifications.emitted).toHaveLength(0);
     });
   });
@@ -385,7 +409,7 @@ describe("sentry-sync — issue pass", () => {
       headers: { "content-type": "application/json" },
     });
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     const row = fixture.db
@@ -404,7 +428,7 @@ describe("sentry-sync — issue pass", () => {
       headers: { "content-type": "application/json" },
     });
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     const call = fixture.fetchMock.calls.find((c) => c.url.includes("/issues/"));
@@ -441,7 +465,7 @@ describe("sentry-sync — issue pass", () => {
       },
     );
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));
@@ -472,7 +496,7 @@ describe("sentry-sync — issue pass", () => {
       { headers: { "content-type": "application/json" } },
     );
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       cursor,
     );
     const ids = fixture.db
@@ -489,7 +513,7 @@ describe("sentry-sync — issue pass", () => {
     });
     const legacy = `nimbus-sentry1:${Buffer.from(JSON.stringify({ pass: 1 }), "utf8").toString("base64url")}`;
     const res = await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       legacy,
     );
     const call = fixture.fetchMock.calls.find((c) => c.url.includes("/issues/"));
@@ -504,7 +528,7 @@ describe("sentry-sync — issue pass", () => {
       Buffer.from(JSON.stringify({ lastSeenMs: 1_600_000_000_000 }), "utf8").toString("base64url");
     fixture.fetchMock.respond("GET", ISSUES_RE, { detail: "forbidden" }, { status: 403 });
     const res = await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       cursor,
     );
     expect(res.cursor).toBe(cursor);
@@ -538,7 +562,7 @@ describe("sentry-sync — issue pass", () => {
     );
     fixture.fetchMock.respond("GET", ISSUES_PAGE2_RE, { detail: "forbidden" }, { status: 403 });
     const res = await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       cursor,
     );
     expect(res.cursor).toBe(cursor);
@@ -556,7 +580,7 @@ describe("sentry-sync — issue pass", () => {
     });
     const floor = Date.now() - 120 * 86_400_000;
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full", historyFloorMs: floor },
+      { ...fixture.createSyncContext("sentry"), depth: "full", historyFloorMs: floor },
       null,
     );
     const call = fixture.fetchMock.calls.find((c) => c.url.includes("/issues/"));
@@ -577,7 +601,7 @@ describe("sentry-sync — issue pass", () => {
       headers: { "content-type": "application/json" }, // no Link header: one page only
     });
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       cursor,
     );
     const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));
@@ -597,7 +621,7 @@ describe("sentry-sync — issue pass", () => {
       headers: { "content-type": "application/json" },
     });
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     const call = fixture.fetchMock.calls.find((c) => c.url.includes("/issues/"));
@@ -616,7 +640,7 @@ describe("sentry-sync — issue pass", () => {
       { headers: { "content-type": "application/json" } },
     );
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     const ids = fixture.db
@@ -634,7 +658,7 @@ describe("sentry-sync — issue pass", () => {
       },
     });
     const res = await createSentrySyncable({ ...ENSURE_MCP, maxPagesPerSync: 2 }).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     expect(fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"))).toHaveLength(2);
@@ -681,7 +705,10 @@ describe("sentry-sync — issue pass", () => {
 
     const syncable = createSentrySyncable({ ...ENSURE_MCP, maxPagesPerSync: 2 });
 
-    const res1 = await syncable.sync({ ...fixture.createSyncContext(), depth: "full" }, null);
+    const res1 = await syncable.sync(
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
+      null,
+    );
     expect(res1.hasMore).toBe(true);
     if (res1.cursor === null) throw new Error("unexpected null cursor after run 1");
     const decoded1 = decodeV2Cursor(res1.cursor);
@@ -697,7 +724,7 @@ describe("sentry-sync — issue pass", () => {
 
     const callsBeforeRun2 = fixture.fetchMock.calls.length;
     const res2 = await syncable.sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       res1.cursor,
     );
     expect(res2.hasMore).toBe(false);
@@ -738,7 +765,7 @@ describe("sentry-sync — issue pass", () => {
       { headers: { "content-type": "application/json" } }, // no Link header: single page, walk completes
     );
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       cursor,
     );
     const ids = fixture.db
@@ -768,7 +795,7 @@ describe("sentry-sync — issue pass", () => {
       { headers: { "content-type": "application/json" } }, // no Link header: completes in this run
     );
     const res = await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       cursor,
     );
     if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -799,7 +826,7 @@ describe("sentry-sync — issue pass", () => {
       { headers: { "content-type": "application/json" } },
     );
     const res = await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       cursor,
     );
     const ids = fixture.db
@@ -820,7 +847,7 @@ describe("sentry-sync — issue pass", () => {
     const floor = Date.now() - 180 * 86_400_000;
     fixture.fetchMock.respond("GET", ISSUES_RE, { detail: "forbidden" }, { status: 403 });
     const res1 = await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full", historyFloorMs: floor },
+      { ...fixture.createSyncContext("sentry"), depth: "full", historyFloorMs: floor },
       null,
     );
     expect(res1.cursor).toBeNull();
@@ -833,7 +860,7 @@ describe("sentry-sync — issue pass", () => {
         headers: { "content-type": "application/json" },
       });
       await createSentrySyncable(ENSURE_MCP).sync(
-        { ...iso.createSyncContext(), depth: "full", historyFloorMs: floor },
+        { ...iso.createSyncContext("sentry"), depth: "full", historyFloorMs: floor },
         res1.cursor,
       );
       const call = iso.fetchMock.calls.find((c) => c.url.includes("/issues/"));
@@ -872,7 +899,7 @@ describe("sentry-sync — issue pass", () => {
       },
     );
     await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));
@@ -901,7 +928,7 @@ describe("sentry-sync — issue pass", () => {
       },
     );
     const res = await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));
@@ -929,7 +956,7 @@ describe("sentry-sync — issue pass", () => {
       },
     );
     const res = await createSentrySyncable(ENSURE_MCP).sync(
-      { ...fixture.createSyncContext(), depth: "full" },
+      { ...fixture.createSyncContext("sentry"), depth: "full" },
       null,
     );
     const issueCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("/issues/"));

@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createRampSyncable } from "../../../src/connectors/ramp-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -96,6 +96,7 @@ function startFakeRamp(config: FakeRampConfig): FakeRamp {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeRamp;
@@ -109,14 +110,14 @@ function startHarness(config: FakeRampConfig): Harness {
   const fake = startFakeRamp(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "ramp"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         ramp: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -141,8 +142,8 @@ function txn(id: string, over: Record<string, unknown> = {}): Record<string, unk
 }
 
 async function seedCreds(h: Harness): Promise<void> {
-  await h.ctx.vault.set("ramp.client_id", "cid_test");
-  await h.ctx.vault.set("ramp.client_secret", "csecret_test");
+  await h.vault.set("ramp.client_id", "cid_test");
+  await h.vault.set("ramp.client_secret", "csecret_test");
 }
 
 // The connector uses the fixed host https://api.ramp.com. To exercise the fake
@@ -208,7 +209,7 @@ describe("ramp-sync against Bun.serve fake API", () => {
 
   test("noop when either credential unset — no requests", async () => {
     h = startHarness({ transactions: [txn("txn_1")] });
-    await h.ctx.vault.set("ramp.client_id", "cid_test");
+    await h.vault.set("ramp.client_id", "cid_test");
     const syncable = createRampSyncable({ ensureRampMcpRunning: async () => {} });
     const result = await withRampHostRewrite(h.fake.baseHost, () => syncable.sync(h!.ctx, null));
     expect(result.itemsUpserted).toBe(0);

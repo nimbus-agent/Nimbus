@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createFluxSyncable } from "../../../src/connectors/flux-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -63,6 +63,7 @@ function startFakeFlux(config: FakeFluxConfig): FakeFlux {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeFlux;
@@ -76,14 +77,14 @@ function startHarness(config: FakeFluxConfig): Harness {
   const fake = startFakeFlux(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "flux"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         flux: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -151,8 +152,8 @@ describe("flux-sync against Bun.serve fake API", () => {
         gitrepositories: [gitRepoItem("podinfo-src")],
       },
     });
-    await h.ctx.vault.set("flux.api_url", h.fake.baseUrl);
-    await h.ctx.vault.set("flux.token", "sa-jwt-token");
+    await h.vault.set("flux.api_url", h.fake.baseUrl);
+    await h.vault.set("flux.token", "sa-jwt-token");
 
     const syncable = createFluxSyncable({ ensureFluxMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -191,7 +192,7 @@ describe("flux-sync against Bun.serve fake API", () => {
 
   test("noop when flux.api_url set but flux.token unset — no requests", async () => {
     h = startHarness({ lists: { kustomizations: [ksItem("x")] } });
-    await h.ctx.vault.set("flux.api_url", h.fake.baseUrl);
+    await h.vault.set("flux.api_url", h.fake.baseUrl);
     const syncable = createFluxSyncable({ ensureFluxMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -200,7 +201,7 @@ describe("flux-sync against Bun.serve fake API", () => {
 
   test("noop when flux.token set but flux.api_url unset — no requests", async () => {
     h = startHarness({ lists: { kustomizations: [ksItem("x")] } });
-    await h.ctx.vault.set("flux.token", "tok");
+    await h.vault.set("flux.token", "tok");
     const syncable = createFluxSyncable({ ensureFluxMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -212,8 +213,8 @@ describe("flux-sync against Bun.serve fake API", () => {
       lists: { kustomizations: [ksItem("podinfo")] },
       statusByPlural: { helmreleases: 500 },
     });
-    await h.ctx.vault.set("flux.api_url", h.fake.baseUrl);
-    await h.ctx.vault.set("flux.token", "tok");
+    await h.vault.set("flux.api_url", h.fake.baseUrl);
+    await h.vault.set("flux.token", "tok");
 
     const syncable = createFluxSyncable({ ensureFluxMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -232,8 +233,8 @@ describe("flux-sync against Bun.serve fake API", () => {
       lists: { kustomizations: [ksItem("podinfo")] },
       statusByPlural: { gitrepositories: 401 },
     });
-    await h.ctx.vault.set("flux.api_url", h.fake.baseUrl);
-    await h.ctx.vault.set("flux.token", "tok");
+    await h.vault.set("flux.api_url", h.fake.baseUrl);
+    await h.vault.set("flux.token", "tok");
 
     const syncable = createFluxSyncable({ ensureFluxMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -247,8 +248,8 @@ describe("flux-sync against Bun.serve fake API", () => {
       status: {},
     };
     h = startHarness({ lists: { kustomizations: [bare] } });
-    await h.ctx.vault.set("flux.api_url", h.fake.baseUrl);
-    await h.ctx.vault.set("flux.token", "tok");
+    await h.vault.set("flux.api_url", h.fake.baseUrl);
+    await h.vault.set("flux.token", "tok");
 
     const syncable = createFluxSyncable({ ensureFluxMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);

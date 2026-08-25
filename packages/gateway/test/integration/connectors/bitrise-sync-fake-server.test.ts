@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createBitriseSyncable } from "../../../src/connectors/bitrise-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -85,6 +85,7 @@ function startFakeBitrise(): FakeBitrise {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeBitrise;
@@ -105,6 +106,7 @@ function startHarness(): Harness {
   };
   return {
     db,
+    vault,
     fake,
     originalFetch,
     cleanup: () => {
@@ -113,8 +115,7 @@ function startHarness(): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "bitrise"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter(),
     },
@@ -125,7 +126,7 @@ describe("bitrise-sync against Bun.serve fake API", () => {
   let h: Harness;
   beforeEach(async () => {
     h = startHarness();
-    await h.ctx.vault.set("bitrise.token", "fake-bitrise-token");
+    await h.vault.set("bitrise.token", "fake-bitrise-token");
   });
   afterEach(() => h.cleanup());
 
@@ -177,7 +178,7 @@ describe("bitrise-sync against Bun.serve fake API", () => {
   });
 
   test("no-op when bitrise.token is unset", async () => {
-    await h.ctx.vault.delete("bitrise.token");
+    await h.vault.delete("bitrise.token");
     const syncable = createBitriseSyncable({ ensureBitriseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

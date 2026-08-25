@@ -5,6 +5,7 @@ import pino from "pino";
 import { createRaindropSyncable } from "../../../src/connectors/raindrop-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -84,6 +85,7 @@ function startFakeRaindrop(config: FakeRaindropConfig): FakeRaindrop {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeRaindrop;
@@ -97,14 +99,14 @@ function startHarness(config: FakeRaindropConfig): Harness {
   const fake = startFakeRaindrop(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "raindrop"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         raindrop: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -179,7 +181,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("happy path: single short page → upserts with raindrop:<id> ids + Bearer auth", async () => {
     h = startHarness({ pages: [[bookmark(1), bookmark(2)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "raindrop_test_token");
+    await h.vault.set("raindrop.token", "raindrop_test_token");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -208,7 +210,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("0-based page walk: continues on a full page, stops on a short page", async () => {
     h = startHarness({ pages: [fullPage(1), [bookmark(100)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -225,7 +227,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
     const pages = Array.from({ length: 25 }, (_, i) => fullPage(i * 50 + 1));
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -238,7 +240,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("the link is the canonical url; missing-link bookmarks → null", async () => {
     h = startHarness({ pages: [[bookmark(1), bookmark(2, { link: null })]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -269,7 +271,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("empty bookmark list → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: [[]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -279,7 +281,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -289,7 +291,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -299,7 +301,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("a valid-JSON but non-object raindrops body degrades to zero bookmarks", async () => {
     h = startHarness({ raindropsBody: [], rootCollections: [collection(1)] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     // The bookmarks walk yields nothing; the collections walk is unaffected.
@@ -314,7 +316,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
       childCollections: [collection(9002, { parent: { $id: 9001 } })],
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "raindrop_test_token");
+    await h.vault.set("raindrop.token", "raindrop_test_token");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -341,7 +343,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("a collection and a bookmark sharing the numeric id both survive the sync", async () => {
     h = startHarness({ pages: [[bookmark(9001)]], rootCollections: [collection(9001)] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -364,7 +366,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
       rootCollections: [collection(9001)],
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -387,7 +389,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
       childCollections: [collection(9002, { parent: { $id: 9001 } })],
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -407,7 +409,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("collection rows carry epoch-ms timestamps and omit the cover", async () => {
     h = startHarness({ pages: [[]], rootCollections: [collection(9001)] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -429,7 +431,7 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   test("empty collection endpoints leave the bookmark upserts untouched", async () => {
     h = startHarness({ pages: [[bookmark(1), bookmark(2)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("raindrop.token", "k");
+    await h.vault.set("raindrop.token", "k");
 
     const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);

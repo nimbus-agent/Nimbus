@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createFlagsmithSyncable } from "../../../src/connectors/flagsmith-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -83,6 +83,7 @@ function startFakeFs(config: FakeFsConfig): FakeFs {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeFs;
@@ -102,6 +103,7 @@ function startHarness(config: FakeFsConfig): Harness {
   };
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       globalThis.fetch = originalFetch;
@@ -109,8 +111,7 @@ function startHarness(config: FakeFsConfig): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "flagsmith"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         flagsmith: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -149,7 +150,7 @@ describe("flagsmith-sync against Bun.serve fake API", () => {
         "7": [feature("flag-a", { tags: [1] }), feature("flag-b")],
       },
     });
-    await h.ctx.vault.set("flagsmith.token", "fs-test-token");
+    await h.vault.set("flagsmith.token", "fs-test-token");
 
     const syncable = createFlagsmithSyncable({ ensureFlagsmithMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -186,7 +187,7 @@ describe("flagsmith-sync against Bun.serve fake API", () => {
       },
       featuresByProject: { "3": [feature("multi", { tags: [20, 10] })] },
     });
-    await h.ctx.vault.set("flagsmith.token", "tok");
+    await h.vault.set("flagsmith.token", "tok");
     const syncable = createFlagsmithSyncable({ ensureFlagsmithMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
 
@@ -213,7 +214,7 @@ describe("flagsmith-sync against Bun.serve fake API", () => {
       featuresByProject: { "7": [feature("flag-a")] },
       featuresStatus: 429,
     });
-    await h.ctx.vault.set("flagsmith.token", "tok");
+    await h.vault.set("flagsmith.token", "tok");
     const syncable = createFlagsmithSyncable({ ensureFlagsmithMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -228,7 +229,7 @@ describe("flagsmith-sync against Bun.serve fake API", () => {
       tagsByProject: { "7": [] },
       featuresByProject: { "7": [...fullPage, ...extra] },
     });
-    await h.ctx.vault.set("flagsmith.token", "tok");
+    await h.vault.set("flagsmith.token", "tok");
     const syncable = createFlagsmithSyncable({ ensureFlagsmithMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(101);

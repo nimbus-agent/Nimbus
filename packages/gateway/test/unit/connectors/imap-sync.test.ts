@@ -87,7 +87,7 @@ describe("imap-sync", () => {
   }
 
   test("missing credentials → noop, preserves cursor, still ensures the mesh", async () => {
-    const res = await makeSyncable(okMessages()).sync(fx.createSyncContext(), "prev");
+    const res = await makeSyncable(okMessages()).sync(fx.createSyncContext("imap"), "prev");
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
     expect(ensureCalls).toHaveLength(1);
@@ -96,7 +96,7 @@ describe("imap-sync", () => {
 
   test("upserts one imap:email item per message and returns the pass-1 cursor", async () => {
     await setCreds();
-    const res = await makeSyncable(okMessages()).sync(fx.createSyncContext(), null);
+    const res = await makeSyncable(okMessages()).sync(fx.createSyncContext("imap"), null);
     expect(res.itemsUpserted).toBe(2);
     expect(res.cursor).toBe(PASS_1_CURSOR);
     expect(res.hasMore).toBe(false);
@@ -111,7 +111,7 @@ describe("imap-sync", () => {
 
   test("defaults to port 993 / INBOX and resolves the configured port + mailbox", async () => {
     await setCreds({ "imap.port": "1143", "imap.mailbox": "Archive" });
-    await makeSyncable(okMessages()).sync(fx.createSyncContext(), null);
+    await makeSyncable(okMessages()).sync(fx.createSyncContext("imap"), null);
     expect(lastFetchConfig?.port).toBe(1143);
     expect(lastFetchConfig?.mailbox).toBe("Archive");
 
@@ -119,7 +119,7 @@ describe("imap-sync", () => {
     fx.cleanup();
     fx = createConnectorSyncFixture();
     await setCreds();
-    await makeSyncable(okMessages()).sync(fx.createSyncContext(), null);
+    await makeSyncable(okMessages()).sync(fx.createSyncContext("imap"), null);
     expect(lastFetchConfig?.port).toBe(993);
     expect(lastFetchConfig?.mailbox).toBe("INBOX");
   });
@@ -127,7 +127,7 @@ describe("imap-sync", () => {
   test("connection failure (ok:false) preserves the cursor with zero upserts", async () => {
     await setCreds();
     const res = await makeSyncable({ ok: false, error: "ECONNREFUSED" }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("imap"),
       PASS_1_CURSOR,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -139,7 +139,7 @@ describe("imap-sync", () => {
     await setCreds();
     const res = await makeSyncable(() => {
       throw new Error("socket exploded");
-    }).sync(fx.createSyncContext(), null);
+    }).sync(fx.createSyncContext("imap"), null);
     expect(res.itemsUpserted).toBe(0);
     // null cursor → falls back to the pass-1 cursor.
     expect(res.cursor).toBe(PASS_1_CURSOR);
@@ -147,7 +147,7 @@ describe("imap-sync", () => {
 
   test("requests at most MAX_MESSAGES (200) per pass", async () => {
     await setCreds();
-    await makeSyncable(okMessages()).sync(fx.createSyncContext(), null);
+    await makeSyncable(okMessages()).sync(fx.createSyncContext("imap"), null);
     expect(lastFetchLimit).toBe(200);
   });
 });

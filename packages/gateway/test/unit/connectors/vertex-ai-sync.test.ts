@@ -47,7 +47,7 @@ describe("vertex-ai-sync — credential short-circuit", () => {
   test("no gcp vault keys → noop, runner never called, cursor preserved", async () => {
     const { run, calls } = makeRunner([]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       "prev",
     );
     expect(res.itemsUpserted).toBe(0);
@@ -58,7 +58,10 @@ describe("vertex-ai-sync — credential short-circuit", () => {
   test("cred path but no project id → noop", async () => {
     await fx.vault.set("gcp.credentials_json_path", "/etc/gcp.json");
     const { run, calls } = makeRunner([]);
-    await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(fx.createSyncContext(), null);
+    await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
+      fx.createSyncContext("vertex_ai"),
+      null,
+    );
     expect(calls).toHaveLength(0);
   });
 });
@@ -90,7 +93,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
       },
     ]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       null,
     );
     expect(res.itemsUpserted).toBe(2);
@@ -128,7 +131,10 @@ describe("vertex-ai-sync — model metadata walk", () => {
   test("uses the optional gcp.region when set", async () => {
     await fx.vault.set("gcp.region", "europe-west4");
     const { run, calls } = makeRunner([{ body: [{ displayName: "m" }] }]);
-    await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(fx.createSyncContext(), null);
+    await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
+      fx.createSyncContext("vertex_ai"),
+      null,
+    );
     expect(calls[0]?.region).toBe("europe-west4");
   });
 
@@ -136,7 +142,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
     await fx.vault.set("gcp.region", "--project=attacker");
     const { run, calls } = makeRunner([{ body: [] }]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       null,
     );
     // Unsafe region → noop (loadCreds returns null), runner never called.
@@ -147,7 +153,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
   test("gcloud failure → parse-empty pass cursor, 0 upserts, no throw", async () => {
     const { run } = makeRunner([{ ok: false }]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -157,7 +163,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
   test("non-array gcloud output → 0 upserts, success cursor", async () => {
     const { run } = makeRunner([{ body: { error: "unexpected" } }]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -167,7 +173,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
   test("skips entries with no name and no displayName", async () => {
     const { run } = makeRunner([{ body: [{ versionId: "1" }, { displayName: "good-model" }] }]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       null,
     );
     expect(res.itemsUpserted).toBe(1);
@@ -176,7 +182,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
   test("emits no notifications and reports bytesTransferred", async () => {
     const { run } = makeRunner([{ body: [{ displayName: "m" }] }]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       null,
     );
     expect(fx.notifications.emitted).toHaveLength(0);
@@ -190,7 +196,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
     await fx.vault.set("gcp.region", regionWithControlChar);
     const { run: run2, calls: calls2 } = makeRunner([{ body: [] }]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run2 }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -208,7 +214,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
       },
     ]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("vertex_ai"),
       null,
     );
     expect(res.itemsUpserted).toBe(3);
@@ -234,7 +240,10 @@ describe("vertex-ai-sync — default gcloud runner (hermetic Bun.spawn mock)", (
     const models = [{ name: "projects/p/locations/us-central1/models/m1", displayName: "Model 1" }];
     const spy = spyOn(Bun, "spawn").mockReturnValue(fakeProc(0, JSON.stringify(models)));
     try {
-      const res = await createVertexAiSyncable(ENSURE).sync(fx.createSyncContext(), null);
+      const res = await createVertexAiSyncable(ENSURE).sync(
+        fx.createSyncContext("vertex_ai"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       expect(spy).toHaveBeenCalled();
     } finally {
@@ -247,7 +256,10 @@ describe("vertex-ai-sync — default gcloud runner (hermetic Bun.spawn mock)", (
       throw new Error("ENOENT: gcloud not found");
     });
     try {
-      const res = await createVertexAiSyncable(ENSURE).sync(fx.createSyncContext(), null);
+      const res = await createVertexAiSyncable(ENSURE).sync(
+        fx.createSyncContext("vertex_ai"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).toBe(PASS_1_CURSOR);
     } finally {

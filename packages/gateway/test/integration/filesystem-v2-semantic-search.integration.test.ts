@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   createMemoryIndexDb,
   EMPTY_NIMBUS_VAULT,
-  silentSyncContextExtras,
+  syncTestContext,
 } from "../../src/connectors/connector-sync-test-helpers.ts";
 import { createFilesystemV2Syncable } from "../../src/connectors/filesystem-v2-sync.ts";
 import { LocalIndex } from "../../src/index/local-index.ts";
@@ -58,7 +58,7 @@ export function renewCredentials() { return {}; }
         },
       ],
     });
-    await sync.sync({ db, vault: EMPTY_NIMBUS_VAULT, ...silentSyncContextExtras() }, null);
+    await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
 
     const targetRow = db
       .query(

@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createMlflowSyncable } from "../../../src/connectors/mlflow-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -65,6 +65,7 @@ function startFakeMlflow(config: FakeMlflowConfig): FakeMlflow {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeMlflow;
@@ -78,14 +79,14 @@ function startHarness(config: FakeMlflowConfig): Harness {
   const fake = startFakeMlflow(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "mlflow"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         mlflow: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -134,8 +135,8 @@ describe("mlflow-sync against Bun.serve fake API", () => {
         },
       },
     });
-    await h.ctx.vault.set("mlflow.host", h.fake.baseUrl);
-    await h.ctx.vault.set("mlflow.token", "mlflow-test-token");
+    await h.vault.set("mlflow.host", h.fake.baseUrl);
+    await h.vault.set("mlflow.token", "mlflow-test-token");
 
     const syncable = createMlflowSyncable({ ensureMlflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -178,8 +179,8 @@ describe("mlflow-sync against Bun.serve fake API", () => {
         PAGE2: { registered_models: [model("m2")] },
       },
     });
-    await h.ctx.vault.set("mlflow.host", h.fake.baseUrl);
-    await h.ctx.vault.set("mlflow.token", "t");
+    await h.vault.set("mlflow.host", h.fake.baseUrl);
+    await h.vault.set("mlflow.token", "t");
     const syncable = createMlflowSyncable({ ensureMlflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
 
@@ -219,8 +220,8 @@ describe("mlflow-sync against Bun.serve fake API", () => {
       requests,
       stop: () => server.stop(true),
     };
-    await h.ctx.vault.set("mlflow.host", h.fake.baseUrl);
-    await h.ctx.vault.set("mlflow.token", "t");
+    await h.vault.set("mlflow.host", h.fake.baseUrl);
+    await h.vault.set("mlflow.token", "t");
 
     const syncable = createMlflowSyncable({ ensureMlflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -234,8 +235,8 @@ describe("mlflow-sync against Bun.serve fake API", () => {
       searchPages: { "": { registered_models: [model("m1")] } },
       searchStatus: 503,
     });
-    await h.ctx.vault.set("mlflow.host", h.fake.baseUrl);
-    await h.ctx.vault.set("mlflow.token", "t");
+    await h.vault.set("mlflow.host", h.fake.baseUrl);
+    await h.vault.set("mlflow.token", "t");
     const syncable = createMlflowSyncable({ ensureMlflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -244,8 +245,8 @@ describe("mlflow-sync against Bun.serve fake API", () => {
 
   test("a parse error on the first search page degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ searchInvalidJson: true });
-    await h.ctx.vault.set("mlflow.host", h.fake.baseUrl);
-    await h.ctx.vault.set("mlflow.token", "t");
+    await h.vault.set("mlflow.host", h.fake.baseUrl);
+    await h.vault.set("mlflow.token", "t");
     const syncable = createMlflowSyncable({ ensureMlflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -254,8 +255,8 @@ describe("mlflow-sync against Bun.serve fake API", () => {
 
   test("an empty registry yields zero upserts and a pass-1 cursor", async () => {
     h = startHarness({ searchPages: { "": { registered_models: [] } } });
-    await h.ctx.vault.set("mlflow.host", h.fake.baseUrl);
-    await h.ctx.vault.set("mlflow.token", "t");
+    await h.vault.set("mlflow.host", h.fake.baseUrl);
+    await h.vault.set("mlflow.token", "t");
     const syncable = createMlflowSyncable({ ensureMlflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-08-05T15:37:03.922Z",
+  "generated_at": "2026-08-25T15:32:03.122Z",
   "files": {
     "packages/gateway/test/benchmark/item-list-query-latency.test.ts": {
       "TS4111": 2
@@ -18,14 +18,20 @@
     "packages/gateway/test/e2e/scenarios/extension-auto-update.e2e.test.ts": {
       "TS2314": 1
     },
+    "packages/gateway/test/e2e/scenarios/obsidian-indexer.e2e.test.ts": {
+      "TS2345": 1
+    },
     "packages/gateway/test/e2e/share-e2e.test.ts": {
       "TS2769": 1
+    },
+    "packages/gateway/test/fixtures/dora/payment-service/seed.ts": {
+      "TS6133": 1
     },
     "packages/gateway/test/fixtures/pagerduty/build-incident.ts": {
       "TS4111": 4
     },
-    "packages/gateway/test/helpers/connector-sync-harness.ts": {
-      "TS2739": 1
+    "packages/gateway/test/fixtures/preflight/payment-service/seed.ts": {
+      "TS6133": 1
     },
     "packages/gateway/test/helpers/mock-fetch.ts": {
       "TS2304": 1,
@@ -231,6 +237,9 @@
     "packages/gateway/test/integration/extensions/sync-with-mock-registry.test.ts": {
       "TS2314": 1
     },
+    "packages/gateway/test/integration/filesystem-v2-semantic-search.integration.test.ts": {
+      "TS6133": 1
+    },
     "packages/gateway/test/integration/http/deployments-post-route.test.ts": {
       "TS2532": 2
     },
@@ -382,7 +391,8 @@
       "TS2578": 5
     },
     "packages/gateway/test/unit/sync/rate-limit-aware-scheduler.test.ts": {
-      "TS2739": 1
+      "TS2353": 1,
+      "TS2739": 8
     },
     "packages/ui/test/components/settings/data/ExportWizard.test.tsx": {
       "TS2375": 1,

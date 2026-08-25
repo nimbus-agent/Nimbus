@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createWizSyncable } from "../../../src/connectors/wiz-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -101,6 +101,7 @@ function startFakeWiz(config: FakeWizConfig): FakeWiz {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeWiz;
@@ -122,6 +123,7 @@ function startHarness(config: FakeWizConfig): Harness {
   };
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       globalThis.fetch = originalFetch;
@@ -129,8 +131,7 @@ function startHarness(config: FakeWizConfig): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "wiz"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter(),
     },
@@ -158,8 +159,8 @@ describe("wiz-sync against Bun.serve fake API", () => {
   });
 
   async function withCreds(harness: Harness): Promise<void> {
-    await harness.ctx.vault.set("wiz.client_id", "client-abc");
-    await harness.ctx.vault.set("wiz.client_secret", "secret-xyz");
+    await harness.vault.set("wiz.client_id", "client-abc");
+    await harness.vault.set("wiz.client_secret", "secret-xyz");
   }
 
   test("authenticates then walks issues and upserts well-formed rows", async () => {

@@ -5,6 +5,7 @@ import pino from "pino";
 import { createStackOverflowSyncable } from "../../../src/connectors/stackoverflow-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -71,6 +72,7 @@ function startFakeStackOverflow(config: FakeStackOverflowConfig): FakeStackOverf
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeStackOverflow;
@@ -84,14 +86,14 @@ function startHarness(config: FakeStackOverflowConfig): Harness {
   const fake = startFakeStackOverflow(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "stackoverflow"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         stackoverflow: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -148,8 +150,8 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   test("happy path: single page → upserts with stackoverflow:<id> ids + Bearer auth + team-slug-in-path", async () => {
     h = startHarness({ pages: [[question(1), question(2)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.token", "so_test_token");
-    await h.ctx.vault.set("stackoverflow.team", TEAM);
+    await h.vault.set("stackoverflow.token", "so_test_token");
+    await h.vault.set("stackoverflow.team", TEAM);
 
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -181,8 +183,8 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   test("page-number walk: continues while page < totalPages, stops at the last page", async () => {
     h = startHarness({ pages: [fullPage(1), [question(1000)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.token", "k");
-    await h.ctx.vault.set("stackoverflow.team", TEAM);
+    await h.vault.set("stackoverflow.token", "k");
+    await h.vault.set("stackoverflow.team", TEAM);
 
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -200,8 +202,8 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
     const pages = Array.from({ length: 25 }, (_, i) => fullPage(i * 100 + 1));
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.token", "k");
-    await h.ctx.vault.set("stackoverflow.team", TEAM);
+    await h.vault.set("stackoverflow.token", "k");
+    await h.vault.set("stackoverflow.team", TEAM);
 
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -215,8 +217,8 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   test("the webUrl is the canonical url; missing-webUrl questions → null", async () => {
     h = startHarness({ pages: [[question(1), question(2, { webUrl: null })]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.token", "k");
-    await h.ctx.vault.set("stackoverflow.team", TEAM);
+    await h.vault.set("stackoverflow.token", "k");
+    await h.vault.set("stackoverflow.team", TEAM);
 
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -238,7 +240,7 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   test("noop when token unset — no requests", async () => {
     h = startHarness({ pages: [[question(1)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.team", TEAM);
+    await h.vault.set("stackoverflow.team", TEAM);
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -248,7 +250,7 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   test("noop when team unset — no requests (both keys required)", async () => {
     h = startHarness({ pages: [[question(1)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.token", "k");
+    await h.vault.set("stackoverflow.token", "k");
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -258,8 +260,8 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   test("empty question list → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: [[]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.token", "k");
-    await h.ctx.vault.set("stackoverflow.team", TEAM);
+    await h.vault.set("stackoverflow.token", "k");
+    await h.vault.set("stackoverflow.team", TEAM);
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -269,8 +271,8 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.token", "k");
-    await h.ctx.vault.set("stackoverflow.team", TEAM);
+    await h.vault.set("stackoverflow.token", "k");
+    await h.vault.set("stackoverflow.team", TEAM);
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -280,8 +282,8 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("stackoverflow.token", "k");
-    await h.ctx.vault.set("stackoverflow.team", TEAM);
+    await h.vault.set("stackoverflow.token", "k");
+    await h.vault.set("stackoverflow.team", TEAM);
     const syncable = createStackOverflowSyncable({ ensureStackOverflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

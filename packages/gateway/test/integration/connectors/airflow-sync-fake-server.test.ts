@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createAirflowSyncable } from "../../../src/connectors/airflow-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -60,6 +60,7 @@ function startFakeAirflow(config: FakeAirflowConfig): FakeAirflow {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeAirflow;
@@ -73,14 +74,14 @@ function startHarness(config: FakeAirflowConfig): Harness {
   const fake = startFakeAirflow(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "airflow"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         airflow: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -110,9 +111,9 @@ function fullPage(prefix: string): unknown[] {
 }
 
 async function setCreds(h: Harness): Promise<void> {
-  await h.ctx.vault.set("airflow.base_url", h.fake.baseUrl);
-  await h.ctx.vault.set("airflow.username", "admin");
-  await h.ctx.vault.set("airflow.password", "secret");
+  await h.vault.set("airflow.base_url", h.fake.baseUrl);
+  await h.vault.set("airflow.username", "admin");
+  await h.vault.set("airflow.password", "secret");
 }
 
 describe("airflow-sync against Bun.serve fake API", () => {
@@ -208,9 +209,9 @@ describe("airflow-sync against Bun.serve fake API", () => {
 
   test("a 401 (auth failure) on page 1 degrades gracefully (no throw, zero upserts)", async () => {
     h = startHarness({ pages: { "0": [dag("x")] }, status: 401 });
-    await h.ctx.vault.set("airflow.base_url", h.fake.baseUrl);
-    await h.ctx.vault.set("airflow.username", "admin");
-    await h.ctx.vault.set("airflow.password", "bad");
+    await h.vault.set("airflow.base_url", h.fake.baseUrl);
+    await h.vault.set("airflow.username", "admin");
+    await h.vault.set("airflow.password", "bad");
     const syncable = createAirflowSyncable({ ensureAirflowMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

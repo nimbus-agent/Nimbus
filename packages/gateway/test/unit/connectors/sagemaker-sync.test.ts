@@ -53,7 +53,7 @@ describe("sagemaker-sync — credential short-circuit", () => {
   test("no aws vault keys → noop, runner never called, cursor preserved", async () => {
     const { run, calls } = makeRunner({});
     const res = await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("sagemaker"),
       "prev",
     );
     expect(res.itemsUpserted).toBe(0);
@@ -65,7 +65,10 @@ describe("sagemaker-sync — credential short-circuit", () => {
     await fx.vault.set("aws.access_key_id", "AKIA");
     await fx.vault.set("aws.secret_access_key", "S");
     const { run, calls } = makeRunner({});
-    await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(fx.createSyncContext(), null);
+    await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(
+      fx.createSyncContext("sagemaker"),
+      null,
+    );
     expect(calls).toHaveLength(0);
   });
 });
@@ -108,7 +111,7 @@ describe("sagemaker-sync — model metadata walk", () => {
       ],
     });
     const res = await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("sagemaker"),
       null,
     );
     expect(res.itemsUpserted).toBe(2);
@@ -138,7 +141,7 @@ describe("sagemaker-sync — model metadata walk", () => {
   test("first-page list-models failure → parse-empty pass cursor, 0 upserts", async () => {
     const { run } = makeRunner({ "list-models": [{ ok: false }] });
     const res = await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("sagemaker"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -154,7 +157,7 @@ describe("sagemaker-sync — model metadata walk", () => {
       "describe-model": [{ body: {} }],
     });
     const res = await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("sagemaker"),
       null,
     );
     expect(res.itemsUpserted).toBe(2);
@@ -170,7 +173,7 @@ describe("sagemaker-sync — model metadata walk", () => {
       "describe-model": [{ ok: false }],
     });
     const res = await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("sagemaker"),
       null,
     );
     expect(res.itemsUpserted).toBe(1);
@@ -183,7 +186,7 @@ describe("sagemaker-sync — model metadata walk", () => {
       "describe-model": [{ body: {} }],
     });
     const res = await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("sagemaker"),
       null,
     );
     // The model is still mapped/upserted from list-models metadata...
@@ -198,7 +201,7 @@ describe("sagemaker-sync — model metadata walk", () => {
       "describe-model": [{ body: {} }],
     });
     const res = await createSagemakerSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("sagemaker"),
       null,
     );
     expect(fx.notifications.emitted).toHaveLength(0);

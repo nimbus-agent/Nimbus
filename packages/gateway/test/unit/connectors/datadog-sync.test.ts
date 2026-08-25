@@ -32,7 +32,7 @@ describe("datadog-sync — credential short-circuits", () => {
   test("returns noop when neither vault key is set", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createDatadogSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("datadog"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
@@ -43,7 +43,7 @@ describe("datadog-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("datadog.api_key", "datadog-stub-api-key");
       const syncable = createDatadogSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("datadog"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
       expect(res.cursor).toBeNull();
     });
@@ -53,7 +53,7 @@ describe("datadog-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("datadog.app_key", "datadog-stub-app-key");
       const syncable = createDatadogSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("datadog"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -63,7 +63,7 @@ describe("datadog-sync — credential short-circuits", () => {
       await iso.vault.set("datadog.api_key", "   ");
       await iso.vault.set("datadog.app_key", "datadog-stub-app-key");
       const syncable = createDatadogSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("datadog"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -73,7 +73,7 @@ describe("datadog-sync — credential short-circuits", () => {
       await iso.vault.set("datadog.api_key", "datadog-stub-api-key");
       await iso.vault.set("datadog.app_key", "   ");
       const syncable = createDatadogSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("datadog"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -81,7 +81,7 @@ describe("datadog-sync — credential short-circuits", () => {
   test("noop preserves incoming cursor", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createDatadogSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), "preserved-cursor");
+      const res = await syncable.sync(iso.createSyncContext("datadog"), "preserved-cursor");
       expect(res.cursor).toBe("preserved-cursor");
     });
   });
@@ -104,27 +104,27 @@ describe("datadog-sync — with shared fixture", () => {
   describe("HTTP request path", () => {
     test("uses default datadoghq.com site when datadog.site is unset", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, []);
-      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext("datadog"), null);
       expect(fixture.fetchMock.firstCall().url).toBe(MONITORS_DEFAULT_URL);
     });
 
     test("uses custom site when datadog.site is set", async () => {
       await fixture.vault.set("datadog.site", "datadoghq.eu");
       fixture.fetchMock.respond("GET", MONITORS_EU_URL, []);
-      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext("datadog"), null);
       expect(fixture.fetchMock.firstCall().url).toBe(MONITORS_EU_URL);
     });
 
     test("whitespace-only datadog.site falls back to default", async () => {
       await fixture.vault.set("datadog.site", "   ");
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, []);
-      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext("datadog"), null);
       expect(fixture.fetchMock.firstCall().url).toBe(MONITORS_DEFAULT_URL);
     });
 
     test("sends DD-API-KEY + DD-APPLICATION-KEY + Accept headers", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, []);
-      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext("datadog"), null);
       const call = fixture.fetchMock.firstCall();
       expect(call.headers["dd-api-key"]).toBe("datadog-stub-api-key");
       expect(call.headers["dd-application-key"]).toBe("datadog-stub-app-key");
@@ -133,7 +133,10 @@ describe("datadog-sync — with shared fixture", () => {
 
     test("non-200 → no upserts, returns http-empty pass cursor", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, { error: "boom" }, { status: 500 });
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -141,7 +144,10 @@ describe("datadog-sync — with shared fixture", () => {
 
     test("invalid JSON → returns parse-empty pass cursor", async () => {
       fixture.fetchMock.respondWithText("GET", MONITORS_DEFAULT_URL, "<html>not json</html>");
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -149,7 +155,10 @@ describe("datadog-sync — with shared fixture", () => {
 
     test("non-array root JSON → 0 upserts, success pass cursor", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, { monitors: [] });
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
@@ -159,7 +168,10 @@ describe("datadog-sync — with shared fixture", () => {
   describe("indexing skip paths", () => {
     test("numeric id is stringified into external_id", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, [{ id: 12345, name: "NumericIdMon" }]);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ external_id: string; title: string }, []>(
@@ -172,7 +184,10 @@ describe("datadog-sync — with shared fixture", () => {
 
     test("string id is used verbatim", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, [{ id: "mon-abc", name: "StrIdMon" }]);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ external_id: string }, []>(
@@ -187,7 +202,10 @@ describe("datadog-sync — with shared fixture", () => {
         { id: true, name: "BoolId" },
         { id: "kept", name: "Kept" },
       ]);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const rows = fixture.db
         .query<{ external_id: string }, []>(
@@ -202,7 +220,10 @@ describe("datadog-sync — with shared fixture", () => {
         { id: null, name: "NullId" },
         { id: "kept", name: "Kept" },
       ]);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
 
@@ -211,7 +232,10 @@ describe("datadog-sync — with shared fixture", () => {
         { name: "NoIdField" },
         { id: "kept", name: "Kept" },
       ]);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
 
@@ -220,7 +244,10 @@ describe("datadog-sync — with shared fixture", () => {
         { id: "no-name" },
         { id: "empty-name", name: "" },
       ]);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(2);
       const rows = fixture.db
         .query<{ external_id: string; title: string }, []>(
@@ -240,7 +267,10 @@ describe("datadog-sync — with shared fixture", () => {
         null,
         { id: "kept", name: "Kept" },
       ]);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
   });
@@ -248,7 +278,10 @@ describe("datadog-sync — with shared fixture", () => {
   describe("cursor decode", () => {
     test("null cursor returns success pass cursor with pass:1", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, []);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.cursor).not.toBeNull();
       expect(res.cursor!.startsWith(CURSOR_PREFIX)).toBe(true);
       const decoded = JSON.parse(
@@ -260,7 +293,7 @@ describe("datadog-sync — with shared fixture", () => {
     test("any incoming cursor is replaced on success (pass cursor)", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, []);
       const res = await createDatadogSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("datadog"),
         encodeCursor({ arbitrary: true }),
       );
       expect(res.cursor).not.toBeNull();
@@ -275,7 +308,10 @@ describe("datadog-sync — with shared fixture", () => {
         { id: "mon-b", name: "Monitor B" },
         { id: "mon-c", name: "Monitor C" },
       ]);
-      const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createDatadogSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("datadog"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(3);
       const rows = fixture.db
         .query<{ external_id: string }, []>(
@@ -291,7 +327,7 @@ describe("datadog-sync — with shared fixture", () => {
 
     test("emits no notifications", async () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, []);
-      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext("datadog"), null);
       expect(fixture.notifications.emitted).toHaveLength(0);
     });
   });

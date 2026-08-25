@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createSupersetSyncable } from "../../../src/connectors/superset-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -75,6 +75,7 @@ function startFakeSuperset(config: FakeSupersetConfig): FakeSuperset {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeSuperset;
@@ -88,14 +89,14 @@ function startHarness(config: FakeSupersetConfig): Harness {
   const fake = startFakeSuperset(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "superset"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         superset: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -121,9 +122,9 @@ function dashboard(
 }
 
 async function seedCreds(h: Harness): Promise<void> {
-  await h.ctx.vault.set("superset.url", h.fake.baseUrl);
-  await h.ctx.vault.set("superset.username", "reader");
-  await h.ctx.vault.set("superset.password", "pw");
+  await h.vault.set("superset.url", h.fake.baseUrl);
+  await h.vault.set("superset.username", "reader");
+  await h.vault.set("superset.password", "pw");
 }
 
 describe("superset-sync against Bun.serve fake API", () => {
@@ -175,8 +176,8 @@ describe("superset-sync against Bun.serve fake API", () => {
 
   test("noop when any of url/username/password unset — no requests", async () => {
     h = startHarness({ dashboards: [dashboard(1)] });
-    await h.ctx.vault.set("superset.url", h.fake.baseUrl);
-    await h.ctx.vault.set("superset.username", "reader");
+    await h.vault.set("superset.url", h.fake.baseUrl);
+    await h.vault.set("superset.username", "reader");
     const syncable = createSupersetSyncable({ ensureSupersetMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

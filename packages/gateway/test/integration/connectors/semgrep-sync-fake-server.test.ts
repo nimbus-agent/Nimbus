@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createSemgrepSyncable } from "../../../src/connectors/semgrep-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -90,6 +90,7 @@ function startFakeSemgrep(): FakeSemgrep {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeSemgrep;
@@ -109,6 +110,7 @@ function startHarness(): Harness {
   };
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       globalThis.fetch = originalFetch;
@@ -116,8 +118,7 @@ function startHarness(): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "semgrep"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter(),
     },
@@ -128,7 +129,7 @@ describe("semgrep-sync against Bun.serve fake API", () => {
   let h: Harness;
   beforeEach(async () => {
     h = startHarness();
-    await h.ctx.vault.set("semgrep.token", "fake-semgrep-token");
+    await h.vault.set("semgrep.token", "fake-semgrep-token");
   });
   afterEach(() => h.cleanup());
 
@@ -162,7 +163,7 @@ describe("semgrep-sync against Bun.serve fake API", () => {
   });
 
   test("when deployment_slug is preset, skips the /deployments discovery round-trip", async () => {
-    await h.ctx.vault.set("semgrep.deployment_slug", "acme-corp");
+    await h.vault.set("semgrep.deployment_slug", "acme-corp");
     const syncable = createSemgrepSyncable({ ensureSemgrepMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
     const deploymentCalls = h.fake.requests.filter((r) => r.path === "/api/v1/deployments");
@@ -183,7 +184,7 @@ describe("semgrep-sync against Bun.serve fake API", () => {
   });
 
   test("noop when semgrep.token is unset", async () => {
-    await h.ctx.vault.delete("semgrep.token");
+    await h.vault.delete("semgrep.token");
     const syncable = createSemgrepSyncable({ ensureSemgrepMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

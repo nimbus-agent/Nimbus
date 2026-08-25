@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createDependencytrackSyncable } from "../../../src/connectors/dependencytrack-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -57,6 +57,7 @@ function startFakeDt(config: FakeDtConfig): FakeDt {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeDt;
@@ -70,14 +71,14 @@ function startHarness(config: FakeDtConfig): Harness {
   const fake = startFakeDt(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "dependencytrack"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         dependencytrack: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -123,8 +124,8 @@ describe("dependencytrack-sync against Bun.serve fake API", () => {
         ],
       },
     });
-    await h.ctx.vault.set("dependencytrack.base_url", h.fake.baseUrl);
-    await h.ctx.vault.set("dependencytrack.api_key", "dt-key-test");
+    await h.vault.set("dependencytrack.base_url", h.fake.baseUrl);
+    await h.vault.set("dependencytrack.api_key", "dt-key-test");
 
     const syncable = createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: async () => {},
@@ -160,8 +161,8 @@ describe("dependencytrack-sync against Bun.serve fake API", () => {
         "2": [project("b-0"), project("b-1")],
       },
     });
-    await h.ctx.vault.set("dependencytrack.base_url", h.fake.baseUrl);
-    await h.ctx.vault.set("dependencytrack.api_key", "k");
+    await h.vault.set("dependencytrack.base_url", h.fake.baseUrl);
+    await h.vault.set("dependencytrack.api_key", "k");
 
     const syncable = createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: async () => {},
@@ -185,8 +186,8 @@ describe("dependencytrack-sync against Bun.serve fake API", () => {
 
   test("a 429 on page 1 degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ pages: { "1": [project("u-1")] }, status: 429 });
-    await h.ctx.vault.set("dependencytrack.base_url", h.fake.baseUrl);
-    await h.ctx.vault.set("dependencytrack.api_key", "k");
+    await h.vault.set("dependencytrack.base_url", h.fake.baseUrl);
+    await h.vault.set("dependencytrack.api_key", "k");
     const syncable = createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: async () => {},
     });
@@ -198,8 +199,8 @@ describe("dependencytrack-sync against Bun.serve fake API", () => {
 
   test("a 401 (auth failure) on page 1 degrades gracefully (no throw, zero upserts)", async () => {
     h = startHarness({ pages: { "1": [project("u-1")] }, status: 401 });
-    await h.ctx.vault.set("dependencytrack.base_url", h.fake.baseUrl);
-    await h.ctx.vault.set("dependencytrack.api_key", "bad-key");
+    await h.vault.set("dependencytrack.base_url", h.fake.baseUrl);
+    await h.vault.set("dependencytrack.api_key", "bad-key");
     const syncable = createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: async () => {},
     });
@@ -210,8 +211,8 @@ describe("dependencytrack-sync against Bun.serve fake API", () => {
 
   test("a 403 (forbidden) on page 1 degrades gracefully (no throw, zero upserts)", async () => {
     h = startHarness({ pages: { "1": [project("u-1")] }, status: 403 });
-    await h.ctx.vault.set("dependencytrack.base_url", h.fake.baseUrl);
-    await h.ctx.vault.set("dependencytrack.api_key", "k");
+    await h.vault.set("dependencytrack.base_url", h.fake.baseUrl);
+    await h.vault.set("dependencytrack.api_key", "k");
     const syncable = createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: async () => {},
     });
@@ -222,8 +223,8 @@ describe("dependencytrack-sync against Bun.serve fake API", () => {
 
   test("empty first page yields zero upserts and pass-1 cursor", async () => {
     h = startHarness({ pages: { "1": [] } });
-    await h.ctx.vault.set("dependencytrack.base_url", h.fake.baseUrl);
-    await h.ctx.vault.set("dependencytrack.api_key", "k");
+    await h.vault.set("dependencytrack.base_url", h.fake.baseUrl);
+    await h.vault.set("dependencytrack.api_key", "k");
     const syncable = createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: async () => {},
     });

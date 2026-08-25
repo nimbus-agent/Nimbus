@@ -5,6 +5,7 @@ import pino from "pino";
 import { createZoteroSyncable } from "../../../src/connectors/zotero-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -66,6 +67,7 @@ function startFakeZotero(config: FakeZoteroConfig): FakeZotero {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeZotero;
@@ -79,14 +81,14 @@ function startHarness(config: FakeZoteroConfig): Harness {
   const fake = startFakeZotero(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "zotero"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         zotero: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -120,8 +122,8 @@ function reference(key: string, over: Record<string, unknown> = {}): Record<stri
 }
 
 async function setCreds(h: Harness): Promise<void> {
-  await h.ctx.vault.set("zotero.api_key", "zk_test_key");
-  await h.ctx.vault.set("zotero.library", LIBRARY);
+  await h.vault.set("zotero.api_key", "zk_test_key");
+  await h.vault.set("zotero.library", LIBRARY);
 }
 
 function withRewrittenFetch(fakeBase: string): () => void {
@@ -246,7 +248,7 @@ describe("zotero-sync against Bun.serve fake API", () => {
   test("noop when only api_key is set (library required)", async () => {
     h = startHarness({ pages: [[reference("ABC1")]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("zotero.api_key", "zk_test_key");
+    await h.vault.set("zotero.api_key", "zk_test_key");
     const syncable = createZoteroSyncable({ ensureZoteroMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

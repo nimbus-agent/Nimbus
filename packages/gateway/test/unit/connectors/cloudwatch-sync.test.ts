@@ -56,7 +56,7 @@ describe("cloudwatch-sync — credential short-circuit", () => {
   test("no aws vault keys → noop, runner never called, cursor preserved", async () => {
     const { run, calls } = makeRunner({});
     const res = await createCloudwatchSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloudwatch"),
       "prev",
     );
     expect(res.itemsUpserted).toBe(0);
@@ -69,7 +69,7 @@ describe("cloudwatch-sync — credential short-circuit", () => {
     await fx.vault.set("aws.secret_access_key", "S");
     const { run, calls } = makeRunner({});
     await createCloudwatchSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloudwatch"),
       null,
     );
     expect(calls).toHaveLength(0);
@@ -108,7 +108,7 @@ describe("cloudwatch-sync — log-group metadata walk", () => {
       ],
     });
     const res = await createCloudwatchSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloudwatch"),
       null,
     );
     expect(res.itemsUpserted).toBe(2);
@@ -138,7 +138,7 @@ describe("cloudwatch-sync — log-group metadata walk", () => {
   test("first-page describe-log-groups failure → parse-empty pass cursor, 0 upserts", async () => {
     const { run } = makeRunner({ "describe-log-groups": [{ ok: false }] });
     const res = await createCloudwatchSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloudwatch"),
       null,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -154,7 +154,7 @@ describe("cloudwatch-sync — log-group metadata walk", () => {
       "describe-log-streams": [{ body: { logStreams: [] } }],
     });
     const res = await createCloudwatchSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloudwatch"),
       null,
     );
     expect(res.itemsUpserted).toBe(2);
@@ -170,7 +170,7 @@ describe("cloudwatch-sync — log-group metadata walk", () => {
       "describe-log-streams": [{ ok: false }],
     });
     const res = await createCloudwatchSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloudwatch"),
       null,
     );
     expect(res.itemsUpserted).toBe(1);
@@ -183,7 +183,7 @@ describe("cloudwatch-sync — log-group metadata walk", () => {
       "describe-log-streams": [{ body: { logStreams: [] } }],
     });
     const res = await createCloudwatchSyncable({ ...ENSURE, runAwsCli: run }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("cloudwatch"),
       null,
     );
     expect(fx.notifications.emitted).toHaveLength(0);

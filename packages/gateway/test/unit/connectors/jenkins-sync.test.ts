@@ -46,7 +46,7 @@ describe("jenkins-sync — credential short-circuits", () => {
   test("returns noop when no vault keys are set", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createJenkinsSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("jenkins"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
@@ -58,7 +58,7 @@ describe("jenkins-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("jenkins.base_url", BASE_URL);
       const syncable = createJenkinsSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("jenkins"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
       expect(res.itemsUpserted).toBe(0);
     });
@@ -68,7 +68,7 @@ describe("jenkins-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("jenkins.username", "jenkins-stub-user");
       const syncable = createJenkinsSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("jenkins"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
       expect(res.itemsUpserted).toBe(0);
     });
@@ -78,7 +78,7 @@ describe("jenkins-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("jenkins.api_token", "jenkins-stub-token");
       const syncable = createJenkinsSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("jenkins"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -89,7 +89,7 @@ describe("jenkins-sync — credential short-circuits", () => {
       await iso.vault.set("jenkins.username", "jenkins-stub-user");
       await iso.vault.set("jenkins.api_token", "jenkins-stub-token");
       const syncable = createJenkinsSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("jenkins"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
     await withIsolatedFixture(async (iso) => {
@@ -97,7 +97,7 @@ describe("jenkins-sync — credential short-circuits", () => {
       await iso.vault.set("jenkins.username", "   ");
       await iso.vault.set("jenkins.api_token", "jenkins-stub-token");
       const syncable = createJenkinsSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("jenkins"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
     await withIsolatedFixture(async (iso) => {
@@ -105,7 +105,7 @@ describe("jenkins-sync — credential short-circuits", () => {
       await iso.vault.set("jenkins.username", "jenkins-stub-user");
       await iso.vault.set("jenkins.api_token", "   ");
       const syncable = createJenkinsSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("jenkins"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -113,7 +113,7 @@ describe("jenkins-sync — credential short-circuits", () => {
   test("noop preserves incoming cursor", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createJenkinsSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), "preserved-cursor");
+      const res = await syncable.sync(iso.createSyncContext("jenkins"), "preserved-cursor");
       expect(res.cursor).toBe("preserved-cursor");
     });
   });
@@ -137,7 +137,10 @@ describe("jenkins-sync — with shared fixture", () => {
   describe("cursor decode", () => {
     test("null cursor → starts fresh with empty jobs map", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.cursor).not.toBeNull();
       const decoded = decodeCursorJson(res.cursor!) as { jobs: Record<string, number> };
       expect(decoded.jobs).toEqual({});
@@ -145,7 +148,10 @@ describe("jenkins-sync — with shared fixture", () => {
 
     test("empty-string cursor → starts fresh", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), "");
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        "",
+      );
       expect(res.cursor).not.toBeNull();
       const decoded = decodeCursorJson(res.cursor!) as { jobs: Record<string, number> };
       expect(decoded.jobs).toEqual({});
@@ -154,7 +160,7 @@ describe("jenkins-sync — with shared fixture", () => {
     test("wrong-prefix cursor → starts fresh", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("jenkins"),
         "nimbus-other:abc",
       );
       const decoded = decodeCursorJson(res.cursor!) as { jobs: Record<string, number> };
@@ -164,7 +170,7 @@ describe("jenkins-sync — with shared fixture", () => {
     test("non-base64 garbage body → starts fresh", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("jenkins"),
         `${CURSOR_PREFIX}!!!not-base64!!!`,
       );
       const decoded = decodeCursorJson(res.cursor!) as { jobs: Record<string, number> };
@@ -174,7 +180,7 @@ describe("jenkins-sync — with shared fixture", () => {
     test("non-record jobs field → falls back to empty jobs map", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("jenkins"),
         encodeCursor({ jobs: "not-a-record" }),
       );
       const decoded = decodeCursorJson(res.cursor!) as { jobs: Record<string, number> };
@@ -184,7 +190,7 @@ describe("jenkins-sync — with shared fixture", () => {
     test("non-finite numeric values in jobs are dropped; finite numbers are retained via Math.floor", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("jenkins"),
         encodeCursor({
           jobs: {
             "team/finite": 12.7,
@@ -202,13 +208,13 @@ describe("jenkins-sync — with shared fixture", () => {
   describe("HTTP request paths", () => {
     test("sends basic auth header on jobs-list URL", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
-      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("jenkins"), null);
       expect(fixture.fetchMock.firstCall().headers["authorization"]).toBe(BASIC_AUTH);
     });
 
     test("sends Accept: application/json on jobs-list URL", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
-      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("jenkins"), null);
       expect(fixture.fetchMock.firstCall().headers["accept"]).toBe("application/json");
     });
 
@@ -217,7 +223,7 @@ describe("jenkins-sync — with shared fixture", () => {
         jobs: [{ name: "build-a", fullName: "team/build-a" }],
       });
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_A, { builds: [] });
-      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("jenkins"), null);
       const buildsCalls = fixture.fetchMock.calls.filter((c) => BUILDS_LIST_RE_ANY.test(c.url));
       expect(buildsCalls).toHaveLength(1);
       expect(buildsCalls[0].headers["authorization"]).toBe(BASIC_AUTH);
@@ -227,7 +233,7 @@ describe("jenkins-sync — with shared fixture", () => {
     test("strips trailing slash from base_url before constructing URLs", async () => {
       await fixture.vault.set("jenkins.base_url", `${BASE_URL}/`);
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
-      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("jenkins"), null);
       const url = fixture.fetchMock.firstCall().url;
       expect(url.startsWith(`${BASE_URL}/api/json?tree=`)).toBe(true);
       expect(url).not.toContain("//api/json");
@@ -236,7 +242,7 @@ describe("jenkins-sync — with shared fixture", () => {
     test("jobs-list 5xx → cursor preserves previous {jobs} state and returns 0 upserts hasMore=false", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { error: "boom" }, { status: 500 });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("jenkins"),
         encodeCursor({ jobs: { "team/prior": 7 } }),
       );
       expect(res.itemsUpserted).toBe(0);
@@ -248,14 +254,20 @@ describe("jenkins-sync — with shared fixture", () => {
 
     test("jobs-list invalid JSON → bails (0 upserts)", async () => {
       fixture.fetchMock.respondWithText("GET", JOBS_LIST_RE, "<html>not json</html>");
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).not.toBeNull();
     });
 
     test("jobs-list non-object root (array) → bails", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, [1, 2, 3]);
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(fixture.fetchMock.calls).toHaveLength(1);
     });
@@ -272,7 +284,10 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_B, {
         builds: [{ number: 5, timestamp: recentTs, result: "SUCCESS" }],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ external_id: string }, []>(
@@ -292,7 +307,7 @@ describe("jenkins-sync — with shared fixture", () => {
         ],
       });
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_ANY, { builds: [] });
-      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("jenkins"), null);
       const buildsCalls = fixture.fetchMock.calls.filter((c) => BUILDS_LIST_RE_ANY.test(c.url));
       expect(buildsCalls).toHaveLength(2);
     });
@@ -314,7 +329,7 @@ describe("jenkins-sync — with shared fixture", () => {
         ],
       });
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_ANY, { builds: [] });
-      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("jenkins"), null);
       const buildsCalls = fixture.fetchMock.calls.filter((c) => BUILDS_LIST_RE_ANY.test(c.url));
       expect(buildsCalls).toHaveLength(3);
       const leafCall = buildsCalls.find((c) => c.url.includes("/job/folder1/job/sub/job/x/"));
@@ -323,7 +338,10 @@ describe("jenkins-sync — with shared fixture", () => {
 
     test("jobs-list with non-array jobs field → bails on flatten, 0 upserts", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: "not-an-array" });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
       expect(fixture.fetchMock.calls).toHaveLength(1);
     });
@@ -342,7 +360,7 @@ describe("jenkins-sync — with shared fixture", () => {
         ],
       });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("jenkins"),
         encodeCursor({ jobs: { "team/build-a": 4 } }),
       );
       expect(res.itemsUpserted).toBe(0);
@@ -356,7 +374,10 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_A, {
         builds: [{ number: 1, timestamp: wayOldTs, result: "SUCCESS" }],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
     });
 
@@ -368,7 +389,10 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_A, {
         builds: [{ number: 7, timestamp: recentTs, building: true }],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ title: string }, []>("SELECT title FROM item WHERE service = 'jenkins'")
@@ -384,7 +408,10 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_A, {
         builds: [{ number: 9, timestamp: recentTs, result: "FAILURE" }],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ title: string }, []>("SELECT title FROM item WHERE service = 'jenkins'")
@@ -400,7 +427,10 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_A, {
         builds: [{ number: 11, timestamp: recentTs }],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ title: string }, []>("SELECT title FROM item WHERE service = 'jenkins'")
@@ -413,7 +443,10 @@ describe("jenkins-sync — with shared fixture", () => {
         jobs: [{ name: "build-a", fullName: "team/build-a" }],
       });
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_A, { somethingElse: true });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(0);
     });
 
@@ -425,7 +458,10 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_A, {
         builds: [42, "string", null, { number: 5, timestamp: recentTs, result: "SUCCESS" }],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
 
@@ -440,7 +476,10 @@ describe("jenkins-sync — with shared fixture", () => {
           { number: 8, timestamp: recentTs, result: "SUCCESS" },
         ],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
     });
   });
@@ -460,7 +499,10 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_B, {
         builds: [{ number: 22, timestamp: recentTs, result: "SUCCESS" }],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(2);
       const decoded = decodeCursorJson(res.cursor!) as { jobs: Record<string, number> };
       expect(decoded.jobs).toEqual({ "team/build-a": 11, "team/build-b": 22 });
@@ -479,7 +521,7 @@ describe("jenkins-sync — with shared fixture", () => {
         ],
       });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("jenkins"),
         encodeCursor({ jobs: { "team/build-a": 6 } }),
       );
       expect(res.itemsUpserted).toBe(1);
@@ -515,7 +557,10 @@ describe("jenkins-sync — with shared fixture", () => {
           },
         ],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ metadata: string; url: string | null }, []>(
@@ -553,7 +598,10 @@ describe("jenkins-sync — with shared fixture", () => {
           { number: 2, timestamp: recentTs, result: "ABORTED" },
         ],
       });
-      const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createJenkinsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("jenkins"),
+        null,
+      );
       expect(res.itemsUpserted).toBe(4);
       const rows = fixture.db
         .query<{ external_id: string }, []>(
@@ -570,7 +618,7 @@ describe("jenkins-sync — with shared fixture", () => {
 
     test("emits no notifications", async () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
-      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("jenkins"), null);
       expect(fixture.notifications.emitted).toHaveLength(0);
     });
   });

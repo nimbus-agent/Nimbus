@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createMetabaseSyncable } from "../../../src/connectors/metabase-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
@@ -60,6 +60,7 @@ function startFakeMb(config: FakeMbConfig): FakeMb {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeMb;
@@ -73,14 +74,14 @@ function startHarness(config: FakeMbConfig): Harness {
   const fake = startFakeMb(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "metabase"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         metabase: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -121,8 +122,8 @@ describe("metabase-sync against Bun.serve fake API", () => {
         dashboard(20, { name: "Funnel", collection_id: 7 }),
       ],
     });
-    await h.ctx.vault.set("metabase.url", h.fake.baseUrl);
-    await h.ctx.vault.set("metabase.api_key", "mb-key-test");
+    await h.vault.set("metabase.url", h.fake.baseUrl);
+    await h.vault.set("metabase.api_key", "mb-key-test");
 
     const syncable = createMetabaseSyncable({ ensureMetabaseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -161,8 +162,8 @@ describe("metabase-sync against Bun.serve fake API", () => {
       dashboards: [dashboard(1)],
       dashboardsStatus: 503,
     });
-    await h.ctx.vault.set("metabase.url", h.fake.baseUrl);
-    await h.ctx.vault.set("metabase.api_key", "k");
+    await h.vault.set("metabase.url", h.fake.baseUrl);
+    await h.vault.set("metabase.api_key", "k");
     const syncable = createMetabaseSyncable({ ensureMetabaseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -175,8 +176,8 @@ describe("metabase-sync against Bun.serve fake API", () => {
       dashboards: [dashboard(1)],
       dashboardsStatus: 429,
     });
-    await h.ctx.vault.set("metabase.url", h.fake.baseUrl);
-    await h.ctx.vault.set("metabase.api_key", "k");
+    await h.vault.set("metabase.url", h.fake.baseUrl);
+    await h.vault.set("metabase.api_key", "k");
     const syncable = createMetabaseSyncable({ ensureMetabaseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -188,8 +189,8 @@ describe("metabase-sync against Bun.serve fake API", () => {
       collectionsStatus: 500,
       dashboards: [dashboard(10, { name: "Revenue", collection_id: 7 })],
     });
-    await h.ctx.vault.set("metabase.url", h.fake.baseUrl);
-    await h.ctx.vault.set("metabase.api_key", "k");
+    await h.vault.set("metabase.url", h.fake.baseUrl);
+    await h.vault.set("metabase.api_key", "k");
     const syncable = createMetabaseSyncable({ ensureMetabaseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(1);

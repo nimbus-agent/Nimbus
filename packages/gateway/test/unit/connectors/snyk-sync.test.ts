@@ -30,7 +30,7 @@ describe("snyk-sync — credential short-circuit", () => {
   test("returns noop when snyk.token is unset", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createSnykSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("snyk"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
@@ -41,7 +41,7 @@ describe("snyk-sync — credential short-circuit", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("snyk.token", "    ");
       const syncable = createSnykSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("snyk"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -49,7 +49,7 @@ describe("snyk-sync — credential short-circuit", () => {
   test("noop preserves the incoming cursor", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createSnykSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), "preserved");
+      const res = await syncable.sync(iso.createSyncContext("snyk"), "preserved");
       expect(res.cursor).toBe("preserved");
     });
   });
@@ -71,13 +71,13 @@ describe("snyk-sync — with token", () => {
   test("sends Authorization: token <value> on every request", async () => {
     fixture.fetchMock.respond("GET", ORGS_URL_RE, { orgs: [{ id: "org-1", name: "Acme" }] });
     fixture.fetchMock.respond("GET", PROJECTS_URL_RE, { projects: [] });
-    await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     expect(fixture.fetchMock.firstCall().headers["authorization"]).toBe("token snyk-stub-token");
   });
 
   test("HTTP 5xx on /orgs short-circuits to http-empty pass cursor", async () => {
     fixture.fetchMock.respond("GET", ORGS_URL_RE, { error: "boom" }, { status: 500 });
-    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).not.toBeNull();
     if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -86,7 +86,7 @@ describe("snyk-sync — with token", () => {
 
   test("invalid JSON on /orgs returns parse-empty pass cursor", async () => {
     fixture.fetchMock.respondWithText("GET", ORGS_URL_RE, "<html>not json</html>");
-    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).not.toBeNull();
     if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -95,7 +95,7 @@ describe("snyk-sync — with token", () => {
 
   test("zero orgs → success cursor, zero upserts", async () => {
     fixture.fetchMock.respond("GET", ORGS_URL_RE, { orgs: [] });
-    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).not.toBeNull();
     if (res.cursor === null) throw new Error("unexpected null cursor");
@@ -135,7 +135,7 @@ describe("snyk-sync — with token", () => {
         },
       ],
     });
-    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     expect(res.itemsUpserted).toBe(1);
     const rows = fixture.db
       .query<{ external_id: string; title: string; metadata: string }, []>(
@@ -168,7 +168,7 @@ describe("snyk-sync — with token", () => {
         },
       ],
     });
-    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     expect(res.itemsUpserted).toBe(1);
   });
 
@@ -189,7 +189,7 @@ describe("snyk-sync — with token", () => {
         },
       ],
     });
-    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     expect(res.itemsUpserted).toBe(2);
     const ids = fixture.db
       .query<{ external_id: string }, []>(
@@ -202,7 +202,7 @@ describe("snyk-sync — with token", () => {
 
   test("cursor decodes to { pass: 1 } on success", async () => {
     fixture.fetchMock.respond("GET", ORGS_URL_RE, { orgs: [] });
-    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     if (res.cursor === null) throw new Error("unexpected null cursor");
     const decoded = JSON.parse(
       Buffer.from(res.cursor.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
@@ -212,7 +212,7 @@ describe("snyk-sync — with token", () => {
 
   test("emits no notifications", async () => {
     fixture.fetchMock.respond("GET", ORGS_URL_RE, { orgs: [] });
-    await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createSnykSyncable(ENSURE_MCP).sync(fixture.createSyncContext("snyk"), null);
     expect(fixture.notifications.emitted).toHaveLength(0);
   });
 });

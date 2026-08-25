@@ -39,7 +39,7 @@ describe("localdb-sync", () => {
   }
 
   test("no scripts_dir → noop, preserves cursor, still ensures the mesh", async () => {
-    const res = await makeSyncable().sync(fx.createSyncContext(), "prev");
+    const res = await makeSyncable().sync(fx.createSyncContext("localdb"), "prev");
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
     expect(ensureCalls).toHaveLength(1);
@@ -53,7 +53,7 @@ describe("localdb-sync", () => {
     await writeFile(join(dir, "empty.sql"), "   \n", "utf8");
     await fx.vault.set("localdb.scripts_dir", dir);
 
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("localdb"), null);
     expect(res.itemsUpserted).toBe(2);
     expect(res.cursor).toBe(PASS_1_CURSOR);
 
@@ -76,7 +76,7 @@ describe("localdb-sync", () => {
       "utf8",
     );
     await fx.vault.set("localdb.scripts_dir", dir);
-    await makeSyncable().sync(fx.createSyncContext(), null);
+    await makeSyncable().sync(fx.createSyncContext("localdb"), null);
     const row = fx.db
       .query<{ body_preview: string }, []>(
         "SELECT body_preview FROM item WHERE service = 'localdb'",
@@ -87,7 +87,7 @@ describe("localdb-sync", () => {
 
   test("a missing dir → success with zero upserts (unreadable dir skipped)", async () => {
     await fx.vault.set("localdb.scripts_dir", join(dir, "does-not-exist"));
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("localdb"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });

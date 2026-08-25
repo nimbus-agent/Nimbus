@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import { createGithubActionsSyncable } from "../../../src/connectors/github-actions-sync.ts";
-import { upsertIndexedItemForSync } from "../../../src/index/item-store.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import {
   type ConnectorSyncFixture,
@@ -26,7 +25,7 @@ function decodeCursorJson(c: string): unknown {
 
 function seedGithubRepo(ctx: SyncContext, fullName: string): void {
   const now = Date.now();
-  upsertIndexedItemForSync(ctx, {
+  ctx.upsertItem({
     service: "github",
     type: "repository",
     externalId: `repo:${fullName}`,
@@ -57,9 +56,9 @@ async function withIsolatedFixture(
 describe("github-actions-sync — credential short-circuits", () => {
   test("returns noop when pat vault key is missing", async () => {
     await withIsolatedFixture(async (iso) => {
-      seedGithubRepo(iso.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(iso.createSyncContext("github_actions"), "acme/repo-a");
       const syncable = createGithubActionsSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("github_actions"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
@@ -70,9 +69,9 @@ describe("github-actions-sync — credential short-circuits", () => {
   test("returns noop when pat is empty string", async () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("github.pat", "");
-      seedGithubRepo(iso.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(iso.createSyncContext("github_actions"), "acme/repo-a");
       const syncable = createGithubActionsSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("github_actions"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -80,9 +79,9 @@ describe("github-actions-sync — credential short-circuits", () => {
   test("returns noop when pat is whitespace-only", async () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("github.pat", "   ");
-      seedGithubRepo(iso.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(iso.createSyncContext("github_actions"), "acme/repo-a");
       const syncable = createGithubActionsSyncable(ENSURE_MCP);
-      await syncable.sync(iso.createSyncContext(), null);
+      await syncable.sync(iso.createSyncContext("github_actions"), null);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
   });
@@ -91,7 +90,7 @@ describe("github-actions-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("github.pat", "github-stub-pat");
       const syncable = createGithubActionsSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), "preserved-cursor");
+      const res = await syncable.sync(iso.createSyncContext("github_actions"), "preserved-cursor");
       expect(iso.fetchMock.calls).toHaveLength(0);
       expect(res.cursor).toBe("preserved-cursor");
     });
@@ -113,9 +112,12 @@ describe("github-actions-sync — with shared fixture", () => {
 
   describe("HTTP request paths", () => {
     test("sends Authorization: Bearer <pat>, Accept and X-GitHub-Api-Version headers", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { workflow_runs: [] });
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       const h = fixture.fetchMock.firstCall().headers;
       expect(h["authorization"]).toBe("Bearer github-stub-pat");
       expect(h["accept"]).toBe("application/vnd.github+json");
@@ -123,16 +125,19 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("URL contains owner + repo segments and per_page=30", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { workflow_runs: [] });
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       const url = fixture.fetchMock.firstCall().url;
       expect(url.startsWith("https://api.github.com/repos/acme/repo-a/actions/runs")).toBe(true);
       expect(url).toContain("per_page=30");
     });
 
     test("non-200 non-403 → 0 upserts for that repo, sibling continues", async () => {
-      const syncCtx = fixture.createSyncContext();
+      const syncCtx = fixture.createSyncContext("github_actions");
       seedGithubRepo(syncCtx, "acme/repo-a");
       seedGithubRepo(syncCtx, "acme/repo-b");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { message: "boom" }, { status: 500 });
@@ -141,7 +146,7 @@ describe("github-actions-sync — with shared fixture", () => {
         workflow_runs: [{ id: 5, created_at: recentTs, conclusion: "success" }],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -154,10 +159,10 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("invalid JSON for one repo → bails for that repo (0 upserts)", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respondWithText("GET", RUNS_URL_ACME_REPO_A, "<html>not json</html>");
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(0);
@@ -165,20 +170,20 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("non-record root (array) → bails for that repo", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, [1, 2, 3]);
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(0);
     });
 
     test("missing workflow_runs field → bails for that repo", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { otherField: "value" });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(0);
@@ -187,7 +192,7 @@ describe("github-actions-sync — with shared fixture", () => {
 
   describe("403 rate-limit penalty", () => {
     test("403 + x-ratelimit-remaining: 0 + retry-after: 30 → rateLimiter.penalise(github, 30_000)", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond(
         "GET",
         RUNS_URL_ACME_REPO_A,
@@ -202,13 +207,16 @@ describe("github-actions-sync — with shared fixture", () => {
         },
       );
       const penaliseSpy = spyOn(fixture.rateLimiter, "penalise");
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       expect(penaliseSpy).toHaveBeenCalledTimes(1);
       expect(penaliseSpy).toHaveBeenCalledWith("github", 30_000);
     });
 
     test("403 + x-ratelimit-remaining: 0 with missing retry-after → penalise(github, 60_000)", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond(
         "GET",
         RUNS_URL_ACME_REPO_A,
@@ -222,13 +230,16 @@ describe("github-actions-sync — with shared fixture", () => {
         },
       );
       const penaliseSpy = spyOn(fixture.rateLimiter, "penalise");
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       expect(penaliseSpy).toHaveBeenCalledTimes(1);
       expect(penaliseSpy).toHaveBeenCalledWith("github", 60_000);
     });
 
     test("403 + x-ratelimit-remaining: 0 + non-numeric retry-after → penalise(github, 60_000)", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond(
         "GET",
         RUNS_URL_ACME_REPO_A,
@@ -243,21 +254,27 @@ describe("github-actions-sync — with shared fixture", () => {
         },
       );
       const penaliseSpy = spyOn(fixture.rateLimiter, "penalise");
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       expect(penaliseSpy).toHaveBeenCalledTimes(1);
       expect(penaliseSpy).toHaveBeenCalledWith("github", 60_000);
     });
 
     test("non-403 status (200) → penalise NOT called", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { workflow_runs: [] });
       const penaliseSpy = spyOn(fixture.rateLimiter, "penalise");
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       expect(penaliseSpy).not.toHaveBeenCalled();
     });
 
     test("403 with x-ratelimit-remaining > 0 → penalise NOT called (regular 403, not rate-limit)", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond(
         "GET",
         RUNS_URL_ACME_REPO_A,
@@ -271,14 +288,17 @@ describe("github-actions-sync — with shared fixture", () => {
         },
       );
       const penaliseSpy = spyOn(fixture.rateLimiter, "penalise");
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       expect(penaliseSpy).not.toHaveBeenCalled();
     });
   });
 
   describe("run filters", () => {
     test("id <= lastSeen → skipped", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [
@@ -287,27 +307,27 @@ describe("github-actions-sync — with shared fixture", () => {
         ],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         encodeCursor({ repos: { "acme/repo-a": 4 } }),
       );
       expect(res.itemsUpserted).toBe(0);
     });
 
     test("created_at < floorMs (14d) → skipped", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const wayOldTs = new Date(Date.now() - 30 * 86_400_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [{ id: 1, created_at: wayOldTs, conclusion: "success" }],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(0);
     });
 
     test("missing id field → skipped", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [
@@ -316,14 +336,14 @@ describe("github-actions-sync — with shared fixture", () => {
         ],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
     });
 
     test("non-finite / missing created_at → modifiedAt = now (not skipped)", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [
           { id: 13, created_at: "garbage-not-iso", conclusion: "success" },
@@ -332,7 +352,7 @@ describe("github-actions-sync — with shared fixture", () => {
       });
       const before = Date.now();
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       const after = Date.now();
@@ -349,13 +369,13 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("missing optional fields → metadata fields are null", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [{ id: 42, created_at: recentTs }],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -375,13 +395,13 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("non-record run entry → skipped", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [42, "string", null, { id: 5, created_at: recentTs, conclusion: "success" }],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(1);
@@ -390,7 +410,7 @@ describe("github-actions-sync — with shared fixture", () => {
 
   describe("title building", () => {
     test("display_title present → used as title base; conclusion appended", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [
@@ -403,7 +423,10 @@ describe("github-actions-sync — with shared fixture", () => {
           },
         ],
       });
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       const row = fixture.db
         .query<{ title: string }, []>("SELECT title FROM item WHERE service = 'github_actions'")
         .get();
@@ -411,14 +434,17 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("display_title missing → falls back to name", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [
           { id: 2, created_at: recentTs, name: "CI Workflow", conclusion: "failure" },
         ],
       });
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       const row = fixture.db
         .query<{ title: string }, []>("SELECT title FROM item WHERE service = 'github_actions'")
         .get();
@@ -426,12 +452,15 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("no conclusion + status present → ' (<status>)' suffix", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [{ id: 3, created_at: recentTs, name: "CI", status: "in_progress" }],
       });
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       const row = fixture.db
         .query<{ title: string }, []>("SELECT title FROM item WHERE service = 'github_actions'")
         .get();
@@ -439,12 +468,15 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("no name + no display_title + no conclusion + no status → bare `Run <id>`", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [{ id: 99, created_at: recentTs }],
       });
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       const row = fixture.db
         .query<{ title: string }, []>("SELECT title FROM item WHERE service = 'github_actions'")
         .get();
@@ -454,10 +486,10 @@ describe("github-actions-sync — with shared fixture", () => {
 
   describe("cursor decode", () => {
     test("null cursor → starts fresh with empty repos map", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { workflow_runs: [] });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       const decoded = decodeCursorJson(res.cursor!) as { repos: Record<string, number> };
@@ -465,10 +497,10 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("wrong-prefix cursor → starts fresh", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { workflow_runs: [] });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         "nimbus-other:abc",
       );
       const decoded = decodeCursorJson(res.cursor!) as { repos: Record<string, number> };
@@ -476,10 +508,10 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("non-record cursor payload → starts fresh", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { workflow_runs: [] });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         encodeCursor([1, 2, 3]),
       );
       const decoded = decodeCursorJson(res.cursor!) as { repos: Record<string, number> };
@@ -487,10 +519,10 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("non-object `repos` field → falls back to empty repos map", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { workflow_runs: [] });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         encodeCursor({ repos: "not-a-record" }),
       );
       const decoded = decodeCursorJson(res.cursor!) as { repos: Record<string, number> };
@@ -500,7 +532,7 @@ describe("github-actions-sync — with shared fixture", () => {
 
   describe("multi-repo + integration", () => {
     test("two repos → cursor.repos keys are full names; external_id is `<full>#run-<id>`", async () => {
-      const syncCtx = fixture.createSyncContext();
+      const syncCtx = fixture.createSyncContext("github_actions");
       seedGithubRepo(syncCtx, "acme/repo-a");
       seedGithubRepo(syncCtx, "acme/repo-b");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
@@ -525,7 +557,7 @@ describe("github-actions-sync — with shared fixture", () => {
         ],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(res.itemsUpserted).toBe(2);
@@ -548,7 +580,7 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("second sync with cursor skips runs at or below recorded lastSeen", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, {
         workflow_runs: [
@@ -558,7 +590,7 @@ describe("github-actions-sync — with shared fixture", () => {
         ],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         encodeCursor({ repos: { "acme/repo-a": 6 } }),
       );
       expect(res.itemsUpserted).toBe(1);
@@ -571,9 +603,9 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("owner-only (no `/`) → repo skipped (no HTTP call)", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "no-slash-here");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "no-slash-here");
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         null,
       );
       expect(fixture.fetchMock.calls).toHaveLength(0);
@@ -581,7 +613,7 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("durationMs computed from run_started_at + updated_at", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       const createdIso = new Date(Date.now() - 60_000).toISOString();
       const startedIso = new Date(Date.now() - 50_000).toISOString();
       const updatedIso = new Date(Date.now() - 40_000).toISOString();
@@ -596,7 +628,10 @@ describe("github-actions-sync — with shared fixture", () => {
           },
         ],
       });
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       const row = fixture.db
         .query<{ metadata: string }, []>(
           "SELECT metadata FROM item WHERE service = 'github_actions'",
@@ -608,14 +643,17 @@ describe("github-actions-sync — with shared fixture", () => {
     });
 
     test("emits no notifications", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
+      seedGithubRepo(fixture.createSyncContext("github_actions"), "acme/repo-a");
       fixture.fetchMock.respond("GET", RUNS_URL_ACME_REPO_A, { workflow_runs: [] });
-      await createGithubActionsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createGithubActionsSyncable(ENSURE_MCP).sync(
+        fixture.createSyncContext("github_actions"),
+        null,
+      );
       expect(fixture.notifications.emitted).toHaveLength(0);
     });
 
     test("repo absent from incoming cursor → treated as lastSeen=0", async () => {
-      const syncCtx = fixture.createSyncContext();
+      const syncCtx = fixture.createSyncContext("github_actions");
       seedGithubRepo(syncCtx, "acme/repo-a");
       seedGithubRepo(syncCtx, "acme/repo-b");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
@@ -626,7 +664,7 @@ describe("github-actions-sync — with shared fixture", () => {
         workflow_runs: [{ id: 100, created_at: recentTs, conclusion: "success" }],
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("github_actions"),
         encodeCursor({ repos: { "acme/repo-a": 50 } }),
       );
       expect(res.itemsUpserted).toBe(1);

@@ -53,7 +53,7 @@ describe("discord-sync — credential short-circuits", () => {
   test("returns noop when neither vault key is set", async () => {
     await withIsolatedFixture(async (iso) => {
       const syncable = createDiscordSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("discord"), null);
       expect(res.hasMore).toBe(false);
       expect(res.itemsUpserted).toBe(0);
       expect(res.itemsDeleted).toBe(0);
@@ -65,7 +65,7 @@ describe("discord-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("discord.enabled", "1");
       const syncable = createDiscordSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("discord"), null);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
@@ -76,7 +76,7 @@ describe("discord-sync — credential short-circuits", () => {
       await iso.vault.set("discord.enabled", "1");
       await iso.vault.set("discord.bot_token", "");
       const syncable = createDiscordSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("discord"), null);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
@@ -87,7 +87,7 @@ describe("discord-sync — credential short-circuits", () => {
       await iso.vault.set("discord.enabled", "true");
       await iso.vault.set("discord.bot_token", "discord-stub-bot-token");
       const syncable = createDiscordSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext("discord"), null);
       expect(res.hasMore).toBe(false);
       expect(iso.fetchMock.calls).toHaveLength(0);
     });
@@ -97,7 +97,7 @@ describe("discord-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       const incomingCursor = "nimbus-dsc1:opaque-cursor-value";
       const syncable = createDiscordSyncable(ENSURE_MCP);
-      const res = await syncable.sync(iso.createSyncContext(), incomingCursor);
+      const res = await syncable.sync(iso.createSyncContext("discord"), incomingCursor);
       expect(res.cursor).toBe(incomingCursor);
     });
   });
@@ -110,7 +110,10 @@ function stageEmptyGuilds(): void {
 describe("discord-sync — cursor decode failures", () => {
   test("null cursor falls back to default state and fetches guild list", async () => {
     stageEmptyGuilds();
-    const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createDiscordSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("discord"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     expect(fixture.fetchMock.calls).toHaveLength(1);
     expect(fixture.fetchMock.calls[0].url).toBe(GUILDS_URL);
@@ -118,7 +121,10 @@ describe("discord-sync — cursor decode failures", () => {
 
   test("empty string cursor falls back to default", async () => {
     stageEmptyGuilds();
-    const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), "");
+    const res = await createDiscordSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("discord"),
+      "",
+    );
     expect(res.hasMore).toBe(false);
     expect(fixture.fetchMock.calls).toHaveLength(1);
   });
@@ -126,7 +132,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("wrong-prefix cursor falls back to default", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       "nimbus-other:abc",
     );
     expect(res.hasMore).toBe(false);
@@ -136,7 +142,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("non-base64 / garbage cursor body falls back to default", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       `${CURSOR_PREFIX}!!!not-base64!!!`,
     );
     expect(res.hasMore).toBe(false);
@@ -146,7 +152,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor JSON parses to array → falls back", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor([1, 2, 3]),
     );
     expect(res.hasMore).toBe(false);
@@ -156,7 +162,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor JSON parses to null → falls back", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor(null),
     );
     expect(res.hasMore).toBe(false);
@@ -165,7 +171,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor missing guildIds (object without it) → falls back", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor({ guildIndex: 0, channelIds: [], channelIndex: 0 }),
     );
     expect(res.hasMore).toBe(false);
@@ -175,7 +181,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor with non-string entry in guildIds → falls back", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor({
         guildIds: ["g1", 42],
         guildIndex: 0,
@@ -189,7 +195,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor with negative guildIndex → falls back", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor({
         guildIds: ["g1"],
         guildIndex: -1,
@@ -203,7 +209,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor with non-integer guildIndex → falls back", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor({
         guildIds: ["g1"],
         guildIndex: 0.5,
@@ -217,7 +223,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor with non-array channelIds → falls back", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor({
         guildIds: ["g1"],
         guildIndex: 0,
@@ -231,7 +237,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor with negative channelIndex → falls back", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor({
         guildIds: ["g1"],
         guildIndex: 0,
@@ -245,7 +251,7 @@ describe("discord-sync — cursor decode failures", () => {
   test("cursor with lastMsgByChannel as array → silently defaults to empty map (decodes ok)", async () => {
     fixture.fetchMock.respond("GET", CHANNELS_RE, []);
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext(),
+      fixture.createSyncContext("discord"),
       encodeCursor({
         guildIds: ["g1"],
         guildIndex: 0,
@@ -263,7 +269,7 @@ describe("discord-sync — cursor decode failures", () => {
 describe("discord-sync — HTTP request paths", () => {
   test("sends `Bot <token>` Authorization header on guild list", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, []);
-    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null);
 
     expect(fixture.fetchMock.calls).toHaveLength(1);
     expect(fixture.fetchMock.calls[0].headers["authorization"]).toBe("Bot discord-stub-bot-token");
@@ -273,7 +279,7 @@ describe("discord-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, [{ id: "c1", type: 0 }]);
     fixture.fetchMock.respond("GET", MESSAGES_RE, []);
-    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null);
 
     expect(fixture.fetchMock.calls.length).toBeGreaterThan(0);
     for (const call of fixture.fetchMock.calls) {
@@ -284,28 +290,28 @@ describe("discord-sync — HTTP request paths", () => {
   test("429 with JSON body `{ retry_after }` → throws Discord guilds 429", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, { retry_after: 0.5 }, { status: 429 });
     await expect(
-      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null),
     ).rejects.toThrow(/Discord guilds 429/);
   });
 
   test("429 with non-numeric retry_after still throws", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, { retry_after: "later" }, { status: 429 });
     await expect(
-      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null),
     ).rejects.toThrow(/Discord guilds 429/);
   });
 
   test("non-200 non-429 on guild list throws", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, { error: "server" }, { status: 500 });
     await expect(
-      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null),
     ).rejects.toThrow(/Discord guilds 500/);
   });
 
   test("non-array body on guild list (200 OK but JSON object) throws", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, { not: "an-array" });
     await expect(
-      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null),
     ).rejects.toThrow(/Discord guilds/);
   });
 
@@ -313,7 +319,7 @@ describe("discord-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, { retry_after: 1 }, { status: 429 });
     await expect(
-      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null),
     ).rejects.toThrow(/Discord channels 429/);
   });
 
@@ -321,7 +327,7 @@ describe("discord-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, { error: "forbidden" }, { status: 403 });
     await expect(
-      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null),
     ).rejects.toThrow(/Discord channels 403/);
   });
 
@@ -330,7 +336,7 @@ describe("discord-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", CHANNELS_RE, [{ id: "c1", type: 0 }]);
     fixture.fetchMock.respond("GET", MESSAGES_RE, { retry_after: 2 }, { status: 429 });
     await expect(
-      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+      createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null),
     ).rejects.toThrow(/Discord messages 429/);
   });
 
@@ -338,7 +344,10 @@ describe("discord-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, [{ id: "c1", type: 0 }]);
     fixture.fetchMock.respond("GET", MESSAGES_RE, { error: "forbidden" }, { status: 403 });
-    const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createDiscordSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("discord"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     expect(res.itemsUpserted).toBe(0);
   });
@@ -352,7 +361,7 @@ describe("discord-sync — indexing skip paths", () => {
       { id: "", content: "no-id", author: { id: "u1", username: "alice" } },
       { id: "m1", content: "kept", author: { id: "u1", username: "alice" } },
     ]);
-    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null);
     const rows = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'discord'")
       .all();
@@ -367,7 +376,7 @@ describe("discord-sync — indexing skip paths", () => {
       { id: "m2", content: "no-author" }, // missing author → skipped
       { id: "m3", content: "kept", author: { id: "u1", username: "alice" } },
     ]);
-    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null);
     const rows = fixture.db
       .query<{ external_id: string }, []>(
         "SELECT external_id FROM item WHERE service = 'discord' ORDER BY external_id",
@@ -386,7 +395,7 @@ describe("discord-sync — indexing skip paths", () => {
       42,
       { id: "m4", content: "kept", author: { id: "u1", username: "alice" } },
     ]);
-    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null);
     const rows = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'discord'")
       .all();
@@ -402,7 +411,7 @@ describe("discord-sync — indexing skip paths", () => {
       { id: "c3", type: 5 }, // news → kept
     ]);
     fixture.fetchMock.respond("GET", MESSAGES_RE, []);
-    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null);
     const msgCalls = fixture.fetchMock.calls.filter((c) => MESSAGES_RE.test(c.url));
     expect(msgCalls).toHaveLength(2);
     expect(msgCalls.some((c) => c.url.includes("/channels/c2/"))).toBe(false);
@@ -419,7 +428,10 @@ describe("discord-sync — phase machine transitions", () => {
     fixture.fetchMock.respond("GET", MESSAGES_RE, [
       { id: "m1", content: "hi", author: { id: "u1", username: "alice", global_name: "Alice" } },
     ]);
-    const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createDiscordSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("discord"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     expect(res.hasMore).toBe(false);
     expect(res.cursor).not.toBeNull();
@@ -438,7 +450,10 @@ describe("discord-sync — phase machine transitions", () => {
       { id: "c2", type: 0 },
     ]);
     fixture.fetchMock.respond("GET", MESSAGES_RE, []);
-    const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createDiscordSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("discord"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     const msgCalls = fixture.fetchMock.calls.filter((c) => MESSAGES_RE.test(c.url));
     expect(msgCalls).toHaveLength(2);
@@ -449,7 +464,10 @@ describe("discord-sync — phase machine transitions", () => {
   test("guild advance: empty channel list moves to next guild", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }, { id: "g2" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, []);
-    const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createDiscordSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("discord"),
+      null,
+    );
     expect(res.hasMore).toBe(false);
     const chCalls = fixture.fetchMock.calls.filter((c) => CHANNELS_RE.test(c.url));
     expect(chCalls).toHaveLength(2);
@@ -470,7 +488,10 @@ describe("discord-sync — phase machine transitions", () => {
       { id: "c8", type: 0 },
     ]);
     fixture.fetchMock.respond("GET", MESSAGES_RE, []);
-    const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createDiscordSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("discord"),
+      null,
+    );
     expect(res.hasMore).toBe(true);
     expect(res.cursor).not.toBeNull();
     if (res.cursor === null) throw new Error("cursor must be non-null after budget exhaustion");
@@ -502,7 +523,10 @@ describe("discord-sync — cycle-completion and integration", () => {
         author: { id: "u9001", username: "pat", global_name: "Pat" },
       },
     ]);
-    const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    const res = await createDiscordSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext("discord"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string; url: string; author_id: string | null; title: string }, []>(
@@ -517,7 +541,7 @@ describe("discord-sync — cycle-completion and integration", () => {
 
   test("notifications log records nothing — discord-sync emits no notifications", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, []);
-    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext("discord"), null);
     expect(fixture.notifications.emitted).toHaveLength(0);
   });
 });

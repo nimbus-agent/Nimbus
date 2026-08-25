@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createVercelSyncable } from "../../../src/connectors/vercel-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -68,6 +68,7 @@ function startFakeVercel(config: FakeVercelConfig): FakeVercel {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeVercel;
@@ -81,14 +82,14 @@ function startHarness(config: FakeVercelConfig): Harness {
   const fake = startFakeVercel(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "vercel"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         vercel: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -140,7 +141,7 @@ describe("vercel-sync against Bun.serve fake API", () => {
       pages: { "": { deployments: [deployment("dpl_1"), deployment("dpl_2")], next: null } },
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("vercel.token", "vc-test-token");
+    await h.vault.set("vercel.token", "vc-test-token");
 
     const syncable = createVercelSyncable({ ensureVercelMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -170,7 +171,7 @@ describe("vercel-sync against Bun.serve fake API", () => {
       },
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("vercel.token", "t");
+    await h.vault.set("vercel.token", "t");
 
     const syncable = createVercelSyncable({ ensureVercelMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -185,7 +186,7 @@ describe("vercel-sync against Bun.serve fake API", () => {
     const pages: Record<string, DeploymentsPage> = {};
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("vercel.token", "t");
+    await h.vault.set("vercel.token", "t");
 
     h.fake.stop();
     let counter = 0;
@@ -231,7 +232,7 @@ describe("vercel-sync against Bun.serve fake API", () => {
   test("empty deployments page → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: { "": { deployments: [], next: null } } });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("vercel.token", "t");
+    await h.vault.set("vercel.token", "t");
     const syncable = createVercelSyncable({ ensureVercelMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -241,7 +242,7 @@ describe("vercel-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("vercel.token", "t");
+    await h.vault.set("vercel.token", "t");
     const syncable = createVercelSyncable({ ensureVercelMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -251,7 +252,7 @@ describe("vercel-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("vercel.token", "t");
+    await h.vault.set("vercel.token", "t");
     const syncable = createVercelSyncable({ ensureVercelMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -263,8 +264,8 @@ describe("vercel-sync against Bun.serve fake API", () => {
       pages: { "": { deployments: [deployment("dpl_1")], next: null } },
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("vercel.token", "t");
-    await h.ctx.vault.set("vercel.team_id", "team_xyz");
+    await h.vault.set("vercel.token", "t");
+    await h.vault.set("vercel.team_id", "team_xyz");
 
     const syncable = createVercelSyncable({ ensureVercelMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);

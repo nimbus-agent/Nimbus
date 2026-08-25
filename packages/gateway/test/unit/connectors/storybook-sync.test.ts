@@ -63,7 +63,7 @@ describe("storybook-sync", () => {
   }
 
   test("no dir → noop, preserves cursor, still ensures the mesh", async () => {
-    const res = await makeSyncable().sync(fx.createSyncContext(), "prev");
+    const res = await makeSyncable().sync(fx.createSyncContext("storybook"), "prev");
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
     expect(ensureCalls).toHaveLength(1);
@@ -73,7 +73,7 @@ describe("storybook-sync", () => {
     await writeFile(join(dir, "index.json"), JSON.stringify(indexJson()), "utf8");
     await fx.vault.set("storybook.dir", dir);
 
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("storybook"), null);
     expect(res.itemsUpserted).toBe(2);
     expect(res.cursor).toBe(PASS_1_CURSOR);
 
@@ -98,13 +98,13 @@ describe("storybook-sync", () => {
       "utf8",
     );
     await fx.vault.set("storybook.dir", dir);
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("storybook"), null);
     expect(res.itemsUpserted).toBe(1);
   });
 
   test("no readable manifest yet (Storybook not built) → success with zero upserts", async () => {
     await fx.vault.set("storybook.dir", dir);
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("storybook"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });

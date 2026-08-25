@@ -60,7 +60,7 @@ describe("protonmail-sync", () => {
   }
 
   test("missing Bridge credentials → noop, preserves cursor, still ensures the mesh", async () => {
-    const res = await makeSyncable(okMessages()).sync(fx.createSyncContext(), "prev");
+    const res = await makeSyncable(okMessages()).sync(fx.createSyncContext("protonmail"), "prev");
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
     expect(ensureCalls).toHaveLength(1);
@@ -70,7 +70,7 @@ describe("protonmail-sync", () => {
   test("defaults to the Bridge loopback (127.0.0.1:1143, STARTTLS, self-signed)", async () => {
     await fx.vault.set("protonmail.username", "bridge-user");
     await fx.vault.set("protonmail.password", "bridge-pass");
-    const res = await makeSyncable(okMessages()).sync(fx.createSyncContext(), null);
+    const res = await makeSyncable(okMessages()).sync(fx.createSyncContext("protonmail"), null);
     expect(res.itemsUpserted).toBe(1);
     expect(res.cursor).toBe(PASS_1_CURSOR);
     expect(lastConfig?.host).toBe("127.0.0.1");
@@ -91,7 +91,7 @@ describe("protonmail-sync", () => {
     await fx.vault.set("protonmail.password", "p");
     await fx.vault.set("protonmail.imap_host", "proton-bridge.test");
     await fx.vault.set("protonmail.imap_port", "11143");
-    await makeSyncable(okMessages()).sync(fx.createSyncContext(), null);
+    await makeSyncable(okMessages()).sync(fx.createSyncContext("protonmail"), null);
     expect(lastConfig?.host).toBe("proton-bridge.test");
     expect(lastConfig?.port).toBe(11143);
   });
@@ -100,7 +100,7 @@ describe("protonmail-sync", () => {
     await fx.vault.set("protonmail.username", "u");
     await fx.vault.set("protonmail.password", "p");
     const res = await makeSyncable({ ok: false, error: "ECONNREFUSED (Bridge not running?)" }).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("protonmail"),
       PASS_1_CURSOR,
     );
     expect(res.itemsUpserted).toBe(0);
@@ -112,7 +112,7 @@ describe("protonmail-sync", () => {
     await fx.vault.set("protonmail.password", "p");
     const res = await makeSyncable(() => {
       throw new Error("bridge down");
-    }).sync(fx.createSyncContext(), null);
+    }).sync(fx.createSyncContext("protonmail"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });

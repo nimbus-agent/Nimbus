@@ -66,7 +66,7 @@ describe("fastmail-sync", () => {
   }
 
   test("missing api token → noop, preserves cursor, still ensures the mesh", async () => {
-    const res = await makeSyncable().sync(fx.createSyncContext(), "prev");
+    const res = await makeSyncable().sync(fx.createSyncContext("fastmail"), "prev");
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
     expect(ensureCalls).toHaveLength(1);
@@ -85,7 +85,7 @@ describe("fastmail-sync", () => {
       ]),
     );
 
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("fastmail"), null);
     expect(res.itemsUpserted).toBe(2);
     expect(res.cursor).toBe(PASS_1_CURSOR);
     expect(res.hasMore).toBe(false);
@@ -105,7 +105,7 @@ describe("fastmail-sync", () => {
     fx.fetchMock.respond("GET", SESSION_URL, sessionBody());
     fx.fetchMock.respond("POST", API_URL, emailGetResponse([rawEmail()]));
 
-    await makeSyncable().sync(fx.createSyncContext(), null);
+    await makeSyncable().sync(fx.createSyncContext("fastmail"), null);
     const sessionCall = fx.fetchMock.calls.find((c) => c.url === SESSION_URL);
     expect(sessionCall?.headers["authorization"]).toBe("Bearer tok");
 
@@ -120,7 +120,7 @@ describe("fastmail-sync", () => {
   test("session HTTP error preserves the cursor with zero upserts", async () => {
     await fx.vault.set("fastmail.api_token", "tok");
     fx.fetchMock.respond("GET", SESSION_URL, { error: "nope" }, { status: 401 });
-    const res = await makeSyncable().sync(fx.createSyncContext(), PASS_1_CURSOR);
+    const res = await makeSyncable().sync(fx.createSyncContext("fastmail"), PASS_1_CURSOR);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });
@@ -128,7 +128,7 @@ describe("fastmail-sync", () => {
   test("a session response missing apiUrl/account → parse-empty, no api call", async () => {
     await fx.vault.set("fastmail.api_token", "tok");
     fx.fetchMock.respond("GET", SESSION_URL, { primaryAccounts: {} });
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("fastmail"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
     expect(fx.fetchMock.calls.filter((c) => c.method === "POST")).toHaveLength(0);
@@ -138,7 +138,7 @@ describe("fastmail-sync", () => {
     await fx.vault.set("fastmail.api_token", "tok");
     fx.fetchMock.respond("GET", SESSION_URL, sessionBody());
     fx.fetchMock.respond("POST", API_URL, { error: "boom" }, { status: 500 });
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("fastmail"), null);
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });
@@ -151,7 +151,7 @@ describe("fastmail-sync", () => {
       primaryAccounts: { "urn:ietf:params:jmap:mail": "acc1" },
     });
     fx.fetchMock.respond("POST", "https://jmap.example.org/api/", emailGetResponse([rawEmail()]));
-    const res = await makeSyncable().sync(fx.createSyncContext(), null);
+    const res = await makeSyncable().sync(fx.createSyncContext("fastmail"), null);
     expect(res.itemsUpserted).toBe(1);
   });
 });

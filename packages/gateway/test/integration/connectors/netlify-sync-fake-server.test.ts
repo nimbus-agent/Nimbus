@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createNetlifySyncable } from "../../../src/connectors/netlify-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -61,6 +61,7 @@ function startFakeNetlify(config: FakeNetlifyConfig): FakeNetlify {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeNetlify;
@@ -74,14 +75,14 @@ function startHarness(config: FakeNetlifyConfig): Harness {
   const fake = startFakeNetlify(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "netlify"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         netlify: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -135,7 +136,7 @@ describe("netlify-sync against Bun.serve fake API", () => {
   test("happy path: single short page → upserts with netlify:<id> ids + Bearer auth", async () => {
     h = startHarness({ pages: { "1": [site("s1"), site("s2")] } });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("netlify.token", "nf-test-token");
+    await h.vault.set("netlify.token", "nf-test-token");
 
     const syncable = createNetlifySyncable({ ensureNetlifyMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -160,7 +161,7 @@ describe("netlify-sync against Bun.serve fake API", () => {
   test("multi-page pagination: a full page then a short page stops the walk", async () => {
     h = startHarness({ pages: { "1": fullPage("a"), "2": [site("b1")] } });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("netlify.token", "t");
+    await h.vault.set("netlify.token", "t");
 
     const syncable = createNetlifySyncable({ ensureNetlifyMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -175,7 +176,7 @@ describe("netlify-sync against Bun.serve fake API", () => {
   test("MAX_PAGES cap: perpetual full pages stop after 20 pages", async () => {
     h = startHarness({});
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("netlify.token", "t");
+    await h.vault.set("netlify.token", "t");
 
     h.fake.stop();
     let serial = 0;
@@ -221,7 +222,7 @@ describe("netlify-sync against Bun.serve fake API", () => {
   test("empty sites list → zero upserts, pass-1 cursor", async () => {
     h = startHarness({ pages: { "1": [] } });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("netlify.token", "t");
+    await h.vault.set("netlify.token", "t");
     const syncable = createNetlifySyncable({ ensureNetlifyMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -231,7 +232,7 @@ describe("netlify-sync against Bun.serve fake API", () => {
   test("first-page 5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("netlify.token", "t");
+    await h.vault.set("netlify.token", "t");
     const syncable = createNetlifySyncable({ ensureNetlifyMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -241,7 +242,7 @@ describe("netlify-sync against Bun.serve fake API", () => {
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("netlify.token", "t");
+    await h.vault.set("netlify.token", "t");
     const syncable = createNetlifySyncable({ ensureNetlifyMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

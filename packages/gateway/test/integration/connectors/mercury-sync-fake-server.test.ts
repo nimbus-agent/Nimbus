@@ -5,6 +5,7 @@ import pino from "pino";
 import { createMercurySyncable } from "../../../src/connectors/mercury-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -100,6 +101,7 @@ function startFakeMercury(config: FakeMercuryConfig): FakeMercury {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeMercury;
@@ -113,14 +115,14 @@ function startHarness(config: FakeMercuryConfig): Harness {
   const fake = startFakeMercury(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.stop();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "mercury"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         mercury: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -202,7 +204,7 @@ describe("mercury-sync against Bun.serve fake API", () => {
   test("happy path: single GET → upserts with mercury:<id> ids + Bearer auth", async () => {
     h = startHarness({ accounts: [account("a1"), account("a2")] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "mercury_test_token");
+    await h.vault.set("mercury.token", "mercury_test_token");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -229,7 +231,7 @@ describe("mercury-sync against Bun.serve fake API", () => {
   test("the full account number is never persisted (last-4 only)", async () => {
     h = startHarness({ accounts: [account("a1")] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -257,7 +259,7 @@ describe("mercury-sync against Bun.serve fake API", () => {
   test("empty account list → zero upserts, pass-1 cursor, no transaction requests", async () => {
     h = startHarness({ accounts: [] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -268,7 +270,7 @@ describe("mercury-sync against Bun.serve fake API", () => {
   test("5xx degrades gracefully (no throw, zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ status: 503 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -278,7 +280,7 @@ describe("mercury-sync against Bun.serve fake API", () => {
   test("parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -302,7 +304,7 @@ describe("mercury-sync transactions pass", () => {
       transactions: { a1: [transaction("t1"), transaction("t2")], a2: [] },
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -339,7 +341,7 @@ describe("mercury-sync transactions pass", () => {
       transactions: { a1: [transaction("t1")] },
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -360,7 +362,7 @@ describe("mercury-sync transactions pass", () => {
   test("a transactions failure keeps the accounts already indexed", async () => {
     h = startHarness({ accounts: [account("a1")], transactionsStatus: 500 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -375,7 +377,7 @@ describe("mercury-sync transactions pass", () => {
   test("a transactions parse error keeps the accounts already indexed", async () => {
     h = startHarness({ accounts: [account("a1")], transactionsBadJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -387,7 +389,7 @@ describe("mercury-sync transactions pass", () => {
   test("a full page advances the offset and stops at the per-account page cap", async () => {
     h = startHarness({ accounts: [account("a1")], alwaysFullTransactions: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
@@ -408,7 +410,7 @@ describe("mercury-sync transactions pass", () => {
       ),
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -424,7 +426,7 @@ describe("mercury-sync transactions pass", () => {
       transactions: { a1: [{ amount: -1 }, transaction("t9")] },
     });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -436,7 +438,7 @@ describe("mercury-sync transactions pass", () => {
   test("a response with no transactions key yields no transaction rows", async () => {
     h = startHarness({ accounts: [account("a1")], transactions: {} });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
-    await h.ctx.vault.set("mercury.token", "k");
+    await h.vault.set("mercury.token", "k");
 
     const syncable = createMercurySyncable({ ensureMercuryMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);

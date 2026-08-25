@@ -3,11 +3,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { BriefRunController } from "../../../src/briefs/brief-run-store.ts";
 import { saveBriefReport } from "../../../src/briefs/brief-save.ts";
 import type { BriefRun, Report } from "../../../src/briefs/brief-types.ts";
 import { ingestClip } from "../../../src/clips/clip-ingest.ts";
+import type { ConnectorServiceId } from "../../../src/connectors/connector-catalog.ts";
 import {
   createMemoryIndexDb,
   EMPTY_NIMBUS_VAULT,
@@ -15,7 +15,6 @@ import {
 } from "../../../src/connectors/connector-sync-test-helpers.ts";
 import { createObsidianSyncable } from "../../../src/connectors/obsidian-sync.ts";
 import { mapZoomTranscriptToItem } from "../../../src/connectors/zoom-transcript-mapping.ts";
-import { upsertIndexedItemForSync } from "../../../src/index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 
@@ -74,7 +73,10 @@ describe("document-body-full — obsidian:obsidian_note", () => {
         { path: root, gitAware: false, codeIndex: false, dependencyGraph: false, exclude: [] },
       ],
     });
-    const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+    const r = await sync.sync(
+      syncTestContext(db, EMPTY_NIMBUS_VAULT, sync.serviceId as ConnectorServiceId),
+      null,
+    );
     expect(r.itemsUpserted).toBe(1);
 
     assertFullBody(readBodyRow(db, "obsidian", "obsidian_note"));
@@ -93,8 +95,8 @@ describe("document-body-full — zoom:transcript", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
-    upsertIndexedItemForSync(ctx, row);
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "zoom");
+    ctx.upsertItem(row);
 
     assertFullBody(readBodyRow(db, "zoom", "transcript"));
   });

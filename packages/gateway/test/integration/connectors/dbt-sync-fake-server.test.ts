@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createDbtSyncable } from "../../../src/connectors/dbt-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -73,6 +73,7 @@ function startFakeDbt(config: FakeDbtConfig): FakeDbt {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeDbt;
@@ -92,6 +93,7 @@ function startHarness(config: FakeDbtConfig): Harness {
   };
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       globalThis.fetch = originalFetch;
@@ -99,8 +101,7 @@ function startHarness(config: FakeDbtConfig): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "dbt"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         dbt: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -138,7 +139,7 @@ describe("dbt-sync against Bun.serve fake API", () => {
       accounts: [{ id: 42, name: "acme" }],
       jobsByAccount: { "42": [dbtJob(1234), dbtJob(5678)] },
     });
-    await h.ctx.vault.set("dbt.token", "dbt-test-token");
+    await h.vault.set("dbt.token", "dbt-test-token");
 
     const syncable = createDbtSyncable({ ensureDbtMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -170,8 +171,8 @@ describe("dbt-sync against Bun.serve fake API", () => {
       accounts: [{ id: 42, name: "acme" }],
       jobsByAccount: { "99": [dbtJob(1, { account_id: 99 })] },
     });
-    await h.ctx.vault.set("dbt.token", "tok");
-    await h.ctx.vault.set("dbt.account_id", "99");
+    await h.vault.set("dbt.token", "tok");
+    await h.vault.set("dbt.account_id", "99");
 
     const syncable = createDbtSyncable({ ensureDbtMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -200,7 +201,7 @@ describe("dbt-sync against Bun.serve fake API", () => {
       jobsByAccount: { "42": [dbtJob(1234)] },
       jobsStatus: 503,
     });
-    await h.ctx.vault.set("dbt.token", "tok");
+    await h.vault.set("dbt.token", "tok");
     const syncable = createDbtSyncable({ ensureDbtMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -213,7 +214,7 @@ describe("dbt-sync against Bun.serve fake API", () => {
       jobsByAccount: { "42": [dbtJob(1234)] },
       jobsStatus: 429,
     });
-    await h.ctx.vault.set("dbt.token", "tok");
+    await h.vault.set("dbt.token", "tok");
     const syncable = createDbtSyncable({ ensureDbtMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -227,7 +228,7 @@ describe("dbt-sync against Bun.serve fake API", () => {
       accounts: [{ id: 42, name: "acme" }],
       jobsByAccount: { "42": [...fullPage, ...extra] },
     });
-    await h.ctx.vault.set("dbt.token", "tok");
+    await h.vault.set("dbt.token", "tok");
     const syncable = createDbtSyncable({ ensureDbtMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(101);

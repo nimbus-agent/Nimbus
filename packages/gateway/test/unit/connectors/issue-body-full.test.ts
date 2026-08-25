@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-
 import { createBitbucketSyncable } from "../../../src/connectors/bitbucket-sync.ts";
+import type { ConnectorServiceId } from "../../../src/connectors/connector-catalog.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -12,7 +12,6 @@ import { createGithubSyncable } from "../../../src/connectors/github-sync.ts";
 import { createJiraSyncable } from "../../../src/connectors/jira-sync.ts";
 import { createLinearSyncable } from "../../../src/connectors/linear-sync.ts";
 import { mapSnykAggregatedIssueToItem } from "../../../src/connectors/snyk-issue-mapping.ts";
-import { upsertIndexedItemForSync } from "../../../src/index/item-store.ts";
 
 /**
  * Task 10: the five issue-tracker / vulnerability connectors now pass the
@@ -92,7 +91,11 @@ describe("issue-body-full — linear:issue", () => {
 
       const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
       const r = await sync.sync(
-        syncTestContext(db, createStubVault({ "linear.api_key": "lin_api_test" })),
+        syncTestContext(
+          db,
+          createStubVault({ "linear.api_key": "lin_api_test" }),
+          sync.serviceId as ConnectorServiceId,
+        ),
         null,
       );
       expect(r.itemsUpserted).toBe(1);
@@ -145,7 +148,10 @@ describe("issue-body-full — jira:issue", () => {
         "jira.base_url": "https://example.atlassian.net",
       });
       const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-      const r = await sync.sync(syncTestContext(db, vault), null);
+      const r = await sync.sync(
+        syncTestContext(db, vault, sync.serviceId as ConnectorServiceId),
+        null,
+      );
       expect(r.itemsUpserted).toBe(1);
 
       const row = readBodyRow(db, "jira", "issue");
@@ -194,7 +200,10 @@ describe("issue-body-full — github:issue", () => {
 
       const vault = createStubVault({ "github.pat": "github-stub-pat" });
       const sync = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
-      const r = await sync.sync(syncTestContext(db, vault), null);
+      const r = await sync.sync(
+        syncTestContext(db, vault, sync.serviceId as ConnectorServiceId),
+        null,
+      );
       expect(r.itemsUpserted).toBe(1);
 
       const row = readBodyRow(db, "github", "issue");
@@ -254,7 +263,10 @@ describe("issue-body-full — bitbucket:pr (only item type this call site emits)
         "bitbucket.app_password": "bitbucket-stub-pass",
       });
       const sync = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
-      const r = await sync.sync(syncTestContext(db, vault), null);
+      const r = await sync.sync(
+        syncTestContext(db, vault, sync.serviceId as ConnectorServiceId),
+        null,
+      );
       expect(r.itemsUpserted).toBe(1);
 
       const row = readBodyRow(db, "bitbucket", "pr");
@@ -295,8 +307,8 @@ describe("issue-body-full — snyk:vulnerability", () => {
       throw new Error("expected mapping to succeed");
     }
 
-    const ctx = syncTestContext(db, createStubVault({}));
-    upsertIndexedItemForSync(ctx, mapped);
+    const ctx = syncTestContext(db, createStubVault({}), "linear");
+    ctx.upsertItem(mapped);
 
     const row = readBodyRow(db, "snyk", "vulnerability");
     expect(row.body).toHaveLength(4000);

@@ -29,7 +29,7 @@ async function withIsolatedFixture(
 describe("aws-sync — credential short-circuits", () => {
   test("no vault keys → noop, no spawn", async () => {
     await withIsolatedFixture(async (iso) => {
-      const res = await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(iso.spawnMock.calls).toHaveLength(0);
     });
@@ -39,7 +39,7 @@ describe("aws-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("aws.access_key_id", "x");
       await iso.vault.set("aws.secret_access_key", "y");
-      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext("aws"), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
     });
   });
@@ -48,7 +48,7 @@ describe("aws-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("aws.access_key_id", "x");
       await iso.vault.set("aws.default_region", "us-east-1");
-      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext("aws"), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
     });
   });
@@ -57,7 +57,7 @@ describe("aws-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("aws.secret_access_key", "y");
       await iso.vault.set("aws.default_region", "us-east-1");
-      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext("aws"), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
     });
   });
@@ -67,7 +67,7 @@ describe("aws-sync — credential short-circuits", () => {
       await iso.vault.set("aws.access_key_id", "   ");
       await iso.vault.set("aws.secret_access_key", "   ");
       await iso.vault.set("aws.default_region", "us-east-1");
-      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext("aws"), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
     });
   });
@@ -75,7 +75,7 @@ describe("aws-sync — credential short-circuits", () => {
   test("noop preserves incoming cursor", async () => {
     await withIsolatedFixture(async (iso) => {
       const res = await createAwsSyncable(ENSURE_MCP).sync(
-        iso.createSyncContext(),
+        iso.createSyncContext("aws"),
         "preserved-cursor",
       );
       expect(res.cursor).toBe("preserved-cursor");
@@ -86,7 +86,7 @@ describe("aws-sync — credential short-circuits", () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("aws.profile", "dev");
       iso.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(iso.spawnMock.calls).toHaveLength(1);
       expect(iso.spawnMock.calls[0]!.env["AWS_PROFILE"]).toBe("dev");
@@ -101,7 +101,7 @@ describe("aws-sync — credential short-circuits", () => {
       await iso.vault.set("aws.secret_access_key", "aws-stub-skey");
       await iso.vault.set("aws.default_region", "us-east-1");
       iso.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
-      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext("aws"), null);
       expect(iso.spawnMock.calls).toHaveLength(1);
     });
   });
@@ -112,7 +112,7 @@ describe("aws-sync — credential short-circuits", () => {
       await iso.vault.set("aws.secret_access_key", "aws-stub-skey");
       await iso.vault.set("aws.profile", "dev");
       iso.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
-      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(iso.createSyncContext("aws"), null);
       expect(iso.spawnMock.calls).toHaveLength(1);
       const env = iso.spawnMock.calls[0]!.env;
       expect(env["AWS_ACCESS_KEY_ID"]).toBe("aws-stub-akid");
@@ -142,7 +142,7 @@ describe("aws-sync — with shared fixture", () => {
   describe("spawn invocation", () => {
     test("argv is lambda list-functions --max-items 35 --output json", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
-      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(fixture.spawnMock.calls[0]!.binary).toBe("aws");
       expect(fixture.spawnMock.calls[0]!.argv).toEqual([
         "lambda",
@@ -157,7 +157,7 @@ describe("aws-sync — with shared fixture", () => {
     test("cursor with nextMarker appends --starting-token before --output", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
       await createAwsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("aws"),
         encodeCursor({ nextMarker: "marker-42" }),
       );
       expect(fixture.spawnMock.calls[0]!.argv).toEqual([
@@ -174,7 +174,7 @@ describe("aws-sync — with shared fixture", () => {
 
     test("env contains AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
-      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       const env = fixture.spawnMock.calls[0]!.env;
       expect(env["AWS_ACCESS_KEY_ID"]).toBe("aws-stub-akid");
       expect(env["AWS_SECRET_ACCESS_KEY"]).toBe("aws-stub-skey");
@@ -184,7 +184,7 @@ describe("aws-sync — with shared fixture", () => {
     test("non-zero exit → 0 upserts, cursor preserved", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 1, stderr: "AccessDenied" });
       const res = await createAwsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("aws"),
         encodeCursor({ nextMarker: "m-1" }),
       );
       expect(res.itemsUpserted).toBe(0);
@@ -193,7 +193,7 @@ describe("aws-sync — with shared fixture", () => {
 
     test("non-zero exit + null cursor → falls back to encodeAwsPassCursor(null)", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 1 });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.cursor).toBe(encodeCursor({ nextMarker: null }));
       expect(res.itemsUpserted).toBe(0);
       expect(res.hasMore).toBe(false);
@@ -201,7 +201,7 @@ describe("aws-sync — with shared fixture", () => {
 
     test("invalid JSON → parse-empty pass cursor with nextMarker null", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: "not-json" });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).toBe(encodeCursor({ nextMarker: null }));
     });
@@ -220,7 +220,7 @@ describe("aws-sync — with shared fixture", () => {
           ],
         }),
       });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ external_id: string; title: string }, []>(
@@ -236,7 +236,7 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: [{ FunctionName: "only-name" }] }),
       });
-      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       const row = fixture.db
         .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'aws'")
         .get();
@@ -248,7 +248,7 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: [{ Runtime: "nodejs20" }] }),
       });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(0);
     });
 
@@ -257,13 +257,13 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: ["string", 42, null, { FunctionName: "fn-1" }] }),
       });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(1);
     });
 
     test("Functions absent → 0 upserts", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: '{"OtherKey":[]}' });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(0);
     });
 
@@ -272,13 +272,13 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: "not-an-array" }),
       });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(0);
     });
 
     test("non-record root (array) → 0 upserts", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: "[1,2,3]" });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(0);
     });
 
@@ -294,7 +294,7 @@ describe("aws-sync — with shared fixture", () => {
           ],
         }),
       });
-      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       const row = fixture.db
         .query<{ metadata: string }, []>("SELECT metadata FROM item WHERE service = 'aws'")
         .get();
@@ -308,7 +308,7 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: [{ FunctionName: "only-name" }] }),
       });
-      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       const row = fixture.db
         .query<{ metadata: string }, []>("SELECT metadata FROM item WHERE service = 'aws'")
         .get();
@@ -322,7 +322,7 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: [], NextMarker: "next-token-1" }),
       });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.hasMore).toBe(true);
       expect(res.cursor).toBe(encodeCursor({ nextMarker: "next-token-1" }));
     });
@@ -332,7 +332,7 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: [{ FunctionName: "fn-x" }], NextMarker: "" }),
       });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.hasMore).toBe(false);
       expect(res.cursor).toBe(encodeCursor({ nextMarker: null }));
     });
@@ -342,7 +342,7 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: [], NextMarker: null }),
       });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.hasMore).toBe(false);
       expect(res.cursor).toBe(encodeCursor({ nextMarker: null }));
     });
@@ -352,7 +352,7 @@ describe("aws-sync — with shared fixture", () => {
         exitCode: 0,
         stdout: JSON.stringify({ Functions: [] }),
       });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.hasMore).toBe(false);
       expect(res.cursor).toBe(encodeCursor({ nextMarker: null }));
     });
@@ -361,14 +361,14 @@ describe("aws-sync — with shared fixture", () => {
   describe("cursor decode", () => {
     test("null cursor + success → cursor with null nextMarker", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.cursor).toBe(encodeCursor({ nextMarker: null }));
     });
 
     test("malformed (non-base64) cursor → decoded as null, spawn omits --starting-token", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
       await createAwsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("aws"),
         `${CURSOR_PREFIX}!!not-base64!!`,
       );
       expect(fixture.spawnMock.calls[0]!.argv).not.toContain("--starting-token");
@@ -377,7 +377,7 @@ describe("aws-sync — with shared fixture", () => {
     test("cursor with non-string nextMarker → decoded as null", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
       await createAwsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("aws"),
         encodeCursor({ nextMarker: 42 }),
       );
       expect(fixture.spawnMock.calls[0]!.argv).not.toContain("--starting-token");
@@ -386,7 +386,7 @@ describe("aws-sync — with shared fixture", () => {
     test("cursor with empty-string nextMarker → decoded as null", async () => {
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
       await createAwsSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext(),
+        fixture.createSyncContext("aws"),
         encodeCursor({ nextMarker: "" }),
       );
       expect(fixture.spawnMock.calls[0]!.argv).not.toContain("--starting-token");
@@ -403,7 +403,7 @@ describe("aws-sync — with shared fixture", () => {
         ],
       });
       fixture.spawnMock.respond("aws", { exitCode: 0, stdout });
-      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+      const res = await createAwsSyncable(ENSURE_MCP).sync(fixture.createSyncContext("aws"), null);
       expect(res.itemsUpserted).toBe(3);
       expect(fixture.notifications.emitted).toHaveLength(0);
       expect(res.bytesTransferred).toBe(stdout.length);

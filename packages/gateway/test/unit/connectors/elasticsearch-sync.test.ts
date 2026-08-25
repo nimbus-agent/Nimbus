@@ -38,7 +38,7 @@ describe("elasticsearch-sync — credential short-circuits", () => {
 
   test("no vault keys → noop, no fetch, preserves cursor", async () => {
     const res = await createElasticsearchSyncable(makeOptions()).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("elasticsearch"),
       "prev",
     );
     expect(res.itemsUpserted).toBe(0);
@@ -48,14 +48,20 @@ describe("elasticsearch-sync — credential short-circuits", () => {
 
   test("url only (no api_key) → noop", async () => {
     await fx.vault.set("elasticsearch.url", URL_VALUE);
-    const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(fx.fetchMock.calls).toHaveLength(0);
   });
 
   test("api_key only (no url) → noop", async () => {
     await fx.vault.set("elasticsearch.api_key", API_KEY);
-    const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(fx.fetchMock.calls).toHaveLength(0);
   });
@@ -90,7 +96,10 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
       products: { mappings: { properties: { sku: { type: "keyword" } } } },
     });
 
-    const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(2);
     expect(res.cursor).toBe(PASS_1_CURSOR);
     expect(res.hasMore).toBe(false);
@@ -109,7 +118,10 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
 
   test("Authorization ApiKey header carries the configured key", async () => {
     fx.fetchMock.respond("GET", CAT_URL, []);
-    await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     const call = fx.fetchMock.firstCall();
     expect(call.headers.authorization).toBe(`ApiKey ${API_KEY}`);
   });
@@ -123,7 +135,10 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
       visible: { mappings: { properties: { f: { type: "text" } } } },
     });
 
-    const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     // Only the visible index's mapping was fetched — no .kibana_1 request.
     const mappingCalls = fx.fetchMock.calls.filter((c) => c.url.endsWith("_mapping"));
@@ -137,7 +152,10 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
     ]);
     fx.fetchMock.respond("GET", mappingUrl("logs"), { error: "boom" }, { status: 500 });
 
-    const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fx.db
       .query<{ metadata: string }, []>(
@@ -152,7 +170,7 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
   test("HTTP error on the _cat/indices listing → http-empty pass (preserves cursor)", async () => {
     fx.fetchMock.respond("GET", CAT_URL, { error: "unauthorized" }, { status: 401 });
     const res = await createElasticsearchSyncable(makeOptions()).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("elasticsearch"),
       "prev",
     );
     expect(res.itemsUpserted).toBe(0);
@@ -161,14 +179,20 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
 
   test("parse error on the _cat/indices listing → parse-empty pass (pass-1 default)", async () => {
     fx.fetchMock.respondWithText("GET", CAT_URL, "not-json");
-    const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });
 
   test("empty index list → success with zero upserts", async () => {
     fx.fetchMock.respond("GET", CAT_URL, []);
-    const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });
@@ -181,7 +205,10 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
       orders: { mappings: { properties: { id: { type: "keyword" } } } },
     });
 
-    const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createElasticsearchSyncable(makeOptions()).sync(
+      fx.createSyncContext("elasticsearch"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
 
     const row = fx.db

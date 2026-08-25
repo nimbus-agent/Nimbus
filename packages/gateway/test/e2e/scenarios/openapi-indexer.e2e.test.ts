@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ConnectorServiceId } from "../../../src/connectors/connector-catalog.ts";
 import {
   createMemoryIndexDb,
   EMPTY_NIMBUS_VAULT,
@@ -27,7 +28,10 @@ test("e2e: two specs in two services produce queryable api_endpoint rows", async
       config: DEFAULT_OPENAPI_CONFIG,
     });
     const db = createMemoryIndexDb();
-    const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+    const r = await sync.sync(
+      syncTestContext(db, EMPTY_NIMBUS_VAULT, sync.serviceId as ConnectorServiceId),
+      null,
+    );
     expect(r.itemsUpserted).toBe(3);
 
     const byType = db.query("SELECT COUNT(*) AS n FROM item WHERE type = 'api_endpoint'").get() as {

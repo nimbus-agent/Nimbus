@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createSonarqubeSyncable } from "../../../src/connectors/sonarqube-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -89,6 +89,7 @@ function startFakeSonar(): FakeSonar {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeSonar;
@@ -108,6 +109,7 @@ function startHarness(): Harness {
   };
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       globalThis.fetch = originalFetch;
@@ -115,8 +117,7 @@ function startHarness(): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "sonarqube"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter(),
     },
@@ -127,8 +128,8 @@ describe("sonarqube-sync against Bun.serve fake API", () => {
   let h: Harness;
   beforeEach(async () => {
     h = startHarness();
-    await h.ctx.vault.set("sonarqube.token", "fake-sq-token");
-    await h.ctx.vault.set("sonarqube.organization", "myorg");
+    await h.vault.set("sonarqube.token", "fake-sq-token");
+    await h.vault.set("sonarqube.organization", "myorg");
   });
   afterEach(() => h.cleanup());
 
@@ -183,7 +184,7 @@ describe("sonarqube-sync against Bun.serve fake API", () => {
   });
 
   test("noop when sonarqube.token is unset", async () => {
-    await h.ctx.vault.delete("sonarqube.token");
+    await h.vault.delete("sonarqube.token");
     const syncable = createSonarqubeSyncable({ ensureSonarqubeMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);

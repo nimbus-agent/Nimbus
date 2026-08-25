@@ -43,7 +43,10 @@ describe("bigquery-sync — credential short-circuits", () => {
   afterEach(() => fx.cleanup());
 
   test("no vault keys → noop, no fetch, preserves cursor", async () => {
-    const res = await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), "prev");
+    const res = await createBigquerySyncable(makeOptions()).sync(
+      fx.createSyncContext("bigquery"),
+      "prev",
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
     expect(fx.fetchMock.calls).toHaveLength(0);
@@ -51,14 +54,20 @@ describe("bigquery-sync — credential short-circuits", () => {
 
   test("cred path only (no project) → noop", async () => {
     await fx.vault.set("gcp.credentials_json_path", CRED_PATH);
-    const res = await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createBigquerySyncable(makeOptions()).sync(
+      fx.createSyncContext("bigquery"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(fx.fetchMock.calls).toHaveLength(0);
   });
 
   test("project only (no cred path) → noop", async () => {
     await fx.vault.set("gcp.project_id", PROJECT_ID);
-    const res = await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createBigquerySyncable(makeOptions()).sync(
+      fx.createSyncContext("bigquery"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(fx.fetchMock.calls).toHaveLength(0);
   });
@@ -76,7 +85,7 @@ describe("bigquery-sync — token mint failure", () => {
 
   test("gcloud token mint returns null → graceful empty pass, preserves cursor, no fetch", async () => {
     const res = await createBigquerySyncable(makeOptions(tokenFail)).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("bigquery"),
       "preserved",
     );
     expect(res.itemsUpserted).toBe(0);
@@ -86,7 +95,7 @@ describe("bigquery-sync — token mint failure", () => {
 
   test("token mint failure + null cursor → pass-1 default", async () => {
     const res = await createBigquerySyncable(makeOptions(tokenFail)).sync(
-      fx.createSyncContext(),
+      fx.createSyncContext("bigquery"),
       null,
     );
     expect(res.cursor).toBe(PASS_1_CURSOR);
@@ -128,7 +137,10 @@ describe("bigquery-sync — datasets→tables walk", () => {
       schema: { fields: [{ name: "msg", type: "STRING" }] },
     });
 
-    const res = await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createBigquerySyncable(makeOptions()).sync(
+      fx.createSyncContext("bigquery"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(2);
     expect(res.cursor).toBe(PASS_1_CURSOR);
     expect(res.hasMore).toBe(false);
@@ -149,7 +161,7 @@ describe("bigquery-sync — datasets→tables walk", () => {
 
   test("Authorization Bearer header carries the minted token", async () => {
     fx.fetchMock.respond("GET", DATASETS_URL, { datasets: [] });
-    await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext("bigquery"), null);
     const call = fx.fetchMock.firstCall();
     expect(call.headers.authorization).toBe(`Bearer ${STUB_TOKEN}`);
   });
@@ -166,28 +178,37 @@ describe("bigquery-sync — datasets→tables walk", () => {
     fx.fetchMock.respond("GET", tablesUrl("d1"), { tables: [] });
     fx.fetchMock.respond("GET", tablesUrl("d2"), { tables: [] });
 
-    await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext("bigquery"), null);
     const datasetCalls = fx.fetchMock.calls.filter((c) => /\/datasets\?/.test(c.url));
     expect(datasetCalls).toHaveLength(2);
   });
 
   test("HTTP error on first datasets page → http-empty pass cursor (preserves cursor)", async () => {
     fx.fetchMock.respond("GET", DATASETS_URL, { error: "boom" }, { status: 403 });
-    const res = await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), "prev");
+    const res = await createBigquerySyncable(makeOptions()).sync(
+      fx.createSyncContext("bigquery"),
+      "prev",
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe("prev");
   });
 
   test("parse error on first datasets page → parse-empty pass cursor (pass-1 default)", async () => {
     fx.fetchMock.respondWithText("GET", DATASETS_URL, "not-json");
-    const res = await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createBigquerySyncable(makeOptions()).sync(
+      fx.createSyncContext("bigquery"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
   });
 
   test("empty datasets → success with zero upserts", async () => {
     fx.fetchMock.respond("GET", DATASETS_URL, { datasets: [] });
-    const res = await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createBigquerySyncable(makeOptions()).sync(
+      fx.createSyncContext("bigquery"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(0);
     expect(res.cursor).toBe(PASS_1_CURSOR);
     expect(fx.notifications.emitted).toHaveLength(0);
@@ -201,7 +222,10 @@ describe("bigquery-sync — datasets→tables walk", () => {
       tables: [{ tableReference: { datasetId: "d", tableId: "t" }, type: "TABLE" }],
     });
     fx.fetchMock.respond("GET", tableDetailUrl("d", "t"), { error: "nope" }, { status: 500 });
-    const res = await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
+    const res = await createBigquerySyncable(makeOptions()).sync(
+      fx.createSyncContext("bigquery"),
+      null,
+    );
     expect(res.itemsUpserted).toBe(1);
     const row = fx.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'bigquery'")

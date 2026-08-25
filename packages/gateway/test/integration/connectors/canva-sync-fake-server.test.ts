@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import pino from "pino";
-
 import { createCanvaSyncable } from "../../../src/connectors/canva-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { installHostInterceptFetch } from "../../helpers/host-intercept-fetch.ts";
@@ -55,6 +55,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeServer;
@@ -68,14 +69,14 @@ function startHarness(config: FakeConfig): Harness {
   const fake = installFakeFetch(config);
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       fake.restore();
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "canva"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         canva: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -100,7 +101,7 @@ function design(id: string, title: string): unknown {
 
 /** Set a non-expired canva.oauth payload so the registry returns the cached token without refreshing. */
 async function setOAuth(h: Harness): Promise<void> {
-  await h.ctx.vault.set(
+  await h.vault.set(
     "canva.oauth",
     JSON.stringify({
       accessToken: "canva-access",

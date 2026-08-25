@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import pino from "pino";
-
 import { createLaunchdarklySyncable } from "../../../src/connectors/launchdarkly-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
+import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
@@ -61,6 +61,7 @@ function startFakeLd(config: FakeLdConfig): FakeLd {
 }
 
 interface Harness {
+  vault: ReturnType<typeof createMockVault>;
   db: Database;
   ctx: SyncContext;
   fake: FakeLd;
@@ -80,6 +81,7 @@ function startHarness(config: FakeLdConfig): Harness {
   };
   return {
     db,
+    vault,
     fake,
     cleanup: () => {
       globalThis.fetch = originalFetch;
@@ -87,8 +89,7 @@ function startHarness(config: FakeLdConfig): Harness {
       db.close();
     },
     ctx: {
-      vault,
-      db,
+      ...buildSyncCapabilities({ vault, db, depth: "full" }, "launchdarkly"),
       logger: pino({ level: "silent" }),
       rateLimiter: new ProviderRateLimiter({
         launchdarkly: { requestsPerMinute: 600_000, burstSize: 10_000 },
@@ -121,7 +122,7 @@ describe("launchdarkly-sync against Bun.serve fake API", () => {
       projects: [{ key: "default" }],
       flagsByProject: { default: [flag("flag-a"), flag("flag-b", { kind: "multivariate" })] },
     });
-    await h.ctx.vault.set("launchdarkly.token", "api-test-token");
+    await h.vault.set("launchdarkly.token", "api-test-token");
 
     const syncable = createLaunchdarklySyncable({ ensureLaunchdarklyMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
@@ -152,8 +153,8 @@ describe("launchdarkly-sync against Bun.serve fake API", () => {
       projects: [{ key: "default" }, { key: "other" }],
       flagsByProject: { mobile: [flag("m1")] },
     });
-    await h.ctx.vault.set("launchdarkly.token", "tok");
-    await h.ctx.vault.set("launchdarkly.project_key", "mobile");
+    await h.vault.set("launchdarkly.token", "tok");
+    await h.vault.set("launchdarkly.project_key", "mobile");
     const syncable = createLaunchdarklySyncable({ ensureLaunchdarklyMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(1);
@@ -175,7 +176,7 @@ describe("launchdarkly-sync against Bun.serve fake API", () => {
       flagsByProject: { default: [flag("flag-a")] },
       flagsStatus: 429,
     });
-    await h.ctx.vault.set("launchdarkly.token", "tok");
+    await h.vault.set("launchdarkly.token", "tok");
     const syncable = createLaunchdarklySyncable({ ensureLaunchdarklyMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
@@ -188,7 +189,7 @@ describe("launchdarkly-sync against Bun.serve fake API", () => {
       projects: [{ key: "default" }],
       flagsByProject: { default: fullPage },
     });
-    await h.ctx.vault.set("launchdarkly.token", "tok");
+    await h.vault.set("launchdarkly.token", "tok");
     const syncable = createLaunchdarklySyncable({ ensureLaunchdarklyMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
     const flagCalls = h.fake.requests.filter((r) => r.path === "/api/v2/flags/default");
