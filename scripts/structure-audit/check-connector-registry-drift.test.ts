@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { checkConnectorRegistryDrift } from "./check-connector-registry-drift.ts";
+import { checkConnectorRegistryDrift, registryIds } from "./check-connector-registry-drift.ts";
 
 const ROOT = mkdtempSync(join(tmpdir(), "nimbus-registry-drift-"));
 
@@ -112,5 +112,39 @@ describe("checkConnectorRegistryDrift", () => {
     writeFileSync(path, "export const BUNDLED_CONNECTORS = {};\n");
 
     expect(checkConnectorRegistryDrift(EMPTY_CONNECTORS, path)).toEqual({ status: "ok" });
+  });
+});
+
+describe("both specifier forms the generator can emit are parsed", () => {
+  // `specifierFor` in gen-bundled-connector-registry.ts emits a relative path today and
+  // `@nimbus-dev/connectors/<id>` after the extraction. A parser that knows only one form does not
+  // fail loudly: registryIds() returns [], the check reports "indeterminate", and indeterminate is
+  // a WARNING — so the drift gate goes quietly inert exactly when the extraction makes it matter.
+  function packageRegistry(ids: readonly string[]): string {
+    const path = join(ROOT, `pkg-registry-${ids.join("-") || "empty"}.ts`);
+    const entries = ids
+      .map((id) => `  ${JSON.stringify(id)}: () => import("@nimbus-dev/connectors/${id}"),`)
+      .join("\n");
+    writeFileSync(path, `export const BUNDLED_CONNECTORS = {\n${entries}\n};\n`);
+    return path;
+  }
+
+  test("a package-mode registry parses its ids", () => {
+    expect(registryIds(packageRegistry(["airflow", "monte-carlo"]))).toEqual([
+      "airflow",
+      "monte-carlo",
+    ]);
+  });
+
+  test("a package-mode registry still DETECTS drift rather than reporting indeterminate", () => {
+    // The regression that matters: a missing connector must be found, not masked by an
+    // unparseable registry.
+    const v = checkConnectorRegistryDrift(join(ROOT, "connectors"), packageRegistry(["airflow"]));
+    expect(JSON.stringify(v)).toMatch(/monte-carlo/);
+    expect(JSON.stringify(v)).not.toMatch(/indeterminate/i);
+  });
+
+  test("relative-mode parsing is unchanged", () => {
+    expect(registryIds(registry(["airflow", "monte-carlo"]))).toEqual(["airflow", "monte-carlo"]);
   });
 });

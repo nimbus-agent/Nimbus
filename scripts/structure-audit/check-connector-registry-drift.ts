@@ -45,12 +45,22 @@ export type RegistryDriftCheck =
 // literal characters in the generator's template string, not the output of any path API, and
 // the interpolated id is a readdirSync entry NAME, which never contains a separator. The
 // generated file is byte-identical on Windows, macOS and Linux.
-const ENTRY_RE = /import\("\.\.\/\.\.\/\.\.\/mcp-connectors\/([^"/]+)\/src\/server\.ts"\)/g;
+// BOTH specifier forms the generator can emit — see `specifierFor` in
+// scripts/gen-bundled-connector-registry.ts. The relative form is what ships today; the package
+// form (`@nimbus-dev/connectors/<id>`) is what ships after the extraction.
+//
+// Matching only one of them does not fail loudly: `registryIds` returns [], the check reports
+// "indeterminate", and that is a WARNING rather than an error — so the drift gate would go quietly
+// inert at exactly the moment the extraction made it matter most.
+const ENTRY_RE =
+  /import\("(?:\.\.\/\.\.\/\.\.\/mcp-connectors\/([^"/]+)\/src\/server\.ts|@nimbus-dev\/connectors\/([^"/]+))"\)/g;
 
 export function registryIds(registryFile: string): string[] {
   if (!existsSync(registryFile)) return [];
   const src = readFileSync(registryFile, "utf8");
-  return [...src.matchAll(ENTRY_RE)].map((m) => m[1] as string).sort((a, b) => a.localeCompare(b));
+  return [...src.matchAll(ENTRY_RE)]
+    .map((m) => (m[1] ?? m[2]) as string)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function buildViolations(
