@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787673393716,
+  "lastUpdate": 1787675502575,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15673,6 +15673,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 253.98129075000543,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "be9841cbda3746e5c727caaf131b9013dfaec697",
+          "message": "fix(llm): enforce_air_gap now refuses the remote classifier instead of doing nothing (#1334)\n\n## The bug\n\n`[llm] enforce_air_gap = true` did not stop the `ask` path from calling\na vendor.\n\n`enforceAirGap` was consulted in exactly **one** production site —\n`extensions/auto-update.ts`,\nwhich suppresses extension update checks. It was consulted nowhere in\n`engine/router.ts`,\n`engine/run-ask.ts`, or `embedding/openai-embedder.ts`. `LlmRouter` has\nhonoured it correctly all\nalong, which is why brief synthesis, glossary and decisions were never\naffected; the ask path is\nthe one place that egresses **without** going through the router.\n\n`classifyIntent` read `ANTHROPIC_API_KEY` straight from the process\nenvironment and POSTed up to\n8,000 characters of the user's question to `api.anthropic.com`, falling\nback to OpenAI. No\nconfiguration was consulted first — not air-gap, not `prefer_local`.\n\nTwo details make this worse than a disabled flag:\n\n- **`prefer_local` defaults to `true`.** This was the default posture,\nnot an opt-in\nmisconfiguration. `classifyIntentForAskWithLocalFallback` consulted\n`prefersLocal()` only inside\nits `catch`, and only for `no_api_key` / `invalid_api_key` — so with a\nkey in the environment the\n  request had already been sent before any preference was read.\n- **The published FAQ claimed the opposite**, in the exact scenario that\nfailed: \"without [a local\nLLM], queries fall back to the configured remote provider and\n`enforce_air_gap` prevents that\ncall from completing.\" That is precisely the path where the call\ncompleted.\n\nFor a project whose pitch is provable non-egress, a false published\nguarantee is the part that\nmatters most.\n\n## The fix\n\n`classifyIntent` refuses **before it reads the environment**, via a\n`ClassifierEgressPolicy` that\nis a **required** parameter rather than an optional one defaulting to\npermissive. A default would\nmake \"forgot to pass the policy\" indistinguishable from \"policy says\negress is fine\", and the first\nis the bug that shipped. Required means a new caller is a compile error\n— the same idiom `I29` uses\nfor its `ClientKind` map. It turned all 39 existing call sites into\ncompile errors, which is the\nforcing function working as intended.\n\nThe guard sits above the provider arms, so a future provider added below\nit cannot egress and one\nadded above would have to step over it visibly.\n\n`LlmRouter.enforcesAirGap()` mirrors the existing `prefersLocal()`. The\ndistinction is the point:\n`preferLocal` is a preference allowed to fall back to a remote provider;\nair-gap is a refusal.\n`run-ask` resolves the policy from the router and treats the new\n`air_gap` reason alongside\n`no_api_key` / `invalid_api_key`, so turning air-gap **on** degrades to\na local indexed answer\nrather than converting a working ask into a hard error.\n\n## Tests, red-proven\n\nFive unit tests plus one integration test, all proven against a real\nmutation rather than assumed.\n\nThe load-bearing assertion is `expect(calls).toBe(0)`. Asserting only\nthat it *throws* would pass a\nversion that calls Anthropic first and throws afterwards — by then the\ntext has already left, which\nis the entire thing air-gap exists to prevent.\n\nRemoving the guard fails 3 of the 5 unit tests. The two that keep\npassing are deliberate: \"air-gap\nOFF still egresses\" and \"empty input still answers locally\" exist so the\nguard cannot be satisfied\nby simply deleting the remote path.\n\nThe integration test runs `runAsk` **without** injecting `classify`, so\nthe policy has to travel\nrouter to run-ask to guard for it to pass; injecting a stub would test\nthe stub. It sets\n`ANTHROPIC_API_KEY` on purpose — the test preload blanks it, and with it\nblank the test would go\ngreen through `no_api_key` while air-gap did nothing, passing for the\nwrong reason.\n\n## One thing the fix broke, and why it is worth naming\n\nThe first full-suite run was **25 failures**, not green.\n`run-ask.test.ts` fakes `LlmRouter` through\nan `as unknown as LlmRouter` cast, so adding a method to the real class\ndid not break the cast — it\nbroke at runtime, in 20 tests at once, because the double never\nimplemented it. The type system was\nsatisfied precisely because the fake was allowed to lie. Fixed in the\nshared `fakeLocalRouter`\nhelper, with a comment to keep it in step, so the next method added\nbreaks one place and not twenty.\n\n## Docs\n\n- The FAQ now states what is true, **including what air-gap does not\ncover**: it does not stop\nconnector syncs, and it does not stop embedding uploads when\n`openai.api_key` is set. Those are\nseparate outbound paths on their own schedules, which a flag scoped to\none round-trip was never\n  able to govern.\n- `ERR_AIR_GAP` is documented in the IPC error catalogue and implemented\nnowhere. Checking the rest\nof that table: **five of six** codes do not exist in any production file\n— `ERR_HITL_REJECTED`,\n`ERR_GAS_LIMIT`, `ERR_VAULT_LOCKED`, `ERR_CONNECTOR_UNAVAILABLE`,\n`ERR_AIR_GAP`. Only\n`ERR_METHOD_NOT_ALLOWED` and `EMBEDDING_WARMING_RPC_CODE` are wired. The\ntable is annotated\naccordingly — correcting only my row would have implied the other four\nwere verified.\n\n## Known gaps\n\n- **The OpenAI embedder still uploads under air-gap.** Threading the\nflag there touches\n`create-embedding-runtime` and roughly ten test call sites, and the FAQ\nscopes air-gap to an `ask`\nround-trip, so this PR makes the docs honest about it instead of\nwidening a bug fix into an\n  indexing change. Worth its own PR.\n- **Connector syncs are not air-gap aware either**, and the FAQ no\nlonger claims they are. Whether\nair-gap should mean \"no inference leaves\" or \"no packet leaves\" is a\nproduct decision, not a bug.\n- **No `egress_ledger` row is appended for the classifier call.** The\n`model` coverage class still\ncannot fire, because the remote path here does not go through\n`LlmRouter`. A user with air-gap off\nand a key set still egresses unledgered — that is unchanged by this PR\nand is the next thing to\n  close.\n\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+          "timestamp": "2026-08-25T19:20:02+03:00",
+          "tree_id": "5b204a4ec3d01d49122553ad847455748f30252a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/be9841cbda3746e5c727caaf131b9013dfaec697"
+        },
+        "date": 1787675500268,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 334.9643587499995,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 334.8796850499999,
             "unit": "ms"
           }
         ]
