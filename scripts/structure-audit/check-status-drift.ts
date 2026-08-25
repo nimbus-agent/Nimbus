@@ -95,8 +95,25 @@ function canonicalInvariant(repoRoot: string): { value: number; errors: string[]
   return { value, errors };
 }
 
-/** Spelled-out forms this doc actually uses for counts, so "twelve entries" can be checked. */
+/**
+ * Spelled-out forms used for counts, so "twelve entries" can be checked.
+ *
+ * One through nine were missing, and that was invisible in BOTH directions. A doc spelling a
+ * small count ("Two entries") matched no pattern, so `statesWriteRouteCount` never attributed
+ * the claim and the count was never checked at all — a stale claim passed in silence. And once
+ * the pattern did match it, `SPELLED[2]` was `undefined`, which the comparison read as "stale"
+ * and reported a false drift. A guard that cannot see a claim does not fail; it passes.
+ */
 const SPELLED: Readonly<Record<number, string>> = {
+  1: "one",
+  2: "two",
+  3: "three",
+  4: "four",
+  5: "five",
+  6: "six",
+  7: "seven",
+  8: "eight",
+  9: "nine",
   10: "ten",
   11: "eleven",
   12: "twelve",
@@ -140,8 +157,15 @@ const WRITE_SURFACE_DOCS: readonly { readonly rel: string; readonly enumerates: 
   { rel: ".claude/commands/nimbus-federation-identity.md", enumerates: false },
 ];
 
-const COUNT_WORD =
-  "ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty";
+/**
+ * DERIVED from `SPELLED`, never written out beside it. The two were hand-kept copies before, and
+ * a second copy is exactly how a list goes stale — here both copies stopped at ten together.
+ * Longest-first so the alternation never settles on a prefix of a longer word ("nine" inside
+ * "nineteen"); a tie is broken alphabetically so the pattern is stable across runs.
+ */
+const COUNT_WORD = Object.values(SPELLED)
+  .sort((a, b) => b.length - a.length || a.localeCompare(b))
+  .join("|");
 
 /** Numeric and spelled forms alike — "3 of 6 routes" went stale in exactly the numeric form. */
 const STATED_COUNT_RE = new RegExp(`\\b(${COUNT_WORD}|\\d+)\\s+(?:entries|routes)\\b`, "gi");

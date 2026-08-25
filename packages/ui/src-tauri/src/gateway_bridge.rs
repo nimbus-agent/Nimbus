@@ -590,6 +590,22 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_glossary_brief_only() {
+        // S1 glossary: the brief is renderer-callable; neither maintenance verb is (I7).
+        // glossary.refresh re-runs the extraction pass and glossary.rebuild clears and
+        // re-derives the whole table, so both stay CLI-only and LAN-forbidden.
+        //
+        // This test was MISSING while the sibling decisions/ownership/premortem tests
+        // existed, and docs/SECURITY-INVARIANTS.md asserted all four pairs were named.
+        // The gap was real: allowlist_exact_size is unchanged by a one-for-one
+        // substitution, so swapping agents.glossary out for glossary.rebuild would have
+        // kept the count at 105 with no named assertion left to catch it.
+        assert!(is_method_allowed("agents.glossary"));
+        assert!(!is_method_allowed("glossary.refresh"));
+        assert!(!is_method_allowed("glossary.rebuild"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
         assert_eq!(ALLOWED_METHODS.len(), 105);
     }

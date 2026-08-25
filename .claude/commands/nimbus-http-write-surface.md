@@ -54,7 +54,7 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
 ]);
 ```
 
-Entries are `"<METHOD> <PATH>"` strings. The deployment route is exact-match; the SCIM item routes use a `{id}` placeholder matched by a regex in `resolveRoute` (the only sanctioned path-templating). `dispatchWriteRoute` selects the per-route bearer token (deployment → `http_api.deployment_token`; SCIM → `identity.scim.bearer`) and audit action type (`deployment.annotation_rejected` vs `scim.provision_rejected`). It rejects anything not resolvable to an entry; unknown paths return 404, known paths on the wrong method return 405 with `Allow` header. SCIM **GET** roster reads are not writes — they go through the bearer-checked `dispatchScimRead` read path, off this surface.
+Entries are `"<METHOD> <PATH>"` strings. The deployment route is exact-match. Path templating is sanctioned only through a `resolveRoute` regex, and four route families use one: the SCIM item routes (`{id}`), the three brief sub-routes (`POST /v1/briefs/{id}/sources|run|save`), and `POST /v1/agents/{agent}` (`AGENT_INVOKE_RE`). A placeholder that is not matched by one of those regexes is not a route. `dispatchWriteRoute` selects the per-route bearer token (deployment → `http_api.deployment_token`; SCIM → `identity.scim.bearer`) and audit action type (`deployment.annotation_rejected` vs `scim.provision_rejected`). It rejects anything not resolvable to an entry; unknown paths return 404, known paths on the wrong method return 405 with `Allow` header. SCIM **GET** roster reads are not writes — they go through the bearer-checked `dispatchScimRead` read path, off this surface.
 
 The fourteen routes do **not** all share one auth model — see the block comment above `WRITE_ROUTE_ALLOWLIST` in `http-write-routes.ts` for the live source of truth:
 
@@ -84,10 +84,12 @@ The deployment/SCIM/policy rows are the static-bearer routes; the teams-events r
 Every accepted write goes through this pipeline in `dispatchWriteRoute`:
 
 1. **Allowlist lookup** — `"<METHOD> <PATH>"` must be in `WRITE_ROUTE_ALLOWLIST`. Unknown → 404; known path, wrong method → 405.
-2. **Bearer auth** — `requireBearer(req, { expectedToken })`. Three outcomes:
-   - `surfaceDisabled`: vault key `http_api.deployment_token` not set → 503 `write_surface_disabled` (no audit row — surface is structurally off).
-   - `!ok`: bad / missing token → 401 `unauthorized` + audit row.
-   - `ok`: continue with `auth.fingerprint` (SHA-256 prefix of the token, for forensic tagging).
+2. **Authentication — route-specific, not one shared bearer.** Three families, matching the table above:
+   - **Static bearer** (deployment, SCIM, policy) — `requireBearer(req, { expectedToken })` against that route's own vault key: `http_api.deployment_token` for deployments, `identity.scim.bearer` for SCIM. Three outcomes: `surfaceDisabled` (that route's vault key is not set → 503 `write_surface_disabled`, no audit row, because the surface is structurally off); `!ok` (bad / missing token → 401 `unauthorized` + audit row); `ok` (continue with `auth.fingerprint`, a SHA-256 prefix of the token, for forensic tagging).
+   - **Validated JWT** (`POST /v1/messaging/teams/events`) — a Bot Framework JWT verified in-route. Never a static bearer.
+   - **Pairing-window token** (clips, the three brief sub-routes, `POST /v1/agents/{agent}`, `POST /v1/items/fetch`) — the labeled web-clipper token, mintable only behind a live owner-opened pairing window (`I30`), Vault-stored and revocable, and scope-checked per route (`agents`, `fetch`).
+
+   Reading step 2 as "every write is `requireBearer` against `http_api.deployment_token`" was true when this surface had one route family and has not been true since Slice 5.
 3. **Rate limit** — `ctx.rateLimiter.check(auth.fingerprint, route.maxRequestsPerWindow)`. The limit is **per-route**: `MAX_REQUESTS_PER_WINDOW_DEFAULT` (60/min) for the control-plane routes, `MAX_REQUESTS_PER_WINDOW_CLIP` (20/min) for `POST /v1/clips` (it pays for that route's raised body cap). A route limit may only *tighten* the server-configured limit, never loosen it. On miss → 429 + `Retry-After` + audit row. On hit, the response always carries `X-RateLimit-{Limit,Remaining,Reset}` — reporting the limit that actually applied.
 4. **Body parse** — `Content-Length` is checked against the route's own cap, `route.maxBodyBytes`, **before** the body is read; the streaming length cap then re-checks `bodyBytes.byteLength` against the same value. The cap is `MAX_BODY_BYTES_DEFAULT` (8 KiB) for every control-plane route and `MAX_BODY_BYTES_ARTICLE` (1 MiB) for `POST /v1/clips` alone, which carries the readable text of a whole page. UTF-8 decode is `{ fatal: true }`. JSON parse failures → 400 `invalid_json` + audit row.
 5. **Service allowlist (per-route)** — for `POST /v1/deployments`, the body's `service` field must be in `ctx.knownServices()`. Unknown → 400 `unknown_service` + audit row (with `known_services` hint truncated to 25 entries).

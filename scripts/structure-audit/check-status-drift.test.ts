@@ -139,6 +139,44 @@ describe("auditStatusDrift — the I13 write surface across docs AND skills", ()
     expect(result.ok).toBe(true);
   });
 
+  test("flags a SPELLED count below ten — the range the mapping used to omit", () => {
+    // The regression this pins: SPELLED and the alternation both started at "ten", so a doc
+    // claiming "Three entries" over a two-route allowlist matched nothing, was never attributed
+    // to this allowlist, and passed. The gate did not fail on the stale claim — it could not see
+    // it. Small counts are exactly where a hand-maintained allowlist starts, so this was the
+    // range most likely to be wrong and least likely to be caught.
+    const wrongCount = [
+      "## The Allowlist",
+      "",
+      "Three entries:",
+      "",
+      "```typescript",
+      "export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([",
+      '  "POST /v1/a",',
+      '  "POST /v1/b",',
+      "]);",
+      "```",
+      "",
+    ].join("\n");
+    const result = auditStatusDrift(
+      makeRepo(withWriteRoutes({ ".claude/commands/nimbus-http-write-surface.md": wrongCount })),
+    );
+    expect(result.ok).toBe(false);
+    expect(
+      result.errors.some(
+        (e) => e.includes("nimbus-http-write-surface.md") && e.includes("Three entries"),
+      ),
+    ).toBe(true);
+  });
+
+  test("accepts a correct spelled count below ten", () => {
+    // The other half: now that small counts are visible, an ACCURATE small count must still
+    // pass. Without this, the fix above could be satisfied by flagging every spelled count.
+    const result = auditStatusDrift(makeRepo(withWriteRoutes()));
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
   test("flags a route missing from the skill's transcribed constant", () => {
     const short = [
       "## The Allowlist",
