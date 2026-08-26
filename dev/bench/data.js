@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787770369075,
+  "lastUpdate": 1787771092199,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16047,6 +16047,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 329.65696204998966,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1a2d38a42ab16d3d83a4a4d016944d2a74bc39d7",
+          "message": "feat(ci): gate on connector version skew between the gateway and npm (#1346)\n\nReopens #1344, which GitHub auto-closed when squash-merging #1343\ndeleted its base branch. Same commit, cherry-picked onto `main`.\n\nThe connectors ship from [their own\nrepo](https://github.com/nimbus-agent/nimbus-mcp-servers) now, so the\ngateway can silently fall behind a capability that has already been\npublished. Nothing would have said so.\n\n## Verdicts, and why they differ\n\n| Gap | Verdict | Reasoning |\n| --- | --- | --- |\n| **minor / major** | **fail** | A connector the shipped binary cannot\nload is indistinguishable, to a user, from a connector that does not\nwork. |\n| **patch** | warn | A fix not yet picked up is worth saying and not\nworth blocking a PR over. |\n| **ahead of registry** | ok | That is what a release in flight looks\nlike — the version is bumped before it is published. Failing it would\nred every PR between the bump and the publish. |\n| **registry unreachable** | indeterminate | Offline development and a\nregistry outage are not version skew. **A gate that reds for them is one\npeople learn to ignore**, which is worse than no gate. |\n\n`floorOf()` recognises only a caret, tilde or exact version — what the\ngateway actually uses. Anything else returns `undefined` and the audit\ndegrades to indeterminate rather than guessing a number it would then\ncompare against the registry.\n\n## Wiring\n\n`package.json`, `scripts/lib/preflight-gates.ts` **and**\n`.github/workflows/_test-suite.yml`, in one commit.\n\n#1318 put `audit:connector-consent` in the manifest and no workflow. It\nran in no CI job, and that PR passed *because the gate never executed*.\n`preflight-gates.test.ts` guards the class now — I red-proved it by\ndeleting the workflow entry and confirming the test fails.\n\n## One implementation note\n\n`report()` is split out and written as guards rather than a `switch`,\nbecause the two linters disagree about a switch here: `process.exit()`\nreturns `never`, so tsc calls a following `break` unreachable code,\nwhile biome — which does not model that — calls the case without one a\nfallthrough. There is no arrangement that satisfies both. Returning an\nexit code satisfies both, and makes the reporting testable without\nspawning a process.\n\n## Tests\n\n23 cases. The network is **injected**, so the gate's own tests never\ndepend on the registry being reachable — including the test asserting\nthat an unreachable registry is indeterminate.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added automated connector version-skew auditing against the package\nregistry.\n* Major and minor version gaps now block validation; patch gaps generate\nwarnings.\n  * Unavailable or invalid version data is reported as indeterminate.\n\n* **Bug Fixes**\n* Added CI checks and preflight validation to detect connector version\ndrift consistently.\n\n* **Tests**\n* Added coverage for version parsing, drift classification, registry\nfailures, and exit statuses.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-26T21:41:11+03:00",
+          "tree_id": "11eb700eb7c122d75db2402a787850482d6fbee6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1a2d38a42ab16d3d83a4a4d016944d2a74bc39d7"
+        },
+        "date": 1787771089354,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 320.4576480500036,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 319.4009144500007,
             "unit": "ms"
           }
         ]
