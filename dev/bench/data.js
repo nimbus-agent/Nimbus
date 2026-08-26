@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787692659935,
+  "lastUpdate": 1787768457328,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -15979,6 +15979,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.7970708000008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0b6ff53aac924d3f4251c74785d58fead450f9b8",
+          "message": "feat(connectors): consume @nimbus-dev/connectors from npm (#1343)\n\nThe gateway now loads all 94 connectors from the published\n[`@nimbus-dev/connectors`](https://www.npmjs.com/package/@nimbus-dev/connectors)\npackage instead of from `packages/mcp-connectors`.\n\n**That directory still exists and its tests still run.** Deleting it is\na separate PR, deliberately last — see *Why the order matters* below.\n\n## What changed\n\n- `packages/gateway` depends on `@nimbus-dev/connectors@^0.1.1`.\n- `gen-bundled-connector-registry` defaults to package specifiers. The\nflag is **inverted, not removed**:\n`NIMBUS_CONNECTOR_SPECIFIER=workspace` still emits relative paths, now\nas a bisection tool rather than a fallback — if a connector misbehaves\nafter the switch, regenerating against the in-repo copy says whether the\npackage boundary is implicated or the connector itself is.\n- `run-bundled-connector.ts` imports `setConnectorMode` from the\npackage.\n\n## Why the order matters\n\nThat last import was the gateway's **only real source import** into the\nconnector tree, and it is why `0.1.0` needed an immediate follow-up.\nThat release *shipped* `shared/connector-mode.ts` — `shared/**` is in\n`files` — but omitted it from `exports`, and an exports map is a\nwhitelist. The file was unreachable.\n\nNothing caught it. Every check passed because the gateway still resolved\nthat file by relative path from `packages/mcp-connectors`, which had not\nbeen deleted. The connector-boot smoke test booted all 94 from the\npublished package and reported `89 answered, 5 refused, 0 failed` while\nthis one import quietly came from the in-repo copy. It would have\nsurfaced as a broken gateway build the moment that copy was removed —\nwith the source of truth already gone.\n\n`0.1.1` exports it, and the connectors repo now guards the class with\nfour red-proved properties, including the inverse case (an exports entry\nwhose file is not packed resolves in a checkout and 404s for everyone\nelse).\n\n## License gate\n\n`@nimbus-dev/connectors` is `AGPL-3.0-only`, and `audit:js-licenses`\nflagged it — correctly. An AGPL dependency imposes AGPL on whatever\nlinks it. Here the consumer is the gateway, which is `AGPL-3.0-only`\nitself, so there is no obligation to impose.\n\nOverridden **without a version pin**, unlike the third-party entries\nbeside it: those pin artefacts so a bump gets reviewed, whereas this\npackage is released by this project and pinning would mean editing the\nlist on every connector release for no review value. `AGPL-3.0-only`\nstays out of `ALLOWED_LICENSES`, so a *third-party* AGPL dependency\nstill trips the gate. `docs/license-policy.md` records the reasoning.\n\n## Verification\n\n| Check | Result |\n| --- | --- |\n| Compiled binary boots connectors from the **published** package | `94\n— 89 answered, 5 refused without credentials, 0 failed` — identical to\nthe relative-path baseline |\n| Full CI test command (`bun test packages/gateway packages/cli\npackages/mcp-connectors scripts`) | 20405 pass, 0 fail, 1577 files |\n| `preflight:fast` | all gates green |\n\n## Not in this PR\n\nThe version-skew gate, and the deletion of `packages/mcp-connectors`\nwith its coupled workspace, CI-path, config and docs changes. Both\nfollow.",
+          "timestamp": "2026-08-26T21:09:32+03:00",
+          "tree_id": "42cb182d7f5997f6cd361ac756a026b6d97af2dd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0b6ff53aac924d3f4251c74785d58fead450f9b8"
+        },
+        "date": 1787768453349,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 325.7676136000009,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 324.455347050001,
             "unit": "ms"
           }
         ]
