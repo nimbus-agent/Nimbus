@@ -77,6 +77,17 @@ const FAST: readonly Gate[] = [
     tier: "fast",
   },
   {
+    // The connectors ship from their own repo now, so the gateway can silently fall behind a
+    // capability that has already been published. A MINOR gap fails: a connector the shipped
+    // binary cannot load is indistinguishable, to a user, from a connector that does not work. A
+    // patch gap warns. An unreachable registry is INDETERMINATE, never a failure — offline
+    // development and a registry outage are not skew, and a gate that reds for them is one people
+    // learn to ignore.
+    name: "audit:connector-version-skew",
+    cmd: ["bun", "run", "audit:connector-version-skew"],
+    tier: "fast",
+  },
+  {
     // A source-tree-relative path derived from `import.meta.dir` resolves inside the read-only
     // bunfs root in a compiled binary, so it silently points at nothing. Two such sites made the
     // admin console and the OpenAPI route unreachable in every released binary.

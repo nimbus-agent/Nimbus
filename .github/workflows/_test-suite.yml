@@ -150,6 +150,12 @@ jobs:
         # CI passed on #1318 because this never ran.
         run: bun run audit:connector-consent
 
+      - name: Connector version skew (gateway pin vs. published package)
+        # Added to the manifest AND here in the same commit, deliberately. #1318 put
+        # audit:connector-consent in the manifest and no workflow, so it ran nowhere and that PR
+        # passed BECAUSE the gate never executed. See the note above this block.
+        run: bun run audit:connector-version-skew
+
       - name: import.meta path confinement (compiled-binary asset resolution)
         # A source-tree-relative path derived from import.meta.dir resolves inside the read-only
         # bunfs root in a compiled binary. Two such sites made the admin console and the OpenAPI
