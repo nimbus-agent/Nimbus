@@ -12,10 +12,6 @@
   - changed-files:
     - any-glob-to-any-file: 'packages/ui/**/*'
 
-'pkg:mcp':
-  - changed-files:
-    - any-glob-to-any-file: 'packages/mcp-connectors/**/*'
-
 'infra:ci':
   - changed-files:
     - any-glob-to-any-file: '.github/**/*'

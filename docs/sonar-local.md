@@ -27,7 +27,7 @@ The scan runs inside the reusable [`_test-suite.yml`](../.github/workflows/_test
 
 Coverage is fed in from two sources, both produced earlier in the same job:
 
-- `coverage/lcov.info` — written by `bun test --coverage --coverage-reporter=lcov` for `gateway`, `cli`, `mcp-connectors`, and `scripts`.
+- `coverage/lcov.info` — written by `bun test --coverage --coverage-reporter=lcov` for `gateway`, `cli`, and `scripts`.
 - `packages/ui/coverage/lcov.info` — written by `bunx vitest run --coverage`. The job rewrites `SF:src/` → `SF:packages/ui/src/` so SonarCloud resolves paths from the repo root rather than the UI sub-project root.
 
 `sonar.qualitygate.wait=true` in [`sonar-project.properties`](../sonar-project.properties) forces the scanner to wait for the Compute Engine task and gate verdict to be computed before the job moves on. The scan-upload step itself is `continue-on-error: true` (a scanner network/infra failure should be a rerun, not a hard block); the **`SonarQube quality gate (enforced)`** step that follows is what actually fails the build. It reads the analysis the scan produced, queries the `api/qualitygates/project_status` Web API, and:
@@ -112,7 +112,7 @@ For reproducing a full scan before pushing (e.g. when CI is unavailable, or to d
 3. Generate coverage so the scanner finds an `lcov.info`:
 
    ```bash
-   bun test packages/gateway packages/cli packages/mcp-connectors scripts \
+   bun test packages/gateway packages/cli scripts \
      --coverage --coverage-reporter=lcov
    cd packages/ui && bunx vitest run --coverage && cd -
    sed -i 's|^SF:src/|SF:packages/ui/src/|' packages/ui/coverage/lcov.info

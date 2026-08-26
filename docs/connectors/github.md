@@ -1,6 +1,6 @@
 # GitHub connector — quirks
 
-Migrated from inline comments in `packages/gateway/src/connectors/github-*.ts` and `packages/mcp-connectors/github/`.
+Migrated from inline comments in `packages/gateway/src/connectors/github-*.ts` and the `github` connector in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers).
 
 ## Entries
 

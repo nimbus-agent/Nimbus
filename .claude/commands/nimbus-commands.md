@@ -49,7 +49,6 @@ cd packages/ui && bunx vitest run --coverage          # UI with coverage
 bun run test:ci                           # the TEST SUITE only — same sequence as .github/workflows/_test-suite.yml
 
 bun run test:sandbox                      # per-connector sandbox contract suite — OPT-IN, real network
-bun run test:sandbox packages/mcp-connectors/github/test/sandbox.test.ts   # scoped to one connector
 ```
 
 **`test:sandbox` is the only way those 79 tests run.** Each connector's
@@ -123,7 +122,6 @@ bun run test:coverage:config          # ≥80% (config loader, profiles, env ove
 bun run test:coverage:telemetry       # ≥85% (telemetry collector — payload safety gate)
 bun run test:coverage:doctor          # ≥80% (nimbus doctor)
 bun run test:coverage:tui             # ≥80% (packages/cli/src/tui)
-bun run test:coverage:mcp             # ≥70% (mcp-connectors)
 
 # Phase 4 WS4 — release infrastructure
 bun run test:coverage:updater         # ≥80% (updater state machine + manifest fetcher)

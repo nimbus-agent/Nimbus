@@ -1,6 +1,6 @@
 # Vercel connector — quirks
 
-Migrated from inline comments in `packages/gateway/src/connectors/vercel-*.ts` and `packages/mcp-connectors/vercel/`.
+Migrated from inline comments in `packages/gateway/src/connectors/vercel-*.ts` and the `vercel` connector in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers).
 
 ## Entries
 

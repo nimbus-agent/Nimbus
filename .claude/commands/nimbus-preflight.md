@@ -66,7 +66,7 @@ and using it produces **no bypass annotation anywhere on the PR**. Nothing in th
 Develop on one OS, but CI runs all three — and **PRs now gate on macOS + Windows too**, not just
 Ubuntu: `pr-quality-cross-platform` runs one leg on `macos-15` and one on `windows-2025`, each
 executing the SAME whole-repo command as the push matrix
-(`bun test packages/gateway packages/cli packages/mcp-connectors scripts`, one process). Treat "it
+(`bun test packages/gateway packages/cli scripts`, one process). Treat "it
 passes on Ubuntu" as covering roughly half the gate. Note what that equality buys and what it does
 not: the legs now load the same FILES in the same PROCESS as the push run, which is what makes a
 green PR leg predictive at all — but they still run on runners ~13–18× slower than a dev machine,

@@ -179,7 +179,7 @@ jobs:
     # ONE leg per OS, running the SAME whole-repo `bun test` command as the push
     # matrix. That equality is the entire point of this job's shape, and it was
     # not true before 2026-08-23: this job ran `bun test packages/<pkg>/src` while
-    # the push leg ran `bun test packages/gateway packages/cli packages/mcp-connectors
+    # the push leg ran `bun test packages/gateway packages/cli
     # scripts` in ONE process. Over the 200 CI runs on `main` between 2026-08-02 and
     # 2026-08-22, 50 failed and 35 of those had a failing macOS job — and 33 of the
     # 35 were files this job never loaded at all (`scripts/`, `test/integration/`,
@@ -348,7 +348,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 900 bun test packages/gateway packages/cli packages/mcp-connectors scripts --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun scripts/run-with-timeout.ts 900 bun test packages/gateway packages/cli scripts --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then

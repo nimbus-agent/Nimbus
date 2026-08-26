@@ -80,7 +80,7 @@ breaking compilation, so the original is kept with an inline `// NOSONAR`.
 
 | Site | Rule | Why it's suppressed |
 |---|---|---|
-| `mcp-connectors/great-expectations/src/gx-parse.ts` `clampId()` | `typescript:S7767` | `(… ) \| 0` is a deliberate 32-bit wraparound (Java-style `hashCode`), not a truncation; `Math.trunc` would let the accumulator exceed 2^53 and corrupt the hash. |
+| `great-expectations/src/gx-parse.ts` `clampId()` (now in nimbus-mcp-servers) | `typescript:S7767` | `(… ) \| 0` is a deliberate 32-bit wraparound (Java-style `hashCode`), not a truncation; `Math.trunc` would let the accumulator exceed 2^53 and corrupt the hash. |
 | `sdk/src/testing/sandbox-probe.ts` | `typescript:S7787` | The specifier-less `export {}` is the module marker required by the top-level `await main()` below it; removing it makes the top-level await a compile error (TS1375). |
 
 If you disable a rule, record:

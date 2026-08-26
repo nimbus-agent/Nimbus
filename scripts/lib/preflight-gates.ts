@@ -45,35 +45,11 @@ const FAST: readonly Gate[] = [
     soft: true,
   },
   {
-    // A connector that guards startup with `import.meta.main` is invisible to the bundled
-    // registry: the guard is false under an import, so it loads, starts nothing and exits 0.
-    // Ten connectors were in exactly that state before this gate existed.
-    name: "audit:connector-entrypoints",
-    cmd: ["bun", "run", "audit:connector-entrypoints"],
-    tier: "fast",
-  },
-  {
-    // Connectors are bundled into the gateway binary. A native dependency would break the
-    // compile or the runtime load, and the only symptom is a sync that never works.
-    name: "audit:connector-deps",
-    cmd: ["bun", "run", "audit:connector-deps"],
-    tier: "fast",
-  },
-  {
     // The bundled registry is GENERATED into a committed file and nothing else diffs it.
     // `test:connector-boot` cannot catch a connector missing FROM the registry — it boots what the
     // registry ships. A stale registry means a connector the shipped binary can never start.
     name: "audit:connector-registry-drift",
     cmd: ["bun", "run", "audit:connector-registry-drift"],
-    tier: "fast",
-  },
-  {
-    // "The connector mode comes from the entrypoint" is a convention until something enforces it:
-    // any other caller of `setConnectorMode` could re-gate a connector mid-process, which is what
-    // Non-Negotiable #2 forbids. Also reports, advisorily for now, connectors that mutate without
-    // declaring it through `registerWriteTool`.
-    name: "audit:connector-consent",
-    cmd: ["bun", "run", "audit:connector-consent"],
     tier: "fast",
   },
   {

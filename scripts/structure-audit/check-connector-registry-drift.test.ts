@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,11 +10,6 @@ const ROOT = mkdtempSync(join(tmpdir(), "nimbus-registry-drift-"));
 afterAll(() => {
   rmSync(ROOT, { recursive: true, force: true });
 });
-
-function connector(name: string): void {
-  mkdirSync(join(ROOT, "connectors", name, "src"), { recursive: true });
-  writeFileSync(join(ROOT, "connectors", name, "src", "server.ts"), "export {};\n");
-}
 
 function registry(ids: readonly string[]): string {
   const path = join(ROOT, `registry-${ids.join("-") || "empty"}.ts`);
@@ -28,12 +23,10 @@ function registry(ids: readonly string[]): string {
   return path;
 }
 
-connector("airflow");
-connector("monte-carlo");
-
-const CONNECTORS = join(ROOT, "connectors");
-const EMPTY_CONNECTORS = join(ROOT, "connectors-empty");
-mkdirSync(EMPTY_CONNECTORS, { recursive: true });
+// The ids the installed connector package would export. Plain data: the check is a comparison,
+// and discovery is the caller's job.
+const CONNECTORS = ["airflow", "monte-carlo"];
+const EMPTY_CONNECTORS: readonly string[] = [];
 
 describe("checkConnectorRegistryDrift", () => {
   test("passes when the registry lists exactly the connectors on disk", () => {
@@ -139,7 +132,7 @@ describe("both specifier forms the generator can emit are parsed", () => {
   test("a package-mode registry still DETECTS drift rather than reporting indeterminate", () => {
     // The regression that matters: a missing connector must be found, not masked by an
     // unparseable registry.
-    const v = checkConnectorRegistryDrift(join(ROOT, "connectors"), packageRegistry(["airflow"]));
+    const v = checkConnectorRegistryDrift(CONNECTORS, packageRegistry(["airflow"]));
     expect(JSON.stringify(v)).toMatch(/monte-carlo/);
     expect(JSON.stringify(v)).not.toMatch(/indeterminate/i);
   });

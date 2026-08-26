@@ -126,29 +126,11 @@ jobs:
 
       # The three audits below guard the compiled binary. They shipped into the local preflight
       # manifest but no workflow ran them, so nothing gated a contributor's PR on them.
-      - name: Connector entrypoint contract (bundled-registry startability)
-        # A connector guarding startup with import.meta.main is invisible to the bundled registry:
-        # the guard is false under an import, so it loads, starts nothing and exits 0 in silence.
-        run: bun run audit:connector-entrypoints
-
-      - name: Connector dependency allowlist (pure JS only — the binary bundles them)
-        run: bun run audit:connector-deps
-
       - name: Connector registry drift (generated file vs. tree)
         # The bundled registry is generated into a committed file. Nothing else diffs it, and
         # test:connector-boot cannot: it boots what the registry ships, so a connector missing
         # FROM the registry is invisible to it.
         run: bun run audit:connector-registry-drift
-
-      - name: Connector consent confinement (setConnectorMode + declared mutations)
-        # "The connector mode comes from the entrypoint" is a convention until something enforces
-        # it: any other caller of setConnectorMode could re-gate a connector mid-process, which is
-        # what Non-Negotiable 2 forbids.
-        #
-        # This landed in preflight-gates.ts in #1318 and NOWHERE ELSE, so it gated local runs and
-        # no PR — the same "manifest but no workflow" gap noted above, reintroduced one gate later.
-        # CI passed on #1318 because this never ran.
-        run: bun run audit:connector-consent
 
       - name: Connector version skew (gateway pin vs. published package)
         # Added to the manifest AND here in the same commit, deliberately. #1318 put
@@ -305,18 +287,11 @@ jobs:
             run_pkg "${pkg}"
           done
 
-          for pkg in packages/mcp-connectors/* packages/github-actions/*; do
+          for pkg in packages/github-actions/*; do
             if [ -f "${pkg}/package.json" ]; then
               run_pkg "${pkg}"
             fi
           done
-
-          # `mcp-connectors/shared` is a relative-import folder (no package.json)
-          # so the loop above skips it, yet it has its own *.test.ts. Collect its
-          # coverage explicitly — `bun test --coverage` emits an lcov from a
-          # package.json-less dir too — so shared utilities (bodystructure,
-          # mail-core, mcp-tool-kit, run-cli-json, search-filter) are measured.
-          run_pkg "packages/mcp-connectors/shared"
 
           # `github-actions/shared` is the same case: a package.json-less relative-import
           # folder (gha-io.ts) shared by the preflight-query + annotate-action actions,
@@ -356,7 +331,7 @@ jobs:
             # last command and silently mask every failure. Same shape as `ci.yml`'s
             # cross-platform retry, and for the same reason — a silent retry costs a full
             # suite run and leaves nothing in the summary to investigate.
-            bun test packages/gateway packages/cli packages/mcp-connectors scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun test packages/gateway packages/cli scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then

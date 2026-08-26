@@ -1,6 +1,6 @@
 # Slack connector — quirks
 
-Migrated from inline comments in `packages/gateway/src/connectors/slack-*.ts` and `packages/mcp-connectors/slack/`.
+Migrated from inline comments in `packages/gateway/src/connectors/slack-*.ts` and the `slack` connector in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers).
 
 ## Entries
 

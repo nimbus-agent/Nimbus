@@ -152,7 +152,7 @@ gateway    ← no imports from cli or ui
 cli        ← IPC-only communication with gateway (no source imports)
 ui         ← IPC-only communication with gateway (no source imports)
 sdk        ← no imports from gateway, cli, or ui
-mcp-connectors/*  ← depend on @nimbus-dev/sdk only
+@nimbus-dev/connectors  ← the connectors, consumed from npm (own repo)
 ```
 
 These rules ensure that the Gateway remains headless and that clients remain thin, communicating exclusively via JSON-RPC 2.0. Types shared between the Gateway and CLI (such as agent briefs) are slimly mirrored in the CLI to avoid violating the IPC-only constraint.
@@ -1890,7 +1890,6 @@ nimbus/
 │   │    repo, nimbus-agent/nimbus-web-clipper, talking to the gateway web-clip
 │   │    HTTP surface. Both release independently of the Gateway.)
 │   │
-│   ├── mcp-connectors/         ← First-party MCP servers (workspace packages)
 │   │   ├── google-drive/       ← Phase 1–2 (productivity / collaboration)
 │   │   ├── gmail/
 │   │   ├── google-photos/
@@ -1922,7 +1921,7 @@ nimbus/
 │   │
 │   │   (@nimbus-dev/sdk — NimbusExtensionServer, NimbusItem/NimbusVault types,
 │   │    MockGateway testing helpers — was extracted to its own repo,
-│   │    nimbus-agent/nimbus-sdk (npm, MIT). mcp-connectors/* consume it as a
+│   │    nimbus-agent/nimbus-sdk (npm, MIT). The connectors consume it as a
 │   │    published npm dependency; it releases independently of the Gateway.)
 │   │
 │   ├── admin-console/          ← dependency-free static admin console (served at /admin/*)

@@ -33,14 +33,13 @@ nimbus/
 │   ├── cli/              ← nimbus CLI + TUI (Bun)
 │   ├── ui/               ← Tauri 2.0 desktop app (React 18 + Rust bridge)
 │   ├── admin-console/    ← dependency-free static admin console (Phase 6 Slice 4)
-│   ├── mcp-connectors/   ← First-party MCP servers (one dir per connector)
 │   ├── github-actions/   ← Composite GitHub Actions (DORA data layer)
 │   └── docs/             ← Astro Starlight documentation site
 ├── docs/                 ← Project docs (architecture.md, roadmap.md, etc.)
 └── .github/workflows/    ← ci.yml, security.yml, codeql.yml, release.yml
 ```
 
-`@nimbus-dev/sdk` (the extension-authoring contract that `mcp-connectors/*` consume) and `@nimbus-dev/client` (the typed IPC wrapper `packages/cli` and the VS Code extension consume) each live in their own repos — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) and [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) (both npm, MIT) — not under `packages/`.
+`@nimbus-dev/sdk` (the extension-authoring contract the connectors consume) and `@nimbus-dev/client` (the typed IPC wrapper `packages/cli` and the VS Code extension consume) each live in their own repos — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) and [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) (both npm, MIT) — not under `packages/`.
 
 ---
 
@@ -153,7 +152,7 @@ The Vault implementation is platform-specific (`win32.ts` / `darwin.ts` / `linux
 
 ## Connector / MCP Pattern
 
-Every connector lives in `packages/mcp-connectors/<service>/`. It:
+Every connector lives in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) at `connectors/<service>/`. It:
 - Is a standalone MCP server process
 - Receives credentials via scoped environment injection at spawn time (not from IPC or config files)
 - Declares `hitlRequired: true` in its manifest for any write tool (which auto-adds those tools to the HITL gate)
@@ -164,7 +163,7 @@ The Engine calls connectors through the MCP tool interface only. No connector im
 **Connector quickstart:**
 ```bash
 nimbus scaffold <service-name>
-# → generates packages/mcp-connectors/<service-name>/ with typed scaffolding
+# → generates connectors/<service-name>/ with typed scaffolding (in the connectors repo)
 ```
 Full walkthrough: `docs/contributors/extension-author-walkthrough.md`
 
@@ -176,7 +175,7 @@ Full walkthrough: `docs/contributors/extension-author-walkthrough.md`
 |---|---|
 | New CLI subcommand | `packages/cli/src/commands/<name>.ts` |
 | New IPC method | `packages/gateway/src/ipc/<namespace>-rpc.ts` |
-| New connector | `packages/mcp-connectors/<service>/` |
+| New connector | `connectors/<service>/` in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) — plus its sync handler HERE |
 | New DB table / migration | `packages/gateway/src/index/migrations/` |
 | New engine capability | `packages/gateway/src/engine/` |
 | New Vault backend | `packages/gateway/src/vault/<platform>.ts` |

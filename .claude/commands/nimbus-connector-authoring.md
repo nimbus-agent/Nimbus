@@ -14,7 +14,9 @@ description: >
 
 ## Package Location
 
-First-party connectors live in `packages/mcp-connectors/<name>/`. Each is a Bun workspace package with its own:
+First-party connectors live in their OWN repository, [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers), at `connectors/<name>/`, and ship as
+the `@nimbus-dev/connectors` npm package. They are no longer workspace packages of this repo — the
+real dependency set is declared once in that repository's root manifest. Each connector has:
 
 - `package.json`
 - `src/server.ts` entry point
@@ -114,14 +116,14 @@ MCP connectors: **≥ 85% line + ≥ 80% branch coverage** (the per-file floor; 
 Always start from:
 
 ```bash
-nimbus scaffold extension packages/mcp-connectors/<name>
+nimbus scaffold extension connectors/<name>   # run from the connectors repo root
 ```
 
 Then add the sync handler and register in the connector registry at `packages/gateway/src/connectors/registry.ts`.
 
 ## Authoring Checklist
 
-- [ ] Package created under `packages/mcp-connectors/<name>/` via `nimbus scaffold extension`.
+- [ ] Package created under `connectors/<name>/` in the connectors repo via `nimbus scaffold extension`.
 - [ ] `nimbus.extension.json` populated with `id`, `displayName`, `version`, `entrypoint`, `runtime: "bun"`, `permissions`, `hitlRequired`, `syncInterval`, `minNimbusVersion`.
 - [ ] Mandatory `list`, `get`, `search` tools exposed.
 - [ ] Every write tool listed in `hitlRequired` and calls `server.assertHitlRequired()` at the top of its handler.

@@ -1,6 +1,6 @@
 # Coverage Floor — Contributor Guide
 
-This project enforces a **per-file 80% line-coverage floor** for every bun-tested workspace package (gateway, cli, sdk, client, mcp-connectors). A CI gate fails any PR that introduces a non-exempt source file below 80% or regresses a baselined file below its recorded watermark.
+This project enforces a **per-file 80% line-coverage floor** for every bun-tested workspace package (gateway, cli, sdk, client). A CI gate fails any PR that introduces a non-exempt source file below 80% or regresses a baselined file below its recorded watermark.
 
 ## Phase 0 scope
 
@@ -8,7 +8,6 @@ Phase 0 covers the bun-tested packages only:
 
 - `packages/gateway`
 - `packages/cli`
-- `packages/mcp-connectors/*`
 
 UI (`packages/ui`) uses Vitest, which emits its own `coverage/lcov.info`. That file is not yet merged into the gate's input; the existing Vitest `>=80% lines / >=75% branches` thresholds keep that surface honest. A future phase can extend the floor to UI by merging the Vitest lcov into `coverage/lcov.info` before the gate runs.
 

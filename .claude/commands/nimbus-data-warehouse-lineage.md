@@ -32,7 +32,7 @@ Read `nimbus-connector-authoring` first for the generic connector contract; this
 | `bigeye` | `data_quality_test` | `monitoredDataModelKeys[]`, `slaStatus`, `anomaly` | `bigeye.base_url`, `bigeye.api_key` |
 
 These MCP servers are **live** (real APIs), not stubs. Per-connector files:
-`packages/mcp-connectors/<name>/src/server.ts` (MCP surface), `packages/gateway/src/connectors/<name>-sync.ts` (sync handler), `packages/gateway/src/connectors/<name>-{data-model,dashboard,dq}-mapping.ts` (item mapper).
+`connectors/<name>/src/server.ts` in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) (MCP surface), `packages/gateway/src/connectors/<name>-sync.ts` (sync handler), `packages/gateway/src/connectors/<name>-{data-model,dashboard,dq}-mapping.ts` (item mapper).
 
 ## The metadata-only ("no-row-data") contract
 

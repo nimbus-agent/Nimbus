@@ -55,8 +55,16 @@ describe("connector audits are wired into CI, not just the local manifest", () =
     n.startsWith("audit:connector-"),
   );
 
-  test("there is at least one, so a rename cannot make this vacuous", () => {
-    expect(connectorGates.length).toBeGreaterThanOrEqual(4);
+  // Asserted as an exact SET rather than a minimum count. The bound here was `>= 4` while the
+  // comment said "at least one, so a rename cannot make this vacuous" — the number had drifted
+  // from the intent, and it broke when the extraction moved three of these gates to the connectors
+  // repository, which was a correct removal rather than a regression. A count cannot tell those
+  // apart. A set can: adding or removing a connector gate now requires saying so here.
+  test("the connector gate set is exactly the expected one", () => {
+    expect([...connectorGates].sort()).toEqual([
+      "audit:connector-registry-drift",
+      "audit:connector-version-skew",
+    ]);
   });
 
   for (const name of connectorGates) {

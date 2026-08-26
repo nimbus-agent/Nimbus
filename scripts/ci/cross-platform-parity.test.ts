@@ -10,7 +10,7 @@ import { REPO_ROOT } from "../structure-audit/lib.ts";
  *
  * They did not, from whenever `pr-quality-cross-platform` was introduced until 2026-08-23. The
  * PR leg ran `bun test packages/<pkg>/src`; the push leg ran
- * `bun test packages/gateway packages/cli packages/mcp-connectors scripts` in one process. The
+ * `bun test packages/gateway packages/cli scripts` in one process. The
  * difference was not academic — over the 200 CI runs on `main` between 2026-08-02 and
  * 2026-08-22, 50 failed, 35 had a failing macOS job, and 33 of those 35 were in files the PR
  * gate never loaded at all (`scripts/`, `test/integration/`, `test/e2e/`). Every one of them was
@@ -100,8 +100,12 @@ describe("PR cross-platform legs run the same tests as the push matrix", () => {
     ]) {
       expect(paths).toContain("packages/gateway");
       expect(paths).toContain("packages/cli");
-      expect(paths).toContain("packages/mcp-connectors");
       expect(paths).toContain("scripts");
+      // `packages/mcp-connectors` was in this list until the connectors were extracted to their
+      // own repository. It is asserted ABSENT rather than simply dropped: a path that no longer
+      // exists would make `bun test` exit non-zero on both legs, so re-adding it is a mistake the
+      // equality check above cannot catch — both lists would agree, and both would be wrong.
+      expect(paths).not.toContain("packages/mcp-connectors");
       for (const p of paths) {
         expect(p.endsWith("/src")).toBe(false);
       }

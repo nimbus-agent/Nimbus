@@ -4,7 +4,7 @@
 
 Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that maintains a private SQLite index of the user's data across ~90 cloud services (Google / Microsoft / GitHub / GitLab / Slack / Jira / Notion + observability, CI-CD, security-quality, feature-flags, GitOps, data-BI, deploy, finance, and support tools — full roster: `CONNECTOR_VAULT_SECRET_KEYS` in `packages/gateway/src/connectors/connector-secrets-manifest.ts`), optional `[[filesystem.roots]]` indexing, and the local filesystem via first-party MCP (Model Context Protocol) connectors, and executes multi-step agentic workflows on the user's behalf. Clients (CLI, Tauri 2.0 desktop) talk to the Gateway only over JSON-RPC 2.0 IPC.
 
-**Runtime:** Bun v1.2+ / TypeScript 7.x strict · **Linter:** Biome · **License:** AGPL-3.0 (GNU Affero GPL; gateway/cli/mcp-connectors) + MIT (sdk)
+**Runtime:** Bun v1.2+ / TypeScript 7.x strict · **Linter:** Biome · **License:** AGPL-3.0 (GNU Affero GPL; gateway/cli) + MIT (sdk)
 **Status:** Phase 6 (Team) ✅ complete (2026-06-18) — all 9 slices: 1 & 3 (2026-06-05), 2 & 4 (2026-06-07), 5 (2026-06-09), 6a (2026-06-11), 6b + 6c (2026-06-12), 7 Waves 7a–7c (2026-06-13/14), 8 Waves 8a–8d (2026-06-15 → 2026-06-18), and 9 — the deferred-from-Phase-5 backlog — across 2026-06-14 → 2026-07-19 (Mendeley; Workday; Apple Mail/iCloud Calendar; ArgoCD/Flux/MLflow writes; the web clipper: gateway surface + the Chrome/Firefox MV3 extension in the `nimbus-web-clipper` satellite repo). **Spine S1 (Local Brain) ✅ complete (2026-06-20 → 2026-08-20). Current build slot: Spine S2 (Local Compute Fleet), opened 2026-08-21. First delivery: sandboxed code execution (2026-08-23 — `nimbus exec`, invariant I33/D23, default-off `[code_execution]`; CLI/owner-only, no network, Bun-only — see docs/roadmap.md § Active for what did NOT ship).** From Phase 6 onward the build order is the Phase 7+ Sequencing Spine overlay (S1 → S5), not the phase numbers. **S2 scope** (detail: `docs/roadmap.md` § Active, drawing on Phase 14): sandboxed code execution, a HITL-gated local computer-use loop where screenshots never leave, runtime tool generation, multimodal I/O, overnight sub-agent fleets on zero-marginal local compute, and bring-your-own-frontier-model routing with local fallback. That last row is the one that would make the `[agents] synthesis = "allow-remote"` path reachable for the first time — `packages/gateway/src/llm/` ships only `OllamaProvider` and `LlamaCppProvider` today, so the I29 `model` egress class is wired but appends zero rows in production. **S1 delivered:** the egress-ledger + `nimbus prove` primitive (2026-06-20), the research-briefs HTTP surface (`briefs/`, default-off `[briefs]`, 2026-07-22), the fourteen built-in read-only agents closing out with `nimbus negotiate` (2026-08-12), the full-body store + connector index-depth chokepoint (V48/V49), zero-config onboarding, and the Wave 6 answer-quality set: agent brief synthesis (A0, 2026-08-16 — `[agents] synthesis`, `"off"`/`"local"`/`"allow-remote"`, and invariant I31), `nimbus ask --devil` (A1, 2026-08-18), the `[persona]` `tone`/`voice` vocabulary (A2, 2026-08-18), and `nimbus stats` (2026-08-19 — the aggregation half of W6-B, disjoint buckets rather than a rolling window). First-class negation queries closed out Wave 6 and with it S1 (W6-B, 2026-08-20): B.1 put three named predicates on `nimbus query` / `nimbus people list`, each refusing on an empty substrate, and B.2 put the same three predicates on `nimbus ask` (and, sharing its engine, the desktop/VS Code surfaces) plus the MCP server, with exclusion-count disclosure guaranteed only on the engine surface and — the local-router (`[llm].prefer_local = true`) path having no tool-calling support at all — inert there. The MCP **server** shipped too, as an early harvest from S3: read-only, stdio-only, 21 tools, with `@nimbus-dev/mcp` listed in the MCP Registry; its owner-sink / write surface did NOT ship, which is why I28 stays reserved and re-scopes onto S3. Phases 1–5 ✅ (Phase 5: 2026-06-04). Invariants through I33 (I28 reserved); schema V56. Dated log (canonical): [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
 **Latest release:** `v2.21.0` <!-- x-release-please-version -->
@@ -86,14 +86,14 @@ Each live invariant (I1–I27, I29–I33) has a production wiring site + an enfo
 - `packages/gateway` — Engine, MCP mesh, Vault, local index, IPC
 - `packages/cli` — Terminal client (CLI + Ink TUI)
 - `packages/ui` — Tauri 2.0 + React (desktop)
-- `packages/mcp-connectors/*` — first-party MCP servers (AGPL)
 - `packages/docs` — Astro Starlight documentation site
 - `packages/admin-console` — dependency-free static admin console served at `/admin/*` (Phase 6 Slice 4)
 - `packages/github-actions/*` — first-party GitHub Actions (annotate-action, preflight-query); tracked but intentionally NOT workspace members
 
 Several surfaces live in their own standalone repos and release independently of the Gateway:
 
-- The **`@nimbus-dev/sdk`** extension-authoring contract — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) (MIT); `mcp-connectors/*` consume the published package.
+- The **`@nimbus-dev/sdk`** extension-authoring contract — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) (MIT); the connectors consume the published package.
+- The **`@nimbus-dev/connectors`** first-party MCP connectors — [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) (AGPL-3.0-only); all 94 ship as ONE package that the gateway depends on and bundles into its compiled binary via `BUNDLED_CONNECTORS`. The gateway's per-connector **sync and indexing** logic stays here, so adding a connector touches both repos. `audit:connector-version-skew` fails the build when this repo's pin falls a MINOR version behind what is published.
 - The **`@nimbus-dev/client`** typed IPC wrapper — [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) (MIT); `packages/cli` and the VS Code extension consume the published package.
 - The **`@nimbus-dev/mcp`** MCP-server launcher (`nimbus-mcp` bin) — [nimbus-agent/nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp) (MIT); resolves the installed `nimbus` binary and execs `nimbus mcp-server --stdio`, so any MCP client reaches the local index and agents. The MCP server itself stays here (`packages/cli/src/commands/mcp-server.ts` + `packages/cli/src/mcp/`). Listed in the official MCP Registry as `io.github.nimbus-agent/nimbus`, republished from that repo's CI on every release.
 - The VS Code / Open VSX extension — [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode); consumes the published `@nimbus-dev/client`.
@@ -101,7 +101,7 @@ Several surfaces live in their own standalone repos and release independently of
 
 **PAL:** OS-specific logic lives under `packages/gateway/src/platform/`, accessed via `PlatformServices` — never import `win32`/`darwin`/`linux` from business logic.
 
-**Dependency rules:** `gateway` imports nothing from cli/ui. `cli` and `ui` reach the gateway IPC-only (no source imports). `sdk` imports nothing from gateway/cli/ui. `mcp-connectors/*` depend on `@nimbus-dev/sdk` only. Circular dependencies are forbidden.
+**Dependency rules:** `gateway` imports nothing from cli/ui. `cli` and `ui` reach the gateway IPC-only (no source imports). `sdk` imports nothing from gateway/cli/ui. The gateway's ONLY import from the connectors package is `setConnectorMode` from `@nimbus-dev/connectors/shared/connector-mode.ts`, in `run-bundled-connector.ts`. Circular dependencies are forbidden.
 
 **Prerequisites:** Bun v1.2+; Rust for the Tauri UI. Local `nimbus ask` can run through Ollama on `http://127.0.0.1:11434` with `[llm].prefer_local = true` + `[llm].local_model`.
 
@@ -124,7 +124,7 @@ Windows leg. Pushes run the full 3-OS matrix. Exactly one status check gates the
 so adding or renaming a gate never needs a ruleset edit, and a red leg reds the aggregator.
 
 **The PR cross-platform legs run the same test PATHS as the push matrix** —
-`bun test packages/gateway packages/cli packages/mcp-connectors scripts`, whole-repo and in ONE
+`bun test packages/gateway packages/cli scripts`, whole-repo and in ONE
 process, so unit + integration + e2e alike (a directory argument recurses, and `bunfig.toml`
 excludes nothing). Only the flags differ: the push leg adds coverage instrumentation and a JUnit
 reporter this job has no use for, which is why the parity test compares positional paths only.

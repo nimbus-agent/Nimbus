@@ -53,7 +53,7 @@ anything still emitting it, which is the one failure a consent gate must never h
 
 ### Migrated rationale (2026-05-28)
 
-The connector registry comment block at `connectors/registry.ts:50–123` is the canonical per-connector dispatch table mapping each logical `action.type` to its `payload.mcpToolId` counterpart (e.g. `email.send` → `gmail_gmail_message_send`, `repo.pr.merge` → `github_github_pr_merge`). This table is the most comprehensive enumeration of the HITL surface outside the executor itself and should be consulted whenever a new connector write tool is added. Comments at `engine/executor.ts:16–17` and `gateway/src/gateway-main.ts` restate that `HITL_REQUIRED_BACKING` is the sole runtime gate; comments across `mcp-connectors/*/src/server.ts` files (aws, azure, bitbucket, circleci, confluence, gcp, github, github-actions, gitlab, iac, jenkins, jira, kubernetes, linear, notion, obsidian, onedrive, outlook, pagerduty, slack, teams) confirm that connector-side write tools rely entirely on the structural gate in `executor.ts` rather than any per-connector guard. The comment at `mcp-connectors/obsidian/src/server.ts:11–16` specifically notes that `assertHitlRequired()` is not used in that codebase and that the defense lives in `executor.ts` — clarifying that MCP connectors are not responsible for gating their own HITL writes.
+The connector registry comment block at `connectors/registry.ts:50–123` is the canonical per-connector dispatch table mapping each logical `action.type` to its `payload.mcpToolId` counterpart (e.g. `email.send` → `gmail_gmail_message_send`, `repo.pr.merge` → `github_github_pr_merge`). This table is the most comprehensive enumeration of the HITL surface outside the executor itself and should be consulted whenever a new connector write tool is added. Comments at `engine/executor.ts:16–17` and `gateway/src/gateway-main.ts` restate that `HITL_REQUIRED_BACKING` is the sole runtime gate; comments across the connectors' `src/server.ts` files (aws, azure, bitbucket, circleci, confluence, gcp, github, github-actions, gitlab, iac, jenkins, jira, kubernetes, linear, notion, obsidian, onedrive, outlook, pagerduty, slack, teams) confirm that connector-side write tools rely entirely on the structural gate in `executor.ts` rather than any per-connector guard. The comment in the obsidian connector's `src/server.ts` specifically notes that `assertHitlRequired()` is not used in that codebase and that the defense lives in `executor.ts` — clarifying that MCP connectors are not responsible for gating their own HITL writes.
 
 ---
 
@@ -913,33 +913,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/watcher/anomaly-detector.ts:2` | I2 | Anomaly detector is read-only; no HITL actions fired from watcher path |
 | `packages/gateway/test/e2e/scenarios/hitl-write-ops.test.ts:17` | I2 | E2E test confirms HITL gate fires for file write operations |
 | `packages/gateway/test/e2e/scenarios/hitl-write-ops.test.ts:34` | I2 | E2E test confirms rejected actions mark dependent sub-tasks as skipped |
-| `packages/mcp-connectors/aws/src/server.ts:2` | I2 | AWS MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/azure/src/server.ts:2` | I2 | Azure MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/bitbucket/src/server.ts:4` | I2 | Bitbucket MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/circleci/src/server.ts:3` | I2 | CircleCI MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/confluence/src/server.ts:4` | I2 | Confluence MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/gcp/src/server.ts:2` | I2 | GCP MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/github/src/server.ts:4` | I2 | GitHub MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/github-actions/src/server.ts:3` | I2 | GitHub Actions MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/gitlab/src/server.ts:4` | I2 | GitLab MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/gitlab/src/server.ts:5` | I2 | GitLab pipeline cancel/retry also rely on executor.ts HITL gate |
-| `packages/mcp-connectors/gmail/src/server.ts:4` | I2 | Gmail MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/google-drive/src/server.ts:4` | I2 | Google Drive MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/iac/src/server.ts:2` | I2 | IaC MCP write tools (terraform.apply/destroy, cloudformation.deploy, pulumi.up) rely on executor.ts gate |
-| `packages/mcp-connectors/jenkins/src/server.ts:3` | I2 | Jenkins MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/jira/src/server.ts:4` | I2 | Jira MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/kubernetes/src/server.ts:2` | I2 | Kubernetes MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/linear/src/server.ts:4` | I2 | Linear MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/notion/src/server.ts:3` | I2 | Notion MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/obsidian/src/server.ts:11` | I2 | Obsidian HITL gate is in executor.ts; assertHitlRequired() not used in this codebase |
-| `packages/mcp-connectors/obsidian/src/server.ts:13` | I2 | Obsidian append_to_daily_note is HITL-gated via obsidian.note.append action type |
-| `packages/mcp-connectors/obsidian/src/server.ts:67` | I2 | Path-traversal guard in obsidian_get covers read path (HITL covers write path) |
-| `packages/mcp-connectors/obsidian/src/server.ts:369` | I2 | Obsidian daily-note append enforces vault boundary via assertWithinVault before writing |
-| `packages/mcp-connectors/onedrive/src/server.ts:4` | I2 | OneDrive MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/outlook/src/server.ts:7` | I2 | Outlook MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/pagerduty/src/server.ts:3` | I2 | PagerDuty MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/slack/src/server.ts:4` | I2 | Slack MCP write tools rely on executor.ts gate; no per-connector HITL guard |
-| `packages/mcp-connectors/teams/src/server.ts:3` | I2 | Teams MCP write tools rely on executor.ts gate; no per-connector HITL guard |
+| `packages/gateway/src/engine/executor.ts` | I2 | Connector write tools rely on the executor's HITL gate; no per-connector guard. This replaced 27 per-connector rows citing `packages/mcp-connectors/<id>/src/server.ts`, which moved to nimbus-agent/nimbus-mcp-servers. The claim was always about THIS site — each row attested that a connector adds no gate of its own, which is a property of the executor, not of 27 files. The counterpart guarantee, that no connector mutates without routing through the consent kit, is enforced in that repository by its `audit:connector-consent` gate. |
 | `packages/ui/src/components/hitl/StructuredPreview.tsx:6` | I2 | StructuredPreview component renders HITL consent payload safely (XSS-protected) |
 | `packages/ui/src/components/PendingUpdates.tsx:9` | I7 | PendingUpdates only calls updater.checkNow (read-only); applyUpdate requires separate user action |
 | `packages/ui/src-tauri/src/gateway_bridge.rs:152` | I7 | NO_TIMEOUT_METHODS sub-list (data.export, data.import, llm.pullModel, updater.applyUpdate) and size assertion |

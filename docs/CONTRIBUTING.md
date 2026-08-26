@@ -127,7 +127,7 @@ expect(sidecarPath("/opt/nimbus/bin/nimbus-gateway", "linux"))
 
 The same rule applies to production helpers that accept a `platform` argument and run on a host where `process.platform` differs — branch on the argument, not on `process.platform`.
 
-The `pr-quality-cross-platform` job (`.github/workflows/ci.yml`) runs the same whole-repo test paths on macOS and Windows at PR time as the push matrix — `packages/gateway packages/cli packages/mcp-connectors scripts`, so unit, integration and e2e in one process — and this class of regression is therefore caught before merge rather than on `main`. Only the flags differ (the push leg adds coverage instrumentation and a JUnit reporter that this job has no use for); coverage and packaging stay Ubuntu-only.
+The `pr-quality-cross-platform` job (`.github/workflows/ci.yml`) runs the same whole-repo test paths on macOS and Windows at PR time as the push matrix — `packages/gateway packages/cli scripts`, so unit, integration and e2e in one process — and this class of regression is therefore caught before merge rather than on `main`. Only the flags differ (the push leg adds coverage instrumentation and a JUnit reporter that this job has no use for); coverage and packaging stay Ubuntu-only.
 
 ### Using the `nimbus-*` skill set (Claude Code / compatible AI assistants)
 
@@ -173,7 +173,8 @@ If a file is genuinely untestable glue rather than logic, it can be excluded —
 
 ## Adding a New MCP Connector
 
-Connectors live in `packages/mcp-connectors/`. They depend only on `@nimbus-dev/sdk`.
+Connectors live in their own repository, [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers), and ship as
+the `@nimbus-dev/connectors` npm package that this gateway consumes. Add or change one there.
 
 Use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector). It is
 published on npm and emits the whole connector package from a JSON spec — `src/server.ts`, the
@@ -185,9 +186,11 @@ the spec declares a search tool.
 bunx create-nimbus-connector --spec ./your-service.spec.json
 ```
 
-**Run it from the repository root.** In monorepo mode it writes to `packages/mcp-connectors/<name>`
-relative to your current directory, so running it from inside `packages/mcp-connectors/` nests the
-output at `packages/mcp-connectors/packages/mcp-connectors/<name>`.
+**Run it from the connectors repository's root**, where it writes to `connectors/<name>` relative
+to your current directory. Running it from inside `connectors/` nests the output one level too deep.
+
+A connector that the gateway should also INDEX needs its sync handler and registry entry here, in
+this repository — adding one touches both repos. See [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers).
 
 Model your spec on one of the generator's own fixtures — `fixtures/netlify.spec.json` is a good
 read-only example. Add `--standalone` if you want the connector outside this repo; that variant
@@ -248,7 +251,7 @@ gateway    ← must not import from cli or ui
 cli        ← IPC-only communication with gateway (no source imports)
 ui         ← IPC-only communication with gateway (no source imports)
 sdk        ← must not import from gateway, cli, or ui
-mcp-connectors/*  ← depend on @nimbus-dev/sdk only
+@nimbus-dev/connectors  ← the connectors, consumed from npm (own repo)
 ```
 
 Circular dependencies are forbidden. The linter will catch cross-package source imports.

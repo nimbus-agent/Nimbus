@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
-const CONNECTORS_DIR = join(REPO_ROOT, "packages", "mcp-connectors");
+export const CONNECTOR_PACKAGE = "@nimbus-dev/connectors";
 const OUT = join(
   REPO_ROOT,
   "packages",
@@ -13,10 +14,68 @@ const OUT = join(
   "bundled-connector-registry.ts",
 );
 
-export function bundledConnectorIds(dir: string = CONNECTORS_DIR): string[] {
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && existsSync(join(dir, e.name, "src", "server.ts")))
-    .map((e) => e.name)
+/**
+ * Every connector the installed `@nimbus-dev/connectors` exposes.
+ *
+ * Derived from the package's `exports` map, which is the only thing that decides what a consumer
+ * can actually import. This used to scan `packages/mcp-connectors` for directories containing
+ * `src/server.ts`; that stopped being the right question when the connectors moved out, because a
+ * connector present in the package but absent from its exports map is unreachable — exactly the
+ * shape of the bug that shipped in 0.1.0, where `shared/connector-mode.ts` was packed but not
+ * exported.
+ *
+ * Subpath exports with a further segment (`./shared/connector-mode.ts`) are not connectors and are
+ * filtered out; so is the root export.
+ */
+/**
+ * The installed package's own directory.
+ *
+ * Resolved through a subpath the package DOES export, then walked up to the manifest — rather than
+ * `require("<pkg>/package.json")`, which fails: an exports map is a whitelist and this package does
+ * not list `./package.json`. Exporting it would be the conventional fix and is worth doing next
+ * time that package is published; walking up needs no release and does not depend on which
+ * subpath happens to be exported.
+ */
+function connectorPackageDir(packageName: string): string {
+  // Resolved from the GATEWAY's manifest, not this script's location: the gateway is the package's
+  // consumer and the dependency is declared there, so that is where node resolution can see it.
+  const require = createRequire(join(REPO_ROOT, "packages", "gateway", "package.json"));
+  let dir = dirname(require.resolve(`${packageName}/shared/connector-mode.ts`));
+  for (let up = 0; up < 8; up++) {
+    const candidate = join(dir, "package.json");
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(candidate, "utf8"));
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        (parsed as Record<string, unknown>)["name"] === packageName
+      ) {
+        return dir;
+      }
+    } catch {
+      // Not this level — keep walking.
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`cannot locate the ${packageName} package root`);
+}
+
+export function bundledConnectorIds(packageName: string = CONNECTOR_PACKAGE): string[] {
+  const manifest: unknown = JSON.parse(
+    readFileSync(join(connectorPackageDir(packageName), "package.json"), "utf8"),
+  );
+  const exportsMap =
+    typeof manifest === "object" && manifest !== null
+      ? (manifest as Record<string, unknown>)["exports"]
+      : undefined;
+  if (typeof exportsMap !== "object" || exportsMap === null) {
+    throw new Error(`${packageName} has no exports map — cannot derive the connector list`);
+  }
+  return Object.keys(exportsMap)
+    .filter((k) => k.startsWith("./") && !k.slice(2).includes("/"))
+    .map((k) => k.slice(2))
     .sort((a, b) => a.localeCompare(b));
 }
 

@@ -20,8 +20,7 @@
       "!**/*.d.ts",
       "!**/*.svg",
       "!packages/cli/src/nimbus.js",
-      "!packages/gateway/src/nimbus-gateway.js",
-      "!packages/mcp-connectors/*/src/nimbus-mcp-*.js"
+      "!packages/gateway/src/nimbus-gateway.js"
     ]
   },
   "formatter": {

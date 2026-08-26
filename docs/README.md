@@ -814,7 +814,6 @@ nimbus/
 │   │                         # config, profile, diag, doctor, db, connector, extension, …
 │   ├── ui/                   # Tauri 2.0 desktop app (Phase 4; release vehicle in Phase 13)
 │   ├── docs/                 # Astro Starlight documentation site
-│   ├── mcp-connectors/       # First-party MCP servers (90+)
 │   ├── admin-console/        # Static admin console served at /admin/*
 │   └── github-actions/       # First-party GitHub Actions (not workspace members)
 ├── docs/

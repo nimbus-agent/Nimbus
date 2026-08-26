@@ -81,14 +81,6 @@ reviews:
         (`helper(`), not the bare name. Prefer dependency injection over
         `mock.module`, which is process-global and leaks across files in the
         combined CI run.
-    - path: "packages/mcp-connectors/**"
-      instructions: >-
-        Connectors are first-party MCP servers whose only dependency is the
-        published `@nimbus-dev/sdk` — flag a new runtime dependency, and flag
-        any import from the gateway. The engine must never call a cloud API
-        directly; that is what these exist for. Write-capable tools must be
-        declared so the HITL gate and the federated invoke gate can see them
-        (I26): a peer must never be able to trigger a connector write.
     - path: "scripts/structure-audit/**"
       instructions: >-
         These are the org's gates, so their failure modes matter more than their
