@@ -143,14 +143,6 @@ export async function discoverSourceFiles(): Promise<string[]> {
     new Glob("packages/gateway/src/**/*.tsx"),
     new Glob("packages/cli/src/**/*.ts"),
     new Glob("packages/cli/src/**/*.tsx"),
-    new Glob("packages/mcp-connectors/*/src/**/*.ts"),
-    // `shared/` has no `src/` segment, so the glob above never matched it — yet
-    // CI has always instrumented it (instrument-scope.ts) and `_test-suite.yml`
-    // runs its tests. The result was real coverage numbers that no gate read:
-    // `safe-cli-arg.ts`, the argv-flag-smuggling guard, sat at 62.5% line and
-    // `join-api-path.ts` had no lcov record at all. All 16 files clear the floor
-    // as of this change, so it lands with no baselined debt.
-    new Glob("packages/mcp-connectors/shared/**/*.ts"),
   ];
   for (const glob of globs) {
     for await (const rawRel of glob.scan({ cwd: REPO_ROOT })) {

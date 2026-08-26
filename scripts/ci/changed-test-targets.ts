@@ -18,7 +18,7 @@ import { changedFiles } from "./changed-files.ts";
 
 const TEST_SUFFIX = /\.test\.tsx?$/;
 /** Source roots whose files have a colocated `<name>.test.ts` by convention. */
-const COLOCATED_ROOTS = ["packages/gateway/src/", "packages/cli/src/", "packages/mcp-connectors/"];
+const COLOCATED_ROOTS = ["packages/gateway/src/", "packages/cli/src/"];
 
 /**
  * Map changed files to test files worth running.

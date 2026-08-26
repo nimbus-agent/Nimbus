@@ -43,20 +43,6 @@ function patternToSampleRelPaths(pattern: string): string[] {
     samples.push("packages/admin-console/src/main.ts", "packages/admin-console/src/views.ts");
     return samples;
   }
-  if (pattern === "**/packages/mcp-connectors/*/src/server.ts") {
-    samples.push(
-      "packages/mcp-connectors/snyk/src/server.ts",
-      "packages/mcp-connectors/sonarqube/src/server.ts",
-    );
-    return samples;
-  }
-  if (pattern === "**/packages/mcp-connectors/*/src/tools.ts") {
-    samples.push(
-      "packages/mcp-connectors/bigquery/src/tools.ts",
-      "packages/mcp-connectors/athena/src/tools.ts",
-    );
-    return samples;
-  }
   samples.push(pattern);
   return samples;
 }

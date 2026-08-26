@@ -103,11 +103,6 @@ export const SCOPE_GATES: readonly ScopeGate[] = Object.freeze([
     floorLines: 80,
     match: (p) => p.startsWith("packages/cli/src/commands/doctor"),
   },
-  {
-    name: "MCP connectors",
-    floorLines: 70,
-    match: (p) => p.startsWith("packages/mcp-connectors/"),
-  },
   { name: "TUI", floorLines: 80, match: (p) => p.startsWith("packages/cli/src/tui/") },
   { name: "Updater", floorLines: 80, match: gw("updater/") },
   { name: "LAN", floorLines: 80, match: (p) => p.startsWith("packages/gateway/src/ipc/lan-") },

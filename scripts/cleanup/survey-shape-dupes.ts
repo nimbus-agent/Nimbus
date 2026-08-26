@@ -1,4 +1,4 @@
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { REPO_ROOT, relPath } from "./lib.ts";
 
@@ -20,7 +20,6 @@ async function lsOne(dir: string, suffix: string): Promise<string[]> {
 async function main() {
   const connectorsDir = `${REPO_ROOT}/packages/gateway/src/connectors`;
   const ipcDir = `${REPO_ROOT}/packages/gateway/src/ipc`;
-  const mcpDir = `${REPO_ROOT}/packages/mcp-connectors`;
 
   const groups: ShapeGroup[] = [
     {
@@ -40,25 +39,10 @@ async function main() {
     },
   ];
 
-  const mcpServers: string[] = [];
-  try {
-    for (const dir of await readdir(mcpDir)) {
-      const srv = join(mcpDir, dir, "src", "server.ts");
-      try {
-        await stat(srv);
-        mcpServers.push(srv);
-      } catch {
-        /* missing */
-      }
-    }
-  } catch {
-    /* missing mcp dir */
-  }
-  groups.push({
-    name: "MCP connector servers",
-    glob: `${mcpDir}/*/src/server.ts`,
-    matches: mcpServers,
-  });
+  // The "MCP connector servers" group was dropped when the connectors moved to
+  // nimbus-agent/nimbus-mcp-servers. It already tolerated a missing directory, so leaving it would
+  // have reported a group of zero forever — a survey that reads as "no duplication here" when it
+  // simply stopped looking.
 
   const out: string[] = ["# Punch list — section 2b: Shape duplication", ""];
   for (const g of groups) {

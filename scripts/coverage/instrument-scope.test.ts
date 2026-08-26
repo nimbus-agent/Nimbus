@@ -6,7 +6,6 @@ describe("shouldInstrument", () => {
   test("instruments first-party package src", () => {
     expect(shouldInstrument("/repo/packages/gateway/src/engine/executor.ts")).toBe(true);
     expect(shouldInstrument("/repo/packages/cli/src/index.ts")).toBe(true);
-    expect(shouldInstrument("/repo/packages/mcp-connectors/jira/src/tools.ts")).toBe(true);
   });
   test("skips node_modules, test/spec files, and non-src", () => {
     expect(shouldInstrument("/repo/node_modules/@babel/core/lib/index.js")).toBe(false);
@@ -18,14 +17,16 @@ describe("shouldInstrument", () => {
   test("normalizes Windows backslashes", () => {
     expect(shouldInstrument(String.raw`C:\repo\packages\gateway\src\a.ts`)).toBe(true);
   });
-  test("instruments mcp-connectors/shared helpers (flat, nested, tsx)", () => {
-    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/mcp-search-tool.ts")).toBe(true);
-    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/sub/bar.ts")).toBe(true);
-    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/widget.tsx")).toBe(true);
+  // The connectors moved to their own repository, so nothing under packages/mcp-connectors is
+  // instrumented here any more — asserted as NOT instrumented rather than deleted, so a
+  // reintroduced path is caught rather than silently measured against a tree that does not exist.
+  test("does not instrument the departed connector tree", () => {
+    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/mcp-search-tool.ts")).toBe(false);
+    expect(shouldInstrument("/repo/packages/mcp-connectors/jira/src/tools.ts")).toBe(false);
+    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/widget.tsx")).toBe(false);
   });
-  test("still instruments connector src and still skips shared test files", () => {
-    expect(shouldInstrument("/repo/packages/mcp-connectors/zotero/src/server.ts")).toBe(true);
-    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/mcp-search-tool.test.ts")).toBe(false);
+  test("skips test files inside instrumented roots", () => {
+    expect(shouldInstrument("/repo/packages/gateway/src/foo.test.ts")).toBe(false);
   });
 
   /**

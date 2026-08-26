@@ -61,12 +61,11 @@ describe("testTargetsFor", () => {
     expect(out).toEqual(["packages/cli/src/a.test.ts", "packages/gateway/src/z.test.ts"]);
   });
 
-  it("covers all three colocated roots", () => {
-    const out = testTargetsFor(
-      ["packages/gateway/src/a.ts", "packages/cli/src/b.ts", "packages/mcp-connectors/slack/c.ts"],
-      allExist,
-    );
-    expect(out).toHaveLength(3);
+  // Was "all three" while packages/mcp-connectors was a colocated root. The connectors moved to
+  // their own repository, so there are two.
+  it("covers both colocated roots", () => {
+    const out = testTargetsFor(["packages/gateway/src/a.ts", "packages/cli/src/b.ts"], allExist);
+    expect(out).toHaveLength(2);
   });
 
   it("an empty change set yields an empty list, never a whole-suite fallback", () => {
