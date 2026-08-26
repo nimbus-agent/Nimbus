@@ -89,7 +89,11 @@ export async function checkVersionSkew(
 }
 
 async function defaultFetchLatest(): Promise<string> {
-  const r = await fetch(`${REGISTRY}/${PACKAGE_NAME.replace("/", "%2F")}`, {
+  // replaceAll, not replace: the single-argument form substitutes only the FIRST occurrence, so a
+  // package name with two separators would be under-encoded and the request would silently address
+  // the wrong path. Correct today by accident — `@nimbus-dev/connectors` has exactly one slash —
+  // which is precisely the shape CodeQL's incomplete-sanitization rule exists to catch.
+  const r = await fetch(`${REGISTRY}/${PACKAGE_NAME.replaceAll("/", "%2F")}`, {
     headers: { accept: "application/vnd.npm.install-v1+json" },
     signal: AbortSignal.timeout(15_000),
   });
