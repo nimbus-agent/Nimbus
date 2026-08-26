@@ -1,4 +1,4 @@
-import { setConnectorMode } from "../../../mcp-connectors/shared/connector-mode.ts";
+import { setConnectorMode } from "@nimbus-dev/connectors/shared/connector-mode.ts";
 import { BUNDLED_CONNECTORS } from "./bundled-connector-registry.ts";
 
 /**

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   getConnectorMode,
   resetConnectorModeForTests,
-} from "../../../mcp-connectors/shared/connector-mode.ts";
+} from "@nimbus-dev/connectors/shared/connector-mode.ts";
 import { runBundledConnector } from "./run-bundled-connector.ts";
 
 // FILE-LEVEL, and deliberately outside both describes: every test here calls

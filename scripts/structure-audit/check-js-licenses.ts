@@ -43,6 +43,15 @@ const PACKAGE_OVERRIDES: ReadonlySet<string> = new Set([
   "@img/sharp-libvips-linux-x64@1.3.2",
   "@img/sharp-libvips-linuxmusl-x64@1.3.2",
   "flatbuffers@1.12.0",
+  // Our own first-party connectors, extracted to nimbus-agent/nimbus-mcp-servers and consumed
+  // from npm. AGPL-3.0-only is flagged by default for a good reason — an AGPL dependency imposes
+  // AGPL on whatever links it — but the consumer here is the gateway, which is AGPL-3.0-only
+  // itself. There is no obligation to impose. Deliberately NOT version-pinned, unlike the entries
+  // above: those pin a THIRD party's binaries so a bump gets reviewed, whereas this package is
+  // released by this project, and pinning would mean editing this list on every connector
+  // release for no review value. AGPL stays out of ALLOWED_LICENSES so a third-party AGPL
+  // dependency still fails, which is the case actually worth catching.
+  "@nimbus-dev/connectors",
 ]);
 
 type LicenseField = string | { type: string } | LicenseField[] | undefined;

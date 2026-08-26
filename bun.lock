@@ -89,6 +89,7 @@
       "dependencies": {
         "@mastra/core": "^1.61.0",
         "@mastra/mcp": "^1.17.1",
+        "@nimbus-dev/connectors": "^0.1.1",
         "@nimbus-dev/sdk": "^1.19.0",
         "@noble/hashes": "^2.3.0",
         "@scure/bip39": "^2.3.0",
@@ -1862,6 +1863,8 @@
     "@nimbus-dev/admin-console": ["@nimbus-dev/admin-console@workspace:packages/admin-console"],
 
     "@nimbus-dev/client": ["@nimbus-dev/client@0.17.3", "", { "dependencies": { "@nimbus-dev/sdk": "^1.6.0" } }, "sha512-iuTeb8wAbFgcAEcTa8rGHuBdoC89krMbVGNs3g9qKFknHlHahrnLHDcUSIj/03iJfExljUm1FFktxhTzIV4BHA=="],
+
+    "@nimbus-dev/connectors": ["@nimbus-dev/connectors@0.1.1", "", { "dependencies": { "@modelcontextprotocol/sdk": "1.30.0", "@nimbus-dev/sdk": "^1.20.0", "zod": "^4.4.2" }, "optionalDependencies": { "hyparquet": "^1.29.1", "imapflow": "^1.7.2", "nodemailer": "^9.0.5", "tsdav": "^2.3.1" }, "bin": { "nimbus-connector": "standalone/src/bin.ts" } }, "sha512-+f5N7GoZUC0POIV8XKJ7R8ebDcXB//2LYCx9kMBF807T6cotIswCreFDGbXVie7CEQPK7A1isDeGhMyBCPYxMQ=="],
 
     "@nimbus-dev/mcp-connector": ["@nimbus-dev/mcp-connector@workspace:packages/mcp-connectors/standalone"],
 
@@ -4258,6 +4261,8 @@
     "@mswjs/interceptors/@open-draft/deferred-promise": ["@open-draft/deferred-promise@2.2.0", "", {}, "sha512-CecwLWx3rhxVQF6V4bAgPS5t+So2sTbPgAzafKkVizyi7tlwpcFpdFqq+wqF2OwNBmqFuu6tOyouTuxgpMfzmA=="],
 
     "@nimbus-dev/client/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.18.0", "", {}, "sha512-s6y3MvF61XNDEukEjylh4OYbMERLPiGIi6B+f8oAYop4/4cWtbLxqh/pSM3f5el8H9d2hD3vW9j1JQhOL6hcSQ=="],
+
+    "@nimbus-dev/connectors/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.21.0", "", {}, "sha512-6mvR4NZNes/xSnR8lvnsO6n4QJXixuHxqUP0jBWRRZxEW/OoTgSLNzJewm75c5SrIf7AK4jcIBmgqtk3xMnZ4g=="],
 
     "@nimbus/docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 

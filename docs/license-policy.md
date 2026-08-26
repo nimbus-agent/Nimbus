@@ -64,6 +64,15 @@ Each override must:
 - `@vscode/vsce-sign@2.0.9`, `@vscode/vsce-sign-{linux,win32}-x64@2.0.6` — Microsoft VSCE signing tooling; redistribution permitted by the LICENSE.txt for vsce-driven extension publishing; not bundled into the gateway binary. Bun installs only the platform-matching variant per runner.
 - `@img/sharp-libvips-{linux-x64,linuxmusl-x64}@1.3.2` — libvips C library shipped as native binary; LGPL-3.0-or-later. Accepted alongside `sharp` itself (dual-licensed Apache-2.0 OR LGPL, passes via Apache). The exception is intentionally narrow — LGPL-3.0-or-later is **not** in the global allowlist, so a stray pure-LGPL dep elsewhere still trips the gate. LGPL §4d compliance is satisfied by sharp's runtime FFI loading of libvips (dynamic-linking model).
 - `flatbuffers@1.12.0` — Apache-2.0 per LICENSE.txt; non-SPDX `license` field is the only reason for the override.
+- `@nimbus-dev/connectors` — our own first-party MCP connectors, extracted to
+  [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) and consumed
+  from npm. `AGPL-3.0-only` is flagged by default for a sound reason — an AGPL dependency imposes
+  AGPL on whatever links it — but the consumer is the gateway, which is `AGPL-3.0-only` itself, so
+  there is no obligation to impose. **Deliberately not version-pinned**, unlike every entry above:
+  those pin a third party's artefacts so a bump gets reviewed, whereas this package is released by
+  this project and pinning would mean editing the list on every connector release for no review
+  value. `AGPL-3.0-only` stays out of the global allowlist, so a *third-party* AGPL dependency still
+  trips the gate — which is the case actually worth catching.
 - `ovsx@1.0.1` — EPL-2.0; build-tool only (`publish-vscode.yml`), not redistributed.
 
 When `PACKAGE_OVERRIDES` and this list disagree, the source wins. PRs that add an override should still update the navigation aid above.
