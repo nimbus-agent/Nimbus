@@ -53,6 +53,8 @@ instead of a dormant one.
 - Collapse the three independent definitions of "is this provider local" into one.
 - Make the egress destination name the vendor, not the word `model`.
 - Close the un-ledgered context-overflow fallback path.
+- Make route availability mean "this model answers", not "the daemon is up" (§3.4) — a fail-open
+  that only becomes harmful once a priority walk exists, i.e. one this slice creates.
 
 **Non-goals (deferred, and to which slice)**
 
@@ -90,6 +92,44 @@ through `generate()` would touch every provider and every call site for no addit
 
 `providerId` survives as the **vendor label** — it is what egress `destination` and local/remote
 classification key on, and it is intentionally not unique across routes.
+
+#### `routeId` is opaque internally and parsed only at the boundary
+
+Model names contain slashes. This is not hypothetical: `LlamaCppProvider`'s model name defaults to
+`"model.gguf"` and is realistically a **file path** (`/models/meta-llama/Llama-3-8B.gguf`, or a
+Windows path with backslashes and a drive colon), and Ollama accepts namespaced tags such as
+`hf.co/user/model`. A naive `routeId.split("/")` breaks on all of these.
+
+Two rules, and the first is what actually makes it safe:
+
+1. **`routeId` is never parsed inside the router.** `ModelRoute` already carries `providerId` and
+   `modelName` as separate fields; `routeId` is an opaque map key, only ever compared for equality.
+   Parsing it internally would be re-deriving data the struct already holds.
+2. **Parsing happens only where a human typed a string** — `route_priority` entries and (slice 4)
+   `nimbus llm use <vendor>/<model>`. There it splits on the **first** slash, which is unambiguous
+   because `providerId` is drawn from a known set and is validated to contain no slash:
+
+   ```ts
+   const i = raw.indexOf("/");
+   const providerId = raw.slice(0, i);
+   const modelName  = raw.slice(i + 1);   // may itself contain slashes
+   ```
+
+A route reference that matches no registered route is a **config error reported at load**, not a
+silently dropped entry — a `route_priority` entry that quietly vanishes would degrade to the
+default ordering with no signal, which is the "supplied flag degrading into an omitted filter"
+shape.
+
+#### llama.cpp cannot host two models at one base URL
+
+`LlamaCppProvider.generate()` sends no model field — the server answers with whatever it was
+launched with (`llamacpp-provider.ts`, the `/completion` body has `prompt`/`n_predict`/
+`temperature`/`stream` only). So two llama.cpp routes at the same `baseUrl` would both hit the same
+loaded weights while reporting different model names: a route table that lies.
+
+Multi-model on llama.cpp therefore requires **one server per model at distinct base URLs**, and
+config must express that. Ollama has no such limit — `generate()` sends `this.modelName` to a shared
+daemon. Slice 1 must reject, at config load, two llama.cpp routes sharing a `base_url`.
 
 ### 3.2 `isLocal` is declared by the provider, and defined once
 
@@ -132,16 +172,66 @@ prefer_local  = true
 route_priority = ["ollama/qwen3", "ollama/gemma3"]   # optional; when set, it IS the order
 ```
 
-Resolution for a task: **explicit task pin → `route_priority` → default ordering**, then filtered
-by air-gap, the reasoning capability floor, and availability, in that order — matching what
-`firstAvailable` does today.
+Resolution for a task: **explicit task pin → `route_priority` → default ordering**. That sequence
+chooses the candidate **order** only. Air-gap, the reasoning capability floor, and availability are
+**gates applied to every candidate**, including an explicit pin — a pin selects which route is tried
+first, never that it is tried unconditionally.
+
+Stated explicitly because the earlier wording ("then filtered by…") could be read as filtering only
+the fallback chain: if `[llm.tasks] reasoning = "gemini/gemini-2.5-pro"` is pinned and
+`enforce_air_gap = true`, the pin is **skipped**, not honoured. A pin that could defeat air-gap
+would make a preference setting override a refusal setting, which inverts the whole point of
+keeping those two knobs distinct (`router.ts` `enforcesAirGap` documents that distinction at
+length).
+
+No behaviour change is implied for the existing walk: `firstAvailable` already applies both gates
+inside the loop via `continue`, rather than pre-filtering a pool. The routes version keeps that
+shape.
 
 Absent `route_priority`, the default ordering reproduces today's semantics exactly: local routes
 first when `prefer_local = true`, remote first otherwise. Task pins are read from
 `llm_task_defaults` and are inert until slice 4 gives them a surface; the resolution step exists in
 slice 1 so slice 4 is a surface change rather than a router change.
 
-### 3.4 Config
+### 3.4 Route availability must mean "this model answers", not "the daemon is up"
+
+**This is a fail-open that slice 1 creates, so slice 1 must close it.**
+
+`OllamaProvider.isAvailable()` issues `GET /api/tags` and returns `resp.ok`. It never checks that
+`this.modelName` is among the tags. `LlamaCppProvider.isAvailable()` pings `/health`, likewise
+model-blind. So a route configured for a model that was never pulled reports **available**, the
+priority walk stops there, and the call fails at `generate()`.
+
+With one route that is merely a confusing error — the only configured model is wrong, and nothing
+else could have run. With N routes it is materially worse: the walk halts at the first route that
+falsely claims availability **instead of falling through to a route that would have worked**. The
+degradation is invisible, and it exists only because this slice introduced the walk.
+
+Fix: availability is per **route**, not per provider — `daemon reachable AND modelName present in
+listModels()`. `OllamaProvider.listModels()` already parses the daemon's tag list, so the data is
+free; what it needs is a short-TTL cache so resolving four routes does not issue four `/api/tags`
+round trips. `LlamaCppProvider.listModels()` returns its own configured name unconditionally, which
+is honest only under the one-server-per-model rule above.
+
+**No auto-pull on a miss.** Falling through to the next route is correct; silently initiating a
+multi-gigabyte download because a config entry named a model is not. Pulling stays explicit
+(`llm.pullModel`, already wired). A route unavailable *because its model is absent* must be
+distinguishable in `nimbus llm status` from one unavailable because the daemon is down — those have
+different fixes, and reporting both as "unavailable" sends the user to the wrong one.
+
+### 3.5 Lifecycle operations key on `providerId`, not `routeId`
+
+`registry.pullModel` / `loadModel` / `unloadModel` currently resolve `providers.get(provider)` by
+kind, which no longer exists after the refactor. They key on **`providerId`** — any registered
+instance of that runtime — and the model name stays an explicit argument.
+
+Keying them on `routeId` would be wrong, not merely redundant: `OllamaProvider.pullModel(modelName)`
+posts that **argument** to the shared daemon's `/api/pull` and ignores `this.modelName`, so any
+instance can pull any model. Requiring a matching route would make it impossible to pull a model
+that has no route yet — which is the primary use of pull, and the exact thing a user does before
+adding a route for it.
+
+### 3.6 Config
 
 `[llm.local.<name>]` sub-tables:
 
@@ -164,7 +254,7 @@ but the parser machinery is not new work either way.
 **Back-compat is total.** Existing `local_model` / `remote_model` / `prefer_local` keys keep
 working and synthesise a single route each. No user config breaks.
 
-### 3.5 Database
+### 3.7 Database
 
 **No migration.** Both tables were already built for pairs; only the router forgot:
 
@@ -196,6 +286,29 @@ append path as any other resolution.
 
 **In slice 1 this is a pure refactor with zero behavioural change**, because no remote route
 exists to fall back to. That is precisely the argument for doing it now.
+
+**Which path this is, precisely — because it is easy to get backwards.** Brief synthesis does *not*
+reach this hazard. `synthesis-llm.ts` deliberately calls `router.generateMarkdown(prompt, resolved)`
+and never `router.generate()`, with an inline instruction not to unify the two, exactly so the
+overflow fallback cannot bypass the ledger append and the `[agents] synthesis` mode check. So on the
+synthesis path there is no fallback to ledger, by construction.
+
+The hazard is in **`LlmRouter.generate()`**, whose callers are `engine/run-ask.ts`,
+`briefs/brief-llm-adapter.ts`, `glossary/glossary-llm-adapter.ts` and
+`decisions/decision-llm-adapter.ts` — none of which append an egress row today, because I29's
+`model` coverage class is scoped to built-in agent brief synthesis and has never claimed more.
+
+**That scoping is sound today and becomes a hole the moment slice 2 lands.** With a remote route
+registered, `nimbus ask` and the glossary/decisions passes can send indexed private content to a
+vendor through `generate()` with **no `egress_ledger` row**, while `nimbus prove` reports only the
+synthesis calls. A ledger that is silent about real outbound traffic is the precise failure this
+subsystem exists to prevent.
+
+**Therefore: a named blocker on slice 2, not a slice 1 deliverable.** Before the first remote route
+is registered, slice 2 must either extend the `model` coverage class to `LlmRouter.generate()` or
+state in `docs/SECURITY-INVARIANTS.md` exactly which LLM calls the class does not cover. Widening
+I29's coverage is a deliberate invariant change requiring the wiring + docs + test triple; it is
+recorded here so slice 2 cannot land without confronting it.
 
 ### 4.2 The egress destination does not name the vendor
 
@@ -269,6 +382,18 @@ All paths above are relative to `packages/gateway/src/`. Test files are not list
   (`isLocal: false`) registered in-test. This is the only way to exercise §4.2 in slice 1.
 - **One definition of local-ness:** a structural test asserting `isLocal` has exactly one
   definition site and that `ipc/llm-rpc.ts` / `llm/registry.ts` no longer carry their own copies.
+- **Availability is per route (§3.4):** with a daemon reachable but a model absent from
+  `listModels()`, the route reports unavailable and the walk **continues to the next route**. Prove
+  this red first — on a model-blind `isAvailable()` the walk stops at the absent model, which is
+  the whole defect.
+- **A pinned route is still gated (§3.3):** a task pin naming a non-local route under
+  `enforce_air_gap = true` is skipped, not honoured.
+- **`routeId` slash handling (§3.1):** a model name containing slashes (`hf.co/user/model`, a
+  `.gguf` path) round-trips through `route_priority` parsing; an unresolvable entry raises at
+  config load rather than being dropped.
+- **Lifecycle by `providerId` (§3.5):** `pullModel("ollama", "a-model-with-no-route")` succeeds.
+  This is the case that keying on `routeId` would break.
+- **Two llama.cpp routes on one `base_url`** are rejected at config load.
 - Config: `[llm.local.<name>]` round-trip; legacy `local_model` still yields one working route;
   malformed sub-table does not discard the whole `[llm]` section (matching the `[ownership]`
   precedent at `nimbus-toml.ts` ≈1907).
@@ -295,6 +420,18 @@ Decided rather than left blank, so the plan is actionable. Each is cheap to reve
    **wrong** — and shipping a surface that under-reports its own state is the failure mode this
    project treats most seriously.
 
+   **Tabular, with the exact columns deferred to implementation**, but two constraints on them:
+   `contextWindow` is frequently `undefined` (it is why `meetsCapabilityFloor` fail-opens), so that
+   column renders `—` and never a fabricated default; and a single availability column collapses
+   two states with different fixes, so "daemon unreachable" and "model not pulled" (§3.4) must be
+   distinguishable. A sketch, not a contract:
+
+   ```
+   ROUTE ID       PROVIDER  MODEL       LOCAL  AVAILABLE            CONTEXT
+   ollama/qwen3   ollama    qwen3:8b    yes    yes                  8192
+   ollama/gemma   ollama    gemma3:12b  yes    no (model not pulled) —
+   ```
+
 3. **Consent posture — carried to slice 2, unresolved here, and it does not block slice 1**
    (slice 1 opens no new egress path). The working assumption to confirm before any vendor lands:
    *configuration is consent; there is no per-call HITL on inference*, on the precedent that
@@ -305,6 +442,16 @@ Decided rather than left blank, so the plan is actionable. Each is cheap to reve
    (#1334) — so enabling a remote vendor must require an explicit opt-in flag, never be inferred
    from key presence.
 
+   **Shape of that flag, answering the review's question:** `enabled = false` by default inside
+   each `[llm.remote.<vendor>]` table, matching the `[briefs]` and `[code_execution]` default-off
+   precedent — a per-vendor switch rather than one global remote toggle, so enabling Gemini does
+   not silently enable Bedrock because an `aws.*` credential happened to be present for a
+   connector. Confirm when slice 2 is specced; recorded here so it is not re-litigated.
+
+4. **Slice 2 is blocked on the `LlmRouter.generate()` coverage question** in §4.1 — extend I29's
+   `model` class to cover it, or document precisely what it excludes. Not optional, and not
+   deferrable past the first remote route.
+
 ---
 
 ## 8. Decomposition
@@ -312,7 +459,7 @@ Decided rather than left blank, so the plan is actionable. Each is cheap to reve
 | Slice | Content | Status |
 | --- | --- | --- |
 | **1. Model routes** | This document. `(provider, model)` routes, one definition of `isLocal`, vendor-named egress destination, ledgered overflow fallback. Ships multi-local-model routing and **zero** cloud vendors. | approved, planning next |
-| **2. Bearer-key clouds** | Anthropic, OpenAI, Gemini, xAI. One adapter shape, four configs, four Vault keys, the explicit opt-in flag from Open decision 3, and the `D`-rule promotion from Open decision 1. First slice where an `egress_ledger` `model` row is ever written. | not started |
+| **2. Bearer-key clouds** | Anthropic, OpenAI, Gemini, xAI. One adapter shape, four configs, four Vault keys, the explicit opt-in flag from Open decision 3, and the `D`-rule promotion from Open decision 1. First slice where an `egress_ledger` `model` row is ever written. **Blocked on resolving `LlmRouter.generate()`'s I29 coverage (§4.1) before the first remote route registers.** | not started |
 | **3. Bedrock** | SigV4 signing, region, static creds *or* profile/role chain. Kept separate because it shares no auth shape with slice 2; reuses the `aws.*` credential fields connectors already have. | not started |
 | **4. Selection surface** | `[llm.tasks]` per-task pinning, `nimbus llm use <vendor>/<model>` writing to `llm_task_defaults`, full `nimbus llm status`. | not started |
 
