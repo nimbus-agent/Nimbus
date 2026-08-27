@@ -126,17 +126,31 @@ describe("local-ness has exactly one definition", () => {
     ]);
   });
 
-  test("no provider-id comparison or membership check, on ANY line", async () => {
+  test("no provider-id comparison or membership check, on any line OR ACROSS lines", async () => {
     // The independent half (see PROVIDER_ID_COMPARISON): a locality branch keyed on a vendor
     // id is forbidden whether or not the word `isLocal` appears beside it.
+    //
+    // Scanned BOTH per line and over the whole stripped file. A per-line scan alone is
+    // evadable: a formatter splits a long condition across lines, so
+    //   route.provider.providerId ===
+    //     "ollama"
+    // matches nothing on either line while re-deriving locality from a vendor id. The
+    // detectors separate their tokens with `\s*`, which spans newlines, so the joined pass
+    // catches the split form for free. Comments are stripped per line FIRST and the result
+    // re-joined, so prose describing the rule still cannot trip the rule.
     const offenders: string[] = [];
     for (const f of FILES) {
       const src = await readTarget(f.label);
-      for (const line of src.split("\n")) {
-        const code = codeOf(line);
+      const lines = src.split("\n").map(codeOf);
+      lines.forEach((code, i) => {
         if (PROVIDER_ID_COMPARISON.test(code) || PROVIDER_ID_MEMBERSHIP.test(code)) {
-          offenders.push(`${f.label}: ${code.trim()}`);
+          offenders.push(`${f.label}:${i + 1}: ${code.trim()}`);
         }
+      });
+      const joined = lines.join("\n");
+      const spansLines = PROVIDER_ID_COMPARISON.test(joined) || PROVIDER_ID_MEMBERSHIP.test(joined);
+      if (spansLines && !offenders.some((o) => o.startsWith(`${f.label}:`))) {
+        offenders.push(`${f.label}: provider-id check split across lines`);
       }
     }
     expect(offenders).toEqual([]);
@@ -151,12 +165,16 @@ describe("local-ness has exactly one definition", () => {
       'if (route.provider.providerId === "ollama") return true;',
       'const local = p.providerId !== "remote";',
       'if ("llamacpp" === provider.providerId) { }',
+      // Split across lines, the shape a formatter produces for a long condition — the
+      // evasion a per-line scan cannot see. `\s*` in the detector spans the newline.
+      ["if (", "  route.provider.providerId ===", '  "ollama"', ") return true;"].join("\n"),
     ]) {
       expect(PROVIDER_ID_COMPARISON.test(shape)).toBe(true);
     }
     for (const shape of [
       "if (LOCAL_IDS.has(route.provider.providerId)) return true;",
       "const local = LOCAL_IDS.includes(providerId);",
+      ["if (LOCAL_IDS.has(", "  route.provider.providerId,", ")) return true;"].join("\n"),
     ]) {
       expect(PROVIDER_ID_MEMBERSHIP.test(shape)).toBe(true);
     }
