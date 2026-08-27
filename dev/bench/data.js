@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787771092199,
+  "lastUpdate": 1787805527476,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16081,6 +16081,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 319.4009144500007,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2118cdd4ba4954d9617485973b753f47fcbed03c",
+          "message": "refactor(connectors)!: delete packages/mcp-connectors — it ships from npm now (#1347)\n\nThe last step of the extraction, and deliberately the last: everything\nhere had to be proven against the **published** package before the\nsource of truth could be removed.\n\nThat ordering paid for itself twice. `0.1.0` shipped\n`shared/connector-mode.ts` without exporting it — and this deletion is\nexactly what would have surfaced it, with the original already gone.\n\n## What is deleted\n\n**802 files**, plus:\n\n- the three gates that moved to\n[nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers)\n— `connector-consent`, `connector-entrypoints`, `connector-deps`;\n- `run-sandbox-contract`, whose only subject moved;\n- `gen-connector-exports` — it generated *that* package's exports map;\n- the e2e connector-structure contract.\n\n## Coupled changes, all in this commit\n\nSplitting them leaves a live gap, so they land together: workspaces\n**100 → 5**; both CI test-path lists losing `packages/mcp-connectors`\n**together**; `biome`, `knip`, `labeler`, `.coderabbit.yaml`; and 16\nlive docs plus `CLAUDE.md` / `GEMINI.md`.\n\n## Four things that were judgment, not mechanics\n\n**The parity test asserts the path is ABSENT**, not merely dropped. A\npath that no longer exists fails `bun test` on both legs, so re-adding\nit is a mistake the equality check cannot catch — both lists would\nagree, and both would be wrong.\n\n**Discovery reads the package's exports map**, not a directory scan — in\n`gen-bundled-connector-registry`, the drift audit, and the gateway's\n`BUNDLED_CONNECTORS` contract test. That is the stricter question, and\nit is the `0.1.0` bug's exact shape: present in the package, absent from\n`exports`, unreachable. A directory scan calls it present.\n\n**`checkConnectorRegistryDrift` takes an injected id list.** Discovery\nnow goes through node resolution of an installed package, which a temp\ndirectory cannot stand in for — every test was coupled to something that\nno longer exists.\n\n**`preflight-gates.test.ts` asserts the connector gate SET exactly**,\nreplacing a `>= 4` bound whose own comment read \"at least one, so a\nrename cannot make this vacuous\". The number had drifted from the intent\nand broke on a *correct* removal. A count cannot tell a deliberate\nremoval from a regression; a set can.\n\n## SECURITY-INVARIANTS\n\n27 per-connector I2 attestation rows collapse into one citing\n`engine/executor.ts`. The claim was always about that site — each row\nattested that a connector adds **no gate of its own**, which is a\nproperty of the executor, not of 27 files. The counterpart guarantee,\nthat no connector mutates without routing through the consent kit, is\nenforced in the connectors repo by its own `audit:connector-consent`.\n\n## Deliberately untouched\n\n`docs/CHANGELOG.md` and `docs/roadmap.md`. They are dated records of\nwhat was true when written; rewriting them to match today's layout would\nfalsify them. The same reasoning left the 21 `docs/superpowers/` specs\nand plans alone.\n\n## Verification\n\n- **19199 tests pass, 0 fail** (pre-rebase full run)\n- `preflight:fast` green on the rebased branch\n- 54 targeted tests covering the interaction between this PR, #1343 and\n#1346\n\nCloses the extraction: #1343 consumed the package, #1346 added the\nversion-skew gate, this removes the copy.",
+          "timestamp": "2026-08-27T04:27:39Z",
+          "tree_id": "3179623eb36c2172eeab4663f1522c37d24fbb78",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2118cdd4ba4954d9617485973b753f47fcbed03c"
+        },
+        "date": 1787805525302,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 318.84394065000413,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 318.96239915000916,
             "unit": "ms"
           }
         ]
