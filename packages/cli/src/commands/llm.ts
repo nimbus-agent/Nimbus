@@ -127,7 +127,11 @@ export async function runLlmStatusImpl(client: IPCClient, opts: { json: boolean 
     console.log(JSON.stringify(routes, null, 2));
     return;
   }
-  printRouteTable(routes.map(toRouteStatus));
+  // Explicit arity rather than `map(toRouteStatus)`: `.map` supplies
+  // (element, index, array), so passing the function bare would hand it a third
+  // argument the day anyone adds a parameter. The index is wanted — it names the
+  // offending row in the validation error — but only the two.
+  printRouteTable(routes.map((row, i) => toRouteStatus(row, i)));
 }
 
 export async function runLlm(args: string[]): Promise<void> {
