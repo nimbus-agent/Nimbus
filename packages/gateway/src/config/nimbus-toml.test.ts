@@ -682,6 +682,45 @@ model = "b.gguf"
     // membership, same as the other tests in this block.
     expect((cfg.localRoutes ?? new Map()).has("")).toBe(false);
   });
+
+  test("an unterminated sub-table header ends the previous route, never mutates it", () => {
+    // `isTableHeader` requires BOTH brackets, so `[llm.local.bad` was not recognised as a
+    // header at all and `currentId` stayed on `good` — every key under the malformed header
+    // was written into `good`'s bucket. The result was not a dropped route but a SILENTLY
+    // WRONG one: `good` came back carrying `bad`'s runtime and model, so the user got a
+    // route they never configured under a name they did configure.
+    const cfg = parseNimbusTomlLlmSection(
+      `[llm]
+enforce_air_gap = true
+
+[llm.local.good]
+runtime = "ollama"
+model = "qwen3:8b"
+
+[llm.local.bad
+runtime = "llamacpp"
+model = "evil.gguf"
+`,
+    );
+    expect(cfg.enforceAirGap).toBe(true);
+    // `good` keeps EXACTLY what its own block declared.
+    expect(cfg.localRoutes?.get("good")).toEqual({ runtime: "ollama", model: "qwen3:8b" });
+    // and the malformed block yields no route of its own.
+    expect([...(cfg.localRoutes ?? new Map()).keys()]).toEqual(["good"]);
+  });
+
+  test("a header-like line with no id resets the block rather than extending the previous one", () => {
+    const cfg = parseNimbusTomlLlmSection(
+      `[llm.local.good]
+runtime = "ollama"
+model = "qwen3:8b"
+
+[llm.local.]
+model = "hijacked"
+`,
+    );
+    expect(cfg.localRoutes?.get("good")).toEqual({ runtime: "ollama", model: "qwen3:8b" });
+  });
 });
 
 // ---------------------------------------------------------------------------

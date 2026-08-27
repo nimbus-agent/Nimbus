@@ -1,8 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { LlmRegistry } from "../llm/registry.ts";
-import type { LlmModelInfo } from "../llm/types.ts";
+import { RouteAvailabilityProbe } from "../llm/route-availability.ts";
+import type { LlmModelInfo, ModelRoute } from "../llm/types.ts";
 import type { LlmRouteStatus, LlmRpcContext } from "./llm-rpc.ts";
-import { dispatchLlmRpc } from "./llm-rpc.ts";
+import { dispatchLlmRpc, LlmRpcError } from "./llm-rpc.ts";
 
 function makeFakeRegistry(models: LlmModelInfo[] = []): LlmRpcContext["registry"] {
   return {
@@ -136,7 +137,8 @@ describe("llm.loadModel / llm.unloadModel", () => {
     );
     expect(r.kind).toBe("hit");
     expect((r as { kind: "hit"; value: { isLoaded: boolean } }).value.isLoaded).toBe(true);
-    expect(loadModel).toHaveBeenCalledWith("ollama", "gemma:2b");
+    // Third argument is the lifecycle discriminator: `{}` when the caller named no routeId.
+    expect(loadModel).toHaveBeenCalledWith("ollama", "gemma:2b", {});
   });
 
   test("unloadModel returns isLoaded: false", async () => {
@@ -148,7 +150,7 @@ describe("llm.loadModel / llm.unloadModel", () => {
       { registry, notify: () => {} },
     );
     expect((r as { kind: "hit"; value: { isLoaded: boolean } }).value.isLoaded).toBe(false);
-    expect(unloadModel).toHaveBeenCalledWith("ollama", "gemma:2b");
+    expect(unloadModel).toHaveBeenCalledWith("ollama", "gemma:2b", {});
   });
 
   // Deferred finding (Task 6/10): `loadModel`/`unloadModel` take `ProviderId` (any string) —
@@ -167,7 +169,7 @@ describe("llm.loadModel / llm.unloadModel", () => {
         { registry, notify: () => {} },
       ),
     ).rejects.toThrow("Provider not registered: remote");
-    expect(loadModel).toHaveBeenCalledWith("remote", "x");
+    expect(loadModel).toHaveBeenCalledWith("remote", "x", {});
   });
 
   test("loadModel rejects empty provider with -32602 before reaching the registry", async () => {
@@ -207,6 +209,21 @@ describe("llm.getRouterStatus", () => {
 
 // A minimal `LlmProvider`-shaped fake — enough for `RouteAvailabilityProbe.check()` to exercise
 // its real reachable/model-listing logic against, rather than mocking the probe's own verdict.
+/**
+ * A fake registry that mirrors the real one's OWNERSHIP of the availability probe: one
+ * `RouteAvailabilityProbe` per registry, reached only through `checkRoute`. `llm.status` used to
+ * construct a probe of its own per request — a cache no other caller shared, so it could report a
+ * route available that the router had already routed past. The fake still exercises the probe's
+ * REAL reachable/model-listing logic; only its owner changed.
+ */
+function makeFakeRouteRegistry(routes: unknown[]): LlmRegistry {
+  const probe = new RouteAvailabilityProbe();
+  return {
+    llmRouter: { routes: () => routes },
+    checkRoute: (route: ModelRoute) => probe.check(route),
+  } as unknown as LlmRegistry;
+}
+
 function makeFakeLlmProvider(opts: {
   providerId: string;
   isLocal: boolean;
@@ -252,7 +269,7 @@ describe("llm.status", () => {
         meta: {},
       },
     ];
-    const registry = { llmRouter: { routes: () => routes } } as unknown as LlmRegistry;
+    const registry = makeFakeRouteRegistry(routes);
     const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
     expect(r.kind).toBe("hit");
     const val = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
@@ -294,14 +311,14 @@ describe("llm.status", () => {
     const routes = [
       { routeId: "llamacpp/model.gguf", provider, modelName: "model.gguf", meta: {} },
     ];
-    const registry = { llmRouter: { routes: () => routes } } as unknown as LlmRegistry;
+    const registry = makeFakeRouteRegistry(routes);
     const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
     const val = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
     expect(val.routes[0]).toMatchObject({ available: false, reason: "provider_unreachable" });
   });
 
   test("returns an empty route list when no routes are registered", async () => {
-    const registry = { llmRouter: { routes: () => [] } } as unknown as LlmRegistry;
+    const registry = makeFakeRouteRegistry([]);
     const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
     expect(r.kind).toBe("hit");
     expect((r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value.routes).toEqual([]);
@@ -331,7 +348,7 @@ describe("llm.status", () => {
         meta: { contextWindow: 8192 },
       },
     ];
-    const registry = { llmRouter: { routes: () => routes } } as unknown as LlmRegistry;
+    const registry = makeFakeRouteRegistry(routes);
     const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
     expect(r.kind).toBe("hit");
     const value = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
@@ -361,7 +378,7 @@ describe("llm.status", () => {
     // No `meta.contextWindow` at all — the route object must OMIT the key entirely (matching
     // the CLI's "render — for a missing contextWindow" contract), not carry it as `undefined`.
     const routes = [{ routeId: "ollama/qwen3:8b", provider, modelName: "qwen3:8b", meta: {} }];
-    const registry = { llmRouter: { routes: () => routes } } as unknown as LlmRegistry;
+    const registry = makeFakeRouteRegistry(routes);
     const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
     const value = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
     const route = value.routes[0];
@@ -428,5 +445,109 @@ describe("llm.setDefault", () => {
     );
     expect(r.kind).toBe("hit");
     expect(setDefault).toHaveBeenCalledWith("reasoning", "gemini", "gemini-pro");
+  });
+});
+
+describe("missing params map to -32602, never a raw TypeError (Fix D)", () => {
+  // JSON-RPC allows `params` to be omitted entirely. The cast this replaces left `p`
+  // `undefined` and the next line read `p.modelName`, throwing a raw `TypeError` — and only
+  // `LlmRpcError` is mapped to `-32602 Invalid params`, so "you forgot the arguments" surfaced
+  // to the client as an internal error.
+  const registry = {
+    pullModel: mock(async () => {}),
+    loadModel: mock(async () => {}),
+    unloadModel: mock(async () => {}),
+    setDefault: mock(async () => {}),
+  } as unknown as LlmRegistry;
+
+  for (const method of [
+    "llm.pullModel",
+    "llm.loadModel",
+    "llm.unloadModel",
+    "llm.setDefault",
+    "llm.cancelPull",
+  ]) {
+    for (const [label, params] of [
+      ["undefined", undefined],
+      ["null", null],
+      ["a string", "modelName"],
+      ["an array", ["gemma:2b"]],
+    ] as Array<[string, unknown]>) {
+      test(`${method} with ${label} params rejects as LlmRpcError(-32602)`, async () => {
+        let thrown: unknown;
+        try {
+          await dispatchLlmRpc(method, params, { registry, notify: () => {} });
+        } catch (err) {
+          thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(LlmRpcError);
+        expect((thrown as LlmRpcError).rpcCode).toBe(-32602);
+        // Specifically NOT a bare TypeError — the shape that produced the wrong RPC code.
+        expect(thrown).not.toBeInstanceOf(TypeError);
+      });
+    }
+  }
+
+  test("a well-formed request still succeeds — the guard rejects shape, not content", async () => {
+    const pullModel = mock(async () => {});
+    const r = await dispatchLlmRpc(
+      "llm.pullModel",
+      { provider: "ollama", modelName: "gemma:2b" },
+      { registry: { pullModel } as unknown as LlmRegistry, notify: () => {} },
+    );
+    expect(r.kind).toBe("hit");
+    expect(pullModel).toHaveBeenCalledTimes(1);
+  });
+
+  test("a non-string routeId is rejected rather than silently dropped", async () => {
+    const pullModel = mock(async () => {});
+    await expect(
+      dispatchLlmRpc(
+        "llm.pullModel",
+        { provider: "ollama", modelName: "gemma:2b", routeId: 7 },
+        { registry: { pullModel } as unknown as LlmRegistry, notify: () => {} },
+      ),
+    ).rejects.toThrow("routeId must be a non-empty string");
+    expect(pullModel).not.toHaveBeenCalled();
+  });
+
+  test("routeId is forwarded to the registry when supplied", async () => {
+    const pullModel = mock(async () => {});
+    await dispatchLlmRpc(
+      "llm.pullModel",
+      { provider: "ollama", modelName: "gemma:2b", routeId: "ollama/qwen3:8b" },
+      { registry: { pullModel } as unknown as LlmRegistry, notify: () => {} },
+    );
+    expect(pullModel).toHaveBeenCalledWith(
+      "ollama",
+      "gemma:2b",
+      expect.objectContaining({ routeId: "ollama/qwen3:8b" }),
+    );
+  });
+});
+
+describe("llm.status reads the registry-owned probe (Fix E)", () => {
+  test("availability comes from registry.checkRoute, not a probe llm.status builds", async () => {
+    // The provider itself is UNREACHABLE. A probe constructed inside `getRouteStatuses` would
+    // answer `provider_unreachable` from its own private cache; the registry-owned probe is
+    // the authority route selection also consults, and here it says `ok`. Only the delegating
+    // implementation can produce this result — which is the whole point: the two snapshots
+    // must not be able to disagree.
+    const provider = makeFakeLlmProvider({
+      providerId: "ollama",
+      isLocal: true,
+      reachable: false,
+      reportedModels: [],
+    });
+    const routes = [{ routeId: "ollama/qwen3:8b", provider, modelName: "qwen3:8b", meta: {} }];
+    const checkRoute = mock(async () => ({ available: true, reason: "ok" as const }));
+    const registry = {
+      llmRouter: { routes: () => routes },
+      checkRoute,
+    } as unknown as LlmRegistry;
+    const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
+    const val = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
+    expect(checkRoute).toHaveBeenCalledTimes(1);
+    expect(val.routes[0]).toMatchObject({ available: true, reason: "ok" });
   });
 });

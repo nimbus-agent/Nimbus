@@ -1,13 +1,30 @@
 import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
+import type { RouteAvailability } from "./route-availability.ts";
 import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { LlmRouter, type LlmRouterConfig, type ProviderMeta } from "./router.ts";
-import type { LlmModelInfo, LlmProvider, ProviderId, PullProgressChunk } from "./types.ts";
+import type {
+  LlmModelInfo,
+  LlmProvider,
+  ModelRoute,
+  ProviderId,
+  PullProgressChunk,
+} from "./types.ts";
 
 export type LlmRegistryOptions = {
   config: LlmRouterConfig;
   db?: Database;
 };
+
+/**
+ * Optional discriminator for the providerId-keyed lifecycle calls (`pullModel`/`loadModel`/
+ * `unloadModel`). Names the exact registered route — and therefore the exact daemon — the
+ * operation must reach, for the case where one vendor id has several distinct provider
+ * INSTANCES behind it (two Ollama daemons at different base URLs). Omitted, the vendor id must
+ * resolve unambiguously or the call throws naming the candidates; see
+ * `resolveLifecycleProvider`.
+ */
+export type LlmLifecycleTarget = { routeId?: string };
 
 export class LlmRegistry {
   private readonly router: LlmRouter;
@@ -133,24 +150,105 @@ export class LlmRegistry {
     return result;
   }
 
+  /**
+   * Availability of one registered route, answered through the probe THIS registry owns — the
+   * same instance `LlmRouter` was constructed with, and therefore the same cache route selection
+   * consults.
+   *
+   * Exists because `ipc/llm-rpc.ts`'s `llm.status` used to construct a `RouteAvailabilityProbe`
+   * of its own per request. That bypassed the shared cache entirely and could report a DIFFERENT
+   * availability snapshot than the one the router had just routed on — "ollama/qwen3:8b:
+   * available" in `nimbus llm status` while `nimbus ask` was answering from the fallback,
+   * with nothing to reconcile the two. Threading it through the registry (which already holds
+   * the reference, for `pullModel`'s `invalidate()`) rather than adding a public probe accessor
+   * to `LlmRouter` keeps the reach-into-router-internals shape out of the IPC layer.
+   */
+  async checkRoute(route: ModelRoute): Promise<RouteAvailability> {
+    return await this.probe.check(route);
+  }
+
+  /**
+   * Resolves which provider INSTANCE a lifecycle call (`pullModel`/`loadModel`/`unloadModel`)
+   * must reach.
+   *
+   * The constraint that shaped this: pulling a model that has NO route yet is the PRIMARY use of
+   * pull, so lifecycle cannot key on `routeId` — the model being pulled has no route by
+   * definition. Keying on `providerId` alone was the previous answer, resolved with a
+   * first-match `.find(...)`; with two Ollama daemons registered at different base URLs that
+   * silently sent the pull to whichever was configured FIRST, downloading gigabytes onto the
+   * wrong machine with a success message.
+   *
+   * The resolution keeps vendor-id addressing (so route-less pulls still work) and closes the
+   * silent-wrong-target hole by refusing to guess:
+   *
+   * - one provider instance carries the vendor id → use it (the overwhelmingly common case, and
+   *   the one every existing caller is in);
+   * - several distinct instances carry it → THROW, naming every candidate route, rather than
+   *   picking one. An ambiguous pull has no safe default: both answers are a multi-gigabyte
+   *   download against a daemon the user may not have meant;
+   * - `target.routeId` supplied → that route's provider, after checking the route exists and
+   *   actually belongs to `providerId` (a mismatch is a caller bug, not a silent override).
+   */
+  private resolveLifecycleProvider(
+    providerId: ProviderId,
+    target: LlmLifecycleTarget,
+  ): LlmProvider {
+    const routeId = target.routeId;
+    if (routeId !== undefined) {
+      const route = this.router.routeFor(routeId);
+      if (route === undefined) throw new Error(`Route not registered: ${routeId}`);
+      if (route.provider.providerId !== providerId) {
+        throw new Error(
+          `Route "${routeId}" belongs to provider "${route.provider.providerId}", not "${providerId}"`,
+        );
+      }
+      return route.provider;
+    }
+    const instances: Array<{ provider: LlmProvider; routeIds: string[] }> = [];
+    for (const route of this.router.routes()) {
+      if (route.provider.providerId !== providerId) continue;
+      const existing = instances.find((e) => e.provider === route.provider);
+      if (existing === undefined) {
+        instances.push({ provider: route.provider, routeIds: [route.routeId] });
+      } else {
+        existing.routeIds.push(route.routeId);
+      }
+    }
+    const first = instances[0];
+    if (first === undefined) throw new Error(`Provider not registered: ${providerId}`);
+    if (instances.length === 1) return first.provider;
+    const candidates = instances.map((e) => e.routeIds.join(" + ")).join("; ");
+    throw new Error(
+      `Provider "${providerId}" is registered on ${instances.length} distinct endpoints — ` +
+        `pass routeId to name which one. Candidates: ${candidates}`,
+    );
+  }
+
   // Lifecycle methods key on `providerId`, and the model stays an argument — never the
   // route id. `OllamaProvider.pullModel(modelName)` posts its argument to the shared
   // daemon, so any registered instance of a providerId can pull/load/unload any model;
   // requiring a matching route would make it impossible to pull a model that has no
-  // route yet, which is the primary use of pull. Resolution is "any registered route
-  // whose provider.providerId matches" — exactly what `LlmRouter.providerFor` does.
-  async loadModel(provider: ProviderId, modelName: string): Promise<void> {
-    const p = this.router.providerFor(provider);
-    if (p === undefined) throw new Error(`Provider not registered: ${provider}`);
+  // route yet, which is the primary use of pull. `target.routeId` is the optional
+  // tie-breaker for when one vendor id has several daemons — see
+  // `resolveLifecycleProvider`, which refuses to guess rather than taking the first.
+  async loadModel(
+    provider: ProviderId,
+    modelName: string,
+    target: LlmLifecycleTarget = {},
+  ): Promise<void> {
+    const p = this.resolveLifecycleProvider(provider, target);
     if (typeof (p as unknown as { loadModel?: unknown }).loadModel === "function") {
       await (p as unknown as { loadModel: (m: string) => Promise<void> }).loadModel(modelName);
     }
     // Ollama auto-loads on first generate; this is a no-op for Ollama.
   }
 
-  async unloadModel(provider: ProviderId, modelName: string): Promise<void> {
-    const p = this.router.providerFor(provider);
-    if (p === undefined) throw new Error(`Provider not registered: ${provider}`);
+  async unloadModel(
+    provider: ProviderId,
+    modelName: string,
+    target: LlmLifecycleTarget = {},
+  ): Promise<void> {
+    const p = this.resolveLifecycleProvider(provider, target);
     if (typeof (p as unknown as { unloadModel?: unknown }).unloadModel === "function") {
       await (p as unknown as { unloadModel: (m: string) => Promise<void> }).unloadModel(modelName);
     }
@@ -159,14 +257,22 @@ export class LlmRegistry {
   async pullModel(
     provider: ProviderId,
     modelName: string,
-    opts: { signal?: AbortSignal; onProgress?: (p: PullProgressChunk) => void } = {},
+    opts: {
+      signal?: AbortSignal;
+      onProgress?: (p: PullProgressChunk) => void;
+      routeId?: string;
+    } = {},
   ): Promise<void> {
-    const p = this.router.providerFor(provider);
-    if (p === undefined) throw new Error(`Provider not registered: ${provider}`);
+    const { routeId, ...providerOpts } = opts;
+    // Spread-conditional rather than `{ routeId }`: under `exactOptionalPropertyTypes`, an
+    // explicit `routeId: undefined` is a different type from an absent key.
+    const p = this.resolveLifecycleProvider(provider, routeId === undefined ? {} : { routeId });
     if (typeof p.pullModel !== "function") {
       throw new TypeError(`Provider ${provider} does not support pullModel`);
     }
-    await p.pullModel(modelName, opts);
+    // `routeId` is a REGISTRY-side discriminator; it is destructured off above rather than
+    // forwarded, so no provider ever receives a key its own `pullModel` contract does not name.
+    await p.pullModel(modelName, providerOpts);
     // Only on success: a failed pull must not clear the cache. Without this, a freshly
     // pulled model keeps reporting `model_absent` for up to
     // ROUTE_AVAILABILITY_POSITIVE_TTL_MS, which looks exactly like the pull having failed.

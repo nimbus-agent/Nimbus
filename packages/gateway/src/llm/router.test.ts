@@ -393,6 +393,41 @@ describe("LlmRouter.getStatus", () => {
     });
   });
 
+  test("reports a SAME-provider fallback — two routes on one provider is the normal case", async () => {
+    // The bug this pins: the fallback was suppressed whenever it shared a `providerId` with
+    // the preferred route. Once the key became `(provider, model)`, that describes the most
+    // ordinary setup there is — two models on one Ollama daemon — so `ollama/qwen3:8b` down
+    // and `ollama/gemma3:12b` answering in its place was never reported at all. The status
+    // said "unavailable" and stopped, while `generate()` was quietly succeeding elsewhere.
+    const daemon: LlmProvider = {
+      providerId: "ollama",
+      isLocal: true,
+      isAvailable: async () => true,
+      // The daemon is UP but has only ever pulled gemma3:12b, so `qwen3:8b` is
+      // `model_absent` — a same-provider, different-model failure, which is precisely the
+      // case a providerId comparison cannot express.
+      listModels: async () => [{ provider: "ollama", modelName: "gemma3:12b" }],
+      generate: async () => ({
+        text: "x",
+        tokensIn: 1,
+        tokensOut: 1,
+        modelUsed: "gemma3:12b",
+        isLocal: true,
+        provider: "ollama",
+      }),
+    };
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerRoute(daemon, "qwen3:8b");
+    router.registerRoute(daemon, "gemma3:12b");
+    const status = await router.getStatus();
+    expect(status.classification?.modelName).toBe("qwen3:8b");
+    expect(status.classification?.isAvailable).toBe(false);
+    expect(status.classification?.fallback).toEqual({
+      providerId: "ollama",
+      modelName: "gemma3:12b",
+    });
+  });
+
   test("no fallback when the preferred provider is available", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel);

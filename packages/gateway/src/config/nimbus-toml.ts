@@ -353,8 +353,15 @@ function collectLlmLocalKvSections(source: string): Map<string, Record<string, s
     const trimmed = stripComment(line).trim();
     if (hasUnterminatedString(line)) continue;
     if (trimmed === "") continue;
-    if (isTableHeader(trimmed)) {
-      currentId = beginLlmLocalTable(accum, trimmed);
+    // Header-LIKE, not header-VALID: a line that opens with `[` is a table header the writer
+    // meant, whether or not it closes. Ending the current block on the OPENING bracket — before
+    // `isTableHeader` gets to reject `[llm.local.bad` for its missing `]` — is what makes a
+    // malformed header end the previous route instead of leaking into it. Without the reset,
+    // `currentId` stayed on the last VALID id, so every `runtime`/`model` line under the
+    // malformed header was written into the PREVIOUS route's bucket: `[llm.local.good]` followed
+    // by `[llm.local.bad` silently became `good` carrying `bad`'s runtime and model.
+    if (trimmed.startsWith("[")) {
+      currentId = isTableHeader(trimmed) ? beginLlmLocalTable(accum, trimmed) : undefined;
       continue;
     }
     if (currentId === undefined) continue;

@@ -30,6 +30,7 @@ import { PairingWindowController } from "../clips/pairing-window.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   type ConnectorsConfig,
+  DEFAULT_NIMBUS_LLM_TOML,
   loadNimbusAuditFromConfigDir,
   loadNimbusAutomationFromConfigDir,
   loadNimbusBriefsFromPath,
@@ -178,6 +179,7 @@ import { startMetricsServer } from "../ipc/metrics-server.ts";
 import type { PolicyRpcCtx } from "../ipc/policy-rpc.ts";
 import { extractKbPageRef } from "../ipc/server/dispatchers.ts";
 import type { TribalSubmitAction } from "../ipc/tribal-rpc.ts";
+import { isLoopbackBaseUrl } from "../llm/base-url-locality.ts";
 import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
@@ -1403,6 +1405,36 @@ function dropDuplicateRouteIds(
 }
 
 /**
+ * Names — in the boot log, by entry name — every `[llm.local.*]` entry whose resolved base URL is
+ * NOT loopback, and is therefore registered as a REMOTE route.
+ *
+ * Nothing is dropped here. The reclassification itself happens in the provider constructors
+ * (`OllamaProvider`/`LlamaCppProvider` derive `isLocal` from the resolved base URL — see
+ * `llm/base-url-locality.ts`), which is what actually stops `[llm] enforce_air_gap` from treating
+ * a LAN daemon as air-gap-eligible. This stage exists so the reclassification is never SILENT: a
+ * route configured under a heading that reads `[llm.local.ws]` and then excluded by air-gap, or
+ * ledgered as egress, would otherwise be inexplicable from the user's seat.
+ *
+ * Dropping instead of warning was the other option and is wrong: a deliberately-configured LAN
+ * llama.cpp box is a legitimate setup, and it stays usable with air-gap off. What must not happen
+ * is it counting as local.
+ */
+function warnRemoteClassifiedLocalRoutes(
+  localRoutes: ReadonlyMap<string, NimbusLlmLocalRoute>,
+  logger: RouteValidationLogger,
+): void {
+  for (const [name, route] of localRoutes) {
+    const resolved = resolveBaseUrl(route.runtime, route.baseUrl);
+    if (isLoopbackBaseUrl(resolved)) continue;
+    logger.warn(
+      `[llm] [llm.local.${name}] base URL "${resolved}" is not loopback — registering it as a ` +
+        "REMOTE route: prompts sent to it leave this machine, so it is excluded when " +
+        "[llm] enforce_air_gap is set and its use is recorded in the egress ledger",
+    );
+  }
+}
+
+/**
  * Resolves `[llm] route_priority` entries against the route ids that are ACTUALLY about to be
  * registered, dropping (with a named log line) any entry that fails `parseRouteRef` or names no
  * registered route. Silence is not acceptable here: a vanished priority entry changes which model
@@ -1469,6 +1501,23 @@ export function buildLlmRegistryFromToml(
   const knownRuntimeLocalRoutes = dropUnknownRuntimeEntries(llmToml.localRoutes, logger);
   const uncollidedLocalRoutes = dropLlamacppBaseUrlCollisions(knownRuntimeLocalRoutes, logger);
   const validatedLocalRoutes = dropDuplicateRouteIds(uncollidedLocalRoutes, logger);
+  warnRemoteClassifiedLocalRoutes(validatedLocalRoutes, logger);
+
+  // `local_model = ""` parses to the empty string and survives `loadNimbusLlmFromPath` (the
+  // `[llm]` parser assigns `parseString(valRaw)` unconditionally). It then reaches
+  // `makeRouteId`, which THROWS on an empty model name — and this function is called from
+  // `assemblePlatformServices` with nothing between it and boot, so a one-character config typo
+  // took the whole Gateway down with `modelName must not be empty`. Nothing in assembly may
+  // abort boot: keep the shipped default and say so by name.
+  const localModel = llmToml.localModel.trim();
+  const effectiveLocalModel =
+    localModel === "" ? DEFAULT_NIMBUS_LLM_TOML.localModel : llmToml.localModel;
+  if (localModel === "") {
+    logger.warn(
+      `[llm] local_model is empty — keeping the default "${DEFAULT_NIMBUS_LLM_TOML.localModel}"; ` +
+        "an empty model name cannot name a route",
+    );
+  }
 
   // The route ids that WILL be registered below — computed up front (without touching the
   // registry) so route_priority can be validated against the real, post-collision-check set
@@ -1479,7 +1528,7 @@ export function buildLlmRegistryFromToml(
       ? [...validatedLocalRoutes.values()].map((route) =>
           makeRouteId(route.runtime === "llamacpp" ? "llamacpp" : "ollama", route.model),
         )
-      : [makeRouteId("ollama", llmToml.localModel), makeRouteId("llamacpp", llmToml.localModel)];
+      : [makeRouteId("ollama", effectiveLocalModel), makeRouteId("llamacpp", effectiveLocalModel)];
 
   const validatedRoutePriority = dropUnresolvableRoutePriorityEntries(
     llmToml.routePriority,
@@ -1492,7 +1541,7 @@ export function buildLlmRegistryFromToml(
     config: {
       preferLocal: llmToml.preferLocal,
       remoteModel: llmToml.remoteModel,
-      localModel: llmToml.localModel,
+      localModel: effectiveLocalModel,
       minReasoningParams: llmToml.minReasoningParams,
       enforceAirGap: llmToml.enforceAirGap,
       routePriority: validatedRoutePriority,
@@ -1513,16 +1562,25 @@ export function buildLlmRegistryFromToml(
     }
   } else {
     llmRegistry.addRoute(
-      new OllamaProvider(OLLAMA_DEFAULT_BASE_URL, llmToml.localModel, llmToml.localContextTokens),
-      llmToml.localModel,
+      new OllamaProvider(OLLAMA_DEFAULT_BASE_URL, effectiveLocalModel, llmToml.localContextTokens),
+      effectiveLocalModel,
     );
     const llamacppBaseUrl = llmToml.llamacppServerPath.trim();
+    // The legacy single-route path reaches the same hazard through a different key: an
+    // `[llm] llamacpp_server_path` pointed at a LAN box also produces a non-local provider now,
+    // and that must be as visible here as it is for a `[llm.local.*]` entry.
+    if (llamacppBaseUrl !== "" && !isLoopbackBaseUrl(llamacppBaseUrl)) {
+      logger.warn(
+        `[llm] llamacpp_server_path "${llamacppBaseUrl}" is not loopback — registering the ` +
+          "llama.cpp route as REMOTE: it is excluded when [llm] enforce_air_gap is set",
+      );
+    }
     llmRegistry.addRoute(
       new LlamaCppProvider(
         llamacppBaseUrl === "" ? undefined : llamacppBaseUrl,
-        llmToml.localModel,
+        effectiveLocalModel,
       ),
-      llmToml.localModel,
+      effectiveLocalModel,
     );
   }
   // Fill in `parameterCount` so `[llm] min_reasoning_params` can fire at all (F8). Fire-and-

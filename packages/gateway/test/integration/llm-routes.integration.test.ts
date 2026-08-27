@@ -193,4 +193,80 @@ model = "qwen3:8b"
     expect(dropMessage).toContain("llm.local.mystery");
     expect(dropMessage).toContain("vllm");
   });
+
+  test("a non-loopback [llm.local.*] entry is registered REMOTE, and named in the log", () => {
+    // The `[llm.local.<name>]` heading says local; the base URL says otherwise, and the base
+    // URL wins. Registering it as local made `[llm] enforce_air_gap` skip its own exclusion
+    // and sent prompts to that host — air-gap is a refusal, not a preference.
+    const { db, tomlPath } = writeConfig(`
+[llm.local.ws]
+runtime = "llamacpp"
+model = "big.gguf"
+base_url = "http://192.168.1.50:8080"
+
+[llm.local.here]
+runtime = "ollama"
+model = "qwen3:8b"
+`);
+    const logger = capturingLogger();
+    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const routes = registry.llmRouter.routes();
+    // Reclassified, not dropped: a deliberately-configured LAN box stays usable with
+    // air-gap off.
+    expect(routes).toHaveLength(2);
+    expect(routes.find((r) => r.routeId === "llamacpp/big.gguf")?.provider.isLocal).toBe(false);
+    expect(routes.find((r) => r.routeId === "ollama/qwen3:8b")?.provider.isLocal).toBe(true);
+    // And it is never silent — the entry is named, so an air-gap exclusion is explicable.
+    const warning = logger.messages.find((m) => m.includes("not loopback"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("llm.local.ws");
+    expect(warning).toContain("192.168.1.50");
+    // The loopback entry earns no warning.
+    expect(logger.messages.filter((m) => m.includes("not loopback"))).toHaveLength(1);
+  });
+
+  test("a LAN llamacpp_server_path is reclassified remote on the legacy path too", () => {
+    const { db, tomlPath } = writeConfig(`
+[llm]
+local_model = "llama3.2"
+llamacpp_server_path = "http://192.168.1.50:8080"
+`);
+    const logger = capturingLogger();
+    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const routes = registry.llmRouter.routes();
+    expect(routes.find((r) => r.provider.providerId === "llamacpp")?.provider.isLocal).toBe(false);
+    expect(routes.find((r) => r.provider.providerId === "ollama")?.provider.isLocal).toBe(true);
+    const warning = logger.messages.find((m) => m.includes("llamacpp_server_path"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("192.168.1.50");
+  });
+
+  test('local_model = "" keeps the default instead of aborting boot', () => {
+    // `makeRouteId` THROWS on an empty model name, and nothing sits between this function and
+    // boot — so a one-character config typo took the whole Gateway down. Nothing in assembly
+    // may abort boot.
+    const { db, tomlPath } = writeConfig(`
+[llm]
+local_model = ""
+`);
+    const logger = capturingLogger();
+    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const routes = registry.llmRouter.routes();
+    expect(routes).toHaveLength(2);
+    expect(routes.map((r) => r.routeId).sort()).toEqual(["llamacpp/llama3.2", "ollama/llama3.2"]);
+    const warning = logger.messages.find((m) => m.includes("local_model is empty"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("llama3.2");
+  });
+
+  test("a whitespace-only local_model is treated the same as empty", () => {
+    const { db, tomlPath } = writeConfig(`
+[llm]
+local_model = "   "
+`);
+    const logger = capturingLogger();
+    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    expect(registry.llmRouter.routes()).toHaveLength(2);
+    expect(logger.messages.some((m) => m.includes("local_model is empty"))).toBe(true);
+  });
 });

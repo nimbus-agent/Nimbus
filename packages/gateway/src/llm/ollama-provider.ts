@@ -1,3 +1,4 @@
+import { isLoopbackBaseUrl } from "./base-url-locality.ts";
 import type {
   LlmGenerateOptions,
   LlmGenerateResult,
@@ -97,7 +98,13 @@ export const DEFAULT_LOCAL_CONTEXT_TOKENS = 8192;
 
 export class OllamaProvider implements LlmProvider {
   readonly providerId = "ollama" as const;
-  readonly isLocal = true;
+  /**
+   * DERIVED from the resolved base URL, never hardcoded. An Ollama daemon is reachable over the
+   * network and `[llm.local.<name>] base_url` accepts a remote host, so "ollama" says nothing
+   * about where the weights run. Hardcoding `true` made `[llm] enforce_air_gap` skip its own
+   * exclusion for a LAN daemon. See `base-url-locality.ts`.
+   */
+  readonly isLocal: boolean;
   private readonly baseUrl: string;
   private readonly modelName: string;
   private readonly contextTokens: number;
@@ -110,6 +117,7 @@ export class OllamaProvider implements LlmProvider {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.modelName = modelName;
     this.contextTokens = contextTokens;
+    this.isLocal = isLoopbackBaseUrl(this.baseUrl);
   }
 
   async isAvailable(): Promise<boolean> {
@@ -172,7 +180,7 @@ export class OllamaProvider implements LlmProvider {
       tokensIn: data.prompt_eval_count ?? 0,
       tokensOut: data.eval_count ?? 0,
       modelUsed: this.modelName,
-      isLocal: true,
+      isLocal: this.isLocal,
       provider: "ollama",
     };
   }
@@ -219,7 +227,7 @@ export class OllamaProvider implements LlmProvider {
       tokensIn: state.tokensIn,
       tokensOut: state.tokensOut,
       modelUsed: this.modelName,
-      isLocal: true,
+      isLocal: this.isLocal,
       provider: "ollama",
     };
   }

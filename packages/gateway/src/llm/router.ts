@@ -90,19 +90,6 @@ export class LlmRouter {
     this.availability = probe;
   }
 
-  /**
-   * The first registered provider matching this vendor id, or `undefined`. Used by callers
-   * that still address a provider by vendor id alone (`LlmRegistry`) rather than by full
-   * route. Ambiguous only when the same vendor id has multiple routes registered under it —
-   * returns the first found in registration order.
-   */
-  providerFor(id: ProviderId): LlmProvider | undefined {
-    for (const route of this.routeMap.values()) {
-      if (route.provider.providerId === id) return route.provider;
-    }
-    return undefined;
-  }
-
   registerRoute(provider: LlmProvider, modelName: string, meta: ProviderMeta = {}): void {
     const routeId = makeRouteId(provider.providerId, modelName);
     this.routeMap.set(routeId, { routeId, provider, modelName, meta });
@@ -405,7 +392,13 @@ export class LlmRouter {
         // The preferred provider is down; report the route generate() would actually fall
         // back to (next available in priority order) so status matches real routing.
         const actual = await this.firstAvailableRoute(t, isAvailable);
-        if (actual !== undefined && actual.provider.providerId !== preferred.provider.providerId) {
+        // Compared by ROUTE id, not provider id. Two routes on one provider is the normal case
+        // now that `(provider, model)` is the key — `ollama/qwen3:8b` down and
+        // `ollama/gemma3:12b` answering in its place is precisely the fallback a user needs to
+        // see, and a providerId comparison suppressed it as "same provider, nothing to report".
+        // A route can only equal itself here, so the self-suppression this guard exists for
+        // still holds.
+        if (actual !== undefined && actual.routeId !== preferred.routeId) {
           entry.fallback = {
             providerId: actual.provider.providerId,
             modelName: actual.modelName,

@@ -1,3 +1,4 @@
+import { isLoopbackBaseUrl } from "./base-url-locality.ts";
 import type { LlmGenerateOptions, LlmGenerateResult, LlmModelInfo, LlmProvider } from "./types.ts";
 
 type LlamaCppCompletionResponse = {
@@ -7,13 +8,21 @@ type LlamaCppCompletionResponse = {
 
 export class LlamaCppProvider implements LlmProvider {
   readonly providerId = "llamacpp" as const;
-  readonly isLocal = true;
+  /**
+   * DERIVED from the resolved base URL, never hardcoded. `llamacpp` is a local RUNTIME, but a
+   * llama.cpp server is reachable over the network and `[llm.local.<name>] base_url` accepts a
+   * remote host — so "the runtime is local" and "this instance is local" are different claims.
+   * Hardcoding `true` here made `[llm] enforce_air_gap` skip its own exclusion for a LAN server
+   * and let prompts leave the machine. See `base-url-locality.ts`.
+   */
+  readonly isLocal: boolean;
   private readonly baseUrl: string;
   private readonly modelName: string;
 
   constructor(baseUrl = "http://127.0.0.1:8080", modelName = "model.gguf") {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.modelName = modelName;
+    this.isLocal = isLoopbackBaseUrl(this.baseUrl);
   }
 
   async isAvailable(): Promise<boolean> {
@@ -57,7 +66,7 @@ export class LlamaCppProvider implements LlmProvider {
       tokensIn: data.timings?.prompt_n ?? 0,
       tokensOut: data.timings?.predicted_n ?? 0,
       modelUsed: this.modelName,
-      isLocal: true,
+      isLocal: this.isLocal,
       provider: "llamacpp",
     };
   }

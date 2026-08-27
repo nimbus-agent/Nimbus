@@ -1,6 +1,5 @@
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { RouteAvailability } from "../llm/route-availability.ts";
-import { RouteAvailabilityProbe } from "../llm/route-availability.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class LlmRpcError extends Error {
@@ -21,22 +20,50 @@ const activePulls = new Map<string, AbortController>();
 
 const VALID_LLM_TASKS = new Set(["classification", "reasoning", "summarisation", "agent_step"]);
 
+/**
+ * Narrows `params` to a plain object BEFORE any field is read.
+ *
+ * The cast this replaces (`params as { … } | null`) was a lie for exactly one input: an OMITTED
+ * `params` member. JSON-RPC allows it, `p` was then `undefined`, and the very next line —
+ * `typeof p.modelName` — threw a raw `TypeError`. Only `LlmRpcError` is mapped to the intended
+ * `-32602 Invalid params`, so a request that merely forgot its arguments surfaced as an internal
+ * error. `typeof null === "object"`, hence the explicit null check; arrays are rejected too,
+ * since none of these handlers takes positional params.
+ */
+function requireParamsObject(params: unknown, message: string): Record<string, unknown> {
+  if (typeof params !== "object" || params === null || Array.isArray(params)) {
+    throw new LlmRpcError(-32602, message);
+  }
+  return params as Record<string, unknown>;
+}
+
 // Validity of a provider string is the registry's answer (`Provider not registered: …`), not a
 // hardcoded set here — see `llm/router.ts` / `llm/registry.ts`, the one-definition-of-local-ness
 // sites. This function only enforces shape: non-empty, defaulting to "ollama" when omitted.
+// `routeId` is the OPTIONAL discriminator `LlmRegistry`'s lifecycle calls use when one vendor id
+// has several daemons behind it; omitted (the normal case) the registry resolves the single
+// instance, and throws naming the candidates rather than guessing when there is more than one.
 function requireModelParams(
   params: unknown,
   action: string,
-): { provider: string; modelName: string } {
-  const p = params as { provider?: string; modelName?: string } | null;
-  if (p === null || typeof p.modelName !== "string") {
+): { provider: string; modelName: string; routeId?: string } {
+  const p = requireParamsObject(params, `${action} requires modelName`);
+  if (typeof p["modelName"] !== "string") {
     throw new LlmRpcError(-32602, `${action} requires modelName`);
   }
-  const provider = p.provider ?? "ollama";
+  const provider = p["provider"] ?? "ollama";
   if (typeof provider !== "string" || provider === "") {
     throw new LlmRpcError(-32602, `${action} requires a non-empty provider`);
   }
-  return { provider, modelName: p.modelName };
+  const routeIdRaw = p["routeId"];
+  if (routeIdRaw !== undefined && (typeof routeIdRaw !== "string" || routeIdRaw === "")) {
+    throw new LlmRpcError(-32602, `${action} routeId must be a non-empty string when present`);
+  }
+  return {
+    provider,
+    modelName: p["modelName"],
+    ...(routeIdRaw === undefined ? {} : { routeId: routeIdRaw }),
+  };
 }
 
 export type LlmRouteStatus = {
@@ -51,15 +78,16 @@ export type LlmRouteStatus = {
   contextWindow?: number;
 };
 
-// One probe per call, not module-level: a status query should reflect current reality rather
-// than a cache shared with unrelated callers (and, incidentally, with any other status query),
-// and route lists are typically small enough that this costs little.
+// Availability comes from the REGISTRY-owned probe (`registry.checkRoute`), never one
+// constructed here. A fresh probe per call sounded like "current reality" but was the opposite:
+// it answered from a cache no other caller shares, so `llm.status` could report a route
+// available while the router — walking its own shared probe — had already routed past it, and
+// nothing could reconcile the two snapshots. One probe, one answer.
 async function getRouteStatuses(ctx: LlmRpcContext): Promise<{ routes: LlmRouteStatus[] }> {
-  const probe = new RouteAvailabilityProbe();
   const routes = ctx.registry.llmRouter.routes();
   const statuses = await Promise.all(
     routes.map(async (route): Promise<LlmRouteStatus> => {
-      const { available, reason } = await probe.check(route);
+      const { available, reason } = await ctx.registry.checkRoute(route);
       return {
         routeId: route.routeId,
         providerId: route.provider.providerId,
@@ -77,7 +105,7 @@ async function getRouteStatuses(ctx: LlmRpcContext): Promise<{ routes: LlmRouteS
 }
 
 async function handlePullModel(params: unknown, ctx: LlmRpcContext): Promise<{ pullId: string }> {
-  const { provider, modelName } = requireModelParams(params, "pullModel");
+  const { provider, modelName, routeId } = requireModelParams(params, "pullModel");
   const pullId = `pull_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
   const controller = new AbortController();
   activePulls.set(pullId, controller);
@@ -85,6 +113,7 @@ async function handlePullModel(params: unknown, ctx: LlmRpcContext): Promise<{ p
     .pullModel(provider, modelName, {
       signal: controller.signal,
       onProgress: (c) => ctx.notify("llm.pullProgress", { pullId, provider, modelName, ...c }),
+      ...(routeId === undefined ? {} : { routeId }),
     })
     .then(() => ctx.notify("llm.pullCompleted", { pullId, provider, modelName }))
     .catch((err: unknown) =>
@@ -104,13 +133,14 @@ async function handleLoadOrUnload(
   params: unknown,
   ctx: LlmRpcContext,
 ): Promise<{ isLoaded: boolean }> {
-  const { provider, modelName } = requireModelParams(params, `${action}Model`);
+  const { provider, modelName, routeId } = requireModelParams(params, `${action}Model`);
+  const target = routeId === undefined ? {} : { routeId };
   if (action === "load") {
-    await ctx.registry.loadModel(provider, modelName);
+    await ctx.registry.loadModel(provider, modelName, target);
     ctx.notify("llm.modelLoaded", { provider, modelName });
     return { isLoaded: true };
   }
-  await ctx.registry.unloadModel(provider, modelName);
+  await ctx.registry.unloadModel(provider, modelName, target);
   ctx.notify("llm.modelUnloaded", { provider, modelName });
   return { isLoaded: false };
 }
@@ -119,31 +149,35 @@ async function handleSetDefault(
   params: unknown,
   ctx: LlmRpcContext,
 ): Promise<{ taskType: string; provider: string; modelName: string }> {
-  const p = params as { taskType?: string; provider?: string; modelName?: string } | null;
+  const message = "setDefault requires valid taskType, provider, modelName";
+  const p = requireParamsObject(params, message);
+  const taskType = p["taskType"];
+  const provider = p["provider"];
+  const modelName = p["modelName"];
   if (
-    p === null ||
-    typeof p.taskType !== "string" ||
-    !VALID_LLM_TASKS.has(p.taskType) ||
-    typeof p.provider !== "string" ||
-    p.provider === "" ||
-    typeof p.modelName !== "string"
+    typeof taskType !== "string" ||
+    !VALID_LLM_TASKS.has(taskType) ||
+    typeof provider !== "string" ||
+    provider === "" ||
+    typeof modelName !== "string"
   ) {
-    throw new LlmRpcError(-32602, "setDefault requires valid taskType, provider, modelName");
+    throw new LlmRpcError(-32602, message);
   }
   await ctx.registry.setDefault(
-    p.taskType as "classification" | "reasoning" | "summarisation" | "agent_step",
-    p.provider,
-    p.modelName,
+    taskType as "classification" | "reasoning" | "summarisation" | "agent_step",
+    provider,
+    modelName,
   );
-  return { taskType: p.taskType, provider: p.provider, modelName: p.modelName };
+  return { taskType, provider, modelName };
 }
 
 function handleCancelPull(params: unknown): { cancelled: boolean } {
-  const p = params as { pullId?: string } | null;
-  if (p === null || typeof p.pullId !== "string") {
+  const p = requireParamsObject(params, "cancelPull requires pullId");
+  const pullId = p["pullId"];
+  if (typeof pullId !== "string") {
     throw new LlmRpcError(-32602, "cancelPull requires pullId");
   }
-  const controller = activePulls.get(p.pullId);
+  const controller = activePulls.get(pullId);
   const cancelled = controller !== undefined;
   controller?.abort();
   return { cancelled };
