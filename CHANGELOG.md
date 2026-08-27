@@ -2,6 +2,17 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [4.0.0](https://github.com/nimbus-agent/Nimbus/compare/v3.1.0...v4.0.0) (2026-08-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **llm:** route the LLM by (provider, model) instead of provider kind ([#1352](https://github.com/nimbus-agent/Nimbus/issues/1352))
+
+### Features
+
+* **llm:** route the LLM by (provider, model) instead of provider kind ([#1352](https://github.com/nimbus-agent/Nimbus/issues/1352)) ([5ac042c](https://github.com/nimbus-agent/Nimbus/commit/5ac042c04fda879fdfd943eaacb99a09ae022cae))
+
 ## [3.1.0](https://github.com/nimbus-agent/Nimbus/compare/v3.0.0...v3.1.0) (2026-08-27)
 
 
