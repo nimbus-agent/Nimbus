@@ -220,7 +220,12 @@ function fakeRemoteProvider(): LlmProvider {
     providerId: "remote",
     isLocal: false,
     isAvailable: async () => true,
-    listModels: async () => [],
+    // Must report the model it registers under (FAKE_LLM_ROUTER_CONFIG.remoteModel,
+    // "remote-model") so the route genuinely RESOLVES as available — otherwise it reads
+    // model_absent, resolveForSynthesis() returns undefined, and the test below passes via
+    // no_eligible_provider from the EARLY branch rather than exercising the "local"-mode
+    // refusal (synthesis-llm.ts) it exists to guard.
+    listModels: async () => [{ provider: "remote", modelName: "remote-model" }],
     generate: async () => ({
       text: "SHOULD-NEVER-BE-USED",
       tokensIn: 0,
