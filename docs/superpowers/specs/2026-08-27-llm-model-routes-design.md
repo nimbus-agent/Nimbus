@@ -142,7 +142,10 @@ loaded weights while reporting different model names: a route table that lies.
 
 Multi-model on llama.cpp therefore requires **one server per model at distinct base URLs**, and
 config must express that. Ollama has no such limit — `generate()` sends `this.modelName` to a shared
-daemon. Slice 1 must reject, at config load, two llama.cpp routes sharing a `base_url`.
+daemon. Slice 1 therefore drops the colliding llama.cpp routes at assembly — keeping the first,
+warn-logging both entry names and the shared URL, and letting boot continue. It does not *reject*
+the config: nothing throws and the gateway starts with a correct-but-reduced route table, for the
+reason given at line 127 above.
 
 ### 3.2 `isLocal` is declared by the provider, and defined once
 
