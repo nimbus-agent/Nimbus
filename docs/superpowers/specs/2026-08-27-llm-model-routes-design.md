@@ -1,7 +1,7 @@
 # LLM Model Routes — Design
 
 **Date:** 2026-08-27
-**Status:** approved design, not yet planned
+**Status:** delivered — slice 1 implemented on `dev/asaf/llm-model-routes` (PR #1352)
 **Slot:** Spine S2 — Local Compute Fleet, row *"bring-your-own-frontier-model routing with local fallback"*
 **Slice:** 1 of 4 (see [Decomposition](#8-decomposition))
 
@@ -423,8 +423,10 @@ All paths above are relative to `packages/gateway/src/`. Test files are not list
 - Router: priority walk across N routes; air-gap skips every non-local route; the reasoning
   capability floor still fires per route; `getStatus` reports the route that `generate()` would
   actually use.
-- Context overflow picks the next fitting route in priority order and appends through the normal
-  path — asserted with a local-only route set, where the correct row count is zero.
+- Context overflow picks the next fitting route in priority order — asserted with a local-only
+  route set, where the correct egress row count is ZERO. Note this verifies route fallback only:
+  per §4.1 `LlmRouter.generate()` appends nothing at all, so there is no append to assert here.
+  Egress coverage for this path is deferred to the remote-route slice.
 - Egress: `destination` equals the `providerId`, asserted against a fake remote provider
   (`isLocal: false`) registered in-test. This is the only way to exercise §4.2 in slice 1.
 - **One definition of local-ness:** a structural test asserting `isLocal` has exactly one
@@ -511,7 +513,7 @@ Decided rather than left blank, so the plan is actionable. Each is cheap to reve
 
 | Slice | Content | Status |
 | --- | --- | --- |
-| **1. Model routes** | This document. `(provider, model)` routes, one definition of `isLocal`, vendor-named egress destination, and a route-walked (still **un-ledgered** — see §4.1) overflow fallback. Ships multi-local-model routing and **zero** cloud vendors. | approved, planning next |
+| **1. Model routes** | This document. `(provider, model)` routes, one definition of `isLocal`, vendor-named egress destination, and a route-walked (still **un-ledgered** — see §4.1) overflow fallback. Ships multi-local-model routing and **zero** cloud vendors. | delivered (PR #1352) |
 | **2. Bearer-key clouds** | Anthropic, OpenAI, Gemini, xAI. One adapter shape, four configs, four Vault keys, the explicit opt-in flag from Open decision 3, and the `D`-rule promotion from Open decision 1. First slice where an `egress_ledger` `model` row is ever written. **Blocked on resolving `LlmRouter.generate()`'s I29 coverage (§4.1) before the first remote route registers.** | not started |
 | **3. Bedrock** | SigV4 signing, region, static creds *or* profile/role chain. Kept separate because it shares no auth shape with slice 2; reuses the `aws.*` credential fields connectors already have. | not started |
 | **4. Selection surface** | `[llm.tasks]` per-task pinning, `nimbus llm use <vendor>/<model>` writing to `llm_task_defaults`, full `nimbus llm status`. **A ROUTER change, not the surface-only change originally promised:** slice 1 did not build the task-pin resolution stage (§3.3 correction), so slice 4 adds it to `orderedRoutes` — together with the §6 test that a pin is still gated by air-gap. | not started |
