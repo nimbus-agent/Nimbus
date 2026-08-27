@@ -52,7 +52,7 @@ export class LlmRegistry {
    * capability preference into an outage. The difference from before is that the floor now fires
    * whenever the information exists.
    */
-  async refreshProviderMeta(modelName: string): Promise<void> {
+  async refreshProviderMeta(modelName?: string): Promise<void> {
     // Iterates registered routes rather than a fixed ["ollama", "llamacpp"] id set, and
     // re-registers each matching route through `registerRoute(route.provider,
     // route.modelName, ...)` rather than the deprecated `registerProvider` shim.
@@ -64,12 +64,25 @@ export class LlmRegistry {
     // MINTING A SPURIOUS second route (`<provider>/<config.localModel>`) alongside the
     // real one on every refresh. Using `route.modelName` targets the exact existing route
     // every time, so re-registration only ever updates that route's meta.
+    //
+    // `modelName`, when supplied, is a FILTER — refresh only the route(s) whose own
+    // `modelName` matches it — never a shared search target applied across every route. The
+    // bug this guards against (Task 9 review, finding 1): the previous version searched
+    // EVERY local route's provider listing for one caller-supplied `modelName` and stamped
+    // whatever it found onto whichever route the loop happened to be on. With two Ollama
+    // routes sharing one daemon (`qwen3:8b` and `gemma3:12b`), refreshing "qwen3:8b" also
+    // matched while examining the unrelated gemma route and wrote qwen3's parameter count
+    // onto gemma's meta — last name processed wins for every route. Matching each route
+    // only against ITS OWN `modelName` (never a caller-supplied one) makes that impossible
+    // by construction, and lets every local route refresh in one pass with no argument at
+    // all — one `listModels()` call per LOCAL ROUTE, not per route × distinct model name.
     for (const route of this.router.routes()) {
       if (!route.provider.isLocal) continue;
+      if (modelName !== undefined && route.modelName !== modelName) continue;
       try {
         const models = await route.provider.listModels();
         const match = models.find(
-          (m) => m.modelName === modelName || m.modelName.startsWith(`${modelName}:`),
+          (m) => m.modelName === route.modelName || m.modelName.startsWith(`${route.modelName}:`),
         );
         if (match?.parameterCount !== undefined) {
           this.router.registerRoute(route.provider, route.modelName, {

@@ -481,6 +481,46 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
       expect(routes[0]?.meta.parameterCount).toBe(8);
     },
   );
+
+  test(
+    "refreshProviderMeta does not cross-assign parameterCount between routes sharing a " +
+      "daemon (Task 9 review, finding 1)",
+    async () => {
+      // Two DISTINCT provider instances (as `buildLlmRegistryFromToml` constructs, one per
+      // [llm.local.*] entry) both pointed at the same shared Ollama daemon — so both report
+      // the daemon's FULL model list, exactly as a real shared daemon would.
+      const sharedDaemonListing: LlmModelInfo[] = [
+        { provider: "ollama", modelName: "qwen3:8b", parameterCount: 8 },
+        { provider: "ollama", modelName: "gemma3:12b", parameterCount: 12 },
+      ];
+      const qwenProvider = makeProvider("ollama", {
+        available: true,
+        models: sharedDaemonListing,
+      });
+      const gemmaProvider = makeProvider("ollama", {
+        available: true,
+        models: sharedDaemonListing,
+      });
+      const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+      registry.addRoute(qwenProvider, "qwen3:8b");
+      registry.addRoute(gemmaProvider, "gemma3:12b");
+
+      // Mirrors the ACTUAL pre-fix production call pattern in assemble.ts: one call per
+      // distinct registered model name, looped across every route.
+      await registry.refreshProviderMeta("qwen3:8b");
+      await registry.refreshProviderMeta("gemma3:12b");
+
+      const routes = registry.llmRouter.routes();
+      const qwenRoute = routes.find((r) => r.modelName === "qwen3:8b");
+      const gemmaRoute = routes.find((r) => r.modelName === "gemma3:12b");
+      // Each route must get its OWN parameterCount — never the other route's, which is
+      // exactly what a caller-supplied `modelName` search applied indiscriminately to every
+      // route (rather than matched against that route's own modelName) produced: whichever
+      // name was refreshed LAST won for every route on the shared daemon.
+      expect(qwenRoute?.meta.parameterCount).toBe(8);
+      expect(gemmaRoute?.meta.parameterCount).toBe(12);
+    },
+  );
 });
 
 describe("LlmRegistry.getRouterStatus", () => {

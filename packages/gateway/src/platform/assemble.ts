@@ -1296,6 +1296,34 @@ function resolveBaseUrl(runtime: string, baseUrl: string | undefined): string {
   return runtime === "llamacpp" ? LLAMACPP_DEFAULT_BASE_URL : OLLAMA_DEFAULT_BASE_URL;
 }
 
+const KNOWN_LOCAL_RUNTIMES = new Set(["ollama", "llamacpp"]);
+
+/**
+ * Drops (and names, via `logger.warn`) any `[llm.local.*]` entry whose `runtime` is neither
+ * `"ollama"` nor `"llamacpp"` — the only two runtimes this build knows how to construct a
+ * provider for. `NimbusLlmLocalRoute.runtime` is an intentionally open string at the parser layer
+ * (Task 8), so a typo or a not-yet-supported runtime (e.g. `"vllm"`) must not silently fall
+ * through to the `runtime === "llamacpp" ? llamacpp : ollama` branches below and get constructed
+ * as an Ollama route pointed at a port that entry never asked for.
+ */
+function dropUnknownRuntimeEntries(
+  localRoutes: ReadonlyMap<string, NimbusLlmLocalRoute>,
+  logger: RouteValidationLogger,
+): Map<string, NimbusLlmLocalRoute> {
+  const kept = new Map<string, NimbusLlmLocalRoute>();
+  for (const [name, route] of localRoutes) {
+    if (!KNOWN_LOCAL_RUNTIMES.has(route.runtime)) {
+      logger.warn(
+        `[llm] dropping [llm.local.${name}]: unknown runtime "${route.runtime}" — expected ` +
+          '"ollama" or "llamacpp"',
+      );
+      continue;
+    }
+    kept.set(name, route);
+  }
+  return kept;
+}
+
 /**
  * Task 9's validation stage — deliberately NOT in the Task 8 parser, because a throw there is
  * swallowed by `loadTomlSection`'s bare catch and silently reverts the WHOLE `[llm]` section to
@@ -1401,7 +1429,8 @@ export function buildLlmRegistryFromToml(
   }
   applyLlmTomlOverrides(llmOverrides);
 
-  const validatedLocalRoutes = dropLlamacppBaseUrlCollisions(llmToml.localRoutes, logger);
+  const knownRuntimeLocalRoutes = dropUnknownRuntimeEntries(llmToml.localRoutes, logger);
+  const validatedLocalRoutes = dropLlamacppBaseUrlCollisions(knownRuntimeLocalRoutes, logger);
 
   // The route ids that WILL be registered below — computed up front (without touching the
   // registry) so route_priority can be validated against the real, post-collision-check set
@@ -1459,14 +1488,13 @@ export function buildLlmRegistryFromToml(
     );
   }
   // Fill in `parameterCount` so `[llm] min_reasoning_params` can fire at all (F8). Fire-and-
-  // forget: it is one `/api/tags` call per distinct model name, nothing downstream blocks on it,
-  // and a provider that is down simply leaves the floor fail-open exactly as it was. Iterates the
-  // distinct model names actually registered, not just `llmToml.localModel`, so a
-  // `[llm.local.*]`-configured route with its own model name gets refreshed too.
-  const distinctModelNames = new Set(llmRegistry.llmRouter.routes().map((r) => r.modelName));
-  for (const modelName of distinctModelNames) {
-    void llmRegistry.refreshProviderMeta(modelName);
-  }
+  // forget: nothing downstream blocks on it, and a provider that is down simply leaves the floor
+  // fail-open exactly as it was. Called with NO argument — one pass over every registered local
+  // route, each matched against its OWN `route.modelName` inside `refreshProviderMeta` — never a
+  // single shared name looped across all routes (Task 9 review, finding 1: that shape cross-
+  // assigned one route's parameterCount onto another route sharing the same daemon). One
+  // `listModels()` call per local route, not per route × distinct model name.
+  void llmRegistry.refreshProviderMeta();
   return llmRegistry;
 }
 
