@@ -59,7 +59,7 @@ describe("Push-to-talk round-trip", () => {
     const { spoken, tts } = makeFakeSpokenLog();
 
     const router = new LlmRouter(ROUTER_CONFIG);
-    router.registerProvider(makeFakeLlmProvider());
+    router.registerRoute(makeFakeLlmProvider(), ROUTER_CONFIG.localModel);
 
     const voice = new VoiceService({ enabled: true, stt, tts });
 

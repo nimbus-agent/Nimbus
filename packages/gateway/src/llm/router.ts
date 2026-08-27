@@ -4,7 +4,6 @@ import type {
   LlmGenerateOptions,
   LlmGenerateResult,
   LlmProvider,
-  LlmProviderKind,
   LlmTaskType,
   ModelRoute,
   ProviderId,
@@ -37,19 +36,19 @@ export type LlmRouterConfig = {
  * provider rather than trust config intent.
  */
 export type ResolvedSynthesisProvider = {
-  readonly providerId: LlmProviderKind;
+  readonly providerId: ProviderId;
   readonly modelName: string;
   readonly isLocal: boolean;
 };
 
 export type LlmTaskStatus = {
-  providerId: LlmProviderKind;
+  providerId: ProviderId;
   modelName: string;
   isAvailable: boolean;
   reason: string;
   // Populated only when the preferred provider is unavailable: the provider generate() would
   // actually fall back to, so the status reflects real routing rather than just config intent.
-  fallback?: { providerId: LlmProviderKind; modelName: string };
+  fallback?: { providerId: ProviderId; modelName: string };
 };
 
 const CONTEXT_OVERFLOW_THRESHOLD = 0.85;
@@ -112,12 +111,6 @@ export class LlmRouter {
 
   routeFor(routeId: string): ModelRoute | undefined {
     return this.routeMap.get(routeId);
-  }
-
-  /** @deprecated Migration shim for call sites not yet on `registerRoute`. */
-  registerProvider(provider: LlmProvider, meta: ProviderMeta = {}): void {
-    const modelName = provider.isLocal ? this.config.localModel : this.config.remoteModel;
-    this.registerRoute(provider, modelName, meta);
   }
 
   prefersLocal(): boolean {

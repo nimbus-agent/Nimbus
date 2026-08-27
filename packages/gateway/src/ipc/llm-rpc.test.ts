@@ -306,6 +306,76 @@ describe("llm.status", () => {
     expect(r.kind).toBe("hit");
     expect((r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value.routes).toEqual([]);
   });
+
+  // `packages/cli` cannot import gateway types — the dependency rule is IPC-only, no source
+  // imports (see CLAUDE.md "Dependency rules") — so `packages/cli/src/commands/llm.ts`'s
+  // `RouteStatus` is a HAND-MAINTAINED copy of this shape, and its own tests mock the IPC
+  // client wholesale rather than talking to a real dispatcher. Nothing on the CLI side would
+  // notice a gateway-side reshape. This already happened once in this branch — a caller went
+  // on reading `res.decisions.classification` after `llm.status` became a route list, and the
+  // whole suite stayed green (see Task 10). Pinning the EXACT key set here (not `toMatchObject`,
+  // which tolerates extra fields) is the gateway half of the fix; the CLI half stays a
+  // documented bound — see docs/CHANGELOG.md's 2026-08-27 entry.
+  test("pins the exact route object key set (available route: contextWindow present)", async () => {
+    const provider = makeFakeLlmProvider({
+      providerId: "ollama",
+      isLocal: true,
+      reachable: true,
+      reportedModels: ["qwen3:8b"],
+    });
+    const routes = [
+      {
+        routeId: "ollama/qwen3:8b",
+        provider,
+        modelName: "qwen3:8b",
+        meta: { contextWindow: 8192 },
+      },
+    ];
+    const registry = { llmRouter: { routes: () => routes } } as unknown as LlmRegistry;
+    const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
+    expect(r.kind).toBe("hit");
+    const value = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
+    // Top level: exactly `{ routes }` — no sibling key the CLI's `LlmStatusResponse` doesn't
+    // also declare.
+    expect(Object.keys(value).sort()).toEqual(["routes"]);
+    const route = value.routes[0];
+    expect(route).toBeDefined();
+    expect(Object.keys(route as object).sort()).toEqual([
+      "available",
+      "contextWindow",
+      "isLocal",
+      "modelName",
+      "providerId",
+      "reason",
+      "routeId",
+    ]);
+  });
+
+  test("pins the exact route object key set (contextWindow ABSENT — never a fabricated key)", async () => {
+    const provider = makeFakeLlmProvider({
+      providerId: "ollama",
+      isLocal: true,
+      reachable: true,
+      reportedModels: ["qwen3:8b"],
+    });
+    // No `meta.contextWindow` at all — the route object must OMIT the key entirely (matching
+    // the CLI's "render — for a missing contextWindow" contract), not carry it as `undefined`.
+    const routes = [{ routeId: "ollama/qwen3:8b", provider, modelName: "qwen3:8b", meta: {} }];
+    const registry = { llmRouter: { routes: () => routes } } as unknown as LlmRegistry;
+    const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
+    const value = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
+    const route = value.routes[0];
+    expect(route).toBeDefined();
+    expect(Object.keys(route as object).sort()).toEqual([
+      "available",
+      "isLocal",
+      "modelName",
+      "providerId",
+      "reason",
+      "routeId",
+    ]);
+    expect("contextWindow" in (route as object)).toBe(false);
+  });
 });
 
 describe("llm.setDefault", () => {

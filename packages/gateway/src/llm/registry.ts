@@ -23,12 +23,7 @@ export class LlmRegistry {
     this.db = opts.db;
   }
 
-  addProvider(provider: LlmProvider, meta?: ProviderMeta): void {
-    this.router.registerProvider(provider, meta ?? {});
-  }
-
-  /** Registers a route with its own model name — the non-deprecated counterpart to
-   *  `addProvider`, which derives the model name from `config.localModel`/`config.remoteModel`. */
+  /** Registers a route under an explicit model name. */
   addRoute(provider: LlmProvider, modelName: string, meta?: ProviderMeta): void {
     this.router.registerRoute(provider, modelName, meta ?? {});
   }

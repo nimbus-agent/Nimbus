@@ -1,15 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
 import { LlmRouter } from "../llm/router.ts";
-import type { LlmProvider, LlmProviderKind } from "../llm/types.ts";
+import type { LlmProvider, ProviderId } from "../llm/types.ts";
 import { createGlossaryLlm } from "./glossary-llm-adapter.ts";
 
-function fakeProvider(
-  id: LlmProviderKind,
-  opts: { available: boolean; text?: string },
-): LlmProvider {
-  // The model this route registers under — `registerProvider` derives it from
-  // `config.localModel`/`config.remoteModel` based on `isLocal`, matching `routerWith` below.
+function fakeProvider(id: ProviderId, opts: { available: boolean; text?: string }): LlmProvider {
+  // The model this route registers under — `routerWith` below registers each provider
+  // under `local-model`/`remote-model` based on `isLocal`, matching this listing.
   const modelName = id === "remote" ? "remote-model" : "local-model";
   return {
     providerId: id,
@@ -41,7 +38,7 @@ function routerWith(...providers: LlmProvider[]): LlmRouter {
     minReasoningParams: 0,
     enforceAirGap: false,
   });
-  for (const p of providers) r.registerProvider(p);
+  for (const p of providers) r.registerRoute(p, p.isLocal ? "local-model" : "remote-model");
   return r;
 }
 

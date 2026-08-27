@@ -198,10 +198,10 @@ function fakeLocalOllamaProvider(markdown: string): LlmProvider {
     isLocal: true,
     isAvailable: async () => true,
     // Must report the model it is registered under (`FAKE_LLM_ROUTER_CONFIG.localModel`,
-    // "local-model" — `registerProvider`/`addProvider` derives the route's modelName from
-    // config, not from the provider) — route availability (Task 5) is reachable AND the
-    // route's own modelName among the models the daemon reports, so an empty listing here
-    // makes every route `model_absent` regardless of `isAvailable()`.
+    // "local-model", matching the `addRoute` call in `makeLlmRegistry` below) — route
+    // availability (Task 5) requires the daemon reachable AND the route's own modelName
+    // among the models it reports, so an empty listing here makes every route
+    // `model_absent` regardless of `isAvailable()`.
     listModels: async () => [{ provider: "ollama", modelName: "local-model" }],
     generate: async () => ({
       text: markdown,
@@ -239,7 +239,10 @@ function fakeRemoteProvider(): LlmProvider {
 
 function makeLlmRegistry(provider: LlmProvider): LlmRegistry {
   const registry = new LlmRegistry({ config: FAKE_LLM_ROUTER_CONFIG });
-  registry.addProvider(provider);
+  registry.addRoute(
+    provider,
+    provider.isLocal ? FAKE_LLM_ROUTER_CONFIG.localModel : FAKE_LLM_ROUTER_CONFIG.remoteModel,
+  );
   return registry;
 }
 

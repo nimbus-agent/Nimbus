@@ -11,7 +11,8 @@ function router(provider?: LlmProvider): LlmRouter {
     minReasoningParams: 0,
     enforceAirGap: false,
   });
-  if (provider !== undefined) r.registerProvider(provider);
+  if (provider !== undefined)
+    r.registerRoute(provider, provider.isLocal ? "llama3.1:8b" : "gpt-4o");
   return r;
 }
 
@@ -19,11 +20,10 @@ const stub: LlmProvider = {
   providerId: "ollama",
   isLocal: true,
   isAvailable: async () => true,
-  // Must report the model it registers under (`registerProvider` derives it from
-  // `config.localModel`, "llama3.1:8b", for an `isLocal` provider) — route availability
-  // (Task 5) requires the daemon reachable AND the route's own modelName among the models it
-  // reports, so an empty listing here makes every route `model_absent` regardless of
-  // `isAvailable()`.
+  // Must report the model it registers under ("llama3.1:8b", matching the `registerRoute`
+  // call above/below for an `isLocal` provider) — route availability (Task 5) requires the
+  // daemon reachable AND the route's own modelName among the models it reports, so an empty
+  // listing here makes every route `model_absent` regardless of `isAvailable()`.
   listModels: async () => [{ provider: "ollama", modelName: "llama3.1:8b" }],
   generate: async () => ({
     text: "{}",
@@ -82,8 +82,8 @@ describe("createBriefLlm", () => {
       minReasoningParams: 0,
       enforceAirGap: false,
     });
-    r.registerProvider(stub);
-    r.registerProvider(makeRemoteStub());
+    r.registerRoute(stub, "llama3.1:8b");
+    r.registerRoute(makeRemoteStub(), "gpt-4o");
     const out = await createBriefLlm(r, true).generateJson("p");
     expect(out).toEqual({ text: "{}", model: "llama3.1:8b", remote: false });
   });
@@ -96,8 +96,8 @@ describe("createBriefLlm", () => {
       minReasoningParams: 0,
       enforceAirGap: false,
     });
-    r.registerProvider(stub);
-    r.registerProvider(makeRemoteStub());
+    r.registerRoute(stub, "llama3.1:8b");
+    r.registerRoute(makeRemoteStub(), "gpt-4o");
     const out = await createBriefLlm(r, false).generateJson("p");
     expect(out).toEqual({ text: "{}", model: "gpt-4o", remote: true });
   });

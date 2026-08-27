@@ -12,9 +12,6 @@ export type LlmTaskType = "classification" | "reasoning" | "summarisation" | "ag
  */
 export type ProviderId = string;
 
-/** @deprecated Alias kept so call sites migrate incrementally. Use `ProviderId`. */
-export type LlmProviderKind = ProviderId;
-
 export type ModelRoute = {
   readonly routeId: string;
   readonly provider: LlmProvider;
@@ -28,7 +25,7 @@ export type ProviderMeta = {
 };
 
 export type LlmModelInfo = {
-  provider: LlmProviderKind;
+  provider: ProviderId;
   modelName: string;
   parameterCount?: number;
   contextWindow?: number;
@@ -52,7 +49,7 @@ export type LlmGenerateResult = {
   tokensOut: number;
   modelUsed: string;
   isLocal: boolean;
-  provider: LlmProviderKind;
+  provider: ProviderId;
 };
 
 export type PullProgressChunk = {
