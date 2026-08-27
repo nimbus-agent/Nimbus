@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787806492985,
+  "lastUpdate": 1787823373170,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16149,6 +16149,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 320.61213255000473,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e496789e171f7641077b4c87bca9f6a7e4edae7",
+          "message": "docs: stop calling this repo the monorepo (#1349)\n\n`packages/` carried **100 workspaces** until 2026-08-27. It carries\n**five**.\n\nThe connectors left for\n[nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers),\nand with the SDK, the IPC client, the MCP launcher, the editor extension\nand the browser client already outside, \"monorepo\" describes something\nthat stopped being true.\n\n## The heading is the small part\n\nThe real change is the sentence under it. A reader arriving at\n`CLAUDE.md` — human or agent — needs to know that for **six of the seven\nsurfaces Nimbus ships, the source of truth is a different repository**,\nand that \"the repo\" in any statement here means the Gateway only.\n\nWithout that, the natural next move on \"add a connector\" is to look in\n`packages/` and find nothing there.\n\n## Both counts are derived, not asserted\n\nFive is the length of the `workspaces` array. Six is the length of the\nlist that follows.\n\nThe first draft said *seven* and was wrong — I had counted the\nsatellites from memory rather than the list. That is precisely the rule\nthis file already states:\n\n> **A total that is still right can hide an enumeration that is wrong.**\n… When a count changes, re-derive the _list_, not just the number.\n\nApplied to the file itself, and it caught me.\n\n`GEMINI.md` mirrors the same change, per the note in `CLAUDE.md` that\nthe two move together.\n\n`preflight:fast` green.",
+          "timestamp": "2026-08-27T12:27:37+03:00",
+          "tree_id": "5a9da7a52897239f1943fb28a36a657eba7e46b9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7e496789e171f7641077b4c87bca9f6a7e4edae7"
+        },
+        "date": 1787823370410,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 247.094427000004,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 246.37975744999858,
             "unit": "ms"
           }
         ]
