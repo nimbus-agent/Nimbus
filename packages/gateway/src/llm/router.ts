@@ -4,7 +4,10 @@ import type {
   LlmProvider,
   LlmProviderKind,
   LlmTaskType,
+  ProviderMeta,
 } from "./types.ts";
+
+export type { ProviderMeta } from "./types.ts";
 
 export type LlmRouterConfig = {
   preferLocal: boolean;
@@ -12,11 +15,6 @@ export type LlmRouterConfig = {
   localModel: string;
   minReasoningParams: number;
   enforceAirGap: boolean;
-};
-
-export type ProviderMeta = {
-  parameterCount?: number;
-  contextWindow?: number;
 };
 
 /**

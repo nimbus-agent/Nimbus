@@ -5,6 +5,7 @@ import type { LlmProvider } from "./types.ts";
 function makeFakeProvider(id: "ollama" | "llamacpp" | "remote", available: boolean): LlmProvider {
   return {
     providerId: id,
+    isLocal: id !== "remote",
     isAvailable: async () => available,
     listModels: async () => [],
     generate: async (_opts) => ({
@@ -153,6 +154,7 @@ function makeCaptureProvider(
 ): LlmProvider {
   return {
     providerId: id,
+    isLocal: id !== "remote",
     isAvailable: async () => available,
     listModels: async () => [],
     generate: async (opts) => {

@@ -7,6 +7,7 @@ type LlamaCppCompletionResponse = {
 
 export class LlamaCppProvider implements LlmProvider {
   readonly providerId = "llamacpp" as const;
+  readonly isLocal = true;
   private readonly baseUrl: string;
   private readonly modelName: string;
 

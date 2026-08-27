@@ -20,6 +20,7 @@ function fakeProvider(
 ): LlmProvider {
   return {
     providerId: id,
+    isLocal: id !== "remote",
     isAvailable: () => Promise.resolve(opts.available),
     listModels: () => Promise.resolve([]),
     generate: () =>

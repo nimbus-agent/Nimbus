@@ -34,6 +34,7 @@ type ProviderOpts = {
 function makeProvider(id: LlmProviderKind, opts: ProviderOpts): LlmProvider {
   const base = {
     providerId: id,
+    isLocal: id !== "remote",
     isAvailable: async () => {
       if (opts.throwOnAvailable === true) throw new Error("availability check failed");
       return opts.available;

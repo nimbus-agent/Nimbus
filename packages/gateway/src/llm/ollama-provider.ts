@@ -97,6 +97,7 @@ export const DEFAULT_LOCAL_CONTEXT_TOKENS = 8192;
 
 export class OllamaProvider implements LlmProvider {
   readonly providerId = "ollama" as const;
+  readonly isLocal = true;
   private readonly baseUrl: string;
   private readonly modelName: string;
   private readonly contextTokens: number;

@@ -195,6 +195,7 @@ const FAKE_LLM_ROUTER_CONFIG = {
 function fakeLocalOllamaProvider(markdown: string): LlmProvider {
   return {
     providerId: "ollama",
+    isLocal: true,
     isAvailable: async () => true,
     listModels: async () => [],
     generate: async () => ({
@@ -212,6 +213,7 @@ function fakeLocalOllamaProvider(markdown: string): LlmProvider {
 function fakeRemoteProvider(): LlmProvider {
   return {
     providerId: "remote",
+    isLocal: false,
     isAvailable: async () => true,
     listModels: async () => [],
     generate: async () => ({

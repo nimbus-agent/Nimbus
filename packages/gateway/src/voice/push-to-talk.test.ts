@@ -27,6 +27,7 @@ function makeFakeSpokenLog(): { spoken: string[]; tts: TtsProvider } {
 function makeFakeLlmProvider(): LlmProvider {
   return {
     providerId: "ollama",
+    isLocal: true,
     isAvailable: async () => true,
     listModels: async () => [],
     generate: async (opts) => ({

@@ -17,6 +17,7 @@ function router(provider?: LlmProvider): LlmRouter {
 
 const stub: LlmProvider = {
   providerId: "ollama",
+  isLocal: true,
   isAvailable: async () => true,
   listModels: async () => [],
   generate: async () => ({
