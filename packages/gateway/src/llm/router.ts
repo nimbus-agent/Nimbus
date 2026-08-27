@@ -21,9 +21,12 @@ export type LlmRouterConfig = {
   /**
    * An explicit, human-authored ordering of route ids (`"<provider>/<model>"`) to try
    * first, before the normal preferLocal-driven ordering. An entry that no longer
-   * resolves to a registered route is skipped (it either failed config-load validation
-   * in Task 8, or the route was unregistered at runtime). Routes not named here still
-   * follow, ordered by `preferLocal` — see `orderedRoutes`.
+   * resolves to a registered route is skipped. Nothing throws on the way here: config
+   * load never rejects a bad entry (a throw in the `[llm]` parser is swallowed by
+   * `loadTomlSection`'s bare catch, which would silently revert the WHOLE section,
+   * `enforce_air_gap` included), so `platform/assemble.ts` warn-logs and DROPS an
+   * unresolvable entry before this config is built, and boot continues. Routes not named
+   * here still follow, ordered by `preferLocal` — see `orderedRoutes`.
    */
   readonly routePriority?: readonly string[];
 };
@@ -73,10 +76,10 @@ export class LlmRouter {
   private readonly routeMap = new Map<string, ModelRoute>();
   private readonly config: LlmRouterConfig;
   // A single long-lived probe shared across every walk this router performs, so its
-  // per-providerId cache (see `RouteAvailabilityProbe`) actually amortizes repeated
-  // checks within the TTL. Injected — not constructed here — so a caller needing a
-  // zero-TTL probe (tests with two distinct provider instances sharing one providerId)
-  // has a seam, rather than `mock.module`.
+  // per-provider-INSTANCE cache (see `RouteAvailabilityProbe`) actually amortizes repeated
+  // checks within the TTL. Injected — not constructed here — so `LlmRegistry` can hold its
+  // own reference and `invalidate()` after a successful pull, and so a caller needing
+  // different TTLs has a seam rather than `mock.module`.
   private readonly availability: RouteAvailabilityProbe;
 
   constructor(
@@ -218,7 +221,8 @@ export class LlmRouter {
     const explicit = this.config.routePriority;
     if (explicit !== undefined && explicit.length > 0) {
       const byId = new Map(all.map((r) => [r.routeId, r]));
-      // An unresolvable entry threw at config load (Task 8); anything still missing
+      // Nothing throws for an unresolvable entry: `platform/assemble.ts` already warn-logged
+      // and dropped it (by name) before this router was constructed. Anything still missing
       // here was unregistered at runtime, so skipping is correct.
       const ordered = explicit
         .map((id) => byId.get(id))
@@ -380,8 +384,8 @@ export class LlmRouter {
     const tasks: LlmTaskType[] = ["classification", "reasoning", "summarisation", "agent_step"];
     const out: Partial<Record<LlmTaskType, LlmTaskStatus | undefined>> = {};
     // `probeAvailable` already goes through the shared `this.availability` probe, whose
-    // own per-providerId TTL cache amortizes repeated checks — a second, per-call cache
-    // here (as this used to have) is redundant, and two caching layers with different
+    // own per-provider-instance TTL cache amortizes repeated checks — a second, per-call
+    // cache here (as this used to have) is redundant, and two caching layers with different
     // lifetimes over the same question is how they drift apart.
     const isAvailable = (route: ModelRoute): Promise<boolean> => this.probeAvailable(route);
     for (const t of tasks) {

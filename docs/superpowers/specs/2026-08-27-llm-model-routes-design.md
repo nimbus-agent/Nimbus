@@ -122,10 +122,16 @@ Two rules, and the first is what actually makes it safe:
    const modelName  = raw.slice(i + 1);   // may itself contain slashes
    ```
 
-A route reference that matches no registered route is a **config error reported at load**, not a
-silently dropped entry — a `route_priority` entry that quietly vanishes would degrade to the
-default ordering with no signal, which is the "supplied flag degrading into an omitted filter"
-shape.
+A route reference that matches no registered route is **named in a `warn` log and dropped at
+assembly, and boot continues** — never a silently dropped entry. (Corrected after the fact: this
+paragraph originally said "a config error reported at load", which reads as a refusal. Nothing
+refuses. It cannot: a throw inside the `[llm]` parser is swallowed by `loadTomlSection`'s bare
+catch and silently reverts the WHOLE section to defaults, `enforce_air_gap` included — a far worse
+failure than the one it would be reporting. So `platform/assemble.ts` validates AFTER the parse,
+warn-logs the offending entry by name, drops it, and carries on.) The property that matters is
+unchanged and is what the tests assert: the entry never vanishes without a word. A `route_priority`
+entry that quietly disappeared would degrade to the default ordering with no signal, which is the
+"supplied flag degrading into an omitted filter" shape.
 
 #### llama.cpp cannot host two models at one base URL
 
@@ -179,14 +185,21 @@ prefer_local  = true
 route_priority = ["ollama/qwen3", "ollama/gemma3"]   # optional; when set, it IS the order
 ```
 
-Resolution for a task: **explicit task pin → `route_priority` → default ordering**. That sequence
-chooses the candidate **order** only. Air-gap, the reasoning capability floor, and availability are
-**gates applied to every candidate**, including an explicit pin — a pin selects which route is tried
-first, never that it is tried unconditionally.
+Resolution for a task, as designed: **explicit task pin → `route_priority` → default ordering**.
+That sequence chooses the candidate **order** only. Air-gap, the reasoning capability floor, and
+availability are **gates applied to every candidate**, including an explicit pin — a pin selects
+which route is tried first, never that it is tried unconditionally.
+
+> **What slice 1 actually shipped: the task-pin stage does NOT exist.** `LlmRouter.orderedRoutes`
+> implements `route_priority` → `byPreference` and nothing before it; the router never consults
+> `LlmRegistry.getDefault` or `llm_task_defaults`. Nothing regressed — pins were inert before this
+> slice too — but the pin stage was never written, so the rest of this section describes a rule
+> that has no code behind it yet. Slice 4 must implement it (see the corrected §8 row).
 
 Stated explicitly because the earlier wording ("then filtered by…") could be read as filtering only
 the fallback chain: if `[llm.tasks] reasoning = "gemini/gemini-2.5-pro"` is pinned and
-`enforce_air_gap = true`, the pin is **skipped**, not honoured. A pin that could defeat air-gap
+`enforce_air_gap = true`, the pin must be **skipped**, not honoured. This is a requirement ON
+slice 4, not a property of slice 1 — with no pin stage there is nothing yet to gate. A pin that could defeat air-gap
 would make a preference setting override a refusal setting, which inverts the whole point of
 keeping those two knobs distinct (`router.ts` `enforcesAirGap` documents that distinction at
 length).
@@ -196,9 +209,12 @@ inside the loop via `continue`, rather than pre-filtering a pool. The routes ver
 shape.
 
 Absent `route_priority`, the default ordering reproduces today's semantics exactly: local routes
-first when `prefer_local = true`, remote first otherwise. Task pins are read from
-`llm_task_defaults` and are inert until slice 4 gives them a surface; the resolution step exists in
-slice 1 so slice 4 is a surface change rather than a router change.
+first when `prefer_local = true`, remote first otherwise — and that is the whole of what slice 1
+resolves. Task pins remain inert: `llm_task_defaults` is still written and read by
+`LlmRegistry.getDefault`, but no router path calls it. The original claim here — "the resolution
+step exists in slice 1 so slice 4 is a surface change rather than a router change" — is
+**withdrawn**: the resolution step was not built, so slice 4 changes the router as well as the
+surface.
 
 ### 3.4 Route availability must mean "this model answers", not "the daemon is up"
 
@@ -271,7 +287,8 @@ working and synthesise a single route each. No user config breaks.
 `registry.setDefault` and `registry.getDefault` already read and write both columns. What is
 missing is that `LlmRouter.modelNameFor()` never consults them — it returns the single global
 `config.localModel` / `config.remoteModel`, and its own inline comment says so. Slice 1 makes the
-router route-aware; slice 4 wires the per-task pins to a CLI.
+router route-aware; slice 4 wires the per-task pins into BOTH the router (the resolution stage
+§3.3 said slice 1 would build, and did not) and a CLI.
 
 ---
 
@@ -413,14 +430,20 @@ All paths above are relative to `packages/gateway/src/`. Test files are not list
   `listModels()`, the route reports unavailable and the walk **continues to the next route**. Prove
   this red first — on a model-blind `isAvailable()` the walk stops at the absent model, which is
   the whole defect.
-- **A pinned route is still gated (§3.3):** a task pin naming a non-local route under
-  `enforce_air_gap = true` is skipped, not honoured.
+- ~~**A pinned route is still gated (§3.3):** a task pin naming a non-local route under
+  `enforce_air_gap = true` is skipped, not honoured.~~ **Not written, because the pin stage it
+  would cover does not exist in slice 1** (see the §3.3 correction). This test moves to slice 4 and
+  must land in the same change as the pin stage itself — a gate and the path it guards are not
+  separable work.
 - **`routeId` slash handling (§3.1):** a model name containing slashes (`hf.co/user/model`, a
-  `.gguf` path) round-trips through `route_priority` parsing; an unresolvable entry raises at
-  config load rather than being dropped.
+  `.gguf` path) round-trips through `route_priority` parsing; an unresolvable entry is warn-logged
+  **by name** and dropped (it does not raise — see the §3.1 correction), and the rest of `[llm]`,
+  `enforce_air_gap` included, survives it.
 - **Lifecycle by `providerId` (§3.5):** `pullModel("ollama", "a-model-with-no-route")` succeeds.
   This is the case that keying on `routeId` would break.
-- **Two llama.cpp routes on one `base_url`** are rejected at config load.
+- **Two llama.cpp routes on one `base_url`** are dropped (first wins) and named in the warn log,
+  at assembly rather than at parse — same correction as above. Likewise two entries deriving the
+  same `<runtime>/<model>` route id.
 - Config: `[llm.local.<name>]` round-trip; legacy `local_model` still yields one working route;
   malformed sub-table does not discard the whole `[llm]` section (matching the `[ownership]`
   precedent at `nimbus-toml.ts` ≈1907).
@@ -488,7 +511,7 @@ Decided rather than left blank, so the plan is actionable. Each is cheap to reve
 | **1. Model routes** | This document. `(provider, model)` routes, one definition of `isLocal`, vendor-named egress destination, and a route-walked (still **un-ledgered** — see §4.1) overflow fallback. Ships multi-local-model routing and **zero** cloud vendors. | approved, planning next |
 | **2. Bearer-key clouds** | Anthropic, OpenAI, Gemini, xAI. One adapter shape, four configs, four Vault keys, the explicit opt-in flag from Open decision 3, and the `D`-rule promotion from Open decision 1. First slice where an `egress_ledger` `model` row is ever written. **Blocked on resolving `LlmRouter.generate()`'s I29 coverage (§4.1) before the first remote route registers.** | not started |
 | **3. Bedrock** | SigV4 signing, region, static creds *or* profile/role chain. Kept separate because it shares no auth shape with slice 2; reuses the `aws.*` credential fields connectors already have. | not started |
-| **4. Selection surface** | `[llm.tasks]` per-task pinning, `nimbus llm use <vendor>/<model>` writing to `llm_task_defaults`, full `nimbus llm status`. | not started |
+| **4. Selection surface** | `[llm.tasks]` per-task pinning, `nimbus llm use <vendor>/<model>` writing to `llm_task_defaults`, full `nimbus llm status`. **A ROUTER change, not the surface-only change originally promised:** slice 1 did not build the task-pin resolution stage (§3.3 correction), so slice 4 adds it to `orderedRoutes` — together with the §6 test that a pin is still gated by air-gap. | not started |
 
 ---
 

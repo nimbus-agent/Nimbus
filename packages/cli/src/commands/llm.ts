@@ -17,10 +17,6 @@ type RouteStatus = {
   contextWindow?: number;
 };
 
-type LlmStatusResponse = {
-  routes: RouteStatus[];
-};
-
 const COL_WIDTHS = {
   routeId: 22,
   provider: 10,
@@ -74,15 +70,64 @@ function printRouteTable(routes: RouteStatus[]): void {
   }
 }
 
+/**
+ * Narrows the `llm.status` payload's envelope. Unguarded, a payload without a `routes` array
+ * threw a raw `TypeError` on `.length` deep inside the table renderer — a stack trace where the
+ * actual fact ("the gateway answered with something this build does not understand") is what the
+ * user needs. Returns the rows still UNVALIDATED, so `--json` can emit exactly what the gateway
+ * sent; the table path narrows each row itself, below.
+ */
+function requireRoutesArray(res: unknown): unknown[] {
+  const routes = (res as { routes?: unknown } | null | undefined)?.routes;
+  if (!Array.isArray(routes)) {
+    throw new Error(
+      "llm.status returned an unexpected payload: no `routes` array. " +
+        "The gateway is likely a different version than this CLI.",
+    );
+  }
+  return routes;
+}
+
+/**
+ * Narrows one row for the TABLE renderer, which indexes fields: `pad()` calls `.length` on
+ * `routeId`, so one malformed row is the same crash as a malformed envelope. Deliberately narrow
+ * — the fields this renderer reads and nothing more; an unknown extra field is not an error, and
+ * an absent `contextWindow` is normal (it renders as "—", never as a fabricated number).
+ */
+function toRouteStatus(row: unknown, i: number): RouteStatus {
+  const r = row as Partial<RouteStatus> | null;
+  if (
+    r === null ||
+    typeof r !== "object" ||
+    typeof r.routeId !== "string" ||
+    typeof r.providerId !== "string" ||
+    typeof r.modelName !== "string"
+  ) {
+    throw new Error(
+      `llm.status returned an unexpected payload: route ${i} is missing routeId/providerId/modelName.`,
+    );
+  }
+  return {
+    routeId: r.routeId,
+    providerId: r.providerId,
+    modelName: r.modelName,
+    isLocal: r.isLocal === true,
+    available: r.available === true,
+    reason: typeof r.reason === "string" ? r.reason : "unknown",
+    ...(typeof r.contextWindow === "number" ? { contextWindow: r.contextWindow } : {}),
+  };
+}
+
 export async function runLlmStatusImpl(client: IPCClient, opts: { json: boolean }): Promise<void> {
-  const res = await client.call<LlmStatusResponse>("llm.status", {});
+  const routes = requireRoutesArray(await client.call<unknown>("llm.status", {}));
   if (opts.json) {
     // Emitted faithfully: whatever the gateway reported, verbatim — including a missing
     // contextWindow staying absent from the JSON rather than becoming a fabricated number.
-    console.log(JSON.stringify(res.routes, null, 2));
+    // Hence the raw rows here, never the table renderer's narrowed copies.
+    console.log(JSON.stringify(routes, null, 2));
     return;
   }
-  printRouteTable(res.routes);
+  printRouteTable(routes.map(toRouteStatus));
 }
 
 export async function runLlm(args: string[]): Promise<void> {

@@ -144,6 +144,34 @@ base_url = "http://127.0.0.1:8099"
     expect(llamacpp[0]?.modelName).toBe("a.gguf");
   });
 
+  test("two entries deriving the SAME route id keep the first and name the drop", () => {
+    // A plausible failover config: the same model on two daemons. The route id is
+    // (runtime, model), so both entries derive "ollama/qwen3:8b" — last-wins on the
+    // router's Map would keep the workstation and discard the laptop with no outward sign.
+    const { db, tomlPath } = writeConfig(`
+[llm.local.laptop]
+runtime = "ollama"
+model = "qwen3:8b"
+
+[llm.local.workstation]
+runtime = "ollama"
+model = "qwen3:8b"
+base_url = "http://192.168.1.50:11434"
+`);
+    const logger = capturingLogger();
+    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const routes = registry.llmRouter.routes();
+    expect(routes).toHaveLength(1);
+    expect(routes[0]?.routeId).toBe("ollama/qwen3:8b");
+    // FIRST wins, matching the llamacpp base-URL rule — the two drop rules must not
+    // disagree about which entry survives.
+    const dropMessage = logger.messages.find((m) => m.includes("route id"));
+    expect(dropMessage).toBeDefined();
+    expect(dropMessage).toContain("llm.local.workstation");
+    expect(dropMessage).toContain("llm.local.laptop");
+    expect(dropMessage).toContain("ollama/qwen3:8b");
+  });
+
   test("an unknown runtime is dropped by name, never silently constructed as ollama", () => {
     const { db, tomlPath } = writeConfig(`
 [llm.local.mystery]

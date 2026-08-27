@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
 import type { LlmProvider } from "./types.ts";
 
@@ -246,14 +245,11 @@ describe("LlmRouter context window overflow", () => {
     // keyed on provider id, so with two same-id routes it cannot tell "walked to the fitting
     // route" apart from "truncated on the original" — only asserting on what each instance
     // actually received can.
-    // Both routes share providerId "ollama", and the availability probe caches by
-    // providerId — a zero TTL forces each check to re-list rather than reuse the OTHER
-    // instance's cached model list (which would report "big" unavailable, since the
-    // cached list would still say ["small"]).
-    const router = new LlmRouter(
-      { ...DEFAULT_CONFIG, preferLocal: true },
-      new RouteAvailabilityProbe(0),
-    );
+    // Both routes share providerId "ollama" but are DISTINCT provider instances, which is
+    // what `RouteAvailabilityProbe` keys its cache on — so each is probed against its own
+    // model list and the default (production) TTLs are what run here. No zero-TTL probe is
+    // injected: a guarantee verified only under a TTL production never uses is not verified.
+    const router = new LlmRouter({ ...DEFAULT_CONFIG, preferLocal: true });
     const smallCaptured = { prompt: "" };
     const bigCaptured = { prompt: "" };
     router.registerRoute(makeCaptureProvider("ollama", true, smallCaptured, ["small"]), "small", {
@@ -693,16 +689,16 @@ describe("LlmRouter route registration", () => {
     // returns it, because the daemon is up even though the configured model was never
     // pulled. That is the whole defect this task fixes.
     //
-    // Both routes share providerId "ollama" — the availability probe caches by
-    // providerId, so a zero TTL is used (rather than a distinct vendor id) to force
-    // each check to re-list against its OWN fake instance, which is what a real daemon
-    // would do too.
+    // Both routes share providerId "ollama" but are DISTINCT provider instances — which is
+    // what the availability probe keys its cache on — so each check re-lists against its
+    // OWN fake, exactly as two real daemons would answer. Deliberately runs on the default
+    // (production) TTLs rather than an injected zero-TTL probe.
     const absent = makeFakeRouteProvider("ollama", true, true, ["other"]);
     const present = makeFakeRouteProvider("ollama", true, true, ["present"]);
-    const router = new LlmRouter(
-      { ...DEFAULT_CONFIG, routePriority: ["ollama/missing", "ollama/present"] },
-      new RouteAvailabilityProbe(0),
-    );
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      routePriority: ["ollama/missing", "ollama/present"],
+    });
     router.registerRoute(absent, "missing");
     router.registerRoute(present, "present");
     const chosen = await router.selectRoute("reasoning");

@@ -37,10 +37,15 @@ export const ROUTE_AVAILABILITY_POSITIVE_TTL_MS = 30_000;
 export const ROUTE_AVAILABILITY_NEGATIVE_TTL_MS = 2_000;
 
 // What a single `/api/tags`-shaped probe of a provider daemon establishes: whether it
-// answered at all, and — only if it did — what models it currently reports. Cached
-// per `providerId`, not per route: the model list is a property of the daemon a route's
-// provider talks to, not of any one route, so four routes sharing one Ollama daemon
-// must cost one round trip, not four.
+// answered at all, and — only if it did — what models it currently reports. Cached per
+// provider INSTANCE, not per route and NOT per `providerId`: the model list is a property
+// of the one daemon a route's provider talks to, so four routes sharing one Ollama
+// provider instance must cost one round trip, not four — while two `[llm.local.*]` entries
+// pointed at DIFFERENT Ollama daemons (`assemble.ts` constructs one `OllamaProvider` per
+// entry, and ollama is exempt from the base-url collision rule) must each be probed
+// against their own daemon. Keying on `providerId` would answer the second daemon's route
+// from the first daemon's model list, reopening exactly the fail-open §3.4 exists to close.
+// Mirrors `registry.ts` `listAllModels`, which dedups by instance for the same reason.
 type ProviderProbeResult = {
   reachable: boolean;
   modelNames: readonly string[];
@@ -62,14 +67,15 @@ type CacheEntry = {
  * correct; silently starting a multi-gigabyte download because a config entry named a
  * model is not.
  *
- * Caches the per-provider probe (reachability + model list) keyed on `providerId`, for
+ * Caches the probe (reachability + model list) keyed on the provider INSTANCE, for
  * `positiveTtlMs` when the daemon answered or `negativeTtlMs` when it didn't — see the
  * two constants above for why they differ. `invalidate(providerId)` exists so a
  * successful `LlmRegistry.pullModel` can drop the cache immediately rather than making
- * the caller wait out the TTL to see a model it just pulled.
+ * the caller wait out the TTL to see a model it just pulled; it still takes a vendor id
+ * (that is all `pullModel` has) and clears every cached instance carrying that id.
  */
 export class RouteAvailabilityProbe {
-  private readonly cache = new Map<ProviderId, CacheEntry>();
+  private readonly cache = new Map<LlmProvider, CacheEntry>();
 
   constructor(
     private readonly positiveTtlMs: number = ROUTE_AVAILABILITY_POSITIVE_TTL_MS,
@@ -87,14 +93,23 @@ export class RouteAvailabilityProbe {
     return { available: false, reason: "model_absent" };
   }
 
-  /** Drops the cached probe for `providerId`, so the next `check()` re-lists. */
+  /**
+   * Drops every cached probe belonging to a provider whose vendor id is `providerId`, so
+   * the next `check()` on any of them re-lists. Iterates rather than deleting one key
+   * because the cache is keyed on the provider INSTANCE: one vendor id can have several
+   * instances (several Ollama daemons), and a pull against that vendor invalidates what
+   * we believe about all of them — dropping too much only costs a re-list, whereas
+   * dropping too little leaves a just-pulled model reading as absent.
+   */
   invalidate(providerId: ProviderId): void {
-    this.cache.delete(providerId);
+    for (const provider of [...this.cache.keys()]) {
+      if (provider.providerId === providerId) this.cache.delete(provider);
+    }
   }
 
   private probeProvider(provider: LlmProvider): Promise<ProviderProbeResult> {
     const now = Date.now();
-    const cached = this.cache.get(provider.providerId);
+    const cached = this.cache.get(provider);
     if (cached !== undefined && cached.expiresAt > now) {
       return cached.result;
     }
@@ -105,7 +120,7 @@ export class RouteAvailabilityProbe {
     // fetch settles. `fetchProviderProbe` never rejects (it catches both awaits
     // internally), so no `.catch()` is needed here.
     const entry: CacheEntry = { result, expiresAt: now + this.positiveTtlMs };
-    this.cache.set(provider.providerId, entry);
+    this.cache.set(provider, entry);
     void result.then((r) => {
       entry.expiresAt = Date.now() + (r.reachable ? this.positiveTtlMs : this.negativeTtlMs);
     });

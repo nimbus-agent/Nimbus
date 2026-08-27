@@ -1366,6 +1366,43 @@ function dropLlamacppBaseUrlCollisions(
 }
 
 /**
+ * Drops (and names) any `[llm.local.*]` entry whose derived route id — `<runtime>/<model>` — was
+ * already claimed by an earlier entry. `LlmRouter.registerRoute` keys on that id and uses
+ * `Map.set`, so without this stage a second entry naming the same runtime AND model at a
+ * different `base_url` (a plausible failover pairing: the same model on a laptop and on a
+ * workstation) silently REPLACES the first, and `nimbus llm status` shows one row pointing at the
+ * second URL with nothing to explain where the other went.
+ *
+ * FIRST occurrence wins, matching `dropLlamacppBaseUrlCollisions` above — the two drop rules must
+ * not disagree about which entry survives, or which one you get depends on which check fired.
+ * Every other drop path in this slice names the offending entry; a route that vanishes without a
+ * word is the exact shape `dropUnresolvableRoutePriorityEntries` refuses to allow.
+ */
+function dropDuplicateRouteIds(
+  localRoutes: ReadonlyMap<string, NimbusLlmLocalRoute>,
+  logger: RouteValidationLogger,
+): Map<string, NimbusLlmLocalRoute> {
+  const kept = new Map<string, NimbusLlmLocalRoute>();
+  const claimedBy = new Map<string, string>(); // route id -> first entry name
+  for (const [name, route] of localRoutes) {
+    const routeId = makeRouteId(route.runtime === "llamacpp" ? "llamacpp" : "ollama", route.model);
+    const existing = claimedBy.get(routeId);
+    if (existing !== undefined) {
+      logger.warn(
+        `[llm] dropping [llm.local.${name}]: route id "${routeId}" is already claimed by ` +
+          `[llm.local.${existing}] — a route is keyed on (runtime, model), so two entries ` +
+          "naming the same pair are one route; keeping the first, and the later entry's " +
+          "base_url is NOT used",
+      );
+      continue;
+    }
+    claimedBy.set(routeId, name);
+    kept.set(name, route);
+  }
+  return kept;
+}
+
+/**
  * Resolves `[llm] route_priority` entries against the route ids that are ACTUALLY about to be
  * registered, dropping (with a named log line) any entry that fails `parseRouteRef` or names no
  * registered route. Silence is not acceptable here: a vanished priority entry changes which model
@@ -1430,7 +1467,8 @@ export function buildLlmRegistryFromToml(
   applyLlmTomlOverrides(llmOverrides);
 
   const knownRuntimeLocalRoutes = dropUnknownRuntimeEntries(llmToml.localRoutes, logger);
-  const validatedLocalRoutes = dropLlamacppBaseUrlCollisions(knownRuntimeLocalRoutes, logger);
+  const uncollidedLocalRoutes = dropLlamacppBaseUrlCollisions(knownRuntimeLocalRoutes, logger);
+  const validatedLocalRoutes = dropDuplicateRouteIds(uncollidedLocalRoutes, logger);
 
   // The route ids that WILL be registered below — computed up front (without touching the
   // registry) so route_priority can be validated against the real, post-collision-check set

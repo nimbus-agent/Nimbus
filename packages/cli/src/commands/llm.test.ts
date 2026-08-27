@@ -88,6 +88,28 @@ describe("runLlmStatusImpl", () => {
     expect(out.stdout).toContain("no routes registered");
   });
 
+  it("reports a clear message when the payload has no routes array", async () => {
+    // Unguarded this threw a raw TypeError on `.length` inside the table renderer.
+    const ipc = createMockIpcClient([{}]);
+    await expect(runLlmStatusImpl(ipc.client, { json: false })).rejects.toThrow(
+      /no `routes` array/,
+    );
+  });
+
+  it("reports a clear message when a ROW is malformed, rather than crashing in pad()", async () => {
+    const ipc = createMockIpcClient([{ routes: [{ providerId: "ollama" }] }]);
+    await expect(runLlmStatusImpl(ipc.client, { json: false })).rejects.toThrow(
+      /route 0 is missing routeId/,
+    );
+    // Nothing half-rendered before the refusal.
+    expect(out.stdout).not.toContain("ollama");
+  });
+
+  it("guards the envelope on the --json path too", async () => {
+    const ipc = createMockIpcClient([{ routes: "not-an-array" }]);
+    await expect(runLlmStatusImpl(ipc.client, { json: true })).rejects.toThrow(/no `routes` array/);
+  });
+
   it("emits the route list faithfully as JSON, contextWindow omitted when absent", async () => {
     const ipc = createMockIpcClient([{ routes: MOCK_ROUTES }]);
     await runLlmStatusImpl(ipc.client, { json: true });

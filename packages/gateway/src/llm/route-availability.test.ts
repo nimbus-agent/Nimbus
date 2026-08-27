@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { RouteAvailabilityProbe } from "./route-availability.ts";
 import type { LlmModelInfo, LlmProvider, ModelRoute } from "./types.ts";
 
-function route(
-  modelName: string,
-  opts: { reachable: boolean; models: string[]; onList?: () => void },
-): ModelRoute {
-  const provider: LlmProvider = {
+function makeProvider(opts: {
+  reachable: boolean;
+  models: string[];
+  onList?: () => void;
+}): LlmProvider {
+  return {
     providerId: "ollama",
     isLocal: true,
     isAvailable: async () => opts.reachable,
@@ -18,7 +19,20 @@ function route(
       throw new Error("not called");
     },
   };
-  return { routeId: `ollama/${modelName}`, provider, modelName, meta: {} };
+}
+
+/** A route on a specific provider INSTANCE. Which instance a route carries is load-bearing
+ *  now that the cache keys on the instance: two routes sharing one daemon must be built
+ *  from ONE `makeProvider(...)` call, and two routes on two daemons from two. */
+function routeOn(p: LlmProvider, modelName: string): ModelRoute {
+  return { routeId: `ollama/${modelName}`, provider: p, modelName, meta: {} };
+}
+
+function route(
+  modelName: string,
+  opts: { reachable: boolean; models: string[]; onList?: () => void },
+): ModelRoute {
+  return routeOn(makeProvider(opts), modelName);
 }
 
 describe("RouteAvailabilityProbe", () => {
@@ -51,16 +65,39 @@ describe("RouteAvailabilityProbe", () => {
   test("listModels is called ONCE for two routes on the same provider within the TTL", async () => {
     let calls = 0;
     const probe = new RouteAvailabilityProbe(60_000);
-    const opts = {
+    // ONE provider instance, two routes on it — the shared-daemon case. Built from a single
+    // `makeProvider(...)` call deliberately: two separate calls would be two instances, which is
+    // a different scenario entirely (see the independence test below) and would make this
+    // amortization claim untestable.
+    const shared = makeProvider({
       reachable: true,
       models: ["a", "b"],
       onList: () => {
         calls += 1;
       },
-    };
-    await probe.check(route("a", opts));
-    await probe.check(route("b", opts));
+    });
+    await probe.check(routeOn(shared, "a"));
+    await probe.check(routeOn(shared, "b"));
     expect(calls).toBe(1);
+  });
+
+  test("two routes on DIFFERENT instances sharing a providerId are probed independently", async () => {
+    // `assemble.ts` builds a new `OllamaProvider` per `[llm.local.*]` entry, and ollama is
+    // exempt from the base-url collision rule — so two ollama routes on two DIFFERENT
+    // daemons is legitimate config. Keyed on `providerId`, the second route is answered from
+    // the FIRST daemon's model list: `laptop` lists gemma3:12b, so the `ws` route (on a
+    // daemon that has no such model, and here is not even reachable) reads as available, the
+    // priority walk stops there, and generate() fails at the network call.
+    const probe = new RouteAvailabilityProbe(60_000);
+    const laptop = makeProvider({ reachable: true, models: ["qwen3:8b", "gemma3:12b"] });
+    const workstation = makeProvider({ reachable: false, models: [] });
+
+    const laptopRoute = await probe.check(routeOn(laptop, "qwen3:8b"));
+    expect(laptopRoute).toEqual({ available: true, reason: "ok" });
+
+    // The assertion that fails under an id-keyed cache: this must consult the WORKSTATION.
+    const wsRoute = await probe.check(routeOn(workstation, "gemma3:12b"));
+    expect(wsRoute).toEqual({ available: false, reason: "provider_unreachable" });
   });
 
   test("a listModels rejection is unavailable, not a thrown probe", async () => {
@@ -83,17 +120,47 @@ describe("RouteAvailabilityProbe", () => {
   test("invalidate() forces the next check to re-list", async () => {
     let calls = 0;
     const probe = new RouteAvailabilityProbe(60_000);
-    const opts = {
+    // The SAME instance either side of invalidate() — otherwise the second check would miss
+    // the cache anyway (different key) and the test would pass whether or not invalidate did
+    // anything, which is the shape this repo calls a test that cannot fail.
+    const p = makeProvider({
       reachable: true,
       models: ["a"],
       onList: () => {
         calls += 1;
       },
-    };
-    await probe.check(route("a", opts));
+    });
+    await probe.check(routeOn(p, "a"));
     probe.invalidate("ollama");
-    await probe.check(route("a", opts));
+    await probe.check(routeOn(p, "a"));
     expect(calls).toBe(2);
+  });
+
+  test("invalidate(providerId) clears EVERY instance carrying that vendor id", async () => {
+    let laptopCalls = 0;
+    let wsCalls = 0;
+    const probe = new RouteAvailabilityProbe(60_000);
+    const laptop = makeProvider({
+      reachable: true,
+      models: ["a"],
+      onList: () => {
+        laptopCalls += 1;
+      },
+    });
+    const workstation = makeProvider({
+      reachable: true,
+      models: ["a"],
+      onList: () => {
+        wsCalls += 1;
+      },
+    });
+    await probe.check(routeOn(laptop, "a"));
+    await probe.check(routeOn(workstation, "a"));
+    probe.invalidate("ollama");
+    await probe.check(routeOn(laptop, "a"));
+    await probe.check(routeOn(workstation, "a"));
+    expect(laptopCalls).toBe(2);
+    expect(wsCalls).toBe(2);
   });
 
   test("an unreachable provider is re-probed sooner than a reachable one (split TTL)", async () => {
