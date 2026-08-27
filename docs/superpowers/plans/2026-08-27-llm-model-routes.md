@@ -335,7 +335,10 @@ This is the core change. Write the test that fails on today's code **first**, so
 
 **Files:**
 - Modify: `packages/gateway/src/llm/router.ts`
+- Modify: `packages/gateway/src/decisions/decision-llm-adapter.ts:159`
+- Modify: `packages/gateway/src/glossary/glossary-llm-adapter.ts:44`
 - Test: `packages/gateway/src/llm/router.test.ts`
+- Test: `packages/gateway/src/decisions/decision-llm-adapter.test.ts`, `packages/gateway/src/glossary/glossary-llm-adapter.test.ts` (existing — confirm the local-only refusal still holds)
 
 **Interfaces:**
 - Consumes: `ModelRoute`, `ProviderId` (Task 1); `makeRouteId` (Task 2).
@@ -431,7 +434,29 @@ Record the observed `1` in your task notes. Delete the temporary block before pr
 
 In `packages/gateway/src/llm/router.ts`:
 
-Delete `LOCAL_PROVIDER_IDS` and rewrite `isLocalProviderKind` as a route-level read. Keep the exported name only if `grep -rn "isLocalProviderKind" packages/gateway/src --include=*.ts | grep -v test` shows a non-test caller; if it shows none, delete the export and its import in `router.test.ts`.
+**Delete both `LOCAL_PROVIDER_IDS` and the exported `isLocalProviderKind`.** The audit is already
+done — do not re-run it as a conditional:
+
+| Caller | Line | Becomes |
+| --- | --- | --- |
+| `decisions/decision-llm-adapter.ts` | `159` — `if (!isLocalProviderKind(provider.providerId)) return null;` | `if (!provider.isLocal) return null;` |
+| `glossary/glossary-llm-adapter.ts` | `44` — same shape | `if (!provider.isLocal) return null;` |
+| `llm/router.ts` | `142` — inside `resolveForSynthesis` | `isLocal: route.provider.isLocal` |
+| `llm/router.test.ts` | `386-399` | delete the `describe`; the property is covered by Task 1 and Task 10 |
+
+**These two call sites are security gates, not conveniences** — they are how the glossary and
+decisions extraction passes refuse to send indexed private prose to a remote provider. Migrate them
+in this task, in this commit; leaving them on a string-keyed predicate is not acceptable as
+follow-up work.
+
+**`isLocalProviderKind` must not survive in any form.** Once `ProviderId` is an open string, a
+function answering "is this id local?" can only work by consulting a list — which is precisely the
+copy this refactor exists to delete, reintroduced at a security gate. Locality is a property of the
+registered provider instance; ask the instance.
+
+(For completeness on review item 2.4: `requireLocalProvider`, `LOCAL_PROVIDERS` and the
+`LocalProvider` type are confined to `ipc/llm-rpc.ts` and have no callers elsewhere — verified by
+grep across `packages/`. Task 10 deletes them with no migration needed.)
 
 Replace the two maps with one:
 
@@ -470,12 +495,43 @@ Rewrite `providerPriority` to return ordered `ModelRoute`s. `routePriority` is a
       // here was unregistered at runtime, so skipping is correct.
       const ordered = explicit.map((id) => byId.get(id)).filter((r): r is ModelRoute => r !== undefined);
       const named = new Set(ordered.map((r) => r.routeId));
-      return [...ordered, ...all.filter((r) => !named.has(r.routeId))];
+      // The unnamed tail still honours preferLocal. Leaving it in registration order
+      // would make the fallback order depend on config-file ordering, which is
+      // arbitrary — and would quietly ignore prefer_local for exactly the routes the
+      // user did not think to rank. Appending them at all (rather than dropping) is
+      // deliberate: a route added to [llm.local.*] but forgotten in route_priority
+      // should still be reachable, not invisible.
+      return [...ordered, ...byPreference(all.filter((r) => !named.has(r.routeId)), preferLocal)];
     }
-    const local = all.filter((r) => r.provider.isLocal);
-    const remote = all.filter((r) => !r.provider.isLocal);
+    return byPreference(all, preferLocal);
+  }
+
+  private static byPreference(routes: ModelRoute[], preferLocal: boolean): ModelRoute[] {
+    const local = routes.filter((r) => r.provider.isLocal);
+    const remote = routes.filter((r) => !r.provider.isLocal);
     return preferLocal ? [...local, ...remote] : [...remote, ...local];
   }
+```
+
+Add the matching test:
+
+```ts
+test("the unnamed tail after route_priority still honours preferLocal", async () => {
+  const router = new LlmRouter({
+    ...DEFAULT_CONFIG,
+    preferLocal: true,
+    routePriority: ["gemini/gemini-2.5-pro"], // an explicit remote FIRST choice
+  });
+  router.registerRoute(makeFakeRouteProvider("gemini", false, true), "gemini-2.5-pro");
+  router.registerRoute(makeFakeRouteProvider("xai", false, true), "grok-4");
+  router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+  // Registration order puts xai (remote) before ollama (local); preferLocal must
+  // reorder the tail so the local route is tried before the unranked remote one.
+  const ids = (router as unknown as { orderedRoutes(p?: boolean): ModelRoute[] })
+    .orderedRoutes(true)
+    .map((r) => r.routeId);
+  expect(ids).toEqual(["gemini/gemini-2.5-pro", "ollama/qwen3:8b", "xai/grok-4"]);
+});
 ```
 
 Rewrite `firstAvailable` to walk routes, keeping the skip-during-walk shape (do NOT pre-filter a pool — see spec §3.3):
@@ -505,7 +561,9 @@ Expected: PASS. Existing `selectProvider` / `getStatus` tests must still pass th
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/gateway/src/llm/router.ts packages/gateway/src/llm/router.test.ts
+git add packages/gateway/src/llm/router.ts packages/gateway/src/llm/router.test.ts \
+        packages/gateway/src/decisions/decision-llm-adapter.ts \
+        packages/gateway/src/glossary/glossary-llm-adapter.ts
 git commit -m "feat(llm): key the router on (provider, model) routes"
 ```
 
@@ -685,7 +743,45 @@ Expected: FAIL — `Cannot find module './route-availability.ts'`.
 
 - [ ] **Step 4: Wire it into the walk and run tests**
 
-In `router.ts`, `probeAvailable` becomes a `RouteAvailabilityProbe.check(route).available` call, keeping the existing catch-to-false. Add a router-level test:
+**The probe must be a single long-lived field on `LlmRouter`**, not constructed inside the walk:
+
+```ts
+  private readonly availability = new RouteAvailabilityProbe();
+```
+
+Constructing it inside `firstAvailableRoute` would discard the cache on every call, which defeats
+the entire purpose — four routes would still cost four `/api/tags` round trips. `probeAvailable`
+becomes `(await this.availability.check(route)).available`, keeping the existing catch-to-false.
+
+Three consequences of a long-lived cache that the implementation must handle:
+
+1. **TTL is `30_000` ms**, a named constant, not a magic number. Long enough that resolving a
+   four-route table costs one round trip; short enough that a model removed out-of-band
+   (`ollama rm`) is noticed without a restart.
+2. **A successful `pullModel` must invalidate the cache for that `providerId`.** Otherwise
+   `nimbus llm pull gemma3` followed immediately by a request that should use it keeps reporting
+   `model_absent` for up to 30 seconds — a bug that looks exactly like the pull having failed.
+   `RouteAvailabilityProbe.invalidate(providerId: ProviderId): void`, called from
+   `LlmRegistry.pullModel` on success (Task 6 — add it there when this lands).
+3. **`getStatus()` already has its own per-call `availabilityCache`** (`Map<…, Promise<boolean>>`)
+   built to probe each provider at most once per status call. Delete it — it is now redundant, and
+   two caching layers with different lifetimes over the same question is how they drift apart.
+
+Add the invalidation test to Task 5's file:
+
+```ts
+test("invalidate() forces the next check to re-list", async () => {
+  let calls = 0;
+  const probe = new RouteAvailabilityProbe(60_000);
+  const opts = { reachable: true, models: ["a"], onList: () => { calls += 1; } };
+  await probe.check(route("a", opts));
+  probe.invalidate("ollama");
+  await probe.check(route("a", opts));
+  expect(calls).toBe(2);
+});
+```
+
+Add a router-level test:
 
 ```ts
 test("the walk falls THROUGH a route whose model is not pulled", async () => {
@@ -910,22 +1006,22 @@ test("a malformed route_priority entry throws at load, it does not vanish", () =
   expect(() => parseNimbusTomlLlmSection(`[llm]\nroute_priority = ["ollama"]\n`)).toThrow(/route/);
 });
 
-test("two llamacpp routes sharing a base_url are rejected", () => {
-  // llama.cpp's generate() sends no model field — the server answers with whatever
-  // it was launched with, so two routes at one URL would report different names
-  // while hitting identical weights.
+test("both llamacpp sub-tables are parsed; collision is Task 9's to catch", () => {
+  // The collision check moved to assemble.ts with the rest of validation. Compare
+  // RESOLVED base URLs there: two routes that both OMIT base_url resolve to the
+  // same default and collide, which a raw-string comparison would miss entirely.
   const toml = `
 [llm.local.a]
 runtime = "llamacpp"
 model = "a.gguf"
-base_url = "http://127.0.0.1:8080"
 
 [llm.local.b]
 runtime = "llamacpp"
 model = "b.gguf"
-base_url = "http://127.0.0.1:8080"
 `;
-  expect(() => parseNimbusTomlLlmSection(toml)).toThrow(/base_url/);
+  const cfg = parseNimbusTomlLlmSection(toml);
+  expect([...(cfg.localRoutes ?? new Map()).keys()].sort()).toEqual(["a", "b"]);
+  expect(cfg.localRoutes?.get("a")?.baseUrl).toBeUndefined();
 });
 
 test("a malformed sub-table does not discard the rest of [llm]", () => {
@@ -936,14 +1032,57 @@ test("a malformed sub-table does not discard the rest of [llm]", () => {
 });
 ```
 
-**Throwing vs. the section's house style — resolve before implementing.** Two tests above expect a
-`throw`, but `parseNimbusTomlLlmSection` currently never throws; `applyNimbusLlmKey` silently
-ignores a bad value, and the `[ownership]` precedent explicitly catches so one malformed block does
-not discard a section. Reconcile: a malformed *value* keeps the silent-ignore behaviour, while an
-unresolvable *route reference* throws — because a dropped `route_priority` entry silently changes
-which model answers, which is a different class of failure from a dropped boolean. If review
-prefers no new throw, surface it as a loaded-config validation error at `assemble.ts` instead
-(Task 9) — but it must not be silent either way.
+> **⚠ The parser MUST NOT throw. Do not write the two `toThrow` tests above as shown — they are
+> superseded by the block below.** They are left visible only so the reasoning is not lost.
+
+**Why a throw here is dangerous, not merely unidiomatic.** `loadTomlSection`
+(`config/nimbus-toml.ts:23-32`) wraps every section parse in a **bare catch that returns the
+defaults**:
+
+```ts
+try { return parse(readFileSync(tomlPath, "utf8")); }
+catch { return structuredClone(fallback); }
+```
+
+A throw from `parseNimbusTomlLlmSection` is therefore swallowed, and the **entire `[llm]` section
+reverts to `DEFAULT_NIMBUS_LLM_TOML`** — silently. That discards `prefer_local`, `local_model`,
+`min_reasoning_params` and, critically, `enforce_air_gap`, whose default is **`false`**. So a typo
+in one `route_priority` entry would silently disable air-gap on a machine configured for it. That
+is a strictly worse outcome than either fail-fast or a diagnostic, and it is invisible.
+
+**Therefore validation is a two-stage split:**
+
+1. **Parse stage (this task) never throws.** `parseNimbusTomlLlmSection` collects `route_priority`
+   entries verbatim into `routePriority: string[]` and `[llm.local.*]` blocks into `localRoutes`,
+   applying no cross-field validation. A structurally unusable sub-table (empty id) is skipped, as
+   the `[ownership]` precedent skips a malformed entry rather than discarding the section.
+2. **Validation stage (Task 9, `assemble.ts`) reports and refuses.** Against the loaded config,
+   run each `routePriority` entry through `parseRouteRef` and check it resolves to a registered
+   route, and check the resolved-`base_url` collision rule. A failure logs an explicit error
+   naming the offending entry and **omits that entry**, rather than reverting anything.
+
+Write the two config tests as non-throwing instead:
+
+```ts
+test("route_priority entries are collected verbatim, without validation", () => {
+  // Validation lives in assemble.ts (Task 9). Throwing here would be swallowed by
+  // loadTomlSection's bare catch and silently revert the WHOLE [llm] section to
+  // defaults — including enforce_air_gap, which defaults to false.
+  const cfg = parseNimbusTomlLlmSection(`[llm]\nroute_priority = ["ollama", "ollama/qwen3"]\n`);
+  expect(cfg.routePriority).toEqual(["ollama", "ollama/qwen3"]);
+});
+
+test("a malformed sub-table is skipped without discarding the section", () => {
+  const cfg = parseNimbusTomlLlmSection(
+    `[llm]\nenforce_air_gap = true\n\n[llm.local.]\nmodel = "x"\n`,
+  );
+  expect(cfg.enforceAirGap).toBe(true); // the security-relevant key SURVIVES
+  expect(cfg.localRoutes ?? new Map()).not.toHaveProperty("");
+});
+```
+
+The second test is the regression guard for the hazard above: assert the *security* key survives a
+malformed neighbour, not merely that some key survives.
 
 - [ ] **Step 2: Run it and verify it fails**
 
@@ -992,7 +1131,92 @@ Expected: FAIL — one route per runtime regardless of config.
 
 - [ ] **Step 3: Implement**
 
-In `buildLlmRegistryFromToml`, when `localRoutes` is non-empty, register one route per entry, constructing `OllamaProvider(baseUrl ?? "http://127.0.0.1:11434", model, llmToml.localContextTokens)` or `LlamaCppProvider(baseUrl, model)` by `runtime`. When it is empty, register exactly today's two providers via `addRoute(provider, llmToml.localModel)` so behaviour is unchanged. Pass `routePriority` into the `LlmRegistry` config. Keep the fire-and-forget `refreshProviderMeta` call, now iterating routes.
+In `buildLlmRegistryFromToml`, when `localRoutes` is non-empty, register one route per entry, constructing `OllamaProvider(baseUrl ?? "http://127.0.0.1:11434", model, llmToml.localContextTokens)` or `LlamaCppProvider(baseUrl, model)` by `runtime`. When it is empty, register exactly today's two providers via `addRoute(provider, llmToml.localModel)` so behaviour is unchanged. Keep the fire-and-forget `refreshProviderMeta` call, now iterating routes.
+
+**Then the validation stage that Task 8 deliberately does not perform.** It lives here because a
+throw inside the parser is swallowed by `loadTomlSection`'s bare catch and silently reverts the
+whole `[llm]` section to defaults — including `enforce_air_gap`.
+
+Resolve base URLs **before** comparing them, per review item 2.3 — two routes that both omit
+`base_url` resolve to the same default and collide, which a raw-string comparison misses because
+both values are `undefined`:
+
+```ts
+const LLAMACPP_DEFAULT_BASE_URL = "http://127.0.0.1:8080";
+
+function resolveBaseUrl(runtime: string, baseUrl: string | undefined): string {
+  const explicit = baseUrl?.trim() ?? "";
+  if (explicit !== "") return explicit.replace(/\/$/, "");
+  return runtime === "llamacpp" ? LLAMACPP_DEFAULT_BASE_URL : "http://127.0.0.1:11434";
+}
+```
+
+Two rules, each logging the offending entry by name and **omitting only that entry**:
+
+1. **A `llamacpp` resolved base URL claimed twice is an error.** `LlamaCppProvider.generate()`
+   sends no model field — the server answers with whatever weights it was launched with — so two
+   llama.cpp routes at one URL report different model names while hitting identical weights: a
+   route table that lies. Keep the first, drop the rest, log both names and the URL. Ollama is
+   exempt: `generate()` sends `this.modelName` to a shared daemon, so many routes at one base URL
+   is the normal case.
+2. **A `route_priority` entry that fails `parseRouteRef` or names no registered route is dropped
+   with an explicit log line** naming the entry. It must not be silent — a vanished priority entry
+   changes which model answers with no outward sign.
+
+Neither rule aborts boot. The gateway starts with a correct-but-reduced route table and a loud
+log, which is the same posture `refreshProviderMeta` takes when a provider is down.
+
+Add to the integration test:
+
+```ts
+test("two llamacpp routes that BOTH omit base_url collide and one is dropped", () => {
+  // The case a raw-string comparison misses: both values are `undefined`.
+  writeConfig(`
+[llm.local.a]
+runtime = "llamacpp"
+model = "a.gguf"
+
+[llm.local.b]
+runtime = "llamacpp"
+model = "b.gguf"
+`);
+  const registry = buildLlmRegistryFromToml(db, tomlPath);
+  const llamacpp = registry.llmRouter.routes().filter((r) => r.provider.providerId === "llamacpp");
+  expect(llamacpp).toHaveLength(1);
+});
+
+test("many ollama routes on one base URL are all kept", () => {
+  // Ollama sends the model name per request, so sharing a daemon is correct.
+  writeConfig(`
+[llm.local.qwen3]
+runtime = "ollama"
+model = "qwen3:8b"
+
+[llm.local.gemma]
+runtime = "ollama"
+model = "gemma3:12b"
+`);
+  const registry = buildLlmRegistryFromToml(db, tomlPath);
+  expect(registry.llmRouter.routes()).toHaveLength(2);
+});
+
+test("an unresolvable route_priority entry is dropped, and the rest of [llm] survives", () => {
+  writeConfig(`
+[llm]
+enforce_air_gap = true
+route_priority = ["ollama/nope", "ollama/qwen3:8b"]
+
+[llm.local.qwen3]
+runtime = "ollama"
+model = "qwen3:8b"
+`);
+  const registry = buildLlmRegistryFromToml(db, tomlPath);
+  // The security-relevant key MUST survive a bad neighbour — this is the regression
+  // guard for loadTomlSection's swallow-and-revert behaviour.
+  expect(registry.llmRouter.enforcesAirGap()).toBe(true);
+  expect(registry.llmRouter.routes()).toHaveLength(1);
+});
+```
 
 - [ ] **Step 4: Run the CI command**
 
