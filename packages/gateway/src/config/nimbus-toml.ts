@@ -4,7 +4,11 @@ import { DEFAULT_LOCAL_CONTEXT_TOKENS } from "../llm/ollama-provider.ts";
 
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
-import { parseNimbusCiServiceToml, parseNimbusDoraToml } from "./service-config-toml.ts";
+import {
+  parseNimbusCiServiceToml,
+  parseNimbusDoraToml,
+  resolveServiceTableId,
+} from "./service-config-toml.ts";
 import {
   hasUnterminatedString,
   isTableHeader,
@@ -194,6 +198,13 @@ export function loadNimbusEmbeddingFromConfigDir(configDir: string): NimbusEmbed
   return loadNimbusEmbeddingFromPath(join(configDir, "nimbus.toml"));
 }
 
+/** One `[llm.local.<name>]` sub-table: a named local model route. Spec §3.6. */
+export type NimbusLlmLocalRoute = {
+  runtime: string;
+  model: string;
+  baseUrl?: string;
+};
+
 export type NimbusLlmToml = {
   preferLocal: boolean;
   remoteModel: string;
@@ -210,6 +221,22 @@ export type NimbusLlmToml = {
   enforceAirGap: boolean;
   maxAgentDepth: number;
   maxToolCallsPerSession: number;
+  /**
+   * Named `[llm.local.<name>]` sub-tables, keyed by name. Collected verbatim here —
+   * NO validation (resolving `route_priority` references, `base_url` collision
+   * checks) happens at this layer. See the module doc above `parseNimbusTomlLlmSection`
+   * for why: validation throws would be swallowed by `loadTomlSection`'s bare catch and
+   * silently revert the whole `[llm]` section to defaults. Validation lives in
+   * `platform/assemble.ts` (Task 9), against the loaded config, where a bad entry can be
+   * logged and dropped without discarding anything else.
+   */
+  localRoutes: ReadonlyMap<string, NimbusLlmLocalRoute>;
+  /**
+   * Verbatim `route_priority` entries — un-resolved route references, in file order.
+   * See `localRoutes` doc: resolving each entry against a registered route (built-in or
+   * `[llm.local.*]`) is Task 9's job, not this parser's.
+   */
+  routePriority: readonly string[];
 };
 
 export const DEFAULT_NIMBUS_LLM_TOML: NimbusLlmToml = {
@@ -223,6 +250,8 @@ export const DEFAULT_NIMBUS_LLM_TOML: NimbusLlmToml = {
   enforceAirGap: false,
   maxAgentDepth: 3,
   maxToolCallsPerSession: 20,
+  localRoutes: new Map(),
+  routePriority: [],
 };
 
 function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: string): void {
@@ -264,10 +293,108 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
       if (n !== undefined && n >= 1 && n <= 200) out.maxToolCallsPerSession = n;
       break;
     }
+    case "route_priority": {
+      // `parseStringArray` THROWS on a non-bracket-delimited value. Unguarded, that
+      // escapes into `loadTomlSection`'s catch and reverts the WHOLE [llm] section —
+      // see the doc above `NimbusLlmToml.routePriority`. Swallow it here instead:
+      // `routePriority` stays unset, every other key in the section survives. This is
+      // ALSO where the two superseded-by-the-brief "malformed entry throws" tests would
+      // have lived — they don't, on purpose: validating each entry (e.g. via
+      // `parseRouteRef`) is Task 9's job against the loaded config, not this parser's.
+      try {
+        out.routePriority = parseStringArray(valRaw);
+      } catch {
+        /* malformed: leave routePriority unset, fall back to the default (empty) */
+      }
+      break;
+    }
     default:
       applyNimbusLlmNumericKey(out, key, valRaw);
       break;
   }
+}
+
+const LLM_LOCAL_TABLE_PREFIX = "[llm.local.";
+
+/** Records a `key = value` line into the current `[llm.local.<name>]` bucket, if any. */
+function applyLlmLocalTableLine(bucket: Record<string, string> | undefined, trimmed: string): void {
+  if (bucket === undefined) return;
+  const kv = splitKeyValue(trimmed);
+  if (kv !== undefined) bucket[kv.key] = kv.valRaw;
+}
+
+/**
+ * If `trimmed` is a `[llm.local.<name>]` header, resolves its id via the shared
+ * `resolveServiceTableId` helper (reused from `service-config-toml.ts` rather than a
+ * second copy of the same prefix-match-and-slice logic). That helper THROWS on an
+ * empty id (`[llm.local.]`) — correct for its own `[metrics.dora.*]`/`[ci.service.*]`
+ * callers, wrong here: this parser must never throw (see the doc above
+ * `NimbusLlmToml.localRoutes`). Catch it locally and treat it as "skip this one
+ * malformed block" — matching the `[ownership]`/`[hitl.quorum]` precedent elsewhere in
+ * this file, where one bad entry is dropped rather than discarding the section.
+ */
+function beginLlmLocalTable(
+  accum: Map<string, Record<string, string>>,
+  trimmed: string,
+): string | undefined {
+  try {
+    return resolveServiceTableId(trimmed, LLM_LOCAL_TABLE_PREFIX, "llm.local", accum);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Accumulates raw kv strings per `[llm.local.<name>]` sub-table. */
+function collectLlmLocalKvSections(source: string): Map<string, Record<string, string>> {
+  const accum = new Map<string, Record<string, string>>();
+  let currentId: string | undefined;
+
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = stripComment(line).trim();
+    if (hasUnterminatedString(line)) continue;
+    if (trimmed === "") continue;
+    if (isTableHeader(trimmed)) {
+      currentId = beginLlmLocalTable(accum, trimmed);
+      continue;
+    }
+    if (currentId === undefined) continue;
+    applyLlmLocalTableLine(accum.get(currentId), trimmed);
+  }
+
+  return accum;
+}
+
+/**
+ * Validates one `[llm.local.<name>]` sub-table's raw kv strings into a route, or
+ * `undefined` when structurally unusable (missing `runtime`/`model`). No OTHER
+ * validation happens here — a runtime/model value that doesn't name a real thing, or
+ * a `base_url` that collides with another route, is Task 9's problem against the
+ * loaded config, not this parser's.
+ */
+function toLlmLocalRoute(kv: Record<string, string>): NimbusLlmLocalRoute | undefined {
+  const runtimeRaw = kv["runtime"];
+  const modelRaw = kv["model"];
+  if (runtimeRaw === undefined || modelRaw === undefined) return undefined;
+  const runtime = parseString(runtimeRaw);
+  const model = parseString(modelRaw);
+  if (runtime.length === 0 || model.length === 0) return undefined;
+  const route: NimbusLlmLocalRoute = { runtime, model };
+  const baseUrlRaw = kv["base_url"];
+  if (baseUrlRaw !== undefined) {
+    const baseUrl = parseString(baseUrlRaw);
+    if (baseUrl.length > 0) route.baseUrl = baseUrl;
+  }
+  return route;
+}
+
+/** Parses every `[llm.local.<name>]` sub-table into a name → route map. Never throws. */
+function parseLlmLocalRoutes(source: string): Map<string, NimbusLlmLocalRoute> {
+  const out = new Map<string, NimbusLlmLocalRoute>();
+  for (const [id, kv] of collectLlmLocalKvSections(source).entries()) {
+    const route = toLlmLocalRoute(kv);
+    if (route !== undefined) out.set(id, route);
+  }
+  return out;
 }
 
 /**
@@ -290,6 +417,12 @@ export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml
   forEachSectionEntry(source, "[llm]", (key, valRaw) => {
     applyNimbusLlmKey(out, key, valRaw);
   });
+  // `forEachSectionEntry` matches `[llm]` by EXACT string equality, so it cannot see
+  // `[llm.local.*]` sub-tables — this is a second, independent scan over the same
+  // source. `Partial<>`: an absent `[llm.local.*]` block leaves `localRoutes` unset
+  // (not an empty map), matching every other optional field here.
+  const localRoutes = parseLlmLocalRoutes(source);
+  if (localRoutes.size > 0) out.localRoutes = localRoutes;
   return out;
 }
 

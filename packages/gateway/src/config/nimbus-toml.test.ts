@@ -581,6 +581,90 @@ describe("loadNimbusLlmFromConfigDir", () => {
     const result = loadNimbusLlmFromConfigDir(dir);
     expect(result.maxAgentDepth).toBe(7);
   });
+
+  test("defaults-merged load exposes an empty route map, not undefined", () => {
+    writeToml(dir, `[llm]\nlocal_model = "llama3.2"\n`);
+    const cfg = loadNimbusLlmFromConfigDir(dir);
+    expect(cfg.localRoutes.size).toBe(0);
+    expect(cfg.routePriority).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseNimbusTomlLlmSection — [llm.local.<name>] sub-tables + route_priority
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusTomlLlmSection — [llm.local.<name>] and route_priority", () => {
+  test("parses [llm.local.<name>] sub-tables", () => {
+    const toml = `
+[llm]
+prefer_local = true
+
+[llm.local.qwen3]
+runtime = "ollama"
+model = "qwen3:8b"
+
+[llm.local.gemma]
+runtime = "ollama"
+model = "gemma3:12b"
+`;
+    const cfg = parseNimbusTomlLlmSection(toml);
+    expect([...(cfg.localRoutes ?? new Map()).keys()].sort()).toEqual(["gemma", "qwen3"]);
+    expect(cfg.localRoutes?.get("qwen3")?.model).toBe("qwen3:8b");
+  });
+
+  test("legacy local_model still parses and defines no sub-table route", () => {
+    const cfg = parseNimbusTomlLlmSection(`[llm]\nlocal_model = "llama3.2"\n`);
+    expect(cfg.localModel).toBe("llama3.2");
+    // Partial<>: absent, not an empty map. assemble.ts synthesises the route (Task 9).
+    expect(cfg.localRoutes).toBeUndefined();
+  });
+
+  test("route_priority with a model name containing slashes round-trips", () => {
+    const cfg = parseNimbusTomlLlmSection(`[llm]\nroute_priority = ["ollama/hf.co/user/model"]\n`);
+    expect(cfg.routePriority).toEqual(["ollama/hf.co/user/model"]);
+  });
+
+  test("both llamacpp sub-tables are parsed; collision is Task 9's to catch", () => {
+    // The collision check moved to assemble.ts with the rest of validation. Compare
+    // RESOLVED base URLs there: two routes that both OMIT base_url resolve to the
+    // same default and collide, which a raw-string comparison would miss entirely.
+    const toml = `
+[llm.local.a]
+runtime = "llamacpp"
+model = "a.gguf"
+
+[llm.local.b]
+runtime = "llamacpp"
+model = "b.gguf"
+`;
+    const cfg = parseNimbusTomlLlmSection(toml);
+    expect([...(cfg.localRoutes ?? new Map()).keys()].sort()).toEqual(["a", "b"]);
+    expect(cfg.localRoutes?.get("a")?.baseUrl).toBeUndefined();
+  });
+
+  // Superseded (per the task-8 brief banner): a malformed route_priority entry and a
+  // base_url collision do NOT throw here. `loadTomlSection`'s bare catch (nimbus-toml.ts
+  // ~line 23) swallows any throw from this parser and reverts the WHOLE [llm] section to
+  // DEFAULT_NIMBUS_LLM_TOML — including enforce_air_gap, whose default is false. A typo
+  // in one route_priority entry would then silently disable air-gap. Validation (resolving
+  // route refs, catching base_url collisions) moves to assemble.ts (Task 9), which can log
+  // the offending entry and drop only that entry.
+  test("route_priority entries are collected verbatim, without validation", () => {
+    const cfg = parseNimbusTomlLlmSection(`[llm]\nroute_priority = ["ollama", "ollama/qwen3"]\n`);
+    expect(cfg.routePriority).toEqual(["ollama", "ollama/qwen3"]);
+  });
+
+  test("a malformed sub-table is skipped without discarding the section", () => {
+    // Mirrors the [ownership]/[hitl.quorum] precedent: one bad block must not
+    // zero the section. Assert the SECURITY-relevant key specifically survives,
+    // not merely that "some key" survived.
+    const cfg = parseNimbusTomlLlmSection(
+      `[llm]\nenforce_air_gap = true\n\n[llm.local.]\nmodel = "x"\n`,
+    );
+    expect(cfg.enforceAirGap).toBe(true); // the security-relevant key SURVIVES
+    expect(cfg.localRoutes ?? new Map()).not.toHaveProperty("");
+  });
 });
 
 // ---------------------------------------------------------------------------

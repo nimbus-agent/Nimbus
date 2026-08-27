@@ -125,7 +125,23 @@ function materializeServiceConfigs(
   return out;
 }
 
-function resolveServiceTableId(
+/**
+ * Resolves a `[<tablePrefix><id>]` table-header line to its `id`, registering an
+ * (initially empty) bucket for it in `accum`. Returns `undefined` when `trimmed`
+ * does not start with `tablePrefix` at all (a different section's header).
+ *
+ * Throws on an empty `id` (`[<tablePrefix>]`) — deliberately, for THIS module's two
+ * callers (`[metrics.dora.*]` / `[ci.service.*]`), which is why `platform/assemble.ts`
+ * wraps `loadNimbusServiceConfigsFromConfigDir` in a try/catch and degrades rather than
+ * aborting startup. Exported (pure, already covered by this module's own tests) so
+ * `nimbus-toml.ts`'s `[llm.local.<name>]` scan can reuse the same id-resolution logic
+ * for its OWN table prefix; that caller has a stricter "never throw" contract (a throw
+ * would be swallowed by `loadTomlSection`'s bare catch and silently revert the whole
+ * `[llm]` section to defaults, including `enforce_air_gap`), so it wraps this call in
+ * its own local try/catch and treats the throw as "skip this one malformed block"
+ * rather than letting it propagate.
+ */
+export function resolveServiceTableId(
   trimmed: string,
   tablePrefix: string,
   blockLabel: string,
