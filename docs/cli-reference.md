@@ -2243,8 +2243,11 @@ nimbus admin token
 
 ### `nimbus llm status`
 
-Show which LLM provider and model is selected for each task type, whether the provider
-is reachable, and why it was chosen.
+Show every LLM route registered with the Gateway — a `(provider, model)` pair, e.g.
+`ollama/qwen3:8b` — and that route's own live availability. One provider vendor (e.g.
+`ollama`, backed by a single daemon) can register several routes at once via
+`[llm.local.<name>]`; each is listed and probed independently, so a shared daemon
+missing one of its two configured models shows only that route as unavailable.
 
 ```text
 nimbus llm status [--json]
@@ -2254,15 +2257,26 @@ nimbus llm status [--json]
 
 | Column    | Description |
 |-----------|-------------|
-| Task type | One of `classification`, `reasoning`, `summarisation`, `agent_step` |
-| Provider  | `ollama`, `llamacpp`, or `remote` |
-| Model     | Model name from config (`llm.local_model` or `llm.remote_model`) |
-| Available | Whether the provider responded to an availability check |
-| Reason    | `prefer-local`, `prefer-remote`, `air-gap`, `no-local-provider`, `no-remote-provider`, or `local-below-reasoning-floor` |
+| Route     | The route id, `"<providerId>/<modelName>"` |
+| Provider  | The provider vendor id, e.g. `ollama`, `llamacpp` |
+| Model     | The model name this route registers |
+| Local     | Whether the route's provider runs on this machine (`provider.isLocal`) |
+| Available | Whether this specific route is reachable right now |
+| Context   | The route's configured context window, or `—` when not reported |
 
-The Provider/Model/Reason columns describe the **preferred** provider for each task (the
-configured intent). When that provider is unavailable, the Reason cell also names the provider
-the router would actually fall back to at generation time — `… (falls back to remote/<model>)`.
+**Available column detail:** `yes`, or one of two distinguishable failure reasons —
+`no (provider unreachable)` when the daemon itself did not respond, or
+`no (model not pulled)` when the daemon is up but this route's specific model is not
+among the models it reports. These are deliberately kept apart (`provider_unreachable`
+vs. `model_absent`) because the fix differs: start the daemon vs. pull the model. An
+unrecognised reason string degrades to `no (<reason>)` rather than a fixed label, so a
+future reason value is still legible.
+
+There is no per-task-type decision or `Reason` column any more, and no
+`falls back to …` text — every route is listed on equal footing with its own
+availability; which one `generate()` would actually pick for a given task is a
+function of `[llm].prefer_local`, `[llm].route_priority`, and the reasoning
+capability floor, not something this command renders per row.
 
 **Flags:**
 
@@ -2273,36 +2287,40 @@ the router would actually fall back to at generation time — `… (falls back t
 **Example — table:**
 
 ```text
-Task type      Provider   Model                    Available  Reason
--------------------------------------------------------------------------------
-classification ollama     llama3.2                 yes        prefer-local
-reasoning      ollama     llama3.2                 no         prefer-local (falls back to remote/claude-sonnet-4-6)
-summarisation  ollama     llama3.2                 yes        prefer-local
-agent_step     —          —                        no         unavailable
+Route                 Provider  Model               Local  Available                 Context
+------------------------------------------------------------------------------------------------
+ollama/qwen3:8b       ollama    qwen3:8b            yes    yes                       8192
+ollama/gemma3:12b     ollama    gemma3:12b          yes    no (model not pulled)     —
+llamacpp/model.gguf   llamacpp  model.gguf          yes    no (provider unreachable) —
 ```
 
 **Example — JSON:**
 
 ```json
-{
-  "classification": {
+[
+  {
+    "routeId": "ollama/qwen3:8b",
     "providerId": "ollama",
-    "modelName": "llama3.2",
-    "isAvailable": true,
-    "reason": "prefer-local"
+    "modelName": "qwen3:8b",
+    "isLocal": true,
+    "available": true,
+    "reason": "ok",
+    "contextWindow": 8192
   },
-  "reasoning": {
+  {
+    "routeId": "ollama/gemma3:12b",
     "providerId": "ollama",
-    "modelName": "llama3.2",
-    "isAvailable": false,
-    "reason": "prefer-local",
-    "fallback": { "providerId": "remote", "modelName": "claude-sonnet-4-6" }
+    "modelName": "gemma3:12b",
+    "isLocal": true,
+    "available": false,
+    "reason": "model_absent"
   }
-}
+]
 ```
 
-The `fallback` field is present only when the preferred provider is unavailable but another
-provider can serve the task.
+The JSON form is the gateway's `routes` array emitted verbatim — a route with no
+reported `contextWindow` simply omits the key (never a fabricated `null` or `0`),
+which is why the table above renders `—` for it instead of a number.
 
 ---
 

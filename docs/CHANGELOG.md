@@ -8,6 +8,46 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-27 — The router's unit becomes a `(provider, model)` route, not a provider kind, and
+  ships zero cloud vendors.** `LlmRouter` used to key on a closed `LlmProviderKind` union
+  (`"ollama" | "llamacpp" | "remote"`), so registering a second provider under an already-used kind
+  silently evicted the first — "qwen3 for reasoning, gemma for classification" on one Ollama daemon
+  was unrepresentable. It now keys on `routeId` (`"<providerId>/<modelName>"`), an open `ProviderId`
+  vendor string, and a live per-route availability probe that checks the daemon **and** that the
+  route's specific model is among what it reports — a shared daemon missing one of two configured
+  models now fails only that route, not its sibling. `[llm.local.<name>]` config entries register N
+  local routes at once; `[llm].route_priority` names an explicit try-first order. The migration
+  shims this landed with — the `LlmProviderKind` alias and `LlmRouter.registerProvider` — are now
+  deleted; every call site is on `registerRoute`/`addRoute`. **What did not ship:** no cloud vendor
+  — `packages/gateway/src/llm/` still registers only `OllamaProvider` and `LlamaCppProvider` in
+  production, so the open `ProviderId` string and the route-keyed registry are the precondition for
+  a remote provider, not the provider itself, and the `[agents] synthesis = "allow-remote"` path and
+  I29's `model` egress class remain reachable by exactly nothing. Two correctness fixes shipped
+  alongside the key change, and they are NOT symmetric: the egress destination now names the vendor
+  (`providerId`) instead of the literal string `"model"` — that gap is closed outright. The
+  context-overflow fallback (`LlmRouter.generate()`, on context overflow, when the preferred route's
+  prompt does not fit) was rewritten to walk routes in priority order instead of looking up a
+  literal `"remote"` key that nothing ever registered under — but `generate()` still calls the
+  resolved route's provider directly, with **no egress append and no `[agents] synthesis` check**.
+  That is a narrower key with a **wider reachable blast radius**: before this slice the fallback was
+  reachable in code but unreachable in practice (the `"remote"` slot was never filled); after it, any
+  registered non-local route satisfies the key, so the day a remote route is registered this path
+  goes live with no further code change. It is now a named, hard blocker on the next slice — a
+  remote provider may not be registered in production until `LlmRouter.generate()` either gets I29
+  `model`-class coverage or `docs/SECURITY-INVARIANTS.md` states precisely which calls it excludes,
+  with the standard wiring + docs + test triple either way. Both fixes are **unit-proven only**: no
+  remote route exists yet to exercise either one against a real outbound call, so "unit-tested" is
+  the honest ceiling on this claim until a vendor lands. **A known bound, left open rather than
+  silently closed:** `packages/cli`'s `nimbus llm status` keeps a hand-maintained private copy of
+  the route-status type (`RouteStatus` in `packages/cli/src/commands/llm.ts`) — `packages/cli` has
+  no source dependency on the gateway (IPC-only, per the dependency rules), so there is no shared
+  type to import, and the CLI's own tests mock the IPC client wholesale rather than dispatching
+  against a real handler. This already broke once in this branch: a caller kept reading
+  `res.decisions.classification` after `llm.status` became a route list, and the whole suite stayed
+  green. A gateway-side test now pins the exact `llm.status` payload shape (`llm-rpc.test.ts`), which
+  catches a reshape on the gateway half; an end-to-end CLI-against-gateway test that would catch it
+  on the CLI half too is out of scope for this slice.
+
 - **2026-08-24 — What a standalone connector actually gives you, measured per client rather than
   assumed.** Off-gateway consent rests entirely on the MCP `elicitation` capability, and whether a
   client implements it had never been checked against a real client. It is now, and the answer is a

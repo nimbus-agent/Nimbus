@@ -956,7 +956,11 @@ These subsystems are active development in Phase 4 (Presence). They extend the e
 
 ### Model Router (Local LLM)
 
-The Model Router is assembled with the Gateway platform services and exposed to the Engine and the `llm.*` IPC namespace. It selects the inference backend for each invocation based on task type and available models.
+The Model Router is assembled with the Gateway platform services and exposed to the Engine and the `llm.*` IPC namespace. It selects a **route** for each invocation — a `(provider, model)` pair, not a provider alone — based on task type, config-driven priority, and per-route availability.
+
+`LlmRouter` keys its registry on `routeId` (`"<providerId>/<modelName>"`, e.g. `"ollama/qwen3:8b"`), not on the provider vendor id. A provider vendor id (`ProviderId`, an open string — `"ollama"`, `"llamacpp"`, and, once slice 2 lands a remote provider, values like `"gemini"`/`"bedrock"`) can back several routes at once: `[llm.local.<name>]` config entries let one Ollama daemon serve multiple named models (`ollama/qwen3:8b` and `ollama/gemma3:12b` side by side), each tracked as an independent route with its own availability. This replaced an earlier design where the router keyed on a closed, three-member provider-kind union (`"ollama" | "llamacpp" | "remote"`) and could hold at most one provider per kind — registering a second model under an already-used kind silently evicted the first.
+
+Route selection walks an ordered list — an optional explicit `[llm].route_priority` prefix, then every other route ordered by `prefer_local` — filtering out routes that fail `enforce_air_gap`, the reasoning capability floor (`min_reasoning_params`), or a live per-route availability probe (the daemon must be reachable **and** report the route's specific model; a shared daemon missing one of its two configured models fails only that route, not the sibling sharing its process).
 
 | Task | Default backend | Air-gapped mode |
 |---|---|---|
@@ -969,12 +973,12 @@ The Model Router is assembled with the Gateway platform services and exposed to 
 
 | Backend | Discovery | `nimbus.toml` key |
 |---|---|---|
-| Ollama | Default `http://127.0.0.1:11434` | `[llm].local_model` set to any pulled Ollama model name; `prefer_local = true` to route to it |
+| Ollama | Default `http://127.0.0.1:11434` | `[llm].local_model`, or one or more `[llm.local.<name>]` entries, set to a pulled Ollama model name; `prefer_local = true` to route to it |
 | llama.cpp (GGUF) | `llama-server` HTTP endpoint, default `http://127.0.0.1:8080` | `[llm].llamacpp_server_path` stores the HTTP base URL, not the binary path |
-| Anthropic (remote) | `ANTHROPIC_API_KEY` in env | `[llm].remote_model = "claude-sonnet-4-6"` (provider inferred from `claude-*` prefix) |
-| OpenAI (remote) | `OPENAI_API_KEY` in env | `[llm].remote_model = "gpt-4o"` (provider inferred from `gpt-*` / `o1-*` / `o3-*` / `o4-*` prefix) |
 
-Model lifecycle (list, pull, load, unload, status) is managed via the `llm.*` IPC method namespace (`llm.listModels`, `llm.getStatus`, `llm.pullModel`, `llm.loadModel`, `llm.unloadModel`, `llm.setDefault`, `llm.getRouterStatus`). The router dispatches to a loaded backend or falls back per the table above; it never calls an LLM provider API directly.
+Anthropic and OpenAI rows do **not** appear above: `packages/gateway/src/llm/` ships only `OllamaProvider` and `LlamaCppProvider` today, so a remote route is not yet reachable in production — the open `ProviderId` string and the route-keyed registry above are the precondition for a remote provider, not the provider itself. See `docs/CHANGELOG.md`'s 2026-08-27 entry and `docs/roadmap.md` § Active (Spine S2) for what a remote route still needs before it ships.
+
+Model lifecycle (list, pull, load, unload, status) is managed via the `llm.*` IPC method namespace. `llm.status` returns every registered route (`routeId`, `providerId`, `modelName`, `isLocal`, `available`, `reason`, and an optional `contextWindow`) with its own live availability — not a single per-task decision. `llm.getRouterStatus` is kept for the older per-task-type decision payload (`{ decisions: {...} }`, one entry per `LlmTaskType`) that predates the route list; the two shapes have diverged and are not interchangeable. `llm.listModels`, `llm.pullModel`, `llm.loadModel`, `llm.unloadModel`, and `llm.setDefault` round out the namespace. The router dispatches to a resolved route's provider or falls back per the priority walk above; it never calls an LLM provider API directly.
 
 ### Multi-Agent Orchestration
 

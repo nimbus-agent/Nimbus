@@ -36,9 +36,14 @@ pick which local model, route tasks to different ones* — all reduce to one cha
 ### Why this slice ships no cloud vendor
 
 Doing the refactor first means every vendor after it is a thin adapter against a proven interface,
-and — more importantly — it means two known correctness gaps are closed **while zero bytes leave the
-machine**. Both are described in §4. Landing vendors first would mean patching a live egress path
-instead of a dormant one.
+and — more importantly — it means both known correctness gaps get fixed **while zero bytes leave the
+machine**, because no remote route exists yet to exercise either one. Both are described in §4, and
+they land differently: §4.2's destination-naming gap is fixed outright. §4.1's un-ledgered
+context-overflow fallback is only **structurally narrowed, not closed** — the key that reaches it is
+narrower (a route id instead of a literal `"remote"` string that never resolved), but the reachable
+surface is wider (any registered non-local route, not a slot nothing could ever fill), and it remains
+a named blocker on slice 2 rather than a slice 1 deliverable. See §4.1's corrected framing below.
+Landing vendors first would mean patching a live egress path instead of a dormant one.
 
 ---
 
@@ -52,7 +57,9 @@ instead of a dormant one.
   no order is configured.
 - Collapse the three independent definitions of "is this provider local" into one.
 - Make the egress destination name the vendor, not the word `model`.
-- Close the un-ledgered context-overflow fallback path.
+- Rewrite the un-ledgered context-overflow fallback to walk routes instead of a literal `"remote"`
+  key. This narrows what could ever reach it — it does **not** close the un-ledgered gap itself;
+  see §4.1.
 - Make route availability mean "this model answers", not "the daemon is up" (§3.4) — a fail-open
   that only becomes harmful once a priority walk exists, i.e. one this slice creates.
 
@@ -273,19 +280,33 @@ router route-aware; slice 4 wires the per-task pins to a CLI.
 Both are latent today and become load-bearing the moment slice 2 lands. Fixing them here means
 fixing them against a dormant path.
 
-### 4.1 The context-overflow fallback is un-ledgered
+### 4.1 The context-overflow fallback is un-ledgered — narrowed, NOT closed
 
 `LlmRouter.fitPromptOrFallback` → `tryRemoteFallback` does `this.providers.get("remote")` and
 generates directly. This is already flagged in the tree: a comment in
 `agents/_lib/synthesis-llm.ts` (≈line 216) notes that this path "can reach a REMOTE provider on
 context overflow with NO egress row."
 
-With routes there is no `"remote"` key at all, so the path must be rewritten as *"the next
-available route whose context window fits, in priority order"* and made to go through the same
-append path as any other resolution.
+With routes there is no `"remote"` key at all, so the path is rewritten as *"the next available
+route whose context window fits, in priority order"*.
 
-**In slice 1 this is a pure refactor with zero behavioural change**, because no remote route
-exists to fall back to. That is precisely the argument for doing it now.
+**Corrected from an earlier draft of this section, which is why this heading says so explicitly:**
+that rewrite is **all** slice 1 does here. `LlmRouter.generate()` — reached by this fallback and by
+every other caller in this section — still calls the resolved route's provider directly, with
+**no egress append and no `[agents] synthesis` check**. Slice 1 does not make it "go through the
+same append path as any other resolution"; no such path exists on this method yet. The accurate
+framing is: **structurally narrower key, materially wider blast radius.** Before this slice, the
+key was a literal `"remote"` string that `buildLlmRegistryFromToml` never registered anything
+under — the path was *reachable in code* but unreachable in practice, i.e. never, on any
+production config. After this slice, the key is a `routeId`, and **any** registered non-local
+route satisfies it — the day slice 2 registers a first remote route, this path becomes live on
+whatever config already exists, with no further code change required to reach it. Narrowing what
+*kind* of key opens the path while widening *how many* configurations can trigger it is a trade
+that only pays off if the blocker below is honored.
+
+**In slice 1 this remains a pure refactor with zero *observable* behavioural change**, because no
+remote route exists to register yet — but "no behavioural change" describes today's empty
+registry, not a property of the code path itself.
 
 **Which path this is, precisely — because it is easy to get backwards.** Brief synthesis does *not*
 reach this hazard. `synthesis-llm.ts` deliberately calls `router.generateMarkdown(prompt, resolved)`
@@ -304,11 +325,17 @@ vendor through `generate()` with **no `egress_ledger` row**, while `nimbus prove
 synthesis calls. A ledger that is silent about real outbound traffic is the precise failure this
 subsystem exists to prevent.
 
-**Therefore: a named blocker on slice 2, not a slice 1 deliverable.** Before the first remote route
-is registered, slice 2 must either extend the `model` coverage class to `LlmRouter.generate()` or
-state in `docs/SECURITY-INVARIANTS.md` exactly which LLM calls the class does not cover. Widening
-I29's coverage is a deliberate invariant change requiring the wiring + docs + test triple; it is
-recorded here so slice 2 cannot land without confronting it.
+**Therefore: a named, HARD blocker on slice 2, not a slice 1 deliverable, and not weakened by
+anything above.** Before the first remote route is registered — literally, before the commit that
+adds the first non-local `LlmProvider` to `buildLlmRegistryFromToml` merges — slice 2 must either
+extend the `model` coverage class to `LlmRouter.generate()` (all four callers, not just the
+overflow-fallback branch) or state in `docs/SECURITY-INVARIANTS.md` exactly which LLM calls the
+class does not cover, with the same rigor I29's existing exclusions already document. Landing a
+remote provider registration in the same slice or PR as this coverage fix is the wrong order: the
+coverage fix must be provably in place — wiring, docs, and enforcement test, the standard triple —
+*before* a remote route can be registered by any code path, not merely before it is expected to be
+exercised. Widening I29's coverage is a deliberate invariant change requiring the wiring + docs + test
+triple; it is recorded here so slice 2 cannot land without confronting it.
 
 ### 4.2 The egress destination does not name the vendor
 
@@ -458,7 +485,7 @@ Decided rather than left blank, so the plan is actionable. Each is cheap to reve
 
 | Slice | Content | Status |
 | --- | --- | --- |
-| **1. Model routes** | This document. `(provider, model)` routes, one definition of `isLocal`, vendor-named egress destination, ledgered overflow fallback. Ships multi-local-model routing and **zero** cloud vendors. | approved, planning next |
+| **1. Model routes** | This document. `(provider, model)` routes, one definition of `isLocal`, vendor-named egress destination, and a route-walked (still **un-ledgered** — see §4.1) overflow fallback. Ships multi-local-model routing and **zero** cloud vendors. | approved, planning next |
 | **2. Bearer-key clouds** | Anthropic, OpenAI, Gemini, xAI. One adapter shape, four configs, four Vault keys, the explicit opt-in flag from Open decision 3, and the `D`-rule promotion from Open decision 1. First slice where an `egress_ledger` `model` row is ever written. **Blocked on resolving `LlmRouter.generate()`'s I29 coverage (§4.1) before the first remote route registers.** | not started |
 | **3. Bedrock** | SigV4 signing, region, static creds *or* profile/role chain. Kept separate because it shares no auth shape with slice 2; reuses the `aws.*` credential fields connectors already have. | not started |
 | **4. Selection surface** | `[llm.tasks]` per-task pinning, `nimbus llm use <vendor>/<model>` writing to `llm_task_defaults`, full `nimbus llm status`. | not started |
