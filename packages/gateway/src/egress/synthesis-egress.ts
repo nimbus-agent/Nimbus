@@ -1,6 +1,7 @@
 // packages/gateway/src/egress/synthesis-egress.ts
 
 import type { Database } from "bun:sqlite";
+import type { ProviderId } from "../llm/types.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import { redactEgressSummary } from "./egress-record.ts";
 
@@ -35,7 +36,11 @@ export function recordSynthesisEgress(
   db: Database,
   args: {
     readonly briefKind: string;
-    readonly provider: { readonly modelName: string; readonly isLocal: boolean };
+    readonly provider: {
+      readonly providerId: ProviderId;
+      readonly modelName: string;
+      readonly isLocal: boolean;
+    };
     readonly now: number;
   },
 ): void {
@@ -47,7 +52,7 @@ export function recordSynthesisEgress(
     timestamp: args.now,
     sourceType: "model",
     sourceId: model,
-    destination: "model",
+    destination: args.provider.providerId,
     method: `agents.${args.briefKind}.synthesis`,
     payloadSummary: redactEgressSummary({ briefKind: args.briefKind, model }),
     hitlStatus: "not_required",
