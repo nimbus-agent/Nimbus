@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { LlmModelInfo } from "../llm/types.ts";
-import type { LlmRpcContext } from "./llm-rpc.ts";
+import type { LlmRouteStatus, LlmRpcContext } from "./llm-rpc.ts";
 import { dispatchLlmRpc } from "./llm-rpc.ts";
 
 function makeFakeRegistry(models: LlmModelInfo[] = []): LlmRpcContext["registry"] {
@@ -65,15 +65,42 @@ describe("llm.pullModel", () => {
     expect(pullModel).toHaveBeenCalledTimes(1);
   });
 
-  test("rejects unknown provider with -32602", async () => {
+  test("rejects empty provider with -32602", async () => {
     const registry = { pullModel: mock(async () => {}) } as unknown as LlmRegistry;
     await expect(
       dispatchLlmRpc(
         "llm.pullModel",
-        { provider: "remote", modelName: "x" },
+        { provider: "", modelName: "x" },
         { registry, notify: () => {} },
       ),
     ).rejects.toThrow();
+  });
+
+  // Deferred finding (Task 6/10): validity of a provider string is no longer decided by an
+  // RPC-level closed set — `requireModelParams` accepts any non-empty string, so an
+  // unregistered provider reaches `registry.pullModel` (the widened `ProviderId` signature),
+  // and its rejection surfaces the same way any other pull failure does: via `llm.pullFailed`,
+  // not an RPC-level throw (pullModel returns { pullId } immediately, fire-and-forget).
+  test("an unregistered provider is rejected by the registry, not by RPC-level validation", async () => {
+    const registryError = new Error("Provider not registered: remote");
+    const pullModel = mock(async () => {
+      throw registryError;
+    });
+    const registry = { pullModel } as unknown as LlmRegistry;
+    const notify = mock((_m: string, _p: unknown) => {});
+    const result = await dispatchLlmRpc(
+      "llm.pullModel",
+      { provider: "remote", modelName: "x" },
+      { registry, notify },
+    );
+    expect(result.kind).toBe("hit");
+    expect(pullModel).toHaveBeenCalledWith("remote", "x", expect.anything());
+    // Let the fire-and-forget .then()/.catch() chain settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(notify).toHaveBeenCalledWith(
+      "llm.pullFailed",
+      expect.objectContaining({ provider: "remote", error: "Provider not registered: remote" }),
+    );
   });
 });
 
@@ -124,15 +151,36 @@ describe("llm.loadModel / llm.unloadModel", () => {
     expect(unloadModel).toHaveBeenCalledWith("ollama", "gemma:2b");
   });
 
-  test("loadModel rejects unsupported provider", async () => {
-    const registry = { loadModel: mock(async () => {}) } as unknown as LlmRegistry;
+  // Deferred finding (Task 6/10): `loadModel`/`unloadModel` take `ProviderId` (any string) —
+  // previously `requireLocalProvider` narrowed to a closed two-member union and rejected
+  // "remote" before the registry was ever called, making the widened signature unreachable
+  // from IPC. Now the call reaches the registry, and the registry decides validity.
+  test("loadModel rejects an unregistered provider via the registry, not RPC-level validation", async () => {
+    const loadModel = mock(async () => {
+      throw new Error("Provider not registered: remote");
+    });
+    const registry = { loadModel } as unknown as LlmRegistry;
     await expect(
       dispatchLlmRpc(
         "llm.loadModel",
         { provider: "remote", modelName: "x" },
         { registry, notify: () => {} },
       ),
+    ).rejects.toThrow("Provider not registered: remote");
+    expect(loadModel).toHaveBeenCalledWith("remote", "x");
+  });
+
+  test("loadModel rejects empty provider with -32602 before reaching the registry", async () => {
+    const loadModel = mock(async () => {});
+    const registry = { loadModel } as unknown as LlmRegistry;
+    await expect(
+      dispatchLlmRpc(
+        "llm.loadModel",
+        { provider: "", modelName: "x" },
+        { registry, notify: () => {} },
+      ),
     ).rejects.toThrow();
+    expect(loadModel).not.toHaveBeenCalled();
   });
 });
 
@@ -157,44 +205,106 @@ describe("llm.getRouterStatus", () => {
   });
 });
 
+// A minimal `LlmProvider`-shaped fake — enough for `RouteAvailabilityProbe.check()` to exercise
+// its real reachable/model-listing logic against, rather than mocking the probe's own verdict.
+function makeFakeLlmProvider(opts: {
+  providerId: string;
+  isLocal: boolean;
+  reachable: boolean;
+  reportedModels: string[];
+}) {
+  return {
+    providerId: opts.providerId,
+    isLocal: opts.isLocal,
+    isAvailable: async () => opts.reachable,
+    listModels: async () =>
+      opts.reportedModels.map((modelName) => ({ provider: opts.providerId, modelName })),
+    generate: async () => {
+      throw new Error("generate() not used by this test");
+    },
+  };
+}
+
 describe("llm.status", () => {
-  test("returns per-task decisions with modelName, isAvailable, and reason", async () => {
-    const getRouterStatus = mock(async () => ({
-      classification: {
-        providerId: "ollama",
-        modelName: "llama3.2",
-        isAvailable: true,
-        reason: "prefer-local",
+  test("lists every route (routeId, providerId, modelName, isLocal, available, reason, contextWindow)", async () => {
+    const provider = makeFakeLlmProvider({
+      providerId: "ollama",
+      isLocal: true,
+      reachable: true,
+      reportedModels: ["qwen3:8b"],
+    });
+    // Two routes sharing one provider instance/daemon: this is the headline case (deferred
+    // finding, Task 3/10) — a same-provider, different-model fallback must be expressible.
+    // Listing every route separately (rather than the old one-decision-per-task-type shape)
+    // makes "ollama/qwen3:8b is up, ollama/gemma3:12b is down" visible without any fallback
+    // field at all.
+    const routes = [
+      {
+        routeId: "ollama/qwen3:8b",
+        provider,
+        modelName: "qwen3:8b",
+        meta: { contextWindow: 8192 },
       },
-      reasoning: {
-        providerId: "ollama",
-        modelName: "llama3.2",
-        isAvailable: true,
-        reason: "prefer-local",
+      {
+        routeId: "ollama/gemma3:12b",
+        provider,
+        modelName: "gemma3:12b",
+        meta: {},
       },
-      summarisation: {
-        providerId: "ollama",
-        modelName: "llama3.2",
-        isAvailable: true,
-        reason: "prefer-local",
-      },
-      agent_step: {
-        providerId: "ollama",
-        modelName: "llama3.2",
-        isAvailable: true,
-        reason: "prefer-local",
-      },
-    }));
-    const registry = { getRouterStatus } as unknown as LlmRegistry;
+    ];
+    const registry = { llmRouter: { routes: () => routes } } as unknown as LlmRegistry;
     const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
     expect(r.kind).toBe("hit");
-    const val = (r as { kind: "hit"; value: { decisions: Record<string, unknown> } }).value;
-    expect(val.decisions["classification"]).toMatchObject({
-      modelName: "llama3.2",
-      isAvailable: true,
-      reason: "prefer-local",
+    const val = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
+    expect(val.routes).toHaveLength(2);
+
+    const qwen = val.routes.find((x) => x.routeId === "ollama/qwen3:8b");
+    expect(qwen).toMatchObject({
+      routeId: "ollama/qwen3:8b",
+      providerId: "ollama",
+      modelName: "qwen3:8b",
+      isLocal: true,
+      available: true,
+      reason: "ok",
+      contextWindow: 8192,
     });
-    expect(getRouterStatus).toHaveBeenCalledTimes(1);
+
+    // The absent-model route: same provider/daemon (so provider_unreachable cannot explain
+    // it), but its own modelName was never pulled — must report `model_absent`, distinct from
+    // `provider_unreachable`, and its contextWindow must stay undefined (never fabricated).
+    const gemma = val.routes.find((x) => x.routeId === "ollama/gemma3:12b");
+    expect(gemma).toMatchObject({
+      routeId: "ollama/gemma3:12b",
+      providerId: "ollama",
+      modelName: "gemma3:12b",
+      isLocal: true,
+      available: false,
+      reason: "model_absent",
+    });
+    expect(gemma?.contextWindow).toBeUndefined();
+  });
+
+  test("reports provider_unreachable (not model_absent) when the daemon itself is down", async () => {
+    const provider = makeFakeLlmProvider({
+      providerId: "llamacpp",
+      isLocal: true,
+      reachable: false,
+      reportedModels: [],
+    });
+    const routes = [
+      { routeId: "llamacpp/model.gguf", provider, modelName: "model.gguf", meta: {} },
+    ];
+    const registry = { llmRouter: { routes: () => routes } } as unknown as LlmRegistry;
+    const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
+    const val = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
+    expect(val.routes[0]).toMatchObject({ available: false, reason: "provider_unreachable" });
+  });
+
+  test("returns an empty route list when no routes are registered", async () => {
+    const registry = { llmRouter: { routes: () => [] } } as unknown as LlmRegistry;
+    const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
+    expect(r.kind).toBe("hit");
+    expect((r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value.routes).toEqual([]);
   });
 });
 
@@ -223,5 +333,30 @@ describe("llm.setDefault", () => {
         { registry, notify: () => {} },
       ),
     ).rejects.toThrow();
+  });
+
+  test("rejects empty provider", async () => {
+    const registry = { setDefault: mock(async () => {}) } as unknown as LlmRegistry;
+    await expect(
+      dispatchLlmRpc(
+        "llm.setDefault",
+        { taskType: "classification", provider: "", modelName: "x" },
+        { registry, notify: () => {} },
+      ),
+    ).rejects.toThrow();
+  });
+
+  // Deleted symbol (Task 10): `VALID_LLM_PROVIDERS` used to reject any provider outside
+  // {"ollama", "llamacpp", "remote"}. Validity is now the registry's answer alone.
+  test("accepts a provider string outside the old closed set", async () => {
+    const setDefault = mock(async () => {});
+    const registry = { setDefault } as unknown as LlmRegistry;
+    const r = await dispatchLlmRpc(
+      "llm.setDefault",
+      { taskType: "reasoning", provider: "gemini", modelName: "gemini-pro" },
+      { registry, notify: () => {} },
+    );
+    expect(r.kind).toBe("hit");
+    expect(setDefault).toHaveBeenCalledWith("reasoning", "gemini", "gemini-pro");
   });
 });

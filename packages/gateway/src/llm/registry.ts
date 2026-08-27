@@ -53,7 +53,7 @@ export class LlmRegistry {
    * whenever the information exists.
    */
   async refreshProviderMeta(modelName?: string): Promise<void> {
-    // Iterates registered routes rather than a fixed ["ollama", "llamacpp"] id set, and
+    // Iterates registered routes rather than a fixed ollama/llamacpp id pair, and
     // re-registers each matching route through `registerRoute(route.provider,
     // route.modelName, ...)` rather than the deprecated `registerProvider` shim.
     //
