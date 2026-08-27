@@ -655,6 +655,20 @@ model = "b.gguf"
     expect(cfg.routePriority).toEqual(["ollama", "ollama/qwen3"]);
   });
 
+  test("a non-array route_priority is swallowed without discarding the section", () => {
+    // Same hazard as the malformed-sub-table test below, one key over: `parseStringArray`
+    // THROWS on a non-bracket-delimited value. Unguarded, that throw would escape
+    // `parseNimbusTomlLlmSection` into `loadTomlSection`'s bare catch and revert the
+    // WHOLE [llm] section to DEFAULT_NIMBUS_LLM_TOML — including enforce_air_gap, whose
+    // default is false. Assert the SECURITY-relevant key specifically survives, not
+    // merely that "some key" survived.
+    const cfg = parseNimbusTomlLlmSection(
+      `[llm]\nenforce_air_gap = true\nroute_priority = "ollama"\n`,
+    );
+    expect(cfg.enforceAirGap).toBe(true); // the security-relevant key SURVIVES
+    expect(cfg.routePriority).toBeUndefined();
+  });
+
   test("a malformed sub-table is skipped without discarding the section", () => {
     // Mirrors the [ownership]/[hitl.quorum] precedent: one bad block must not
     // zero the section. Assert the SECURITY-relevant key specifically survives,
@@ -663,7 +677,10 @@ model = "b.gguf"
       `[llm]\nenforce_air_gap = true\n\n[llm.local.]\nmodel = "x"\n`,
     );
     expect(cfg.enforceAirGap).toBe(true); // the security-relevant key SURVIVES
-    expect(cfg.localRoutes ?? new Map()).not.toHaveProperty("");
+    // The malformed block never yields a route, so localRoutes stays unset here
+    // (Partial<>: no non-empty map to attach) — fall back to empty before checking
+    // membership, same as the other tests in this block.
+    expect((cfg.localRoutes ?? new Map()).has("")).toBe(false);
   });
 });
 
