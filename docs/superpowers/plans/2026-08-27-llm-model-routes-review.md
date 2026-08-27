@@ -3,7 +3,7 @@
 **Date:** 2026-08-27  
 **Reviewer:** Antigravity (AI Coding Assistant)  
 **Status:** Under Review  
-**Target Plan:** [2026-08-27-llm-model-routes.md](file:///C:/gitrep/Nimbus/docs/superpowers/plans/2026-08-27-llm-model-routes.md)
+**Target Plan:** [2026-08-27-llm-model-routes.md](./2026-08-27-llm-model-routes.md)
 
 ---
 
