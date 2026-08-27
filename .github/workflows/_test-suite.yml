@@ -138,6 +138,11 @@ jobs:
         # passed BECAUSE the gate never executed. See the note above this block.
         run: bun run audit:connector-version-skew
 
+      - name: Gateway native dependencies (the compiled binary cannot bundle one)
+        # Wired here AND in preflight-gates.ts in the same commit. #1318 put a gate in the manifest
+        # and no workflow, so it ran nowhere and that PR passed because the gate never executed.
+        run: bun run audit:gateway-native-deps
+
       - name: import.meta path confinement (compiled-binary asset resolution)
         # A source-tree-relative path derived from import.meta.dir resolves inside the read-only
         # bunfs root in a compiled binary. Two such sites made the admin console and the OpenAPI

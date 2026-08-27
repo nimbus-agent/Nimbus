@@ -64,6 +64,18 @@ const FAST: readonly Gate[] = [
     tier: "fast",
   },
   {
+    // The gateway ships as a `bun build --compile` binary, which cannot bundle a native module: it
+    // either fails the compile or produces a binary that cannot load its shared library, where the
+    // only symptom is a connector that never works. sqlite-vec is the one native dependency and is
+    // handled deliberately, as a sidecar the compile step copies.
+    //
+    // Declared dependencies only — see the scope bound in the script. The transitive case is
+    // covered empirically by `test:connector-boot`.
+    name: "audit:gateway-native-deps",
+    cmd: ["bun", "run", "audit:gateway-native-deps"],
+    tier: "fast",
+  },
+  {
     // A source-tree-relative path derived from `import.meta.dir` resolves inside the read-only
     // bunfs root in a compiled binary, so it silently points at nothing. Two such sites made the
     // admin console and the OpenAPI route unreachable in every released binary.

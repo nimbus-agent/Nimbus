@@ -74,6 +74,7 @@
     "audit:platform-test-gaps": "bun scripts/ci/platform-test-gaps.ts",
     "audit:connector-registry-drift": "bun scripts/structure-audit/check-connector-registry-drift.ts",
     "audit:connector-version-skew": "bun scripts/structure-audit/check-connector-version-skew.ts",
+    "audit:gateway-native-deps": "bun scripts/structure-audit/check-gateway-native-deps.ts",
     "audit:import-meta-dir": "bun scripts/structure-audit/check-import-meta-dir.ts",
     "gen:connector-registry": "bun scripts/gen-bundled-connector-registry.ts",
     "test:connector-boot": "bun scripts/connector-boot-smoke.ts dist/nimbus-gateway",
