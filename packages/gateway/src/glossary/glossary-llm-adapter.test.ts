@@ -8,11 +8,19 @@ function fakeProvider(
   id: LlmProviderKind,
   opts: { available: boolean; text?: string },
 ): LlmProvider {
+  // The model this route registers under — `registerProvider` derives it from
+  // `config.localModel`/`config.remoteModel` based on `isLocal`, matching `routerWith` below.
+  const modelName = id === "remote" ? "remote-model" : "local-model";
   return {
     providerId: id,
     isLocal: id !== "remote",
     isAvailable: () => Promise.resolve(opts.available),
-    listModels: () => Promise.resolve([]),
+    // Must report the model it registers under — route availability (Task 5) requires the
+    // daemon reachable AND the route's own modelName among the reported models; an empty
+    // listing here makes the route model_absent regardless of isAvailable(). Harmless when
+    // `opts.available` is false: `probeProvider` short-circuits on an unreachable daemon
+    // before ever consulting the model list.
+    listModels: () => Promise.resolve([{ provider: id, modelName }]),
     generate: () =>
       Promise.resolve({
         text: opts.text ?? "{}",

@@ -197,7 +197,12 @@ function fakeLocalOllamaProvider(markdown: string): LlmProvider {
     providerId: "ollama",
     isLocal: true,
     isAvailable: async () => true,
-    listModels: async () => [],
+    // Must report the model it is registered under (`FAKE_LLM_ROUTER_CONFIG.localModel`,
+    // "local-model" — `registerProvider`/`addProvider` derives the route's modelName from
+    // config, not from the provider) — route availability (Task 5) is reachable AND the
+    // route's own modelName among the models the daemon reports, so an empty listing here
+    // makes every route `model_absent` regardless of `isAvailable()`.
+    listModels: async () => [{ provider: "ollama", modelName: "local-model" }],
     generate: async () => ({
       text: markdown,
       tokensIn: 0,

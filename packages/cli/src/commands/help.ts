@@ -108,7 +108,7 @@ AUTOMATION & EXTENSIONS
 CONFIG & DIAGNOSTICS
   nimbus config validate | list [--json] | edit
   nimbus profile create|list|switch|delete
-  nimbus llm status [--json]   Selected LLM provider/model per task type, and availability
+  nimbus llm status [--json]   Every registered LLM route (provider/model) and its availability
   nimbus serve [--port 7474]   Start gateway with NIMBUS_HTTP_PORT (read-only HTTP sidecar)
   nimbus db verify | repair --yes | snapshot | snapshots list | backups list | restore <snap> --yes
   nimbus diag [--json] | diag slow-queries [--limit N] [--since 7d]
