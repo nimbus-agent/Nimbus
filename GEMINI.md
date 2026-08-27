@@ -81,7 +81,17 @@ Each live invariant (I1–I27, I29–I33) has a production wiring site + an enfo
 
 ---
 
-## Subsystems (monorepo)
+## Subsystems
+
+**This repository is the Gateway, not the whole of Nimbus.** It holds five workspaces; the six
+surfaces listed below live in their own repos and release independently. That balance moved decisively on
+2026-08-27, when the 94 first-party connectors left for
+[nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) — before
+that, `packages/` carried 100 workspaces and the word "monorepo" described something real. Read a
+statement about "the repo" with that in mind: for connectors, the SDK, the IPC client, the MCP
+launcher, the editor extension and the browser client, the source of truth is elsewhere.
+
+In this repository:
 
 - `packages/gateway` — Engine, MCP mesh, Vault, local index, IPC
 - `packages/cli` — Terminal client (CLI + Ink TUI)
@@ -90,7 +100,8 @@ Each live invariant (I1–I27, I29–I33) has a production wiring site + an enfo
 - `packages/admin-console` — dependency-free static admin console served at `/admin/*` (Phase 6 Slice 4)
 - `packages/github-actions/*` — first-party GitHub Actions (annotate-action, preflight-query); tracked but intentionally NOT workspace members
 
-Several surfaces live in their own standalone repos and release independently of the Gateway:
+Everything else releases on its own cadence, and a change to one of these is a PR in that repo —
+not here. Where the Gateway also carries per-connector sync/indexing logic, a feature touches both:
 
 - The **`@nimbus-dev/sdk`** extension-authoring contract — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) (MIT); the connectors consume the published package.
 - The **`@nimbus-dev/connectors`** first-party MCP connectors — [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) (AGPL-3.0-only); all 94 ship as ONE package that the gateway depends on and bundles into its compiled binary via `BUNDLED_CONNECTORS`. The gateway's per-connector **sync and indexing** logic stays here, so adding a connector touches both repos. `audit:connector-version-skew` fails the build when this repo's pin falls a MINOR version behind what is published.
