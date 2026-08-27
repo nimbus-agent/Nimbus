@@ -255,8 +255,8 @@ export class LlmRouter {
       throw new Error(`No LLM provider available for task: ${opts.task}`);
     }
     const adjusted = await this.fitPromptOrFallback(opts, route);
-    if (adjusted.kind === "remote-result") {
-      return adjusted.result;
+    if (adjusted.kind === "route") {
+      return adjusted.route.provider.generate(adjusted.opts);
     }
     return route.provider.generate(adjusted.opts);
   }
@@ -266,7 +266,7 @@ export class LlmRouter {
     route: ModelRoute,
   ): Promise<
     | { kind: "opts"; opts: LlmGenerateOptions }
-    | { kind: "remote-result"; result: LlmGenerateResult }
+    | { kind: "route"; route: ModelRoute; opts: LlmGenerateOptions }
   > {
     const contextWindow = route.meta.contextWindow;
     if (contextWindow === undefined) {
@@ -284,31 +284,46 @@ export class LlmRouter {
     if (opts.task === "summarisation" || opts.task === "classification") {
       return { kind: "opts", opts: truncated };
     }
-    if (this.config.enforceAirGap) {
+    // Defensive, not reachable through the public `generate()` path today: `selectRoute`
+    // already excludes non-local routes when air-gap is enforced (I6-adjacent posture), so
+    // `route` here is always local under air-gap. Kept because truncating a NON-local route's
+    // prompt would not fix the actual problem — the prompt would still leave the machine — so
+    // truncation is not an acceptable substitute for refusal in that case. A local overflowing
+    // route with no fitting fallback truncates instead (below), which the "local" half of this
+    // condition permits.
+    if (this.config.enforceAirGap && !route.provider.isLocal) {
       throw new Error(
         `Prompt exceeds provider context window and air-gap mode prevents remote fallback`,
       );
     }
-    const remoteResult = await this.tryRemoteFallback(opts);
-    if (remoteResult !== undefined) {
-      return { kind: "remote-result", result: remoteResult };
+    const fallback = await this.findFallbackRoute(opts.task, estimatedTokens);
+    if (fallback !== undefined) {
+      return { kind: "route", route: fallback, opts };
     }
     return { kind: "opts", opts: truncated };
   }
 
-  private async tryRemoteFallback(
-    opts: LlmGenerateOptions,
-  ): Promise<LlmGenerateResult | undefined> {
-    const remote = this.providerFor("remote");
-    if (remote === undefined) {
-      return undefined;
-    }
-    try {
-      if (await remote.isAvailable()) {
-        return await remote.generate(opts);
+  // Walks routes in priority order looking for the next one the overflowing prompt actually
+  // fits in — replaces the old literal `providerFor("remote")` lookup. Applies the SAME gates
+  // as `firstAvailableRoute` (air-gap, capability floor, availability), evaluated per candidate
+  // rather than against a pre-filtered pool, plus a context-fit check using the same threshold
+  // math as the overflow check above. A route with no declared `contextWindow` is eligible
+  // (fail-open, matching `meetsCapabilityFloor`'s treatment of an undisclosed `parameterCount`).
+  // The originally overflowing route is never explicitly excluded — it fails its own fit check
+  // here for the same reason it overflowed above, since both use the same threshold formula.
+  private async findFallbackRoute(
+    task: LlmTaskType,
+    estimatedTokens: number,
+  ): Promise<ModelRoute | undefined> {
+    for (const candidate of this.orderedRoutes()) {
+      if (this.config.enforceAirGap && !candidate.provider.isLocal) continue;
+      if (!this.meetsCapabilityFloor(candidate, task)) continue;
+      const window = candidate.meta.contextWindow;
+      if (window !== undefined) {
+        const limit = Math.floor(window * CONTEXT_OVERFLOW_THRESHOLD);
+        if (estimatedTokens > limit) continue;
       }
-    } catch {
-      /* treat as unavailable */
+      if (await this.probeAvailable(candidate.provider)) return candidate;
     }
     return undefined;
   }

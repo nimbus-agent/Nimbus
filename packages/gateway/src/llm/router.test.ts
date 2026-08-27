@@ -194,14 +194,47 @@ describe("LlmRouter context window overflow", () => {
     expect(captured.prompt).toBe(longPrompt);
   });
 
-  test("throws for reasoning overflow when air-gap is enforced", async () => {
+  test("truncates onto the local route for reasoning overflow when air-gap is enforced and no fallback route fits", async () => {
+    // Old behavior (pre-route-walk) threw unconditionally here, even though there was no
+    // remote route registered to "prevent" reaching. The route walk correctly finds no
+    // fitting fallback (the only route IS the overflowing one) and truncates, same as the
+    // non-air-gapped case would with no other route registered.
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, enforceAirGap: true };
     const router = new LlmRouter(config);
-    router.registerProvider(makeFakeProvider("ollama", true), { contextWindow: 100 });
+    const captured = { prompt: "" };
+    router.registerProvider(makeCaptureProvider("ollama", true, captured), { contextWindow: 100 });
     const longPrompt = "x".repeat(500);
-    await expect(router.generate({ task: "reasoning", prompt: longPrompt })).rejects.toThrow(
-      "air-gap mode prevents remote fallback",
-    );
+    const result = await router.generate({ task: "reasoning", prompt: longPrompt });
+    expect(captured.prompt).toContain("[...truncated...]");
+    expect(result.provider).toBe("ollama");
+  });
+
+  test("falls through to a route whose context window fits", async () => {
+    const router = new LlmRouter({ ...DEFAULT_CONFIG, preferLocal: true });
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "small", {
+      contextWindow: 100,
+    });
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "big", {
+      contextWindow: 100_000,
+    });
+    const result = await router.generate({
+      task: "reasoning",
+      prompt: "x".repeat(40_000), // ~10k tokens: overflows "small", fits "big"
+    });
+    expect(result.text).toContain("ollama");
+  });
+
+  test("air-gap still refuses a non-local route on overflow", async () => {
+    const router = new LlmRouter({ ...DEFAULT_CONFIG, enforceAirGap: true });
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "small", {
+      contextWindow: 100,
+    });
+    router.registerRoute(makeFakeRouteProvider("gemini", false, true), "big", {
+      contextWindow: 100_000,
+    });
+    // Must truncate onto the local route, never reach the remote one.
+    const result = await router.generate({ task: "reasoning", prompt: "x".repeat(40_000) });
+    expect(result.provider).toBe("ollama");
   });
 
   test("short prompt within context window is not truncated", async () => {
