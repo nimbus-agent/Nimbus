@@ -3,7 +3,7 @@
 **Date:** 2026-08-27
 **Status:** approved design, not yet planned
 **Slot:** Spine S2 — Local Compute Fleet, row *"bring-your-own-frontier-model routing with local fallback"*
-**Slice:** 1 of 4 (see [Decomposition](#decomposition))
+**Slice:** 1 of 4 (see [Decomposition](#8-decomposition))
 
 ---
 
@@ -63,7 +63,7 @@ instead of a dormant one.
 - `nimbus llm use <vendor>/<model>` and per-task pinning **as a CLI/config surface** — slice 4.
   (Slice 1 does change `nimbus llm status`; see §7.)
 - Any change to how `[agents] synthesis` decides `off` / `local` / `allow-remote`.
-- Any new HITL gate on inference. See [Open decision 3](#open-decisions).
+- Any new HITL gate on inference. See [Open decision 3](#7-open-decisions).
 
 ---
 
@@ -364,7 +364,7 @@ All paths above are relative to `packages/gateway/src/`. Test files are not list
   (`packages/ui/src-tauri/src/gateway_bridge.rs`); slice 1 adds none, so the I7 count assertion is
   untouched. Response *shapes* change for `llm.listModels` and `llm.getRouterStatus`, so the
   desktop UI consumers need checking.
-- **No new invariant.** See [Open decision 1](#open-decisions).
+- **No new invariant.** See [Open decision 1](#7-open-decisions).
 
 ---
 
@@ -426,7 +426,7 @@ Decided rather than left blank, so the plan is actionable. Each is cheap to reve
    two states with different fixes, so "daemon unreachable" and "model not pulled" (§3.4) must be
    distinguishable. A sketch, not a contract:
 
-   ```
+   ```text
    ROUTE ID       PROVIDER  MODEL       LOCAL  AVAILABLE            CONTEXT
    ollama/qwen3   ollama    qwen3:8b    yes    yes                  8192
    ollama/gemma   ollama    gemma3:12b  yes    no (model not pulled) —

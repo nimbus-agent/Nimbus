@@ -47,12 +47,14 @@ Ordering rationale: types → the one parsing helper → router core → availab
 The union `LlmProviderKind = "ollama" | "llamacpp" | "remote"` is what caps the router at one provider per kind. Opening it is the precondition for everything else. `isLocal` becomes a required interface field so the three copies of that fact (Task 6, Task 10) have one place to collapse into.
 
 **Files:**
+
 - Modify: `packages/gateway/src/llm/types.ts`
 - Modify: `packages/gateway/src/llm/ollama-provider.ts` (add one field)
 - Modify: `packages/gateway/src/llm/llamacpp-provider.ts` (add one field)
 - Test: `packages/gateway/src/llm/types.test.ts` **(new)**
 
 **Interfaces:**
+
 - Produces: `type ProviderId = string`; `LlmProvider.isLocal: boolean` (required); `type ModelRoute = { routeId: string; provider: LlmProvider; modelName: string; meta: ProviderMeta }`. `LlmProviderKind` is retained as a deprecated alias of `ProviderId` so Tasks 3–10 can migrate call sites incrementally rather than in one commit.
 
 - [ ] **Step 1: Write the failing test**
@@ -195,10 +197,12 @@ git commit -m "refactor(llm): open ProviderId and require isLocal on LlmProvider
 Model names contain slashes — `LlamaCppProvider` defaults to `"model.gguf"` and realistically holds a path; Ollama accepts `hf.co/user/model`. A naive `split("/")` breaks both. This helper is the only sanctioned parser, so Task 3 can treat `routeId` as opaque.
 
 **Files:**
+
 - Create: `packages/gateway/src/llm/route-id.ts`
 - Test: `packages/gateway/src/llm/route-id.test.ts`
 
 **Interfaces:**
+
 - Produces: `makeRouteId(providerId: ProviderId, modelName: string): string`; `parseRouteRef(raw: string): { providerId: ProviderId; modelName: string }` — **throws** `Error` on a malformed ref rather than returning `undefined`, so a bad `route_priority` entry surfaces at config load instead of degrading to default ordering.
 
 - [ ] **Step 1: Write the failing test**
@@ -334,6 +338,7 @@ git commit -m "feat(llm): route-id helper that splits on the first slash only"
 This is the core change. Write the test that fails on today's code **first**, so the defect is demonstrated rather than assumed.
 
 **Files:**
+
 - Modify: `packages/gateway/src/llm/router.ts`
 - Modify: `packages/gateway/src/decisions/decision-llm-adapter.ts:159`
 - Modify: `packages/gateway/src/glossary/glossary-llm-adapter.ts:44`
@@ -341,6 +346,7 @@ This is the core change. Write the test that fails on today's code **first**, so
 - Test: `packages/gateway/src/decisions/decision-llm-adapter.test.ts`, `packages/gateway/src/glossary/glossary-llm-adapter.test.ts` (existing — confirm the local-only refusal still holds)
 
 **Interfaces:**
+
 - Consumes: `ModelRoute`, `ProviderId` (Task 1); `makeRouteId` (Task 2).
 - Produces: `LlmRouter.registerRoute(provider: LlmProvider, modelName: string, meta?: ProviderMeta): void`; `LlmRouter.routes(): readonly ModelRoute[]`; `LlmRouter.routeFor(routeId: string): ModelRoute | undefined`. `registerProvider(provider, meta)` is kept as a shim calling `registerRoute(provider, <config default model for that provider>, meta)` so Tasks 6–10 migrate incrementally.
 
@@ -574,10 +580,12 @@ git commit -m "feat(llm): key the router on (provider, model) routes"
 `tryRemoteFallback` does `this.providers.get("remote")` — a key that no longer exists. Spec §4.1: rewrite it as "next fitting route in priority order". No remote route exists in this slice, so this is a pure refactor; the point is to close it before slice 2 makes it live.
 
 **Files:**
+
 - Modify: `packages/gateway/src/llm/router.ts`
 - Test: `packages/gateway/src/llm/router.test.ts`
 
 **Interfaces:**
+
 - Consumes: `firstAvailableRoute`, `orderedRoutes` (Task 3).
 - Produces: no new public surface. `tryRemoteFallback` is deleted; `fitPromptOrFallback` returns `{ kind: "route"; route: ModelRoute; opts: LlmGenerateOptions }`.
 
@@ -643,11 +651,13 @@ git commit -m "fix(llm): context-overflow fallback walks routes, not a 'remote' 
 Spec §3.4. `OllamaProvider.isAvailable()` returns `resp.ok` from `GET /api/tags` without checking `this.modelName` is among them. With one route that is a confusing error; with a priority walk it halts at the first route that lies instead of falling through to one that works.
 
 **Files:**
+
 - Create: `packages/gateway/src/llm/route-availability.ts`
 - Modify: `packages/gateway/src/llm/router.ts` (use it in the walk)
 - Test: `packages/gateway/src/llm/route-availability.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ModelRoute` (Task 1).
 - Produces: `type RouteAvailability = { available: boolean; reason: "ok" | "provider_unreachable" | "model_absent" }`; `class RouteAvailabilityProbe { constructor(ttlMs?: number); check(route: ModelRoute): Promise<RouteAvailability>; }`. The two failure reasons stay distinct because they have different fixes — reporting both as "unavailable" sends the user to the wrong one.
 
@@ -819,10 +829,12 @@ git commit -m "fix(llm): route availability checks the model, not just the daemo
 Three arrays hardcode the closed union (`registry.ts:44`, `:67`, `:87`) and four method signatures hardcode `"ollama" | "llamacpp"`. Spec §3.5: lifecycle keys on `providerId`, model stays an argument — keying on `routeId` would make it impossible to pull a model that has no route yet.
 
 **Files:**
+
 - Modify: `packages/gateway/src/llm/registry.ts`
 - Test: `packages/gateway/src/llm/registry.test.ts`
 
 **Interfaces:**
+
 - Consumes: `routes()`, `routeFor()` (Task 3).
 - Produces: `addRoute(provider: LlmProvider, modelName: string, meta?: ProviderMeta): void`; `pullModel(providerId: ProviderId, modelName: string, opts?): Promise<void>` — note `providerId` widens from the union to `ProviderId`. `loadModel` / `unloadModel` / `setDefault` widen identically.
 
@@ -877,11 +889,13 @@ git commit -m "refactor(llm): registry iterates routes; lifecycle keys on provid
 Spec §4.2. `synthesis-egress.ts` hardcodes `destination: "model"` and its parameter type structurally drops `providerId`, though the call site has it. With five vendors, `nimbus prove` would report that "a prompt went to a model".
 
 **Files:**
+
 - Modify: `packages/gateway/src/egress/synthesis-egress.ts`
 - Modify: `packages/gateway/src/agents/_lib/synthesis-llm.ts` (widen `RecordSynthesisEgressFn`)
 - Test: `packages/gateway/src/egress/synthesis-egress.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ResolvedSynthesisProvider` (already carries `providerId`).
 - Produces: `recordSynthesisEgress(db, { briefKind, provider: { providerId, modelName, isLocal }, now })`.
 
@@ -945,10 +959,12 @@ git commit -m "fix(egress): synthesis destination names the vendor, not the lite
 Spec §3.6. Total back-compat: existing keys must still work.
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts`
 - Test: `packages/gateway/src/config/nimbus-toml.test.ts`
 
 **Interfaces:**
+
 - Consumes: `parseRouteRef` (Task 2).
 - Produces: `NimbusLlmToml.localRoutes: ReadonlyMap<string, { runtime: string; model: string; baseUrl?: string }>` and `NimbusLlmToml.routePriority: readonly string[]`. Both default to empty in `DEFAULT_NIMBUS_LLM_TOML`, so `loadNimbusLlmFromPath` yields an empty map/array while `parseNimbusTomlLlmSection` (a `Partial`) yields `undefined` when unset. Task 9 consumes the defaults-merged form.
 
@@ -1111,10 +1127,12 @@ git commit -m "feat(config): [llm.local.<name>] routes and route_priority"
 ### Task 9: Wire N routes at assembly
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble.ts:1277-1311`
 - Test: `packages/gateway/test/integration/llm-routes.integration.test.ts` **(new)**
 
 **Interfaces:**
+
 - Consumes: `NimbusLlmToml.localRoutes` (Task 8), `LlmRegistry.addRoute` (Task 6).
 - Produces: a registry whose `routes()` reflects config.
 
@@ -1235,11 +1253,13 @@ git commit -m "feat(llm): assemble registers one route per configured model"
 ### Task 10: IPC surface + the one-definition test
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/llm-rpc.ts:20-28`
 - Test: `packages/gateway/src/ipc/llm-rpc.test.ts`
 - Test: `packages/gateway/src/llm/local-definition.test.ts` **(new)**
 
 **Interfaces:**
+
 - Consumes: everything above.
 - Produces: `llm.status` returns `{ routes: Array<{ routeId, providerId, modelName, isLocal, available, reason, contextWindow }> }`. No new method.
 
@@ -1308,6 +1328,7 @@ git commit -m "refactor(ipc): llm.status lists routes; drop the last local-id co
 ### Task 11: Coverage floor, docs, and the deprecated alias
 
 **Files:**
+
 - Modify: `packages/gateway/src/llm/types.ts` (delete the `LlmProviderKind` alias)
 - Modify: `docs/architecture.md` (LLM routing section)
 - Modify: `docs/CHANGELOG.md` (dated entry)
