@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787851429548,
+  "lastUpdate": 1787866424329,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16251,6 +16251,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 285.4330446000029,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5ac042c04fda879fdfd943eaacb99a09ae022cae",
+          "message": "feat(llm)!: route the LLM by (provider, model) instead of provider kind (#1352)\n\n## What this changes\n\n`LlmRouter` kept its providers in a map keyed on a closed three-member\nunion, so it had exactly **one seat per provider kind**. Registering a\nsecond provider of a kind silently evicted the first, because `Map.set`\non the same key overwrites. That seat was never filled: only Ollama and\nllama.cpp were ever registered, and `[llm] remote_model` defaulted to a\nmodel name for a provider that does not exist.\n\nThe same limit applied one level down. `OllamaProvider` takes a model\nname and there is no allowlist, so `local_model = \"qwen3\"` already\nworked — but two local models at once was unrepresentable, because the\nseat is per runtime and the model was a single global config string.\n\nThis re-keys the router on **`(provider, model)` routes**. Provider\nimplementations are unchanged: two models means two instances sharing a\n`providerId`, so only the map key moved.\n\n## What ships\n\n- Multiple local models at once, per task — `[llm.local.<name>]`\nsub-tables plus `route_priority`\n- Availability that means **this model answers**, not **the daemon is\nup**\n- Egress destination naming the vendor instead of the literal string\n`model`\n- One definition of `isLocal`, declared by the provider, replacing three\ncopies that had to agree\n\n## What does NOT ship\n\n**Zero cloud vendors.** No adapter for Anthropic, OpenAI, Gemini, xAI or\nBedrock. This slice is the enabling refactor; vendors are slice 2.\n\nTwo fixes here are **unit-proven only**, because no remote route exists\nyet to exercise them: the vendor-named egress destination, and the\nroute-aware context-overflow fallback.\n\n## Breaking\n\n- `llm.status` returns a route list. `nimbus llm status --json`\ntherefore changes shape — anything scripting against it must be updated.\n- The deprecated `LlmProviderKind` alias and\n`LlmRouter.registerProvider` shim are removed.\n\n`ALLOWED_METHODS` is untouched — no new IPC method, so invariant I7 is\nunaffected.\n\n## Known bounds, stated rather than papered over\n\n- `packages/cli` keeps a private copy of the route-status type. A shared\ntype is forbidden by the IPC-only dependency rule, and nothing pins the\ncopy to the real payload. This break already happened once during\ndevelopment and the suite stayed green throughout. A gateway-side shape\npin now catches the gateway half; the CLI half remains a documented gap.\n- `LlmRouter.generate` still calls the route provider directly with no\negress append. Previously only a route keyed `remote` could reach it —\nnever. Now any registered non-local route can, once slice 2 adds one.\n**Named slice-2 blocker**: resolve `generate`'s I29 coverage before the\nfirst remote route registers.\n- A malformed `route_priority` value, as opposed to an unresolvable\nentry, is swallowed during parsing with no diagnostic, so assembly\ncannot name it.\n- Per-task pinning did not ship. Slice 4 is therefore a router change,\nnot the surface-only change the spec originally claimed.\n\n## Verification\n\n- `bun test packages/gateway/src` — 12370 pass, 0 fail\n- `bun test packages/cli/src` — 2470 pass, 0 fail\n- `bun test scripts` — 1596 pass, 0 fail\n- `bun run typecheck` — exit 0\n- `bun run lint:markdown` — exit 0\n\n**Not run locally:** the coverage floor, which is CI-Linux-authoritative\nand could not run without Docker here. Three new source files land in\n`llm/`, which is under the Engine gate. Please let CI settle before\nmerging.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-27T21:22:15Z",
+          "tree_id": "42b38b42304ac152def9bf67cd0ea037f24ec4f9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5ac042c04fda879fdfd943eaacb99a09ae022cae"
+        },
+        "date": 1787866421864,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 315.11441159999885,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 314.86610090000215,
             "unit": "ms"
           }
         ]
