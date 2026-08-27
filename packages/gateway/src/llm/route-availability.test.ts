@@ -95,4 +95,65 @@ describe("RouteAvailabilityProbe", () => {
     await probe.check(route("a", opts));
     expect(calls).toBe(2);
   });
+
+  test("an unreachable provider is re-probed sooner than a reachable one (split TTL)", async () => {
+    // Positive TTL long enough that the sleep below can't cross it; negative TTL short
+    // enough that the SAME sleep does. If both reasons shared one TTL this would either
+    // fail to re-probe the down provider (TTL too long) or needlessly re-probe the
+    // healthy one (TTL too short) — this test can only pass if the two are different.
+    const probe = new RouteAvailabilityProbe(10_000, 5);
+
+    let unreachableCalls = 0;
+    const unreachable: LlmProvider = {
+      providerId: "down",
+      isLocal: true,
+      isAvailable: async () => {
+        unreachableCalls += 1;
+        return false;
+      },
+      listModels: async () => [],
+      generate: async () => {
+        throw new Error("not called");
+      },
+    };
+    const downRoute: ModelRoute = {
+      routeId: "down/x",
+      provider: unreachable,
+      modelName: "x",
+      meta: {},
+    };
+
+    let reachableCalls = 0;
+    const reachable: LlmProvider = {
+      providerId: "up",
+      isLocal: true,
+      isAvailable: async () => true,
+      listModels: async (): Promise<LlmModelInfo[]> => {
+        reachableCalls += 1;
+        return [{ provider: "up", modelName: "other" }]; // "wanted" stays model_absent
+      },
+      generate: async () => {
+        throw new Error("not called");
+      },
+    };
+    const upRoute: ModelRoute = {
+      routeId: "up/wanted",
+      provider: reachable,
+      modelName: "wanted",
+      meta: {},
+    };
+
+    await probe.check(downRoute);
+    await probe.check(upRoute);
+    expect(unreachableCalls).toBe(1);
+    expect(reachableCalls).toBe(1);
+
+    // Longer than the negative TTL (5ms), shorter than the positive TTL (10_000ms).
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    await probe.check(downRoute);
+    await probe.check(upRoute);
+    expect(unreachableCalls).toBe(2); // negative TTL expired — re-probed
+    expect(reachableCalls).toBe(1); // positive TTL still holds — NOT re-probed
+  });
 });

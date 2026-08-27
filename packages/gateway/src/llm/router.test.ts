@@ -627,7 +627,14 @@ describe("LlmRouter route registration", () => {
 
   test("enforceAirGap skips every non-local route, whatever its id", async () => {
     const router = new LlmRouter({ ...DEFAULT_CONFIG, enforceAirGap: true });
-    router.registerRoute(makeFakeRouteProvider("gemini", false, true), "gemini-2.5-pro");
+    // The model list is supplied and matches, so the ONLY thing that can make this
+    // route unavailable is the air-gap skip itself — without this the route would
+    // read as model_absent regardless of enforceAirGap, and the test would pass for
+    // the wrong reason.
+    router.registerRoute(
+      makeFakeRouteProvider("gemini", false, true, ["gemini-2.5-pro"]),
+      "gemini-2.5-pro",
+    );
     // A vendor id this code has never seen must still be refused, because isLocal
     // is declared false — not because "gemini" is on a list somewhere.
     const provider = await router.selectProvider("agent_step");
