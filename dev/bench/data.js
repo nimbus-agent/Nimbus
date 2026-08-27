@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787866424329,
+  "lastUpdate": 1787867602203,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16285,6 +16285,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 314.86610090000215,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "40569a563d8b152a9833d975dec98bb500214b20",
+          "message": "chore: release main (#1353)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>4.0.0</summary>\n\n##\n[4.0.0](https://github.com/nimbus-agent/Nimbus/compare/v3.1.0...v4.0.0)\n(2026-08-27)\n\n\n### ⚠ BREAKING CHANGES\n\n* **llm:** route the LLM by (provider, model) instead of provider kind\n([#1352](https://github.com/nimbus-agent/Nimbus/issues/1352))\n\n### Features\n\n* **llm:** route the LLM by (provider, model) instead of provider kind\n([#1352](https://github.com/nimbus-agent/Nimbus/issues/1352))\n([5ac042c](https://github.com/nimbus-agent/Nimbus/commit/5ac042c04fda879fdfd943eaacb99a09ae022cae))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-08-27T21:41:27Z",
+          "tree_id": "266c52911bf5690f409333812e66f31806b86349",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/40569a563d8b152a9833d975dec98bb500214b20"
+        },
+        "date": 1787867599317,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 333.06199290000006,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 335.7032335000011,
             "unit": "ms"
           }
         ]
