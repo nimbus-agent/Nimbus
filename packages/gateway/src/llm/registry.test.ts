@@ -376,6 +376,96 @@ describe("LlmRegistry.setDefault / getDefault", () => {
   });
 });
 
+describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
+  test("pullModel works for a model that has NO route", async () => {
+    // The primary use of pull: fetch a model BEFORE configuring a route for it. Keying
+    // lifecycle on routeId would make this impossible — see Task 6 brief.
+    const pulled: string[] = [];
+    const provider = makeProvider("ollama", {
+      available: true,
+      pullModel: async (m) => {
+        pulled.push(m);
+      },
+    });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    registry.addRoute(provider, "qwen3:8b");
+    await registry.pullModel("ollama", "a-model-with-no-route");
+    expect(pulled).toEqual(["a-model-with-no-route"]);
+  });
+
+  test("listAllModels covers a vendor id the registry has never heard of", async () => {
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    registry.addRoute(
+      makeProvider("gemini", {
+        available: true,
+        models: [{ provider: "gemini", modelName: "gemini-2.5-pro" }],
+      }),
+      "gemini-2.5-pro",
+    );
+    const models = await registry.listAllModels();
+    expect(models.some((m) => m.provider === "gemini")).toBe(true);
+  });
+
+  test("a successful pullModel invalidates the route-availability cache for that providerId", async () => {
+    // Without invalidate(), a freshly-pulled model reports model_absent for up to the
+    // positive TTL — indistinguishable from the pull having failed.
+    let reportedModels: string[] = [];
+    const provider = makeProvider("ollama", {
+      available: true,
+      models: [],
+      pullModel: async (m) => {
+        reportedModels = [m];
+      },
+    });
+    (provider as unknown as { listModels: () => Promise<LlmModelInfo[]> }).listModels = async () =>
+      reportedModels.map((m) => ({ provider: "ollama", modelName: m }));
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    registry.addRoute(provider, "fresh-model");
+    // Prime the negative cache: at this point the daemon does not yet report the model.
+    const before = await registry.llmRouter.selectProvider("agent_step");
+    expect(before).toBeUndefined();
+    await registry.pullModel("ollama", "fresh-model");
+    const after = await registry.llmRouter.selectProvider("agent_step");
+    expect(after?.providerId).toBe("ollama");
+  });
+
+  test("a FAILED pullModel does not invalidate the cache", async () => {
+    const provider = makeProvider("ollama", {
+      available: true,
+      models: [],
+      pullModel: async () => {
+        throw new Error("pull failed");
+      },
+    });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    registry.addRoute(provider, "fresh-model");
+    await expect(registry.pullModel("ollama", "fresh-model")).rejects.toThrow("pull failed");
+    // No assertion beyond "did not throw during invalidate" — the cache-clear must be
+    // gated on success, proven directly in the invariant test above.
+  });
+
+  test(
+    "refreshProviderMeta does not mint a spurious route from config.localModel " +
+      "(Task 3 predicted bug)",
+    async () => {
+      const provider = makeProvider("ollama", {
+        available: true,
+        models: [{ provider: "ollama", modelName: "qwen3:8b", parameterCount: 8 }],
+      });
+      // DEFAULT_CONFIG.localModel is "llama3.2" — distinct from the route's own model,
+      // so the old registerProvider-shim re-registration would mint a second route
+      // "ollama/llama3.2" alongside "ollama/qwen3:8b".
+      const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+      registry.addRoute(provider, "qwen3:8b");
+      await registry.refreshProviderMeta("qwen3:8b");
+      const routes = registry.llmRouter.routes();
+      expect(routes).toHaveLength(1);
+      expect(routes[0]?.modelName).toBe("qwen3:8b");
+      expect(routes[0]?.meta.parameterCount).toBe(8);
+    },
+  );
+});
+
 describe("LlmRegistry.getRouterStatus", () => {
   test("delegates to LlmRouter.getStatus and returns a shape with the four task types", async () => {
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG });

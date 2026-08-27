@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
+import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { LlmRouter, type LlmRouterConfig, type ProviderMeta } from "./router.ts";
-import type { LlmModelInfo, LlmProvider, PullProgressChunk } from "./types.ts";
+import type { LlmModelInfo, LlmProvider, ProviderId, PullProgressChunk } from "./types.ts";
 
 export type LlmRegistryOptions = {
   config: LlmRouterConfig;
@@ -11,14 +12,25 @@ export type LlmRegistryOptions = {
 export class LlmRegistry {
   private readonly router: LlmRouter;
   private readonly db: Database | undefined;
+  // Constructed here (not by LlmRouter) so the registry keeps its own reference to call
+  // `invalidate()` on a successful pullModel — see pullModel below. No public accessor is
+  // exposed on LlmRouter for this: that would recreate the reach-into-router-internals
+  // shape Task 3 just deleted from this file.
+  private readonly probe = new RouteAvailabilityProbe();
 
   constructor(opts: LlmRegistryOptions) {
-    this.router = new LlmRouter(opts.config);
+    this.router = new LlmRouter(opts.config, this.probe);
     this.db = opts.db;
   }
 
   addProvider(provider: LlmProvider, meta?: ProviderMeta): void {
     this.router.registerProvider(provider, meta ?? {});
+  }
+
+  /** Registers a route with its own model name — the non-deprecated counterpart to
+   *  `addProvider`, which derives the model name from `config.localModel`/`config.remoteModel`. */
+  addRoute(provider: LlmProvider, modelName: string, meta?: ProviderMeta): void {
+    this.router.registerRoute(provider, modelName, meta ?? {});
   }
 
   /**
@@ -41,16 +53,28 @@ export class LlmRegistry {
    * whenever the information exists.
    */
   async refreshProviderMeta(modelName: string): Promise<void> {
-    for (const id of ["ollama", "llamacpp"] as const) {
-      const provider = this.router.providerFor(id);
-      if (provider === undefined) continue;
+    // Iterates registered routes rather than a fixed ["ollama", "llamacpp"] id set, and
+    // re-registers each matching route through `registerRoute(route.provider,
+    // route.modelName, ...)` rather than the deprecated `registerProvider` shim.
+    //
+    // The shim derives the model name it registers under from `config.localModel` /
+    // `config.remoteModel` — fine while every provider had exactly one config-derived
+    // route, but once a route is registered with its OWN model name (`addRoute`, Task 9),
+    // calling `registerProvider` here would re-register under `config.localModel` instead,
+    // MINTING A SPURIOUS second route (`<provider>/<config.localModel>`) alongside the
+    // real one on every refresh. Using `route.modelName` targets the exact existing route
+    // every time, so re-registration only ever updates that route's meta.
+    for (const route of this.router.routes()) {
+      if (!route.provider.isLocal) continue;
       try {
-        const models = await provider.listModels();
+        const models = await route.provider.listModels();
         const match = models.find(
           (m) => m.modelName === modelName || m.modelName.startsWith(`${modelName}:`),
         );
         if (match?.parameterCount !== undefined) {
-          this.router.registerProvider(provider, { parameterCount: match.parameterCount });
+          this.router.registerRoute(route.provider, route.modelName, {
+            parameterCount: match.parameterCount,
+          });
         }
       } catch {
         // Provider unreachable. Leaving meta empty keeps the documented fail-open.
@@ -64,11 +88,16 @@ export class LlmRegistry {
 
   async listAllModels(): Promise<LlmModelInfo[]> {
     const results: LlmModelInfo[] = [];
-    const providerIds = ["ollama", "llamacpp", "remote"] as const;
-    for (const id of providerIds) {
+    // Dedup by provider INSTANCE (not providerId): a future multi-route provider id
+    // (several distinct Ollama daemons, say) must still be listed once per instance, but
+    // two routes sharing the same instance must not trigger the same listModels() call
+    // twice.
+    const seen = new Set<LlmProvider>();
+    for (const route of this.router.routes()) {
+      const provider = route.provider;
+      if (seen.has(provider)) continue;
+      seen.add(provider);
       try {
-        const provider = this.router.providerFor(id);
-        if (provider === undefined) continue;
         if (!(await provider.isAvailable())) continue;
         const models = await provider.listModels();
         results.push(...models);
@@ -82,12 +111,13 @@ export class LlmRegistry {
 
   async checkAvailability(): Promise<Record<string, boolean>> {
     const result: Record<string, boolean> = {};
-    const providerIds = ["ollama", "llamacpp", "remote"] as const;
-    for (const id of providerIds) {
+    const seen = new Set<ProviderId>();
+    for (const route of this.router.routes()) {
+      const id = route.provider.providerId;
+      if (seen.has(id)) continue;
+      seen.add(id);
       try {
-        const provider = this.router.providerFor(id);
-        if (provider === undefined) continue;
-        result[id] = await provider.isAvailable();
+        result[id] = await route.provider.isAvailable();
       } catch {
         result[id] = false;
       }
@@ -95,7 +125,13 @@ export class LlmRegistry {
     return result;
   }
 
-  async loadModel(provider: "ollama" | "llamacpp", modelName: string): Promise<void> {
+  // Lifecycle methods key on `providerId`, and the model stays an argument — never the
+  // route id. `OllamaProvider.pullModel(modelName)` posts its argument to the shared
+  // daemon, so any registered instance of a providerId can pull/load/unload any model;
+  // requiring a matching route would make it impossible to pull a model that has no
+  // route yet, which is the primary use of pull. Resolution is "any registered route
+  // whose provider.providerId matches" — exactly what `LlmRouter.providerFor` does.
+  async loadModel(provider: ProviderId, modelName: string): Promise<void> {
     const p = this.router.providerFor(provider);
     if (p === undefined) throw new Error(`Provider not registered: ${provider}`);
     if (typeof (p as unknown as { loadModel?: unknown }).loadModel === "function") {
@@ -104,7 +140,7 @@ export class LlmRegistry {
     // Ollama auto-loads on first generate; this is a no-op for Ollama.
   }
 
-  async unloadModel(provider: "ollama" | "llamacpp", modelName: string): Promise<void> {
+  async unloadModel(provider: ProviderId, modelName: string): Promise<void> {
     const p = this.router.providerFor(provider);
     if (p === undefined) throw new Error(`Provider not registered: ${provider}`);
     if (typeof (p as unknown as { unloadModel?: unknown }).unloadModel === "function") {
@@ -113,7 +149,7 @@ export class LlmRegistry {
   }
 
   async pullModel(
-    provider: "ollama" | "llamacpp",
+    provider: ProviderId,
     modelName: string,
     opts: { signal?: AbortSignal; onProgress?: (p: PullProgressChunk) => void } = {},
   ): Promise<void> {
@@ -123,11 +159,15 @@ export class LlmRegistry {
       throw new TypeError(`Provider ${provider} does not support pullModel`);
     }
     await p.pullModel(modelName, opts);
+    // Only on success: a failed pull must not clear the cache. Without this, a freshly
+    // pulled model keeps reporting `model_absent` for up to
+    // ROUTE_AVAILABILITY_POSITIVE_TTL_MS, which looks exactly like the pull having failed.
+    this.probe.invalidate(provider);
   }
 
   async setDefault(
     taskType: "classification" | "reasoning" | "summarisation" | "agent_step",
-    provider: "ollama" | "llamacpp" | "remote",
+    provider: ProviderId,
     modelName: string,
   ): Promise<void> {
     if (this.db === undefined) return;
