@@ -1,3 +1,4 @@
+import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { makeRouteId } from "./route-id.ts";
 import type {
   LlmGenerateOptions,
@@ -72,9 +73,19 @@ function byPreference(routes: readonly ModelRoute[], preferLocal: boolean): Mode
 export class LlmRouter {
   private readonly routeMap = new Map<string, ModelRoute>();
   private readonly config: LlmRouterConfig;
+  // A single long-lived probe shared across every walk this router performs, so its
+  // per-providerId cache (see `RouteAvailabilityProbe`) actually amortizes repeated
+  // checks within the TTL. Injected — not constructed here — so a caller needing a
+  // zero-TTL probe (tests with two distinct provider instances sharing one providerId)
+  // has a seam, rather than `mock.module`.
+  private readonly availability: RouteAvailabilityProbe;
 
-  constructor(config: LlmRouterConfig) {
+  constructor(
+    config: LlmRouterConfig,
+    probe: RouteAvailabilityProbe = new RouteAvailabilityProbe(),
+  ) {
     this.config = config;
+    this.availability = probe;
   }
 
   /**
@@ -133,11 +144,7 @@ export class LlmRouter {
     task: LlmTaskType,
     opts?: { preferLocal?: boolean },
   ): Promise<ModelRoute | undefined> {
-    return this.firstAvailableRoute(
-      task,
-      (r) => this.probeAvailable(r.provider),
-      opts?.preferLocal,
-    );
+    return this.firstAvailableRoute(task, (r) => this.probeAvailable(r), opts?.preferLocal);
   }
 
   async selectProvider(
@@ -241,9 +248,13 @@ export class LlmRouter {
     return byPreference(all, preferLocal);
   }
 
-  private async probeAvailable(provider: LlmProvider): Promise<boolean> {
+  // Route-level availability: the daemon is reachable AND `route.modelName` is among the
+  // models it currently reports (via the shared `RouteAvailabilityProbe`) — not just
+  // "the daemon answered". `RouteAvailabilityProbe.check` already catches internally,
+  // so this catch is defense-in-depth, preserving the pre-existing catch-to-false.
+  private async probeAvailable(route: ModelRoute): Promise<boolean> {
     try {
-      return await provider.isAvailable();
+      return (await this.availability.check(route)).available;
     } catch {
       return false; // treat availability check failure as unavailable
     }
@@ -323,7 +334,7 @@ export class LlmRouter {
         const limit = Math.floor(window * CONTEXT_OVERFLOW_THRESHOLD);
         if (estimatedTokens > limit) continue;
       }
-      if (await this.probeAvailable(candidate.provider)) return candidate;
+      if (await this.probeAvailable(candidate)) return candidate;
     }
     return undefined;
   }
@@ -375,33 +386,28 @@ export class LlmRouter {
   async getStatus(): Promise<Record<LlmTaskType, LlmTaskStatus | undefined>> {
     const tasks: LlmTaskType[] = ["classification", "reasoning", "summarisation", "agent_step"];
     const out: Partial<Record<LlmTaskType, LlmTaskStatus | undefined>> = {};
-    // Probe each provider's availability at most once for the whole call.
-    const availabilityCache = new Map<string, Promise<boolean>>();
-    const cachedAvailable = (route: ModelRoute): Promise<boolean> => {
-      let probe = availabilityCache.get(route.provider.providerId);
-      if (probe === undefined) {
-        probe = this.probeAvailable(route.provider);
-        availabilityCache.set(route.provider.providerId, probe);
-      }
-      return probe;
-    };
+    // `probeAvailable` already goes through the shared `this.availability` probe, whose
+    // own per-providerId TTL cache amortizes repeated checks — a second, per-call cache
+    // here (as this used to have) is redundant, and two caching layers with different
+    // lifetimes over the same question is how they drift apart.
+    const isAvailable = (route: ModelRoute): Promise<boolean> => this.probeAvailable(route);
     for (const t of tasks) {
       const preferred = this.findPreferredRoute(t);
       if (preferred === undefined) {
         out[t] = undefined;
         continue;
       }
-      const isAvailable = await cachedAvailable(preferred);
+      const preferredAvailable = await isAvailable(preferred);
       const entry: LlmTaskStatus = {
         providerId: preferred.provider.providerId,
         modelName: preferred.modelName,
-        isAvailable,
+        isAvailable: preferredAvailable,
         reason: this.reasonFor(t, preferred),
       };
-      if (!isAvailable) {
+      if (!preferredAvailable) {
         // The preferred provider is down; report the route generate() would actually fall
         // back to (next available in priority order) so status matches real routing.
-        const actual = await this.firstAvailableRoute(t, cachedAvailable);
+        const actual = await this.firstAvailableRoute(t, isAvailable);
         if (actual !== undefined && actual.provider.providerId !== preferred.provider.providerId) {
           entry.fallback = {
             providerId: actual.provider.providerId,

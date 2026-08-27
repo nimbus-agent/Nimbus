@@ -83,7 +83,14 @@ describe("LlmRegistry — construction + provider registration", () => {
 
   test("addProvider forwards to LlmRouter.registerProvider", () => {
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
-    reg.addProvider(makeProvider("ollama", { available: true }));
+    // The model-aware availability probe (Task 5) needs the fake to report the model
+    // `registerProvider` assigns it (`config.localModel`), or it reads as unavailable.
+    reg.addProvider(
+      makeProvider("ollama", {
+        available: true,
+        models: [{ provider: "ollama", modelName: DEFAULT_CONFIG.localModel }],
+      }),
+    );
     return reg.llmRouter.selectProvider("agent_step").then((p) => {
       expect(p?.providerId).toBe("ollama");
     });

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
 import type { LlmProvider } from "./types.ts";
 
@@ -7,7 +8,16 @@ function makeFakeProvider(id: "ollama" | "llamacpp" | "remote", available: boole
     providerId: id,
     isLocal: id !== "remote",
     isAvailable: async () => available,
-    listModels: async () => [],
+    // Matches the model `registerProvider` will assign this fake (localModel for a
+    // local id, remoteModel for "remote"), so the model-aware availability probe
+    // wired in Task 5 does not fail these route-selection-focused fakes on a model
+    // mismatch they were never testing for.
+    listModels: async () => [
+      {
+        provider: id,
+        modelName: id === "remote" ? DEFAULT_CONFIG.remoteModel : DEFAULT_CONFIG.localModel,
+      },
+    ],
     generate: async (_opts) => ({
       text: `response from ${id}`,
       tokensIn: 1,
@@ -151,12 +161,16 @@ function makeCaptureProvider(
   id: "ollama" | "llamacpp" | "remote",
   available: boolean,
   captured: { prompt: string },
+  // Defaults to the model `registerProvider` would assign this id; a caller using
+  // `registerRoute` with an explicit model name (e.g. "small"/"big" below) passes it
+  // here too, so the model-aware availability probe matches what was registered.
+  models: string[] = [id === "remote" ? DEFAULT_CONFIG.remoteModel : DEFAULT_CONFIG.localModel],
 ): LlmProvider {
   return {
     providerId: id,
     isLocal: id !== "remote",
     isAvailable: async () => available,
-    listModels: async () => [],
+    listModels: async () => models.map((m) => ({ provider: id, modelName: m })),
     generate: async (opts) => {
       captured.prompt = opts.prompt;
       return {
@@ -215,13 +229,20 @@ describe("LlmRouter context window overflow", () => {
     // keyed on provider id, so with two same-id routes it cannot tell "walked to the fitting
     // route" apart from "truncated on the original" — only asserting on what each instance
     // actually received can.
-    const router = new LlmRouter({ ...DEFAULT_CONFIG, preferLocal: true });
+    // Both routes share providerId "ollama", and the availability probe caches by
+    // providerId — a zero TTL forces each check to re-list rather than reuse the OTHER
+    // instance's cached model list (which would report "big" unavailable, since the
+    // cached list would still say ["small"]).
+    const router = new LlmRouter(
+      { ...DEFAULT_CONFIG, preferLocal: true },
+      new RouteAvailabilityProbe(0),
+    );
     const smallCaptured = { prompt: "" };
     const bigCaptured = { prompt: "" };
-    router.registerRoute(makeCaptureProvider("ollama", true, smallCaptured), "small", {
+    router.registerRoute(makeCaptureProvider("ollama", true, smallCaptured, ["small"]), "small", {
       contextWindow: 100,
     });
-    router.registerRoute(makeCaptureProvider("ollama", true, bigCaptured), "big", {
+    router.registerRoute(makeCaptureProvider("ollama", true, bigCaptured, ["big"]), "big", {
       contextWindow: 100_000,
     });
     const longPrompt = "x".repeat(40_000); // ~10k tokens: overflows "small", fits "big"
@@ -232,10 +253,10 @@ describe("LlmRouter context window overflow", () => {
 
   test("air-gap still refuses a non-local route on overflow", async () => {
     const router = new LlmRouter({ ...DEFAULT_CONFIG, enforceAirGap: true });
-    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "small", {
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true, ["small"]), "small", {
       contextWindow: 100,
     });
-    router.registerRoute(makeFakeRouteProvider("gemini", false, true), "big", {
+    router.registerRoute(makeFakeRouteProvider("gemini", false, true, ["big"]), "big", {
       contextWindow: 100_000,
     });
     // Must truncate onto the local route, never reach the remote one.
@@ -536,12 +557,20 @@ describe("LlmRouter.generateMarkdown", () => {
   });
 });
 
-function makeFakeRouteProvider(id: string, isLocal: boolean, available: boolean): LlmProvider {
+function makeFakeRouteProvider(
+  id: string,
+  isLocal: boolean,
+  available: boolean,
+  // The models this fake's daemon reports — must include whatever model name the
+  // caller then registers this provider under, or the model-aware availability
+  // probe (Task 5) reports `model_absent` regardless of `available`.
+  models: string[] = [],
+): LlmProvider {
   return {
     providerId: id,
     isLocal,
     isAvailable: async () => available,
-    listModels: async () => [],
+    listModels: async () => models.map((m) => ({ provider: id, modelName: m })),
     generate: async () => ({
       text: `response from ${id}`,
       tokensIn: 1,
@@ -587,8 +616,11 @@ describe("LlmRouter route registration", () => {
 
   test("selectProvider prefers a local route when preferLocal=true", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
-    router.registerRoute(makeFakeRouteProvider("gemini", false, true), "gemini-2.5-pro");
-    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+    router.registerRoute(
+      makeFakeRouteProvider("gemini", false, true, ["gemini-2.5-pro"]),
+      "gemini-2.5-pro",
+    );
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true, ["qwen3:8b"]), "qwen3:8b");
     const provider = await router.selectProvider("agent_step");
     expect(provider?.providerId).toBe("ollama");
   });
@@ -621,10 +653,31 @@ describe("LlmRouter route registration", () => {
 
   test("selectRoute returns the full ModelRoute, not just the provider", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
-    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true, ["qwen3:8b"]), "qwen3:8b");
     const route = await router.selectRoute("reasoning");
     expect(route?.modelName).toBe("qwen3:8b");
     expect(route?.routeId).toBe("ollama/qwen3:8b");
     expect(route?.provider.providerId).toBe("ollama");
+  });
+
+  test("the walk falls THROUGH a route whose model is not pulled", async () => {
+    // Without per-route (model-aware) availability this stops at the first route and
+    // returns it, because the daemon is up even though the configured model was never
+    // pulled. That is the whole defect this task fixes.
+    //
+    // Both routes share providerId "ollama" — the availability probe caches by
+    // providerId, so a zero TTL is used (rather than a distinct vendor id) to force
+    // each check to re-list against its OWN fake instance, which is what a real daemon
+    // would do too.
+    const absent = makeFakeRouteProvider("ollama", true, true, ["other"]);
+    const present = makeFakeRouteProvider("ollama", true, true, ["present"]);
+    const router = new LlmRouter(
+      { ...DEFAULT_CONFIG, routePriority: ["ollama/missing", "ollama/present"] },
+      new RouteAvailabilityProbe(0),
+    );
+    router.registerRoute(absent, "missing");
+    router.registerRoute(present, "present");
+    const chosen = await router.selectRoute("reasoning");
+    expect(chosen?.modelName).toBe("present");
   });
 });
