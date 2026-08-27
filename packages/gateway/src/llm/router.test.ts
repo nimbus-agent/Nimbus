@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isLocalProviderKind, LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
+import { LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
 import type { LlmProvider } from "./types.ts";
 
 function makeFakeProvider(id: "ollama" | "llamacpp" | "remote", available: boolean): LlmProvider {
@@ -385,22 +385,14 @@ describe("midTruncate", () => {
   });
 });
 
-describe("isLocalProviderKind", () => {
-  test("classifies ollama and llamacpp as local, remote as not", () => {
-    expect(isLocalProviderKind("ollama")).toBe(true);
-    expect(isLocalProviderKind("llamacpp")).toBe(true);
-    expect(isLocalProviderKind("remote")).toBe(false);
-  });
-});
-
 describe("LlmRouter.resolveForSynthesis", () => {
-  test("a LOCAL provider kind resolves isLocal: true — via the REAL LOCAL_PROVIDER_IDS membership, not a stub", async () => {
+  test("a LOCAL provider kind resolves isLocal: true — via the REAL provider.isLocal, not a stub", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerProvider(makeFakeProvider("ollama", true));
     const resolved = await router.resolveForSynthesis();
-    // This is the security-relevant assertion: `isLocal` comes from `isLocalProviderKind`
-    // classifying the REAL resolved `providerId` ("ollama"), never from a caller-supplied flag —
-    // a caller deciding `[agents].synthesis = "local"` vs egress-ledgering trusts THIS value.
+    // This is the security-relevant assertion: `isLocal` comes from the resolved route's
+    // REAL `provider.isLocal`, never from a caller-supplied flag — a caller deciding
+    // `[agents].synthesis = "local"` vs egress-ledgering trusts THIS value.
     expect(resolved).toEqual({
       providerId: "ollama",
       modelName: DEFAULT_CONFIG.localModel,
@@ -502,5 +494,98 @@ describe("LlmRouter.generateMarkdown", () => {
     if (resolved === undefined) throw new Error("expected a resolved provider");
     await router.generateMarkdown("the exact prompt text", resolved);
     expect(captured.prompt).toBe("the exact prompt text");
+  });
+});
+
+function makeFakeRouteProvider(id: string, isLocal: boolean, available: boolean): LlmProvider {
+  return {
+    providerId: id,
+    isLocal,
+    isAvailable: async () => available,
+    listModels: async () => [],
+    generate: async () => ({
+      text: `response from ${id}`,
+      tokensIn: 1,
+      tokensOut: 1,
+      modelUsed: id,
+      isLocal,
+      provider: id,
+    }),
+  };
+}
+
+describe("LlmRouter route registration", () => {
+  test("two models on ONE runtime both survive registration", async () => {
+    // RED-PROVE: on the pre-refactor Map<LlmProviderKind, LlmProvider> the second
+    // register overwrote the first, so this asserted 1 where it should assert 2.
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "gemma3:12b");
+
+    const ids = router
+      .routes()
+      .map((r) => r.routeId)
+      .sort();
+    expect(ids).toEqual(["ollama/gemma3:12b", "ollama/qwen3:8b"]);
+  });
+
+  test("a route is addressable by its id", () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+    expect(router.routeFor("ollama/qwen3:8b")?.modelName).toBe("qwen3:8b");
+    expect(router.routeFor("ollama/nope")).toBeUndefined();
+  });
+
+  test("re-registering the SAME routeId replaces it rather than duplicating", () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b", {
+      parameterCount: 8,
+    });
+    expect(router.routes()).toHaveLength(1);
+    expect(router.routes()[0]?.meta.parameterCount).toBe(8);
+  });
+
+  test("selectProvider prefers a local route when preferLocal=true", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerRoute(makeFakeRouteProvider("gemini", false, true), "gemini-2.5-pro");
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+    const provider = await router.selectProvider("agent_step");
+    expect(provider?.providerId).toBe("ollama");
+  });
+
+  test("enforceAirGap skips every non-local route, whatever its id", async () => {
+    const router = new LlmRouter({ ...DEFAULT_CONFIG, enforceAirGap: true });
+    router.registerRoute(makeFakeRouteProvider("gemini", false, true), "gemini-2.5-pro");
+    // A vendor id this code has never seen must still be refused, because isLocal
+    // is declared false — not because "gemini" is on a list somewhere.
+    const provider = await router.selectProvider("agent_step");
+    expect(provider).toBeUndefined();
+  });
+
+  test("the unnamed tail after route_priority still honours preferLocal", async () => {
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      preferLocal: true,
+      routePriority: ["gemini/gemini-2.5-pro"], // an explicit remote FIRST choice
+    });
+    router.registerRoute(makeFakeRouteProvider("gemini", false, true), "gemini-2.5-pro");
+    router.registerRoute(makeFakeRouteProvider("xai", false, true), "grok-4");
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+    // Registration order puts xai (remote) before ollama (local); preferLocal must
+    // reorder the tail so the local route is tried before the unranked remote one.
+    const ids = (router as unknown as { orderedRoutes(p?: boolean): { routeId: string }[] })
+      .orderedRoutes(true)
+      .map((r) => r.routeId);
+    expect(ids).toEqual(["gemini/gemini-2.5-pro", "ollama/qwen3:8b", "xai/grok-4"]);
+  });
+
+  test("selectRoute returns the full ModelRoute, not just the provider", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "qwen3:8b");
+    const route = await router.selectRoute("reasoning");
+    expect(route?.modelName).toBe("qwen3:8b");
+    expect(route?.routeId).toBe("ollama/qwen3:8b");
+    expect(route?.provider.providerId).toBe("ollama");
   });
 });

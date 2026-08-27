@@ -1,4 +1,4 @@
-import { isLocalProviderKind, type LlmRouter } from "../llm/router.ts";
+import type { LlmRouter } from "../llm/router.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
 
 /**
@@ -41,7 +41,7 @@ export function createGlossaryLlm(router: LlmRouter): ConsolidatorLlm {
       if (signal?.aborted === true) return null;
       const provider = await router.selectProvider("summarisation", { preferLocal: true });
       if (provider === undefined) return null;
-      if (!isLocalProviderKind(provider.providerId)) return null;
+      if (!provider.isLocal) return null;
       const result = await provider.generate({
         task: "summarisation",
         prompt,

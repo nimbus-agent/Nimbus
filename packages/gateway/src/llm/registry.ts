@@ -67,9 +67,7 @@ export class LlmRegistry {
     const providerIds = ["ollama", "llamacpp", "remote"] as const;
     for (const id of providerIds) {
       try {
-        const provider = (
-          this.router as unknown as { providers: Map<string, LlmProvider> }
-        ).providers?.get(id);
+        const provider = this.router.providerFor(id);
         if (provider === undefined) continue;
         if (!(await provider.isAvailable())) continue;
         const models = await provider.listModels();
@@ -87,9 +85,7 @@ export class LlmRegistry {
     const providerIds = ["ollama", "llamacpp", "remote"] as const;
     for (const id of providerIds) {
       try {
-        const provider = (
-          this.router as unknown as { providers: Map<string, LlmProvider> }
-        ).providers?.get(id);
+        const provider = this.router.providerFor(id);
         if (provider === undefined) continue;
         result[id] = await provider.isAvailable();
       } catch {
@@ -100,9 +96,7 @@ export class LlmRegistry {
   }
 
   async loadModel(provider: "ollama" | "llamacpp", modelName: string): Promise<void> {
-    const p = (this.router as unknown as { providers: Map<string, LlmProvider> }).providers?.get(
-      provider,
-    );
+    const p = this.router.providerFor(provider);
     if (p === undefined) throw new Error(`Provider not registered: ${provider}`);
     if (typeof (p as unknown as { loadModel?: unknown }).loadModel === "function") {
       await (p as unknown as { loadModel: (m: string) => Promise<void> }).loadModel(modelName);
@@ -111,9 +105,7 @@ export class LlmRegistry {
   }
 
   async unloadModel(provider: "ollama" | "llamacpp", modelName: string): Promise<void> {
-    const p = (this.router as unknown as { providers: Map<string, LlmProvider> }).providers?.get(
-      provider,
-    );
+    const p = this.router.providerFor(provider);
     if (p === undefined) throw new Error(`Provider not registered: ${provider}`);
     if (typeof (p as unknown as { unloadModel?: unknown }).unloadModel === "function") {
       await (p as unknown as { unloadModel: (m: string) => Promise<void> }).unloadModel(modelName);
@@ -125,9 +117,7 @@ export class LlmRegistry {
     modelName: string,
     opts: { signal?: AbortSignal; onProgress?: (p: PullProgressChunk) => void } = {},
   ): Promise<void> {
-    const p = (this.router as unknown as { providers: Map<string, LlmProvider> }).providers?.get(
-      provider,
-    );
+    const p = this.router.providerFor(provider);
     if (p === undefined) throw new Error(`Provider not registered: ${provider}`);
     if (typeof p.pullModel !== "function") {
       throw new TypeError(`Provider ${provider} does not support pullModel`);

@@ -1,4 +1,4 @@
-import { isLocalProviderKind, type LlmRouter } from "../llm/router.ts";
+import type { LlmRouter } from "../llm/router.ts";
 
 export type DecisionLlm = {
   complete(prompt: string): Promise<string | null>;
@@ -156,7 +156,7 @@ export function createDecisionLlm(router: LlmRouter): DecisionLlm {
     async complete(prompt: string): Promise<string | null> {
       const provider = await router.selectProvider("summarisation", { preferLocal: true });
       if (provider === undefined) return null;
-      if (!isLocalProviderKind(provider.providerId)) return null;
+      if (!provider.isLocal) return null;
       const result = await provider.generate({
         task: "summarisation",
         prompt,
