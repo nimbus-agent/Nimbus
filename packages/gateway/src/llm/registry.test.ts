@@ -430,6 +430,14 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
   });
 
   test("a FAILED pullModel does not invalidate the cache", async () => {
+    // Same technique as the success test above, but the pull rejects: prime the
+    // negative cache, fail the pull, THEN flip listModels() to report the model, and
+    // assert the route STILL reads as unavailable — because a failed pull must not
+    // have cleared the cache, and the stale (positive-TTL) entry should still be in
+    // effect. This assertion is what actually distinguishes "invalidate was correctly
+    // skipped" from "invalidate ran anyway" — a bare `rejects.toThrow` on the pull
+    // call cannot: it stays green whether or not invalidate() runs on failure.
+    let reportedModels: string[] = [];
     const provider = makeProvider("ollama", {
       available: true,
       models: [],
@@ -437,11 +445,20 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
         throw new Error("pull failed");
       },
     });
+    (provider as unknown as { listModels: () => Promise<LlmModelInfo[]> }).listModels = async () =>
+      reportedModels.map((m) => ({ provider: "ollama", modelName: m }));
     const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
     registry.addRoute(provider, "fresh-model");
+    // Prime the negative cache: at this point the daemon does not report the model.
+    const before = await registry.llmRouter.selectProvider("agent_step");
+    expect(before).toBeUndefined();
     await expect(registry.pullModel("ollama", "fresh-model")).rejects.toThrow("pull failed");
-    // No assertion beyond "did not throw during invalidate" — the cache-clear must be
-    // gated on success, proven directly in the invariant test above.
+    // The daemon now DOES report the model (as if it landed some other way) — but the
+    // cache must still be serving its stale, pre-pull answer, because invalidate()
+    // must not have run on this failed pull.
+    reportedModels = ["fresh-model"];
+    const after = await registry.llmRouter.selectProvider("agent_step");
+    expect(after).toBeUndefined();
   });
 
   test(
