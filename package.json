@@ -149,7 +149,6 @@
     "test:coverage:metrics": "bun test packages/gateway/test/unit/metrics/ packages/gateway/test/integration/metrics/ packages/gateway/test/unit/ipc/metrics-rpc.test.ts packages/gateway/test/integration/http/metrics-dora-route.test.ts --coverage --coverage-threshold-lines=80 --timeout 30000",
     "test:coverage:preflight": "bun test packages/gateway/test/unit/preflight/ packages/gateway/test/integration/preflight/ packages/gateway/test/unit/ipc/preflight-rpc.test.ts packages/gateway/test/integration/http/preflight-deploy-route.test.ts packages/gateway/test/unit/connectors/github-sync-mergeable.test.ts --coverage --coverage-threshold-lines=80 --timeout 30000",
     "test:coverage:doctor": "bun test packages/cli/src/commands/doctor*.test.ts --coverage --coverage-threshold-lines=80 --timeout 30000",
-    "test:coverage:mcp": "bun test packages/mcp-connectors --coverage --coverage-threshold-lines=70 --timeout 30000",
     "test:coverage:tui": "bun test packages/cli/src/tui/ --coverage --coverage-threshold-lines=80 --timeout 30000",
     "test:coverage:updater": "bun test packages/gateway/src/updater packages/gateway/src/ipc/updater-rpc.test.ts --coverage --coverage-threshold-lines=80 --timeout 30000",
     "test:coverage:lan": "bun test packages/gateway/src/ipc/lan-crypto.test.ts packages/gateway/src/ipc/lan-pairing.test.ts packages/gateway/src/ipc/lan-rate-limit.test.ts packages/gateway/src/ipc/lan-rpc.test.ts packages/gateway/src/ipc/lan-server.test.ts packages/gateway/test/integration/lan/ --coverage --coverage-threshold-lines=80 --timeout 30000",

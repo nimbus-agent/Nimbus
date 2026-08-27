@@ -455,7 +455,7 @@ describe("auditCoverageGatePal", () => {
     expect(result.ok).toBe(true);
   });
 
-  test("the real workflow carries 9 PAL gates and 3 Linux batches covering all 15 Linux scripts", () => {
+  test("the real workflow carries 9 PAL gates and 3 Linux batches covering all 14 Linux scripts", () => {
     const yaml = readFileSync(join(REPO_ROOT, ".github/workflows/_test-suite.yml"), "utf8");
     const gates = parseCoverageGateMatrix(yaml);
 
@@ -473,8 +473,12 @@ describe("auditCoverageGatePal", () => {
     const batched = [...yaml.matchAll(/^ {12}scripts: "([^"]+)"$/gm)].flatMap((m) =>
       (m[1] ?? "").split(" ").filter((s) => s !== ""),
     );
-    expect(new Set(batched).size, "a Linux coverage script was dropped or duplicated").toBe(15);
-    expect(batched).toHaveLength(15);
+    // 15 until `test:coverage:mcp` went with the connectors to their own repository. The number is
+    // hand-maintained and this is the second thing it caught, both times correctly: a DELIBERATE
+    // removal looks identical to a silent drop from here, and having to come and change it is the
+    // point — it forces the removal to be stated rather than absorbed.
+    expect(new Set(batched).size, "a Linux coverage script was dropped or duplicated").toBe(14);
+    expect(batched).toHaveLength(14);
     for (const script of batched) {
       expect(script, "batched entries must name `test:coverage:*` scripts").toMatch(
         /^test:coverage:[a-z-]+$/,

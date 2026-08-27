@@ -15,6 +15,18 @@ const OUT = join(
 );
 
 /**
+ * A connector id: lowercase letters, digits and hyphens.
+ *
+ * The SAME shape the standalone launcher validates before joining an id into a path. Filtering
+ * only on "a subpath export with no further slash" was not enough: 0.2.0 added `./package.json`
+ * to the exports map, which has no slash after `./` and was duly counted as a connector called
+ * "package.json". The registry-drift audit caught it immediately, which is the whole reason that
+ * gate exists — the alternative was a compiled binary carrying an import of a connector that does
+ * not exist.
+ */
+const CONNECTOR_ID_RE = /^[a-z0-9-]+$/;
+
+/**
  * Every connector the installed `@nimbus-dev/connectors` exposes.
  *
  * Derived from the package's `exports` map, which is the only thing that decides what a consumer
@@ -74,8 +86,9 @@ export function bundledConnectorIds(packageName: string = CONNECTOR_PACKAGE): st
     throw new Error(`${packageName} has no exports map — cannot derive the connector list`);
   }
   return Object.keys(exportsMap)
-    .filter((k) => k.startsWith("./") && !k.slice(2).includes("/"))
+    .filter((k) => k.startsWith("./"))
     .map((k) => k.slice(2))
+    .filter((id) => CONNECTOR_ID_RE.test(id))
     .sort((a, b) => a.localeCompare(b));
 }
 

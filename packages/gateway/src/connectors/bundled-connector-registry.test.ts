@@ -22,10 +22,15 @@ function exportedIds(): string[] {
   const manifest = require(`${CONNECTOR_PACKAGE}/package.json`) as {
     exports?: Record<string, unknown>;
   };
-  return Object.keys(manifest.exports ?? {})
-    .filter((k) => k.startsWith("./") && !k.slice(2).includes("/"))
-    .map((k) => k.slice(2))
-    .sort((a, b) => a.localeCompare(b));
+  return (
+    Object.keys(manifest.exports ?? {})
+      .filter((k) => k.startsWith("./"))
+      .map((k) => k.slice(2))
+      // Lowercase letters, digits and hyphens — the shape the launcher validates. `./package.json`
+      // and `./shared/connector-mode.ts` are exports, not connectors.
+      .filter((id) => /^[a-z0-9-]+$/.test(id))
+      .sort((a, b) => a.localeCompare(b))
+  );
 }
 
 describe("BUNDLED_CONNECTORS", () => {

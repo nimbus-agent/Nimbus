@@ -1146,7 +1146,7 @@ jobs:
         gate:
           - name: Engine & agents
             flag: engine-agents
-            scripts: "test:coverage:engine test:coverage:agents test:coverage:workflow test:coverage:mcp test:coverage:preflight"
+            scripts: "test:coverage:engine test:coverage:agents test:coverage:workflow test:coverage:preflight"
             pal: false
           - name: Runtime services
             flag: runtime-services

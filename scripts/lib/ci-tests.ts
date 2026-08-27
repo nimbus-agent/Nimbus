@@ -107,7 +107,6 @@ export const COVERAGE_GATES: ReadonlyArray<{ script: string; dbus?: boolean }> =
   { script: "test:coverage:preflight" },
   { script: "test:coverage:doctor" },
   { script: "test:coverage:tui" },
-  { script: "test:coverage:mcp" },
   { script: "test:coverage:updater" },
   { script: "test:coverage:lan" },
   { script: "test:coverage:perf" },
