@@ -210,18 +210,24 @@ describe("LlmRouter context window overflow", () => {
   });
 
   test("falls through to a route whose context window fits", async () => {
+    // Each route gets a DISTINCT provider instance with its own capture object.
+    // `makeFakeRouteProvider`'s generate() ignores its input and always returns fixed text
+    // keyed on provider id, so with two same-id routes it cannot tell "walked to the fitting
+    // route" apart from "truncated on the original" — only asserting on what each instance
+    // actually received can.
     const router = new LlmRouter({ ...DEFAULT_CONFIG, preferLocal: true });
-    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "small", {
+    const smallCaptured = { prompt: "" };
+    const bigCaptured = { prompt: "" };
+    router.registerRoute(makeCaptureProvider("ollama", true, smallCaptured), "small", {
       contextWindow: 100,
     });
-    router.registerRoute(makeFakeRouteProvider("ollama", true, true), "big", {
+    router.registerRoute(makeCaptureProvider("ollama", true, bigCaptured), "big", {
       contextWindow: 100_000,
     });
-    const result = await router.generate({
-      task: "reasoning",
-      prompt: "x".repeat(40_000), // ~10k tokens: overflows "small", fits "big"
-    });
-    expect(result.text).toContain("ollama");
+    const longPrompt = "x".repeat(40_000); // ~10k tokens: overflows "small", fits "big"
+    await router.generate({ task: "reasoning", prompt: longPrompt });
+    expect(bigCaptured.prompt).toBe(longPrompt); // walked to the fitting route, untruncated
+    expect(smallCaptured.prompt).toBe(""); // the small route was never invoked
   });
 
   test("air-gap still refuses a non-local route on overflow", async () => {

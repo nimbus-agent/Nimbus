@@ -211,7 +211,7 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
 
       // Deliberately `generateMarkdown(prompt, resolved)` — the EXACT provider `resolveForSynthesis`
       // already resolved and classified above — never `LlmRouter.generate()`. `generate()` routes
-      // through `fitPromptOrFallback`, whose private `tryRemoteFallback` method (`llm/router.ts` —
+      // through `fitPromptOrFallback`, whose private `findFallbackRoute` method (`llm/router.ts` —
       // cited by name, not a line number, since this exact comment's own line-number citation
       // already drifted once) can reach a REMOTE provider on context overflow with NO egress row
       // appended and NO `[agents] synthesis` mode check — exactly the two guarantees this function
