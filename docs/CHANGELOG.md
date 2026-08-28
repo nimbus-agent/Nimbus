@@ -8,6 +8,48 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-28 — Every non-local model route now ledgers by construction; the `LlmRouter.generate()`
+  hole recorded on 2026-08-27 is closed, and the Mastra air-gap bypass with it.** Slice 2a of the
+  LLM model routes work; no cloud vendor is registered by it. Three things shipped.
+  **(1) The `model`-class appender moved off the call site and onto the provider.**
+  `egress/model-egress.ts`'s `wrapLedgeredProvider` is a decorator applied at
+  `LlmRegistry.addRoute`, so a non-local provider appends one `egress_ledger` row BEFORE every
+  `generate()` and an append failure aborts the call (`EgressAppendFailedError`, fail-closed). That
+  covers `LlmRouter.generate()`, `generateMarkdown()` and every `selectProvider()` caller —
+  `briefs/brief-llm-adapter.ts` among them, which resolved a provider and called it directly, so it
+  was never covered before — without any of them cooperating. The previous appender
+  (`egress/synthesis-egress.ts`'s `recordSynthesisEgress`) saw only the synthesis path and is
+  **deleted**, along with the `SynthesisLlmDeps.recordEgress` DI seam and the
+  `SynthesisEgressRecorder` type; there is now exactly ONE `model` appender in the tree. Locality is
+  still derived INSIDE the appender from `provider.isLocal` — a local provider is returned
+  UNCHANGED and appends nothing, not even a blocked row — so no caller can write a false zero into
+  the ledger `nimbus prove` reports on. A new `LlmGenerateOptions.egressMethod` names the row (a
+  synthesized brief still records `agents.<briefKind>.synthesis`) but cannot suppress one.
+  **(2) Static rule D22(e)** confines `LlmRouter.registerRoute` to `llm/registry.ts` plus its own
+  definition, so no future code can enter the route table unwrapped. The wrap deliberately sits at
+  `addRoute` and NOT at `registerRoute`, because `refreshProviderMeta` re-registers an
+  already-wrapped provider to update its meta and wrapping there would append twice per generate —
+  a hazard now pinned by its own test rather than by a `__ledgered` marker, which was proposed and
+  rejected (it would be read off the very provider whose egress is being recorded, so any provider
+  could suppress its own row). **(3) Invariant I34** — locality is declared once per adapter, and a
+  cloud adapter can never claim to be local. `isLocal` is the single field read by two independent
+  defenses (air-gap refusal and the I29 appender), neither of which can detect the other's failure,
+  so a wrong `true` is one word and silent in both directions. The wiring shipped in slice 1
+  (`llm/base-url-locality.ts`); this adds the enforcement test and the docs row.
+  **Also fixed, a live bug on `main`:** under `enforce_air_gap = true`, a local router that threw
+  mid-turn fell through to the Mastra agent — which talks to a cloud vendor — with no air-gap check
+  and no ledger row, because `engine/agent.ts` resolves its model through `@mastra/core`, outside
+  the route table entirely. `enforce_air_gap` is a REFUSAL setting, so that fallback now rethrows
+  instead (`engine/run-conversational-agent.ts`). **What did NOT ship, and remains named:** no cloud
+  vendor — `packages/gateway/src/llm/` still registers only `OllamaProvider` and `LlamaCppProvider`,
+  so every remote behaviour here is proven against a fake `isLocal: false` provider and the `model`
+  class still appends zero rows in production until slice 2b lands one. Two exclusions keep `model`
+  narrower than "all inference": **embeddings** append nothing (`PROSE_HEAVY_TYPES` routes to
+  OpenAI's 1536-dim table with no appender), and the **Mastra engine agent** appends nothing —
+  refused under air-gap as of this slice, but with air-gap off it is an open gap that 2b closes at
+  the AI-SDK seam. `nimbus prove`'s `model` scope label widens accordingly, from
+  "remotely-synthesized agent briefs" to "prompts sent to a non-local model route".
+
 - **2026-08-27 — The router's unit becomes a `(provider, model)` route, not a provider kind, and
   ships zero cloud vendors.** `LlmRouter` used to key on a closed `LlmProviderKind` union
   (`"ollama" | "llamacpp" | "remote"`), so registering a second provider under an already-used kind

@@ -57,9 +57,12 @@ const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   // loudly), it just makes no outbound call and ledgers no row — so a zero here means no
   // CONFIGURED connector's sync/fetch ran, not that no syncable on the scheduler executed at all.
   sync: "configured connector sync runs and targeted fetch-on-miss calls",
-  // NOT "model calls". Covers remote-provider brief synthesis only; embeddings append nothing,
-  // so a zero here is not a claim that no vector left the machine.
-  model: "remotely-synthesized agent briefs",
+  // NOT "model calls". Covers every non-local ROUTE in the router's table (all callers, via the
+  // provider wrapper `egress/model-egress.ts`) -- wider than the brief-synthesis-only scope this
+  // label used to name. Two exclusions remain: embeddings and the Mastra engine agent both append
+  // nothing, so a zero here is still not a claim that no vector or prompt left the machine. See
+  // the `model` entry in the gateway's `egress/egress-coverage.ts`.
+  model: "prompts sent to a non-local model route",
 };
 
 /**

@@ -172,7 +172,7 @@ describe("formatProveResult", () => {
   // synthesis only". A fresh, ACCURATE fixture here, deliberately not folded into `COVERED` above,
   // for the same reason the `sync` test isn't: `COVERED` is shared by five other tests whose
   // exact-string assertions would all need rewriting for an unrelated reason if it changed.
-  test("the model class renders its OWN label ('remotely-synthesized agent briefs'), never falls through to a bare key", () => {
+  test("the model class renders its OWN label ('prompts sent to a non-local model route'), never falls through to a bare key", () => {
     const out = formatProveResult({
       delta: 0,
       completeness: {
@@ -191,7 +191,7 @@ describe("formatProveResult", () => {
       chainOk: true,
       label: "during this query",
     });
-    expect(out).toContain("remotely-synthesized agent briefs");
+    expect(out).toContain("prompts sent to a non-local model route");
     // The bare fallback never fires: a lone "model" (unlabelled) would appear as its own
     // comma-delimited scope-clause token.
     expect(out).not.toMatch(/scope:.*(?:^|, )model(?:,|\))/);

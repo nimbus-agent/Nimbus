@@ -35,10 +35,10 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
  * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run OR a
  * targeted fetch-on-miss call, both landing through `egress/sync-egress.ts`'s `recordSyncEgress` —
- * see the `sync` paragraph below); and `model` (a non-local-provider agent brief synthesis,
- * `egress/synthesis-egress.ts` — see the `model` paragraph below, which reads narrower than the
- * name). Later phases raise `peer`, `session`; raising an entry without landing its appender is the
- * exact defect this vector exists to prevent.
+ * see the `sync` paragraph below); and `model` (any generate on a NON-LOCAL route, appended by
+ * `egress/model-egress.ts`'s `wrapLedgeredProvider` — see the `model` paragraph below for the two
+ * exclusions that still make it narrower than the name). Later phases raise `peer`, `session`;
+ * raising an entry without landing its appender is the exact defect this vector exists to prevent.
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
@@ -79,20 +79,27 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * markers from different binaries — asserting `per-call` here would overstate what the scheduled-
  * sync half of this class observes.
  *
- * `model` is `per-call`, RAISED FROM `none`, and covers LESS than its name — read it as narrowly as
- * `mcp` and `http`. It is per-call over exactly one thing: a built-in agent brief synthesized by a
- * NON-LOCAL provider (`egress/synthesis-egress.ts`'s `recordSynthesisEgress`). Its only caller is
- * the synthesis wiring (`agents/_lib/synthesis-llm.ts`, under `[agents] synthesis = "local"` or
- * `"allow-remote"`), reached in production from `ipc/server/dispatchers.ts` and
- * `agent-runs/agent-http-invoke.ts` (Task 6's `buildAgentSynthesisRunner`). The
- * local-vs-remote distinction is enforced INSIDE the appender via a required `remote` argument
- * (a `false` call appends nothing), the same choice `sync-egress.ts`'s `recordSyncEgress` makes for
- * `LOCAL_ONLY_SYNC_SERVICES` and for the same reason: a caller-enforced rule is one wiring mistake
- * away from fabricating egress rows for a local generation. It is NOT "all inference". EMBEDDINGS
- * APPEND NOTHING: `PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table when a key is set, and that
- * path has no appender — so a zero `model` count does NOT mean no vector left the machine. Under
- * `synthesis = "off"` or `"local"` this class emits nothing BY CONSTRUCTION, not by observation.
- * Raising this entry further requires landing the embedding appender first.
+ * `model` is `per-call` and covers every NON-LOCAL route in the router's table. The appender is
+ * `egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at `LlmRegistry.addRoute`, so it
+ * covers `LlmRouter.generate()`, `generateMarkdown()`, and every `selectProvider()` caller
+ * (`briefs/brief-llm-adapter.ts` among them) without any of them cooperating — a strictly wider
+ * claim than the call-site appender it replaced, which saw only the synthesis path. The
+ * local-vs-remote distinction is enforced INSIDE the wrapper, DERIVED from `provider.isLocal` —
+ * a local provider is returned unwrapped and appends nothing, not even a blocked row. That is the
+ * same choice `sync-egress.ts`'s `recordSyncEgress` makes for `LOCAL_ONLY_SYNC_SERVICES` and for
+ * the same reason: a caller-supplied verdict is one wiring mistake away from a false zero.
+ * Static rule D22(e) confines `registerRoute` to `llm/registry.ts` so nothing enters the route
+ * table unwrapped, and invariant I34 pins the `isLocal` declaration the derivation reads.
+ *
+ * It is still NOT "all inference", and two exclusions remain. EMBEDDINGS APPEND NOTHING:
+ * `PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table when a key is set, and that path has no
+ * appender — so a zero `model` count does NOT mean no vector left the machine. THE MASTRA ENGINE
+ * AGENT APPENDS NOTHING in this slice: `engine/agent.ts` resolves its model through
+ * `@mastra/core`, outside the route table entirely, so the wrapper never sees it; under
+ * `[llm] enforce_air_gap` that path is now REFUSED rather than silently taken
+ * (`engine/run-conversational-agent.ts`), but with air-gap off it remains an open, named gap that
+ * slice 2b closes at the AI-SDK seam. Raising this entry further requires landing the embedding
+ * appender.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",

@@ -820,7 +820,7 @@ nimbus/
 │   ├── README.md             # this file — the repository landing page
 │   ├── architecture.md       # subsystem design, IPC catalogue, schema reference
 │   ├── SECURITY.md           # security model + vulnerability reporting
-│   ├── SECURITY-INVARIANTS.md# I1–I33 rationale + anti-patterns
+│   ├── SECURITY-INVARIANTS.md# I1–I34 rationale + anti-patterns
 │   ├── roadmap.md            # acceptance-criteria-driven roadmap
 │   ├── CHANGELOG.md          # dated delivery log (canonical)
 │   ├── cli-reference.md      # full CLI + nimbus.toml reference

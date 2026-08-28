@@ -1,7 +1,7 @@
 # Security Policy
 
 Nimbus takes security seriously. The full security model, threat model, and
-invariant catalogue (I1–I33, with I28 reserved) live in
+invariant catalogue (I1–I34, with I28 reserved) live in
 [`docs/SECURITY.md`](../docs/SECURITY.md) and the central
 [nimbus-security](https://github.com/nimbus-agent/nimbus-security) repository.
 

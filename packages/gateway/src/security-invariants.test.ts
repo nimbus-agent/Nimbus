@@ -22,6 +22,8 @@ import { HITL_REQUIRED } from "./engine/executor.ts";
 import { CURRENT_SCHEMA_VERSION } from "./index/local-index.ts";
 import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
 import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
+import { LlamaCppProvider } from "./llm/llamacpp-provider.ts";
+import { OllamaProvider } from "./llm/ollama-provider.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
@@ -1839,20 +1841,26 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     await expect(exec3.execute({ type: "search.run", payload: {} })).rejects.toThrow();
   });
 
-  test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, the agent brief append to agents-rpc.ts, and emitter imports to agents-rpc.ts", async () => {
+  test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, the agent brief append to agents-rpc.ts, emitter imports to agents-rpc.ts, and registerRoute to llm/registry.ts", async () => {
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D22-connectors-dispatch");
     expect(audit).toContain("D22-egress-append");
     expect(audit).toContain("D22-agent-brief-egress");
     expect(audit).toContain("D22-agent-emitter-import");
+    // (e) — the route-table chokepoint. Unlike (a), this one does NOT rest on its own name alone:
+    // the "checker actually rejects an unwrapped route registration" test below drives
+    // `checkEgressChokepointConfinement` directly, so a deleted rule body fails there too.
+    expect(audit).toContain("D22-register-route");
 
-    // The four assertions above are string-presence checks, and all four of those strings are
+    // The five assertions above are string-presence checks, and all five of those strings are
     // `rule:` literals INSIDE the check functions — so they scan for a token that lives in the
     // definition being scanned for. Deleting the `run()` block that INVOKES the checks leaves
     // every one of them green while `audit:invariants` stops executing D22 entirely.
     //
-    // Rules (b) and (c) survive that by luck: each has an independent tree-scan further down this
-    // file. Rule (a), the `connectors.dispatch` confinement, has none — so its only enforcement is
+    // Rules (b), (c) and (e) survive that by luck or by design: (b) and (c) each have an
+    // independent tree-scan further down this file, and (e) is driven directly through
+    // `checkEgressChokepointConfinement` by the "rejects an unwrapped route registration" test.
+    // Rule (a), the `connectors.dispatch` confinement, has none — so its only enforcement is
     // the invocation, and its only assertion was the presence of its own name.
     //
     // Same wiring shape as the scan-floor assertion in the audit script's own suite: prove the
@@ -2177,6 +2185,43 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       },
     ]);
     expect(violations.map((v) => v.rule)).toContain("D22-register-route");
+  });
+});
+
+describe("I34 — locality is declared once, and a cloud adapter can never claim to be local", () => {
+  // Air-gap refusal AND the I29 `model` appender both read `provider.isLocal`. A wrong
+  // `true` is one word and silent in both directions: the prompt leaves under a setting
+  // that promised it would not, and no ledger row records that it did.
+
+  test("a local runtime pointed at a LAN box is NOT local", () => {
+    // Slice 1's fix. `base_url` is user-configurable and `[llm.local.*]` accepts a remote
+    // host, so a hardcoded `true` here defeated `enforce_air_gap` entirely.
+    expect(new OllamaProvider("http://192.168.1.50:11434", "m").isLocal).toBe(false);
+    expect(new LlamaCppProvider("http://192.168.1.50:8080", "m").isLocal).toBe(false);
+  });
+
+  test("a local runtime on loopback IS local", () => {
+    expect(new OllamaProvider("http://127.0.0.1:11434", "m").isLocal).toBe(true);
+    expect(new LlamaCppProvider("http://localhost:8080", "m").isLocal).toBe(true);
+  });
+
+  test("locality is derived from the base URL, never from a vendor id", async () => {
+    // One definition site. Three copies of this fact is what produced the hardcoded-env
+    // bug in the Windows sandbox work; `LOCAL_PROVIDER_IDS` and its two duplicates were
+    // deleted in slice 1 and must not come back.
+    const files = await readDirFiles("packages/gateway/src");
+    const offenders = files
+      .filter((f) => /LOCAL_PROVIDER_IDS|LOCAL_PROVIDERS\s*=/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  test("isLoopbackBaseUrl has exactly one definition site", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const definers = files
+      .filter((f) => /export function isLoopbackBaseUrl\b/.test(stripComments(f.contents)))
+      .map((f) => `packages/gateway/src/${f.rel}`);
+    expect(definers).toEqual(["packages/gateway/src/llm/base-url-locality.ts"]);
   });
 });
 
