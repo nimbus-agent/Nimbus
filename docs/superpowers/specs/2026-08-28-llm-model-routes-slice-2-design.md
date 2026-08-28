@@ -125,6 +125,17 @@ egress" becomes a claim, so it is fixed here rather than named and left.
 - An embeddings appender. `PROSE_HEAVY_TYPES` still routes to OpenAI with no ledger row; that
   exclusion survives slice 2 unchanged and stays documented as such.
 - Any per-call HITL on inference. Confirmed, not re-litigated — see §9 decision 1.
+- **A local OpenAI-compatible runtime** (LM Studio, LocalAI, llamafile). Unsupported today —
+  `KNOWN_LOCAL_RUNTIMES` (`platform/assemble.ts:1301`) admits only `"ollama"` and `"llamacpp"`, and
+  anything else is warn-logged and dropped — and still unsupported after slice 2. Deferred
+  deliberately, not overlooked. The shape it would take is cheap once §7.3 exists:
+  `runtime = "openai-compatible"` under `[llm.local.<name>]`, reusing `openai-provider.ts`'s
+  request/response mapping with locality **derived** from `base_url` like the other local runtimes.
+  It is deferred because that derived rule is the *inverse* of the hardcoded `isLocal = false` the
+  four cloud adapters carry in the same PR, and §7.4 already flags that pair as the easiest thing
+  in this slice to get backwards. Shipping four adapters under one uniform locality rule, then
+  adding the inverted one where it gets its own attention and its own I34 test row, is the safer
+  order. Slice 3 or 4.
 
 ---
 
@@ -276,11 +287,30 @@ The decorator intercepts `doGenerate` / `doStream` only. Mastra keeps its own cl
 and streaming — including the three negation tools, which live on the Mastra agent and not on the
 router path. No new `@ai-sdk/*` dependency, no private API, no async construction.
 
-**This does not make Mastra call `LlmProvider.generate()`, and cannot.** `LlmGenerateOptions` has
-no `tools` field, so a literal unification would silently kill the agent's tool-calling. The
-property sought — one ledger, air-gap honoured, one opt-in — is achieved at the AI-SDK seam
-instead. Stated plainly because the shorter phrase "route Mastra through the ledger" invites the
-wrong implementation.
+**This does not make Mastra call `LlmProvider.generate()`, and cannot.** `llm/types.ts` contains no
+`tools` field on `LlmGenerateOptions` — verified by grep, zero occurrences — so an adapter built
+over `LlmProvider` would silently kill the agent's tool-calling. The property sought — one ledger,
+air-gap honoured, one opt-in — is achieved at the AI-SDK seam instead. Stated plainly because the
+shorter phrase "route Mastra through the ledger" invites the wrong implementation.
+
+**Accepted cost, stated rather than hidden:** after 2b there are two HTTP clients for Anthropic —
+`llm/anthropic-provider.ts` for the route table, and Mastra's own for the agent. That asymmetry is
+real and is the price of keeping tool-calling. It is honest rather than accidental: the agent loop
+is Mastra's, so its wire is Mastra's; the route table is ours, so its wire is ours. Both are
+ledgered by their respective wrappers.
+
+**`ModelRouterLanguageModel` is public API, not an internal type.** It is exported from
+`@mastra/core/llm` (`dist/llm/index.d.ts:39`), the same public entry point the codebase already
+imports `Agent` and `createTool` from. Recorded because an upgrade-fragility objection to this
+design rests on it being a deep internal import, and it is not.
+
+**Escape hatch if §6.3's verification fails.** If `{ id, apiKey }` forces an OpenAI-compatible wire
+format for Anthropic, or if the metadata-fetch traffic proves unacceptable, the fallback is our own
+`LanguageModelV4` adapter written **directly against the vendor HTTP APIs** — not over
+`LlmProvider`, for the tools reason above. That is materially more work (the full V4 contract:
+streaming parts, tool calls, tool results, finish reasons, usage accounting, per vendor — in effect
+reimplementing `@ai-sdk/anthropic`), which is why it is the fallback and not the plan. If it is
+reached, it is re-specced, not improvised.
 
 **Two things to verify at implementation time, not assume:**
 
@@ -293,6 +323,53 @@ wrong implementation.
    also exports `isOfflineMode()`, which implies some paths do. If it does, that traffic is
    invisible to the decorator and becomes a **named I29 exclusion in the docs** — Mastra metadata
    egress the ledger cannot see. It must not be left unstated either way.
+
+### 6.4 Generate-time route fallback (PR 2b) — a gap §7.4 creates
+
+`LlmRouter.generate()` today resolves one route and calls it:
+
+```ts
+const route = await this.selectRoute(opts.task);
+const adjusted = await this.fitPromptOrFallback(opts, route);
+return route.provider.generate(adjusted.opts);
+```
+
+There is **no try/catch and no retry** — verified. `firstAvailableRoute` skips routes whose
+*availability probe* says unavailable; nothing reacts to a *generation* that throws.
+
+For local routes that was tolerable, because the probe genuinely predicts reachability. §7.4 breaks
+that link for remote routes on purpose: availability is answered offline, so a route reports
+available whenever it is enabled and keyed, whatever the network is doing. A user with
+`route_priority = ["anthropic/claude-sonnet-4-6", "ollama/qwen3"]` and no internet therefore gets a
+hard failure rather than falling through to the local model — while the S2 roadmap row this slice
+serves promises "bring-your-own-frontier-model routing **with local fallback**". Shipping the
+promise without the behaviour is the failure mode this project treats most seriously.
+
+This is the same shape as slice 1's §3.4: a fail-open created by the very change that introduces
+the walk, and therefore closed by the slice that creates it.
+
+**Rule, deliberately narrow.** On a failed `generate()`, continue the priority walk to the next
+route that passes the same gates — but only for a **transport-class** failure (connection refused,
+DNS, timeout, 5xx, 429). An **auth- or request-class** failure (401, 403, 400, model-not-found)
+does not retry: a bad key or a malformed request will fail identically on the next vendor, so
+retrying only sends the same prompt to a second destination for nothing. Classification lives with
+each adapter, which is the only layer that can read a vendor's status codes.
+
+**Two consequences to state rather than discover:**
+
+- **One prompt can produce N ledger rows across N destinations.** That is correct and must not be
+  "deduplicated" — each row records a real outbound request, and a ledger that collapsed them
+  would under-report egress. The wrapper produces this naturally, one row per attempt.
+- **Under `prefer_local = true` with air-gap OFF, a failing local route can now fall through to a
+  remote one.** That is already true today by a different door — `runTurn` catches a router failure
+  and falls back to the Mastra agent — but the walk makes it a routing decision rather than an
+  accident, so it is ledgered and visible in `nimbus llm status`. Under air-gap the walk excludes
+  every non-local route, unchanged, and §6.1 closes the Mastra door.
+
+**Alternative considered and rejected:** deferring this to slice 4, which already reopens
+`orderedRoutes` for the pin stage. Rejected because it would ship the first four cloud vendors with
+the roadmap row's headline property missing, and a claim that outruns the behaviour is worse than a
+later slice being slightly larger.
 
 ---
 
@@ -317,6 +394,17 @@ section to defaults, `enforce_air_gap` included. Unknown vendor id, `enabled = t
 resolvable key, empty model — warn-log **by name**, drop that vendor, boot continues. An entry
 that vanishes without a word is the shape slice 1's `dropUnresolvableRoutePriorityEntries`
 refuses to allow.
+
+**Validation runs AFTER defaults are applied, and that is deliberate — do not "fix" it earlier.**
+The instinct is to validate the raw parsed table before defaults so a vendor-specific problem can
+be isolated. That instinct moves validation *toward* the parser, which is the hazard: the closer it
+gets, the closer a throw gets to `loadTomlSection`'s bare catch, and the outcome of tripping that
+catch is not a dropped vendor but a silently reverted `[llm]` section with `enforce_air_gap` back
+at its `false` default. Post-default validation loses nothing here, because no field this slice
+adds needs absent-versus-explicit discrimination: an absent `enabled` and an explicit
+`enabled = false` mean the same thing. Slice 1 hit exactly this with `local_model = ""` and solved
+it the same way — check the post-default value in `assemble.ts`, warn by name, keep the default,
+carry on (`platform/assemble.ts:1506-1520`).
 
 ### 7.2 Vault
 
@@ -448,7 +536,16 @@ shipped eight tests that could not fail; a green run proves nothing about a guar
   and its `method` is `agents.<kind>.synthesis` for the synthesis path.
 - **Fail-closed (2a):** an appender that throws — the delegate is called **zero** times, and
   `synthesis-llm.ts` reports `egress_append_failed`, not `provider_error`.
-- **No double-append (2a):** one synthesized brief produces exactly one row.
+- **No double-append (2a):** one synthesized brief, invoked over the local socket, produces exactly
+  one row.
+- **Two rows, two classes, when invoked externally (2a):** a brief requested over HTTP
+  (`POST /v1/agents/{agent}`) or MCP and synthesized by a non-local provider produces **two** rows
+  — one `http`/`mcp` row from `recordAgentBriefEgress` (`egress/agent-brief-egress.ts:36`, called
+  at `ipc/agents-rpc.ts:1033`) for the inbound request, and one `model` row from the wrapper for
+  the outbound generation. They are distinguished by `source_type` and by `method`
+  (`agents.<kind>.synthesis` on the model row). This is not double-appending: they record two
+  different events, and a test that only counted rows would read them as one bug and the real
+  double-append as correct.
 - **Local is untouched (2a):** a local provider is returned unwrapped and appends nothing — not
   even a blocked row, mirroring `LOCAL_ONLY_SYNC_SERVICES`.
 - **The air-gap bypass (2a):** revert the guard. Air-gap on, `prefer_local` on, local router made
@@ -463,6 +560,11 @@ shipped eight tests that could not fail; a green run proves nothing about a guar
   especially — survives.
 - **Status (2b):** `not_configured` is distinguishable from `provider_unreachable` and
   `model_absent`; the CLI shape-parity test.
+- **Generate-time fallback (2b, §6.4):** a remote route whose `generate()` throws a transport-class
+  error falls through to the next route and the call succeeds; a 401 does **not** fall through and
+  the call fails at the first route. Assert the ledger holds one row per attempt — two rows for
+  the transport case, one for the 401 — since a test that asserted "exactly one row per prompt"
+  would encode the under-reporting bug as the expected behaviour.
 
 Coverage: `llm/` sits under the Engine 85% gate. `audit:coverage-floor` is CI-Linux-authoritative —
 verify with `verify:docker --changed`, not a local run.
