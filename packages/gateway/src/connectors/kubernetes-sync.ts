@@ -1,4 +1,5 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
+import { spawnCapture } from "../platform/spawn-capture.ts";
 import { syncPassCursorParseEmpty } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -108,14 +109,13 @@ async function kubectlDeploymentsJson(
     args.push("--context", context.trim());
   }
   args.push("get", "deployments", "-A", "-o", "json");
-  const proc = Bun.spawn(args, {
+  // `spawnCapture`, not `Bun.spawn`: the Gateway runs detached, so on Windows an unhidden
+  // console-subsystem child pops a visible window on every sync tick. See
+  // `platform/spawn-capture.ts`.
+  const r = await spawnCapture(args, {
     env: extensionProcessEnv({ KUBECONFIG: kubeconfig }),
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const code = await proc.exited;
-  const out = await new Response(proc.stdout).text();
-  return { ok: code === 0, text: out };
+  return { ok: r.ok, text: r.stdout };
 }
 
 export type KubernetesSyncableOptions = {

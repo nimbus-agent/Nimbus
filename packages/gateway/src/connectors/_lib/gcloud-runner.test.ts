@@ -1,54 +1,58 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import { spawnCaptureInternals } from "../../platform/spawn-capture.ts";
 
 import { runGcloudCommand } from "./gcloud-runner.ts";
 
-type SpawnArgs = Parameters<typeof Bun.spawn>;
-type BunWithSpawn = { spawn: typeof Bun.spawn };
+type CaptureSpawn = typeof spawnCaptureInternals.spawn;
 
-const realSpawn = Bun.spawn;
+const realSpawn = spawnCaptureInternals.spawn;
 afterEach(() => {
-  (Bun as unknown as BunWithSpawn).spawn = realSpawn;
+  spawnCaptureInternals.spawn = realSpawn;
 });
 
-/** Replace Bun.spawn with a fake; returns the captured argv + env. */
+/** Replace the spawn seam with a fake; returns the captured argv + env. */
 function stubSpawn(
   impl: (
     argv: string[],
     opts: { env: Record<string, string> },
   ) => {
-    exited: Promise<number>;
+    exitCode: number;
     stdout: string;
   },
 ): { calls: { argv: string[]; env: Record<string, string> }[] } {
   const calls: { argv: string[]; env: Record<string, string> }[] = [];
-  const fake = ((argv: SpawnArgs[0], opts?: SpawnArgs[1]) => {
-    const a = argv as string[];
-    const env = (opts?.env ?? {}) as Record<string, string>;
-    calls.push({ argv: a, env });
-    const r = impl(a, { env });
-    return { exited: r.exited, stdout: r.stdout } as unknown as ReturnType<typeof Bun.spawn>;
-  }) as unknown as typeof Bun.spawn;
-  (Bun as unknown as BunWithSpawn).spawn = fake;
+  spawnCaptureInternals.spawn = ((
+    cmd: string,
+    args: readonly string[],
+    opts?: { env?: Record<string, string> },
+  ) => {
+    const argv = [cmd, ...args];
+    const env = opts?.env ?? {};
+    calls.push({ argv, env });
+    const r = impl(argv, { env });
+    return fakeChild(r.exitCode, r.stdout);
+  }) as unknown as CaptureSpawn;
   return { calls };
 }
 
 describe("runGcloudCommand", () => {
   test("returns ok + stdout text on exit code 0", async () => {
-    stubSpawn(() => ({ exited: Promise.resolve(0), stdout: '[{"a":1}]' }));
+    stubSpawn(() => ({ exitCode: 0, stdout: '[{"a":1}]' }));
     const res = await runGcloudCommand(["gcloud", "logging", "sinks", "list"], "/creds.json");
     expect(res.ok).toBe(true);
     expect(res.text).toBe('[{"a":1}]');
   });
 
   test("returns ok:false on a non-zero exit code (text still captured)", async () => {
-    stubSpawn(() => ({ exited: Promise.resolve(1), stdout: "boom" }));
+    stubSpawn(() => ({ exitCode: 1, stdout: "boom" }));
     const res = await runGcloudCommand(["gcloud", "ai", "models", "list"], "/creds.json");
     expect(res.ok).toBe(false);
     expect(res.text).toBe("boom");
   });
 
   test("passes the argv through and scopes GOOGLE_APPLICATION_CREDENTIALS into the env (I1)", async () => {
-    const { calls } = stubSpawn(() => ({ exited: Promise.resolve(0), stdout: "[]" }));
+    const { calls } = stubSpawn(() => ({ exitCode: 0, stdout: "[]" }));
     await runGcloudCommand(["gcloud", "x"], "/path/to/creds.json");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.argv).toEqual(["gcloud", "x"]);
@@ -63,3 +67,25 @@ describe("runGcloudCommand", () => {
     expect(res).toEqual({ ok: false, text: "" });
   });
 });
+
+/**
+ * A `node:child_process` stand-in. The connector CLI runners moved off `Bun.spawn` to
+ * `platform/spawn-capture.ts`, which spawns with `windowsHide` — the Gateway runs detached, so an
+ * unhidden child pops a console window on every sync tick. These tests stub the seam that module
+ * exports rather than `Bun.spawn`, which it no longer uses.
+ */
+function fakeChild(exitCode: number, stdout: string): unknown {
+  const proc = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    kill: () => void;
+  };
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = (): void => {};
+  queueMicrotask(() => {
+    if (stdout !== "") proc.stdout.emit("data", Buffer.from(stdout));
+    proc.emit("close", exitCode);
+  });
+  return proc;
+}

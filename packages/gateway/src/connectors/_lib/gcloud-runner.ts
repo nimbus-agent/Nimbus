@@ -1,4 +1,5 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
+import { spawnCapture } from "../../platform/spawn-capture.ts";
 
 /**
  * Spawn a `gcloud` CLI command with Application Default Credentials pointed at
@@ -15,14 +16,10 @@ export async function runGcloudCommand(
   credPath: string,
 ): Promise<{ ok: boolean; text: string }> {
   try {
-    const proc = Bun.spawn(argv, {
+    const r = await spawnCapture(argv, {
       env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: credPath }),
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const code = await proc.exited;
-    const out = await new Response(proc.stdout).text();
-    return { ok: code === 0, text: out };
+    return { ok: r.ok, text: r.stdout };
   } catch {
     return { ok: false, text: "" };
   }

@@ -1,4 +1,5 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
+import { spawnCapture } from "../../platform/spawn-capture.ts";
 import {
   syncPassCursorParseEmpty,
   syncPassCursorSuccess,
@@ -114,14 +115,14 @@ export async function awsCliJson(
   if (extra === null) {
     return { ok: false, text: "" };
   }
-  const proc = Bun.spawn(["aws", ...args, "--output", "json"], {
+  // `spawnCapture`, not `Bun.spawn`: the Gateway runs detached, so on Windows every
+  // console-subsystem child gets a NEW console and a visible window. `cloudwatch` and
+  // `sagemaker` spawn one of these PER INDEXED ITEM via `runAwsCliPaginatedWalk`, so the
+  // unhidden version flashed dozens of windows per sync tick. See `platform/spawn-capture.ts`.
+  const r = await spawnCapture(["aws", ...args, "--output", "json"], {
     env: extensionProcessEnv(extra),
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const code = await proc.exited;
-  const out = await new Response(proc.stdout).text();
-  return { ok: code === 0, text: out };
+  return { ok: r.ok, text: r.stdout };
 }
 
 // ---------------------------------------------------------------------------

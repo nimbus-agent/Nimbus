@@ -1,4 +1,5 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
+import { spawnCapture } from "../platform/spawn-capture.ts";
 import {
   clampSyncTitle,
   syncPassCursorHttpEmpty,
@@ -30,14 +31,13 @@ async function gcloudJson(
   if (credPath === "") {
     return { ok: false, text: "" };
   }
-  const proc = Bun.spawn(["gcloud", ...args, "--format", "json"], {
+  // `spawnCapture`, not `Bun.spawn`: the Gateway runs detached, so on Windows an unhidden
+  // console-subsystem child pops a visible window on every sync tick. See
+  // `platform/spawn-capture.ts`.
+  const r = await spawnCapture(["gcloud", ...args, "--format", "json"], {
     env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: credPath }),
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const code = await proc.exited;
-  const out = await new Response(proc.stdout).text();
-  return { ok: code === 0, text: out };
+  return { ok: r.ok, text: r.stdout };
 }
 
 export type GcpSyncableOptions = {

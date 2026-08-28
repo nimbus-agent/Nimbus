@@ -741,6 +741,54 @@ export function checkSyncContextNoRawHandles(files: readonly FileEntry[]): Viola
   return out;
 }
 
+// D25: a CONNECTOR SYNCABLE may not call `Bun.spawn` — it must go through
+// `platform/spawn-capture.ts`, which spawns with `windowsHide`.
+//
+// The Gateway runs DETACHED, so on Windows a console-subsystem child with no console to inherit
+// gets a brand-new one allocated, plus a `conhost.exe` to host it — i.e. a visible window that
+// opens and closes for the lifetime of every CLI call. That is not a rare event at connector
+// rates: `cloudwatch` and `sagemaker` spawn one `aws` process PER INDEXED ITEM through
+// `runAwsCliPaginatedWalk`'s `processEntry`, and `aws` re-lists Lambda functions every 120 s, so
+// the unhidden version flashed dozens of windows per sync tick on an otherwise idle machine.
+//
+// This is a STATIC rule because the failure is invisible to every test and to CI: it reproduces
+// only on Windows, only when the parent has no console, and it breaks nothing — the sync still
+// works. A reviewer on macOS or Linux cannot see it, and neither can the 3-OS matrix, whose
+// Windows leg runs tests from a shell that HAS a console.
+//
+// `blame-index-sync.ts` and `filesystem-v2-sync.ts` are exempted: they take `Bun.spawn` as an
+// INJECTED default parameter (`spawn: SpawnFn = Bun.spawn`) rather than calling it inline, and
+// converting that seam is a wider change than this rule's subject. They spawn `git`, which is
+// equally affected — tracked separately rather than silently blessed.
+const D25_BUN_SPAWN_RE = /\bBun\s*\.\s*spawn\b/;
+const D25_BUN_SPAWN_ALLOWED: readonly string[] = [
+  "packages/gateway/src/connectors/blame-index-sync.ts",
+  "packages/gateway/src/connectors/filesystem-v2-sync.ts",
+];
+
+export function checkConnectorSpawnIsHidden(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/connectors/")) continue;
+    if (f.relPath.startsWith("packages/gateway/src/connectors/lazy-mesh/")) continue;
+    if (D25_BUN_SPAWN_ALLOWED.includes(f.relPath)) continue;
+    const stripped = stripComments(f.contents).split("\n");
+    const original = f.contents.split("\n");
+    for (let i = 0; i < stripped.length; i++) {
+      if (D25_BUN_SPAWN_RE.test(stripped[i] ?? "")) {
+        out.push({
+          rule: "connector-spawn-must-be-hidden",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (original[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // D23 (I33): `runConfined` — the confined-spawn primitive that turns user-supplied code into a
 // running process — may be CALLED only from the exec gate (which performs the config/policy checks,
 // the sandbox-posture assertion and the owner-HITL approval first) plus its own definition file.
@@ -1326,6 +1374,13 @@ async function run(): Promise<void> {
       );
     }
     if (handleViolations.length > 0) exit = 1;
+    const spawnViolations = checkConnectorSpawnIsHidden(files);
+    for (const e of spawnViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D25 a connector called Bun.spawn — use platform/spawn-capture.ts, which passes windowsHide (the detached Gateway pops a console window otherwise): ${e.snippet}`,
+      );
+    }
+    if (spawnViolations.length > 0) exit = 1;
     const v = checkRunConfinedConfinement(files);
     for (const e of v) {
       console.error(

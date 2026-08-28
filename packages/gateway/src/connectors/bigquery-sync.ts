@@ -1,4 +1,5 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
+import { spawnCapture } from "../platform/spawn-capture.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -37,16 +38,13 @@ function pass1Cursor(): string {
  */
 async function gcloudPrintAccessToken(credPath: string): Promise<string | null> {
   try {
-    const proc = Bun.spawn(["gcloud", "auth", "print-access-token"], {
+    const r = await spawnCapture(["gcloud", "auth", "print-access-token"], {
       env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: credPath }),
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const code = await proc.exited;
-    if (code !== 0) {
+    if (!r.ok) {
       return null;
     }
-    const out = (await new Response(proc.stdout).text()).trim();
+    const out = r.stdout.trim();
     return out === "" ? null : out;
   } catch {
     return null;

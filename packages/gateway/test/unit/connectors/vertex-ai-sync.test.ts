@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-
+import { EventEmitter } from "node:events";
 import { createVertexAiSyncable, type RunGcloud } from "../../../src/connectors/vertex-ai-sync.ts";
+import { spawnCaptureInternals } from "../../../src/platform/spawn-capture.ts";
 import {
   type ConnectorSyncFixture,
   createConnectorSyncFixture,
@@ -224,11 +225,8 @@ describe("vertex-ai-sync — model metadata walk", () => {
 // Exercise the real (non-DI) `gcloudAiModelsList` runner body without spawning
 // a real subprocess: mock Bun.spawn to return a fake process. `new Response(<string>)`
 // reads the canned stdout, so the spawn → exited → parse path is covered hermetically.
-function fakeProc(code: number, stdout: string): ReturnType<typeof Bun.spawn> {
-  return { exited: Promise.resolve(code), stdout } as unknown as ReturnType<typeof Bun.spawn>;
-}
 
-describe("vertex-ai-sync — default gcloud runner (hermetic Bun.spawn mock)", () => {
+describe("vertex-ai-sync — default gcloud runner (hermetic spawn mock)", () => {
   let fx: ConnectorSyncFixture;
   beforeEach(async () => {
     fx = createConnectorSyncFixture();
@@ -238,7 +236,8 @@ describe("vertex-ai-sync — default gcloud runner (hermetic Bun.spawn mock)", (
 
   test("spawn exits 0 with model JSON → models upserted", async () => {
     const models = [{ name: "projects/p/locations/us-central1/models/m1", displayName: "Model 1" }];
-    const spy = spyOn(Bun, "spawn").mockReturnValue(fakeProc(0, JSON.stringify(models)));
+    const spy = spyOn(spawnCaptureInternals, "spawn").mockImplementation((() =>
+      fakeChild(0, JSON.stringify(models))) as never);
     try {
       const res = await createVertexAiSyncable(ENSURE).sync(
         fx.createSyncContext("vertex_ai"),
@@ -252,9 +251,9 @@ describe("vertex-ai-sync — default gcloud runner (hermetic Bun.spawn mock)", (
   });
 
   test("spawn throws (gcloud absent) → graceful empty pass, no throw", async () => {
-    const spy = spyOn(Bun, "spawn").mockImplementation(() => {
+    const spy = spyOn(spawnCaptureInternals, "spawn").mockImplementation((() => {
       throw new Error("ENOENT: gcloud not found");
-    });
+    }) as never);
     try {
       const res = await createVertexAiSyncable(ENSURE).sync(
         fx.createSyncContext("vertex_ai"),
@@ -267,3 +266,25 @@ describe("vertex-ai-sync — default gcloud runner (hermetic Bun.spawn mock)", (
     }
   });
 });
+
+/**
+ * A `node:child_process` stand-in. The connector CLI runners moved off `Bun.spawn` to
+ * `platform/spawn-capture.ts`, which spawns with `windowsHide` — the Gateway runs detached, so an
+ * unhidden child pops a console window on every sync tick. These tests stub the seam that module
+ * exports rather than `Bun.spawn`, which it no longer uses.
+ */
+function fakeChild(exitCode: number, stdout: string): unknown {
+  const proc = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    kill: () => void;
+  };
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = (): void => {};
+  queueMicrotask(() => {
+    if (stdout !== "") proc.stdout.emit("data", Buffer.from(stdout));
+    proc.emit("close", exitCode);
+  });
+  return proc;
+}

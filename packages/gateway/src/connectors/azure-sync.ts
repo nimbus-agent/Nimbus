@@ -1,4 +1,5 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
+import { spawnCapture } from "../platform/spawn-capture.ts";
 import {
   clampSyncTitle,
   syncPassCursorHttpEmpty,
@@ -32,17 +33,18 @@ async function azureCliJson(
   if (tenant === "" || clientId === "" || secret === "") {
     return { ok: false, text: "" };
   }
-  const proc = Bun.spawn(["az", ...args, "-o", "json"], {
+  // `spawnCapture`, not `Bun.spawn`: the Gateway runs detached, so on Windows an unhidden
+  // console-subsystem child pops a visible window on every sync tick. See
+  // `platform/spawn-capture.ts`.
+  const r = await spawnCapture(["az", ...args, "-o", "json"], {
     env: extensionProcessEnv({
       AZURE_TENANT_ID: tenant,
       AZURE_CLIENT_ID: clientId,
       AZURE_CLIENT_SECRET: secret,
     }),
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const code = await proc.exited;
-  const out = await new Response(proc.stdout).text();
+  const code = r.ok ? 0 : 1;
+  const out = r.stdout;
   return { ok: code === 0, text: out };
 }
 
