@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [6.0.1](https://github.com/nimbus-agent/Nimbus/compare/v6.0.0...v6.0.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **connectors:** stop connector CLI spawns flashing console windows on Windows ([#1370](https://github.com/nimbus-agent/Nimbus/issues/1370)) ([184dc42](https://github.com/nimbus-agent/Nimbus/commit/184dc42aed22b4156d1f8367f69e60118ebcffab))
+
 ## [6.0.0](https://github.com/nimbus-agent/Nimbus/compare/v5.0.1...v6.0.0) (2026-08-28)
 
 
