@@ -203,13 +203,19 @@ describe("runAsk", () => {
   });
 
   test("air-gap ON answers locally and makes no remote call", async () => {
-    // The integration half of the guard in `router.ts`. `classify` is deliberately NOT injected,
-    // so the REAL classifyIntent runs and the policy has to travel router -> run-ask -> guard for
-    // this to pass. Injecting a stub would test the stub.
+    // `classify` is deliberately NOT injected, so the REAL classifyIntent runs and the policy has
+    // to travel router -> run-ask -> classifier for this to pass. Injecting a stub would test the
+    // stub.
     //
-    // ANTHROPIC_API_KEY is SET on purpose. The test preload blanks it, and with it blank this test
-    // would go green through the `no_api_key` path without air-gap doing anything at all — passing
-    // for the wrong reason. With a key present, air-gap is the only thing that can stop the call.
+    // What the two guards below prove changed on 2026-08-28, and the weaker one is called out so
+    // nobody reads more into it than it carries:
+    //
+    //  - `reached` staying empty is now STRUCTURAL, not a property of air-gap: the classifier has
+    //    no HTTP client of its own any more, so nothing in `ask` can reach a vendor except through
+    //    `LlmRouter`. It is kept, with ANTHROPIC_API_KEY still set, as a regression guard against
+    //    someone re-adding a direct client keyed off the environment — which is exactly what was
+    //    deleted. It does NOT prove air-gap did anything.
+    //  - `isLocal` is the assertion that still tests air-gap: the answer came from a LOCAL route.
     //
     // This file has no lifecycle hooks, so the env and fetch are restored here.
     const db = new Database(":memory:");
@@ -246,7 +252,7 @@ describe("runAsk", () => {
 
       expect(out.reply).toBe("Answered from the local index.");
       expect(out.modelMeta?.isLocal).toBe(true);
-      // The assertion the whole fix exists for.
+      // Structural now — see the note above. Guards against a direct client coming back.
       expect(reached).toEqual([]);
     } finally {
       globalThis.fetch = originalFetch;

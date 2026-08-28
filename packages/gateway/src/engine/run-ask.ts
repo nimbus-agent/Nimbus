@@ -217,11 +217,16 @@ function shouldAnswerFromLocalIndexedContext(p: RunAskParams): boolean {
 }
 
 async function classifyIntentForAskWithLocalFallback(p: RunAskParams): Promise<ClassifiedIntent> {
-  // Resolved from the router, which owns `[llm]`. Absent a router there is no configuration to
-  // read, so the policy is the permissive one — the same posture that shipped before this guard
-  // existed. Every production path builds a router (`platform/assemble.ts`).
+  // Resolved from the router, which owns `[llm]` AND is now the classifier's only way out of the
+  // machine: `generate` is what carries the per-vendor `[llm.remote.*]` opt-in and appends the
+  // I29 `model` row. Absent a router there is no configuration to read and no ledger to append
+  // to, so `generate` is undefined and the classifier refuses — fail-closed, where it used to
+  // fall back to its own env-keyed HTTP client. Every production path builds a router
+  // (`platform/assemble.ts`).
+  const router = p.llmRouter;
   const policy: ClassifierEgressPolicy = {
-    enforceAirGap: p.llmRouter?.enforcesAirGap() ?? false,
+    enforceAirGap: router?.enforcesAirGap() ?? false,
+    generate: router === undefined ? undefined : (opts) => router.generate(opts),
   };
   try {
     return await (p.classify ?? ((input) => classifyIntentForAsk(input, policy)))(p.input);

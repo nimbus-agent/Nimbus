@@ -69,24 +69,17 @@ export function parseEmbeddingsEnabled(): boolean {
 const searchServicePriorityMap: ReadonlyMap<string, number> = parseSearchPriorityJson();
 
 const HARDCODED_AGENT_MODEL_DEFAULT = "claude-sonnet-4-6";
-const HARDCODED_CLASSIFIER_MODEL_DEFAULT = "claude-haiku-4-5-20251001";
 
 let tomlAgentModel: string | undefined;
-let tomlClassifierModel: string | undefined;
 
 export type LlmTomlOverrides = {
   agentModel?: string;
-  classifierModel?: string;
 };
 
 export function applyLlmTomlOverrides(overrides: LlmTomlOverrides): void {
   tomlAgentModel =
     typeof overrides.agentModel === "string" && overrides.agentModel !== ""
       ? overrides.agentModel
-      : undefined;
-  tomlClassifierModel =
-    typeof overrides.classifierModel === "string" && overrides.classifierModel !== ""
-      ? overrides.classifierModel
       : undefined;
 }
 
@@ -99,16 +92,7 @@ export function getEffectiveAgentModel(): string {
   return envOrUndefined("NIMBUS_AGENT_MODEL") ?? tomlAgentModel ?? HARDCODED_AGENT_MODEL_DEFAULT;
 }
 
-export function getEffectiveClassifierModel(): string {
-  return (
-    envOrUndefined("NIMBUS_CLASSIFIER_MODEL") ??
-    tomlClassifierModel ??
-    HARDCODED_CLASSIFIER_MODEL_DEFAULT
-  );
-}
-
 export const Config = {
-  openaiClassifierModel: processEnvGet("NIMBUS_OPENAI_CLASSIFIER_MODEL") ?? "gpt-4o-mini",
   oauthGoogleClientId: processEnvGet("NIMBUS_OAUTH_GOOGLE_CLIENT_ID") ?? "",
   oauthGoogleClientSecret: processEnvGet("NIMBUS_OAUTH_GOOGLE_CLIENT_SECRET") ?? "",
   oauthMicrosoftClientId: processEnvGet("NIMBUS_OAUTH_MICROSOFT_CLIENT_ID") ?? "",

@@ -17,6 +17,8 @@ type RouteStatus = {
   contextWindow?: number;
 };
 
+// Total column widths INCLUDING the two-space gap `pad` appends when a value is short enough to
+// be padded, so the table's geometry is unchanged from before the gap existed.
 const COL_WIDTHS = {
   routeId: 22,
   provider: 10,
@@ -26,8 +28,23 @@ const COL_WIDTHS = {
   context: 8,
 };
 
+/**
+ * A MINIMUM column width plus an unconditional gap.
+ *
+ * The gap is the point. Padding alone guarantees a minimum width, NOT a separator: at
+ * `s.length >= width` the old version emitted the bare string and the next column began on the
+ * very next character, so `ollama/llama3.2:latest` (exactly 22, the `routeId` width) rendered as
+ * `ollama/llama3.2:latestollama`. Slice 2b's own flagship route, `anthropic/claude-sonnet-4-6`
+ * (27), collides too, so the first vendor most people enable hits it.
+ *
+ * Widening the column is NOT the fix — it moves the cliff to the first longer model name, and
+ * `ollama/hf.co/user/some-long-model` is already a supported route-id shape. A separator that
+ * does not depend on the value's length has no cliff.
+ */
+const COL_GAP = "  ";
+
 function pad(s: string, width: number): string {
-  return s.length >= width ? s : s + " ".repeat(width - s.length);
+  return s.length >= width ? s + COL_GAP : s + " ".repeat(width - s.length);
 }
 
 // The two failure reasons have different fixes (start the daemon vs. pull the model) and must

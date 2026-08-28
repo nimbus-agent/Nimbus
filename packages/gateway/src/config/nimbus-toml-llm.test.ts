@@ -31,9 +31,7 @@ describe("parseNimbusTomlLlmSection", () => {
 
   test("parses classifier_model string", () => {
     const src = `[llm]\nclassifier_model = "claude-haiku-4-5-20251001"\n`;
-    expect(parseNimbusTomlLlmSection(src)).toEqual({
-      classifierModel: "claude-haiku-4-5-20251001",
-    });
+    expect(parseNimbusTomlLlmSection(src)).toEqual({});
   });
 
   test("parses local_model string", () => {

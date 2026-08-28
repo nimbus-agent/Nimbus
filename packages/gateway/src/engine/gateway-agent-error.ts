@@ -104,7 +104,7 @@ function buildAgentErrorMessage(init: AgentUnavailableInit): string {
     case "rate_limited":
       return `${provider} rate limit hit. Wait a moment and retry, or upgrade your usage tier.`;
     case "model_not_found":
-      return `${provider} returned 404 for the configured model. Check NIMBUS_AGENT_MODEL / NIMBUS_CLASSIFIER_MODEL (or NIMBUS_OPENAI_CLASSIFIER_MODEL when using OpenAI) or your access tier.`;
+      return `${provider} returned 404 for the configured model. Check the model name in your [llm.remote.*] block (or NIMBUS_AGENT_MODEL) and your access tier.`;
     case "provider_error": {
       const detail = init.detail !== undefined && init.detail !== "" ? ` ${init.detail}` : "";
       return `${provider} request failed.${detail}`;

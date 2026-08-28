@@ -505,17 +505,18 @@ The first time the Gateway starts it creates a default `nimbus.toml` in the plat
 | macOS | `~/Library/Application Support/Nimbus/nimbus.toml` | `~/Library/Application Support/Nimbus` |
 | Linux | `~/.config/nimbus/nimbus.toml` | `~/.local/share/nimbus` |
 
-`NIMBUS_CONFIG_DIR` moves the config directory only — it deliberately does not move the data directory, and there is no data-directory override (on Linux the data root follows `XDG_DATA_HOME`). Most TOML keys also have a corresponding `NIMBUS_`-prefixed env var override that wins over the file (e.g. `NIMBUS_AGENT_MODEL`, `NIMBUS_CLASSIFIER_MODEL`, `NIMBUS_TELEMETRY_ENABLED`) — see [`cli-reference.md`](./cli-reference.md#environment-variables).
+`NIMBUS_CONFIG_DIR` moves the config directory only — it deliberately does not move the data directory, and there is no data-directory override (on Linux the data root follows `XDG_DATA_HOME`). Most TOML keys also have a corresponding `NIMBUS_`-prefixed env var override that wins over the file (e.g. `NIMBUS_AGENT_MODEL`, `NIMBUS_TELEMETRY_ENABLED`) — see [`cli-reference.md`](./cli-reference.md#environment-variables).
 
 `nimbus ask` needs an LLM; indexing, `nimbus why` and the deterministic briefs do not. Remote model ids are inferred: `claude-*` → Anthropic, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI. Local model ids are passed to Ollama or llama.cpp through `[llm].local_model`.
 
 ```bash
-# Cloud (default — fastest path to a working install).
-# Defaults are claude-sonnet-4-6 (agent) + claude-haiku-4-5-20251001 (classifier);
-# only set these if you want to override.
-export ANTHROPIC_API_KEY=sk-ant-…
-nimbus config set llm.remote_model      claude-sonnet-4-6
-nimbus config set llm.classifier_model  claude-haiku-4-5-20251001
+# Cloud — one vendor at a time, opted into explicitly. A key alone does nothing:
+# no environment variable can enable a vendor you did not name in nimbus.toml.
+nimbus vault set anthropic.api_key   # prompts for the value; never on the command line
+nimbus config edit                   # add the block below, then restart the Gateway
+#   [llm.remote.anthropic]
+#   enabled = true
+#   model   = "claude-sonnet-4-6"
 
 # OR fully local (no network calls; requires Ollama running)
 ollama pull llama3.2

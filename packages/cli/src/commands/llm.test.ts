@@ -211,3 +211,44 @@ describe("runLlm (dispatcher)", () => {
     expect(parsed[0]).toBeDefined();
   });
 });
+
+describe("column separation at and beyond the column width", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  // `ollama/llama3.2:latest` is EXACTLY 22, the routeId width -- the boundary that shipped.
+  // `anthropic/claude-sonnet-4-6` is 27, and is slice 2b's own documented default, so the first
+  // vendor most people enable was the one that collided.
+  const LONG_IDS = [
+    "ollama/llama3.2:latest",
+    "anthropic/claude-sonnet-4-6",
+    "ollama/hf.co/user/some-very-long-model",
+  ];
+
+  for (const routeId of LONG_IDS) {
+    it(`separates Route from Provider for ${routeId} (len ${String(routeId.length)})`, async () => {
+      const ipc = createMockIpcClient([
+        {
+          routes: [
+            {
+              routeId,
+              providerId: "ollama",
+              modelName: "m",
+              isLocal: true,
+              available: true,
+              reason: "ok",
+            },
+          ],
+        },
+      ]);
+      await runLlmStatusImpl(ipc.client, { json: false });
+      const row = out.stdout.split("\n").find((l) => l.startsWith(routeId));
+      expect(row).toBeDefined();
+      // The defect rendered `ollama/llama3.2:latestollama`; the provider must not begin on the
+      // character right after the route id.
+      expect(row).not.toContain(`${routeId}ollama`);
+      expect(row).toContain(`${routeId}  ollama`);
+    });
+  }
+});

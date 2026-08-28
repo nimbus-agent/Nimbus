@@ -8,6 +8,49 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-28 — The `ask` intent classifier stops being the one path that egressed outside the
+  ledger, and `route_priority` learns to name a cloud vendor.** Four defects found on a live
+  v5.0.0 install, in severity order.
+
+  **The classifier (#1363).** `engine/router.ts` held its own HTTP client: it read
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` straight from the process environment and POSTed the
+  user's question to Anthropic or OpenAI, appending **no `egress_ledger` row**. `nimbus prove`
+  reported `0` for a query that had made a real outbound request carrying user text. It also had
+  **no opt-in**: a user who had enabled Gemini alone still egressed to Anthropic if a stale key
+  sat in their environment — precisely the shape slice 2b's `[llm.remote.*]` design exists to
+  prevent, one path over. Observed live, and only a stale key stopped the send. Note that it
+  evaded static rule D22 as well: a raw `fetch` is not `connectors.dispatch`, and the file never
+  named `appendEgressEntry`. The classifier now asks `LlmRouter` for the `"classification"` task,
+  so `wrapLedgeredProvider` covers it like any other route (`method='engine.ask.classify'`) and
+  the per-vendor opt-in applies. Three consequences: **the `model` class's "one exclusion" claim
+  is now TRUE** where before it under-reported (embeddings remain the only one); classification
+  can run on a **local** model for the first time, so `enforce_air_gap = true` with a local route
+  now classifies instead of refusing; and an unparseable reply **degrades to `intent: "unknown"`**
+  rather than throwing, because small local models return prose often enough that a throw would
+  abort the `ask` on a routine event. Transport and auth failures still throw. `[llm]
+  classifier_model`, `NIMBUS_CLASSIFIER_MODEL` and `NIMBUS_OPENAI_CLASSIFIER_MODEL` are **removed**
+  — nothing reads a classifier model name any more, and a live config key that does nothing is
+  worse than no key. A stale entry in an existing `nimbus.toml` is ignored, as any unrecognised
+  `[llm]` key is.
+
+  **`route_priority` could not name a cloud vendor.** A defect introduced by slice 2b:
+  `routeIdsToRegister` was computed from LOCAL routes only, so
+  `dropUnresolvableRoutePriorityEntries` dropped every enabled vendor's route id as unresolvable
+  before the router was constructed — and under `prefer_local = true` that made the vendor
+  effectively unreachable. Local and remote ids are now resolved from one `resolveEnabledVendors`
+  call and validated together.
+
+  **`providerLabel` knew only `anthropic` and `openai`.** Gemini and xAI failures rendered as the
+  generic "the LLM provider", and on a Gemini-only install a classifier 401 read as an *Anthropic*
+  problem. The label map is now TOTAL over `AgentProviderName`, so a vendor added without a label
+  is a compile error.
+
+  **`nimbus llm status` ran two columns together (#1362).** `pad()` returned the value unchanged at
+  or over the column width, emitting no separator: `ollama/llama3.2:latest` is exactly 22, the
+  `routeId` width, and slice 2b's own documented `anthropic/claude-sonnet-4-6` is 27. The gap is
+  now unconditional rather than a function of the value's length — widening the column would only
+  move the cliff to the first longer model name.
+
 - **2026-08-28 — Four cloud vendors ship behind a default-off, per-vendor opt-in, and the `model`
   egress class becomes live for the first time.** Slice 2b of the LLM model routes work, landing
   directly on 2a's chokepoint (#1357). `[llm.remote.<vendor>]` tables configure **Anthropic,

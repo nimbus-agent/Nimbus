@@ -49,16 +49,19 @@ describe("listTomlKeysWithEnv — llm.* entries", () => {
     });
   });
 
-  test("llm.classifier_model surfaces from env when NIMBUS_CLASSIFIER_MODEL is set", () => {
+  test("llm.classifier_model is NOT listed — the key was removed on 2026-08-28", () => {
+    // The intent classifier no longer owns an HTTP client that could take a model name: it asks
+    // `LlmRouter` for the `"classification"` task. Listing a key nothing reads would tell the
+    // owner they had configured something.
     process.env["NIMBUS_CLASSIFIER_MODEL"] = "claude-haiku-4-5-20251001";
+    writeFileSync(
+      tomlPath,
+      `[llm]
+classifier_model = "claude-haiku-4-5-20251001"
+`,
+    );
     const rows = listTomlKeysWithEnv(tomlPath);
-    const row = rows.find((r) => r.key === "llm.classifier_model");
-    expect(row).toEqual({
-      key: "llm.classifier_model",
-      value: "claude-haiku-4-5-20251001",
-      source: "env",
-      envVar: "NIMBUS_CLASSIFIER_MODEL",
-    });
+    expect(rows.find((r) => r.key === "llm.classifier_model")).toBeUndefined();
   });
 
   test("llm.* surfaces from file when env is unset and the key is in the TOML", () => {
@@ -68,15 +71,9 @@ describe("listTomlKeysWithEnv — llm.* entries", () => {
     );
     const rows = listTomlKeysWithEnv(tomlPath);
     const remote = rows.find((r) => r.key === "llm.remote_model");
-    const classifier = rows.find((r) => r.key === "llm.classifier_model");
     expect(remote).toEqual({
       key: "llm.remote_model",
       value: '"claude-sonnet-4-6"',
-      source: "file",
-    });
-    expect(classifier).toEqual({
-      key: "llm.classifier_model",
-      value: '"claude-haiku-4-5-20251001"',
       source: "file",
     });
   });

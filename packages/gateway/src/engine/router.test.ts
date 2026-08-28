@@ -1,113 +1,95 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
-import type { AgentUnavailableReason } from "./gateway-agent-error.ts";
+import { LlmProviderError } from "../llm/provider-error.ts";
+import type { LlmGenerateOptions, LlmGenerateResult } from "../llm/types.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
-import { classifyIntent } from "./router.ts";
+import { type ClassifierEgressPolicy, classifyIntent } from "./router.ts";
 
-/** Status → reason mapping, identical for every provider. */
-const HTTP_STATUS_REASONS: ReadonlyArray<readonly [number, string, AgentUnavailableReason]> = [
-  [429, "Too Many Requests", "rate_limited"],
-  [404, "Not Found", "model_not_found"],
-  [500, "Internal Server Error", "provider_error"],
-];
-
+/**
+ * The classifier reaches a vendor ONLY through `LlmRouter.generate`, so every test here injects
+ * that one function. There is deliberately no `fetch` stub and no `ANTHROPIC_API_KEY` in this
+ * file: before 2026-08-28 the classifier held its own HTTP client and read those keys from the
+ * environment, egressing with no `egress_ledger` row and no `[llm.remote.*]` opt-in. A test that
+ * still stubbed `fetch` would be testing a path that must not come back.
+ */
 const BUN_NATIVE_FETCH = globalThis.fetch;
-const ORIGINAL_ANTHROPIC = process.env["ANTHROPIC_API_KEY"];
-const ORIGINAL_OPENAI = process.env["OPENAI_API_KEY"];
-const ORIGINAL_CLASSIFIER_MODEL = process.env["NIMBUS_CLASSIFIER_MODEL"];
 
-function setEnv(name: string, value: string | undefined): void {
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
+type Recorded = { calls: LlmGenerateOptions[] };
+
+const UNKNOWN_REPLY = JSON.stringify({ intent: "unknown", entities: {}, confidence: 1 });
+const SEARCH_REPLY = JSON.stringify({ intent: "file_search", entities: {}, confidence: 1 });
+const ARRAY_REPLY = JSON.stringify(["a"]);
+
+/** A router whose single route answers with `text`. */
+function replying(text: string, rec?: Recorded): ClassifierEgressPolicy {
+  return {
+    enforceAirGap: false,
+    generate: async (opts) => {
+      rec?.calls.push(opts);
+      return {
+        text,
+        tokensIn: 0,
+        tokensOut: 0,
+        modelUsed: "stub-model",
+        isLocal: true,
+        provider: "stub",
+      } satisfies LlmGenerateResult;
+    },
+  };
+}
+
+/** A router whose walk fails with `err`. */
+function failing(err: unknown, enforceAirGap = false): ClassifierEgressPolicy {
+  return {
+    enforceAirGap,
+    generate: async () => {
+      throw err;
+    },
+  };
+}
+
+async function reasonOf(policy: ClassifierEgressPolicy, input = "find my notes"): Promise<string> {
+  try {
+    await classifyIntent(input, policy);
+  } catch (e) {
+    if (e instanceof GatewayAgentUnavailableError) return e.reason;
+    throw e;
   }
-}
-
-afterEach(() => {
-  globalThis.fetch = BUN_NATIVE_FETCH;
-  setEnv("ANTHROPIC_API_KEY", ORIGINAL_ANTHROPIC);
-  setEnv("OPENAI_API_KEY", ORIGINAL_OPENAI);
-  setEnv("NIMBUS_CLASSIFIER_MODEL", ORIGINAL_CLASSIFIER_MODEL);
-});
-
-function stubFetch(impl: (input: string, init?: RequestInit) => Promise<Response>): void {
-  globalThis.fetch = impl as typeof globalThis.fetch;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function textResponse(body: string, status = 200): Response {
-  return new Response(body, {
-    status,
-    headers: { "content-type": "text/plain" },
-  });
-}
-
-function anthropicTextResponse(text: string): Response {
-  return jsonResponse({ content: [{ type: "text", text }] });
-}
-
-function openaiChatResponse(content: string): Response {
-  return jsonResponse({ choices: [{ message: { content } }] });
-}
-
-function useAnthropicOnly(): void {
-  setEnv("ANTHROPIC_API_KEY", "sk-stub-anth");
-  setEnv("OPENAI_API_KEY", undefined);
-  setEnv("NIMBUS_CLASSIFIER_MODEL", undefined);
-}
-
-function useOpenAiOnly(): void {
-  setEnv("ANTHROPIC_API_KEY", undefined);
-  setEnv("OPENAI_API_KEY", "sk-stub-oai");
-  setEnv("NIMBUS_CLASSIFIER_MODEL", undefined);
+  throw new Error("expected classifyIntent to throw");
 }
 
 describe("classifyIntent — empty input", () => {
-  test("empty string returns unknown,confidence 1 without calling fetch", async () => {
-    useAnthropicOnly();
-    let fetchCalled = false;
-    stubFetch(async () => {
-      fetchCalled = true;
-      return jsonResponse({});
-    });
-
-    const result = await classifyIntent("", { enforceAirGap: false });
+  test("empty string returns unknown,confidence 1 without reaching the router", async () => {
+    const rec: Recorded = { calls: [] };
+    const result = await classifyIntent("", replying("{}", rec));
     expect(result).toEqual({
       intent: "unknown",
       entities: {},
       requiresHITL: false,
       confidence: 1,
     });
-    expect(fetchCalled).toBe(false);
+    expect(rec.calls).toHaveLength(0);
   });
 
   test("whitespace-only string also short-circuits", async () => {
-    useAnthropicOnly();
-    let fetchCalled = false;
-    stubFetch(async () => {
-      fetchCalled = true;
-      return jsonResponse({});
-    });
-
-    const result = await classifyIntent("   \n\t  ", { enforceAirGap: false });
+    const rec: Recorded = { calls: [] };
+    const result = await classifyIntent("   \n\t  ", replying("{}", rec));
     expect(result.intent).toBe("unknown");
     expect(result.confidence).toBe(1);
-    expect(fetchCalled).toBe(false);
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  test("empty input answers locally under air-gap rather than refusing", async () => {
+    const result = await classifyIntent("", { ...replying("{}"), enforceAirGap: true });
+    expect(result.intent).toBe("unknown");
   });
 });
 
-describe("classifyIntent — Anthropic happy paths", () => {
-  test("parses plain JSON body, returns file_search intent", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
+describe("classifyIntent — response parsing", () => {
+  test("parses a plain JSON body, returning file_search", async () => {
+    const result = await classifyIntent(
+      "find my notes",
+      replying(
         JSON.stringify({
           intent: "file_search",
           entities: { pattern: "*.md" },
@@ -116,673 +98,215 @@ describe("classifyIntent — Anthropic happy paths", () => {
         }),
       ),
     );
-
-    const result = await classifyIntent("find markdown files", { enforceAirGap: false });
-    expect(result.intent).toBe("file_search");
-    expect(result.entities).toEqual({ pattern: "*.md" });
-    expect(result.requiresHITL).toBe(false);
-    expect(result.confidence).toBeCloseTo(0.9, 5);
-  });
-
-  test("calls Anthropic endpoint with x-api-key header and anthropic-version header", async () => {
-    useAnthropicOnly();
-    let capturedReq: Request | undefined;
-    stubFetch(async (input, init) => {
-      capturedReq = new Request(input, init);
-      return anthropicTextResponse(
-        JSON.stringify({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0.5 }),
-      );
+    expect(result).toEqual({
+      intent: "file_search",
+      entities: { pattern: "*.md" },
+      requiresHITL: false,
+      confidence: 0.9,
     });
-
-    await classifyIntent("hi", { enforceAirGap: false });
-    expect(capturedReq).toBeDefined();
-    expect(capturedReq?.url).toBe("https://api.anthropic.com/v1/messages");
-    expect(capturedReq?.method).toBe("POST");
-    expect(capturedReq?.headers.get("x-api-key")).toBe("sk-stub-anth");
-    expect(capturedReq?.headers.get("anthropic-version")).toBe("2023-06-01");
-    expect(capturedReq?.headers.get("content-type")).toBe("application/json");
   });
 
-  test("parses markdown-fenced JSON body (```json...```)", async () => {
-    useAnthropicOnly();
-    const fenced =
-      '```json\n{"intent":"file_organize","entities":{"source":"a","destination":"b"},"requiresHITL":true,"confidence":0.7}\n```';
-    stubFetch(async () => anthropicTextResponse(fenced));
-
-    const result = await classifyIntent("move a to b", { enforceAirGap: false });
-    expect(result.intent).toBe("file_organize");
-    expect(result.entities).toEqual({ source: "a", destination: "b" });
-    expect(result.requiresHITL).toBe(true);
-  });
-
-  test("parses bare-fenced JSON body (```...```)", async () => {
-    useAnthropicOnly();
-    const fenced =
-      '```\n{"intent":"file_search","entities":{"pattern":"x"},"requiresHITL":false,"confidence":0.5}\n```';
-    stubFetch(async () => anthropicTextResponse(fenced));
-
-    const result = await classifyIntent("find x", { enforceAirGap: false });
+  test("parses a markdown-fenced JSON body (```json...```)", async () => {
+    const result = await classifyIntent(
+      "find my notes",
+      replying('```json\n{"intent":"file_search","entities":{},"confidence":0.7}\n```'),
+    );
     expect(result.intent).toBe("file_search");
-    expect(result.entities).toEqual({ pattern: "x" });
+    expect(result.confidence).toBe(0.7);
   });
 
-  test("extracts JSON object embedded in surrounding prose", async () => {
-    useAnthropicOnly();
-    const prose =
-      'Sure, here is the classification: {"intent":"unknown","entities":{},"requiresHITL":false,"confidence":0.3} hope this helps.';
-    stubFetch(async () => anthropicTextResponse(prose));
+  test("parses a bare-fenced JSON body (```...```)", async () => {
+    const result = await classifyIntent(
+      "find my notes",
+      replying('```\n{"intent":"file_organize","entities":{},"confidence":0.5}\n```'),
+    );
+    expect(result.intent).toBe("file_organize");
+  });
 
-    const result = await classifyIntent("?", { enforceAirGap: false });
-    expect(result.intent).toBe("unknown");
-    expect(result.confidence).toBeCloseTo(0.3, 5);
+  test("extracts a JSON object embedded in surrounding prose", async () => {
+    const result = await classifyIntent(
+      "find my notes",
+      replying('Sure! {"intent":"file_search","entities":{},"confidence":1} Hope that helps.'),
+    );
+    expect(result.intent).toBe("file_search");
   });
 
   test("file_organize defaults requiresHITL=true when the field is absent", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "file_organize",
-          entities: { source: "x", destination: "y" },
-          confidence: 0.8,
-        }),
-      ),
+    const result = await classifyIntent(
+      "move a file",
+      replying('{"intent":"file_organize","entities":{},"confidence":0.8}'),
     );
-
-    const result = await classifyIntent("move x to y", { enforceAirGap: false });
-    expect(result.intent).toBe("file_organize");
     expect(result.requiresHITL).toBe(true);
   });
 
   test("file_search defaults requiresHITL=false when the field is absent", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "file_search",
-          entities: { pattern: "foo" },
-          confidence: 0.8,
-        }),
-      ),
+    const result = await classifyIntent(
+      "find my notes",
+      replying('{"intent":"file_search","entities":{},"confidence":0.8}'),
     );
-
-    const result = await classifyIntent("find foo", { enforceAirGap: false });
     expect(result.requiresHITL).toBe(false);
   });
 
-  test("clamps numeric confidence below 0 to 0", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "unknown",
-          entities: {},
-          requiresHITL: false,
-          confidence: -0.5,
-        }),
-      ),
-    );
-
-    const result = await classifyIntent("hi", { enforceAirGap: false });
-    expect(result.confidence).toBe(0);
-  });
-
-  test("clamps numeric confidence above 1 to 1", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "unknown",
-          entities: {},
-          requiresHITL: false,
-          confidence: 5,
-        }),
-      ),
-    );
-
-    const result = await classifyIntent("hi", { enforceAirGap: false });
-    expect(result.confidence).toBe(1);
-  });
-
-  test("non-finite confidence (NaN) is coerced to 0", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "unknown",
-          entities: {},
-          requiresHITL: false,
-          confidence: "not a number",
-        }),
-      ),
-    );
-
-    const result = await classifyIntent("hi", { enforceAirGap: false });
-    expect(result.confidence).toBe(0);
-  });
-
-  test("non-string entity values are dropped", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "file_search",
-          entities: { pattern: "foo", count: 5, nested: { a: 1 }, ok: "yes" },
-          requiresHITL: false,
-          confidence: 0.5,
-        }),
-      ),
-    );
-
-    const result = await classifyIntent("find foo", { enforceAirGap: false });
-    expect(result.entities).toEqual({ pattern: "foo", ok: "yes" });
-  });
-
-  test("non-object entities payload yields empty entities", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "file_search",
-          entities: "oops",
-          requiresHITL: false,
-          confidence: 0.5,
-        }),
-      ),
-    );
-
-    const result = await classifyIntent("find foo", { enforceAirGap: false });
-    expect(result.entities).toEqual({});
-  });
-
-  test("array entities payload yields empty entities (Array.isArray guard)", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "file_search",
-          entities: ["nope"],
-          requiresHITL: false,
-          confidence: 0.5,
-        }),
-      ),
-    );
-
-    const result = await classifyIntent("find foo", { enforceAirGap: false });
-    expect(result.entities).toEqual({});
-  });
-
   test("unknown intent values are normalised to 'unknown'", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse(
-        JSON.stringify({
-          intent: "delete_everything",
-          entities: {},
-          requiresHITL: true,
-          confidence: 0.9,
-        }),
-      ),
+    const result = await classifyIntent(
+      "hello",
+      replying('{"intent":"launch_missiles","entities":{},"confidence":1}'),
     );
-
-    const result = await classifyIntent("?", { enforceAirGap: false });
     expect(result.intent).toBe("unknown");
   });
+});
 
-  test("strips anthropic/ prefix from configured Anthropic model id", async () => {
-    useAnthropicOnly();
-    setEnv("NIMBUS_CLASSIFIER_MODEL", "anthropic/claude-haiku-4-5");
-    let capturedBody = "";
-    stubFetch(async (input, init) => {
-      const req = new Request(input, init);
-      capturedBody = await req.text();
-      return anthropicTextResponse(
-        JSON.stringify({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0.5 }),
+describe("classifyIntent — field normalisation", () => {
+  const CONFIDENCE_CASES: ReadonlyArray<readonly [string, string, number]> = [
+    ["clamps below 0 to 0", "-3", 0],
+    ["clamps above 1 to 1", "42", 1],
+    ["coerces non-finite (NaN) to 0", "null", 0],
+  ];
+
+  for (const [name, raw, expected] of CONFIDENCE_CASES) {
+    test(`confidence: ${name}`, async () => {
+      const result = await classifyIntent(
+        "find my notes",
+        replying(`{"intent":"file_search","entities":{},"confidence":${raw}}`),
       );
+      expect(result.confidence).toBe(expected);
     });
+  }
 
-    await classifyIntent("hi", { enforceAirGap: false });
-    const body = JSON.parse(capturedBody) as { model: string };
-    expect(body.model).toBe("claude-haiku-4-5");
+  test("non-string entity values are dropped", async () => {
+    const result = await classifyIntent(
+      "find my notes",
+      replying('{"intent":"file_search","entities":{"pattern":"*.md","depth":3},"confidence":1}'),
+    );
+    expect(result.entities).toEqual({ pattern: "*.md" });
+  });
+
+  const NON_OBJECT_ENTITIES: ReadonlyArray<readonly [string, string]> = [
+    ["a string payload", '"nope"'],
+    ["an array payload (Array.isArray guard)", '["a","b"]'],
+    ["a null payload", "null"],
+  ];
+
+  for (const [name, raw] of NON_OBJECT_ENTITIES) {
+    test(`entities: ${name} yields empty entities`, async () => {
+      const result = await classifyIntent(
+        "find my notes",
+        replying(`{"intent":"file_search","entities":${raw},"confidence":1}`),
+      );
+      expect(result.entities).toEqual({});
+    });
+  }
+});
+
+describe("classifyIntent — what it asks the router for", () => {
+  test("asks for the classification task, so route selection can pin a cheap model", async () => {
+    const rec: Recorded = { calls: [] };
+    await classifyIntent("find my notes", replying(UNKNOWN_REPLY, rec));
+    expect(rec.calls[0]?.task).toBe("classification");
+  });
+
+  test("names the call engine.ask.classify in the ledger, not the generic task method", async () => {
+    // `nimbus prove` has to be able to say an `ask` round-trip sent the question text for
+    // CLASSIFICATION as distinct from sending it for an answer.
+    const rec: Recorded = { calls: [] };
+    await classifyIntent("find my notes", replying(UNKNOWN_REPLY, rec));
+    expect(rec.calls[0]?.egressMethod).toBe("engine.ask.classify");
   });
 
   test("trims very long input to 8000 chars before sending", async () => {
-    useAnthropicOnly();
-    let capturedBody = "";
-    stubFetch(async (input, init) => {
-      const req = new Request(input, init);
-      capturedBody = await req.text();
-      return anthropicTextResponse(
-        JSON.stringify({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0.5 }),
-      );
-    });
+    const rec: Recorded = { calls: [] };
+    await classifyIntent("x".repeat(20_000), replying(UNKNOWN_REPLY, rec));
+    expect(rec.calls[0]?.prompt.length).toBe(8000);
+  });
 
-    const longInput = "x".repeat(10_000);
-    await classifyIntent(longInput, { enforceAirGap: false });
-    const body = JSON.parse(capturedBody) as { messages: Array<{ content: string }> };
-    expect(body.messages[0]?.content).toHaveLength(8000);
+  test("sends the classifier system prompt, not the raw question alone", async () => {
+    const rec: Recorded = { calls: [] };
+    await classifyIntent("find my notes", replying(UNKNOWN_REPLY, rec));
+    expect(rec.calls[0]?.systemPrompt).toContain("file_search");
+    expect(rec.calls[0]?.systemPrompt).toContain("file_organize");
   });
 });
 
-describe("classifyIntent — Anthropic error paths", () => {
-  test("HTTP 401 → invalid_api_key", async () => {
-    useAnthropicOnly();
-    stubFetch(async () => textResponse("Unauthorized", 401));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("invalid_api_key");
-    expect((caught as GatewayAgentUnavailableError).provider).toBe("anthropic");
+describe("classifyIntent — failure mapping", () => {
+  test("a prose reply degrades to unknown rather than aborting the ask", async () => {
+    // Small LOCAL models are on this path now and answer in prose regularly. Throwing would end
+    // the `ask` on a routine event; "unknown" is what the prompt asks for when the model cannot
+    // place the request, and the caller answers conversationally from there.
+    const result = await classifyIntent("find my notes", replying("I am not sure."));
+    expect(result).toEqual({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0 });
   });
 
-  test.each(HTTP_STATUS_REASONS)("HTTP %s → %s", async (status, body, reason) => {
-    useAnthropicOnly();
-    stubFetch(async () => textResponse(body, status));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe(reason);
+  test("a JSON array reply degrades the same way — it is not an object", async () => {
+    const result = await classifyIntent("find my notes", replying(ARRAY_REPLY));
+    expect(result.intent).toBe("unknown");
+    expect(result.confidence).toBe(0);
   });
 
-  test("fetch throws (network exception) → network_error", async () => {
-    useAnthropicOnly();
-    stubFetch(async () => {
-      throw new Error("ECONNREFUSED");
-    });
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-    expect((caught as GatewayAgentUnavailableError).provider).toBe("anthropic");
-  });
-
-  test("HTTP 200 with non-JSON text body → wrapped as network_error", async () => {
-    useAnthropicOnly();
-    stubFetch(async () =>
-      anthropicTextResponse("definitely not JSON, just chatty text from the model."),
+  test("auth failure maps to invalid_api_key", async () => {
+    expect(await reasonOf(failing(new LlmProviderError("401", "auth", 401)))).toBe(
+      "invalid_api_key",
     );
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
   });
 
-  test("HTTP 200 with JSON that isn't an object (array) → wrapped as network_error", async () => {
-    useAnthropicOnly();
-    stubFetch(async () => anthropicTextResponse(JSON.stringify([1, 2, 3])));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-  });
-
-  test("HTTP 200 with JSON null → wrapped as network_error", async () => {
-    useAnthropicOnly();
-    stubFetch(async () => anthropicTextResponse("null"));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-  });
-
-  test("malformed model name (newline char) → assertSafeModelName throws → wrapped as network_error", async () => {
-    useAnthropicOnly();
-    setEnv("NIMBUS_CLASSIFIER_MODEL", "claude-haiku\n-evil");
-    stubFetch(async () => {
-      throw new Error("fetch should not be reached when the model name is rejected first");
-    });
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-  });
-
-  test("response with no text-content block falls through to non-JSON error path", async () => {
-    useAnthropicOnly();
-    stubFetch(async () => jsonResponse({ content: [{ type: "tool_use", text: "" }] }));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-  });
-});
-
-describe("classifyIntent — OpenAI happy paths", () => {
-  test("parses plain JSON body from OpenAI choices[0].message.content", async () => {
-    useOpenAiOnly();
-    stubFetch(async () =>
-      openaiChatResponse(
-        JSON.stringify({
-          intent: "file_search",
-          entities: { pattern: "*.ts" },
-          requiresHITL: false,
-          confidence: 0.85,
-        }),
-      ),
+  test("transport failure maps to network_error", async () => {
+    expect(await reasonOf(failing(new LlmProviderError("ECONNREFUSED", "transport")))).toBe(
+      "network_error",
     );
-
-    const result = await classifyIntent("find ts files", { enforceAirGap: false });
-    expect(result.intent).toBe("file_search");
-    expect(result.entities).toEqual({ pattern: "*.ts" });
-    expect(result.confidence).toBeCloseTo(0.85, 5);
   });
 
-  test("calls OpenAI chat-completions endpoint with Bearer Authorization header", async () => {
-    useOpenAiOnly();
-    let capturedReq: Request | undefined;
-    let capturedBody = "";
-    stubFetch(async (input, init) => {
-      capturedReq = new Request(input, init);
-      capturedBody = await capturedReq.text();
-      return openaiChatResponse(
-        JSON.stringify({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0.5 }),
-      );
-    });
-
-    await classifyIntent("hi", { enforceAirGap: false });
-    expect(capturedReq).toBeDefined();
-    expect(capturedReq?.url).toBe("https://api.openai.com/v1/chat/completions");
-    expect(capturedReq?.method).toBe("POST");
-    expect(capturedReq?.headers.get("authorization")).toBe("Bearer sk-stub-oai");
-    expect(capturedReq?.headers.get("content-type")).toBe("application/json");
-
-    const body = JSON.parse(capturedBody) as {
-      model: string;
-      temperature: number;
-      response_format: { type: string };
-      messages: Array<{ role: string }>;
-    };
-    expect(body.temperature).toBe(0);
-    expect(body.response_format).toEqual({ type: "json_object" });
-    expect(body.model).not.toMatch(/^openai\//);
-    expect(body.messages).toHaveLength(2);
-    expect(body.messages[0]?.role).toBe("system");
-    expect(body.messages[1]?.role).toBe("user");
-  });
-
-  test("parses markdown-fenced JSON body from OpenAI", async () => {
-    useOpenAiOnly();
-    const fenced =
-      '```json\n{"intent":"file_organize","entities":{"source":"a","destination":"b"},"requiresHITL":true,"confidence":0.6}\n```';
-    stubFetch(async () => openaiChatResponse(fenced));
-
-    const result = await classifyIntent("move a to b", { enforceAirGap: false });
-    expect(result.intent).toBe("file_organize");
-    expect(result.requiresHITL).toBe(true);
-  });
-});
-
-describe("classifyIntent — OpenAI error paths", () => {
-  test("HTTP 401 → invalid_api_key", async () => {
-    useOpenAiOnly();
-    stubFetch(async () => textResponse("Unauthorized", 401));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("invalid_api_key");
-    expect((caught as GatewayAgentUnavailableError).provider).toBe("openai");
-  });
-
-  test.each(HTTP_STATUS_REASONS)("HTTP %s → %s", async (status, body, reason) => {
-    useOpenAiOnly();
-    stubFetch(async () => textResponse(body, status));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe(reason);
-  });
-
-  test("fetch throws → network_error with openai provider", async () => {
-    useOpenAiOnly();
-    stubFetch(async () => {
-      throw new Error("DNS lookup failed");
-    });
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-    expect((caught as GatewayAgentUnavailableError).provider).toBe("openai");
-  });
-
-  test("HTTP 200 with non-JSON content body → wrapped as network_error", async () => {
-    useOpenAiOnly();
-    stubFetch(async () => openaiChatResponse("not json at all"));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-  });
-
-  test("HTTP 200 with JSON that isn't an object → wrapped as network_error", async () => {
-    useOpenAiOnly();
-    stubFetch(async () => openaiChatResponse(JSON.stringify([1, 2, 3])));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-  });
-
-  test("response with no choices → wrapped as network_error", async () => {
-    useOpenAiOnly();
-    stubFetch(async () => jsonResponse({ choices: [] }));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
-  });
-});
-
-describe("classifyIntent — provider selection", () => {
-  test("prefers Anthropic when both ANTHROPIC_API_KEY and OPENAI_API_KEY are set", async () => {
-    setEnv("ANTHROPIC_API_KEY", "sk-stub-anth");
-    setEnv("OPENAI_API_KEY", "sk-stub-oai");
-
-    let capturedUrl = "";
-    stubFetch(async (input, init) => {
-      capturedUrl = new Request(input, init).url;
-      return anthropicTextResponse(
-        JSON.stringify({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0.5 }),
-      );
-    });
-
-    await classifyIntent("hi", { enforceAirGap: false });
-    expect(capturedUrl).toBe("https://api.anthropic.com/v1/messages");
-  });
-
-  test("falls through to OpenAI when ANTHROPIC_API_KEY is empty string", async () => {
-    setEnv("ANTHROPIC_API_KEY", "");
-    setEnv("OPENAI_API_KEY", "sk-stub-oai");
-
-    let capturedUrl = "";
-    stubFetch(async (input, init) => {
-      capturedUrl = new Request(input, init).url;
-      return openaiChatResponse(
-        JSON.stringify({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0.5 }),
-      );
-    });
-
-    await classifyIntent("hi", { enforceAirGap: false });
-    expect(capturedUrl).toBe("https://api.openai.com/v1/chat/completions");
-  });
-});
-
-describe("classifyIntent — no API key", () => {
-  test("throws GatewayAgentUnavailableError(no_api_key) when neither key is set", async () => {
-    setEnv("ANTHROPIC_API_KEY", undefined);
-    setEnv("OPENAI_API_KEY", undefined);
-    stubFetch(async () => {
-      throw new Error("fetch must not be called when no API key is set");
-    });
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("no_api_key");
-  });
-
-  test("treats empty-string keys as no_api_key", async () => {
-    setEnv("ANTHROPIC_API_KEY", "");
-    setEnv("OPENAI_API_KEY", "");
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi", { enforceAirGap: false });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("no_api_key");
-  });
-});
-
-describe("classifyIntent — [llm] enforce_air_gap", () => {
-  test("refuses WITHOUT making any network call, with a live key configured", async () => {
-    // The bug this pins. `enforce_air_gap` was consulted nowhere on this path, so an owner who set
-    // it and had ANTHROPIC_API_KEY in the environment shipped every `ask` to Anthropic anyway.
-    //
-    // Asserting only that it throws would NOT catch a version that calls out first and throws
-    // afterwards — by then the user's text has already left the machine, which is the entire thing
-    // air-gap exists to prevent. So the load-bearing assertion here is the call count, not the
-    // rejection.
-    setEnv("ANTHROPIC_API_KEY", "sk-ant-live-key-not-real");
-    let calls = 0;
-    stubFetch(async () => {
-      calls += 1;
-      return jsonResponse({});
-    });
-
-    await expect(
-      classifyIntent("what changed this week", { enforceAirGap: true }),
-    ).rejects.toBeInstanceOf(GatewayAgentUnavailableError);
-    expect(calls).toBe(0);
-  });
-
-  test("reports air_gap, not no_api_key — a key IS present and we refuse to use it", async () => {
-    setEnv("ANTHROPIC_API_KEY", "sk-ant-live-key-not-real");
-    stubFetch(async () => jsonResponse({}));
-
-    const err = await classifyIntent("hi", { enforceAirGap: true }).then(
+  test("request failure maps to provider_error, carrying the vendor message", async () => {
+    const policy = failing(new LlmProviderError("model xyz does not exist", "request", 400));
+    const err = await classifyIntent("find my notes", policy).then(
       () => undefined,
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((err as GatewayAgentUnavailableError).reason).toBe("air_gap");
+    expect((err as GatewayAgentUnavailableError).reason).toBe("provider_error");
+    expect((err as Error).message).toContain("does not exist");
   });
 
-  test("refuses on the OpenAI arm too, not just the first provider checked", async () => {
-    // Anthropic is tried first, so a guard placed inside the Anthropic branch alone would pass the
-    // test above and still egress for an OpenAI-only user.
-    setEnv("ANTHROPIC_API_KEY", undefined);
-    setEnv("OPENAI_API_KEY", "sk-openai-not-real");
-    let calls = 0;
-    stubFetch(async () => {
-      calls += 1;
-      return jsonResponse({});
+  test("a GatewayAgentUnavailableError from below passes through unchanged", async () => {
+    const inner = new GatewayAgentUnavailableError({ reason: "insufficient_quota" });
+    expect(await reasonOf(failing(inner))).toBe("insufficient_quota");
+  });
+});
+
+describe("classifyIntent — no reachable route", () => {
+  const EXHAUSTED = "No LLM provider available for task: classification";
+
+  test("an exhausted priority walk reports no_api_key when air-gap is off", async () => {
+    expect(await reasonOf(failing(new Error(EXHAUSTED)))).toBe("no_api_key");
+  });
+
+  test("the SAME exhausted walk reports air_gap when air-gap is on", async () => {
+    // Only the caller knows which of the two very different causes applied, which is why the
+    // flag survives on the policy even though the router does the refusing.
+    expect(await reasonOf(failing(new Error(EXHAUSTED), true))).toBe("air_gap");
+  });
+
+  test("no router at all reports no_api_key, and no fallback client is attempted", async () => {
+    globalThis.fetch = (() => {
+      throw new Error("classifyIntent must never call fetch directly");
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      expect(await reasonOf({ enforceAirGap: false, generate: undefined })).toBe("no_api_key");
+    } finally {
+      globalThis.fetch = BUN_NATIVE_FETCH;
+    }
+  });
+
+  test("no router under air-gap reports air_gap, which names the actionable cause", async () => {
+    expect(await reasonOf({ enforceAirGap: true, generate: undefined })).toBe("air_gap");
+  });
+
+  test("air-gap ON still classifies when the router hands back a LOCAL route", async () => {
+    // The behaviour the hand-rolled client could never have: enforce_air_gap refuses REMOTE
+    // routes, and the air_gap message tells the owner to configure a local model precisely so
+    // this works. The router applies that rule; the classifier does not second-guess it.
+    const result = await classifyIntent("find my notes", {
+      ...replying(SEARCH_REPLY),
+      enforceAirGap: true,
     });
-
-    const err = await classifyIntent("hi", { enforceAirGap: true }).then(
-      () => undefined,
-      (e: unknown) => e,
-    );
-    expect((err as GatewayAgentUnavailableError).reason).toBe("air_gap");
-    expect(calls).toBe(0);
-  });
-
-  test("air-gap OFF still egresses — the guard is the flag, not a blanket refusal", async () => {
-    // Without this, deleting the whole remote path would satisfy every assertion above.
-    setEnv("ANTHROPIC_API_KEY", "sk-ant-live-key-not-real");
-    let calls = 0;
-    stubFetch(async (url: string) => {
-      calls += 1;
-      expect(url).toContain("api.anthropic.com");
-      return jsonResponse({
-        content: [{ type: "text", text: JSON.stringify({ intent: "search", entities: {} }) }],
-      });
-    });
-
-    await classifyIntent("find markdown files", { enforceAirGap: false });
-    expect(calls).toBe(1);
-  });
-
-  test("empty input answers locally under air-gap rather than refusing", async () => {
-    // Nothing would have egressed, so there is nothing to refuse. Turning air-gap on must not
-    // convert a purely local answer into an error.
-    const result = await classifyIntent("   	 ", { enforceAirGap: true });
-    expect(result.intent).toBe("unknown");
-    expect(result.confidence).toBe(1);
+    expect(result.intent).toBe("file_search");
   });
 });

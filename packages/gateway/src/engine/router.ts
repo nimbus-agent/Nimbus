@@ -1,6 +1,6 @@
-import { Config, getEffectiveClassifierModel } from "../config.ts";
-import { processEnvGet } from "../platform/env-access.ts";
-import { agentErrorFromHttpResponse, GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
+import { LlmProviderError } from "../llm/provider-error.ts";
+import type { LlmGenerateOptions, LlmGenerateResult } from "../llm/types.ts";
+import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { extractFirstMarkdownFenceBody } from "./json-fence.ts";
 
 export type IntentClass = "file_search" | "file_organize" | "unknown";
@@ -24,25 +24,6 @@ function extractJsonObject(text: string): string {
     return t.slice(start, end + 1);
   }
   return t;
-}
-
-function resolveAnthropicModelId(configured: string): string {
-  const s = configured.trim();
-  if (s.startsWith("anthropic/")) {
-    return s.slice("anthropic/".length);
-  }
-  return s;
-}
-
-const SAFE_MODEL_NAME_RE = /^[A-Za-z0-9._/:-]{1,128}$/;
-
-function assertSafeModelName(model: string): string {
-  if (!SAFE_MODEL_NAME_RE.test(model)) {
-    throw new Error(
-      `Refusing to call provider API with malformed model name (got ${model.length} chars; expected /^[A-Za-z0-9._/:-]{1,128}$/). Check nimbus.toml [llm].classifier_model or NIMBUS_CLASSIFIER_MODEL.`,
-    );
-  }
-  return model;
 }
 
 function parseClassifierJsonObject(
@@ -96,7 +77,7 @@ function classifiedFromObject(o: Record<string, unknown>): ClassifiedIntent {
   return { intent, entities, requiresHITL, confidence };
 }
 
-const CLASSIFIER_SYSTEM_PROMPT_ANTHROPIC = `You classify user requests for a local-first assistant. Reply with a single JSON object only, no markdown:
+const CLASSIFIER_SYSTEM_PROMPT = `You classify user requests for a local-first assistant. Reply with a single JSON object only, no markdown:
 {
   "intent": "file_search" | "file_organize" | "unknown",
   "entities": { string: string },
@@ -110,97 +91,79 @@ Rules:
 - requiresHITL: true for file_organize (destructive path change), false for file_search.
 - confidence: 0–1.`;
 
-const CLASSIFIER_SYSTEM_PROMPT_OPENAI = `Classify the user message. Return JSON only:
-{"intent":"file_search"|"file_organize"|"unknown","entities":{},"requiresHITL":bool,"confidence":0-1}
-file_search: finding files — put pattern in entities.pattern, optional entities.path.
-file_organize: move/rename — entities.source and entities.destination.
-unknown: else.`;
-
-type LlmClassifyProvider = "anthropic" | "openai";
-
-async function llmClassify(
-  provider: LlmClassifyProvider,
-  userText: string,
-  model: string,
-  apiKey: string,
-): Promise<ClassifiedIntent> {
-  const trimmed = userText.slice(0, 8000);
-  if (provider === "anthropic") {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: assertSafeModelName(resolveAnthropicModelId(model)),
-        max_tokens: 512,
-        system: CLASSIFIER_SYSTEM_PROMPT_ANTHROPIC,
-        messages: [{ role: "user", content: trimmed }],
-      }),
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      throw agentErrorFromHttpResponse("anthropic", res.status, errBody);
-    }
-    const body = (await res.json()) as {
-      content?: Array<{ type?: string; text?: string }>;
-    };
-    const block = body.content?.find((c) => c.type === "text");
-    const text = block?.text ?? "";
-    const raw = extractJsonObject(text);
-    const o = parseClassifierJsonObject(raw, "Classifier returned non-JSON");
-    return classifiedFromObject(o);
-  }
-
-  const m = assertSafeModelName(model.replace(/^openai\//, ""));
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: m,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: CLASSIFIER_SYSTEM_PROMPT_OPENAI },
-        { role: "user", content: trimmed },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => "");
-    throw agentErrorFromHttpResponse("openai", res.status, errBody);
-  }
-  const body = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const text = body.choices?.[0]?.message?.content ?? "";
-  const raw = extractJsonObject(text);
-  const o = parseClassifierJsonObject(raw, "Classifier returned non-JSON");
-  return classifiedFromObject(o);
-}
-
 /**
  * What this classifier is permitted to reach.
  *
- * REQUIRED, and deliberately not an optional parameter defaulting to permissive. This function
- * reads `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` straight from the process environment and POSTs the
- * user's text to a vendor — it is the one path in the gateway that egresses without going through
- * `LlmRouter`, which has honoured `enforceAirGap` all along. A default would make "forgot to pass
- * the policy" indistinguishable from "policy says egress is fine", and the first is the bug that
- * shipped: `[llm] enforce_air_gap = true` did nothing here, while the published FAQ said it
- * "blocks all outbound HTTP for the duration of an `ask` round-trip".
+ * REQUIRED, and deliberately not an optional parameter defaulting to permissive. A default would
+ * make "forgot to pass the policy" indistinguishable from "policy says egress is fine", and the
+ * first is the bug that shipped once already: `[llm] enforce_air_gap = true` did nothing here,
+ * while the published FAQ said it "blocks all outbound HTTP for the duration of an `ask`
+ * round-trip".
  *
- * Required means a new caller is a COMPILE error rather than a silent hole.
+ * `generate` is `LlmRouter.generate` bound to the gateway's router, and passing it is the whole
+ * point of this type. Until 2026-08-28 this function held its OWN HTTP client: it read
+ * `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` straight from the process environment and POSTed the
+ * user's text to a vendor, making it the one path in the gateway that egressed without going
+ * through `LlmRouter`. Two properties the rest of the gateway guarantees did not hold on it:
+ *
+ *  - **No egress row.** `nimbus prove` reported `0` for a query that had made a real outbound
+ *    request carrying user text (I29's `model` class covers `LlmRouter` routes via
+ *    `egress/model-egress.ts`, and this path was not one).
+ *  - **No opt-in.** A user who enabled Gemini alone still egressed to Anthropic if a stale
+ *    `ANTHROPIC_API_KEY` sat in their environment — precisely the shape slice 2b's per-vendor
+ *    `[llm.remote.*]` opt-in exists to prevent, one path over.
+ *
+ * Routing through the router fixes both at once and buys a third thing: classification can now
+ * run on a LOCAL model, which the hand-rolled client could never do.
  */
 export type ClassifierEgressPolicy = {
-  /** `[llm] enforce_air_gap`. True refuses the call outright — see {@link LlmRouter.enforcesAirGap}. */
+  /**
+   * `[llm] enforce_air_gap`. Used ONLY to word the failure — the router itself already refuses
+   * every non-local route under air-gap ({@link LlmRouter.enforcesAirGap}), so a local route
+   * still classifies, which is the behaviour the `air_gap` message promises when it tells the
+   * owner to "configure a local model ... to answer without leaving the machine".
+   */
   readonly enforceAirGap: boolean;
+  /**
+   * `LlmRouter.generate`, bound. `undefined` when no router exists at all, which is refused the
+   * same way an empty route table is: fail-closed, never a fallback client.
+   */
+  readonly generate: ((opts: LlmGenerateOptions) => Promise<LlmGenerateResult>) | undefined;
 };
+
+const CLASSIFIER_MAX_TOKENS = 512;
+/** Low, not zero: the reply is a fixed JSON shape, so sampling buys nothing but drift. */
+const CLASSIFIER_TEMPERATURE = 0;
+/** Matches the pre-router client's cap, so a long `ask` classifies the same way it always did. */
+const CLASSIFIER_INPUT_MAX_CHARS = 8000;
+
+const EMPTY_INTENT: ClassifiedIntent = {
+  intent: "unknown",
+  entities: {},
+  requiresHITL: false,
+  confidence: 1,
+};
+
+/**
+ * Turns a router failure into the reason the owner can act on.
+ *
+ * `LlmRouter.generate` throws a bare `Error` when the priority walk found NOTHING eligible, which
+ * is the common case here and means one of two very different things: air-gap held every remote
+ * route back, or no vendor is enabled at all. Only the caller knows which, hence the policy flag.
+ */
+function classifierFailure(e: unknown, enforceAirGap: boolean): GatewayAgentUnavailableError {
+  if (e instanceof GatewayAgentUnavailableError) return e;
+  if (e instanceof LlmProviderError) {
+    if (e.kind === "auth") return new GatewayAgentUnavailableError({ reason: "invalid_api_key" });
+    if (e.kind === "transport") {
+      return new GatewayAgentUnavailableError({ reason: "network_error" });
+    }
+    return new GatewayAgentUnavailableError({ reason: "provider_error", detail: e.message });
+  }
+  return new GatewayAgentUnavailableError({
+    reason: enforceAirGap ? "air_gap" : "no_api_key",
+  });
+}
 
 export async function classifyIntent(
   userText: string,
@@ -208,46 +171,47 @@ export async function classifyIntent(
 ): Promise<ClassifiedIntent> {
   const trimmed = userText.trim();
   if (trimmed.length === 0) {
-    return {
-      intent: "unknown",
-      entities: {},
-      requiresHITL: false,
-      confidence: 1,
-    };
+    return EMPTY_INTENT;
   }
 
-  // BEFORE the environment is read, not after. Reading the key first and refusing later would
-  // still be correct, but this ordering makes the refusal impossible to get wrong when a future
-  // provider arm is added below: a new arm added under this guard cannot egress, and one added
-  // above it would have to step over the guard visibly.
-  if (policy.enforceAirGap) {
-    throw new GatewayAgentUnavailableError({ reason: "air_gap" });
+  // No router, no classification. The deleted client's env-var fallback lived exactly here, and
+  // reinstating any form of it would reopen both holes described on ClassifierEgressPolicy.
+  if (policy.generate === undefined) {
+    throw new GatewayAgentUnavailableError({
+      reason: policy.enforceAirGap ? "air_gap" : "no_api_key",
+    });
   }
 
-  const anthropicKey = processEnvGet("ANTHROPIC_API_KEY");
-  const openAiKey = processEnvGet("OPENAI_API_KEY");
-
-  if (anthropicKey !== undefined && anthropicKey.length > 0) {
-    try {
-      return await llmClassify("anthropic", trimmed, getEffectiveClassifierModel(), anthropicKey);
-    } catch (e) {
-      if (e instanceof GatewayAgentUnavailableError) {
-        throw e;
-      }
-      throw new GatewayAgentUnavailableError({ reason: "network_error", provider: "anthropic" });
-    }
+  let result: LlmGenerateResult;
+  try {
+    result = await policy.generate({
+      task: "classification",
+      prompt: trimmed.slice(0, CLASSIFIER_INPUT_MAX_CHARS),
+      systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
+      maxTokens: CLASSIFIER_MAX_TOKENS,
+      temperature: CLASSIFIER_TEMPERATURE,
+      // Names THIS call in `egress_ledger` rather than the generic `llm.generate.classification`,
+      // so `nimbus prove` can say an `ask` round-trip sent the question text for classification
+      // as distinct from sending it for an answer.
+      egressMethod: "engine.ask.classify",
+    });
+  } catch (e) {
+    throw classifierFailure(e, policy.enforceAirGap);
   }
 
-  if (openAiKey !== undefined && openAiKey.length > 0) {
-    try {
-      return await llmClassify("openai", trimmed, Config.openaiClassifierModel, openAiKey);
-    } catch (e) {
-      if (e instanceof GatewayAgentUnavailableError) {
-        throw e;
-      }
-      throw new GatewayAgentUnavailableError({ reason: "network_error", provider: "openai" });
-    }
+  // A reply that arrived but is not the requested shape is a CLASSIFICATION outcome, not a
+  // failure: "unknown" is exactly what the prompt asks for when the model cannot place the
+  // request, and the caller answers conversationally from there. Throwing here used to be
+  // tolerable because only two frontier models ever answered; routing through `LlmRouter` puts
+  // small LOCAL models on this path, and those return prose instead of JSON often enough that a
+  // throw would abort the `ask` on a routine event. Transport and auth failures still throw
+  // above -- those are real failures, and the owner has to see them.
+  const raw = extractJsonObject(result.text);
+  let o: Record<string, unknown>;
+  try {
+    o = parseClassifierJsonObject(raw, "Classifier returned non-JSON");
+  } catch {
+    return { ...EMPTY_INTENT, confidence: 0 };
   }
-
-  throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+  return classifiedFromObject(o);
 }

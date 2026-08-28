@@ -1625,12 +1625,9 @@ export async function buildLlmRegistryFromToml(
 ): Promise<LlmRegistry> {
   const llmToml = loadNimbusLlmFromPath(activeTomlPath);
   const llmTomlPartial = loadNimbusLlmPartialFromPath(activeTomlPath);
-  const llmOverrides: { agentModel?: string; classifierModel?: string } = {};
+  const llmOverrides: { agentModel?: string } = {};
   if (llmTomlPartial.remoteModel !== undefined) {
     llmOverrides.agentModel = llmTomlPartial.remoteModel;
-  }
-  if (llmTomlPartial.classifierModel !== undefined) {
-    llmOverrides.classifierModel = llmTomlPartial.classifierModel;
   }
   applyLlmTomlOverrides(llmOverrides);
 

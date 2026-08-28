@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import type { AgentProviderName } from "./gateway-agent-error.ts";
 import {
   agentErrorFromCaughtError,
   agentErrorFromHttpResponse,

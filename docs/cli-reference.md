@@ -1529,7 +1529,6 @@ Set a configuration value. Changes take effect on the next Gateway restart for G
 ```bash
 nimbus config set telemetry.enabled false
 nimbus config set llm.remote_model      claude-sonnet-4-6
-nimbus config set llm.classifier_model  claude-haiku-4-5-20251001
 nimbus config set llm.local_model       llama3.2
 nimbus config set llm.prefer_local      true
 ```
@@ -1540,7 +1539,7 @@ The provider is inferred from the model id: `claude-*` → Anthropic, `gpt-*` / 
 
 ### `nimbus config list`
 
-Print the config file path, then a per-key line for whichever of the five env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`, `llm.remote_model`, `llm.classifier_model`) currently has a value, followed by the raw `nimbus.toml` body. A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in `nimbus.toml` — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
+Print the config file path, then a per-key line for whichever of the four env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`, `llm.remote_model`) currently has a value, followed by the raw `nimbus.toml` body. A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in `nimbus.toml` — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
 
 ```bash
 nimbus config list
@@ -1598,8 +1597,6 @@ Key sections:
 # Conversational agent (Mastra). Provider is inferred from the model id:
 # claude-* → Anthropic; gpt-*/o1-*/o3-*/o4-* → OpenAI.
 remote_model       = "claude-sonnet-4-6"
-# Cheaper/faster model used by the intent classifier. May differ from remote_model.
-classifier_model   = "claude-haiku-4-5-20251001"
 # Local-LLM routing (Phase 4 LLM router).
 prefer_local       = true
 local_model        = "llama3.2" # Any pulled Ollama model name
@@ -1633,7 +1630,7 @@ endpoint = "https://telemetry.nimbus-agent.dev/v1/collect"
 # graph_conditions = true
 ```
 
-**Environment variable overrides:** Most TOML keys have a corresponding `NIMBUS_`-prefixed env var that wins over the file. Examples: `NIMBUS_AGENT_MODEL` (overrides `[llm].remote_model`), `NIMBUS_CLASSIFIER_MODEL` (overrides `[llm].classifier_model`), `NIMBUS_TELEMETRY_ENABLED`. See the [Environment Variables](#environment-variables) table at the end of this document for the full list.
+**Environment variable overrides:** Most TOML keys have a corresponding `NIMBUS_`-prefixed env var that wins over the file. Examples: `NIMBUS_AGENT_MODEL` (overrides `[llm].remote_model`), `NIMBUS_TELEMETRY_ENABLED`. See the [Environment Variables](#environment-variables) table at the end of this document for the full list.
 
 ---
 
@@ -3514,8 +3511,6 @@ nimbus lan remove abc123
 | Variable | Purpose |
 |---|---|
 | `NIMBUS_AGENT_MODEL` | Override `[llm].remote_model` — model id for the conversational agent (default: `claude-sonnet-4-6`). Bare ids work; provider is inferred from `claude-*` / `gpt-*` / `o1-*` / `o3-*` / `o4-*` prefix. |
-| `NIMBUS_CLASSIFIER_MODEL` | Override `[llm].classifier_model` — Anthropic model used by the intent classifier (default: `claude-haiku-4-5-20251001`). |
-| `NIMBUS_OPENAI_CLASSIFIER_MODEL` | OpenAI model used by the classifier when only `OPENAI_API_KEY` is set (default: `gpt-4o-mini`). |
 | `NIMBUS_TELEMETRY_ENABLED` | Override `[telemetry].enabled` |
 | `NIMBUS_TELEMETRY_ENDPOINT` | Override `[telemetry].endpoint` |
 | `NIMBUS_CONFIG_DIR` | Override the platform config directory — **config only**. There is no data-directory override: the data directory is not relocatable by any `NIMBUS_*` variable (on Linux it follows `XDG_DATA_HOME`). |
