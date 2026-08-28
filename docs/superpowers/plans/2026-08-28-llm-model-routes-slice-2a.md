@@ -1,5 +1,17 @@
 # LLM Model Routes — Slice 2a (Coverage) Implementation Plan
 
+> **STATUS: DELIVERED 2026-08-28 — PR #1357.** All seven tasks implemented and verified. This
+> file is kept as the historical record of the plan as written and REVIEWED; the unchecked
+> `- [ ]` boxes below are the plan's original state, not outstanding work. Deviations found
+> during execution are recorded in the SDD ledger as Rulings 7 and 8 — chiefly that Task 3's
+> `addRoute` sketch did not typecheck against the optional `LlmRegistryOptions.db`, resolved by
+> refusing to register a non-local route with no ledger and tracked onward in issue #1356; and
+> that Task 7 Step 5 named `verify:docker --changed`, which does not run the coverage floor.
+> A second air-gap hole not anticipated by Task 1 — `shouldUseLocalRouter()` skipping the router
+> entirely under `prefer_local = false` — was found in review and fixed in the same PR.
+
+---
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make every non-local LLM route append an `egress_ledger` row by construction, close the `runTurn` air-gap bypass, and land invariant I34 — all before any cloud vendor is registered.

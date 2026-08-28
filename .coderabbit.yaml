@@ -12,7 +12,7 @@
 # scripts/structure-audit/*; this file tells the reviewer what the repo's
 # invariants MEAN so its prose comments are useful rather than generic.
 #
-# Invariant ids below refer to docs/SECURITY-INVARIANTS.md (I1-I33; I28 is
+# Invariant ids below refer to docs/SECURITY-INVARIANTS.md (I1-I34; I28 is
 # reserved). Keep them in sync — scripts/structure-audit/check-coderabbit-config.test.ts
 # fails if this file cites an invariant that does not exist there.
 language: en-US

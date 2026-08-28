@@ -34,7 +34,7 @@ Below are specific suggestions, open questions, and improvements to consider dur
 ### 2.3 Strict Validation on TOML Parses
 
 * **Observation:** §7.1 notes that a throw in `loadTomlSection`'s bare catch silently reverts the whole section.
-* **Recommendation:** Ensure the custom post-parse validation in `platform/assemble.ts` runs on the parsed AST/JSON *before* applying defaults, so we can isolate and log vendor-specific issues without risking the reset of the `enforce_air_gap` flag.
+* **Recommendation:** Ensure the custom post-parse validation in `packages/gateway/src/platform/assemble.ts` runs on the parsed AST/JSON *before* applying defaults, so we can isolate and log vendor-specific issues without risking the reset of the `enforce_air_gap` flag.
 
 ---
 
@@ -42,7 +42,7 @@ Below are specific suggestions, open questions, and improvements to consider dur
 
 1. **Custom/Third-Party OpenAI-Compatible Providers:**
    * If a user wants to configure a local provider that uses the OpenAI wire format (e.g., LM Studio, LocalAI, or llamafile on another port/host), how will they do so under this design?
-   * Since `openai-provider.ts` and `xai-provider.ts` hardcode `isLocal = false` unconditionally, we ensure security by default. Will support for custom local OpenAI-compatible endpoints be deferred to Slice 4, or should we define a separate `openai-local` provider type?
+   * Since `packages/gateway/src/llm/openai-provider.ts` and `packages/gateway/src/llm/xai-provider.ts` hardcode `isLocal = false` unconditionally, we ensure security by default. Will support for custom local OpenAI-compatible endpoints be deferred to Slice 4, or should we define a separate `openai-local` provider type?
 2. **Handling Transient Network Issues in `isAvailable`:**
    * Since `isAvailable()` is answered offline (`enabled && key present`), if a remote provider is down or the user's internet is disconnected, the router will still select the route and try to call `generate()`.
    * This is correct to prevent background network leakage, but does the router's fallback logic handle the resulting network error gracefully by attempting the next prioritized route (if any), or does it fail immediately?

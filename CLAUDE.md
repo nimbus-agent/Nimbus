@@ -41,7 +41,7 @@ Architectural constraints, not preferences. Do not suggest changes that violate 
 
 ## Security Invariants
 
-Each live invariant (I1–I27, I29–I33) has a production wiring site + an enforcement test in `packages/gateway/src/security-invariants.test.ts`; I28 is reserved and has neither. **Full rationale, anti-patterns, and the triple rule (wiring + docs + test land in the same commit; retire = delete the row, never leave drift):** [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) + the `nimbus-security-invariants` skill — read before adding/auditing any defense.
+Each live invariant (I1–I27, I29–I34) has a production wiring site + an enforcement test in `packages/gateway/src/security-invariants.test.ts`; I28 is reserved and has neither. **Full rationale, anti-patterns, and the triple rule (wiring + docs + test land in the same commit; retire = delete the row, never leave drift):** [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) + the `nimbus-security-invariants` skill — read before adding/auditing any defense.
 
 - **I1** — child-process env scoping via `extensionProcessEnv()` · `connectors/lazy-mesh/*` spawns
 - **I2** — HITL frozen-set membership (`HITL_REQUIRED_BACKING` module-private) · `engine/executor.ts` `gate()`

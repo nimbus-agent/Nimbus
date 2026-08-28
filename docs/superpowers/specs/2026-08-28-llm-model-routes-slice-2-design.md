@@ -1,7 +1,7 @@
 # LLM Model Routes — Slice 2: Bearer-Key Clouds
 
 **Date:** 2026-08-28
-**Status:** designed — not started
+**Status:** slice 2a DELIVERED 2026-08-28 (the chokepoint, §5 — see PR #1357); slice 2b (the bearer-key cloud adapters, §6+) not started
 **Slot:** Spine S2 — Local Compute Fleet, row *"bring-your-own-frontier-model routing with local fallback"*
 **Slice:** 2 of 4 — see [slice 1's decomposition](./2026-08-27-llm-model-routes-design.md#8-decomposition)
 **Predecessor:** slice 1 delivered as PR #1352 (`5ac042c0`, `feat(llm)!`, `v4.0.0`)
@@ -162,11 +162,24 @@ end-to-end demonstration, because there is deliberately nothing remote to demons
 ### 5.1 Wrap at registration
 
 ```ts
-// llm/registry.ts
+// llm/registry.ts — as shipped in 2a
 addRoute(provider: LlmProvider, modelName: string, meta?: ProviderMeta): void {
-  this.router.registerRoute(wrapLedgeredProvider(this.db, provider), modelName, meta ?? {});
+  this.router.registerRoute(this.ledgered(provider, modelName), modelName, meta ?? {});
 }
 ```
+
+The sketch this section originally carried was `wrapLedgeredProvider(this.db, provider)`, which
+does not typecheck and drops a value the ledger needs. Two corrections, both made during
+implementation:
+
+- **`modelName` must be passed through.** The wrapper records it as the row's `sourceId`, so
+  omitting it would leave every `model` row unable to say WHICH model the prompt went to.
+- **`this.db` is `Database | undefined`,** because `LlmRegistryOptions.db` is optional, while
+  `wrapLedgeredProvider` requires a `Database`. The `ledgered()` helper resolves this by
+  REFUSING to register a non-local route when there is no ledger to append to — registering it
+  unwrapped would reintroduce the unrecorded egress path this slice exists to close. Local
+  providers are returned unchanged and need no db. Making `db` required, so this becomes a
+  compile error rather than a runtime throw, is tracked separately in issue #1356.
 
 `wrapLedgeredProvider(db, provider)`:
 
