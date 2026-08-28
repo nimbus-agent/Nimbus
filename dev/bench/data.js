@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787922973743,
+  "lastUpdate": 1787929519674,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16523,6 +16523,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 319.62658720000366,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c7a9e1a53fcc5fc22e2830e38ad25009b7e5d6e5",
+          "message": "fix(connectors): index a Confluence page under its browser URL (#1364)\n\n## Summary\n\n`confluence-sync` indexes every page under a URL it **constructs**:\n\n```ts\nconst webUi = `${site}/wiki/pages/viewpage.action?pageId=${encodeURIComponent(id)}`;\n```\n\nThat is a valid Confluence address, but not one a browser is ever on —\nConfluence Cloud serves pages at\n`/wiki/spaces/<KEY>/pages/<id>/<Title>`.\n\n`GET /v1/items/resolve` resolves purely by URL. `resolveItemByUrl`\ncomputes a resolve key and tries exact, then query-stripped, then up to\nthree trimmed trailing path segments — there is no title fallback. No\nrung of that ladder can bridge `?pageId=12345` to\n`/spaces/ENG/pages/12345/Title`, so **every browser resolve on a\nConfluence page misses an item the gateway is holding.**\n\nThe Confluence v1 content API already returns `_links.webui` on every\ncontent response (it is not gated by `expand`), and it is exactly the\nshape a browser shows — site-relative, without the `/wiki` context. This\nprefers it, and keeps the constructed URL as a fallback for Server/DC\nand older Cloud responses that carry no `_links`.\n\nFound while adding Confluence page recognition to the browser extension\n(nimbus-agent/nimbus-web-clipper#88), where the symptom is a Confluence\npage reporting *not indexed* while indexed. That client deliberately\ndoes **not** work around this — canonicalisation is the gateway's job,\nand encoding `viewpage.action?pageId=` in a client would hard-code a\ngateway implementation detail.\n\nNotes:\n- `_links` / `webui` are narrowed with the file's own `asRecord` /\n`stringField` helpers — the value crosses JSON from a remote API, so no\ncasts and no `any`.\n- The leading-slash check is load-bearing: a `webui` not starting with\n`/` would concatenate into a URL naming a different host. Reviewed for\nthe protocol-relative case (`//evil.example/x`) — not exploitable,\nbecause this is string concatenation onto an already-absolute site base,\nnot `new URL(webui, base)` resolution, so the host cannot move. A test\npins the rejection anyway.\n- Nothing about `expand`, pagination, watermarks or authorship is\ntouched. URL construction only.\n\n## Related Issue\n\n<!-- No existing issue; discovered while building the browser-side\nclient. -->\n\nRelates to nimbus-agent/nimbus-web-clipper#88\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change that fixes an issue)\n- [ ] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [ ] Test improvement\n- [ ] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`)\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic) — n/a, no platform-specific\ncode\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot of the rendered\npage (light + dark) is attached — n/a, no docs touched\n\n## Coverage (if engine/ or vault/ was changed)\n\nNeither `engine/` nor `vault/` was modified.\n\n## Testing\n\n`bun test packages/gateway/src/connectors/confluence-sync.test.ts` →\n**36 pass, 0 fail** (33 before; 3 added).\n\nWritten test-first. Before the change, the `_links.webui` case failed\nand both fallback cases passed — confirming the new test actually\ndistinguishes the new behaviour rather than passing against the old\ncode.\n\nThe three cases:\n1. `_links.webui` present → indexed as\n`<site>/wiki/spaces/ENG/pages/12345/Wiki+Page`.\n2. `_links` absent → falls back to the constructed\n`viewpage.action?pageId=` URL, byte-identical to today's output.\n3. `webui` present but not a rooted path (`https://evil.example/x`) →\nfalls back, rather than concatenating.\n\n## Notes for Reviewers\n\nThe fallback path is intentionally byte-identical to the pre-change\nbehaviour, so an instance whose API omits `_links` sees no change at\nall. The interesting review question is whether preferring\n`_links.webui` could ever produce a *worse* key than the constructed one\n— I believe not, since `webui` is what Confluence itself links to and\ntherefore what a user's address bar and any pasted link will carry.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-28T17:53:38+03:00",
+          "tree_id": "9820524ff959cdfc05d687d1684410591ecd9f83",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c7a9e1a53fcc5fc22e2830e38ad25009b7e5d6e5"
+        },
+        "date": 1787929517008,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 319.28518875000043,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 314.67895575000585,
             "unit": "ms"
           }
         ]
