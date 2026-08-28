@@ -2188,7 +2188,12 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   // asserted here on the SOURCE, because a type error is invisible to a runtime suite and
   // would otherwise be pinned nowhere the invariant's own tests can see.
   test("I29: LlmRegistryOptions.db is non-optional, so an unledgerable registry cannot exist", async () => {
-    const src = stripComments(await readFile("packages/gateway/src/llm/registry.ts", "utf8"));
+    // Resolved from REPO_ROOT, never cwd — every other file-reading helper here does the
+    // same. A bare relative path passes locally (repo root) and fails in the coverage step,
+    // which runs with a different working directory: ENOENT, not a real invariant breach.
+    const src = stripComments(
+      await readFile(resolve(REPO_ROOT, "packages/gateway/src/llm/registry.ts"), "utf8"),
+    );
     const optionsBlock = /export type LlmRegistryOptions = \{([\s\S]*?)\}/.exec(src)?.[1] ?? "";
     expect(optionsBlock).not.toBe("");
     // The whole assertion: `db: Database`, never `db?: Database`.
