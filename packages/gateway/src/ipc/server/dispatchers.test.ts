@@ -241,16 +241,17 @@ function fakeRemoteProvider(): LlmProvider {
 }
 
 /**
- * `db` is REQUIRED for a non-local provider: `addRoute` refuses to enter a non-local route in
- * the table with no `egress_ledger` to append to (I29), since that route would otherwise be an
- * unrecorded egress path. Passing the test's own tracked db also makes the egress assertions
- * below sharper than they were — the remote route is now wrapped, so had synthesis actually
- * proceeded, a `model` row would be there to find.
+ * `db` is REQUIRED (#1356), so an unledgered non-local route is now a COMPILE error rather than
+ * the runtime refusal this comment used to describe. Callers that do not track their own db get
+ * a bare in-memory one: `wrapLedgeredProvider` returns a LOCAL provider unchanged without
+ * touching the handle, and a caller registering a REMOTE provider passes its own tracked db so
+ * the egress assertions below stay sharp — the remote route is wrapped, so had synthesis
+ * actually proceeded, a `model` row would be there to find.
  */
 function makeLlmRegistry(provider: LlmProvider, db?: Database): LlmRegistry {
   const registry = new LlmRegistry({
     config: FAKE_LLM_ROUTER_CONFIG,
-    ...(db === undefined ? {} : { db }),
+    db: db ?? new Database(":memory:"),
   });
   registry.addRoute(provider, provider.isLocal ? FAKE_LLM_ROUTER_CONFIG.localModel : REMOTE_MODEL);
   return registry;

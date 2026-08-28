@@ -72,6 +72,18 @@ function makeProvider(id: ProviderId, opts: ProviderOpts): LlmProvider {
   return base;
 }
 
+/**
+ * A database for the ROUTING-only tests.
+ *
+ * `LlmRegistryOptions.db` became required (#1356) so an unledgered non-local route is a compile
+ * error rather than a runtime refusal. These tests register LOCAL providers only, and
+ * `wrapLedgeredProvider` returns a local provider UNCHANGED without touching the handle — so a
+ * bare in-memory database with no schema is sufficient, and they stay as cheap as they were when
+ * they passed nothing. A test that registers a non-local provider needs `makeDbWithSchema()`
+ * below instead, because the wrapper will really append to `egress_ledger`.
+ */
+const ROUTING_DB = new Database(":memory:");
+
 function makeDbWithSchema(): { db: Database; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-registry-"));
   const db = new Database(join(dir, "test.db"));
@@ -82,13 +94,13 @@ function makeDbWithSchema(): { db: Database; dir: string } {
 
 describe("LlmRegistry — construction + provider registration", () => {
   test("exposes the underlying LlmRouter via llmRouter getter", () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     expect(reg.llmRouter).toBeDefined();
     expect(typeof reg.llmRouter.selectProvider).toBe("function");
   });
 
   test("addRoute registers a provider that selectProvider can then resolve", () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     // The model-aware availability probe (Task 5) needs the fake to report the model it is
     // registered under, or it reads as unavailable.
     reg.addRoute(
@@ -235,7 +247,7 @@ describe("LlmRegistry.listAllModels", () => {
   });
 
   test("no-DB mode skips sync without throwing", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     reg.addRoute(
       makeProvider("ollama", {
         available: true,
@@ -263,7 +275,7 @@ describe("LlmRegistry.checkAvailability", () => {
   });
 
   test("isAvailable throw → false for that provider", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     reg.addRoute(
       makeProvider("ollama", { available: false, throwOnAvailable: true }),
       DEFAULT_CONFIG.localModel,
@@ -275,7 +287,7 @@ describe("LlmRegistry.checkAvailability", () => {
 
 describe("LlmRegistry.loadModel / unloadModel", () => {
   test("loadModel invokes the provider's loadModel when defined", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     let captured = "";
     reg.addRoute(
       makeProvider("llamacpp", {
@@ -291,18 +303,18 @@ describe("LlmRegistry.loadModel / unloadModel", () => {
   });
 
   test("loadModel is a no-op when the provider does not implement it", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     reg.addRoute(makeProvider("ollama", { available: true }), DEFAULT_CONFIG.localModel);
     await expect(reg.loadModel("ollama", "any-model")).resolves.toBeUndefined();
   });
 
   test("loadModel throws when provider is not registered", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     await expect(reg.loadModel("ollama", "x")).rejects.toThrow("Provider not registered: ollama");
   });
 
   test("unloadModel invokes the provider's unloadModel when defined", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     let captured = "";
     reg.addRoute(
       makeProvider("llamacpp", {
@@ -318,7 +330,7 @@ describe("LlmRegistry.loadModel / unloadModel", () => {
   });
 
   test("unloadModel throws for unregistered provider", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     await expect(reg.unloadModel("llamacpp", "x")).rejects.toThrow(
       "Provider not registered: llamacpp",
     );
@@ -327,7 +339,7 @@ describe("LlmRegistry.loadModel / unloadModel", () => {
 
 describe("LlmRegistry.pullModel", () => {
   test("dispatches to provider.pullModel when supported", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     let captured = "";
     reg.addRoute(
       makeProvider("ollama", {
@@ -343,7 +355,7 @@ describe("LlmRegistry.pullModel", () => {
   });
 
   test("rejects with TypeError when provider lacks pullModel", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     reg.addRoute(makeProvider("llamacpp", { available: true }), DEFAULT_CONFIG.localModel);
     await expect(reg.pullModel("llamacpp", "x")).rejects.toThrow(
       "Provider llamacpp does not support pullModel",
@@ -351,7 +363,7 @@ describe("LlmRegistry.pullModel", () => {
   });
 
   test("rejects when provider is not registered", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     await expect(reg.pullModel("ollama", "x")).rejects.toThrow("Provider not registered: ollama");
   });
 });
@@ -387,15 +399,12 @@ describe("LlmRegistry.setDefault / getDefault", () => {
     expect(reg.getDefault("reasoning")).toEqual({ provider: "remote", modelName: "claude" });
   });
 
-  test("setDefault no-ops silently when DB is undefined", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
-    await expect(reg.setDefault("classification", "ollama", "any")).resolves.toBeUndefined();
-  });
-
-  test("getDefault returns undefined when DB is undefined", () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
-    expect(reg.getDefault("classification")).toBeUndefined();
-  });
+  // The two "when DB is undefined" tests that stood here are DELETED, not ported: `db` became
+  // required (#1356), so `setDefault`'s and `getDefault`'s `this.db === undefined` early-returns
+  // no longer exist and the state they described is unconstructable. Keeping them would have
+  // meant passing a real db and asserting the no-op that no longer happens — a test that cannot
+  // fail. The replacement guard is `db is REQUIRED at COMPILE time` below, which `bun run
+  // typecheck` enforces.
 
   test("getDefault on a missing-row throws (bun:sqlite .get() returns null, not undefined)", () => {
     env = makeDbWithSchema();
@@ -415,14 +424,14 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
         pulled.push(m);
       },
     });
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(provider, "qwen3:8b");
     await registry.pullModel("ollama", "a-model-with-no-route");
     expect(pulled).toEqual(["a-model-with-no-route"]);
   });
 
   test("listAllModels covers a vendor id the registry has never heard of", async () => {
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(
       makeProvider("gemini", {
         available: true,
@@ -447,7 +456,7 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
     });
     (provider as unknown as { listModels: () => Promise<LlmModelInfo[]> }).listModels = async () =>
       reportedModels.map((m) => ({ provider: "ollama", modelName: m }));
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(provider, "fresh-model");
     // Prime the negative cache: at this point the daemon does not yet report the model.
     const before = await registry.llmRouter.selectProvider("agent_step");
@@ -475,7 +484,7 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
     });
     (provider as unknown as { listModels: () => Promise<LlmModelInfo[]> }).listModels = async () =>
       reportedModels.map((m) => ({ provider: "ollama", modelName: m }));
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(provider, "fresh-model");
     // Prime the negative cache: at this point the daemon does not report the model.
     const before = await registry.llmRouter.selectProvider("agent_step");
@@ -500,7 +509,7 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
       // DEFAULT_CONFIG.localModel is "llama3.2" — distinct from the route's own model,
       // so the old registerProvider-shim re-registration would mint a second route
       // "ollama/llama3.2" alongside "ollama/qwen3:8b".
-      const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+      const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
       registry.addRoute(provider, "qwen3:8b");
       await registry.refreshProviderMeta("qwen3:8b");
       const routes = registry.llmRouter.routes();
@@ -529,7 +538,7 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
         available: true,
         models: sharedDaemonListing,
       });
-      const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+      const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
       registry.addRoute(qwenProvider, "qwen3:8b");
       registry.addRoute(gemmaProvider, "gemma3:12b");
 
@@ -553,7 +562,7 @@ describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
 
 describe("LlmRegistry.getRouterStatus", () => {
   test("delegates to LlmRouter.getStatus and returns a shape with the four task types", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     reg.addRoute(makeProvider("ollama", { available: true }), DEFAULT_CONFIG.localModel);
     const status = await reg.getRouterStatus();
     expect(status).toBeDefined();
@@ -604,6 +613,7 @@ describe("min_reasoning_params can actually fire (F8)", () => {
   test("a reported parameter count reaches the router", async () => {
     const registry = new LlmRegistry({
       config: { preferLocal: true, localModel: "llama3.2", minReasoningParams: 7 } as never,
+      db: ROUTING_DB,
     });
     registry.addRoute(providerReporting(3.2), DEFAULT_CONFIG.localModel);
     await registry.refreshProviderMeta("llama3.2");
@@ -619,6 +629,7 @@ describe("min_reasoning_params can actually fire (F8)", () => {
     // capability preference into an outage.
     const registry = new LlmRegistry({
       config: { preferLocal: true, localModel: "llama3.2", minReasoningParams: 7 } as never,
+      db: ROUTING_DB,
     });
     registry.addRoute(
       {
@@ -647,7 +658,7 @@ describe("LlmRegistry lifecycle — two daemons behind one vendor id (Fix I)", (
         pulled.push(m);
       },
     });
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     // Two ROUTES, one provider INSTANCE — the ordinary two-models-on-one-daemon setup.
     registry.addRoute(provider, "qwen3:8b");
     registry.addRoute(provider, "gemma3:12b");
@@ -672,7 +683,7 @@ describe("LlmRegistry lifecycle — two daemons behind one vendor id (Fix I)", (
         workstationPulls.push(m);
       },
     });
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(laptop, "qwen3:8b");
     registry.addRoute(workstation, "gemma3:12b");
 
@@ -701,7 +712,7 @@ describe("LlmRegistry lifecycle — two daemons behind one vendor id (Fix I)", (
         workstationPulls.push(m);
       },
     });
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(laptop, "qwen3:8b");
     registry.addRoute(workstation, "gemma3:12b");
 
@@ -723,7 +734,7 @@ describe("LlmRegistry lifecycle — two daemons behind one vendor id (Fix I)", (
         unloaded.push(m);
       },
     });
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(laptop, "qwen3:8b");
     registry.addRoute(workstation, "gemma3:12b");
 
@@ -736,7 +747,7 @@ describe("LlmRegistry lifecycle — two daemons behind one vendor id (Fix I)", (
 
   test("an unregistered routeId is rejected rather than silently ignored", async () => {
     const provider = makeProvider("ollama", { available: true, pullModel: async () => {} });
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(provider, "qwen3:8b");
     await expect(
       registry.pullModel("ollama", "x", { routeId: "ollama/not-registered" }),
@@ -744,7 +755,7 @@ describe("LlmRegistry lifecycle — two daemons behind one vendor id (Fix I)", (
   });
 
   test("a routeId belonging to a DIFFERENT provider is rejected, never used as an override", async () => {
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(makeProvider("ollama", { available: true }), "qwen3:8b");
     registry.addRoute(makeProvider("llamacpp", { available: true }), "a.gguf");
     await expect(registry.loadModel("ollama", "x", { routeId: "llamacpp/a.gguf" })).rejects.toThrow(
@@ -766,7 +777,7 @@ describe("LlmRegistry.checkRoute — the registry owns the probe (Fix E)", () =>
         listCalls += 1;
         return reportedModels.map((m) => ({ provider: "ollama", modelName: m }));
       };
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(provider, "fresh-model");
     const route = registry.llmRouter.routes()[0];
     expect(route).toBeDefined();
@@ -861,23 +872,21 @@ describe("LlmRegistry — egress ledgering of non-local routes (I29)", () => {
     db.close();
   });
 
-  test("registering a NON-LOCAL route without a db is refused, not silently unledgered", async () => {
-    // `LlmRegistryOptions.db` is optional, so `addRoute` has to answer what a non-local
-    // provider means when there is no ledger to append to. Registering it unwrapped would
-    // put an unrecorded egress path in the route table -- the exact false zero `nimbus
-    // prove` would then report on. Production always passes a db (`platform/assemble.ts`),
-    // so this refusal is unreachable there and costs nothing.
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
-    expect(() =>
-      registry.addRoute(makeProvider("remote", { available: true }), "claude-sonnet-4-6"),
-    ).toThrow(/without a database/);
-    expect(registry.llmRouter.routes()).toHaveLength(0);
+  test("db is REQUIRED at COMPILE time, so an unledgered non-local route cannot be built", () => {
+    // The runtime refusal this replaces ("without a database") is gone, because the state it
+    // guarded is now unconstructable. This is the guard that took its place, and it is checked
+    // by `bun run typecheck`, not at runtime: if `db` ever became optional again, the
+    // `@ts-expect-error` below would report an UNUSED directive and fail the typecheck. That is
+    // the whole point — the protection moved from a throw to the type, so the test moved too.
+    // @ts-expect-error -- `db` is required; omitting it must not compile.
+    const build = () => new LlmRegistry({ config: DEFAULT_CONFIG });
+    expect(typeof build).toBe("function");
   });
 
   test("a LOCAL route still registers without a db", () => {
     // The refusal must be scoped to non-local providers: a local-only registry is a
     // legitimate configuration and every existing db-less test depends on it.
-    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG, db: ROUTING_DB });
     registry.addRoute(makeProvider("ollama", { available: true }), "llama3.2");
     expect(registry.llmRouter.routes()).toHaveLength(1);
   });

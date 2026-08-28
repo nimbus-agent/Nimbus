@@ -14,7 +14,18 @@ import type {
 
 export type LlmRegistryOptions = {
   config: LlmRouterConfig;
-  db?: Database;
+  /**
+   * REQUIRED. `addRoute` passes it to `wrapLedgeredProvider`, the sole I29 `model`-class
+   * appender, so a registry without one could put an unrecorded egress path in the route table.
+   *
+   * It was optional until 2026-08-28, purely as a test-ergonomics affordance — tests that only
+   * exercise routing avoided standing up SQLite. There was never a product scenario without it:
+   * `platform/assemble.ts` holds the ONLY non-test construction, inside
+   * `buildLlmRegistryFromToml`, whose own `db` parameter is non-optional. The optionality bought
+   * a runtime refusal in `addRoute` and three `this.db === undefined` early-returns; requiring it
+   * turns the refusal into a COMPILE error and retires all four. See #1356.
+   */
+  db: Database;
 };
 
 /**
@@ -29,7 +40,7 @@ export type LlmLifecycleTarget = { routeId?: string };
 
 export class LlmRegistry {
   private readonly router: LlmRouter;
-  private readonly db: Database | undefined;
+  private readonly db: Database;
   // Constructed here (not by LlmRouter) so the registry keeps its own reference to call
   // `invalidate()` on a successful pullModel — see pullModel below. No public accessor is
   // exposed on LlmRouter for this: that would recreate the reach-into-router-internals
@@ -49,44 +60,20 @@ export class LlmRegistry {
    * `registerRoute` to update its meta -- wrapping there would wrap the wrapper and append
    * two rows per generate. Static rule D22(e) pins `registerRoute` to this file so no other
    * caller can enter the route table unwrapped.
+   *
+   * Calls `wrapLedgeredProvider` DIRECTLY. A private `ledgered()` helper sat here while `db`
+   * was optional, to refuse a non-local provider it had no ledger for; with `db` required that
+   * refusal is unreachable, and the helper's only other behaviour — returning a local provider
+   * unchanged — is what the wrapper itself already does, and does as the authoritative
+   * locality decision (I34). Two places reading `isLocal` for one question is exactly the
+   * drift the invariant exists to prevent.
    */
   addRoute(provider: LlmProvider, modelName: string, meta?: ProviderMeta): void {
-    this.router.registerRoute(this.ledgered(provider, modelName), modelName, meta ?? {});
-  }
-
-  /**
-   * `wrapLedgeredProvider` needs a `Database`, and `LlmRegistryOptions.db` is OPTIONAL — so
-   * `addRoute` has to answer what a non-local provider means when there is no ledger to
-   * append to. It REFUSES. Registering it unwrapped would put an unrecorded egress path in
-   * the route table, which is precisely the false zero `nimbus prove` would then report a
-   * clean window over; and a refusal at registration is louder, earlier, and easier to
-   * diagnose than a missing row discovered months later.
-   *
-   * This is the ONE place outside `wrapLedgeredProvider` that reads `isLocal`, and it is not
-   * a second locality decision: the wrapper still decides what gets LEDGERED. This decides
-   * only whether a db is REQUIRED, and its answer for a local provider is "no" — which is
-   * what keeps every db-less local-only registry working unchanged (the ~30 such constructions
-   * in `registry.test.ts`, and `ipc/server/dispatchers.test.ts`).
-   *
-   * Unreachable in production: `platform/assemble.ts` holds the ONLY non-test construction
-   * (inside `buildLlmRegistryFromToml`, whose own `db` is non-optional), so this throw is a
-   * TRIPWIRE for a future second caller — slice 2b's bearer-key clouds — not protection for
-   * any scenario that ships today. The optionality it works around is a test-ergonomics
-   * affordance with no product justification; making `db` required would turn this runtime
-   * refusal into a compile error and retire this method. Tracked in #1356.
-   */
-  private ledgered(provider: LlmProvider, modelName: string): LlmProvider {
-    if (provider.isLocal) {
-      return provider;
-    }
-    const db = this.db;
-    if (db === undefined) {
-      throw new Error(
-        `Refusing to register non-local LLM route "${provider.providerId}/${modelName}" ` +
-          "without a database: its egress could not be recorded in egress_ledger (I29).",
-      );
-    }
-    return wrapLedgeredProvider(db, provider, modelName);
+    this.router.registerRoute(
+      wrapLedgeredProvider(this.db, provider, modelName),
+      modelName,
+      meta ?? {},
+    );
   }
 
   /**
@@ -328,7 +315,6 @@ export class LlmRegistry {
     provider: ProviderId,
     modelName: string,
   ): Promise<void> {
-    if (this.db === undefined) return;
     dbRun(
       this.db,
       `INSERT INTO llm_task_defaults (task_type, provider, model_name, updated_at)
@@ -346,7 +332,6 @@ export class LlmRegistry {
   }
 
   getDefault(taskType: string): { provider: string; modelName: string } | undefined {
-    if (this.db === undefined) return undefined;
     const row = this.db
       .query("SELECT provider, model_name FROM llm_task_defaults WHERE task_type = ?")
       .get(taskType) as { provider: string; model_name: string } | undefined;
@@ -354,7 +339,6 @@ export class LlmRegistry {
   }
 
   private syncModelsToDb(models: LlmModelInfo[]): void {
-    if (this.db === undefined) return;
     const now = Date.now();
     for (const m of models) {
       try {
