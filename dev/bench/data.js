@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787867602203,
+  "lastUpdate": 1787890117510,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16319,6 +16319,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 335.7032335000011,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "30c1ce61afedf459651a25dc1fb88cc32b1152f4",
+          "message": "fix: resolve the brief timeout from one definition, and make the ask context budget configurable (#1354)\n\n## Why\n\nRunning a 14B-class local model against the briefs surfaced two hard\ncaps that made the local-first path unusable, plus one wrong claim in a\ncode comment.\n\nThe CLI brief timeout was a hardcoded 30s. It is a **client**-side\nbound, so it silently capped the gateway's own `[agents]\nsynthesis_timeout_ms`: a gateway configured for 90000 could never\ndeliver, because the caller gave up first and the caller's error was the\nonly one anyone saw. Any local model slow enough to need more than 30s\ncould therefore never return a brief through the CLI at all. Measured:\n`catchup` renders in about 41s on a 14B model, so it always died.\n\n## What changed\n\n**One definition for the brief timeout.** The 30s cap existed in\n**four** independent copies:\n\n| Site | Problem |\n| --- | --- |\n| `lib/agent-brief-render.ts` | the copy behind `catchup` / `impact` /\n`why` |\n| `commands/_agent-brief-cli.ts` | exported `TIMEOUT_MS`, used by most\nbrief commands |\n| `commands/glossary.ts` | consumed that export as a default parameter |\n| `commands/expert.ts` | own constant **and** the literal `\"30 s\"` in\nits error string, so it would have reported the wrong number the moment\nits constant moved |\n\nAll four now resolve through `resolveBriefTimeoutMs`. Default raised\nfrom 30000 to 120000, overridable with `NIMBUS_BRIEF_TIMEOUT_MS`. A\nguard test is written as *what cannot pass*, so a newly added hardcoded\ncopy re-fails it. The guard deliberately matches only a bare\n`TIMEOUT_MS` declaration: it first flagged `doctor.ts`'s\n`FIX_KEYRING_EXEC_TIMEOUT_MS`, an unrelated keyring-spawn budget, and\nforcing that into conformance would have been a false positive.\n\n**Configurable ask context budget.** `LOCAL_CONTEXT_ITEM_LIMIT` was a\nhardcoded 8, sized for a 3B model. Now `resolveLocalContextItemLimit`,\nhonouring `NIMBUS_ASK_CONTEXT_ITEMS`. **The default stays 8, so no\nexisting deployment changes behaviour.**\n\n## What this does NOT fix\n\nRaising the context budget does **not** fix `nimbus ask`. Tested at 40\nitems: the truncation disclosure disappeared entirely, meaning every\nmatching item reached the model, and the answer was still \"no data\navailable\". The real cause is indexing depth, not the budget and not the\nmodel:\n\n- `ci_run` holds 17,913 rows with **zero** `body` and **zero**\n`body_preview`.\n- The workflow name is absent from the searchable title, which is the\ncommit message plus a status suffix.\n\nSo \"which CI workflows failed most often\" is unanswerable from this\nindex at any model size. That needs separate `nimbus index rebody` work\nand is not attempted here.\n\n## Verification\n\n- `bun run preflight:fast` passes, including\n`audit:gateway-native-deps`.\n- Full CI command `bun test packages/gateway packages/cli scripts`:\n19,332 pass, 3 fail. All 3 are pre-existing TUI fallback timeouts in\n`tui/dumb-terminal.test.ts`, confirmed failing identically on clean\n`main` with this work stashed.\n- Every new test was watched fail first, then red-proved by reverting\nthe production value rather than by observing green.\n- End to end: `catchup` completes in 34.9s on an unpatched CLI with no\noverride set, the exact run that previously died at the 30s cap.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Brief operations now allow configurable timeouts through\n`NIMBUS_BRIEF_TIMEOUT_MS`, with a 120-second default and safe fallback\nfor invalid values.\n- Ask-related context retrieval now supports configuration through\n`NIMBUS_ASK_CONTEXT_ITEMS`, defaulting to 8 items.\n- Configured limits are consistently applied across local context, issue\nand pull request lookups, quoted-query searches, and service results.\n\n- **Bug Fixes**\n- Timeout and context-limit settings are now resolved at runtime,\nensuring updated environment values take effect without restarting\ncommand logic.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-28T06:57:32+03:00",
+          "tree_id": "3ba5aea91f93374578502e4a9c5f5e94a1015d05",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/30c1ce61afedf459651a25dc1fb88cc32b1152f4"
+        },
+        "date": 1787890114856,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 309.81854040000104,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 308.2407142000109,
             "unit": "ms"
           }
         ]
