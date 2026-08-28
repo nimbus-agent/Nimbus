@@ -22,6 +22,7 @@ export const VAULT_KEY_ALLOW_LIST = [
   "packages/gateway/src/llm/anthropic-provider.ts",
   "packages/gateway/src/llm/gemini-provider.ts",
   "packages/gateway/src/llm/openai-provider.ts",
+  "packages/gateway/src/llm/vendor-vault-keys.ts",
   "packages/gateway/src/llm/xai-provider.ts",
 ];
 

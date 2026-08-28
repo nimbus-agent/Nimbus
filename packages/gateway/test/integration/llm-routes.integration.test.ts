@@ -5,6 +5,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { buildLlmRegistryFromToml } from "../../src/platform/assemble.ts";
+import type { NimbusVault } from "../../src/vault/nimbus-vault.ts";
+
+/**
+ * An EMPTY Vault. Every case in this file exercises `[llm.local.*]` assembly only, and a
+ * keyless Vault means any `[llm.remote.*]` entry would be dropped rather than registered —
+ * so these assertions keep measuring local routes and nothing else.
+ */
+function emptyVault(): NimbusVault {
+  return {
+    get: async () => null,
+    set: async () => undefined,
+    delete: async () => undefined,
+    listKeys: async () => [],
+  };
+}
 
 // This tree is NOT loaded by `bun test packages/gateway/src` — run the CI command
 // (`bun test packages/gateway packages/cli scripts`) to exercise it.
@@ -30,7 +45,7 @@ describe("buildLlmRegistryFromToml — route assembly from [llm.local.*]", () =>
     return { warn: (msg) => messages.push(msg), messages };
   }
 
-  test("two [llm.local.*] entries produce two routes", () => {
+  test("two [llm.local.*] entries produce two routes", async () => {
     const { db, tomlPath } = writeConfig(`
 [llm.local.qwen3]
 runtime = "ollama"
@@ -41,26 +56,26 @@ runtime = "llamacpp"
 model = "a.gguf"
 base_url = "http://127.0.0.1:9090"
 `);
-    const registry = buildLlmRegistryFromToml(db, tomlPath);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault());
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(2);
     const ids = routes.map((r) => r.routeId).sort();
     expect(ids).toEqual(["llamacpp/a.gguf", "ollama/qwen3:8b"].sort());
   });
 
-  test("only legacy local_model configured → exactly one ollama route plus the llama.cpp route", () => {
+  test("only legacy local_model configured → exactly one ollama route plus the llama.cpp route", async () => {
     const { db, tomlPath } = writeConfig(`
 [llm]
 local_model = "llama3.2"
 `);
-    const registry = buildLlmRegistryFromToml(db, tomlPath);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault());
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(2);
     const providerIds = routes.map((r) => r.provider.providerId).sort();
     expect(providerIds).toEqual(["llamacpp", "ollama"]);
   });
 
-  test("two llamacpp routes that BOTH omit base_url collide and one is dropped", () => {
+  test("two llamacpp routes that BOTH omit base_url collide and one is dropped", async () => {
     // The case a raw-string comparison misses: both values are `undefined`.
     const { db, tomlPath } = writeConfig(`
 [llm.local.a]
@@ -72,7 +87,7 @@ runtime = "llamacpp"
 model = "b.gguf"
 `);
     const logger = capturingLogger();
-    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
     const llamacpp = registry.llmRouter
       .routes()
       .filter((r) => r.provider.providerId === "llamacpp");
@@ -86,7 +101,7 @@ model = "b.gguf"
     expect(dropMessage).toContain("http://127.0.0.1:8080");
   });
 
-  test("many ollama routes on one base URL are all kept", () => {
+  test("many ollama routes on one base URL are all kept", async () => {
     // Ollama sends the model name per request, so sharing a daemon is correct.
     const { db, tomlPath } = writeConfig(`
 [llm.local.qwen3]
@@ -97,11 +112,11 @@ model = "qwen3:8b"
 runtime = "ollama"
 model = "gemma3:12b"
 `);
-    const registry = buildLlmRegistryFromToml(db, tomlPath);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault());
     expect(registry.llmRouter.routes()).toHaveLength(2);
   });
 
-  test("an unresolvable route_priority entry is dropped, and the rest of [llm] survives", () => {
+  test("an unresolvable route_priority entry is dropped, and the rest of [llm] survives", async () => {
     const { db, tomlPath } = writeConfig(`
 [llm]
 enforce_air_gap = true
@@ -112,7 +127,7 @@ runtime = "ollama"
 model = "qwen3:8b"
 `);
     const logger = capturingLogger();
-    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
     // The security-relevant key MUST survive a bad neighbour — this is the regression
     // guard for loadTomlSection's swallow-and-revert behaviour.
     expect(registry.llmRouter.enforcesAirGap()).toBe(true);
@@ -124,7 +139,7 @@ model = "qwen3:8b"
     expect(dropMessage).toContain("ollama/nope");
   });
 
-  test("two llamacpp routes at the SAME explicit base_url collide and one is dropped", () => {
+  test("two llamacpp routes at the SAME explicit base_url collide and one is dropped", async () => {
     const { db, tomlPath } = writeConfig(`
 [llm.local.a]
 runtime = "llamacpp"
@@ -136,7 +151,7 @@ runtime = "llamacpp"
 model = "b.gguf"
 base_url = "http://127.0.0.1:8099"
 `);
-    const registry = buildLlmRegistryFromToml(db, tomlPath);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault());
     const llamacpp = registry.llmRouter
       .routes()
       .filter((r) => r.provider.providerId === "llamacpp");
@@ -144,7 +159,7 @@ base_url = "http://127.0.0.1:8099"
     expect(llamacpp[0]?.modelName).toBe("a.gguf");
   });
 
-  test("two entries deriving the SAME route id keep the first and name the drop", () => {
+  test("two entries deriving the SAME route id keep the first and name the drop", async () => {
     // A plausible failover config: the same model on two daemons. The route id is
     // (runtime, model), so both entries derive "ollama/qwen3:8b" — last-wins on the
     // router's Map would keep the workstation and discard the laptop with no outward sign.
@@ -159,7 +174,7 @@ model = "qwen3:8b"
 base_url = "http://192.168.1.50:11434"
 `);
     const logger = capturingLogger();
-    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(1);
     expect(routes[0]?.routeId).toBe("ollama/qwen3:8b");
@@ -172,7 +187,7 @@ base_url = "http://192.168.1.50:11434"
     expect(dropMessage).toContain("ollama/qwen3:8b");
   });
 
-  test("an unknown runtime is dropped by name, never silently constructed as ollama", () => {
+  test("an unknown runtime is dropped by name, never silently constructed as ollama", async () => {
     const { db, tomlPath } = writeConfig(`
 [llm.local.mystery]
 runtime = "vllm"
@@ -183,7 +198,7 @@ runtime = "ollama"
 model = "qwen3:8b"
 `);
     const logger = capturingLogger();
-    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(1);
     expect(routes[0]?.provider.providerId).toBe("ollama");
@@ -194,7 +209,7 @@ model = "qwen3:8b"
     expect(dropMessage).toContain("vllm");
   });
 
-  test("a non-loopback [llm.local.*] entry is registered REMOTE, and named in the log", () => {
+  test("a non-loopback [llm.local.*] entry is registered REMOTE, and named in the log", async () => {
     // The `[llm.local.<name>]` heading says local; the base URL says otherwise, and the base
     // URL wins. Registering it as local made `[llm] enforce_air_gap` skip its own exclusion
     // and sent prompts to that host — air-gap is a refusal, not a preference.
@@ -209,7 +224,7 @@ runtime = "ollama"
 model = "qwen3:8b"
 `);
     const logger = capturingLogger();
-    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     // Reclassified, not dropped: a deliberately-configured LAN box stays usable with
     // air-gap off.
@@ -225,14 +240,14 @@ model = "qwen3:8b"
     expect(logger.messages.filter((m) => m.includes("not loopback"))).toHaveLength(1);
   });
 
-  test("a LAN llamacpp_server_path is reclassified remote on the legacy path too", () => {
+  test("a LAN llamacpp_server_path is reclassified remote on the legacy path too", async () => {
     const { db, tomlPath } = writeConfig(`
 [llm]
 local_model = "llama3.2"
 llamacpp_server_path = "http://192.168.1.50:8080"
 `);
     const logger = capturingLogger();
-    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     expect(routes.find((r) => r.provider.providerId === "llamacpp")?.provider.isLocal).toBe(false);
     expect(routes.find((r) => r.provider.providerId === "ollama")?.provider.isLocal).toBe(true);
@@ -241,7 +256,7 @@ llamacpp_server_path = "http://192.168.1.50:8080"
     expect(warning).toContain("192.168.1.50");
   });
 
-  test('local_model = "" keeps the default instead of aborting boot', () => {
+  test('local_model = "" keeps the default instead of aborting boot', async () => {
     // `makeRouteId` THROWS on an empty model name, and nothing sits between this function and
     // boot — so a one-character config typo took the whole Gateway down. Nothing in assembly
     // may abort boot.
@@ -250,7 +265,7 @@ llamacpp_server_path = "http://192.168.1.50:8080"
 local_model = ""
 `);
     const logger = capturingLogger();
-    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(2);
     expect(routes.map((r) => r.routeId).sort()).toEqual(["llamacpp/llama3.2", "ollama/llama3.2"]);
@@ -259,13 +274,13 @@ local_model = ""
     expect(warning).toContain("llama3.2");
   });
 
-  test("a whitespace-only local_model is treated the same as empty", () => {
+  test("a whitespace-only local_model is treated the same as empty", async () => {
     const { db, tomlPath } = writeConfig(`
 [llm]
 local_model = "   "
 `);
     const logger = capturingLogger();
-    const registry = buildLlmRegistryFromToml(db, tomlPath, logger);
+    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
     expect(registry.llmRouter.routes()).toHaveLength(2);
     expect(logger.messages.some((m) => m.includes("local_model is empty"))).toBe(true);
   });

@@ -58,6 +58,7 @@ import {
   loadNimbusUpdaterFromConfigDir,
   type NimbusChatopsToml,
   type NimbusLlmLocalRoute,
+  type NimbusLlmRemoteVendor,
   type NimbusTribalToml,
   resolveNimbusTomlForProfile,
   type TeamCredentialConnector,
@@ -179,11 +180,18 @@ import { startMetricsServer } from "../ipc/metrics-server.ts";
 import type { PolicyRpcCtx } from "../ipc/policy-rpc.ts";
 import { extractKbPageRef } from "../ipc/server/dispatchers.ts";
 import type { TribalSubmitAction } from "../ipc/tribal-rpc.ts";
+import { AnthropicProvider } from "../llm/anthropic-provider.ts";
 import { isLoopbackBaseUrl } from "../llm/base-url-locality.ts";
+import { GeminiProvider } from "../llm/gemini-provider.ts";
 import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
+import type { ApiKeyResolver, OpenAiCompatibleOptions } from "../llm/openai-provider.ts";
+import { OpenAiProvider } from "../llm/openai-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
 import { makeRouteId, parseRouteRef } from "../llm/route-id.ts";
+import type { LlmProvider } from "../llm/types.ts";
+import { vendorApiKeyName } from "../llm/vendor-vault-keys.ts";
+import { XaiProvider } from "../llm/xai-provider.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { runOwnershipPass } from "../ownership/ownership-pass.ts";
@@ -1300,6 +1308,99 @@ function resolveBaseUrl(runtime: string, baseUrl: string | undefined): string {
 
 const KNOWN_LOCAL_RUNTIMES = new Set(["ollama", "llamacpp"]);
 
+/** The four cloud vendors this build knows how to CONSTRUCT an adapter for. */
+const REMOTE_VENDOR_IDS = ["anthropic", "openai", "gemini", "xai"] as const;
+export type RemoteVendorId = (typeof REMOTE_VENDOR_IDS)[number];
+
+function isKnownVendorId(id: string): id is RemoteVendorId {
+  return (REMOTE_VENDOR_IDS as readonly string[]).includes(id);
+}
+
+export type ResolvedRemoteVendor = {
+  vendorId: RemoteVendorId;
+  modelName: string;
+  apiKey: ApiKeyResolver;
+  baseUrl?: string;
+};
+
+/**
+ * TOTAL over `RemoteVendorId`, so adding a vendor id without adding its factory is a COMPILE
+ * ERROR rather than a silent fallthrough — the same shape `EGRESS_BEARING_CLIENT_KINDS` uses to
+ * make a new transport a compile error instead of a missing ledger row.
+ *
+ * This deliberately replaces a `switch` whose `default` would construct one particular vendor: a
+ * fifth id added without a case would then be built as THAT vendor's adapter while carrying the
+ * new vendor's model name and reading its `<id>.api_key` — prompts posted to the wrong host under
+ * a credential minted for someone else. A `default: throw` catches it at runtime; a total map
+ * catches it before the code can be committed.
+ */
+const REMOTE_PROVIDER_FACTORIES: Record<
+  RemoteVendorId,
+  (opts: OpenAiCompatibleOptions) => LlmProvider
+> = {
+  anthropic: (opts) => new AnthropicProvider(opts),
+  openai: (opts) => new OpenAiProvider(opts),
+  gemini: (opts) => new GeminiProvider(opts),
+  xai: (opts) => new XaiProvider(opts),
+};
+
+function makeRemoteProvider(v: ResolvedRemoteVendor): LlmProvider {
+  return REMOTE_PROVIDER_FACTORIES[v.vendorId]({
+    apiKey: v.apiKey,
+    modelName: v.modelName,
+    ...(v.baseUrl === undefined ? {} : { baseUrl: v.baseUrl }),
+  });
+}
+
+/**
+ * Validates `[llm.remote.*]` AFTER defaults are applied, here rather than in the parser.
+ *
+ * DO NOT "fix" this by moving it earlier. The instinct is to validate the raw table before
+ * defaults so a vendor problem can be isolated — but that moves validation TOWARD the parser, and
+ * a throw there is swallowed by `loadTomlSection`'s bare catch, whose outcome is not a dropped
+ * vendor but a silently reverted `[llm]` section with `enforce_air_gap` back at `false`.
+ * Post-default validation loses nothing, because an absent `enabled` and an explicit
+ * `enabled = false` mean the same thing — no field here needs absent-versus-explicit
+ * discrimination.
+ *
+ * Every rejection is warn-logged BY NAME, matching `dropUnknownRuntimeEntries` above. An entry
+ * that vanishes without a word is the shape `dropUnresolvableRoutePriorityEntries` refuses to
+ * allow.
+ */
+export function resolveEnabledVendors(
+  remoteVendors: ReadonlyMap<string, NimbusLlmRemoteVendor>,
+  vault: NimbusVault,
+  logger: RouteValidationLogger,
+): ResolvedRemoteVendor[] {
+  const out: ResolvedRemoteVendor[] = [];
+  for (const [vendorId, cfg] of remoteVendors) {
+    // Default-off. Not an error and not warned: it is the norm, and the whole point of the
+    // per-vendor opt-in.
+    if (!cfg.enabled) continue;
+    if (!isKnownVendorId(vendorId)) {
+      logger.warn(
+        `[llm] dropping [llm.remote.${vendorId}]: unknown vendor — expected one of ` +
+          REMOTE_VENDOR_IDS.join(", "),
+      );
+      continue;
+    }
+    if (cfg.model.trim() === "") {
+      logger.warn(`[llm] dropping [llm.remote.${vendorId}]: empty model`);
+      continue;
+    }
+    out.push({
+      vendorId,
+      modelName: cfg.model,
+      // Resolved PER CALL from the Vault, never from the environment: no env var may satisfy a
+      // vendor nobody opted into, and a key added after boot works with no restart. `VaultReader`
+      // answers `null` for a miss, which is normalised to `undefined` for `ApiKeyResolver`.
+      apiKey: async () => (await vault.get(vendorApiKeyName(vendorId))) ?? undefined,
+      ...(cfg.baseUrl === undefined ? {} : { baseUrl: cfg.baseUrl }),
+    });
+  }
+  return out;
+}
+
 /**
  * Drops (and names, via `logger.warn`) any `[llm.local.*]` entry whose `runtime` is neither
  * `"ollama"` nor `"llamacpp"` — the only two runtimes this build knows how to construct a
@@ -1482,11 +1583,12 @@ function dropUnresolvableRoutePriorityEntries(
  *  unresolvable `route_priority` entry. `logger` defaults to a no-op so this stays independently
  *  callable (e.g. from a test) without a real Gateway logger; production wiring always supplies
  *  `syncLogger`, so a dropped-entry warning is never actually silent at boot. */
-export function buildLlmRegistryFromToml(
+export async function buildLlmRegistryFromToml(
   db: Database,
   activeTomlPath: string,
+  vault: NimbusVault,
   logger: RouteValidationLogger = defaultRouteValidationLogger,
-): LlmRegistry {
+): Promise<LlmRegistry> {
   const llmToml = loadNimbusLlmFromPath(activeTomlPath);
   const llmTomlPartial = loadNimbusLlmPartialFromPath(activeTomlPath);
   const llmOverrides: { agentModel?: string; classifierModel?: string } = {};
@@ -1590,6 +1692,23 @@ export function buildLlmRegistryFromToml(
   // single shared name looped across all routes (Task 9 review, finding 1: that shape cross-
   // assigned one route's parameterCount onto another route sharing the same daemon). One
   // `listModels()` call per local route, not per route × distinct model name.
+  // Registering a vendor HERE is what turns I29's `model` egress class from wired-but-zero-row
+  // into a live one: `addRoute` passes every non-local provider through `wrapLedgeredProvider`
+  // (slice 2a), so each of these routes ledgers before every generate without the adapter
+  // cooperating. A vendor that is enabled but whose key does not resolve is dropped with a
+  // warning rather than registered, so a keyless route never enters the priority walk at all.
+  for (const vendor of resolveEnabledVendors(llmToml.remoteVendors, vault, logger)) {
+    const key = await vendor.apiKey();
+    if (key === undefined || key.trim() === "") {
+      logger.warn(
+        `[llm] dropping [llm.remote.${vendor.vendorId}]: enabled but no ` +
+          `${vendorApiKeyName(vendor.vendorId)} in the Vault`,
+      );
+      continue;
+    }
+    llmRegistry.addRoute(makeRemoteProvider(vendor), vendor.modelName);
+  }
+
   void llmRegistry.refreshProviderMeta();
   return llmRegistry;
 }
@@ -2598,8 +2717,10 @@ export async function assemblePlatformServices(
   // design review raised (Q2).
   resolvePersona(paths.configDir, syncLogger);
   const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
-  const llmRegistry = buildLlmRegistryFromToml(db, activeTomlPath, {
-    warn: (m) => syncLogger.warn(m),
+  // AWAITED, never fire-and-forget: the registry must be fully populated before the router
+  // answers anything, or a remote route could be missing from the first turn after boot.
+  const llmRegistry = await buildLlmRegistryFromToml(db, activeTomlPath, vault, {
+    warn: (m: string) => syncLogger.warn(m),
   });
 
   const { localIndex, scheduleItemEmbedding, rt } = createLocalIndexWithEmbeddingRuntime(
