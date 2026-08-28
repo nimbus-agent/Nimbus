@@ -168,6 +168,49 @@ describe("OpenAiProvider", () => {
     await p.generate({ task: "reasoning", prompt: "hi" });
     expect(seen[0]?.url).toBe("https://proxy.internal/v1/chat/completions");
   });
+
+  test("maxTokens and temperature are forwarded when supplied", async () => {
+    stubFetch(200, OK_BODY);
+    const p = new OpenAiProvider({ apiKey: async () => "sk-test", modelName: "gpt-5" });
+    await p.generate({ task: "reasoning", prompt: "hi", maxTokens: 256, temperature: 0.2 });
+    expect(seen[0]?.body).toMatchObject({ max_tokens: 256, temperature: 0.2 });
+  });
+
+  test("a response missing choices and usage degrades to empty text and zero tokens", async () => {
+    // The vendor contract is external data: a shape change must not throw here, it must produce
+    // an honest empty answer the caller can see.
+    stubFetch(200, {});
+    const p = new OpenAiProvider({ apiKey: async () => "sk-test", modelName: "gpt-5" });
+    expect(await p.generate({ task: "reasoning", prompt: "hi" })).toMatchObject({
+      text: "",
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+  });
+
+  test("a non-string content and non-numeric usage are ignored rather than trusted", async () => {
+    stubFetch(200, {
+      choices: [{ message: { content: { unexpected: true } } }],
+      usage: { prompt_tokens: "11", completion_tokens: null },
+    });
+    const p = new OpenAiProvider({ apiKey: async () => "sk-test", modelName: "gpt-5" });
+    expect(await p.generate({ task: "reasoning", prompt: "hi" })).toMatchObject({
+      text: "",
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+  });
+
+  test("a NON-Error thrown from fetch is still transport-class", async () => {
+    // `err instanceof Error` has two arms; a string throw takes the other one.
+    globalThis.fetch = (async () => {
+      throw "boom";
+    }) as unknown as typeof globalThis.fetch;
+    const p = new OpenAiProvider({ apiKey: async () => "sk-test", modelName: "gpt-5" });
+    const err = await p.generate({ task: "reasoning", prompt: "hi" }).catch((e: unknown) => e);
+    expect((err as LlmProviderError).kind).toBe("transport");
+    expect((err as Error).message).toContain("unknown");
+  });
 });
 
 describe("XaiProvider", () => {
@@ -197,5 +240,33 @@ describe("XaiProvider", () => {
     const err = await p.generate({ task: "reasoning", prompt: "hi" }).catch((e: unknown) => e);
     expect((err as LlmProviderError).kind).toBe("auth");
     expect(seen).toHaveLength(0);
+  });
+
+  test("isAvailable and listModels are offline", async () => {
+    const p = new XaiProvider({ apiKey: async () => "xai-test", modelName: "grok-4" });
+    expect(await p.isAvailable()).toBe(true);
+    expect(await p.listModels()).toEqual([{ provider: "xai", modelName: "grok-4" }]);
+    expect(seen).toHaveLength(0);
+  });
+
+  test("isAvailable is false when no key resolves, and when it is blank", async () => {
+    expect(
+      await new XaiProvider({ apiKey: async () => undefined, modelName: "grok-4" }).isAvailable(),
+    ).toBe(false);
+    expect(
+      await new XaiProvider({ apiKey: async () => "   ", modelName: "grok-4" }).isAvailable(),
+    ).toBe(false);
+    expect(seen).toHaveLength(0);
+  });
+
+  test("base_url overrides the xAI host", async () => {
+    stubFetch(200, OK_BODY);
+    const p = new XaiProvider({
+      apiKey: async () => "xai-test",
+      modelName: "grok-4",
+      baseUrl: "https://proxy.internal/",
+    });
+    await p.generate({ task: "reasoning", prompt: "hi" });
+    expect(seen[0]?.url).toBe("https://proxy.internal/v1/chat/completions");
   });
 });

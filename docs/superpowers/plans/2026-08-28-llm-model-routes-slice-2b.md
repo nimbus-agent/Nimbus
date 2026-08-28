@@ -1764,7 +1764,7 @@ git commit -m "feat(llm): add the not_configured availability reason and I34 clo
 
 ---
 
-### Task 7: Registration, validation, and the opt-in
+### Task 7: Registration, validation, and the opt-in — ✅ DONE (b412abe1)
 
 Spec §7.1 (validation), §7.2 (vault), §7.4. This is where the opt-in becomes real. `addRoute`
 already wraps every non-local provider in the I29 ledger decorator (slice 2a), so registering a
@@ -1785,7 +1785,7 @@ vendor here is what turns the `model` egress class from wired-but-zero-row into 
   - `type ResolvedRemoteVendor = { vendorId: string; modelName: string; apiKey: ApiKeyResolver }`
   - `function resolveEnabledVendors(llmToml, vault, logger): ResolvedRemoteVendor[]`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `packages/gateway/src/platform/assemble.test.ts`:
 
@@ -1866,13 +1866,13 @@ model = "claude-sonnet-4-6"
 Reuse whatever fake-vault and temp-toml helpers `assemble.test.ts` already has; add
 `makeFakeVault` / `tomlWith` only if no equivalent exists, and match the file's existing style.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/gateway/src/platform/assemble.test.ts -t "llm.remote"`
 
 Expected: FAIL — `buildLlmRegistryFromToml` takes no vault and is not async.
 
-- [ ] **Step 3: Add the resolver and validation**
+- [x] **Step 3: Add the resolver and validation**
 
 In `packages/gateway/src/platform/assemble.ts`:
 
@@ -1972,7 +1972,7 @@ function makeRemoteProvider(v: ResolvedRemoteVendor): LlmProvider {
 }
 ```
 
-- [ ] **Step 4: Make the builder async and register the vendors**
+- [x] **Step 4: Make the builder async and register the vendors**
 
 Change the signature and register after the local routes:
 
@@ -2011,20 +2011,20 @@ surrounding assembly already calls the vault instance. If that call site is not 
 `async` function, make it one and await at its own caller — do not fire-and-forget it, because the
 registry must be fully populated before the router answers anything.
 
-- [ ] **Step 5: Run the tests, typecheck and the wide-ish suite**
+- [x] **Step 5: Run the tests, typecheck and the wide-ish suite**
 
 Run: `bun test packages/gateway/src/platform packages/gateway/src/llm && bun run typecheck && bun test packages/gateway/test`
 
 Expected: PASS. `buildLlmRegistryFromToml` becoming async is a signature change — grep for every
 caller (`grep -rn 'buildLlmRegistryFromToml' --include=*.ts packages/`) and confirm each awaits.
 
-- [ ] **Step 6: Red-prove the opt-in**
+- [x] **Step 6: Red-prove the opt-in**
 
 Change `if (!cfg.enabled) continue;` to `if (false) continue;`. Re-run: the
 "enabled = false registers NOTHING" test FAILS. Restore. This is the property the entire slice
 exists to preserve — it must be observed failing.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/gateway/src/platform/assemble.ts packages/gateway/src/platform/assemble.test.ts
@@ -2033,7 +2033,7 @@ git commit -m "feat(llm): register enabled [llm.remote.*] vendors behind a Vault
 
 ---
 
-### Task 8: Generate-time route fallback
+### Task 8: Generate-time route fallback — ✅ DONE (ee91d85b)
 
 Spec §6.4. Task 7 created this gap deliberately: a remote route's availability is answered offline,
 so it reports available whatever the network is doing, and `LlmRouter.generate()` has **no try/catch
@@ -2050,7 +2050,7 @@ no internet is a hard failure, while the roadmap row promises "with local fallba
 - Consumes: `LlmProviderError`, `LlmFailureKind` (Task 3).
 - Produces: no new exports. `LlmRouter.generate` behaviour changes only.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `packages/gateway/src/llm/router.test.ts`:
 
@@ -2153,7 +2153,7 @@ describe("generate-time route fallback (§6.4)", () => {
 Reuse the file's existing router/provider fixtures; add `fakeProvider(id, isLocal, generate)` and
 `okResult(text)` helpers only if no equivalents exist. Import `LlmProviderError` and `mock`.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/gateway/src/llm/router.test.ts -t "generate-time route fallback"`
 
@@ -2161,7 +2161,7 @@ Expected: the transport-fallback test FAILS (the error propagates; the local rou
 The auth/request/unclassified tests may pass incidentally today, because nothing falls through
 at all — that is expected, and they become meaningful once the walk exists.
 
-- [ ] **Step 3: Implement the walk**
+- [x] **Step 3: Implement the walk**
 
 Replace `LlmRouter.generate`:
 
@@ -2235,14 +2235,14 @@ Match `firstAvailableRoute`'s existing gate order and availability source exactl
 and mirror it, rather than reconstructing the checks from this snippet. If it takes an injected
 `isAvailable`, thread the same one through.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `bun test packages/gateway/src/llm && bun run typecheck && bun test packages/gateway/test`
 
 Expected: PASS, including every pre-existing `router.test.ts` case — `generate` is widely consumed
 and this changes its failure semantics.
 
-- [ ] **Step 5: Red-prove both directions**
+- [x] **Step 5: Red-prove both directions**
 
 1. Change `err.kind === "transport"` to `true`. Re-run: the auth, request and unclassified tests
    FAIL. Restore.
@@ -2251,7 +2251,7 @@ and this changes its failure semantics.
 Both directions matter: one guards against retrying what must not be retried, the other against
 never retrying at all.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/gateway/src/llm/router.ts packages/gateway/src/llm/router.test.ts
@@ -2260,7 +2260,7 @@ git commit -m "feat(llm): continue the priority walk on a transport-class genera
 
 ---
 
-### Task 9: The Mastra unification and its ledger seam
+### Task 9: The Mastra unification and its ledger seam — ✅ DONE (0cfc4f79)
 
 Spec §6.2, §6.3. **Read the "Pre-flight findings" section at the top of this plan first** — both of
 §6.3's open questions are already answered, and the escape hatch is not needed.
@@ -2285,7 +2285,7 @@ Spec §6.2, §6.3. **Read the "Pre-flight findings" section at the top of this p
 > it from `engine/`, exactly as slice 2a put `wrapLedgeredProvider` in `egress/model-egress.ts`.
 > Update the File Structure row above accordingly when you create it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `packages/gateway/src/egress/mastra-model-egress.test.ts`:
 
@@ -2407,9 +2407,9 @@ describe("wrapLedgeredMastraModel", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail** — module not found.
+- [x] **Step 2: Run them to verify they fail** — module not found.
 
-- [ ] **Step 3: Write the decorator**
+- [x] **Step 3: Write the decorator**
 
 Create `packages/gateway/src/egress/mastra-model-egress.ts`:
 
@@ -2497,9 +2497,9 @@ export function wrapLedgeredMastraModel<T extends object>(
 }
 ```
 
-- [ ] **Step 4: Run the tests** — all four PASS. Then `bun run typecheck`.
+- [x] **Step 4: Run the tests** — all four PASS. Then `bun run typecheck`.
 
-- [ ] **Step 5: Wire the agent onto `[llm.remote.*]`**
+- [x] **Step 5: Wire the agent onto `[llm.remote.*]`**
 
 In `packages/gateway/src/engine/agent.ts`:
 
@@ -2542,7 +2542,7 @@ Import `ModelRouterLanguageModel` from `@mastra/core/llm` and `wrapLedgeredMastr
 `../egress/mastra-model-egress.ts`. Delete the now-unused `getEffectiveAgentModel` import; leave
 `toMastraModelId` only if something else still calls it, otherwise delete it too.
 
-- [ ] **Step 6: Make the agent conditional in `gateway-main.ts`**
+- [x] **Step 6: Make the agent conditional in `gateway-main.ts`**
 
 ```ts
   // No enabled vendor means NO remote inference anywhere, including the default `nimbus ask`.
@@ -2577,7 +2577,7 @@ enabled or none has a key. `resolveEngineAgent`'s return type widens to `Agent |
 follow the compiler to every call site and confirm each already tolerates `undefined` (they do:
 `runTurn` and `runViaAgent` branch on `p.agent === undefined` today).
 
-- [ ] **Step 7: Add the no-vendor test**
+- [x] **Step 7: Add the no-vendor test**
 
 ```ts
 test("with no enabled vendor the engine agent is not constructed at all", async () => {
@@ -2593,11 +2593,11 @@ test("with no enabled vendor the engine agent is not constructed at all", async 
 Place it wherever `gateway-main`'s existing boot tests live; if none exist, assert the same property
 at the `resolveAgentVendor` level instead and say so in the test name.
 
-- [ ] **Step 8: Run everything touched**
+- [x] **Step 8: Run everything touched**
 
 Run: `bun test packages/gateway/src/engine packages/gateway/src/egress packages/gateway/src/platform && bun run typecheck && bun test packages/gateway/test`
 
-- [ ] **Step 9: Red-prove the ledger seam and the opt-in**
+- [x] **Step 9: Red-prove the ledger seam and the opt-in**
 
 1. Remove the `wrapLedgeredMastraModel(...)` call, passing the bare `ModelRouterLanguageModel`.
    Re-run: the `mastra-model-egress` fail-closed and row-count tests still pass (they test the
@@ -2606,7 +2606,7 @@ Run: `bun test packages/gateway/src/engine packages/gateway/src/egress packages/
 2. Change the `vendor === undefined` guard to always construct. Re-run: the no-vendor test FAILS.
    Restore.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/gateway/src/egress/mastra-model-egress.ts packages/gateway/src/egress/mastra-model-egress.test.ts \
@@ -2616,7 +2616,7 @@ git commit -m "feat(engine): put the Mastra agent behind the vendor opt-in and t
 
 ---
 
-### Task 10: Status surface and CLI shape parity
+### Task 10: Status surface and CLI shape parity — ✅ DONE (afbcf703)
 
 Spec §10. **The LOCAL column already exists** — slice 1 added `local: 7` to `COL_WIDTHS` and
 `isLocal` to the CLI's `RouteStatus`. This task adds the `not_configured` rendering and the
@@ -2633,7 +2633,7 @@ shape-parity test.
 - Consumes: `RouteAvailability["reason"]` gaining `not_configured` (Task 6).
 - Produces: nothing later tasks consume.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `packages/cli/src/commands/llm.test.ts`:
 
@@ -2686,10 +2686,10 @@ describe("CLI RouteStatus ≡ gateway LlmRouteStatus", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail** — the parity test passes only if the shapes already
+- [x] **Step 2: Run them to verify they fail** — the parity test passes only if the shapes already
 match (they should); the `not_configured` test FAILS, rendering `no (not_configured)`.
 
-- [ ] **Step 3: Render the new reason**
+- [x] **Step 3: Render the new reason**
 
 In `packages/cli/src/commands/llm.ts`, extend `availabilityText`:
 
@@ -2707,7 +2707,7 @@ function availabilityText(route: RouteStatus): string {
 Extend the `RouteReason` union with `"not_configured"`, keeping the trailing `| string` so a future
 reason still degrades to raw text rather than a type error.
 
-- [ ] **Step 4: Run, red-prove, commit**
+- [x] **Step 4: Run, red-prove, commit**
 
 Run: `bun test packages/cli/src/commands && bun run typecheck`
 
@@ -2723,7 +2723,7 @@ git commit -m "feat(cli): render not_configured and pin the CLI route-status sha
 
 ---
 
-### Task 11: Docs
+### Task 11: Docs — ✅ DONE (fc15a399)
 
 Spec §12. These change **together with their wiring** — the triple rule, and "correct a claim at
 every restatement". The slice-2a docs say the `model` class "appends zero rows in production"; that
@@ -2732,7 +2732,7 @@ becomes FALSE the moment Task 7 lands, and it is restated in several files.
 **Files:** `docs/SECURITY-INVARIANTS.md`, `docs/architecture.md`, `CLAUDE.md`, `GEMINI.md`,
 `.claude/commands/nimbus-egress.md`, `docs/CHANGELOG.md`, `docs/roadmap.md`
 
-- [ ] **Step 1: Find every restatement before editing any of them**
+- [x] **Step 1: Find every restatement before editing any of them**
 
 ```bash
 grep -rn "appends zero rows in production\|wired but appends zero\|zero-row" --include=*.md . \
@@ -2744,7 +2744,7 @@ grep -rn "ships only .OllamaProvider. and .LlamaCppProvider" --include=*.md . \
 Fix every hit in ONE commit. Sweep on the RANGE and the WORD form too, not just the phrase you
 remember — a claim in several spellings needs a sweep per spelling.
 
-- [ ] **Step 2: Update the I29 `model` class**
+- [x] **Step 2: Update the I29 `model` class**
 
 It is no longer latent. State: four vendors registrable behind a default-off per-vendor opt-in; the
 route table ledgered by `wrapLedgeredProvider`; the Mastra agent ledgered by
@@ -2756,7 +2756,7 @@ closes it. Do NOT add a Mastra metadata exclusion — the pre-flight verificatio
 State the §6.4 consequence explicitly: **one prompt can now produce N ledger rows across N
 destinations**, which is correct and must not be deduplicated.
 
-- [ ] **Step 3: Update I34, the roadmap and the CHANGELOG**
+- [x] **Step 3: Update I34, the roadmap and the CHANGELOG**
 
 I34 gains the cloud-adapter half: locality hardcoded `false`, never derived from `base_url`.
 
@@ -2767,14 +2767,14 @@ CHANGELOG: a dated entry covering the four vendors, the opt-in, the fallback wal
 unification, and the fact that the `model` egress class is now exercised in production for the
 first time.
 
-- [ ] **Step 4: Run the doc gates**
+- [x] **Step 4: Run the doc gates**
 
 Run: `bun run lint:markdown && bun run audit:doc-refs && bun run audit:status-drift`
 
 Then check for absolute links, which pass locally and fail lychee on CI:
 `grep -rn "file:///" --include=*.md docs/ *.md` — expected: only prose describing the check itself.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/ CLAUDE.md GEMINI.md .claude/commands/

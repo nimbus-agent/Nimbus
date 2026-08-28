@@ -150,4 +150,58 @@ describe("AnthropicProvider", () => {
     ]);
     expect(seen).toHaveLength(0);
   });
+
+  test("temperature is forwarded when supplied, and maxTokens overrides the default", async () => {
+    stubFetch(200, OK_BODY);
+    const p = new AnthropicProvider({ apiKey: async () => "sk-ant", modelName: "m" });
+    await p.generate({ task: "reasoning", prompt: "hi", maxTokens: 99, temperature: 0.3 });
+    expect(seen[0]?.body).toMatchObject({ max_tokens: 99, temperature: 0.3 });
+  });
+
+  test("a malformed response degrades to empty text and zero tokens", async () => {
+    stubFetch(200, {});
+    const p = new AnthropicProvider({ apiKey: async () => "sk-ant", modelName: "m" });
+    expect(await p.generate({ task: "reasoning", prompt: "hi" })).toMatchObject({
+      text: "",
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+  });
+
+  test("non-string block text and non-numeric usage are ignored rather than trusted", async () => {
+    stubFetch(200, {
+      content: [
+        { type: "text", text: 42 },
+        { type: "text", text: "kept" },
+      ],
+      usage: { input_tokens: "11", output_tokens: null },
+    });
+    const p = new AnthropicProvider({ apiKey: async () => "sk-ant", modelName: "m" });
+    expect(await p.generate({ task: "reasoning", prompt: "hi" })).toMatchObject({
+      text: "kept",
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+  });
+
+  test("a NON-Error thrown from fetch is still transport-class", async () => {
+    globalThis.fetch = (async () => {
+      throw "boom";
+    }) as unknown as typeof globalThis.fetch;
+    const p = new AnthropicProvider({ apiKey: async () => "sk-ant", modelName: "m" });
+    const err = await p.generate({ task: "reasoning", prompt: "hi" }).catch((e: unknown) => e);
+    expect((err as LlmProviderError).kind).toBe("transport");
+    expect((err as Error).message).toContain("unknown");
+  });
+
+  test("base_url overrides the host, trailing slash and all", async () => {
+    stubFetch(200, OK_BODY);
+    const p = new AnthropicProvider({
+      apiKey: async () => "sk-ant",
+      modelName: "m",
+      baseUrl: "https://proxy.internal/",
+    });
+    await p.generate({ task: "reasoning", prompt: "hi" });
+    expect(seen[0]?.url).toBe("https://proxy.internal/v1/messages");
+  });
 });

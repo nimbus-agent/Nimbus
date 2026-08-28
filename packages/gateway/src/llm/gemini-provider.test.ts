@@ -123,4 +123,65 @@ describe("GeminiProvider", () => {
     expect(await p.listModels()).toEqual([{ provider: "gemini", modelName: "gemini-2.5-pro" }]);
     expect(seen).toHaveLength(0);
   });
+
+  test("maxTokens and temperature ride generationConfig when supplied", async () => {
+    stubFetch(200, OK_BODY);
+    const p = new GeminiProvider({ apiKey: async () => "g-key", modelName: "m" });
+    await p.generate({ task: "reasoning", prompt: "hi", maxTokens: 256, temperature: 0.2 });
+    expect(seen[0]?.body).toMatchObject({
+      generationConfig: { maxOutputTokens: 256, temperature: 0.2 },
+    });
+  });
+
+  test("no generationConfig is sent when neither is supplied", async () => {
+    stubFetch(200, OK_BODY);
+    const p = new GeminiProvider({ apiKey: async () => "g-key", modelName: "m" });
+    await p.generate({ task: "reasoning", prompt: "hi" });
+    expect(seen[0]?.body).not.toHaveProperty("generationConfig");
+  });
+
+  test("a malformed response degrades to empty text and zero tokens", async () => {
+    // External data: a vendor shape change must produce an honest empty answer, not a throw.
+    stubFetch(200, {});
+    const p = new GeminiProvider({ apiKey: async () => "g-key", modelName: "m" });
+    expect(await p.generate({ task: "reasoning", prompt: "hi" })).toMatchObject({
+      text: "",
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+  });
+
+  test("non-string parts and non-numeric usage are ignored rather than trusted", async () => {
+    stubFetch(200, {
+      candidates: [{ content: { parts: [{ text: 42 }, { text: "kept" }] } }],
+      usageMetadata: { promptTokenCount: "11", candidatesTokenCount: null },
+    });
+    const p = new GeminiProvider({ apiKey: async () => "g-key", modelName: "m" });
+    expect(await p.generate({ task: "reasoning", prompt: "hi" })).toMatchObject({
+      text: "kept",
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+  });
+
+  test("a NON-Error thrown from fetch is still transport-class", async () => {
+    globalThis.fetch = (async () => {
+      throw "boom";
+    }) as unknown as typeof globalThis.fetch;
+    const p = new GeminiProvider({ apiKey: async () => "g-key", modelName: "m" });
+    const err = await p.generate({ task: "reasoning", prompt: "hi" }).catch((e: unknown) => e);
+    expect((err as LlmProviderError).kind).toBe("transport");
+    expect((err as Error).message).toContain("unknown");
+  });
+
+  test("base_url overrides the host, trailing slash and all", async () => {
+    stubFetch(200, OK_BODY);
+    const p = new GeminiProvider({
+      apiKey: async () => "g-key",
+      modelName: "m",
+      baseUrl: "https://proxy.internal/",
+    });
+    await p.generate({ task: "reasoning", prompt: "hi" });
+    expect(seen[0]?.url).toContain("https://proxy.internal/v1beta/models/m:generateContent");
+  });
 });
