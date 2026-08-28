@@ -65,8 +65,8 @@ export class LlmRegistry {
    * This is the ONE place outside `wrapLedgeredProvider` that reads `isLocal`, and it is not
    * a second locality decision: the wrapper still decides what gets LEDGERED. This decides
    * only whether a db is REQUIRED, and its answer for a local provider is "no" — which is
-   * what keeps every db-less local-only registry (all of `registry.test.ts`, `assemble.ts`'s
-   * pre-db paths) working unchanged.
+   * what keeps every db-less local-only registry working unchanged (the ~30 such constructions
+   * in `registry.test.ts`, and `ipc/server/dispatchers.test.ts`).
    *
    * Unreachable in production: `platform/assemble.ts` always constructs the registry with
    * `db`. Slice 2b's bearer-key clouds inherit the guarantee for free.
