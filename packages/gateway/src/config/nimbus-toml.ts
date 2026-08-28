@@ -205,6 +205,23 @@ export type NimbusLlmLocalRoute = {
   baseUrl?: string;
 };
 
+/**
+ * One `[llm.remote.<vendor>]` sub-table: a cloud vendor opt-in. Slice 2b spec §7.1.
+ *
+ * `enabled` DEFAULTS TO FALSE and is never inferred from the presence of a key. Per-vendor rather
+ * than one global remote toggle, so enabling Gemini cannot silently enable another vendor because
+ * an unrelated credential happens to exist.
+ *
+ * `baseUrl` is a proxy override and does NOT affect locality — a cloud adapter hardcodes
+ * `isLocal = false` even on a loopback base URL, because the proxy forwards to the vendor
+ * (invariant I34).
+ */
+export type NimbusLlmRemoteVendor = {
+  enabled: boolean;
+  model: string;
+  baseUrl?: string;
+};
+
 export type NimbusLlmToml = {
   preferLocal: boolean;
   remoteModel: string;
@@ -232,6 +249,14 @@ export type NimbusLlmToml = {
    */
   localRoutes: ReadonlyMap<string, NimbusLlmLocalRoute>;
   /**
+   * Named `[llm.remote.<vendor>]` sub-tables, keyed by vendor id VERBATIM from the header.
+   * Collected without validation, exactly like `localRoutes`: an unknown vendor id, an
+   * `enabled = true` with no resolvable key, and an empty model are all `platform/assemble.ts`'s
+   * to warn about BY NAME and drop. A throw here would be swallowed by `loadTomlSection`'s bare
+   * catch and revert the whole `[llm]` section to defaults, `enforce_air_gap` included.
+   */
+  remoteVendors: ReadonlyMap<string, NimbusLlmRemoteVendor>;
+  /**
    * Verbatim `route_priority` entries — un-resolved route references, in file order.
    * See `localRoutes` doc: resolving each entry against a registered route (built-in or
    * `[llm.local.*]`) is Task 9's job, not this parser's.
@@ -251,6 +276,7 @@ export const DEFAULT_NIMBUS_LLM_TOML: NimbusLlmToml = {
   maxAgentDepth: 3,
   maxToolCallsPerSession: 20,
   localRoutes: new Map(),
+  remoteVendors: new Map(),
   routePriority: [],
 };
 
@@ -315,6 +341,7 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
 }
 
 const LLM_LOCAL_TABLE_PREFIX = "[llm.local.";
+const LLM_REMOTE_TABLE_PREFIX = "[llm.remote.";
 
 /** Records a `key = value` line into the current `[llm.local.<name>]` bucket, if any. */
 function applyLlmLocalTableLine(bucket: Record<string, string> | undefined, trimmed: string): void {
@@ -333,19 +360,31 @@ function applyLlmLocalTableLine(bucket: Record<string, string> | undefined, trim
  * malformed block" — matching the `[ownership]`/`[hitl.quorum]` precedent elsewhere in
  * this file, where one bad entry is dropped rather than discarding the section.
  */
-function beginLlmLocalTable(
+function beginLlmTable(
   accum: Map<string, Record<string, string>>,
   trimmed: string,
+  prefix: string,
+  label: string,
 ): string | undefined {
   try {
-    return resolveServiceTableId(trimmed, LLM_LOCAL_TABLE_PREFIX, "llm.local", accum);
+    return resolveServiceTableId(trimmed, prefix, label, accum);
   } catch {
     return undefined;
   }
 }
 
-/** Accumulates raw kv strings per `[llm.local.<name>]` sub-table. */
-function collectLlmLocalKvSections(source: string): Map<string, Record<string, string>> {
+/**
+ * Accumulates raw kv strings per `[llm.<kind>.<id>]` sub-table.
+ *
+ * `prefix`/`label` are the ONLY difference between the local-route and remote-vendor collectors,
+ * so they share this one function rather than each carrying a copy of the header-reset behaviour
+ * below — that reset fixed a real bug, and a second copy could regress it independently.
+ */
+function collectLlmKvSections(
+  source: string,
+  prefix: string,
+  label: string,
+): Map<string, Record<string, string>> {
   const accum = new Map<string, Record<string, string>>();
   let currentId: string | undefined;
 
@@ -361,7 +400,7 @@ function collectLlmLocalKvSections(source: string): Map<string, Record<string, s
     // malformed header was written into the PREVIOUS route's bucket: `[llm.local.good]` followed
     // by `[llm.local.bad` silently became `good` carrying `bad`'s runtime and model.
     if (trimmed.startsWith("[")) {
-      currentId = isTableHeader(trimmed) ? beginLlmLocalTable(accum, trimmed) : undefined;
+      currentId = isTableHeader(trimmed) ? beginLlmTable(accum, trimmed, prefix, label) : undefined;
       continue;
     }
     if (currentId === undefined) continue;
@@ -369,6 +408,46 @@ function collectLlmLocalKvSections(source: string): Map<string, Record<string, s
   }
 
   return accum;
+}
+
+/** Accumulates raw kv strings per `[llm.local.<name>]` sub-table. */
+function collectLlmLocalKvSections(source: string): Map<string, Record<string, string>> {
+  return collectLlmKvSections(source, LLM_LOCAL_TABLE_PREFIX, "llm.local");
+}
+
+/**
+ * Validates one `[llm.remote.<vendor>]` sub-table's raw kv strings into a vendor, or `undefined`
+ * when structurally unusable (no `model`). An absent `enabled` and an explicit `enabled = false`
+ * mean the same thing, so no absent-versus-explicit discrimination is needed here or downstream —
+ * which is what lets `platform/assemble.ts` validate AFTER defaults are applied rather than
+ * closer to the parser, where a throw would trip `loadTomlSection`'s bare catch.
+ */
+function toLlmRemoteVendor(kv: Record<string, string>): NimbusLlmRemoteVendor | undefined {
+  const modelRaw = kv["model"];
+  if (modelRaw === undefined) return undefined;
+  const model = parseString(modelRaw);
+  if (model.length === 0) return undefined;
+  const enabledRaw = kv["enabled"];
+  const vendor: NimbusLlmRemoteVendor = {
+    enabled: enabledRaw === undefined ? false : (parseBool(enabledRaw) ?? false),
+    model,
+  };
+  const baseUrlRaw = kv["base_url"];
+  if (baseUrlRaw !== undefined) {
+    const baseUrl = parseString(baseUrlRaw);
+    if (baseUrl.length > 0) vendor.baseUrl = baseUrl;
+  }
+  return vendor;
+}
+
+/** Parses every `[llm.remote.<vendor>]` sub-table into a vendor → config map. Never throws. */
+function parseLlmRemoteVendors(source: string): Map<string, NimbusLlmRemoteVendor> {
+  const out = new Map<string, NimbusLlmRemoteVendor>();
+  for (const [id, kv] of collectLlmKvSections(source, LLM_REMOTE_TABLE_PREFIX, "llm.remote")) {
+    const vendor = toLlmRemoteVendor(kv);
+    if (vendor !== undefined) out.set(id, vendor);
+  }
+  return out;
 }
 
 /**
@@ -430,6 +509,11 @@ export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml
   // (not an empty map), matching every other optional field here.
   const localRoutes = parseLlmLocalRoutes(source);
   if (localRoutes.size > 0) out.localRoutes = localRoutes;
+  // Same second-scan reasoning and the same `Partial<>` contract as `localRoutes` above: an
+  // absent `[llm.remote.*]` block leaves `remoteVendors` UNSET rather than an empty map, so
+  // `assemble.ts` can tell "no vendor tables" from "vendor tables that all dropped".
+  const remoteVendors = parseLlmRemoteVendors(source);
+  if (remoteVendors.size > 0) out.remoteVendors = remoteVendors;
   return out;
 }
 

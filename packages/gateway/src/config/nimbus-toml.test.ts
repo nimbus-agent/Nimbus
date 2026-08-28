@@ -26,6 +26,7 @@ import {
   DEFAULT_NIMBUS_BRIEFS_TOML,
   DEFAULT_NIMBUS_EMBEDDING_TOML,
   DEFAULT_NIMBUS_LAN_TOML,
+  DEFAULT_NIMBUS_LLM_TOML,
   DEFAULT_NIMBUS_PREMORTEM_TOML,
   DEFAULT_NIMBUS_UPDATER_TOML,
   loadNimbusAuditFromConfigDir,
@@ -1884,5 +1885,97 @@ describe("[code_execution] config", () => {
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
+  });
+});
+
+describe("parseNimbusTomlLlmSection — [llm.remote.<vendor>]", () => {
+  test("parses a vendor table, defaulting enabled to false", () => {
+    // DEFAULT-OFF is the property the whole slice rests on: an entry that merely EXISTS, with a
+    // model and (elsewhere) a key present, must still not be enabled.
+    const cfg = parseNimbusTomlLlmSection(`
+[llm]
+prefer_local = true
+
+[llm.remote.anthropic]
+model = "claude-sonnet-4-6"
+`);
+    expect(cfg.remoteVendors?.get("anthropic")).toEqual({
+      enabled: false,
+      model: "claude-sonnet-4-6",
+    });
+  });
+
+  test("enabled = true is honoured, and base_url is optional", () => {
+    const cfg = parseNimbusTomlLlmSection(`
+[llm]
+
+[llm.remote.openai]
+enabled = true
+model = "gpt-5"
+base_url = "https://proxy.internal"
+`);
+    expect(cfg.remoteVendors?.get("openai")).toEqual({
+      enabled: true,
+      model: "gpt-5",
+      baseUrl: "https://proxy.internal",
+    });
+  });
+
+  test("several vendors coexist and do not bleed into each other", () => {
+    const cfg = parseNimbusTomlLlmSection(`
+[llm]
+
+[llm.remote.anthropic]
+enabled = true
+model = "claude-sonnet-4-6"
+
+[llm.remote.gemini]
+model = "gemini-2.5-pro"
+`);
+    expect(cfg.remoteVendors?.get("anthropic")?.enabled).toBe(true);
+    expect(cfg.remoteVendors?.get("gemini")?.enabled).toBe(false);
+    expect(cfg.remoteVendors?.get("gemini")?.model).toBe("gemini-2.5-pro");
+  });
+
+  test("a malformed header ends the previous vendor rather than leaking into it", () => {
+    // The bug the shared collector's header-reset exists to prevent, asserted on the REMOTE side
+    // too: without it `anthropic` would silently acquire xai's model.
+    const cfg = parseNimbusTomlLlmSection(`
+[llm]
+
+[llm.remote.anthropic]
+model = "claude-sonnet-4-6"
+
+[llm.remote.xai
+model = "grok-4"
+`);
+    expect(cfg.remoteVendors?.get("anthropic")?.model).toBe("claude-sonnet-4-6");
+    expect(cfg.remoteVendors?.has("xai")).toBe(false);
+  });
+
+  test("a vendor with no model is dropped, and enforce_air_gap SURVIVES", () => {
+    // The parser NEVER throws: a structurally unusable entry is dropped here and warned about by
+    // name in assemble.ts. If this threw, `loadTomlSection`'s bare catch would revert the whole
+    // section and take `enforce_air_gap` back to its `false` default with it.
+    const cfg = parseNimbusTomlLlmSection(`
+[llm]
+enforce_air_gap = true
+
+[llm.remote.anthropic]
+enabled = true
+`);
+    // It was the only vendor table, so dropping it leaves the key entirely unset — the
+    // `Partial<>` contract, not an empty map. `?.has()` would yield `undefined` here, so assert
+    // the absence directly rather than comparing it to `false`.
+    expect(cfg.remoteVendors).toBeUndefined();
+    expect(cfg.enforceAirGap).toBe(true);
+  });
+
+  test("no [llm.remote.*] tables leaves the key ABSENT, matching localRoutes", () => {
+    // Partial<>: absent, not an empty map -- the same contract `localRoutes` follows, so
+    // `assemble.ts` can tell "no tables" from "tables that all dropped". The empty Map lives on
+    // DEFAULT_NIMBUS_LLM_TOML, not here.
+    expect(parseNimbusTomlLlmSection(`[llm]\nprefer_local = true\n`).remoteVendors).toBeUndefined();
+    expect(DEFAULT_NIMBUS_LLM_TOML.remoteVendors.size).toBe(0);
   });
 });
