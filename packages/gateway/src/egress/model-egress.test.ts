@@ -134,6 +134,38 @@ describe("wrapLedgeredProvider", () => {
     expect(await wrapped.listModels()).toEqual([]);
   });
 
+  test("an OPTIONAL pullModel is forwarded, and bound to the inner provider", async () => {
+    // The conditional spread has two arms and the tests above only ever exercised the absent
+    // one. This matters beyond coverage: `pullModel` is `.bind`-ed rather than arrow-wrapped,
+    // so a regression to a bare `provider.pullModel` reference would lose `this` and throw
+    // only at pull time, on a multi-gigabyte download.
+    let pulledBy: unknown;
+    let pulledName = "";
+    const inner = {
+      ...makeProvider("anthropic", false),
+      pullModel(this: unknown, modelName: string): Promise<void> {
+        pulledBy = this;
+        pulledName = modelName;
+        return Promise.resolve();
+      },
+    };
+    const wrapped = wrapLedgeredProvider(db, inner, "claude-sonnet-4-6");
+
+    expect(wrapped.pullModel).toBeDefined();
+    await wrapped.pullModel?.("claude-sonnet-4-6", {});
+    expect(pulledName).toBe("claude-sonnet-4-6");
+    expect(pulledBy).toBe(inner);
+    // Pulling is not egress the ledger claims: only `generate` appends.
+    expect(listEgress(db, {})).toHaveLength(0);
+  });
+
+  test("a provider WITHOUT pullModel does not gain an undefined one", () => {
+    // The other arm. A `pullModel: undefined` key is not the same as an absent key under
+    // `exactOptionalPropertyTypes`, and `LlmRegistry.pullModel` tests `typeof !== "function"`.
+    const wrapped = wrapLedgeredProvider(db, makeProvider("anthropic", false), "m");
+    expect("pullModel" in wrapped).toBe(false);
+  });
+
   test("wrapping is idempotent-safe: re-wrapping an already-wrapped provider double-counts", async () => {
     // Documents WHY `addRoute` wraps and `registerRoute` does not (Task 3). If a future
     // change moved the wrap into `registerRoute`, `refreshProviderMeta`'s re-registration
