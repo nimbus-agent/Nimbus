@@ -398,7 +398,7 @@ git commit -m "feat(config): parse [llm.remote.<vendor>] sub-tables, default-off
 
 ---
 
-### Task 2: Vault keys and the allow-list
+### Task 2: Vault keys and the allow-list — ✅ DONE (9930fc71)
 
 Spec §7.2. Four keys join the platform keyspace; the files that read them join the allow-list.
 Nothing consumes them yet, so `audit:invariants` is this task's gate.
@@ -414,7 +414,7 @@ Nothing consumes them yet, so `audit:invariants` is this task's gate.
 - Produces, relied on by Tasks 3-5, 7 and 9: the vault key ids `anthropic.api_key`,
   `openai.api_key`, `gemini.api_key`, `xai.api_key`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `packages/gateway/src/security-invariants.test.ts`. Place it beside the existing vault-key
 assertions — find them by searching the file for `VAULT_KEY_ALLOW_LIST`.
@@ -432,13 +432,13 @@ assertions — find them by searching the file for `VAULT_KEY_ALLOW_LIST`.
   });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `bun test packages/gateway/src/security-invariants.test.ts -t "slice-2b vendor keys"`
 
 Expected: FAIL — none of the four are present.
 
-- [ ] **Step 3: Register the keys**
+- [x] **Step 3: Register the keys**
 
 In `scripts/structure-audit/check-nimbus-invariants.ts`:
 
@@ -460,19 +460,28 @@ export const PLATFORM_VAULT_KEYS = [
 ] as const;
 ```
 
-- [ ] **Step 4: Run the test and the audit**
+- [x] **Step 4: Run the test and the audit**
 
 Run: `bun test packages/gateway/src/security-invariants.test.ts && bun run audit:invariants`
 
 Expected: both PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/structure-audit/check-nimbus-invariants.ts packages/gateway/src/security-invariants.test.ts
 git commit -m "feat(vault): register the four slice-2b vendor api_key entries"
 ```
 
+> **Executed-note.** The test went into `scripts/structure-audit/check-nimbus-invariants.test.ts`,
+> beside the existing D11 vault blocks — `security-invariants.test.ts` has no vault-key
+> assertions, contrary to this task's Step 1. `PLATFORM_VAULT_KEYS` is `as const`, so the
+> assertion spreads it into a widened `string[]` before `toContain`.
+>
+> **A coupling this plan did not name:** a frozen `VAULT_KEY_ALLOW_LIST has exactly 9 entries`
+> test sits immediately above. Tasks 3-5 add four adapter entries, so that count must become
+> **13** — bump it in the task that takes it past 9, not afterwards.
+>
 > **Note on `VAULT_KEY_ALLOW_LIST`.** The four adapter files must join it, but the entry lands in
 > the commit that CREATES each file (Tasks 3-5), not here — an allow-list naming a file that does
 > not exist yet is drift of the kind `audit:doc-refs` and the structure audits exist to prevent.
