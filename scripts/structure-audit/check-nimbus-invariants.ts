@@ -17,6 +17,10 @@ export const VAULT_KEY_ALLOW_LIST = [
   "packages/gateway/src/embedding/create-embedding-runtime.ts",
   "packages/gateway/src/connectors/connector-secrets-manifest.ts",
   "packages/gateway/src/extensions/publisher-keys.ts",
+  // Slice 2b cloud adapters: each names its own `<vendor>.api_key` when resolving the
+  // credential per call from the Vault.
+  "packages/gateway/src/llm/openai-provider.ts",
+  "packages/gateway/src/llm/xai-provider.ts",
 ];
 
 /**
