@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787941644449,
+  "lastUpdate": 1787943832420,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16795,6 +16795,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 316.81038419999607,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "97ce9043cb6c08e9e7c5c06a3db5bf71f0bda1c0",
+          "message": "refactor(llm)!: make LlmRegistryOptions.db required so an unledgered non-local route is a compile error (#1372)\n\nCloses #1356.\n\n## The optionality had no product justification\n\n`LlmRegistryOptions.db` was optional (`db?: Database`), but of the 45\n`new LlmRegistry(...)` constructions in the repo exactly **one** was not\na test — `platform/assemble.ts`, inside `buildLlmRegistryFromToml`,\nwhose own `db` parameter is non-optional and whose single caller passes\nthe handle from `openGatewaySqlite()`. The other 44 were tests, 30 of\nthem using the bare `new LlmRegistry({ config: DEFAULT_CONFIG })` form.\n\nSo `db?` was a **test-ergonomics affordance** — tests exercising only\nrouting avoided standing up SQLite — not a supported configuration.\n\n## What it cost\n\nSlice 2a gave that same `db` a safety-critical second job: `addRoute`\npasses it to `wrapLedgeredProvider`, the sole I29 `model`-class\nappender. The optionality therefore bought:\n\n- a **runtime refusal** in `addRoute` for a non-local provider with no\nledger, plus its private `ledgered()` helper;\n- three `this.db === undefined` early-returns in `setDefault`,\n`getDefault` and `syncModelsToDb`.\n\nAll four are now deleted. Making `db` required turns the refusal into a\n**compile error** — 33 of them on the first typecheck, which is the\nchange working.\n\n`ledgered()` goes too, and not only because its refusal branch became\nunreachable: its other behaviour — returning a local provider unchanged\n— is exactly what `wrapLedgeredProvider` already does, and does as the\n*authoritative* locality decision under **I34**. Two places reading\n`isLocal` to answer one question is the drift that invariant exists to\nprevent, so `addRoute` now calls the wrapper directly.\n\n## Tests: deleted, not ported\n\nThree tests covered states that are now unconstructable. Porting them\nwould have meant passing a real `db` and asserting a no-op that no\nlonger happens — tests that cannot fail.\n\n- The two `\"when DB is undefined\"` tests are **deleted**, with a comment\nsaying why and pointing at the replacement.\n- The `\"registering a NON-LOCAL route without a db is refused\"` test is\nreplaced by a **compile-time** guard:\n\n```ts\n// @ts-expect-error -- `db` is required; omitting it must not compile.\nconst build = () => new LlmRegistry({ config: DEFAULT_CONFIG });\n```\n\nIf `db` ever became optional again, that directive becomes unused and\n`bun run typecheck` fails with `TS2578`. The protection moved from a\nthrow to the type, so the test moved with it.\n\n**Red-proved:** reverting `db` to `db?` produces exactly that failure —\n\n```\nsrc/llm/registry.test.ts(881,5): error TS2578: Unused '@ts-expect-error' directive.\nsrc/llm/registry.ts(52,5): error TS2322: Type 'Database | undefined' is not assignable to type 'Database'.\n```\n\nRouting-only tests get a shared bare in-memory `ROUTING_DB`, documented:\nthey register **local** providers only, and `wrapLedgeredProvider`\nreturns those unchanged without touching the handle, so no schema is\nneeded and they stay as cheap as before. A test registering a non-local\nprovider still uses `makeDbWithSchema()`, because the wrapper really\ndoes append.\n\n## Verification\n\n- `bun run typecheck` — clean; red-proved as above.\n- `bun run preflight:fast` — pass.\n- Full CI command `bun test packages/gateway packages/cli scripts` —\n**19,457 pass, 0 fail**.\n\n## Breaking-change note\n\n`LlmRegistryOptions.db` is now required. This is internal to\n`@nimbus/gateway`, a `private: true` package with no published surface —\nthe same call I made on slice 2a (#1357) and the opposite of the one on\n2b, where an env-var fallback removal required user action.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved reliability for AI provider routing by ensuring the required\ndatabase is always available.\n- Ledger tracking and provider configuration now operate consistently\nacross supported routes.\n- Default model settings and synchronization no longer silently skip\ndatabase-backed operations.\n\n- **Tests**\n- Expanded coverage for local and non-local provider routing,\npersistence, lifecycle behavior, metadata, caching, and ledger tracking.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-28T18:52:29Z",
+          "tree_id": "53919d028380f0d54d695a924c64762e69d09fd7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/97ce9043cb6c08e9e7c5c06a3db5bf71f0bda1c0"
+        },
+        "date": 1787943829753,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 322.85159070000043,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 325.45994540000646,
             "unit": "ms"
           }
         ]
