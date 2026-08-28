@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [5.0.1](https://github.com/nimbus-agent/Nimbus/compare/v5.0.0...v5.0.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **connectors:** index a Confluence page under its browser URL ([#1364](https://github.com/nimbus-agent/Nimbus/issues/1364)) ([c7a9e1a](https://github.com/nimbus-agent/Nimbus/commit/c7a9e1a53fcc5fc22e2830e38ad25009b7e5d6e5))
+
 ## [5.0.0](https://github.com/nimbus-agent/Nimbus/compare/v4.1.0...v5.0.0) (2026-08-28)
 
 
