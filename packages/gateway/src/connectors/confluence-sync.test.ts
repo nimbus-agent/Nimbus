@@ -837,4 +837,140 @@ describeWithFetchRestore("confluence-sync", () => {
       }),
     ).toBe("Note");
   });
+
+  // ---------------------------------------------------------------------------
+  // The indexed URL must be one a browser is actually on.
+  // ---------------------------------------------------------------------------
+
+  /** One CQL search result, with whatever `_links` the case under test needs. */
+  function pageResult(links?: unknown): unknown {
+    return {
+      type: "page",
+      id: "12345",
+      title: "Wiki Page",
+      ...(links === undefined ? {} : { _links: links }),
+      history: { lastUpdated: { when: "2026-04-01T12:00:00.000+0000" } },
+    };
+  }
+
+  /** The `url` column of the single indexed Confluence item. */
+  function indexedUrl(db: ReturnType<typeof createMemoryIndexDb>): string | null {
+    const row = db.prepare("SELECT url FROM item WHERE service = 'confluence' LIMIT 1").get() as
+      | { url: string | null }
+      | undefined;
+    return row?.url ?? null;
+  }
+
+  test("indexes a page under its browser URL when the API supplies _links.webui", async () => {
+    // `_links.webui` is site-relative and omits the `/wiki` context. It is the
+    // URL a browser is on, and therefore the only one the clipper's
+    // `GET /v1/items/resolve` can ever match: that ladder is resolve-key based
+    // (exact, query-stripped, up to three trimmed trailing segments) and cannot
+    // bridge to `viewpage.action?pageId=`.
+    const db = createMemoryIndexDb();
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response(
+        JSON.stringify({
+          results: [pageResult({ webui: "/spaces/ENG/pages/12345/Wiki+Page" })],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+
+    const sync = createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({
+        "confluence.email": "u@example.com",
+        "confluence.api_token": "tok",
+        "confluence.base_url": "https://example.atlassian.net",
+      }),
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({
+          "confluence.email": "u@example.com",
+          "confluence.api_token": "tok",
+          "confluence.base_url": "https://example.atlassian.net",
+        }),
+        "confluence",
+      ),
+    };
+    await sync.sync(ctx, null);
+
+    expect(indexedUrl(db)).toBe(
+      "https://example.atlassian.net/wiki/spaces/ENG/pages/12345/Wiki+Page",
+    );
+  });
+
+  test("falls back to the constructed viewpage URL when _links is absent", async () => {
+    // Server/DC and older Cloud responses may carry no `_links` at all. The
+    // fallback must be the previous behaviour, not `undefined` concatenated
+    // into a URL.
+    const db = createMemoryIndexDb();
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response(JSON.stringify({ results: [pageResult()] }), {
+        status: 200,
+      })) as unknown as typeof fetch;
+
+    const sync = createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({
+        "confluence.email": "u@example.com",
+        "confluence.api_token": "tok",
+        "confluence.base_url": "https://example.atlassian.net",
+      }),
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({
+          "confluence.email": "u@example.com",
+          "confluence.api_token": "tok",
+          "confluence.base_url": "https://example.atlassian.net",
+        }),
+        "confluence",
+      ),
+    };
+    await sync.sync(ctx, null);
+
+    expect(indexedUrl(db)).toBe(
+      "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=12345",
+    );
+  });
+
+  test("falls back when webui is present but not a rooted path", async () => {
+    // A `webui` that does not start with "/" would concatenate into a URL on
+    // another host. The guard is not theoretical politeness: this value crosses
+    // JSON from a remote API.
+    const db = createMemoryIndexDb();
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response(JSON.stringify({ results: [pageResult({ webui: "https://evil.example/x" })] }), {
+        status: 200,
+      })) as unknown as typeof fetch;
+
+    const sync = createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({
+        "confluence.email": "u@example.com",
+        "confluence.api_token": "tok",
+        "confluence.base_url": "https://example.atlassian.net",
+      }),
+      db,
+      ...silentSyncContextExtras(),
+      ...boundTestCapabilities(
+        db,
+        createStubVault({
+          "confluence.email": "u@example.com",
+          "confluence.api_token": "tok",
+          "confluence.base_url": "https://example.atlassian.net",
+        }),
+        "confluence",
+      ),
+    };
+    await sync.sync(ctx, null);
+
+    expect(indexedUrl(db)).toBe(
+      "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=12345",
+    );
+  });
 });

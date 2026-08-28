@@ -139,7 +139,20 @@ function confluenceUpsertOneSearchHit(
     return true;
   }
   const site = normalizeAtlassianSiteBaseUrl(opts.baseRaw);
-  const webUi = `${site}/wiki/pages/viewpage.action?pageId=${encodeURIComponent(id)}`;
+  // The URL a browser is actually on. `_links.webui` is site-relative and omits
+  // the `/wiki` context (`/spaces/ENG/pages/123/Title`). The constructed
+  // viewpage.action URL below is a valid Confluence address but not one any
+  // browser shows, so indexing it made `resolveItemByUrl` miss every real page:
+  // its ladder is resolve-key based (exact, query-stripped, up to three trimmed
+  // trailing segments) and cannot bridge the two shapes.
+  //
+  // The leading-slash check is load-bearing: a `webui` that did not start with
+  // "/" would concatenate into a URL on another host.
+  const links = asRecord(row["_links"]);
+  const webui = links === undefined ? undefined : stringField(links, "webui");
+  const webUi = webui?.startsWith("/")
+    ? `${site}/wiki${webui}`
+    : `${site}/wiki/pages/viewpage.action?pageId=${encodeURIComponent(id)}`;
   const modified = when !== undefined && when !== "" ? isoMs(when) : opts.syncTime;
   acc.upserted += 1;
   const by = confluenceLastUpdatedBy(row);
