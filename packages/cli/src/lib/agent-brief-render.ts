@@ -34,8 +34,11 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 export function resolveBriefTimeoutMs(): number {
   const raw = envGet("NIMBUS_BRIEF_TIMEOUT_MS");
   if (raw === undefined || raw === "") return DEFAULT_TIMEOUT_MS;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_TIMEOUT_MS;
+  // Number(), not parseInt(): parseInt stops at the first non-digit, so "40ms"
+  // becomes 40 and "1.5" becomes 1 — a 1ms timeout that fails every brief
+  // instantly, which is strictly worse than ignoring the override.
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n <= 0) return DEFAULT_TIMEOUT_MS;
   return n;
 }
 

@@ -329,8 +329,10 @@ const DEFAULT_LOCAL_CONTEXT_ITEM_LIMIT = 8;
 export function resolveLocalContextItemLimit(): number {
   const raw = process.env["NIMBUS_ASK_CONTEXT_ITEMS"];
   if (raw === undefined || raw === "") return DEFAULT_LOCAL_CONTEXT_ITEM_LIMIT;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_LOCAL_CONTEXT_ITEM_LIMIT;
+  // Number(), not parseInt(): parseInt stops at the first non-digit, so "40ms"
+  // would silently become a budget of 40 and "1.5" a budget of 1.
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n <= 0) return DEFAULT_LOCAL_CONTEXT_ITEM_LIMIT;
   return n;
 }
 /**

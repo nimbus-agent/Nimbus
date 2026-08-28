@@ -218,7 +218,7 @@ describe("resolveBriefTimeoutMs", () => {
   });
 
   it("falls back to the default when the override is not a positive integer", () => {
-    for (const bad of ["", "abc", "0", "-5"]) {
+    for (const bad of ["", "abc", "0", "-5", "40ms", "1.5", "12abc"]) {
       expect(withTimeoutEnv(bad, resolveBriefTimeoutMs)).toBe(120_000);
     }
   });

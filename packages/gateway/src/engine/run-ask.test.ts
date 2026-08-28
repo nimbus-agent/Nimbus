@@ -2017,7 +2017,7 @@ describe("resolveLocalContextItemLimit", () => {
   });
 
   test("falls back to the default when the override is not a positive integer", () => {
-    for (const bad of ["", "abc", "0", "-3"]) {
+    for (const bad of ["", "abc", "0", "-3", "40ms", "1.5", "12abc"]) {
       expect(withAskItemsEnv(bad, resolveLocalContextItemLimit)).toBe(8);
     }
   });
