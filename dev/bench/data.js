@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787922094336,
+  "lastUpdate": 1787922973743,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16489,6 +16489,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 314.55315555001215,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "09ac5ec0b06af70689577794f0280b092c4dfccc",
+          "message": "chore: release main (#1361)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>5.0.0</summary>\n\n##\n[5.0.0](https://github.com/nimbus-agent/Nimbus/compare/v4.1.0...v5.0.0)\n(2026-08-28)\n\n\n### ⚠ BREAKING CHANGES\n\n* **llm:** the Mastra engine agent no longer falls back to a vendor API\nkey found in the environment. An install that today relies on\n`ANTHROPIC_API_KEY` alone, with no `[llm.remote.*]` configuration, will\nstop constructing the agent — `nimbus ask` then answers from the local\nrouter if one is configured, and workflows refuse with a message naming\nthe fix. To restore the previous behaviour, add `[llm.remote.anthropic]\nenabled = true` with a `model`, and store `anthropic.api_key` in the\nVault. This is the point of the change rather than a side effect: a\ncapability that turns itself on because a credential happens to exist is\nthe air-gap defect's shape, one level up.\n\n### Features\n\n* **llm:** register four cloud vendors behind a default-off per-vendor\nopt-in ([#1359](https://github.com/nimbus-agent/Nimbus/issues/1359))\n([1a59735](https://github.com/nimbus-agent/Nimbus/commit/1a59735f7ee5cf3fcfe2866d804e149b3bbc3c73))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-08-28T13:04:19Z",
+          "tree_id": "b3370e7c12350eccfc65629d5db68fbd9709a674",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/09ac5ec0b06af70689577794f0280b092c4dfccc"
+        },
+        "date": 1787922970995,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 321.05356239999566,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 319.62658720000366,
             "unit": "ms"
           }
         ]
