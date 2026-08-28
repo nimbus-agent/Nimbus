@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { tmpdir } from "node:os";
 
 import { spawnCapture, spawnCaptureInternals } from "./spawn-capture.ts";
 
@@ -104,16 +105,17 @@ describe("spawnCapture", () => {
   });
 
   test("passes cwd and env through when supplied, and omits them when not", async () => {
+    const cwd = tmpdir();
     let seen: Record<string, unknown> | undefined;
     await withStub(
       (_c, _a, opts) => {
         seen = opts;
         return fakeChild(0);
       },
-      () => spawnCapture(["aws"], { env: { A: "1" }, cwd: "/tmp" }),
+      () => spawnCapture(["aws"], { env: { A: "1" }, cwd }),
     );
     expect(seen?.["env"]).toEqual({ A: "1" });
-    expect(seen?.["cwd"]).toBe("/tmp");
+    expect(seen?.["cwd"]).toBe(cwd);
 
     let bare: Record<string, unknown> | undefined;
     await withStub(

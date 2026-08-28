@@ -5,6 +5,7 @@ import { CO_OWNED_ENTITY_TYPES } from "../../packages/gateway/src/graph/relation
 import {
   assertScanIsMeaningful,
   checkAgentEmitterImportConfinement,
+  checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
@@ -1189,5 +1190,65 @@ describe("D24 — a syncable cannot reach a raw vault or db handle", () => {
       files.push({ relPath: f.relPath, contents: f.contents });
     }
     expect(checkSyncContextNoRawHandles(files)).toEqual([]);
+  });
+});
+
+describe("D25 — a connector cannot spawn without windowsHide", () => {
+  const syncable = (contents: string) => [
+    { relPath: "packages/gateway/src/connectors/evil-sync.ts", contents },
+  ];
+
+  test("flags a plain Bun.spawn in a connector", () => {
+    const v = checkConnectorSpawnIsHidden(syncable('Bun.spawn(["aws", "s3", "ls"]);\n'));
+    expect(v.map((x) => x.rule)).toEqual(["connector-spawn-must-be-hidden"]);
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("flags a Bun.spawn SPLIT ACROSS LINES", () => {
+    // The rule scanned line by line at first. `Bun` on one line and `.spawn` on the next is
+    // valid TypeScript that matches NEITHER line, so an unhidden spawn slipped through while
+    // the audit stayed green — the failure mode a guard must not have.
+    const v = checkConnectorSpawnIsHidden(syncable('const p = Bun\n  .spawn(["aws"]);\n'));
+    expect(v).toHaveLength(1);
+    // Reported against the line the match STARTS on, derived from the offset.
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("reports the correct line for a spawn further down the file", () => {
+    const src = `${"const a = 1;\n".repeat(9)}Bun.spawn(["aws"]);\n`;
+    expect(checkConnectorSpawnIsHidden(syncable(src))[0]?.line).toBe(10);
+  });
+
+  test("a commented-out Bun.spawn is not flagged", () => {
+    // `stripComments` runs first, which is also what keeps this file's own explanatory
+    // comments about `Bun.spawn` from tripping the rule.
+    expect(
+      checkConnectorSpawnIsHidden(
+        syncable('// Bun.spawn is forbidden here\nspawnCapture(["aws"]);\n'),
+      ),
+    ).toEqual([]);
+  });
+
+  test("spawnCapture is clean", () => {
+    expect(checkConnectorSpawnIsHidden(syncable('await spawnCapture(["aws"]);\n'))).toEqual([]);
+  });
+
+  test("the two injected-seam files stay exempt, and lazy-mesh is out of scope", () => {
+    const files = [
+      {
+        relPath: "packages/gateway/src/connectors/blame-index-sync.ts",
+        contents: "Bun.spawn(x);\n",
+      },
+      {
+        relPath: "packages/gateway/src/connectors/filesystem-v2-sync.ts",
+        contents: "Bun.spawn(x);\n",
+      },
+      {
+        relPath: "packages/gateway/src/connectors/lazy-mesh/runner.ts",
+        contents: "Bun.spawn(x);\n",
+      },
+      { relPath: "packages/gateway/src/connectors/evil-sync.test.ts", contents: "Bun.spawn(x);\n" },
+    ];
+    expect(checkConnectorSpawnIsHidden(files)).toEqual([]);
   });
 });

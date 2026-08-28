@@ -773,17 +773,21 @@ export function checkConnectorSpawnIsHidden(files: readonly FileEntry[]): Violat
     if (!f.relPath.startsWith("packages/gateway/src/connectors/")) continue;
     if (f.relPath.startsWith("packages/gateway/src/connectors/lazy-mesh/")) continue;
     if (D25_BUN_SPAWN_ALLOWED.includes(f.relPath)) continue;
-    const stripped = stripComments(f.contents).split("\n");
+    // Scans the WHOLE stripped source, not line by line. `Bun` and `.spawn` may sit on
+    // different lines — `Bun` then a newline then `.spawn(...)` is valid TypeScript, and a
+    // per-line test matches NEITHER line, so the rule would silently miss it. `stripComments`
+    // preserves length, so a match offset maps 1:1 onto the original's line numbering.
+    const stripped = stripComments(f.contents);
     const original = f.contents.split("\n");
-    for (let i = 0; i < stripped.length; i++) {
-      if (D25_BUN_SPAWN_RE.test(stripped[i] ?? "")) {
-        out.push({
-          rule: "connector-spawn-must-be-hidden",
-          file: f.relPath,
-          line: i + 1,
-          snippet: (original[i] ?? "").trim(),
-        });
-      }
+    const re = new RegExp(D25_BUN_SPAWN_RE.source, "g");
+    for (const m of stripped.matchAll(re)) {
+      const line = stripped.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "connector-spawn-must-be-hidden",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
     }
   }
   return out;
