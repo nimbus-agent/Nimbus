@@ -1515,7 +1515,7 @@ Read a single configuration value.
 
 ```bash
 nimbus config get telemetry.enabled
-nimbus config get llm.remote_model
+nimbus config get llm.local_model
 ```
 
 There is no TOML key for sync cadence — per-connector intervals are set with `nimbus connector set-interval <service> <duration>`, which writes to the index, not to `nimbus.toml`.
@@ -1528,18 +1528,17 @@ Set a configuration value. Changes take effect on the next Gateway restart for G
 
 ```bash
 nimbus config set telemetry.enabled false
-nimbus config set llm.remote_model      claude-sonnet-4-6
 nimbus config set llm.local_model       llama3.2
 nimbus config set llm.prefer_local      true
 ```
 
-The provider is inferred from the model id: `claude-*` → Anthropic, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI. Already-prefixed forms (`anthropic/...`, `openai/...`) are accepted as-is.
+Cloud vendors are **not** configured this way — they need a whole `[llm.remote.<vendor>]` table plus a Vault key, so use `nimbus config edit` and `nimbus vault set`. See [Configuration File](#configuration-file) below.
 
 ---
 
 ### `nimbus config list`
 
-Print the config file path, then a per-key line for whichever of the four env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`, `llm.remote_model`) currently has a value, followed by the raw `nimbus.toml` body. A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in `nimbus.toml` — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
+Print the config file path, then a per-key line for whichever of the three env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`) currently has a value, followed by the raw `nimbus.toml` body. A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in `nimbus.toml` — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
 
 ```bash
 nimbus config list
@@ -1594,10 +1593,7 @@ Key sections:
 
 ```toml
 [llm]
-# Conversational agent (Mastra). Provider is inferred from the model id:
-# claude-* → Anthropic; gpt-*/o1-*/o3-*/o4-* → OpenAI.
-remote_model       = "claude-sonnet-4-6"
-# Local-LLM routing (Phase 4 LLM router).
+# Local-LLM routing.
 prefer_local       = true
 local_model        = "llama3.2" # Any pulled Ollama model name
 # llama.cpp HTTP base URL; not the filesystem path to the llama-server binary.
@@ -1630,7 +1626,35 @@ endpoint = "https://telemetry.nimbus-agent.dev/v1/collect"
 # graph_conditions = true
 ```
 
-**Environment variable overrides:** Most TOML keys have a corresponding `NIMBUS_`-prefixed env var that wins over the file. Examples: `NIMBUS_AGENT_MODEL` (overrides `[llm].remote_model`), `NIMBUS_TELEMETRY_ENABLED`. See the [Environment Variables](#environment-variables) table at the end of this document for the full list.
+#### Cloud vendors — `[llm.remote.<vendor>]`
+
+Four vendors are supported: `anthropic`, `openai`, `gemini`, `xai`. Each is its own table, and each is **off by default**.
+
+```toml
+[llm.remote.anthropic]
+enabled = true                    # REQUIRED. Never inferred from the presence of a key.
+model   = "claude-sonnet-4-6"     # REQUIRED. An empty model drops the route (warn-logged by name).
+# base_url = "https://api.anthropic.com"   # optional; for a proxy
+```
+
+The API key is **never** read from the environment or from this file. Store it in the Vault:
+
+| Vendor | Vault key |
+|---|---|
+| `anthropic` | `anthropic.api_key` |
+| `openai` | `openai.api_key` — deliberately the SAME key the embedding runtime uses |
+| `gemini` | `gemini.api_key` |
+| `xai` | `xai.api_key` |
+
+```bash
+nimbus vault set gemini.api_key      # prompts for the value; never on the command line
+```
+
+Both halves are required and they are independent: a key with no `enabled = true` registers no route, and `enabled = true` with no key registers a route that reports `no (no api key)` in `nimbus llm status`. Each enabled vendor becomes one route named `<vendor>/<model>`, which is the name `[llm].route_priority` and `nimbus llm status` use.
+
+**Model ids are the vendor's, and vendors retire them.** Check the vendor's current list rather than copying an id from a document — a retired id fails with a 404 that names the replacement. As of 2026-08-28, for example, `gemini-2.5-pro` and `gemini-2.5-flash` still appear in Google's `GET /v1beta/models` listing but return `404 NOT_FOUND … no longer available to new users` on `generateContent` for a key issued after their retirement; `gemini-flash-lite-latest` and `gemini-3.5-flash` answer normally.
+
+**Environment variable overrides:** Most TOML keys have a corresponding `NIMBUS_`-prefixed env var that wins over the file — `NIMBUS_TELEMETRY_ENABLED`, `NIMBUS_ASK_MAX_STEPS`, and so on. **No vendor credential or vendor selection is env-overridable**, by design: a capability must not turn itself on because a credential happens to exist in the environment. See the [Environment Variables](#environment-variables) table at the end of this document for the full list.
 
 ---
 
@@ -3510,7 +3534,6 @@ nimbus lan remove abc123
 
 | Variable | Purpose |
 |---|---|
-| `NIMBUS_AGENT_MODEL` | Override `[llm].remote_model` — model id for the conversational agent (default: `claude-sonnet-4-6`). Bare ids work; provider is inferred from `claude-*` / `gpt-*` / `o1-*` / `o3-*` / `o4-*` prefix. |
 | `NIMBUS_TELEMETRY_ENABLED` | Override `[telemetry].enabled` |
 | `NIMBUS_TELEMETRY_ENDPOINT` | Override `[telemetry].endpoint` |
 | `NIMBUS_CONFIG_DIR` | Override the platform config directory — **config only**. There is no data-directory override: the data directory is not relocatable by any `NIMBUS_*` variable (on Linux it follows `XDG_DATA_HOME`). |

@@ -47,7 +47,6 @@ function makeFakeLlmProvider(): LlmProvider {
 
 const ROUTER_CONFIG: LlmRouterConfig = {
   preferLocal: true,
-  remoteModel: "claude-sonnet-4-6",
   localModel: "llama3.2",
   minReasoningParams: 7,
   enforceAirGap: false,

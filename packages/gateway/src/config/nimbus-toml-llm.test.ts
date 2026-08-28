@@ -24,14 +24,17 @@ describe("parseNimbusTomlLlmSection", () => {
     expect(parseNimbusTomlLlmSection(src)).toEqual({ preferLocal: false });
   });
 
-  test("parses remote_model string", () => {
-    const src = `[llm]\nremote_model = "claude-sonnet-4-6"\n`;
-    expect(parseNimbusTomlLlmSection(src)).toEqual({ remoteModel: "claude-sonnet-4-6" });
+  // Both keys were REMOVED on 2026-08-28. A stale one in an existing nimbus.toml must be
+  // IGNORED like any unrecognised [llm] key — never parsed into a field nothing reads, and
+  // never an error, which would revert the whole section and take the live keys with it.
+  test("remote_model and classifier_model are ignored, not parsed", () => {
+    const src = `[llm]\nremote_model = "claude-sonnet-4-6"\nclassifier_model = "haiku"\n`;
+    expect(parseNimbusTomlLlmSection(src)).toEqual({});
   });
 
-  test("parses classifier_model string", () => {
-    const src = `[llm]\nclassifier_model = "claude-haiku-4-5-20251001"\n`;
-    expect(parseNimbusTomlLlmSection(src)).toEqual({});
+  test("a stale key does not stop the rest of the section parsing", () => {
+    const src = `[llm]\nremote_model = "claude-sonnet-4-6"\nprefer_local = true\n`;
+    expect(parseNimbusTomlLlmSection(src)).toEqual({ preferLocal: true });
   });
 
   test("parses local_model string", () => {
@@ -126,8 +129,8 @@ describe("loadNimbusLlmPartialFromPath", () => {
   test("returns only explicitly-set keys (no defaults)", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-llm-partial-"));
     const tomlPath = join(dir, "nimbus.toml");
-    writeFileSync(tomlPath, `[llm]\nremote_model = "claude-opus-4-8"\n`);
-    expect(loadNimbusLlmPartialFromPath(tomlPath)).toEqual({ remoteModel: "claude-opus-4-8" });
+    writeFileSync(tomlPath, `[llm]\nlocal_model = "qwen3:8b"\n`);
+    expect(loadNimbusLlmPartialFromPath(tomlPath)).toEqual({ localModel: "qwen3:8b" });
   });
 
   test("returns empty object when [llm] section is absent", () => {

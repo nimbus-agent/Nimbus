@@ -72,6 +72,10 @@ import {
 } from "./dispatchers.ts";
 import { RpcMethodError } from "./rpc-error.ts";
 
+// A stand-in remote model name. Was `LlmRouterConfig.remoteModel`, removed on 2026-08-28
+// along with `[llm] remote_model`; these tests only ever needed an arbitrary non-local id.
+const REMOTE_MODEL = "claude-sonnet-4-6";
+
 function makePolicyRpcCtx(overrides: Partial<PolicyRpcCtx> = {}): PolicyRpcCtx {
   return {
     showPolicy: () => ({
@@ -185,7 +189,6 @@ function trackedDb(): Database {
 
 const FAKE_LLM_ROUTER_CONFIG = {
   preferLocal: true,
-  remoteModel: "remote-model",
   localModel: "local-model",
   minReasoningParams: 0,
   enforceAirGap: false,
@@ -220,7 +223,7 @@ function fakeRemoteProvider(): LlmProvider {
     providerId: "remote",
     isLocal: false,
     isAvailable: async () => true,
-    // Must report the model it registers under (FAKE_LLM_ROUTER_CONFIG.remoteModel,
+    // Must report the model it registers under (REMOTE_MODEL,
     // "remote-model") so the route genuinely RESOLVES as available — otherwise it reads
     // model_absent, resolveForSynthesis() returns undefined, and the test below passes via
     // no_eligible_provider from the EARLY branch rather than exercising the "local"-mode
@@ -249,10 +252,7 @@ function makeLlmRegistry(provider: LlmProvider, db?: Database): LlmRegistry {
     config: FAKE_LLM_ROUTER_CONFIG,
     ...(db === undefined ? {} : { db }),
   });
-  registry.addRoute(
-    provider,
-    provider.isLocal ? FAKE_LLM_ROUTER_CONFIG.localModel : FAKE_LLM_ROUTER_CONFIG.remoteModel,
-  );
+  registry.addRoute(provider, provider.isLocal ? FAKE_LLM_ROUTER_CONFIG.localModel : REMOTE_MODEL);
   return registry;
 }
 

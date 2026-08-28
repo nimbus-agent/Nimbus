@@ -64,7 +64,6 @@ describe("provider isLocal is derived from the base URL, not hardcoded", () => {
 
 const AIR_GAPPED: LlmRouterConfig = {
   preferLocal: true,
-  remoteModel: "claude-sonnet-4-6",
   localModel: "m.gguf",
   minReasoningParams: 0,
   enforceAirGap: true,

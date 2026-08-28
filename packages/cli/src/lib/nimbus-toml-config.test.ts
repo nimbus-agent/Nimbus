@@ -13,6 +13,7 @@ const SAVED = {
   agent: process.env["NIMBUS_AGENT_MODEL"],
   classifier: process.env["NIMBUS_CLASSIFIER_MODEL"],
   telemetry: process.env["NIMBUS_TELEMETRY_ENABLED"],
+  endpoint: process.env["NIMBUS_TELEMETRY_ENDPOINT"],
 };
 
 let dir: string;
@@ -22,6 +23,7 @@ beforeEach(() => {
   delete process.env["NIMBUS_AGENT_MODEL"];
   delete process.env["NIMBUS_CLASSIFIER_MODEL"];
   delete process.env["NIMBUS_TELEMETRY_ENABLED"];
+  delete process.env["NIMBUS_TELEMETRY_ENDPOINT"];
   dir = mkdtempSync(join(tmpdir(), "nimbus-toml-cfg-"));
   tomlPath = join(dir, "nimbus.toml");
 });
@@ -34,71 +36,70 @@ afterEach(() => {
   else process.env["NIMBUS_CLASSIFIER_MODEL"] = SAVED.classifier;
   if (SAVED.telemetry === undefined) delete process.env["NIMBUS_TELEMETRY_ENABLED"];
   else process.env["NIMBUS_TELEMETRY_ENABLED"] = SAVED.telemetry;
+  if (SAVED.endpoint === undefined) delete process.env["NIMBUS_TELEMETRY_ENDPOINT"];
+  else process.env["NIMBUS_TELEMETRY_ENDPOINT"] = SAVED.endpoint;
 });
 
-describe("listTomlKeysWithEnv — llm.* entries", () => {
-  test("llm.remote_model surfaces from env when NIMBUS_AGENT_MODEL is set", () => {
-    process.env["NIMBUS_AGENT_MODEL"] = "claude-opus-4-8";
+describe("listTomlKeysWithEnv — env-overridable entries", () => {
+  // These exercised `llm.remote_model` until 2026-08-28, when it and `llm.classifier_model` were
+  // removed: the engine agent moved to `[llm.remote.<vendor>] model` and the intent classifier
+  // to `LlmRouter`, leaving nothing that read either key. `telemetry.endpoint` is the remaining
+  // string-valued env-overridable key and carries the same behaviours.
+  test("surfaces from env when the env var is set", () => {
+    process.env["NIMBUS_TELEMETRY_ENDPOINT"] = "https://otel.example/v1";
     const rows = listTomlKeysWithEnv(tomlPath);
-    const row = rows.find((r) => r.key === "llm.remote_model");
+    const row = rows.find((r) => r.key === "telemetry.endpoint");
     expect(row).toEqual({
-      key: "llm.remote_model",
-      value: "claude-opus-4-8",
+      key: "telemetry.endpoint",
+      value: "https://otel.example/v1",
       source: "env",
-      envVar: "NIMBUS_AGENT_MODEL",
+      envVar: "NIMBUS_TELEMETRY_ENDPOINT",
     });
   });
 
-  test("llm.classifier_model is NOT listed — the key was removed on 2026-08-28", () => {
-    // The intent classifier no longer owns an HTTP client that could take a model name: it asks
-    // `LlmRouter` for the `"classification"` task. Listing a key nothing reads would tell the
-    // owner they had configured something.
-    process.env["NIMBUS_CLASSIFIER_MODEL"] = "claude-haiku-4-5-20251001";
-    writeFileSync(
-      tomlPath,
-      `[llm]
-classifier_model = "claude-haiku-4-5-20251001"
-`,
-    );
+  test("surfaces from file when env is unset and the key is in the TOML", () => {
+    writeFileSync(tomlPath, `[telemetry]\nendpoint = "https://otel.example/v1"\n`);
     const rows = listTomlKeysWithEnv(tomlPath);
-    expect(rows.find((r) => r.key === "llm.classifier_model")).toBeUndefined();
-  });
-
-  test("llm.* surfaces from file when env is unset and the key is in the TOML", () => {
-    writeFileSync(
-      tomlPath,
-      `[llm]\nremote_model = "claude-sonnet-4-6"\nclassifier_model = "claude-haiku-4-5-20251001"\n`,
-    );
-    const rows = listTomlKeysWithEnv(tomlPath);
-    const remote = rows.find((r) => r.key === "llm.remote_model");
-    expect(remote).toEqual({
-      key: "llm.remote_model",
-      value: '"claude-sonnet-4-6"',
+    expect(rows.find((r) => r.key === "telemetry.endpoint")).toEqual({
+      key: "telemetry.endpoint",
+      value: '"https://otel.example/v1"',
       source: "file",
     });
   });
 
   test("env beats file when both are set", () => {
-    writeFileSync(tomlPath, `[llm]\nremote_model = "claude-sonnet-4-6"\n`);
-    process.env["NIMBUS_AGENT_MODEL"] = "claude-opus-4-8";
+    writeFileSync(tomlPath, `[telemetry]\nendpoint = "https://from-file"\n`);
+    process.env["NIMBUS_TELEMETRY_ENDPOINT"] = "https://from-env";
     const rows = listTomlKeysWithEnv(tomlPath);
-    const row = rows.find((r) => r.key === "llm.remote_model");
+    const row = rows.find((r) => r.key === "telemetry.endpoint");
     expect(row?.source).toBe("env");
-    expect(row?.value).toBe("claude-opus-4-8");
-  });
-
-  test("llm.* is omitted when both env and file are unset", () => {
-    const rows = listTomlKeysWithEnv(tomlPath);
-    expect(rows.find((r) => r.key === "llm.remote_model")).toBeUndefined();
-    expect(rows.find((r) => r.key === "llm.classifier_model")).toBeUndefined();
+    expect(row?.value).toBe("https://from-env");
   });
 
   test("trims whitespace-only env values to undefined and falls back to file", () => {
-    process.env["NIMBUS_AGENT_MODEL"] = "   ";
-    writeFileSync(tomlPath, `[llm]\nremote_model = "from-file"\n`);
+    process.env["NIMBUS_TELEMETRY_ENDPOINT"] = "   ";
+    writeFileSync(tomlPath, `[telemetry]\nendpoint = "https://from-file"\n`);
     const rows = listTomlKeysWithEnv(tomlPath);
-    const row = rows.find((r) => r.key === "llm.remote_model");
-    expect(row?.source).toBe("file");
+    expect(rows.find((r) => r.key === "telemetry.endpoint")?.source).toBe("file");
+  });
+
+  test("a key is omitted entirely when both env and file are unset", () => {
+    const rows = listTomlKeysWithEnv(tomlPath);
+    expect(rows.find((r) => r.key === "telemetry.endpoint")).toBeUndefined();
+  });
+
+  // The removed keys must not merely be absent from the map — they must not surface even when
+  // the owner still has them set both ways, because a listed key reads as "this is configured".
+  test("the removed llm.* keys are not listed, from env or from file", () => {
+    process.env["NIMBUS_AGENT_MODEL"] = "claude-opus-4-8";
+    process.env["NIMBUS_CLASSIFIER_MODEL"] = "claude-haiku-4-5-20251001";
+    writeFileSync(
+      tomlPath,
+      `[llm]\nremote_model = "claude-sonnet-4-6"\nclassifier_model = "haiku"\n`,
+    );
+    const rows = listTomlKeysWithEnv(tomlPath);
+    expect(rows.find((r) => r.key === "llm.remote_model")).toBeUndefined();
+    expect(rows.find((r) => r.key === "llm.classifier_model")).toBeUndefined();
   });
 });
 

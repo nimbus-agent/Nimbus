@@ -3,6 +3,10 @@ import { LlmProviderError } from "./provider-error.ts";
 import { LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
 import type { LlmProvider } from "./types.ts";
 
+// A stand-in remote model name. Was `LlmRouterConfig.remoteModel`, removed on 2026-08-28
+// along with `[llm] remote_model`; these tests only ever needed an arbitrary non-local id.
+const REMOTE_MODEL = "claude-sonnet-4-6";
+
 function makeFakeProvider(id: "ollama" | "llamacpp" | "remote", available: boolean): LlmProvider {
   return {
     providerId: id,
@@ -15,7 +19,7 @@ function makeFakeProvider(id: "ollama" | "llamacpp" | "remote", available: boole
     listModels: async () => [
       {
         provider: id,
-        modelName: id === "remote" ? DEFAULT_CONFIG.remoteModel : DEFAULT_CONFIG.localModel,
+        modelName: id === "remote" ? REMOTE_MODEL : DEFAULT_CONFIG.localModel,
       },
     ],
     generate: async (_opts) => ({
@@ -31,7 +35,6 @@ function makeFakeProvider(id: "ollama" | "llamacpp" | "remote", available: boole
 
 const DEFAULT_CONFIG: LlmRouterConfig = {
   preferLocal: true,
-  remoteModel: "claude-sonnet-4-6",
   localModel: "llama3.2",
   minReasoningParams: 7,
   enforceAirGap: false,
@@ -41,7 +44,7 @@ describe("LlmRouter.selectProvider", () => {
   test("returns ollama when preferLocal=true and ollama is available", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const provider = await router.selectProvider("agent_step");
     expect(provider?.providerId).toBe("ollama");
   });
@@ -49,7 +52,7 @@ describe("LlmRouter.selectProvider", () => {
   test("falls back to remote when local unavailable and enforceAirGap=false", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerRoute(makeFakeProvider("ollama", false), DEFAULT_CONFIG.localModel);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const provider = await router.selectProvider("agent_step");
     expect(provider?.providerId).toBe("remote");
   });
@@ -65,7 +68,7 @@ describe("LlmRouter.selectProvider", () => {
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, enforceAirGap: true };
     const router = new LlmRouter(config);
     router.registerRoute(makeFakeProvider("ollama", false), DEFAULT_CONFIG.localModel);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const provider = await router.selectProvider("reasoning");
     expect(provider).toBeUndefined();
   });
@@ -82,7 +85,7 @@ describe("LlmRouter.selectProvider", () => {
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
     const router = new LlmRouter(config);
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const provider = await router.selectProvider("classification");
     expect(provider?.providerId).toBe("remote");
   });
@@ -91,7 +94,7 @@ describe("LlmRouter.selectProvider", () => {
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
     const router = new LlmRouter(config);
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const overridden = await router.selectProvider("reasoning", { preferLocal: true });
     expect(overridden?.providerId).toBe("ollama");
     // No override: falls back to config, which prefers remote — proves the override is per-call.
@@ -102,7 +105,7 @@ describe("LlmRouter.selectProvider", () => {
   test("per-call preferLocal override falls back to remote when no local provider is available", async () => {
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
     const router = new LlmRouter(config);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const provider = await router.selectProvider("reasoning", { preferLocal: true });
     expect(provider?.providerId).toBe("remote");
   });
@@ -131,7 +134,7 @@ describe("LlmRouter capability floor", () => {
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel, {
       parameterCount: 3,
     });
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const provider = await router.selectProvider("reasoning");
     expect(provider?.providerId).toBe("remote");
   });
@@ -159,7 +162,7 @@ describe("LlmRouter capability floor", () => {
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel, {
       parameterCount: 3,
     });
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const provider = await router.selectProvider("agent_step");
     expect(provider?.providerId).toBe("remote");
   });
@@ -173,7 +176,7 @@ function makeCaptureProvider(
   // (localModel/remoteModel); a caller using an explicit model name (e.g. "small"/"big"
   // below) passes it here too, so the model-aware availability probe matches what was
   // registered.
-  models: string[] = [id === "remote" ? DEFAULT_CONFIG.remoteModel : DEFAULT_CONFIG.localModel],
+  models: string[] = [id === "remote" ? REMOTE_MODEL : DEFAULT_CONFIG.localModel],
 ): LlmProvider {
   return {
     providerId: id,
@@ -217,7 +220,7 @@ describe("LlmRouter context window overflow", () => {
         contextWindow: 100,
       },
     );
-    router.registerRoute(makeCaptureProvider("remote", true, captured), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeCaptureProvider("remote", true, captured), REMOTE_MODEL);
     const longPrompt = "x".repeat(500);
     await router.generate({ task: "reasoning", prompt: longPrompt });
     expect(captured.prompt).toBe(longPrompt);
@@ -301,9 +304,9 @@ describe("LlmRouter.getStatus", () => {
   test("populates modelName from remoteModel for remote", async () => {
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
     const router = new LlmRouter(config);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const status = await router.getStatus();
-    expect(status.classification?.modelName).toBe(DEFAULT_CONFIG.remoteModel);
+    expect(status.classification?.modelName).toBe(REMOTE_MODEL);
   });
 
   test("isAvailable is true when provider is reachable", async () => {
@@ -337,7 +340,7 @@ describe("LlmRouter.getStatus", () => {
   test("reason is prefer-remote when preferLocal=false and remote provider selected", async () => {
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
     const router = new LlmRouter(config);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const status = await router.getStatus();
     expect(status.classification?.reason).toBe("prefer-remote");
   });
@@ -356,7 +359,7 @@ describe("LlmRouter.getStatus", () => {
 
   test("reason is no-local-provider when preferLocal=true but only remote is registered", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const status = await router.getStatus();
     expect(status.classification?.reason).toBe("no-local-provider");
   });
@@ -384,13 +387,13 @@ describe("LlmRouter.getStatus", () => {
   test("reports the fallback generate() would use when the preferred provider is down", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerRoute(makeFakeProvider("ollama", false), DEFAULT_CONFIG.localModel);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const status = await router.getStatus();
     expect(status.classification?.providerId).toBe("ollama");
     expect(status.classification?.isAvailable).toBe(false);
     expect(status.classification?.fallback).toEqual({
       providerId: "remote",
-      modelName: DEFAULT_CONFIG.remoteModel,
+      modelName: REMOTE_MODEL,
     });
   });
 
@@ -432,7 +435,7 @@ describe("LlmRouter.getStatus", () => {
   test("no fallback when the preferred provider is available", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const status = await router.getStatus();
     expect(status.classification?.isAvailable).toBe(true);
     expect(status.classification?.fallback).toBeUndefined();
@@ -451,7 +454,7 @@ describe("LlmRouter.getStatus", () => {
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel, {
       parameterCount: 1,
     });
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const status = await router.getStatus();
     // reasoning carries a capability floor; ollama (1B < minReasoningParams) is skipped → remote.
     expect(status.reasoning?.providerId).toBe("remote");
@@ -514,11 +517,11 @@ describe("LlmRouter.resolveForSynthesis", () => {
   test("a REMOTE provider kind resolves isLocal: false", async () => {
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
     const router = new LlmRouter(config);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const resolved = await router.resolveForSynthesis();
     expect(resolved).toEqual({
       providerId: "remote",
-      modelName: DEFAULT_CONFIG.remoteModel,
+      modelName: REMOTE_MODEL,
       isLocal: false,
     });
   });
@@ -543,7 +546,7 @@ describe("LlmRouter.resolveForSynthesis", () => {
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel, {
       parameterCount: 1,
     });
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
     const resolved = await router.resolveForSynthesis();
     expect(resolved?.providerId).toBe("remote");
   });
@@ -558,12 +561,12 @@ describe("LlmRouter.resolveForSynthesis", () => {
     const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
     const router = new LlmRouter(config);
     router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel);
-    router.registerRoute(makeFakeProvider("remote", true), DEFAULT_CONFIG.remoteModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
 
     const viaConfigDefault = await router.resolveForSynthesis();
     expect(viaConfigDefault).toEqual({
       providerId: "remote",
-      modelName: DEFAULT_CONFIG.remoteModel,
+      modelName: REMOTE_MODEL,
       isLocal: false,
     });
 
@@ -749,7 +752,6 @@ describe("generate-time route fallback", () => {
   // the roadmap row this serves promises "with local fallback".
   const CFG: LlmRouterConfig = {
     preferLocal: false,
-    remoteModel: "remote-model",
     localModel: "local-model",
     minReasoningParams: 0,
     enforceAirGap: false,
@@ -875,7 +877,6 @@ describe("generate-time walk — no destination is invoked twice", () => {
     let remoteCalls = 0;
     const cfg: LlmRouterConfig = {
       preferLocal: true,
-      remoteModel: "remote-model",
       localModel: "local-model",
       minReasoningParams: 0,
       enforceAirGap: false,

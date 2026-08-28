@@ -13,9 +13,12 @@ import { LlmRegistry } from "./registry.ts";
 import type { LlmRouterConfig } from "./router.ts";
 import type { LlmModelInfo, LlmProvider, ProviderId, PullProgressChunk } from "./types.ts";
 
+// A stand-in remote model name. Was `LlmRouterConfig.remoteModel`, removed on 2026-08-28
+// along with `[llm] remote_model`; these tests only ever needed an arbitrary non-local id.
+const REMOTE_MODEL = "claude-sonnet-4-6";
+
 const DEFAULT_CONFIG: LlmRouterConfig = {
   preferLocal: true,
-  remoteModel: "claude-sonnet-4-6",
   localModel: "llama3.2",
   minReasoningParams: 7,
   enforceAirGap: false,
@@ -138,7 +141,7 @@ describe("LlmRegistry.listAllModels", () => {
         available: true,
         models: [{ provider: "remote", modelName: "claude-sonnet-4-6" }],
       }),
-      DEFAULT_CONFIG.remoteModel,
+      REMOTE_MODEL,
     );
     const models = await reg.listAllModels();
     expect(models).toHaveLength(3);
@@ -183,7 +186,7 @@ describe("LlmRegistry.listAllModels", () => {
         available: true,
         models: [{ provider: "remote", modelName: "good" }],
       }),
-      DEFAULT_CONFIG.remoteModel,
+      REMOTE_MODEL,
     );
     const models = await reg.listAllModels();
     expect(models).toHaveLength(1);
@@ -251,7 +254,7 @@ describe("LlmRegistry.checkAvailability", () => {
     const db = freshLedgerDb();
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db });
     reg.addRoute(makeProvider("ollama", { available: true }), DEFAULT_CONFIG.localModel);
-    reg.addRoute(makeProvider("remote", { available: false }), DEFAULT_CONFIG.remoteModel);
+    reg.addRoute(makeProvider("remote", { available: false }), REMOTE_MODEL);
     const out = await reg.checkAvailability();
     expect(out["ollama"]).toBe(true);
     expect(out["remote"]).toBe(false);

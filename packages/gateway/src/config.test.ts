@@ -1,8 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import {
-  applyLlmTomlOverrides,
   Config,
-  getEffectiveAgentModel,
   parseConversationalAgentMaxSteps,
   parseEmbeddingsEnabled,
   parseEngineContextWindowItems,
@@ -25,54 +23,6 @@ afterAll(() => {
   if (SAVED_ENV.agent !== undefined) process.env["NIMBUS_AGENT_MODEL"] = SAVED_ENV.agent;
   if (SAVED_ENV.classifier !== undefined)
     process.env["NIMBUS_CLASSIFIER_MODEL"] = SAVED_ENV.classifier;
-});
-
-afterEach(() => {
-  applyLlmTomlOverrides({});
-});
-
-describe("getEffectiveAgentModel / getEffectiveClassifierModel", () => {
-  test("falls back to hardcoded defaults when no overrides applied", () => {
-    expect(getEffectiveAgentModel()).toBe("claude-sonnet-4-6");
-  });
-
-  test("TOML overrides win over hardcoded defaults", () => {
-    applyLlmTomlOverrides({
-      agentModel: "claude-opus-4-8",
-    });
-    expect(getEffectiveAgentModel()).toBe("claude-opus-4-8");
-  });
-
-  test("calling applyLlmTomlOverrides({}) resets to hardcoded defaults", () => {
-    applyLlmTomlOverrides({ agentModel: "claude-opus-4-8" });
-    expect(getEffectiveAgentModel()).toBe("claude-opus-4-8");
-    applyLlmTomlOverrides({});
-    expect(getEffectiveAgentModel()).toBe("claude-sonnet-4-6");
-  });
-
-  test("empty-string TOML value is treated as unset", () => {
-    applyLlmTomlOverrides({ agentModel: "" });
-    expect(getEffectiveAgentModel()).toBe("claude-sonnet-4-6");
-  });
-
-  test("partial overrides leave other field on default", () => {
-    applyLlmTomlOverrides({ agentModel: "claude-opus-4-8" });
-    expect(getEffectiveAgentModel()).toBe("claude-opus-4-8");
-  });
-
-  test("env var wins over TOML override", () => {
-    applyLlmTomlOverrides({
-      agentModel: "claude-opus-4-8",
-    });
-    process.env["NIMBUS_AGENT_MODEL"] = "claude-sonnet-from-env";
-    process.env["NIMBUS_CLASSIFIER_MODEL"] = "claude-haiku-from-env";
-    try {
-      expect(getEffectiveAgentModel()).toBe("claude-sonnet-from-env");
-    } finally {
-      delete process.env["NIMBUS_AGENT_MODEL"];
-      delete process.env["NIMBUS_CLASSIFIER_MODEL"];
-    }
-  });
 });
 
 describe("env-var parsers", () => {

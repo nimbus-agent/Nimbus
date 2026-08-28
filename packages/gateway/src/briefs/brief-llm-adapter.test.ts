@@ -6,7 +6,6 @@ import { createBriefLlm } from "./brief-llm-adapter.ts";
 function router(provider?: LlmProvider): LlmRouter {
   const r = new LlmRouter({
     preferLocal: true,
-    remoteModel: "gpt-4o",
     localModel: "llama3.1:8b",
     minReasoningParams: 0,
     enforceAirGap: false,
@@ -77,7 +76,6 @@ describe("createBriefLlm", () => {
   test("forwards preferLocal=true to the router, choosing local even when router config prefers remote", async () => {
     const r = new LlmRouter({
       preferLocal: false,
-      remoteModel: "gpt-4o",
       localModel: "llama3.1:8b",
       minReasoningParams: 0,
       enforceAirGap: false,
@@ -91,7 +89,6 @@ describe("createBriefLlm", () => {
   test("forwards preferLocal=false to the router, choosing remote even when local is registered first", async () => {
     const r = new LlmRouter({
       preferLocal: true,
-      remoteModel: "gpt-4o",
       localModel: "llama3.1:8b",
       minReasoningParams: 0,
       enforceAirGap: false,

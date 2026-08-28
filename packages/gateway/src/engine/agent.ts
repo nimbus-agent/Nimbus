@@ -87,8 +87,8 @@ function clipToolString(s: string, max = MAX_TOOL_STRING_LEN): string {
  * Builds the `"<provider>/<model>"` router id Mastra resolves against.
  *
  * The `includes("/")` branch is load-bearing and replaces the old `toMastraModelId`: an operator
- * may set `NIMBUS_AGENT_MODEL` / `[llm] remote_model` to EITHER a bare model name
- * (`claude-sonnet-4-6`) or an already-qualified router id (`anthropic/claude-sonnet-4-6`).
+ * may set `[llm.remote.<vendor>] model` to EITHER a bare model name (`claude-sonnet-4-6`) or an
+ * already-qualified router id (`anthropic/claude-sonnet-4-6`).
  * Unconditionally prefixing the vendor would turn the second form into
  * `anthropic/anthropic/claude-sonnet-4-6`, which resolves to nothing.
  *
@@ -133,10 +133,13 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   agent: Agent;
   agentsByName: { nimbus: Agent; devops: Agent; research: Agent };
 } {
-  // `NIMBUS_AGENT_MODEL` / `[llm] remote_model` still override the MODEL NAME within the enabled
-  // vendor, so no existing config breaks silently — but they can no longer SELECT a vendor, and
-  // they can no longer supply a credential. Both of those now come from `[llm.remote.<vendor>]`
-  // and the Vault.
+  // `deps.agentModel` is an INJECTION SEAM for tests, not a config path: nothing in production
+  // supplies it, so the model is `[llm.remote.<vendor>] model`. It is spelled out because the
+  // comment that stood here until 2026-08-28 claimed `NIMBUS_AGENT_MODEL` / `[llm] remote_model`
+  // "still override the MODEL NAME within the enabled vendor" — which was never wired. Slice 2b
+  // left `getEffectiveAgentModel()` without a caller, so both keys were inert while
+  // `cli-reference.md` still documented `nimbus config set llm.remote_model` as THE way to pick a
+  // cloud model; both are now removed rather than left claiming to work.
   const modelId = deps.agentModel ?? deps.vendor.modelId;
   // Wrapped at the AI-SDK seam: Mastra keeps its own client (which is what makes tool-calling
   // work), and the decorator ledgers every doGenerate/doStream before it runs. See

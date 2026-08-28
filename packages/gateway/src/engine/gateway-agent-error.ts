@@ -104,7 +104,12 @@ function buildAgentErrorMessage(init: AgentUnavailableInit): string {
     case "rate_limited":
       return `${provider} rate limit hit. Wait a moment and retry, or upgrade your usage tier.`;
     case "model_not_found":
-      return `${provider} returned 404 for the configured model. Check the model name in your [llm.remote.*] block (or NIMBUS_AGENT_MODEL) and your access tier.`;
+      // Names no env var: `NIMBUS_AGENT_MODEL` / `NIMBUS_CLASSIFIER_MODEL` were removed, and
+      // sending someone to check a variable nothing reads is worse than saying nothing. The
+      // "vendors retire model ids" clause is there because that is the common cause in practice:
+      // `gemini-2.5-pro` still appears in `GET /v1beta/models` while `generateContent` on it
+      // 404s for keys issued after its retirement.
+      return `${provider} returned 404 for the configured model. Check the \`model\` in your [llm.remote.*] block against the vendor's current model list, and your access tier — vendors retire model ids.`;
     case "provider_error": {
       const detail = init.detail !== undefined && init.detail !== "" ? ` ${init.detail}` : "";
       return `${provider} request failed.${detail}`;
