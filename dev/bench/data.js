@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787939701006,
+  "lastUpdate": 1787941644449,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16761,6 +16761,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 332.49636665000725,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "21c1a889878b7cf6d88670531f6c7b140f0b6e3b",
+          "message": "ci: raise the Windows cross-platform test cap to 1080s and the job ceiling with it (#1373)\n\nCloses #1360.\n\n## The tripwire fired\n\nThe 900 s cap's own comment left one: *\"Re-check this number if a\nhealthy run ever exceeds ~700 s.\"*\n\nMeasured on `windows-2025`, the capped step only, **successful** runs:\n\n```\n519 s · 538 s · 560 s · 637 s · 669 s · 698 s · 709 s\n```\n\nThe runner's variance is ~28 % on identical work (404 s then 516 s on\nconsecutive runs of the same commit set). A worst healthy run of **709\ns** therefore implies **~907 s** at the top of that swing — *above* the\n900 s cap.\n\nThat is not a prediction. #1359 hit it twice, dying at **16,958** and\n**18,679** of 19,520 tests on the two attempts. Different death points\nrule out a deterministic hang and confirm plain slowness — and `exit\n124` is a wall-clock kill with **zero failing tests**, so it reads like\na mystery failure to whoever triages it.\n\n1080 s puts the worst observed healthy run at **66 %** of the cap,\nabsorbing the measured variance instead of sitting inside it.\n\n## The constraint the last raise missed\n\n`timeout-minutes` moves in the same commit, and this is the part worth\nreviewing:\n\n```\nsetup + 2 × cap  ≤  ceiling\n```\n\nMeasured setup overhead on `windows-2025` is **~270 s** (job 975 s vs.\ncapped step 709 s on the same run). At an 18-minute cap the worst case\nis `270 + 2160 = 2430 s ≈ 40.5 min` — so the existing 40-minute ceiling\nwas no longer enough, and the ceiling goes to 48.\n\n**A cap raised alone would have been silently useless.** The second\nattempt could never finish: the job would be cancelled at the ceiling\nwith *\"The operation was canceled\"* instead of surfacing the wrapper's\n`exit 124` — precisely the failure mode the per-attempt cap exists to\nprevent. The 600 s → 900 s raise did not state this arithmetic and so\ncould not check it; it is now written down next to both numbers.\n\n## A test that pinned the wrong thing\n\n`scripts/ci/cross-platform-parity.test.ts` identified the PR step by the\nliteral string `run-with-timeout.ts 900 bun test`, so this change failed\nit — a test whose subject is the **test paths**, not the cap value. It\nnow matches `\\d+` for the seconds.\n\nThat mattered beyond convenience: the tempting fix for a predicate that\nstops matching is to relax it until it matches *nothing*, which would\nmake the parity assertion vacuously true. The existing `toHaveLength(1)`\nassertion catches that, but only while the predicate still identifies\nthe step at all — so the comment says so.\n\n**Red-proved both directions:** the test passes with the cap changed to\nan arbitrary `1234` (correctly cap-agnostic) and fails all three\nassertions when the wrapper is removed entirely (still identifies the\nstep).\n\n## Not pretending this is the fix\n\nThe durable answer is a faster suite, not a fourth cap raise. The suite\nhas grown from **11,166 tests / 796 files** to **19,525 / 1,379** in\nunder a month, and the comment now says that plainly, with the next\nre-check threshold (~850 s) written down.\n\n## Verification\n\n- `bun run preflight:fast` — pass, including `audit:workflow-lint`.\n- `scripts/ci/cross-platform-parity.test.ts` — 3 pass, red-proved as\nabove.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+          "timestamp": "2026-08-28T21:15:49+03:00",
+          "tree_id": "d9fda7b25699acb4c16977663bcb2fc3e4c2618a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/21c1a889878b7cf6d88670531f6c7b140f0b6e3b"
+        },
+        "date": 1787941641923,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 317.74896250000313,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 316.81038419999607,
             "unit": "ms"
           }
         ]
