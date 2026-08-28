@@ -63,7 +63,14 @@ describe("PR cross-platform legs run the same tests as the push matrix", () => {
   // Identified by the wall-clock wrapper, which is unique to this step in ci.yml. Keying on
   // the step NAME would break the moment the step is renamed; keying on `packages/…` would
   // match any future `bun test` added to the file.
-  const prLines = matchingLines(CI_YML, (l) => l.includes("run-with-timeout.ts 900 bun test"));
+  //
+  // The cap SECONDS are matched as a number, not as the literal `900` this used to hard-code.
+  // That literal made a routine cap change (900 -> 1080, when a healthy run crossed the
+  // previous comment's own ~700 s tripwire) fail this test for a reason unrelated to parity,
+  // and worse, a careless "fix" is to relax the predicate until it matches nothing again --
+  // which the length assertion below is here to catch, but only if the predicate still
+  // identifies the step at all. The cap's VALUE is not this file's subject; the test PATHS are.
+  const prLines = matchingLines(CI_YML, (l) => /run-with-timeout\.ts \d+ bun test/.test(l));
 
   // Identified by the JUnit outfile, which names the unit shard and appears exactly once.
   const pushLines = matchingLines(
