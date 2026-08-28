@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [6.0.0](https://github.com/nimbus-agent/Nimbus/compare/v5.0.1...v6.0.0) (2026-08-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **llm:** remove the inert remote_model key and document the vendor tables ([#1368](https://github.com/nimbus-agent/Nimbus/issues/1368))
+* **llm:** ledger the ask intent classifier, and three defects found on a live install ([#1366](https://github.com/nimbus-agent/Nimbus/issues/1366))
+
+### Bug Fixes
+
+* **llm:** ledger the ask intent classifier, and three defects found on a live install ([#1366](https://github.com/nimbus-agent/Nimbus/issues/1366)) ([8202ec6](https://github.com/nimbus-agent/Nimbus/commit/8202ec64199c524ff436f3d4d04822e9c9a8620c))
+* **llm:** remove the inert remote_model key and document the vendor tables ([#1368](https://github.com/nimbus-agent/Nimbus/issues/1368)) ([0ca8232](https://github.com/nimbus-agent/Nimbus/commit/0ca82323f26dbd10dc59efa28eab3c43ba9c593e))
+
 ## [5.0.1](https://github.com/nimbus-agent/Nimbus/compare/v5.0.0...v5.0.1) (2026-08-28)
 
 
