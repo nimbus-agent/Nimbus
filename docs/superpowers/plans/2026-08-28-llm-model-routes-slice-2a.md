@@ -444,6 +444,21 @@ export class EgressAppendFailedError extends Error {
  * provider is already wrapped, so wrapping inside `registerRoute` would wrap the wrapper and
  * every generate would append twice. Static rule D22(e) pins `registerRoute` to
  * `llm/registry.ts` so this stays true.
+ *
+ * DO NOT ADD A `__ledgered` MARKER to make re-wrapping idempotent. It was proposed and
+ * rejected, for a reason that is not obvious:
+ *
+ *   - It would be read off the PROVIDER, i.e. off the very object whose egress is being
+ *     recorded. Any provider -- including a future third-party or extension-supplied one --
+ *     could then set `__ledgered: true` on itself and suppress its own ledger row. That is a
+ *     caller-controlled false zero, the exact shape this function derives locality internally
+ *     to prevent. A guard that can be satisfied by the thing it guards is not a guard.
+ *   - It would make the hazard SILENT rather than impossible. Today a refactor that moved the
+ *     wrap into `registerRoute` fails loudly: `audit:invariants` reports D22(e), and the
+ *     "re-wrapping double-counts" test goes red. With a marker, that refactor would quietly
+ *     work, and both signals would have to be deleted to keep the suite green.
+ *   - Reading an undeclared property off `LlmProvider` requires `unknown` narrowing or an
+ *     `any` cast; `any` is a Non-Negotiable violation.
  */
 export function wrapLedgeredProvider(
   db: Database,
@@ -454,6 +469,11 @@ export function wrapLedgeredProvider(
   if (provider.isLocal) {
     return provider;
   }
+  // `pullModel` is `.bind`-ed rather than arrow-wrapped because it is OPTIONAL: the
+  // conditional spread below needs a value to test, and arrow-wrapping an optional method
+  // would need a non-null assertion. The three required members are arrow-wrapped instead,
+  // which calls each on `provider` and so preserves its `this` exactly as `.bind` would.
+  // The asymmetry is deliberate, not an oversight.
   const pullModel = provider.pullModel?.bind(provider);
   return {
     providerId: provider.providerId,
@@ -489,6 +509,27 @@ export function wrapLedgeredProvider(
 Run: `bun test packages/gateway/src/egress/model-egress.test.ts && bun run typecheck`
 
 Expected: all 7 tests PASS; typecheck clean.
+
+- [ ] **Step 5b: Verify the `llm/` import stays type-only**
+
+Task 3 adds a **value** import `llm/registry.ts` → `egress/model-egress.ts`. Today `llm/`
+imports nothing from `egress/` and `egress/` reaches `llm/` only through `import type`, which
+is erased at compile time. If this file's `llm/types.ts` import ever becomes a value import,
+that closes a real runtime cycle `llm → egress → llm`, whose symptom under ESM is an
+`undefined` binding at module-init rather than a clean error.
+
+Being inside one package is not what makes this safe — it is precisely where import cycles
+form. What makes it safe is that the import is type-only, and `llm/types.ts` exports only
+types and one interface, so it has nothing else to offer.
+
+```bash
+grep -n 'from "../llm/' packages/gateway/src/egress/model-egress.ts
+```
+
+Expected: every line begins `import type`. There is **no** circular-dependency gate in this
+repo (no `madge`/`dpdm` in `package.json` or `preflight-gates.ts`), despite CLAUDE.md forbidding
+circular dependencies — so nothing else will catch a regression here. Adding such a gate is out
+of scope for this PR; this grep is the check.
 
 - [ ] **Step 6: Red-prove the locality derivation**
 
