@@ -227,35 +227,28 @@ Create `packages/gateway/src/egress/model-egress.test.ts`:
 
 ```ts
 import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { LlmGenerateOptions, LlmGenerateResult, LlmProvider } from "../llm/types.ts";
+import { THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
+import { listEgress } from "./egress-verify.ts";
 import { EgressAppendFailedError, wrapLedgeredProvider } from "./model-egress.ts";
 
-// The real ledger table, not a fake: `appendEgressEntry` computes a BLAKE3 chain over
-// prior rows, so a stub db would not exercise the code path that actually runs.
-function freshDb(): Database {
-  const db = new Database(":memory:");
-  db.exec(`CREATE TABLE egress_ledger (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp INTEGER NOT NULL,
-    source_type TEXT NOT NULL,
-    source_id TEXT,
-    destination TEXT NOT NULL,
-    method TEXT NOT NULL,
-    payload_summary TEXT NOT NULL,
-    hitl_status TEXT NOT NULL,
-    result_status TEXT NOT NULL,
-    row_hash TEXT NOT NULL,
-    prev_hash TEXT NOT NULL
-  )`);
-  return db;
-}
+// The REAL schema, via the migration runner -- the pattern every other `egress/*.test.ts`
+// uses. `appendEgressEntry` calls `readHeadHash` and `dbRun` and computes a BLAKE3 chain
+// over prior rows, so a hand-rolled CREATE TABLE would risk exercising something other
+// than the code path that actually runs. Rows are read back with `listEgress`, which
+// returns them camelCased.
 
-function rows(db: Database): Array<Record<string, unknown>> {
-  return db.query("SELECT * FROM egress_ledger ORDER BY id").all() as Array<
-    Record<string, unknown>
-  >;
-}
+// Carried over from `egress/synthesis-egress.test.ts`, which Task 3 DELETES. This is the
+// only test pinning the `model` coverage class, and `nimbus prove` reports on it -- it must
+// not vanish with its old home.
+describe("model coverage", () => {
+  test("model is per-call now that every non-local route appends", () => {
+    expect(THIS_BINARY_COVERAGE.model).toBe("per-call");
+  });
+});
 
 function makeProvider(providerId: string, isLocal: boolean): LlmProvider & {
   generate: ReturnType<typeof mock>;
@@ -282,8 +275,10 @@ function makeProvider(providerId: string, isLocal: boolean): LlmProvider & {
 describe("wrapLedgeredProvider", () => {
   let db: Database;
   beforeEach(() => {
-    db = freshDb();
+    db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   });
+  afterEach(() => db.close());
 
   test("a LOCAL provider is returned unchanged and appends nothing", async () => {
     // Identity, not a pass-through wrapper: a local generate makes no outbound request,
@@ -295,7 +290,7 @@ describe("wrapLedgeredProvider", () => {
     expect(wrapped).toBe(inner);
 
     await wrapped.generate({ task: "reasoning", prompt: "hi" });
-    expect(rows(db)).toHaveLength(0);
+    expect(listEgress(db, {})).toHaveLength(0);
   });
 
   test("a REMOTE provider appends exactly one row, destination = providerId", async () => {
@@ -306,14 +301,14 @@ describe("wrapLedgeredProvider", () => {
 
     await wrapped.generate({ task: "reasoning", prompt: "hi" });
 
-    const r = rows(db);
+    const r = listEgress(db, {});
     expect(r).toHaveLength(1);
-    expect(r[0]?.["source_type"]).toBe("model");
-    expect(r[0]?.["destination"]).toBe("anthropic");
-    expect(r[0]?.["source_id"]).toBe("claude-sonnet-4-6");
-    expect(r[0]?.["method"]).toBe("llm.generate.reasoning");
-    expect(r[0]?.["timestamp"]).toBe(1234);
-    expect(r[0]?.["result_status"]).toBe("authorized");
+    expect(r[0]?.sourceType).toBe("model");
+    expect(r[0]?.destination).toBe("anthropic");
+    expect(r[0]?.sourceId).toBe("claude-sonnet-4-6");
+    expect(r[0]?.method).toBe("llm.generate.reasoning");
+    expect(r[0]?.timestamp).toBe(1234);
+    expect(r[0]?.resultStatus).toBe("authorized");
   });
 
   test("egressMethod overrides the derived method", async () => {
@@ -326,7 +321,7 @@ describe("wrapLedgeredProvider", () => {
       egressMethod: "agents.catchup.synthesis",
     });
 
-    expect(rows(db)[0]?.["method"]).toBe("agents.catchup.synthesis");
+    expect(listEgress(db, {})[0]?.method).toBe("agents.catchup.synthesis");
   });
 
   test("egressMethod cannot suppress a row for a remote provider", async () => {
@@ -337,7 +332,7 @@ describe("wrapLedgeredProvider", () => {
 
     await wrapped.generate({ task: "reasoning", prompt: "hi", egressMethod: "" });
 
-    expect(rows(db)).toHaveLength(1);
+    expect(listEgress(db, {})).toHaveLength(1);
   });
 
   test("fail-closed: an append failure throws and the delegate never runs", async () => {
@@ -374,7 +369,7 @@ describe("wrapLedgeredProvider", () => {
     const twice = wrapLedgeredProvider(db, once, "claude-sonnet-4-6");
 
     await twice.generate({ task: "reasoning", prompt: "hi" });
-    expect(rows(db)).toHaveLength(2);
+    expect(listEgress(db, {})).toHaveLength(2);
   });
 });
 ```
@@ -620,7 +615,7 @@ test("refreshProviderMeta does not double-wrap", async () => {
 });
 ```
 
-If `registry.test.ts` has no ledger-backed db helper, add `freshLedgerDb()` to that file using the same `CREATE TABLE egress_ledger` DDL as `model-egress.test.ts` Step 2.
+If `registry.test.ts` has no ledger-backed db helper, add `freshLedgerDb()` to that file using the same setup as `model-egress.test.ts` Step 2 — `new Database(":memory:")` then `runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION)`. Read rows with `listEgress(db, {})` from `egress/egress-verify.ts` (it returns camelCase fields: `sourceType`, `sourceId`, `destination`, `method`, `resultStatus`, `timestamp`) rather than raw SQL, matching every other `egress/*.test.ts` in the repo.
 
 Add to `packages/gateway/src/agents/_lib/synthesis-llm.test.ts`:
 
