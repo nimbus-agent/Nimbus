@@ -14,7 +14,7 @@ import type { PlatformPaths } from "../platform/paths.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { TONE_DIRECTIVES, VOICE_DIRECTIVES } from "./persona.ts";
-import { runAsk } from "./run-ask.ts";
+import { resolveLocalContextItemLimit, runAsk } from "./run-ask.ts";
 import type { ConnectorDispatcher } from "./types.ts";
 
 const stubBase = join(tmpdir(), "nimbus-run-ask-test");
@@ -1980,5 +1980,45 @@ describe("a count question is answered from the index, not the model (F23)", () 
 
     expect(out.reply).not.toContain("Counted from the index");
     localIndex.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveLocalContextItemLimit
+//
+// `ask` fed the model 8 indexed items regardless of the model behind it. That
+// budget was sized for a 3B local model; a 14B-class model with a 128k window
+// can hold far more, and the 8-item cap — not the model — was what made `ask`
+// answer "no data available" while 71 items matched. Default stays 8 so no
+// existing deployment changes behaviour; the override is opt-in.
+// ---------------------------------------------------------------------------
+
+const ASK_ITEMS_ENV = "NIMBUS_ASK_CONTEXT_ITEMS";
+
+function withAskItemsEnv<T>(value: string | undefined, fn: () => T): T {
+  const prev = process.env[ASK_ITEMS_ENV];
+  if (value === undefined) delete process.env[ASK_ITEMS_ENV];
+  else process.env[ASK_ITEMS_ENV] = value;
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env[ASK_ITEMS_ENV];
+    else process.env[ASK_ITEMS_ENV] = prev;
+  }
+}
+
+describe("resolveLocalContextItemLimit", () => {
+  test("defaults to 8, preserving the shipped context budget", () => {
+    expect(withAskItemsEnv(undefined, resolveLocalContextItemLimit)).toBe(8);
+  });
+
+  test("honours NIMBUS_ASK_CONTEXT_ITEMS when it is a positive integer", () => {
+    expect(withAskItemsEnv("40", resolveLocalContextItemLimit)).toBe(40);
+  });
+
+  test("falls back to the default when the override is not a positive integer", () => {
+    for (const bad of ["", "abc", "0", "-3"]) {
+      expect(withAskItemsEnv(bad, resolveLocalContextItemLimit)).toBe(8);
+    }
   });
 });

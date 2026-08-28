@@ -1,4 +1,5 @@
 import { IPCClient } from "../ipc-client/index.ts";
+import { resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -40,8 +41,6 @@ export function parseExpertArgs(args: string[]): ExpertCliArgs {
   return out;
 }
 
-const TIMEOUT_MS = 30_000;
-
 export async function runExpertCli(args: string[]): Promise<void> {
   const parsed = parseExpertArgs(args);
 
@@ -59,7 +58,11 @@ export async function runExpertCli(args: string[]): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
   const briefPromise = new Promise<{ brief: string; findings: ExpertBrief }>((resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS);
+    const timeoutMs = resolveBriefTimeoutMs();
+    timeout = setTimeout(
+      () => reject(new Error(`Agent timed out after ${Math.round(timeoutMs / 1000)} s`)),
+      timeoutMs,
+    );
     client.onNotification("expert.briefReady", (params: unknown) => {
       const p = params as { sessionId?: string; brief?: string; findings?: unknown };
       if (typeof p.brief !== "string" || !isExpertBrief(p.findings)) {

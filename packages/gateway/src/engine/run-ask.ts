@@ -310,12 +310,34 @@ async function dispatchPlan(p: RunAskParams, plan: PlanResult): Promise<{ reply:
   return await runActionsPlan(p, plan.actions);
 }
 
-const LOCAL_CONTEXT_ITEM_LIMIT = 8;
+const DEFAULT_LOCAL_CONTEXT_ITEM_LIMIT = 8;
+
+/**
+ * How many indexed items `ask` puts in front of the model.
+ *
+ * The default of 8 was sized for a small local model and is kept as-is, so no
+ * existing deployment changes behaviour. It is a ceiling on the ANSWER, not on
+ * the search: with a larger local model (a 14B-class one holds a 128k window)
+ * the cap, not the model, is what makes `ask` say it has no data while dozens
+ * of items match — the disclosure note below reports exactly that shortfall.
+ * Raise it via NIMBUS_ASK_CONTEXT_ITEMS when the configured model can hold more.
+ *
+ * Read per call rather than cached so a caller can change it without a restart;
+ * a non-positive or unparseable value falls back to the default instead of
+ * throwing, since a malformed override must not make `ask` unusable.
+ */
+export function resolveLocalContextItemLimit(): number {
+  const raw = process.env["NIMBUS_ASK_CONTEXT_ITEMS"];
+  if (raw === undefined || raw === "") return DEFAULT_LOCAL_CONTEXT_ITEM_LIMIT;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_LOCAL_CONTEXT_ITEM_LIMIT;
+  return n;
+}
 /**
  * How far the primary ranked search looks before the context is sliced to
- * {@link LOCAL_CONTEXT_ITEM_LIMIT}.
+ * {@link resolveLocalContextItemLimit}.
  *
- * The context budget stays 8; this exists only so the answer can SAY how much it left out.
+ * The context budget defaults to 8; this exists only so the answer can SAY how much it left out.
  * Before it, the search itself asked for 8, so nothing downstream could tell "8 matches" from
  * "800 matches, of which you are seeing 8" — and `ask` served the second as the first.
  *
@@ -428,7 +450,7 @@ function githubIssueContextItemsForRepo(
        ORDER BY modified_at DESC, synced_at DESC, title ASC
        LIMIT ?`,
     )
-    .all(like, urlLike, LOCAL_CONTEXT_ITEM_LIMIT) as GithubIssueContextRow[];
+    .all(like, urlLike, resolveLocalContextItemLimit()) as GithubIssueContextRow[];
   return rows.map((row) => {
     const preview = cleanContextText(row.body_preview ?? "");
     const url = cleanContextText(row.url ?? "");
@@ -489,10 +511,10 @@ async function buildLocalIndexedContext(
       { name: searchTerms, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT },
       { semantic: true, contextChunks: 2 },
     );
-    addRankedResults(primary.slice(0, LOCAL_CONTEXT_ITEM_LIMIT));
+    addRankedResults(primary.slice(0, resolveLocalContextItemLimit()));
     for (const quotedQuery of extractQuotedSearchQueries(query)) {
       addRankedResults(
-        localIndex.searchRanked({ name: quotedQuery, limit: LOCAL_CONTEXT_ITEM_LIMIT }),
+        localIndex.searchRanked({ name: quotedQuery, limit: resolveLocalContextItemLimit() }),
       );
     }
     for (const repoSlug of extractGithubRepoSlugs(query)) {
@@ -532,7 +554,7 @@ async function buildLocalIndexedContext(
     // Round-robin across services before slicing (F12b): `github_actions` held 11,979 items to
     // `github`'s 214 on the audited index, so the eight highest-ranked were all CI runs and a
     // question about a repo never saw a PR.
-    const contextItems = capPerService([...byId.values()], LOCAL_CONTEXT_ITEM_LIMIT).map(
+    const contextItems = capPerService([...byId.values()], resolveLocalContextItemLimit()).map(
       (item, idx) => ({ ...item, rank: idx + 1 }),
     );
     return {

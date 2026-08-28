@@ -1,6 +1,6 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import { GatewayNotRunningError, withGatewayIpc } from "../lib/with-gateway-ipc.ts";
-import { flagValue, runAgentBriefCli, TIMEOUT_MS } from "./_agent-brief-cli.ts";
+import { briefTimeoutMs, flagValue, runAgentBriefCli } from "./_agent-brief-cli.ts";
 
 export type GlossaryCliArgs = {
   term?: string;
@@ -308,7 +308,7 @@ function isGlossaryPreviewLike(v: unknown): v is GlossaryPreviewLike {
  * IPC calls made (never `glossary.rebuild` / `glossary.refresh`) without
  * standing up a gateway.
  *
- * Bounded by the same `TIMEOUT_MS` discipline `awaitBrief` uses: a wedged or
+ * Bounded by the same `briefTimeoutMs()` discipline `awaitBrief` uses: a wedged or
  * crashed gateway that never emits `glossary.briefReady`/`briefError` must
  * fail closed with the same "Agent timed out after N s" shape, not hang
  * forever. `timeoutMs` is overridable so tests can force the timeout branch
@@ -321,7 +321,7 @@ function isGlossaryPreviewLike(v: unknown): v is GlossaryPreviewLike {
  */
 export function readRebuildPreview(
   client: IPCClient,
-  timeoutMs: number = TIMEOUT_MS,
+  timeoutMs: number = briefTimeoutMs(),
 ): Promise<{ counts: { total: number; pending: number; manual: number }; sample: string[] }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -379,7 +379,7 @@ export type GlossaryCommandDeps = {
   runAgentBriefCli: typeof runAgentBriefCli;
   /**
    * Overridable only so a test can force `readRebuildPreview`'s timeout
-   * branch without a real 30s wait. Always `TIMEOUT_MS` in production —
+   * branch without a real 30s wait. Always `briefTimeoutMs()` in production —
    * `defaultGlossaryDeps` below omits it, so `readRebuildPreview`'s own
    * default parameter applies.
    */

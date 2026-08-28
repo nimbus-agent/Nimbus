@@ -1,12 +1,16 @@
 import { IPCClient } from "../ipc-client/index.ts";
+import { resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
-/** Shared 30s notification-wait bound. Exported so sibling read paths outside
- * `runAgentBriefCli` (e.g. `glossary`'s `--rebuild` preview read) fail closed
- * with the same timeout discipline instead of hanging indefinitely. */
-export const TIMEOUT_MS = 30_000;
+/** Shared notification-wait bound, resolved from the single definition in
+ * `lib/agent-brief-render.ts` (honours NIMBUS_BRIEF_TIMEOUT_MS). Exported so
+ * sibling read paths outside `runAgentBriefCli` (e.g. `glossary`'s `--rebuild`
+ * preview read) fail closed with the same discipline instead of hanging.
+ * A function, not a const: the value is read per call, so an override applies
+ * without a rebuild and a stale module-load snapshot cannot pin it. */
+export const briefTimeoutMs = resolveBriefTimeoutMs;
 
 /** Reads the value following a `--flag`, rejecting empty / another-flag values. Shared by agent CLIs. */
 export function flagValue(args: string[], i: number, flag: string): string {
@@ -50,7 +54,7 @@ function awaitBrief<TFindings>(
   spec: AgentBriefCliSpec<TFindings>,
   onTimer: (t: ReturnType<typeof setTimeout>) => void,
 ): Promise<{ brief: string; findings: TFindings }> {
-  const timeoutMs = spec.timeoutMs ?? TIMEOUT_MS;
+  const timeoutMs = spec.timeoutMs ?? briefTimeoutMs();
   return new Promise<{ brief: string; findings: TFindings }>((resolve, reject) => {
     onTimer(
       setTimeout(

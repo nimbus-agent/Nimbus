@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
-import { awaitAgentBrief, renderAgentBrief } from "./agent-brief-render.ts";
+import { awaitAgentBrief, renderAgentBrief, resolveBriefTimeoutMs } from "./agent-brief-render.ts";
 
 // ---------------------------------------------------------------------------
 // renderAgentBrief
@@ -178,5 +178,95 @@ describe("awaitAgentBrief — timeout", () => {
     pending.bindSession("s1");
 
     await expect(pending.result).rejects.toThrow("timed out");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveBriefTimeoutMs
+//
+// The CLI's brief timeout used to be a hardcoded 30_000 with no override. That
+// silently capped the gateway's own `[agents] synthesis_timeout_ms`: a config of
+// 90_000 was unreachable, because the client gave up first. Any local model slow
+// enough to need more than 30s could therefore never return a brief through the
+// CLI at all (observed: a 14B model rendering `catchup` in 41.5s).
+// ---------------------------------------------------------------------------
+
+const TIMEOUT_ENV = "NIMBUS_BRIEF_TIMEOUT_MS";
+
+function withTimeoutEnv<T>(value: string | undefined, fn: () => T): T {
+  const prev = process.env[TIMEOUT_ENV];
+  if (value === undefined) delete process.env[TIMEOUT_ENV];
+  else process.env[TIMEOUT_ENV] = value;
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env[TIMEOUT_ENV];
+    else process.env[TIMEOUT_ENV] = prev;
+  }
+}
+
+describe("resolveBriefTimeoutMs", () => {
+  it("defaults high enough for a local mid-size model to finish a brief", () => {
+    // Pinned deliberately: the old 30_000 default is below the observed
+    // wall-clock of a 14B-class local model, which is the default path for a
+    // local-first product.
+    expect(withTimeoutEnv(undefined, resolveBriefTimeoutMs)).toBe(120_000);
+  });
+
+  it("uses NIMBUS_BRIEF_TIMEOUT_MS when it is a positive integer", () => {
+    expect(withTimeoutEnv("240000", resolveBriefTimeoutMs)).toBe(240_000);
+  });
+
+  it("falls back to the default when the override is not a positive integer", () => {
+    for (const bad of ["", "abc", "0", "-5"]) {
+      expect(withTimeoutEnv(bad, resolveBriefTimeoutMs)).toBe(120_000);
+    }
+  });
+});
+
+describe("awaitAgentBrief — timeout wiring", () => {
+  it("times out using the env-derived value rather than a hardcoded default", async () => {
+    const client: { onNotification(m: string, h: (p: unknown) => void): void } = {
+      onNotification: (): void => {},
+    };
+    const pending = withTimeoutEnv("60", () =>
+      awaitAgentBrief(client, "catchup", (_x): _x is { gaps: [] } => true),
+    );
+    await expect(pending.result).rejects.toThrow("Agent timed out after 60 ms");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Single source of truth for the brief timeout.
+//
+// The 30s cap existed in FOUR independent copies: this module,
+// commands/_agent-brief-cli.ts, commands/glossary.ts (via that export) and
+// commands/expert.ts — the last with the literal "30 s" baked into its error
+// string, so it would have reported the wrong number the moment its own
+// constant moved. Fixing one left the others capping every brief they serve.
+// Written as what CANNOT pass: any NEW hardcoded brief timeout re-fails this.
+// ---------------------------------------------------------------------------
+
+describe("brief timeout has one definition", () => {
+  it("no CLI command declares its own 30-second brief timeout", async () => {
+    const { Glob } = await import("bun");
+    const offenders: string[] = [];
+    const glob = new Glob("**/*.ts");
+    for await (const rel of glob.scan({ cwd: `${import.meta.dir}/..` })) {
+      if (rel.endsWith(".test.ts")) continue;
+      const path = `${import.meta.dir}/../${rel}`;
+      const src = await Bun.file(path).text();
+      // A local timeout constant sized in the 30s range, or an error string
+      // that hardcodes the duration instead of formatting the real value.
+      // Bare `TIMEOUT_MS` only: a prefixed constant like doctor.ts's
+      // FIX_KEYRING_EXEC_TIMEOUT_MS is an unrelated spawn budget, not a brief cap.
+      if (
+        /^\s*(?:export\s+)?const TIMEOUT_MS\s*=\s*30_000/m.test(src) ||
+        /timed out after 30 s/.test(src)
+      ) {
+        offenders.push(rel);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

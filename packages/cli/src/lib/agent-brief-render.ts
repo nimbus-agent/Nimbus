@@ -1,3 +1,4 @@
+import { envGet } from "../env.ts";
 import {
   AgentBriefRouter,
   type BriefNotificationSource,
@@ -8,7 +9,35 @@ import {
 // `awaitAgentBrief` from this module instead of reaching into the router directly.
 export type { PendingBrief };
 
-const TIMEOUT_MS = 30_000;
+/**
+ * Default wall-clock a CLI caller waits for an agent brief.
+ *
+ * This is a CLIENT-side cap and it silently bounds the gateway's own
+ * `[agents] synthesis_timeout_ms`: whichever is smaller wins, and the caller
+ * only ever sees the client's error. At the previous 30_000 a gateway
+ * configured for 90_000 could never deliver, so any local model slow enough to
+ * need more than 30s was unusable for briefs through the CLI — a 14B-class
+ * model renders `catchup` in ~41s. Raised so the local-first default path works
+ * out of the box; lower it via NIMBUS_BRIEF_TIMEOUT_MS if you would rather fail
+ * fast than wait.
+ */
+const DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * Resolve the brief timeout, honouring NIMBUS_BRIEF_TIMEOUT_MS.
+ *
+ * Read per call, never cached: tests and callers set the variable after this
+ * module is imported. A non-positive or unparseable value falls back to the
+ * default rather than throwing — a malformed override should not make every
+ * brief unrunnable.
+ */
+export function resolveBriefTimeoutMs(): number {
+  const raw = envGet("NIMBUS_BRIEF_TIMEOUT_MS");
+  if (raw === undefined || raw === "") return DEFAULT_TIMEOUT_MS;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_TIMEOUT_MS;
+  return n;
+}
 
 /** One router per client, so listeners are registered once per agent name per connection. */
 const routers = new WeakMap<object, AgentBriefRouter>();
@@ -31,7 +60,7 @@ export function awaitAgentBrief<T>(
   client: BriefNotificationSource,
   agentName: string,
   guard: (x: unknown) => x is T,
-  timeoutMs: number = TIMEOUT_MS,
+  timeoutMs: number = resolveBriefTimeoutMs(),
 ): PendingBrief<T> {
   return routerFor(client).expect(agentName, guard, timeoutMs);
 }
