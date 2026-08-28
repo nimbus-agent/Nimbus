@@ -177,3 +177,28 @@ describe("agentErrorFromCaughtError", () => {
     expect(e?.provider).toBe("openai");
   });
 });
+
+describe("providerLabel covers every registrable vendor", () => {
+  test("each vendor renders its own name, never the generic fallback", () => {
+    // Slice 2b made gemini and xai registrable but left them out of the label map, so their
+    // errors read as "the LLM provider" -- and a classifier 401 on a Gemini-only install
+    // reported an ANTHROPIC problem, sending diagnosis the wrong way.
+    const cases: Array<[AgentProviderName, string]> = [
+      ["anthropic", "Anthropic"],
+      ["openai", "OpenAI"],
+      ["gemini", "Gemini"],
+      ["xai", "xAI"],
+    ];
+    for (const [provider, label] of cases) {
+      const err = new GatewayAgentUnavailableError({ reason: "invalid_api_key", provider });
+      expect(err.message).toContain(label);
+      expect(err.message).not.toContain("the LLM provider");
+    }
+  });
+
+  test("an unknown provider still degrades to the generic label", () => {
+    // `undefined` is the honest case: the provider genuinely is not known.
+    const err = new GatewayAgentUnavailableError({ reason: "invalid_api_key" });
+    expect(err.message).toContain("the LLM provider");
+  });
+});

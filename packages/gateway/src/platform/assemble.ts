@@ -1659,12 +1659,33 @@ export async function buildLlmRegistryFromToml(
   // registry) so route_priority can be validated against the real, post-collision-check set
   // before the router is constructed, since `LlmRouterConfig.routePriority` is set at
   // construction time.
-  const routeIdsToRegister: string[] =
+  const localRouteIdsToRegister: string[] =
     validatedLocalRoutes.size > 0
       ? [...validatedLocalRoutes.values()].map((route) =>
           makeRouteId(route.runtime === "llamacpp" ? "llamacpp" : "ollama", route.model),
         )
       : [makeRouteId("ollama", effectiveLocalModel), makeRouteId("llamacpp", effectiveLocalModel)];
+
+  // REMOTE route ids belong in this set too, and leaving them out was a real bug: the vendor
+  // loop registers them AFTER the router is constructed, but `routePriority` is frozen into
+  // `LlmRouterConfig` at construction — so a `[llm.remote.*]` id named in `route_priority` was
+  // dropped as "does not name a registered route" and could never be honoured. With
+  // `prefer_local = true` that left an enabled cloud vendor effectively unreachable, since
+  // `byPreference` always put the local routes first.
+  //
+  // Keyless vendors are INCLUDED here on purpose. Whether a key resolves is not known until the
+  // async registration loop below, and over-including is safe: `orderedRoutes` skips an id that
+  // did not end up registered, and the vendor loop warns by name when it drops one. Excluding
+  // them would resurrect this bug for anyone whose key arrives after boot.
+  // Resolved ONCE and reused by the registration loop below: `resolveEnabledVendors` warns by
+  // name for an unknown vendor or an empty model, so calling it twice would emit every warning
+  // twice.
+  const enabledVendors = resolveEnabledVendors(llmToml.remoteVendors, vault, logger);
+  const remoteRouteIdsToRegister: string[] = enabledVendors.map((v) =>
+    makeRouteId(v.vendorId, v.modelName),
+  );
+
+  const routeIdsToRegister: string[] = [...localRouteIdsToRegister, ...remoteRouteIdsToRegister];
 
   const validatedRoutePriority = dropUnresolvableRoutePriorityEntries(
     llmToml.routePriority,
@@ -1731,7 +1752,7 @@ export async function buildLlmRegistryFromToml(
   // (slice 2a), so each of these routes ledgers before every generate without the adapter
   // cooperating. A vendor that is enabled but whose key does not resolve is dropped with a
   // warning rather than registered, so a keyless route never enters the priority walk at all.
-  for (const vendor of resolveEnabledVendors(llmToml.remoteVendors, vault, logger)) {
+  for (const vendor of enabledVendors) {
     const key = await vendor.apiKey();
     if (key === undefined || key.trim() === "") {
       logger.warn(

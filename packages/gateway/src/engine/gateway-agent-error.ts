@@ -12,7 +12,15 @@ export type AgentUnavailableReason =
   | "air_gap"
   | "unknown";
 
-export type AgentProviderName = "anthropic" | "openai";
+/**
+ * A vendor that can appear in a user-facing agent error.
+ *
+ * Kept in step with `REMOTE_VENDOR_IDS` (`platform/assemble.ts`). Slice 2b added `gemini` and
+ * `xai` as registrable vendors but not here, so their failures rendered as the generic "the LLM
+ * provider" — and on a Gemini-only install a classifier 401 read as an *Anthropic* problem,
+ * which sent diagnosis in the wrong direction.
+ */
+export type AgentProviderName = "anthropic" | "openai" | "gemini" | "xai";
 
 export type AgentUnavailableInit = {
   reason: AgentUnavailableReason;
@@ -67,10 +75,21 @@ export class GatewayAgentUnavailableError extends Error {
   }
 }
 
+/**
+ * TOTAL over `AgentProviderName`, so adding a vendor id without a label is a COMPILE error rather
+ * than a silent downgrade to the generic string — the failure mode that made a Gemini error read
+ * as an anonymous one. `undefined` still maps to the generic label, which is the honest answer
+ * when the provider genuinely is not known.
+ */
+const PROVIDER_LABELS: Record<AgentProviderName, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  gemini: "Gemini",
+  xai: "xAI",
+};
+
 function providerLabel(provider: AgentProviderName | undefined): string {
-  if (provider === "anthropic") return "Anthropic";
-  if (provider === "openai") return "OpenAI";
-  return "the LLM provider";
+  return provider === undefined ? "the LLM provider" : PROVIDER_LABELS[provider];
 }
 
 function buildAgentErrorMessage(init: AgentUnavailableInit): string {

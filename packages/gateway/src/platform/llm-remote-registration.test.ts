@@ -192,3 +192,80 @@ describe("resolveAgentVendor — the Mastra agent's opt-in", () => {
     });
   });
 });
+
+describe("route_priority may name a [llm.remote.*] route", () => {
+  test("an enabled vendor named in route_priority is NOT dropped as unresolvable", async () => {
+    // The regression: `routeIdsToRegister` was computed from LOCAL routes only, and
+    // `routePriority` is frozen into `LlmRouterConfig` at construction -- but vendors register
+    // AFTER. So a remote id in route_priority was warn-dropped and could never be honoured, and
+    // with `prefer_local = true` (the default) `byPreference` then put local routes first,
+    // leaving an enabled cloud vendor effectively unreachable.
+    const warnings: string[] = [];
+    const db = new Database(":memory:");
+    const registry = await buildLlmRegistryFromToml(
+      db,
+      tomlWith(
+        `[llm]
+route_priority = ["anthropic/claude-sonnet-4-6"]
+
+` +
+          `[llm.remote.anthropic]
+enabled = true
+model = "claude-sonnet-4-6"
+`,
+      ),
+      vaultOf(new Map([["anthropic.api_key", "sk-ant"]])),
+      { warn: (m: string) => warnings.push(m) },
+    );
+
+    expect(warnings.join(" ")).not.toContain("does not name a registered route");
+    expect(remoteRoutesOf(registry).map((r) => r.routeId)).toContain("anthropic/claude-sonnet-4-6");
+    db.close();
+  });
+
+  test("a KEYLESS enabled vendor is still accepted in route_priority, not warn-dropped", async () => {
+    // Whether a key resolves is not known until the async registration loop, so the id set is
+    // built from enabled vendors REGARDLESS of key. Over-including is safe -- `orderedRoutes`
+    // skips an id that never registered -- and under-including would resurrect the bug for
+    // anyone whose key arrives after boot.
+    const warnings: string[] = [];
+    const db = new Database(":memory:");
+    await buildLlmRegistryFromToml(
+      db,
+      tomlWith(
+        `[llm]
+route_priority = ["gemini/gemini-2.5-flash"]
+
+` +
+          `[llm.remote.gemini]
+enabled = true
+model = "gemini-2.5-flash"
+`,
+      ),
+      vaultOf(new Map()),
+      { warn: (m: string) => warnings.push(m) },
+    );
+
+    expect(warnings.join(" ")).not.toContain("does not name a registered route");
+    // It IS still dropped from the registry, by name, for the missing key -- a different and
+    // correct warning.
+    expect(warnings.join(" ")).toContain("gemini");
+    db.close();
+  });
+
+  test("a genuinely unresolvable entry is STILL dropped by name", async () => {
+    // The widened set must not make the validation inert.
+    const warnings: string[] = [];
+    const db = new Database(":memory:");
+    await buildLlmRegistryFromToml(
+      db,
+      tomlWith(`[llm]
+route_priority = ["ollama/not-a-configured-model"]
+`),
+      vaultOf(new Map()),
+      { warn: (m: string) => warnings.push(m) },
+    );
+    expect(warnings.join(" ")).toContain("does not name a registered route");
+    db.close();
+  });
+});
