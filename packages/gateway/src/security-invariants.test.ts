@@ -22,8 +22,12 @@ import { HITL_REQUIRED } from "./engine/executor.ts";
 import { CURRENT_SCHEMA_VERSION } from "./index/local-index.ts";
 import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
 import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
+import { AnthropicProvider } from "./llm/anthropic-provider.ts";
+import { GeminiProvider } from "./llm/gemini-provider.ts";
 import { LlamaCppProvider } from "./llm/llamacpp-provider.ts";
 import { OllamaProvider } from "./llm/ollama-provider.ts";
+import { OpenAiProvider } from "./llm/openai-provider.ts";
+import { XaiProvider } from "./llm/xai-provider.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
@@ -2212,6 +2216,31 @@ describe("I34 — locality is declared once, and a cloud adapter can never claim
     const files = await readDirFiles("packages/gateway/src");
     const offenders = files
       .filter((f) => /LOCAL_PROVIDER_IDS|LOCAL_PROVIDERS\s*=/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  test("every cloud adapter reports isLocal === false, even on a loopback base_url", () => {
+    // The INVERSE of the local-runtime rule above, and the case slice 2a could not write because
+    // no cloud adapter existed. A LiteLLM-style proxy on 127.0.0.1 FORWARDS to the vendor, so
+    // deriving locality from the URL here would reopen the air-gap bypass slice 1 closed --
+    // through the opposite door.
+    const apiKey = async (): Promise<string | undefined> => "k";
+    const baseUrl = "http://127.0.0.1:4000";
+    expect(new AnthropicProvider({ apiKey, modelName: "m", baseUrl }).isLocal).toBe(false);
+    expect(new OpenAiProvider({ apiKey, modelName: "m", baseUrl }).isLocal).toBe(false);
+    expect(new GeminiProvider({ apiKey, modelName: "m", baseUrl }).isLocal).toBe(false);
+    expect(new XaiProvider({ apiKey, modelName: "m", baseUrl }).isLocal).toBe(false);
+  });
+
+  test("no cloud adapter derives locality from the base URL", async () => {
+    // Structural complement to the four value assertions above: a future adapter that imported
+    // `isLoopbackBaseUrl` would be DERIVING locality, which is exactly the mistake I34 names.
+    // Scoped to the cloud adapters -- the two local runtimes import it correctly and by design.
+    const files = await readDirFiles("packages/gateway/src/llm");
+    const offenders = files
+      .filter((f) => /-provider.ts$/.test(f.rel) && !/^(ollama|llamacpp)-/.test(f.rel))
+      .filter((f) => /isLoopbackBaseUrl/.test(stripComments(f.contents)))
       .map((f) => f.rel);
     expect(offenders).toEqual([]);
   });

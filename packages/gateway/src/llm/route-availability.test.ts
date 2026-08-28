@@ -224,3 +224,50 @@ describe("RouteAvailabilityProbe", () => {
     expect(reachableCalls).toBe(1); // positive TTL still holds — NOT re-probed
   });
 });
+
+describe("not_configured — the remote-only availability reason", () => {
+  function fakeRoute(providerId: string, isLocal: boolean, available: boolean): ModelRoute {
+    return {
+      routeId: `${providerId}/m`,
+      modelName: "m",
+      meta: {},
+      provider: {
+        providerId,
+        isLocal,
+        isAvailable: async () => available,
+        listModels: async () => [{ provider: providerId, modelName: "m" }],
+        generate: async () => {
+          throw new Error("unused");
+        },
+      },
+    } as unknown as ModelRoute;
+  }
+
+  test("an enabled-but-keyless REMOTE route reports not_configured", async () => {
+    // Three different fixes otherwise collapse into one word: start the daemon, pull the model,
+    // add a key. A cloud adapter answers `isAvailable()` OFFLINE, so a `false` from one means
+    // "no key" and never "unreachable" -- which is what makes this derivable without a probe.
+    const probe = new RouteAvailabilityProbe();
+    expect(await probe.check(fakeRoute("openai", false, false))).toEqual({
+      available: false,
+      reason: "not_configured",
+    });
+  });
+
+  test("an unavailable LOCAL route still reports provider_unreachable", async () => {
+    // The new reason must be scoped to remote routes: a stopped Ollama daemon is still a
+    // reachability problem and its remedy is unchanged.
+    const probe = new RouteAvailabilityProbe();
+    expect((await probe.check(fakeRoute("ollama", true, false))).reason).toBe(
+      "provider_unreachable",
+    );
+  });
+
+  test("a keyed remote route whose model matches is available", async () => {
+    const probe = new RouteAvailabilityProbe();
+    expect(await probe.check(fakeRoute("anthropic", false, true))).toEqual({
+      available: true,
+      reason: "ok",
+    });
+  });
+});

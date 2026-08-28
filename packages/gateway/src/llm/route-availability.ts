@@ -9,7 +9,14 @@ import type { LlmProvider, ModelRoute, ProviderId } from "./types.ts";
  */
 export type RouteAvailability = {
   available: boolean;
-  reason: "ok" | "provider_unreachable" | "model_absent";
+  /**
+   * `not_configured` is REMOTE-ONLY: a cloud route that is enabled but has no resolvable key.
+   * It exists because three different fixes otherwise collapse into one word — start the daemon
+   * (`provider_unreachable`), pull the model (`model_absent`), add a key. A cloud adapter answers
+   * `isAvailable()` OFFLINE, so a `false` from one means "no key" and never "unreachable"; that
+   * is what makes the distinction derivable here without issuing a probe.
+   */
+  reason: "ok" | "provider_unreachable" | "model_absent" | "not_configured";
 };
 
 /**
@@ -85,7 +92,14 @@ export class RouteAvailabilityProbe {
   async check(route: ModelRoute): Promise<RouteAvailability> {
     const probe = await this.probeProvider(route.provider);
     if (!probe.reachable) {
-      return { available: false, reason: "provider_unreachable" };
+      // Split on LOCALITY. A remote adapter's `isAvailable()` is offline and answers exactly
+      // "enabled and keyed", so a `false` from one means the credential is missing — not that
+      // anything was unreachable, and telling the user to check their network for a missing key
+      // would send them to the wrong remedy.
+      return {
+        available: false,
+        reason: route.provider.isLocal ? "provider_unreachable" : "not_configured",
+      };
     }
     if (matchesModel(probe.modelNames, route.modelName)) {
       return { available: true, reason: "ok" };
