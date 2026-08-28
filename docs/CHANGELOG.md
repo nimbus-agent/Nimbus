@@ -8,6 +8,41 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-28 — Four cloud vendors ship behind a default-off, per-vendor opt-in, and the `model`
+  egress class becomes live for the first time.** Slice 2b of the LLM model routes work, landing
+  directly on 2a's chokepoint (#1357). `[llm.remote.<vendor>]` tables configure **Anthropic,
+  OpenAI, Gemini and xAI** — three wire formats, since xAI is OpenAI-compatible. **`enabled`
+  defaults to FALSE and is never inferred from the presence of a key**, which is the single
+  property the slice exists to preserve: `openai.api_key` is deliberately REUSED from the
+  embedding runtime rather than minted fresh, so an existing embeddings user already has that
+  credential — and a capability that turned itself on because a credential exists would light up
+  for them without their asking. Keys are read from the **Vault and never the environment**, per
+  call, so a key added after boot works with no restart and no env var can satisfy a vendor
+  nobody opted into. **Cloud adapters hardcode `isLocal = false`** and do NOT derive it from
+  `base_url` — the inverse of slice 1's rule for local runtimes, because a LiteLLM-style proxy on
+  `127.0.0.1` forwards to the vendor; invariant **I34** now pins both directions. Availability is
+  answered **offline** (enabled-and-keyed, no `/models` probe), because probing four vendors on
+  every `nimbus llm status` would be real un-ledgered egress before the user ever opted into
+  sending a prompt; the accepted cost is a named fail-open, and a new `not_configured` reason
+  keeps "add a key" distinguishable from "start the daemon" and "pull the model".
+  **`LlmRouter.generate` now walks the priority order**, continuing past a TRANSPORT-class failure
+  only — that is what makes the roadmap row's "with local fallback" true rather than claimed. An
+  auth- or request-class failure does not retry, because it would fail identically at the next
+  vendor and would only send the same prompt to a second destination. A consequence to expect
+  rather than discover: **one prompt can now produce N ledger rows across N destinations**, which
+  is correct and must not be deduplicated. **The Mastra engine agent** moved onto the same opt-in:
+  it no longer reads `getEffectiveAgentModel()`, it is ledgered at the AI-SDK seam by
+  `egress/mastra-model-egress.ts` (not over `LlmProvider`, which has no `tools` field and would
+  silently kill tool-calling, the three negation tools included), and it is **not constructed at
+  all** when no vendor is enabled — because `@mastra/core` resolves a vendor key from the
+  environment on its own once an agent exists. **Net effect on I29:** the `model` class was wired
+  but appended zero rows in production from 2a; it is now exercised, with **one exclusion left** —
+  embeddings, which still append nothing. Two supporting changes worth knowing: vault-key
+  construction for vendors lives in the new four-line `llm/vendor-vault-keys.ts` rather than
+  allow-listing the 3,000-line `platform/assemble.ts` under D11, and `nimbus llm status`'s CLI-side
+  route-status type is now pinned field-for-field to the gateway's by a structural parity test,
+  closing a drift that had broken that command once with the whole suite green.
+
 - **2026-08-28 — Every non-local model route now ledgers by construction; the `LlmRouter.generate()`
   hole recorded on 2026-08-27 is closed, and the Mastra air-gap bypass with it.** Slice 2a of the
   LLM model routes work; no cloud vendor is registered by it. Three things shipped.
