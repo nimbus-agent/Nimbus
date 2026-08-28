@@ -216,11 +216,18 @@ jobs:
     # Backstop only — each test attempt has its own 15-min wall-clock cap (see the
     # unit-tests step), so a hang fails fast via retry rather than burning this
     # ceiling. Sized for setup + retried typecheck + 2 capped test attempts:
-    # 2 × 15 min of tests alone is 30 min, so this MUST stay above that or a
+    # 2 × 18 min of tests alone is 36 min, so this MUST stay above that or a
     # double-timeout is cancelled at the job ceiling ("The operation was canceled")
     # instead of surfacing the wrapper's exit 124 — the very failure mode the
     # per-attempt cap exists to prevent. Raise both together or neither.
-    timeout-minutes: 40
+    #
+    # The binding arithmetic, which the previous raise (600 s → 900 s) did not state and
+    # therefore could not check: `setup + 2 × cap <= ceiling`. Measured setup overhead on
+    # windows-2025 is ~270 s (job 975 s vs. capped step 709 s on the same run), so at an
+    # 18-minute cap the worst case is 270 + 2160 = 2430 s ≈ 40.5 min — which is why 40 was
+    # no longer enough and this is 48. A cap raised alone would have been silently useless:
+    # the second attempt could never finish.
+    timeout-minutes: 48
     permissions:
       contents: read
 
@@ -322,18 +329,29 @@ jobs:
         # runs — recovering a transient hang in minutes instead of burning the full
         # ceiling.
         #
-        # The cap is 900 s, NOT the 600 s it was through 2026-08-14. The old value
-        # was justified by "far above a healthy Windows run (~2-3 min)", and that
-        # premise silently expired: the gateway leg on windows-2025 drifted to
-        # 340 s → 404 s → 516 s → 557 s over a single day, and the run that broke it
-        # was killed mid-suite at 600 s (exit 124 on BOTH attempts, zero test
-        # failures). The runner is also highly variable — 11,166 tests / 796 files
-        # took 404 s and then 516 s on consecutive runs, a 28 % swing on identical
-        # work — so a cap sized to the observed mean will keep false-killing green
-        # suites. 900 s sits far enough above the worst observed healthy run (557 s)
-        # to absorb that variance while still bounding a true hang well under the
-        # job ceiling. Re-check this number if a healthy run ever exceeds ~700 s;
-        # the durable fix is making the suite faster, not raising the cap again.
+        # The cap is 1080 s (18 min). It was 900 s from 2026-08-14, and 600 s before
+        # that; each value expired the same way, and the 900 s comment left an explicit
+        # tripwire — "re-check this number if a healthy run ever exceeds ~700 s" — which
+        # has now fired.
+        #
+        # Measured on windows-2025, capped step only, SUCCESSFUL runs:
+        #   519 s · 538 s · 560 s · 637 s · 669 s · 698 s · 709 s
+        # The runner's variance is ~28 % on identical work (404 s then 516 s on
+        # consecutive runs of the same commit set), so a worst healthy run of 709 s
+        # implies ~907 s at the top of the swing — ABOVE the 900 s cap. That is not a
+        # prediction: #1359 hit it, twice, dying at 16,958 and 18,679 of 19,520 tests on
+        # the two attempts. Different death points rule out a deterministic hang and
+        # confirm plain slowness, and `exit 124` is a wall-clock kill with ZERO failing
+        # tests, so it reads like a mystery failure to whoever triages it.
+        #
+        # 1080 s puts the worst observed healthy run at 66 % of the cap, which absorbs
+        # the measured variance instead of sitting inside it. It cannot be raised alone —
+        # see the `timeout-minutes: 48` note above for the `setup + 2 × cap <= ceiling`
+        # constraint the last raise missed.
+        #
+        # Re-check if a healthy run exceeds ~850 s. The durable fix remains making the
+        # suite faster: it has grown from 11,166 tests / 796 files to 19,525 / 1,379 in
+        # under a month, and raising the cap a fourth time is not a plan.
         # A SILENT retry is the expensive kind. Attempt 1 costs a full suite run — on
         # windows-2025 that was 882 s in run 32452626344, where ONE test
         # (`briefs/brief-e2e.test.ts`'s leak check) timed out and the retry passed, so the job
@@ -348,7 +366,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 900 bun test packages/gateway packages/cli scripts --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun scripts/run-with-timeout.ts 1080 bun test packages/gateway packages/cli scripts --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
