@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787891528789,
+  "lastUpdate": 1787908482840,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16387,6 +16387,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 276.39962684998864,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "278e6b2412d80d4cd7aa064e250a9a2f406b129a",
+          "message": "feat(egress): ledger every non-local LLM route at the provider chokepoint (#1357)\n\nSlice 2a of the LLM model routes work. Closes the three blockers slice 1\nin #1352 named before\nany remote route may register. Registers **zero** cloud vendors by\ndesign — see\n`docs/superpowers/specs/2026-08-28-llm-model-routes-slice-2-design.md`\n§4 for why the coverage\nfix must land first.\n\n## What changed\n\n**1. The `model`-class appender moved off the call site and onto the\nprovider.**\n`egress/model-egress.ts`'s `wrapLedgeredProvider` is a decorator applied\nat\n`LlmRegistry.addRoute`, so a non-local provider appends one\n`egress_ledger` row **before**\nevery `generate` and an append failure aborts the call — fail-closed,\nvia\n`EgressAppendFailedError`. That covers `LlmRouter.generate`,\n`generateMarkdown`, and every\n`selectProvider` caller — `briefs/brief-llm-adapter.ts` among them,\nwhich resolved a provider\nand called it directly and so was never covered by the old call-site\nappend. The previous\nappender, `egress/synthesis-egress.ts`'s `recordSynthesisEgress`, saw\nonly the synthesis path\nand is **deleted**; there is now exactly one `model` appender in the\ntree.\n\nLocality is still derived **inside** the appender from\n`provider.isLocal` — a local provider is\nreturned unchanged and appends nothing, not even a blocked row — so no\ncaller can write a false\nzero into the ledger `nimbus prove` reports on. The new\n`LlmGenerateOptions.egressMethod` names\nthe row, so a synthesized brief still records\n`agents.<briefKind>.synthesis`, but it can never\nsuppress one.\n\n**2. Static rule D22 gains rule e.** `LlmRouter.registerRoute` is\nconfined to `llm/registry.ts`\nplus its own definition, so no future code can enter the route table\nunwrapped. The wrap sits at\n`addRoute` and **not** at `registerRoute`, because `refreshProviderMeta`\nre-registers an\nalready-wrapped provider to update its meta and wrapping there would\nappend twice per generate.\nThat hazard is pinned by its own test rather than by a `__ledgered`\nmarker, which was considered\nand rejected: the marker would be read off the very provider whose\negress is being recorded, so\nany provider could suppress its own row.\n\n**3. Invariant I34 — locality-declaration integrity.** `isLocal` is the\nsingle field read by two\nindependent defenses, air-gap refusal and the I29 appender, and neither\ncan detect the other's\nfailure. A wrong `true` is one word and silent in both directions. The\nwiring shipped in slice 1;\nthis adds the enforcement test and the docs row, and moves the invariant\nceiling to I34.\n\n**Also fixed, a live bug on `main`.** Under `enforce_air_gap = true`\nwith `prefer_local = true`, a\nlocal router that threw mid-turn fell through to the Mastra agent —\nwhich talks to a cloud vendor\n— with no air-gap check and no ledger row, because `engine/agent.ts`\nresolves its model through\n`@mastra/core`, outside the route table entirely. `enforce_air_gap` is a\nrefusal setting, so that\nfallback now rethrows.\n\n## What did NOT ship\n\nNo cloud vendor. `packages/gateway/src/llm/` still registers only\n`OllamaProvider` and\n`LlamaCppProvider`, so every remote behaviour here is proven against a\nfake `isLocal: false`\nprovider and the `model` class still appends zero rows in production\nuntil slice 2b lands one.\n\nTwo exclusions keep `model` narrower than \"all inference\", both named in\nthe docs: **embeddings**\nappend nothing, since `PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim\ntable with no appender; and\nthe **Mastra engine agent** appends nothing, since it resolves its model\noutside the route table.\nThe latter is refused under air-gap as of this PR, but with air-gap off\nit is an open, named gap\nthat slice 2b closes at the AI-SDK seam.\n\n## One deviation from the plan, and one follow-up\n\nThe plan's `addRoute` wiring did not typecheck: it passed `this.db` to\n`wrapLedgeredProvider`,\nbut `LlmRegistryOptions.db` is optional and the wrapper requires a\n`Database`. This PR **refuses**\nto register a non-local route when there is no ledger to append to,\nrather than registering it\nunwrapped — the latter would reintroduce exactly the unrecorded egress\npath this PR exists to\nclose. Local routes are unaffected. It cannot fire in production, where\n`buildLlmRegistryFromToml` takes a non-optional db; it is a tripwire for\nslice 2b.\n\nThe cleaner end state — make `db` required so this becomes a compile\nerror rather than a runtime\nthrow — is filed as #1356 and deliberately kept out of this PR, since it\nis a `LlmRegistry`\ndesign change touching ~31 test call sites.\n\n## Verification\n\n- Full CI command verbatim, `bun test packages/gateway packages/cli\nscripts`: **19,351 pass, 0 fail**\n- Gateway `test/` tree, which a `src` run does not load: **2,776 pass, 0\nfail**\n- `typecheck` clean; `typecheck:tests` 0 new over baseline\n- `preflight:fast`: all 28 gates\n- Linux via Docker: `verify:docker --changed` 497 pass; coverage floor\n**ok** and all 23 coverage\n  scopes **ok**, with `model-egress.ts` at 100% line / 100% branch\n- Every guard red-proved by reverting it, including D22 rule e and the\nI34 locality derivation\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Expanded egress tracking to cover all non-local language-model routes.\n  * Added fail-closed behavior when egress records cannot be written.\n  * Added stricter air-gap protection to prevent remote fallback.\n* Added locality validation for model providers, including LAN-hosted\nruntimes.\n\n* **Documentation**\n* Updated security invariants and architecture documentation through\nI34.\n* Documented current coverage, exclusions, and remaining roadmap items.\n\n* **Tests**\n* Added coverage for route tracking, locality rules, duplicate wrapping,\nand air-gap enforcement.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-28T09:03:21Z",
+          "tree_id": "2083039f440d877c8cf0d9319504de66b9a37f40",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/278e6b2412d80d4cd7aa064e250a9a2f406b129a"
+        },
+        "date": 1787908479970,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 315.0181051499996,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 313.70478989999754,
             "unit": "ms"
           }
         ]
