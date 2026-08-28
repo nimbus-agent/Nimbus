@@ -1,14 +1,15 @@
 import type { Database } from "bun:sqlite";
-
 import { Mastra } from "@mastra/core";
 import { Agent } from "@mastra/core/agent";
+import { ModelRouterLanguageModel } from "@mastra/core/llm";
 import { createTool } from "@mastra/core/tools";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
-import { Config, getEffectiveAgentModel } from "../config.ts";
+import { Config } from "../config.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
 import { getConnectorHealth } from "../connectors/health.ts";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
+import { wrapLedgeredMastraModel } from "../egress/mastra-model-egress.ts";
 import type { IndexSearchQuery, LocalIndex, TraverseGraphOptions } from "../index/local-index.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { searchPersons } from "../people/person-store.ts";
@@ -82,12 +83,22 @@ function clipToolString(s: string, max = MAX_TOOL_STRING_LEN): string {
   return s.length > max ? s.slice(0, max) : s;
 }
 
-function toMastraModelId(modelId: string): string {
+/**
+ * Builds the `"<provider>/<model>"` router id Mastra resolves against.
+ *
+ * The `includes("/")` branch is load-bearing and replaces the old `toMastraModelId`: an operator
+ * may set `NIMBUS_AGENT_MODEL` / `[llm] remote_model` to EITHER a bare model name
+ * (`claude-sonnet-4-6`) or an already-qualified router id (`anthropic/claude-sonnet-4-6`).
+ * Unconditionally prefixing the vendor would turn the second form into
+ * `anthropic/anthropic/claude-sonnet-4-6`, which resolves to nothing.
+ *
+ * Unlike `toMastraModelId`, the vendor is no longer GUESSED from the model name's shape — it is
+ * whatever `[llm.remote.<vendor>]` was enabled, so a `gpt-`-prefixed override under an enabled
+ * Anthropic vendor no longer silently retargets OpenAI.
+ */
+export function toRouterModelId(providerId: string, modelId: string): string {
   const s = modelId.trim();
-  if (s.includes("/")) return s;
-  if (/^claude-/i.test(s)) return `anthropic/${s}`;
-  if (/^(gpt-|o1-|o3-|o4-)/i.test(s)) return `openai/${s}`;
-  return s;
+  return s.includes("/") ? s : `${providerId}/${s}`;
 }
 
 function isStringArray(xs: unknown): xs is string[] {
@@ -96,6 +107,20 @@ function isStringArray(xs: unknown): xs is string[] {
 
 export type NimbusEngineAgentDeps = {
   localIndex: LocalIndex;
+  /**
+   * The resolved cloud vendor this agent talks to. REQUIRED for the agent to exist at all: when
+   * no `[llm.remote.*]` vendor is enabled and keyed, `gateway-main.ts` does not construct the
+   * agent, and `resolveEngineAgent` returns `undefined`.
+   *
+   * This replaces `getEffectiveAgentModel()`. That read `[llm] remote_model` and let
+   * `@mastra/core` resolve `ANTHROPIC_API_KEY` from the ENVIRONMENT on its own — so the default
+   * `nimbus ask` was a hole exactly the size of the per-vendor opt-in: a capability that turned
+   * itself on because a credential happened to exist. That is the air-gap defect's shape, one
+   * level up.
+   */
+  vendor: { providerId: string; modelId: string; apiKey: string };
+  /** Where `wrapLedgeredMastraModel` appends this agent's `model`-class egress rows. */
+  egressDb: Database;
   agentModel?: string;
   contextWindowItems?: number;
   searchServicePriority?: ReadonlyMap<string, number>;
@@ -108,7 +133,22 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   agent: Agent;
   agentsByName: { nimbus: Agent; devops: Agent; research: Agent };
 } {
-  const model = toMastraModelId(deps.agentModel ?? getEffectiveAgentModel());
+  // `NIMBUS_AGENT_MODEL` / `[llm] remote_model` still override the MODEL NAME within the enabled
+  // vendor, so no existing config breaks silently — but they can no longer SELECT a vendor, and
+  // they can no longer supply a credential. Both of those now come from `[llm.remote.<vendor>]`
+  // and the Vault.
+  const modelId = deps.agentModel ?? deps.vendor.modelId;
+  // Wrapped at the AI-SDK seam: Mastra keeps its own client (which is what makes tool-calling
+  // work), and the decorator ledgers every doGenerate/doStream before it runs. See
+  // `egress/mastra-model-egress.ts` for why this is not built over `LlmProvider`.
+  const model = wrapLedgeredMastraModel(
+    deps.egressDb,
+    new ModelRouterLanguageModel({
+      id: toRouterModelId(deps.vendor.providerId, modelId) as `${string}/${string}`,
+      apiKey: deps.vendor.apiKey,
+    }),
+    { providerId: deps.vendor.providerId, modelId },
+  );
   const contextWindowItems = deps.contextWindowItems ?? Config.engineContextWindowItems;
   const searchPriority = deps.searchServicePriority ?? Config.searchServicePriorityMap;
 

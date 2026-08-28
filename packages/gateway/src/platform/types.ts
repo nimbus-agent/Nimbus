@@ -9,6 +9,7 @@ import type { LlmRegistry } from "../llm/registry.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { NimbusVault } from "../vault/index.ts";
+import type { AgentVendor } from "./assemble.ts";
 import type { PlatformPaths } from "./paths.ts";
 import type { SandboxRunner } from "./sandbox/sandbox-runner.ts";
 
@@ -34,6 +35,14 @@ export interface PlatformServices {
   openUrl(url: string): Promise<void>;
   sessionMemoryStore?: SessionMemoryStore;
   llmRegistry: LlmRegistry;
+  /**
+   * The `[llm.remote.<vendor>]` vendor the Mastra engine agent talks to, or `undefined` when none
+   * is enabled AND keyed — in which case `gateway-main.ts` does not construct the agent at all.
+   * That absence is the point: `@mastra/core` resolves a vendor key from the ENVIRONMENT on its
+   * own once an agent exists, so "constructed but refusing" would leave a hole exactly the size
+   * of the default `nimbus ask`.
+   */
+  agentVendor?: AgentVendor;
   sandboxRunner: SandboxRunner;
   /** Credential-aware deps for the connector write dispatcher (warehouse/BI ∪ GitOps/ML; wrapped in index.ts). */
   connectorWriteDeps: ConnectorWriteContext;

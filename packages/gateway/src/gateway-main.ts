@@ -99,15 +99,29 @@ export async function main(): Promise<void> {
   // — the most dispatch-capable path in the product. RunAskParams.egressSink is a REQUIRED dep, so
   // it is wired here once and handed to every runAsk call rather than left to an internal fallback.
   const askEgressSink = makeEgressSink(platform.localIndex.getDatabase());
-  const engine = createNimbusEngineAgent({
-    localIndex: platform.localIndex,
-    auditDb: platform.localIndex.getDatabase(),
-    ...(platform.sessionMemoryStore === undefined
-      ? {}
-      : { sessionMemoryStore: platform.sessionMemoryStore }),
-  });
+  // NO ENABLED VENDOR MEANS NO REMOTE INFERENCE ANYWHERE, including the default `nimbus ask`.
+  // The agent is not merely refused, it is NOT CONSTRUCTED: `@mastra/core` resolves a vendor key
+  // from the ENVIRONMENT on its own the moment an agent exists, so a constructed-but-refusing
+  // agent would leave a hole exactly the size of the per-vendor opt-in. `runTurn` and
+  // `runViaAgent` already branch on `p.agent === undefined` on every path, so this removes a
+  // failure mode rather than adding one.
+  const engine =
+    platform.agentVendor === undefined
+      ? undefined
+      : createNimbusEngineAgent({
+          localIndex: platform.localIndex,
+          auditDb: platform.localIndex.getDatabase(),
+          egressDb: platform.localIndex.getDatabase(),
+          vendor: platform.agentVendor,
+          ...(platform.sessionMemoryStore === undefined
+            ? {}
+            : { sessionMemoryStore: platform.sessionMemoryStore }),
+        });
 
-  function resolveEngineAgent(name: string | undefined): Agent {
+  function resolveEngineAgent(name: string | undefined): Agent | undefined {
+    if (engine === undefined) {
+      return undefined;
+    }
     const key = name?.toLowerCase().trim();
     if (key === "devops") {
       return engine.agentsByName.devops;
@@ -126,7 +140,13 @@ export async function main(): Promise<void> {
       localIndex: platform.localIndex,
       dispatcher,
       egressSink: askEgressSink,
-      conversationalAgent: resolveEngineAgent(ctx.agent),
+      // Spread-conditional: `conversationalAgent` is OPTIONAL and `run-ask` already handles its
+      // absence, but under `exactOptionalPropertyTypes` an explicit `undefined` is a different
+      // type from an absent key.
+      ...(() => {
+        const a = resolveEngineAgent(ctx.agent);
+        return a === undefined ? {} : { conversationalAgent: a };
+      })(),
       llmRouter: platform.llmRegistry.llmRouter,
       ...(platform.sessionMemoryStore === undefined
         ? {}
@@ -158,7 +178,10 @@ export async function main(): Promise<void> {
       dispatcher,
       egressSink: askEgressSink,
       sendChunk: () => {},
-      conversationalAgent: engine.agentsByName.nimbus,
+      ...(() => {
+        const a = resolveEngineAgent(undefined);
+        return a === undefined ? {} : { conversationalAgent: a };
+      })(),
       llmRouter: platform.llmRegistry.llmRouter,
       ...(platform.sessionMemoryStore === undefined
         ? {}
@@ -167,10 +190,20 @@ export async function main(): Promise<void> {
     })),
   );
 
-  platform.ipc.setWorkflowRunHandler(async (ctx) =>
-    runWorkflowExecution({
+  platform.ipc.setWorkflowRunHandler(async (ctx) => {
+    // `runWorkflowExecution` genuinely REQUIRES an agent — unlike `runAsk`, it has no
+    // deterministic path to fall back to. With no `[llm.remote.*]` vendor enabled there is no
+    // agent, so refuse with a message that names the fix rather than dereferencing undefined.
+    const workflowAgent = resolveEngineAgent(ctx.agent);
+    if (workflowAgent === undefined) {
+      throw new Error(
+        "Workflows need a model: enable a vendor under [llm.remote.<vendor>] in nimbus.toml " +
+          "and store its <vendor>.api_key in the Vault.",
+      );
+    }
+    return runWorkflowExecution({
       db: platform.localIndex.getDatabase(),
-      agent: resolveEngineAgent(ctx.agent),
+      agent: workflowAgent,
       workflowName: ctx.workflowName,
       triggeredBy: ctx.triggeredBy,
       dryRun: ctx.dryRun,
@@ -178,8 +211,8 @@ export async function main(): Promise<void> {
       sendChunk: ctx.sendChunk,
       ...(ctx.paramsOverride !== undefined && { paramsOverride: ctx.paramsOverride }),
       ...(ctx.signal !== undefined && { signal: ctx.signal }),
-    }),
-  );
+    });
+  });
 
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`[gateway] ${signal} — shutting down\n`);

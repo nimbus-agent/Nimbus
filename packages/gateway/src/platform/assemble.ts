@@ -59,6 +59,7 @@ import {
   type NimbusChatopsToml,
   type NimbusLlmLocalRoute,
   type NimbusLlmRemoteVendor,
+  type NimbusLlmToml,
   type NimbusTribalToml,
   resolveNimbusTomlForProfile,
   type TeamCredentialConnector,
@@ -1343,6 +1344,39 @@ const REMOTE_PROVIDER_FACTORIES: Record<
   gemini: (opts) => new GeminiProvider(opts),
   xai: (opts) => new XaiProvider(opts),
 };
+
+/** A vendor resolved far enough to construct the Mastra agent: key materialised, not a thunk. */
+export type AgentVendor = { providerId: string; modelId: string; apiKey: string };
+
+/**
+ * The vendor the Mastra engine agent talks to, or `undefined` when none is enabled AND keyed.
+ *
+ * `undefined` is the load-bearing case: `gateway-main.ts` then does not construct the agent at
+ * all. That matters because `@mastra/core` resolves `ANTHROPIC_API_KEY` from the ENVIRONMENT on
+ * its own the moment an agent exists — so "constructed but refusing" would leave a hole exactly
+ * the size of the default `nimbus ask`.
+ *
+ * FIRST enabled-and-keyed vendor in config order. The agent takes one model, unlike the route
+ * table which takes all of them; picking the first keeps that deterministic and lets an operator
+ * choose by ordering their `[llm.remote.*]` tables.
+ *
+ * The key is materialised HERE rather than passed as a resolver because Mastra's model config
+ * takes a string. The cost is that a key rotated after boot needs a restart FOR THE AGENT —
+ * route-table adapters still resolve per call and pick it up immediately.
+ */
+export async function resolveAgentVendor(
+  llmToml: NimbusLlmToml,
+  vault: NimbusVault,
+  logger: RouteValidationLogger = defaultRouteValidationLogger,
+): Promise<AgentVendor | undefined> {
+  for (const vendor of resolveEnabledVendors(llmToml.remoteVendors, vault, logger)) {
+    const apiKey = await vendor.apiKey();
+    if (apiKey !== undefined && apiKey.trim() !== "") {
+      return { providerId: vendor.vendorId, modelId: vendor.modelName, apiKey };
+    }
+  }
+  return undefined;
+}
 
 function makeRemoteProvider(v: ResolvedRemoteVendor): LlmProvider {
   return REMOTE_PROVIDER_FACTORIES[v.vendorId]({
@@ -2722,6 +2756,12 @@ export async function assemblePlatformServices(
   const llmRegistry = await buildLlmRegistryFromToml(db, activeTomlPath, vault, {
     warn: (m: string) => syncLogger.warn(m),
   });
+  // `undefined` here means the Mastra engine agent is NOT CONSTRUCTED at all (gateway-main.ts),
+  // which is what makes `enabled = false` mean no remote inference anywhere — including the
+  // default `nimbus ask`, which Mastra would otherwise serve off an environment credential.
+  const agentVendor = await resolveAgentVendor(loadNimbusLlmFromPath(activeTomlPath), vault, {
+    warn: (m: string) => syncLogger.warn(m),
+  });
 
   const { localIndex, scheduleItemEmbedding, rt } = createLocalIndexWithEmbeddingRuntime(
     db,
@@ -3311,6 +3351,7 @@ export async function assemblePlatformServices(
     openUrl: openUrlInDefaultBrowser,
     sandboxRunner,
     llmRegistry,
+    ...(agentVendor === undefined ? {} : { agentVendor }),
     connectorWriteDeps,
     embeddingReadiness,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),

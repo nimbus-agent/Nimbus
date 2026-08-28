@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadNimbusLlmFromPath } from "../config/nimbus-toml.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import { buildLlmRegistryFromToml } from "./assemble.ts";
+import { buildLlmRegistryFromToml, resolveAgentVendor } from "./assemble.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -153,5 +154,41 @@ describe("[llm.remote.*] registration", () => {
     // unchanged. Identity with `AnthropicProvider.prototype` would mean it was never wrapped.
     expect(Object.getPrototypeOf(route?.provider)).toBe(Object.prototype);
     db.close();
+  });
+});
+
+describe("resolveAgentVendor — the Mastra agent's opt-in", () => {
+  test("returns undefined when no vendor is enabled, EVEN with a key in the environment", async () => {
+    // `undefined` is what makes gateway-main skip constructing the agent entirely. Not merely
+    // "the agent refuses": @mastra/core resolves ANTHROPIC_API_KEY from the ENVIRONMENT on its
+    // own the moment an agent exists, so a constructed-but-refusing agent would leave a hole
+    // exactly the size of the default `nimbus ask`.
+    process.env["ANTHROPIC_API_KEY"] = "sk-env";
+    try {
+      const llm = loadNimbusLlmFromPath(tomlWith(`[llm]\nprefer_local = true\n`));
+      expect(await resolveAgentVendor(llm, vaultOf(new Map()))).toBeUndefined();
+    } finally {
+      delete process.env["ANTHROPIC_API_KEY"];
+    }
+  });
+
+  test("returns undefined when a vendor is enabled but has no Vault key", async () => {
+    const llm = loadNimbusLlmFromPath(
+      tomlWith(`[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n`),
+    );
+    expect(await resolveAgentVendor(llm, vaultOf(new Map()))).toBeUndefined();
+  });
+
+  test("returns the first enabled AND keyed vendor, key materialised", async () => {
+    const llm = loadNimbusLlmFromPath(
+      tomlWith(`[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n`),
+    );
+    expect(
+      await resolveAgentVendor(llm, vaultOf(new Map([["anthropic.api_key", "sk-ant"]]))),
+    ).toEqual({
+      providerId: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      apiKey: "sk-ant",
+    });
   });
 });

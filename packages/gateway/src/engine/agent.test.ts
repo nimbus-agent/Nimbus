@@ -14,6 +14,16 @@ import { insertPerson } from "../people/person-store.ts";
 import { createNimbusEngineAgent } from "./agent.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
 
+/**
+ * The agent now REQUIRES a resolved vendor and an egress db: slice 2b removed
+ * `getEffectiveAgentModel()`, so a model can no longer be inferred from config or the
+ * environment. These fixtures supply both explicitly. `TEST_EGRESS_DB` is an in-memory database
+ * with no `egress_ledger` table -- nothing in this file calls doGenerate, so nothing appends, and
+ * a schema here would only imply otherwise.
+ */
+const TEST_VENDOR = { providerId: "openai", modelId: "gpt-4o-mini", apiKey: "sk-test-not-used" };
+const TEST_EGRESS_DB = new Database(":memory:");
+
 type ToolExecute = (input: unknown, ctx?: unknown) => Promise<string>;
 type ToolMap = Record<string, { execute: ToolExecute }>;
 type AgentWithListTools = { listTools: () => Promise<ToolMap> };
@@ -128,6 +138,8 @@ describe("createNimbusEngineAgent — construction", () => {
     const { localIndex } = freshIndex();
     const { mastra, agent, agentsByName } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     expect(mastra).toBeDefined();
@@ -140,6 +152,8 @@ describe("createNimbusEngineAgent — construction", () => {
     const { localIndex } = freshIndex();
     const { agentsByName } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     for (const a of [agentsByName.nimbus, agentsByName.devops, agentsByName.research]) {
@@ -156,6 +170,8 @@ describe("createNimbusEngineAgent — construction", () => {
     const { localIndex } = freshIndex();
     const { agentsByName } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: fakeMemoryStore(),
     });
@@ -169,7 +185,12 @@ describe("toMastraModelId (via agentModel)", () => {
   test("already-prefixed id passes through", () => {
     const { localIndex } = freshIndex();
     expect(() =>
-      createNimbusEngineAgent({ localIndex, agentModel: "openai/gpt-4o-mini" }),
+      createNimbusEngineAgent({
+        localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
+        agentModel: "openai/gpt-4o-mini",
+      }),
     ).not.toThrow();
   });
 
@@ -178,6 +199,8 @@ describe("toMastraModelId (via agentModel)", () => {
     expect(() =>
       createNimbusEngineAgent({
         localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
         agentModel: "claude-sonnet-4-6",
       }),
     ).not.toThrow();
@@ -189,7 +212,14 @@ describe("toMastraModelId (via agentModel)", () => {
     ["an unknown family (passed through unmodified)", "llama-3"],
   ])("accepts %s", (_label, agentModel) => {
     const { localIndex } = freshIndex();
-    expect(() => createNimbusEngineAgent({ localIndex, agentModel })).not.toThrow();
+    expect(() =>
+      createNimbusEngineAgent({
+        localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
+        agentModel,
+      }),
+    ).not.toThrow();
   });
 });
 
@@ -198,6 +228,8 @@ describe("searchLocalIndex", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "searchLocalIndex");
@@ -221,6 +253,8 @@ describe("searchLocalIndex", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "searchLocalIndex");
@@ -238,6 +272,8 @@ describe("searchLocalIndex", () => {
     try {
       const { agent } = createNimbusEngineAgent({
         localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
         agentModel: "openai/gpt-4o-mini",
       });
       const tool = await getTool(agent, "searchLocalIndex");
@@ -258,6 +294,8 @@ describe("searchLocalIndex", () => {
     try {
       const { agent } = createNimbusEngineAgent({
         localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
         agentModel: "openai/gpt-4o-mini",
       });
       const tool = await getTool(agent, "searchLocalIndex");
@@ -275,6 +313,8 @@ describe("searchLocalIndex", () => {
     try {
       const { agent } = createNimbusEngineAgent({
         localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
         agentModel: "openai/gpt-4o-mini",
       });
       const tool = await getTool(agent, "searchLocalIndex");
@@ -293,6 +333,8 @@ describe("searchLocalIndex", () => {
     try {
       const { agent } = createNimbusEngineAgent({
         localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
         agentModel: "openai/gpt-4o-mini",
       });
       const tool = await getTool(agent, "searchLocalIndex");
@@ -309,6 +351,8 @@ describe("searchLocalIndex", () => {
     try {
       const { agent } = createNimbusEngineAgent({
         localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
         agentModel: "openai/gpt-4o-mini",
       });
       const tool = await getTool(agent, "searchLocalIndex");
@@ -329,6 +373,8 @@ describe("searchLocalIndex", () => {
     try {
       const { agent } = createNimbusEngineAgent({
         localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
         agentModel: "openai/gpt-4o-mini",
       });
       const tool = await getTool(agent, "searchLocalIndex");
@@ -347,6 +393,8 @@ describe("searchLocalIndex", () => {
     });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "searchLocalIndex");
@@ -368,6 +416,8 @@ describe("searchLocalIndex", () => {
     });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "searchLocalIndex");
@@ -383,6 +433,8 @@ describe("fetchMoreIndexResults", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "fetchMoreIndexResults");
@@ -395,6 +447,8 @@ describe("fetchMoreIndexResults", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "fetchMoreIndexResults");
@@ -407,6 +461,8 @@ describe("fetchMoreIndexResults", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "fetchMoreIndexResults");
@@ -421,6 +477,8 @@ describe("fetchMoreIndexResults", () => {
     seedItem(db, { service: "github", type: "pr", externalId: "p2", title: "second" });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "fetchMoreIndexResults");
@@ -460,6 +518,8 @@ describe("fetchMoreIndexResults", () => {
     transitionHealth(db, "github", { type: "persistent_error", error: "boom" });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "fetchMoreIndexResults");
@@ -475,6 +535,8 @@ describe("traverseGraph", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "traverseGraph");
@@ -487,6 +549,8 @@ describe("traverseGraph", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "traverseGraph");
@@ -510,6 +574,8 @@ describe("traverseGraph", () => {
     try {
       const { agent } = createNimbusEngineAgent({
         localIndex,
+        vendor: TEST_VENDOR,
+        egressDb: TEST_EGRESS_DB,
         agentModel: "openai/gpt-4o-mini",
       });
       const tool = await getTool(agent, "traverseGraph");
@@ -538,6 +604,8 @@ describe("resolvePerson", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "resolvePerson");
@@ -551,6 +619,8 @@ describe("resolvePerson", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "resolvePerson");
@@ -578,6 +648,8 @@ describe("resolvePerson", () => {
     });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "resolvePerson");
@@ -597,6 +669,8 @@ describe("listConnectors", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "listConnectors");
@@ -616,6 +690,8 @@ describe("listConnectors", () => {
     );
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "listConnectors");
@@ -631,6 +707,8 @@ describe("listConnectors", () => {
     const { db, localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     db.close();
@@ -655,6 +733,8 @@ describe("getAuditLog", () => {
     });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "getAuditLog");
@@ -677,6 +757,8 @@ describe("getAuditLog", () => {
     }
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "getAuditLog");
@@ -699,6 +781,8 @@ describe("getAuditLog", () => {
     });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "getAuditLog");
@@ -720,6 +804,8 @@ describe("getAuditLog", () => {
     });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "getAuditLog");
@@ -734,6 +820,8 @@ describe("negation tools are registered through wrapToolForLlm", () => {
     const { localIndex } = setupIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "findPrsNotTouching");
@@ -752,6 +840,8 @@ describe("negation tools are registered through wrapToolForLlm", () => {
     const { localIndex } = setupIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "findDeploymentsWithoutIncident");
@@ -766,6 +856,8 @@ describe("negation tools are registered through wrapToolForLlm", () => {
     const { localIndex } = setupIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "findPeopleWithoutReviews");
@@ -801,6 +893,8 @@ describe("session-memory tools", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     await expect(getTool(agent, "recallSessionMemory")).rejects.toThrow(/not exposed/);
@@ -811,6 +905,8 @@ describe("session-memory tools", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: fakeMemoryStore(),
     });
@@ -823,6 +919,8 @@ describe("session-memory tools", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: fakeMemoryStore(),
     });
@@ -844,6 +942,8 @@ describe("session-memory tools", () => {
     });
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: store,
     });
@@ -868,6 +968,8 @@ describe("session-memory tools", () => {
     } as unknown as SessionMemoryStore;
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: store,
     });
@@ -886,6 +988,8 @@ describe("session-memory tools", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: fakeMemoryStore(),
     });
@@ -900,6 +1004,8 @@ describe("session-memory tools", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: fakeMemoryStore(),
     });
@@ -914,6 +1020,8 @@ describe("session-memory tools", () => {
     const { localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: fakeMemoryStore(),
     });
@@ -933,6 +1041,8 @@ describe("session-memory tools", () => {
     } as unknown as SessionMemoryStore;
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: store,
     });
@@ -958,6 +1068,8 @@ describe("session-memory tools", () => {
     } as unknown as SessionMemoryStore;
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       sessionMemoryStore: store,
     });
@@ -975,6 +1087,8 @@ describe("wrapToolForLlm (auditDb branches)", () => {
     const { db, localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       auditDb: db,
     });
@@ -1010,6 +1124,8 @@ describe("wrapToolForLlm (auditDb branches)", () => {
     };
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       auditDb: db,
     });
@@ -1027,6 +1143,8 @@ describe("wrapToolForLlm (auditDb branches)", () => {
     const { db, localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       auditDb: db,
     });
@@ -1043,6 +1161,8 @@ describe("wrapToolForLlm (auditDb branches)", () => {
     const { db, localIndex } = freshIndex();
     const { agent } = createNimbusEngineAgent({
       localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "listConnectors");
