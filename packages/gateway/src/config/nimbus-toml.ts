@@ -224,7 +224,6 @@ export type NimbusLlmRemoteVendor = {
 
 export type NimbusLlmToml = {
   preferLocal: boolean;
-  remoteModel: string;
   localModel: string;
   /**
    * `num_ctx` for the local provider, in tokens. See `DEFAULT_LOCAL_CONTEXT_TOKENS`: unset is
@@ -265,7 +264,6 @@ export type NimbusLlmToml = {
 
 export const DEFAULT_NIMBUS_LLM_TOML: NimbusLlmToml = {
   preferLocal: true,
-  remoteModel: "claude-sonnet-4-6",
   localModel: "llama3.2",
   localContextTokens: DEFAULT_LOCAL_CONTEXT_TOKENS,
   llamacppServerPath: "",
@@ -285,9 +283,8 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
       if (b !== undefined) out.preferLocal = b;
       break;
     }
-    case "remote_model":
-      out.remoteModel = parseString(valRaw);
-      break;
+    // `remote_model` was removed on 2026-08-28 alongside `classifier_model`, for the same
+    // reason and with the same handling: a stale key in an existing nimbus.toml is ignored.
     // `classifier_model` was removed on 2026-08-28 and is deliberately NOT parsed here: the
     // intent classifier no longer owns an HTTP client that could take a model name, it asks
     // `LlmRouter` for the `"classification"` task and takes whatever route answers. A stale key

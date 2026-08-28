@@ -57,7 +57,6 @@ describe("classifyIntent appends an I29 model row for a REMOTE route", () => {
         preferLocal: false,
         enforceAirGap: false,
         minReasoningParams: 0,
-        remoteModel: "claude-x",
         localModel: "",
       },
       db,

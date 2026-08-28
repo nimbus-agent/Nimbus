@@ -33,7 +33,6 @@ function fakeProvider(id: ProviderId, opts: { available: boolean; text?: string 
 function routerWith(...providers: LlmProvider[]): LlmRouter {
   const r = new LlmRouter({
     preferLocal: true,
-    remoteModel: "remote-model",
     localModel: "local-model",
     minReasoningParams: 0,
     enforceAirGap: false,

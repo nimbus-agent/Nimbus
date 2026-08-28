@@ -45,7 +45,6 @@ import {
   loadNimbusIdentityFromConfigDir,
   loadNimbusLanFromConfigDir,
   loadNimbusLlmFromPath,
-  loadNimbusLlmPartialFromPath,
   loadNimbusOwnershipFromConfigDir,
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusPreflightFromConfigDir,
@@ -68,7 +67,7 @@ import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts
 import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
 import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
-import { applyLlmTomlOverrides, Config } from "../config.ts";
+import { Config } from "../config.ts";
 import { bitbucketFetchOneUrlIsSupported } from "../connectors/bitbucket-sync.ts";
 import { createBlameIndexSyncable } from "../connectors/blame-index-sync.ts";
 import {
@@ -1624,13 +1623,6 @@ export async function buildLlmRegistryFromToml(
   logger: RouteValidationLogger = defaultRouteValidationLogger,
 ): Promise<LlmRegistry> {
   const llmToml = loadNimbusLlmFromPath(activeTomlPath);
-  const llmTomlPartial = loadNimbusLlmPartialFromPath(activeTomlPath);
-  const llmOverrides: { agentModel?: string } = {};
-  if (llmTomlPartial.remoteModel !== undefined) {
-    llmOverrides.agentModel = llmTomlPartial.remoteModel;
-  }
-  applyLlmTomlOverrides(llmOverrides);
-
   const knownRuntimeLocalRoutes = dropUnknownRuntimeEntries(llmToml.localRoutes, logger);
   const uncollidedLocalRoutes = dropLlamacppBaseUrlCollisions(knownRuntimeLocalRoutes, logger);
   const validatedLocalRoutes = dropDuplicateRouteIds(uncollidedLocalRoutes, logger);
@@ -1694,7 +1686,6 @@ export async function buildLlmRegistryFromToml(
     db,
     config: {
       preferLocal: llmToml.preferLocal,
-      remoteModel: llmToml.remoteModel,
       localModel: effectiveLocalModel,
       minReasoningParams: llmToml.minReasoningParams,
       enforceAirGap: llmToml.enforceAirGap,

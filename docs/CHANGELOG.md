@@ -33,6 +33,26 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   worse than no key. A stale entry in an existing `nimbus.toml` is ignored, as any unrecognised
   `[llm]` key is.
 
+  **`[llm] remote_model` and `NIMBUS_AGENT_MODEL` were inert and are removed too.** Found while
+  verifying the Gemini adapter against the live API. Slice 2b moved the engine agent onto
+  `[llm.remote.<vendor>] model` and left `getEffectiveAgentModel()` **without a production
+  caller** — so both keys changed nothing, while `nimbus config list` still listed
+  `llm.remote_model` as a live env-overridable key and `cli-reference.md` still documented
+  `nimbus config set llm.remote_model claude-sonnet-4-6` as THE way to choose a cloud model. A
+  comment in `engine/agent.ts` asserted they "still override the MODEL NAME within the enabled
+  vendor"; nothing wired that. With four vendors the key is no longer well defined anyway — a
+  bare `claude-sonnet-4-6` says nothing about which vendor is enabled — so it is removed rather
+  than rewired, and `[llm.remote.*]` gained the reference documentation it shipped without.
+
+  **A live-API check of the Gemini adapter.** The wire format is correct — URL-path model,
+  query-string key, `systemInstruction`, `generationConfig`, multi-part concatenation and
+  `usageMetadata` all verified against the real endpoint. What is NOT correct is the model id
+  every internal document had been using: `gemini-2.5-pro` and `gemini-2.5-flash` still appear in
+  Google's `GET /v1beta/models` listing but return `404 NOT_FOUND … no longer available to new
+  users` on `generateContent` for a key issued after their retirement, so anyone following our
+  examples got a hard 404 from a model the listing said existed. The new `[llm.remote.*]` docs say
+  to check the vendor's current list rather than copy an id, and give this as the worked example.
+
   **`route_priority` could not name a cloud vendor.** A defect introduced by slice 2b:
   `routeIdsToRegister` was computed from LOCAL routes only, so
   `dropUnresolvableRoutePriorityEntries` dropped every enabled vendor's route id as unresolvable

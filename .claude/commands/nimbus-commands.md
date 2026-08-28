@@ -540,7 +540,6 @@ Bare model ids work; the engine auto-prefixes for Mastra (`claude-*` → `anthro
 
 Local model ids are passed to the local router. With Ollama running on `http://127.0.0.1:11434`, set `[llm].local_model` to any pulled model name and `[llm].prefer_local = true`; `nimbus ask` can then answer open-ended questions from indexed context even when no remote classifier key is configured.
 ```
-NIMBUS_AGENT_MODEL=claude-sonnet-4-6                # overrides [llm].remote_model       (Mastra agent)
 ```
 
 ## Docs site

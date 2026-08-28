@@ -51,7 +51,7 @@ function printAdditionalEnvOverrideLegend(): void {
   console.log(
     "  NIMBUS_PROFILE, NIMBUS_HTTP_PORT, NIMBUS_METRICS_PORT, NIMBUS_LOG_LEVEL, NIMBUS_EMBEDDINGS,",
   );
-  console.log("  NIMBUS_EMBEDDING_MODEL_DIR, NIMBUS_AGENT_MODEL, NIMBUS_ASK_MAX_STEPS, …");
+  console.log("  NIMBUS_EMBEDDING_MODEL_DIR, NIMBUS_ASK_MAX_STEPS, …");
   console.log(
     "  (see packages/gateway/src/config.ts and packages/gateway/src/platform/assemble.ts)",
   );

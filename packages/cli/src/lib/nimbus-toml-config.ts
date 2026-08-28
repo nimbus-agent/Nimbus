@@ -22,7 +22,6 @@ const ENV_BY_DOTTED: Readonly<Record<string, string>> = {
   "telemetry.enabled": "NIMBUS_TELEMETRY_ENABLED",
   "telemetry.endpoint": "NIMBUS_TELEMETRY_ENDPOINT",
   "telemetry.flush_interval_seconds": "NIMBUS_TELEMETRY_FLUSH_SECONDS",
-  "llm.remote_model": "NIMBUS_AGENT_MODEL",
 };
 
 function stripComment(line: string): string {

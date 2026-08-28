@@ -15,7 +15,6 @@ export type { ProviderMeta } from "./types.ts";
 
 export type LlmRouterConfig = {
   preferLocal: boolean;
-  remoteModel: string;
   localModel: string;
   minReasoningParams: number;
   enforceAirGap: boolean;
