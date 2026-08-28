@@ -172,14 +172,30 @@ export class LlmRouter {
   /**
    * Generates markdown from the EXACT route `resolveForSynthesis()` resolved — never
    * re-selects — so the provider actually invoked always matches the one a caller classified as
-   * local/remote and (if applicable) ledgered.
+   * local/remote.
+   *
+   * `egressMethod` names the `egress_ledger` row this call produces IF the resolved route is
+   * non-local; it does NOT decide whether one is written. That is derived from the provider
+   * inside `wrapLedgeredProvider` (I29), which `LlmRegistry.addRoute` applied before the route
+   * ever entered this table — so a caller that omits the argument still cannot generate
+   * unledgered remote egress, it only gets the default `llm.generate.<task>` method name.
    */
-  async generateMarkdown(prompt: string, resolved: ResolvedSynthesisProvider): Promise<string> {
+  async generateMarkdown(
+    prompt: string,
+    resolved: ResolvedSynthesisProvider,
+    egressMethod?: string,
+  ): Promise<string> {
     const route = this.routeFor(makeRouteId(resolved.providerId, resolved.modelName));
     if (route === undefined) {
       throw new Error(`LLM provider "${resolved.providerId}" is no longer registered`);
     }
-    const result = await route.provider.generate({ task: "reasoning", prompt });
+    const result = await route.provider.generate({
+      task: "reasoning",
+      prompt,
+      // Spread-conditional, not `{ egressMethod }`: under `exactOptionalPropertyTypes` an
+      // explicit `egressMethod: undefined` is a different type from an absent key.
+      ...(egressMethod === undefined ? {} : { egressMethod }),
+    });
     return result.text;
   }
 

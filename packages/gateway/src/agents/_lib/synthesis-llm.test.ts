@@ -1,13 +1,9 @@
 // packages/gateway/src/agents/_lib/synthesis-llm.test.ts
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { recordSynthesisEgress } from "../../egress/synthesis-egress.ts";
+import { EgressAppendFailedError } from "../../egress/model-egress.ts";
 import type { LlmRouter } from "../../llm/router.ts";
-import {
-  buildSynthesisRunner,
-  type SynthesisEgressRecorder,
-  type SynthesisRouter,
-} from "./synthesis-llm.ts";
+import { buildSynthesisRunner, type SynthesisRouter } from "./synthesis-llm.ts";
 
 /**
  * Compile-time proof only — never invoked at runtime. `SynthesisRouter` exists so this file's
@@ -34,12 +30,13 @@ function fakeRouter(
 }
 
 /**
- * A tiny counter object implementing only what `recordSynthesisEgress` touches: `query(...).get()`
- * (head-hash lookup, empty ledger → genesis) and `run(...)` (the INSERT). `onAppend`, when given,
- * runs before the row is counted — pass one that throws to simulate a `SQLITE_BUSY`-style append
- * failure. Cast through `unknown` deliberately: `Database` (bun:sqlite) declares only public
- * members, so TypeScript would otherwise require every method on the real class, not just the
- * two `recordSynthesisEgress` actually calls.
+ * A tiny counter object standing in for `SynthesisLlmDeps.db`. Since the `model` append moved
+ * into `wrapLedgeredProvider` (`egress/model-egress.ts`), `buildSynthesisRunner` no longer
+ * touches the db at all — so `count()` here is now a REGRESSION GUARD rather than an assertion
+ * about the appender: it must stay 0 on every path, and a non-zero reading means someone
+ * re-introduced a call-site append that would double-count against the wrapper. Cast through
+ * `unknown` deliberately: `Database` (bun:sqlite) declares only public members, so TypeScript
+ * would otherwise require every method on the real class.
  */
 function fakeDb(onAppend?: () => void): Database & { count: () => number } {
   let n = 0;
@@ -94,72 +91,42 @@ describe("buildSynthesisRunner", () => {
     expect(rows.count()).toBe(0); // refused, and nothing ledgered
   });
 
-  test("allow-remote appends exactly one model row BEFORE generating", async () => {
-    const order: string[] = [];
-    const rows = fakeDb(() => order.push("append"));
+  test("allow-remote generates, and appends NOTHING from this call site", async () => {
+    // The append moved into the provider wrapper. This site must not also append -- a
+    // re-introduced call-site append would double-count every remote synthesis against the
+    // wrapper's row. Append-before-generate ordering is proven where it now lives:
+    // `egress/model-egress.test.ts`.
+    const rows = fakeDb();
     const runner = buildSynthesisRunner({
       config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
-      router: fakeRouter(remoteProvider, async () => {
-        order.push("generate");
-        return "out";
-      }),
+      router: fakeRouter(remoteProvider, async () => "out"),
       db: rows,
       briefKind: "why",
       now: () => 1,
     });
-    await runner?.run("p");
-    expect(order).toEqual(["append", "generate"]);
-    expect(rows.count()).toBe(1);
+    const attempt = await runner?.run("p");
+    expect(attempt).toMatchObject({ ok: true, markdown: "out", remote: true });
+    expect(rows.count()).toBe(0);
   });
 
-  test("a LOCAL provider under allow-remote appends nothing, and the runner still succeeds", async () => {
+  test("a LOCAL provider under allow-remote succeeds and reports remote: false", async () => {
+    // The local/remote SPLIT is no longer decided here -- `wrapLedgeredProvider` derives it
+    // from `provider.isLocal`, and a local provider is returned unwrapped, so no row exists to
+    // count (`egress/model-egress.test.ts` proves that half). What this site still owns is the
+    // `remote` flag it reports back on the attempt, and that it does not refuse a local
+    // provider under `allow-remote` -- a regression that early-returned `ok: false` on this
+    // exact path would otherwise pass silently.
     const rows = fakeDb();
-    // Observing `rows.count()` alone cannot catch a regression that moves the append call INTO a
-    // non-local branch: `recordSynthesisEgress` already no-ops on a local provider, so a call that
-    // never happens and a call that happens-and-no-ops are byte-identical by row count. This spy
-    // observes the CALL itself (and the provider handed to it), which the row count cannot. See
-    // the "an append failure" test above for the complementary case (mode "allow-remote", REMOTE
-    // provider).
-    const recordCalls: Array<{ readonly isLocal: boolean }> = [];
-    const recordEgress: SynthesisEgressRecorder = (db, args) => {
-      recordCalls.push({ isLocal: args.provider.isLocal });
-      recordSynthesisEgress(db, args); // delegate to the real appender against the fake db
-    };
     const runner = buildSynthesisRunner({
       config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
       router: fakeRouter(localProvider),
       db: rows,
       briefKind: "why",
       now: () => 1,
-      recordEgress,
     });
     const attempt = await runner?.run("p");
-    // The brief text says "the runner still succeeds AND the ledger gains zero rows" — the first
-    // half was missing from the original test, so a regression that early-returned `ok: false`
-    // on this exact path would have passed silently.
-    expect(attempt?.ok).toBe(true);
-    expect(recordCalls).toEqual([{ isLocal: true }]);
+    expect(attempt).toMatchObject({ ok: true, remote: false });
     expect(rows.count()).toBe(0);
-  });
-
-  test("an append failure prevents the generate call entirely", async () => {
-    let generated = false;
-    const rows = fakeDb(() => {
-      throw new Error("ledger down");
-    });
-    const runner = buildSynthesisRunner({
-      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
-      router: fakeRouter(remoteProvider, async () => {
-        generated = true;
-        return "out";
-      }),
-      db: rows,
-      briefKind: "why",
-      now: () => 1,
-    });
-    const attempt = await runner?.run("p");
-    expect(attempt?.ok).toBe(false);
-    expect(generated).toBe(false);
   });
 
   // The next two tests pin that "timeout" and "provider_error" are genuinely distinguishable —
@@ -258,5 +225,65 @@ describe("buildSynthesisRunner", () => {
     });
     await runner?.run("p");
     expect(receivedArgs).toEqual([true]);
+  });
+});
+
+describe("buildSynthesisRunner — the append now lives in the provider wrapper", () => {
+  test("a failed ledger append surfaces as egress_append_failed, not provider_error", async () => {
+    // These two are kept apart because `detail` reaches the user on `briefReady`. Sending
+    // someone to their model config for a database problem is a false diagnosis. The append
+    // moved into `egress/model-egress.ts`, so its failure now arrives here as a REJECTION
+    // from `generateMarkdown` rather than a local throw -- preserved by TYPE, not by branch.
+    const runner = buildSynthesisRunner({
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
+      router: fakeRouter(remoteProvider, async () => {
+        throw new EgressAppendFailedError(new Error("table missing"));
+      }),
+      db: fakeDb(),
+      briefKind: "catchup",
+      now: () => 0,
+    });
+
+    expect(await runner?.run("p")).toMatchObject({
+      ok: false,
+      reason: "egress_append_failed",
+    });
+  });
+
+  test("an ordinary provider rejection is still provider_error", async () => {
+    // The guard above must key on the ERROR TYPE, not swallow every rejection.
+    const runner = buildSynthesisRunner({
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
+      router: fakeRouter(remoteProvider, async () => {
+        throw new Error("401 unauthorized");
+      }),
+      db: fakeDb(),
+      briefKind: "catchup",
+      now: () => 0,
+    });
+
+    expect(await runner?.run("p")).toMatchObject({ ok: false, reason: "provider_error" });
+  });
+
+  test("the synthesis call names its own brief kind as the ledger method", async () => {
+    // Without this, every model row would read `llm.generate.reasoning` and `nimbus prove`
+    // could no longer say which brief sent what.
+    const seen: Array<string | undefined> = [];
+    const runner = buildSynthesisRunner({
+      config: { synthesis: "allow-remote", synthesisTimeoutMs: 20000 },
+      router: {
+        resolveForSynthesis: async () => remoteProvider,
+        generateMarkdown: async (_p, _r, egressMethod) => {
+          seen.push(egressMethod);
+          return "# brief";
+        },
+      },
+      db: fakeDb(),
+      briefKind: "catchup",
+      now: () => 0,
+    });
+
+    await runner?.run("p");
+    expect(seen).toEqual(["agents.catchup.synthesis"]);
   });
 });

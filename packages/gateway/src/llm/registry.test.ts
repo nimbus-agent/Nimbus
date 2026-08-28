@@ -4,8 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { listEgress } from "../egress/egress-verify.ts";
 import { LLM_MODELS_V16_SQL } from "../index/llm-models-v16-sql.ts";
 import { LLM_TASK_DEFAULTS_V20_SQL } from "../index/llm-task-defaults-v20-sql.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { LlmRegistry } from "./registry.ts";
 import type { LlmRouterConfig } from "./router.ts";
 import type { LlmModelInfo, LlmProvider, ProviderId, PullProgressChunk } from "./types.ts";
@@ -243,13 +246,17 @@ describe("LlmRegistry.listAllModels", () => {
 
 describe("LlmRegistry.checkAvailability", () => {
   test("returns per-provider booleans for registered providers", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
+    // A db is required only because this case registers a NON-LOCAL ("remote") provider, and
+    // `addRoute` refuses to enter one in the route table with no ledger to append to (I29).
+    const db = freshLedgerDb();
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db });
     reg.addRoute(makeProvider("ollama", { available: true }), DEFAULT_CONFIG.localModel);
     reg.addRoute(makeProvider("remote", { available: false }), DEFAULT_CONFIG.remoteModel);
     const out = await reg.checkAvailability();
     expect(out["ollama"]).toBe(true);
     expect(out["remote"]).toBe(false);
     expect(out["llamacpp"]).toBeUndefined();
+    db.close();
   });
 
   test("isAvailable throw → false for that provider", async () => {
@@ -773,5 +780,102 @@ describe("LlmRegistry.checkRoute — the registry owns the probe (Fix E)", () =>
       reason: "model_absent",
     });
     expect(listCalls).toBe(callsAfterRouting);
+  });
+});
+
+/**
+ * A db carrying the REAL schema, via the migration runner — `egress_ledger` included, and
+ * with the chain triggers/indices `appendEgressEntry` actually runs against. The file's
+ * older `makeDbWithSchema()` hand-rolls two tables and predates the ledger, so it cannot
+ * back these tests.
+ */
+function freshLedgerDb(): Database {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  return db;
+}
+
+describe("LlmRegistry — egress ledgering of non-local routes (I29)", () => {
+  test("addRoute ledgers a remote route's generate exactly once", async () => {
+    // The end-to-end shape of the wiring: registry -> router -> provider, one row.
+    const db = freshLedgerDb();
+    const registry = new LlmRegistry({ db, config: DEFAULT_CONFIG });
+    registry.addRoute(
+      makeProvider("remote", {
+        available: true,
+        models: [{ provider: "remote", modelName: "claude-sonnet-4-6" }],
+      }),
+      "claude-sonnet-4-6",
+    );
+
+    await registry.llmRouter.generate({ task: "reasoning", prompt: "hi" });
+
+    const rows = listEgress(db, {});
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      sourceType: "model",
+      sourceId: "claude-sonnet-4-6",
+      destination: "remote",
+      method: "llm.generate.reasoning",
+      resultStatus: "authorized",
+    });
+    db.close();
+  });
+
+  test("a LOCAL route's generate appends nothing", async () => {
+    // The other half of the derivation: local inference makes no outbound request, so
+    // ledgering it would over-claim egress.
+    const db = freshLedgerDb();
+    const registry = new LlmRegistry({ db, config: DEFAULT_CONFIG });
+    registry.addRoute(
+      makeProvider("ollama", {
+        available: true,
+        models: [{ provider: "ollama", modelName: "llama3.2" }],
+      }),
+      "llama3.2",
+    );
+
+    await registry.llmRouter.generate({ task: "reasoning", prompt: "hi" });
+
+    expect(listEgress(db, {})).toHaveLength(0);
+    db.close();
+  });
+
+  test("refreshProviderMeta does not double-wrap", async () => {
+    // `refreshProviderMeta` re-registers a route's provider through `registerRoute`. If the
+    // wrap ever moved there, this would append two rows per generate.
+    const db = freshLedgerDb();
+    const registry = new LlmRegistry({ db, config: DEFAULT_CONFIG });
+    registry.addRoute(
+      makeProvider("ollama", {
+        available: true,
+        models: [{ provider: "ollama", modelName: "qwen3:8b", parameterCount: 8 }],
+      }),
+      "qwen3:8b",
+    );
+    await registry.refreshProviderMeta();
+    expect(registry.llmRouter.routes()).toHaveLength(1);
+    db.close();
+  });
+
+  test("registering a NON-LOCAL route without a db is refused, not silently unledgered", async () => {
+    // `LlmRegistryOptions.db` is optional, so `addRoute` has to answer what a non-local
+    // provider means when there is no ledger to append to. Registering it unwrapped would
+    // put an unrecorded egress path in the route table -- the exact false zero `nimbus
+    // prove` would then report on. Production always passes a db (`platform/assemble.ts`),
+    // so this refusal is unreachable there and costs nothing.
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    expect(() =>
+      registry.addRoute(makeProvider("remote", { available: true }), "claude-sonnet-4-6"),
+    ).toThrow(/without a database/);
+    expect(registry.llmRouter.routes()).toHaveLength(0);
+  });
+
+  test("a LOCAL route still registers without a db", () => {
+    // The refusal must be scoped to non-local providers: a local-only registry is a
+    // legitimate configuration and every existing db-less test depends on it.
+    const registry = new LlmRegistry({ config: DEFAULT_CONFIG });
+    registry.addRoute(makeProvider("ollama", { available: true }), "llama3.2");
+    expect(registry.llmRouter.routes()).toHaveLength(1);
   });
 });

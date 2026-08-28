@@ -237,8 +237,18 @@ function fakeRemoteProvider(): LlmProvider {
   };
 }
 
-function makeLlmRegistry(provider: LlmProvider): LlmRegistry {
-  const registry = new LlmRegistry({ config: FAKE_LLM_ROUTER_CONFIG });
+/**
+ * `db` is REQUIRED for a non-local provider: `addRoute` refuses to enter a non-local route in
+ * the table with no `egress_ledger` to append to (I29), since that route would otherwise be an
+ * unrecorded egress path. Passing the test's own tracked db also makes the egress assertions
+ * below sharper than they were — the remote route is now wrapped, so had synthesis actually
+ * proceeded, a `model` row would be there to find.
+ */
+function makeLlmRegistry(provider: LlmProvider, db?: Database): LlmRegistry {
+  const registry = new LlmRegistry({
+    config: FAKE_LLM_ROUTER_CONFIG,
+    ...(db === undefined ? {} : { db }),
+  });
   registry.addRoute(
     provider,
     provider.isLocal ? FAKE_LLM_ROUTER_CONFIG.localModel : FAKE_LLM_ROUTER_CONFIG.remoteModel,
@@ -355,7 +365,7 @@ describe("tryDispatchAgentsRpc", () => {
   test('wiring the socket runner causes NO remote egress on a default install ([agents].synthesis defaults to "local"; a REMOTE-only registry is refused)', async () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
-    const llmRegistry = makeLlmRegistry(fakeRemoteProvider());
+    const llmRegistry = makeLlmRegistry(fakeRemoteProvider(), db);
     // No configDir on this ctx → DEFAULT_NIMBUS_AGENTS_TOML (`synthesis: "local"`) — the exact
     // config a fresh `nimbus init` install has, before anyone touches nimbus.toml.
     const { ctx, notifications } = makeCtx({ localIndex, llmRegistry });

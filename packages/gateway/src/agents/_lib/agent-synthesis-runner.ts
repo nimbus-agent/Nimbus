@@ -16,8 +16,9 @@ import {
 const AGENTS_METHOD_PREFIX = "agents.";
 
 /**
- * `"agents.why"` → `"why"`. The `briefKind` `buildSynthesisRunner` ledgers under
- * (`egress/synthesis-egress.ts` writes `agents.<briefKind>.synthesis`). Falls back to the method
+ * `"agents.why"` → `"why"`. The `briefKind` `buildSynthesisRunner` ledgers under — it passes
+ * `agents.<briefKind>.synthesis` to `generateMarkdown` as the `egressMethod` naming the row
+ * `egress/model-egress.ts` appends. Falls back to the method
  * verbatim for a caller that (incorrectly) hands in an unprefixed name, rather than throwing —
  * this is a labeling detail, not a security boundary.
  */
@@ -73,9 +74,10 @@ export function buildAgentSynthesisRunner(
   // No logger: this runs per brief, and warning on every brief would be noise. The single
   // warning site is the boot-time resolution in `platform/assemble.ts`.
   const persona = deps.configDir === undefined ? undefined : resolvePersona(deps.configDir);
-  // recordEgress is deliberately NOT overridden here: buildSynthesisRunner's default is the real
-  // recordSynthesisEgress appender, and this factory must never substitute a fake one on any
-  // production path (I29).
+  // There is no appender seam to override here any more, and that is the point: the `model` row
+  // is appended by `wrapLedgeredProvider`, which `LlmRegistry.addRoute` already applied to the
+  // provider behind `deps.router`. This factory therefore cannot substitute a fake appender on a
+  // production path even by mistake — it never sees one (I29).
   const inner = buildSynthesisRunner({
     config,
     router: deps.router,

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
+import { wrapLedgeredProvider } from "../egress/model-egress.ts";
 import type { RouteAvailability } from "./route-availability.ts";
 import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { LlmRouter, type LlmRouterConfig, type ProviderMeta } from "./router.ts";
@@ -40,9 +41,48 @@ export class LlmRegistry {
     this.db = opts.db;
   }
 
-  /** Registers a route under an explicit model name. */
+  /**
+   * Registers a route under an explicit model name, ledgered (I29).
+   *
+   * Wrapping happens HERE and not in `LlmRouter.registerRoute`, because
+   * `refreshProviderMeta` below re-registers an ALREADY-WRAPPED provider through
+   * `registerRoute` to update its meta -- wrapping there would wrap the wrapper and append
+   * two rows per generate. Static rule D22(e) pins `registerRoute` to this file so no other
+   * caller can enter the route table unwrapped.
+   */
   addRoute(provider: LlmProvider, modelName: string, meta?: ProviderMeta): void {
-    this.router.registerRoute(provider, modelName, meta ?? {});
+    this.router.registerRoute(this.ledgered(provider, modelName), modelName, meta ?? {});
+  }
+
+  /**
+   * `wrapLedgeredProvider` needs a `Database`, and `LlmRegistryOptions.db` is OPTIONAL — so
+   * `addRoute` has to answer what a non-local provider means when there is no ledger to
+   * append to. It REFUSES. Registering it unwrapped would put an unrecorded egress path in
+   * the route table, which is precisely the false zero `nimbus prove` would then report a
+   * clean window over; and a refusal at registration is louder, earlier, and easier to
+   * diagnose than a missing row discovered months later.
+   *
+   * This is the ONE place outside `wrapLedgeredProvider` that reads `isLocal`, and it is not
+   * a second locality decision: the wrapper still decides what gets LEDGERED. This decides
+   * only whether a db is REQUIRED, and its answer for a local provider is "no" — which is
+   * what keeps every db-less local-only registry (all of `registry.test.ts`, `assemble.ts`'s
+   * pre-db paths) working unchanged.
+   *
+   * Unreachable in production: `platform/assemble.ts` always constructs the registry with
+   * `db`. Slice 2b's bearer-key clouds inherit the guarantee for free.
+   */
+  private ledgered(provider: LlmProvider, modelName: string): LlmProvider {
+    if (provider.isLocal) {
+      return provider;
+    }
+    const db = this.db;
+    if (db === undefined) {
+      throw new Error(
+        `Refusing to register non-local LLM route "${provider.providerId}/${modelName}" ` +
+          "without a database: its egress could not be recorded in egress_ledger (I29).",
+      );
+    }
+    return wrapLedgeredProvider(db, provider, modelName);
   }
 
   /**

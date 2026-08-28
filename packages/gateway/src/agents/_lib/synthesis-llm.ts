@@ -4,9 +4,8 @@ import type { Database } from "bun:sqlite";
 import { redactAuditPayload } from "../../audit/format-audit-payload.ts";
 import type { NimbusAgentsToml } from "../../config/nimbus-toml.ts";
 import type { NimbusPersonaToml } from "../../config/persona.ts";
-import { recordSynthesisEgress } from "../../egress/synthesis-egress.ts";
+import { EgressAppendFailedError } from "../../egress/model-egress.ts";
 import type { ResolvedSynthesisProvider } from "../../llm/router.ts";
-import type { ProviderId } from "../../llm/types.ts";
 
 export type SynthesisAttempt =
   | { ok: true; markdown: string; model: string; remote: boolean }
@@ -40,44 +39,27 @@ export type SynthesisRunner = {
  */
 export interface SynthesisRouter {
   resolveForSynthesis(preferLocal?: boolean): Promise<ResolvedSynthesisProvider | undefined>;
-  generateMarkdown(prompt: string, provider: ResolvedSynthesisProvider): Promise<string>;
+  generateMarkdown(
+    prompt: string,
+    provider: ResolvedSynthesisProvider,
+    egressMethod?: string,
+  ): Promise<string>;
 }
-
-/**
- * The exact call shape of `recordSynthesisEgress`. Extracted as a named type — rather than
- * `typeof recordSynthesisEgress` inline at every use — purely so `SynthesisLlmDeps.recordEgress`
- * reads self-documenting.
- */
-export type SynthesisEgressRecorder = (
-  db: Database,
-  args: {
-    readonly briefKind: string;
-    readonly provider: {
-      readonly providerId: ProviderId;
-      readonly modelName: string;
-      readonly isLocal: boolean;
-    };
-    readonly now: number;
-  },
-) => void;
 
 export type SynthesisLlmDeps = {
   readonly config: NimbusAgentsToml;
   readonly router: SynthesisRouter;
-  readonly db: Database;
   readonly briefKind: string;
-  readonly now: () => number;
   /**
-   * Injectable seam over `recordSynthesisEgress`, defaulting to the real one. Test-visibility
-   * only — production callers never set this, the appender is still the same chokepoint, and D22
-   * (b) is unaffected: this file still never names `appendEgressEntry`. It exists so a test can
-   * assert the recorder was actually CALLED (with which `remote` value) rather than only
-   * inferring that from row counts on a fake db — a call moved into `if (remote)` and a call made
-   * unconditionally are BYTE-IDENTICAL by row count alone when `remote` is `false`, since the
-   * real appender already no-ops on `remote: false`; observing the call itself is the only way to
-   * catch that regression.
+   * `db` and `now` are no longer read by `buildSynthesisRunner` itself — the append they fed
+   * moved into `egress/model-egress.ts`, which the provider carries. They are KEPT on the deps
+   * because `buildAgentSynthesisRunner` (`agents/_lib/agent-synthesis-runner.ts`) is the shared
+   * factory for both production brief paths and threads them through; removing them here would
+   * be a signature change across that seam for no behavioural gain, and slice 2b has uses for
+   * an injectable clock.
    */
-  readonly recordEgress?: SynthesisEgressRecorder;
+  readonly db: Database;
+  readonly now: () => number;
 };
 
 /** Cap for a redacted error `detail` — generous for a diagnostic message, not a payload dump. */
@@ -154,32 +136,29 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<RaceOutcom
  *      is only a preference (its own doc comment: "falls through to `remote` when no local
  *      provider answers"), so the provider actually resolved must be inspected, never inferred
  *      from that preference.
- *   4. Call `recordSynthesisEgress` (or the injected `recordEgress` test double) UNCONDITIONALLY
- *      for EVERY mode that reaches this point — `"local"` and `"allow-remote"` alike, `"off"`
- *      already excluded at build time — handing over the RESOLVED PROVIDER, never a `remote`
- *      boolean computed here. `recordSynthesisEgress` re-derives locality from `provider.isLocal`
- *      and appends nothing for a local one; because it decides from the provider rather than from
- *      a verdict this site supplies, no call site can suppress a row (a false zero in the ledger
- *      `nimbus prove` reports on) or fabricate one for a local generate. Calling it only from a
- *      non-local branch would make that internal guard inert and silently return enforcement to
- *      this call site, which is exactly the weakness Task 3's review closed. Calling it under
- *      `"local"` too (where a remote provider would already have been refused above) is
- *      deliberate, not redundant: it means a future third `SynthesisMode` cannot silently bypass
- *      the appender by failing to be spelled out in a mode check — the appender, not this call
- *      site, decides what gets ledgered. A throw here fails closed: `egress_append_failed`, and
- *      generation never happens.
+ *   4. NO egress append happens here any more. It moved into `wrapLedgeredProvider`
+ *      (`egress/model-egress.ts`), which `LlmRegistry.addRoute` applies to every non-local
+ *      provider BEFORE it enters the route table — so the row is appended by the provider this
+ *      function is about to call, not by this function. That is strictly stronger than the call-
+ *      site append it replaces: `briefs/brief-llm-adapter.ts` reaches a provider WITHOUT passing
+ *      through here, and that path was silent before. Locality is still derived inside the
+ *      appender from `provider.isLocal`, so no call site can suppress a row (a false zero in the
+ *      ledger `nimbus prove` reports on) or fabricate one for a local generate. What this site
+ *      still contributes is the row's NAME: it passes `agents.<briefKind>.synthesis` as
+ *      `egressMethod` so a model row keeps identifying which brief sent it.
  *   5. Race the provider call against `config.synthesisTimeoutMs`. The timer elapsing first is
  *      `timeout`; the provider call REJECTING first (network failure, auth rejection, a
  *      malformed response, ...) is the distinct `provider_error` — see the inline comment where
- *      they are told apart for why they are never merged.
+ *      they are told apart for why they are never merged. A rejection carrying
+ *      `EgressAppendFailedError` is the third case: the wrapper refused to let the prompt leave
+ *      because the ledger append failed, reported as `egress_append_failed` and never folded
+ *      into `provider_error`. Generation never happened — the wrapper appends BEFORE delegating.
  *   6. Otherwise, `ok: true` with the markdown, model, and derived `remote` flag.
  */
 export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | undefined {
   if (deps.config.synthesis === "off") {
     return undefined;
   }
-  const recordEgress = deps.recordEgress ?? recordSynthesisEgress;
-
   return {
     async run(prompt: string): Promise<SynthesisAttempt> {
       // preferLocal: true — independent of `[llm].prefer_local`, same precedent as
@@ -198,33 +177,21 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
         return { ok: false, reason: "no_eligible_provider" };
       }
 
-      // Called for EVERY mode reaching this point ("local" and "allow-remote" alike — "off"
-      // already returned undefined above), not only "allow-remote": the appender decides what
-      // gets ledgered, this call site never re-implements that rule. See Step 4 in the doc
-      // comment above. `resolved` is handed over WHOLE rather than as a `remote` boolean this
-      // site derived — the appender re-derives locality from `provider.isLocal` so a caller
-      // cannot suppress or fabricate a `model` row by miscomputing it.
-      try {
-        recordEgress(deps.db, {
-          briefKind: deps.briefKind,
-          provider: resolved,
-          now: deps.now(),
-        });
-      } catch (err) {
-        return { ok: false, reason: "egress_append_failed", detail: redactedErrorDetail(err) };
-      }
-
-      // Deliberately `generateMarkdown(prompt, resolved)` — the EXACT provider `resolveForSynthesis`
-      // already resolved and classified above — never `LlmRouter.generate()`. `generate()` routes
-      // through `fitPromptOrFallback`, whose private `findFallbackRoute` method (`llm/router.ts` —
-      // cited by name, not a line number, since this exact comment's own line-number citation
-      // already drifted once) can reach a REMOTE provider on context overflow with NO egress row
-      // appended and NO `[agents] synthesis` mode check — exactly the two guarantees this function
-      // exists to enforce (the `remote` flag ledgered above, and `"local"` refusing a non-local
-      // `resolved` before this line is ever reached). Do not "unify" these two call paths — that
-      // would reopen an unledgered, mode-blind remote egress path this file was written to close.
+      // Deliberately `generateMarkdown(prompt, resolved, ...)` — the EXACT provider
+      // `resolveForSynthesis` already resolved and classified above — never `LlmRouter.generate()`.
+      // `generate()` routes through `fitPromptOrFallback`, whose private `findFallbackRoute` method
+      // (`llm/router.ts` — cited by name, not a line number, since this exact comment's own line-
+      // number citation already drifted once) can reach a REMOTE provider on context overflow with
+      // NO `[agents] synthesis` mode check.
+      //
+      // ONE of the two original reasons has since been closed elsewhere: that fallback provider is
+      // now wrapped by `wrapLedgeredProvider`, so a row IS appended even down that path. The note
+      // stands on the OTHER reason, which nothing has closed — `generate()` re-selects a route and
+      // so skips the `"local"`-refuses-a-remote-`resolved` check made above. Do not "unify" these
+      // two call paths: that would reopen a mode-blind remote egress path this file exists to
+      // close, and would also lose the `agents.<briefKind>.synthesis` row name.
       const raced = await raceWithTimeout(
-        deps.router.generateMarkdown(prompt, resolved),
+        deps.router.generateMarkdown(prompt, resolved, `agents.${deps.briefKind}.synthesis`),
         deps.config.synthesisTimeoutMs,
       );
       // `timeout` and `provider_error` are kept as SEPARATE reasons, not merged into one bucket,
@@ -238,6 +205,18 @@ export function buildSynthesisRunner(deps: SynthesisLlmDeps): SynthesisRunner | 
         return { ok: false, reason: "timeout" };
       }
       if (raced.kind === "error") {
+        // The append moved into `egress/model-egress.ts` (it wraps the PROVIDER, so it covers
+        // callers this file cannot see). Its failure now arrives as a rejection rather than a
+        // local throw, so the distinct outcome is preserved by TYPE here. Merging it into
+        // `provider_error` would send the user to their model config for a database problem —
+        // `detail` reaches them on `briefReady`.
+        if (raced.error instanceof EgressAppendFailedError) {
+          return {
+            ok: false,
+            reason: "egress_append_failed",
+            detail: redactedErrorDetail(raced.error),
+          };
+        }
         return { ok: false, reason: "provider_error", detail: redactedErrorDetail(raced.error) };
       }
       return { ok: true, markdown: raced.value, model: resolved.modelName, remote };
