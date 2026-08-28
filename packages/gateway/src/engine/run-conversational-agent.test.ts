@@ -476,6 +476,7 @@ describe("negation disclosures", () => {
       generate: mock(async () => {
         throw new Error("router down");
       }),
+      enforcesAirGap: () => false,
     } as unknown as LlmRouter;
     const agent = { generate: mock(async () => ({ text: "from agent" })) } as unknown as Agent;
     const r = await runConversationalAgent({
@@ -660,6 +661,7 @@ describe("the tool-less local path discloses that predicates never ran (F21)", (
         throw new Error("ollama down");
       }),
       prefersLocal: () => true,
+      enforcesAirGap: () => false,
     } as unknown as LlmRouter;
     const agent = {
       generate: mock(async () => ({ text: "Two deployments had none." })),
@@ -674,6 +676,58 @@ describe("the tool-less local path discloses that predicates never ran (F21)", (
     });
 
     expect(r.reply).toBe("Two deployments had none.");
+  });
+
+  test("air-gap refuses the Mastra fallback when the local router throws", async () => {
+    // #1334's shape: `enforce_air_gap` is a REFUSAL setting, so a local model dying
+    // mid-turn must surface the failure, never downgrade to a cloud vendor. Counting
+    // agent invocations is the assertion that matters -- "an error was returned" would
+    // also pass if the agent ran first and then something else threw.
+    const throwingRouter = {
+      generate: mock(async () => {
+        throw new Error("ollama down");
+      }),
+      prefersLocal: () => true,
+      enforcesAirGap: () => true,
+    } as unknown as LlmRouter;
+    const agentGenerate = mock(async () => ({ text: "leaked to the cloud" }));
+    const agent = { generate: agentGenerate } as unknown as Agent;
+
+    await expect(
+      runConversationalAgent({
+        agent,
+        llmRouter: throwingRouter,
+        input: "which deployments had no downstream incident?",
+        stream: false,
+        sendChunk: () => undefined,
+      }),
+    ).rejects.toThrow("ollama down");
+
+    expect(agentGenerate).toHaveBeenCalledTimes(0);
+  });
+
+  test("without air-gap the Mastra fallback still runs", async () => {
+    // The guard must be air-gap-specific, not a blanket removal of the fallback.
+    const throwingRouter = {
+      generate: mock(async () => {
+        throw new Error("ollama down");
+      }),
+      prefersLocal: () => true,
+      enforcesAirGap: () => false,
+    } as unknown as LlmRouter;
+    const agentGenerate = mock(async () => ({ text: "answered by the agent" }));
+    const agent = { generate: agentGenerate } as unknown as Agent;
+
+    const r = await runConversationalAgent({
+      agent,
+      llmRouter: throwingRouter,
+      input: "which deployments had no downstream incident?",
+      stream: false,
+      sendChunk: () => undefined,
+    });
+
+    expect(r.reply).toBe("answered by the agent");
+    expect(agentGenerate).toHaveBeenCalledTimes(1);
   });
 
   test("a streaming local turn gets the disclosure as a chunk", async () => {

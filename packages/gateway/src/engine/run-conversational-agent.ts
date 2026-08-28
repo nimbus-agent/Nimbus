@@ -212,6 +212,13 @@ async function runTurn(
       if (p.agent === undefined) {
         throw e;
       }
+      // `enforce_air_gap` is a REFUSAL, not a preference (see `LlmRouter.enforcesAirGap`).
+      // Falling back to the Mastra agent here would send the prompt to a cloud vendor --
+      // outside the route table, so outside the I29 wrapper too, meaning not even a ledger
+      // row would record it. Surface the local failure instead.
+      if (llmRouter.enforcesAirGap()) {
+        throw e;
+      }
       conversationalLog.warn({ err: e }, "local LLM router failed; falling back to agent");
     }
   }
