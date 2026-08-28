@@ -68,8 +68,12 @@ export class LlmRegistry {
    * what keeps every db-less local-only registry working unchanged (the ~30 such constructions
    * in `registry.test.ts`, and `ipc/server/dispatchers.test.ts`).
    *
-   * Unreachable in production: `platform/assemble.ts` always constructs the registry with
-   * `db`. Slice 2b's bearer-key clouds inherit the guarantee for free.
+   * Unreachable in production: `platform/assemble.ts` holds the ONLY non-test construction
+   * (inside `buildLlmRegistryFromToml`, whose own `db` is non-optional), so this throw is a
+   * TRIPWIRE for a future second caller — slice 2b's bearer-key clouds — not protection for
+   * any scenario that ships today. The optionality it works around is a test-ergonomics
+   * affordance with no product justification; making `db` required would turn this runtime
+   * refusal into a compile error and retire this method. Tracked in #1356.
    */
   private ledgered(provider: LlmProvider, modelName: string): LlmProvider {
     if (provider.isLocal) {
