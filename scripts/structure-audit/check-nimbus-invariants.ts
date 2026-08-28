@@ -29,6 +29,20 @@ export const PLATFORM_VAULT_KEYS = [
   "policy.signing.pubkey",
   "http_api.deployment_token",
   "http_api.web_clipper_tokens",
+  // Slice 2b cloud vendors, read per call by the four `llm/*-provider.ts` adapters and by
+  // `platform/assemble.ts`'s vendor resolution. NEVER read from the environment: an env var must
+  // not be able to satisfy a vendor nobody opted into, which is the hole the per-vendor
+  // `[llm.remote.<vendor>] enabled` flag exists to close.
+  //
+  // `openai.api_key` is DELIBERATELY REUSED from the embedding runtime rather than minted as a
+  // second OpenAI key: same credential, same vendor, and a second key for one vendor invites
+  // drift. It is also the sharpest test of the opt-in — an existing embeddings user already has
+  // this key, so a capability that turned itself on because a credential exists would light up
+  // for them without their asking.
+  "anthropic.api_key",
+  "openai.api_key",
+  "gemini.api_key",
+  "xai.api_key",
 ] as const;
 
 const SPAWN_RE = /\b(?:Bun\.spawn|Bun\.spawnSync|child_process\.spawn|spawn)\s*\(/;
