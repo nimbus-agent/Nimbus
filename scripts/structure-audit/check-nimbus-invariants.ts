@@ -815,6 +815,21 @@ const D22_AGENT_RECORD_RE = /\brecordAgentBriefEgress\b/;
 const D22_AGENT_RECORD_CALLER = "packages/gateway/src/ipc/agents-rpc.ts";
 const D22_AGENT_RECORD_DEFINITION = "packages/gateway/src/egress/agent-brief-egress.ts";
 
+// (e) the ROUTE-TABLE chokepoint. `LlmRegistry.addRoute` is where a provider is passed
+// through `wrapLedgeredProvider` (the I29 `model`-class appender). A file that calls
+// `LlmRouter.registerRoute` directly puts an UNWRAPPED provider in the route table, which
+// then generates with no ledger row -- the `model` class silently incomplete while this
+// audit stays green.
+//
+// `registry.ts` is permitted twice over: `addRoute` (which wraps) and `refreshProviderMeta`
+// (which re-registers an ALREADY-wrapped provider to update its meta, and must NOT wrap
+// again or every generate would append twice). `router.ts` holds the definition.
+const D22_REGISTER_ROUTE_RE = /\bregisterRoute\b/;
+const D22_REGISTER_ROUTE_ALLOWED: readonly string[] = [
+  "packages/gateway/src/llm/registry.ts",
+  "packages/gateway/src/llm/router.ts",
+];
+
 // (d) the EMITTER chokepoint. Rule (c) pins the caller of the appender, which catches a second file
 // acquiring the appender — but NOT a second file that serves a brief without calling it at all.
 // That path spells nothing (c) matches: it would append no row, serve the brief, and leave
@@ -927,6 +942,14 @@ export function checkEgressChokepointConfinement(files: readonly FileEntry[]): V
       ) {
         out.push({
           rule: "D22-agent-brief-egress",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+      if (D22_REGISTER_ROUTE_RE.test(line) && !D22_REGISTER_ROUTE_ALLOWED.includes(f.relPath)) {
+        out.push({
+          rule: "D22-register-route",
           file: f.relPath,
           line: i + 1,
           snippet: (originalLines[i] ?? "").trim(),
@@ -1297,7 +1320,7 @@ async function run(): Promise<void> {
     const v = checkEgressChokepointConfinement(files);
     for (const e of v) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, appendEgressEntry outside egress/, or recordAgentBriefEgress outside agents-rpc.ts) — bypasses I29: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, appendEgressEntry outside egress/, recordAgentBriefEgress outside agents-rpc.ts, or registerRoute outside llm/registry.ts) — bypasses I29: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

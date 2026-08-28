@@ -5,6 +5,7 @@ import { relative, resolve, sep } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import {
   checkAgentEmitterImportConfinement,
+  checkEgressChokepointConfinement,
   checkWrapServerSpecInvariant,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments } from "../../../scripts/structure-audit/lib.ts";
@@ -2150,6 +2151,32 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     makeEgressSink(db).append(entry);
     expect(egressHead(db).count).toBe(1);
     db.close();
+  });
+
+  // The route table is the boundary the model-class appender sits on. A file that calls
+  // `registerRoute` directly enters that table WITHOUT `addRoute`'s `wrapLedgeredProvider`,
+  // so its provider would generate with no ledger row -- I29's `model` class silently
+  // incomplete, with the static audit green.
+  test("I29/D22(e): registerRoute is named only by registry.ts and its own definition", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const callers = files
+      .filter((f) => /\bregisterRoute\b/.test(stripComments(f.contents)))
+      .map((f) => `packages/gateway/src/${f.rel}`)
+      .sort();
+    expect(callers).toEqual([
+      "packages/gateway/src/llm/registry.ts",
+      "packages/gateway/src/llm/router.ts",
+    ]);
+  });
+
+  test("I29: the checker actually rejects an unwrapped route registration", () => {
+    const violations = checkEgressChokepointConfinement([
+      {
+        relPath: "packages/gateway/src/platform/assemble.ts",
+        contents: "router.registerRoute(provider, 'm');",
+      },
+    ]);
+    expect(violations.map((v) => v.rule)).toContain("D22-register-route");
   });
 });
 
