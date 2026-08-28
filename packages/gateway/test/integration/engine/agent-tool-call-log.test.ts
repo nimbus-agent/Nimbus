@@ -7,6 +7,15 @@ import type { LocalIndex } from "../../../src/index/local-index.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../../../src/index/tool-call-log-v29-sql.ts";
 import { TOOL_CALL_PARAMS_V42_SQL } from "../../../src/index/tool-call-params-v42-sql.ts";
 
+/**
+ * The agent REQUIRES a resolved vendor and an egress db as of slice 2b: `getEffectiveAgentModel()`
+ * is gone, so a model can no longer be inferred from config or the environment. Nothing here
+ * calls doGenerate, so `TEST_EGRESS_DB` needs no `egress_ledger` table -- adding one would imply
+ * an append that never happens.
+ */
+const TEST_VENDOR = { providerId: "openai", modelId: "gpt-4o-mini", apiKey: "sk-test-not-used" };
+const TEST_EGRESS_DB = new Database(":memory:");
+
 function freshAuditDb(): Database {
   const db = new Database(":memory:");
   db.exec(TOOL_CALL_LOG_V29_SCHEMA_SQL);
@@ -28,6 +37,8 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
     const auditDb = freshAuditDb();
     const { agent } = createNimbusEngineAgent({
       localIndex: stubLocalIndex(),
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       auditDb,
     });
@@ -65,6 +76,8 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
     } as unknown as LocalIndex;
     const { agent } = createNimbusEngineAgent({
       localIndex: throwingIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       auditDb,
     });
@@ -94,6 +107,8 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
     const auditDb = freshAuditDb();
     const { agent } = createNimbusEngineAgent({
       localIndex: stubLocalIndex(),
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
       auditDb,
     });
@@ -113,6 +128,8 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
   test("does not break the LLM-facing path when auditDb is undefined", async () => {
     const { agent } = createNimbusEngineAgent({
       localIndex: stubLocalIndex(),
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
       agentModel: "openai/gpt-4o-mini",
     });
     const tools = (await agent.listTools()) as Record<
