@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { LlmProviderError } from "./provider-error.ts";
 import { LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
 import type { LlmProvider } from "./types.ts";
 
@@ -738,5 +739,130 @@ describe("LlmRouter route registration", () => {
     router.registerRoute(present, "present");
     const chosen = await router.selectRoute("reasoning");
     expect(chosen?.modelName).toBe("present");
+  });
+});
+
+describe("generate-time route fallback", () => {
+  // Slice 2b §6.4. Cloud adapters answer availability OFFLINE, so a remote route reports
+  // available whatever the network is doing. Without a walk, `route_priority = [remote, local]`
+  // with no internet becomes a hard failure even with a healthy local model next in line -- while
+  // the roadmap row this serves promises "with local fallback".
+  const CFG: LlmRouterConfig = {
+    preferLocal: false,
+    remoteModel: "remote-model",
+    localModel: "local-model",
+    minReasoningParams: 0,
+    enforceAirGap: false,
+    routePriority: ["remote/remote-model", "ollama/local-model"],
+  };
+
+  function provider(
+    id: "ollama" | "remote",
+    modelName: string,
+    generate: () => Promise<never> | Promise<{ text: string }>,
+  ): LlmProvider {
+    return {
+      providerId: id,
+      isLocal: id !== "remote",
+      isAvailable: async () => true,
+      listModels: async () => [{ provider: id, modelName }],
+      generate: generate as LlmProvider["generate"],
+    };
+  }
+
+  const ok = (text: string) => async () => ({
+    text,
+    tokensIn: 1,
+    tokensOut: 1,
+    modelUsed: "m",
+    isLocal: false,
+    provider: "x",
+  });
+  const boom = (kind: "transport" | "auth" | "request", status: number) => async () => {
+    throw new LlmProviderError(`x: HTTP ${String(status)}`, kind, status);
+  };
+
+  function routerWith(
+    remoteGen: () => Promise<never> | Promise<{ text: string }>,
+    localGen: () => Promise<never> | Promise<{ text: string }>,
+    cfg: LlmRouterConfig = CFG,
+  ) {
+    const r = new LlmRouter(cfg);
+    r.registerRoute(provider("remote", "remote-model", remoteGen), "remote-model");
+    r.registerRoute(provider("ollama", "local-model", localGen), "local-model");
+    return r;
+  }
+
+  test("a TRANSPORT failure falls through to the next route and succeeds", async () => {
+    let localCalls = 0;
+    const r = routerWith(boom("transport", 503), async () => {
+      localCalls += 1;
+      return (await ok("local answer")()) as never;
+    });
+    expect((await r.generate({ task: "reasoning", prompt: "hi" })).text).toBe("local answer");
+    expect(localCalls).toBe(1);
+  });
+
+  test("an AUTH failure does NOT fall through -- it fails at the first route", async () => {
+    // A bad key fails identically at the next vendor, so retrying only sends the same prompt to a
+    // second destination: one more real outbound request and one more ledger row, no better
+    // answer.
+    let localCalls = 0;
+    const r = routerWith(boom("auth", 401), async () => {
+      localCalls += 1;
+      return (await ok("local answer")()) as never;
+    });
+    await expect(r.generate({ task: "reasoning", prompt: "hi" })).rejects.toBeInstanceOf(
+      LlmProviderError,
+    );
+    expect(localCalls).toBe(0);
+  });
+
+  test("a REQUEST failure does NOT fall through either", async () => {
+    let localCalls = 0;
+    const r = routerWith(boom("request", 400), async () => {
+      localCalls += 1;
+      return (await ok("local answer")()) as never;
+    });
+    await expect(r.generate({ task: "reasoning", prompt: "hi" })).rejects.toThrow();
+    expect(localCalls).toBe(0);
+  });
+
+  test("an UNCLASSIFIED error does not fall through", async () => {
+    // A plain Error carries no `kind`. Fail-closed on the RETRY decision: only an explicitly
+    // transport-classified failure earns a second destination.
+    let localCalls = 0;
+    const r = routerWith(
+      async () => {
+        throw new Error("something else");
+      },
+      async () => {
+        localCalls += 1;
+        return (await ok("local answer")()) as never;
+      },
+    );
+    await expect(r.generate({ task: "reasoning", prompt: "hi" })).rejects.toThrow("something else");
+    expect(localCalls).toBe(0);
+  });
+
+  test("when EVERY route fails on transport, the LAST error is thrown", async () => {
+    const r = routerWith(boom("transport", 503), async () => {
+      throw new LlmProviderError("second", "transport", 500);
+    });
+    await expect(r.generate({ task: "reasoning", prompt: "hi" })).rejects.toThrow("second");
+  });
+
+  test("under air-gap the walk never reaches a non-local route", async () => {
+    let remoteCalls = 0;
+    const r = routerWith(
+      async () => {
+        remoteCalls += 1;
+        return (await ok("cloud")()) as never;
+      },
+      ok("local") as () => Promise<{ text: string }>,
+      { ...CFG, enforceAirGap: true },
+    );
+    expect((await r.generate({ task: "reasoning", prompt: "hi" })).text).toBe("local");
+    expect(remoteCalls).toBe(0);
   });
 });

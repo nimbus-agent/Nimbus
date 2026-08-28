@@ -1,3 +1,4 @@
+import { LlmProviderError } from "./provider-error.ts";
 import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { makeRouteId } from "./route-id.ts";
 import type {
@@ -203,15 +204,35 @@ export class LlmRouter {
   // returns the first route whose provider's availability check resolves true. The check is
   // injected so callers can share a memoized probe across many tasks (see getStatus).
   // `preferLocal`, when provided, overrides `config.preferLocal` for this call only.
+  /**
+   * Every route passing the task's gates, in priority order — air-gap exclusion FIRST, so a
+   * non-local route is never a candidate under `enforce_air_gap` however a consumer walks this.
+   *
+   * A LAZY generator, deliberately. `generate()` needs to continue past a failed route while
+   * `firstAvailableRoute` must stop at the first hit, and returning an array would make the
+   * latter probe every remaining route on every call — a real cost, since a local provider's
+   * availability probe pays a connection attempt. Laziness lets both share ONE definition of the
+   * gates instead of keeping two copies that can drift apart.
+   */
+  private async *eligibleRoutes(
+    task: LlmTaskType,
+    isAvailable: (route: ModelRoute) => Promise<boolean>,
+    preferLocal?: boolean,
+  ): AsyncGenerator<ModelRoute> {
+    for (const route of this.orderedRoutes(preferLocal)) {
+      if (this.config.enforceAirGap && !route.provider.isLocal) continue;
+      if (!this.meetsCapabilityFloor(route, task)) continue;
+      if (await isAvailable(route)) yield route;
+    }
+  }
+
   private async firstAvailableRoute(
     task: LlmTaskType,
     isAvailable: (route: ModelRoute) => Promise<boolean>,
     preferLocal?: boolean,
   ): Promise<ModelRoute | undefined> {
-    for (const route of this.orderedRoutes(preferLocal)) {
-      if (this.config.enforceAirGap && !route.provider.isLocal) continue;
-      if (!this.meetsCapabilityFloor(route, task)) continue;
-      if (await isAvailable(route)) return route;
+    for await (const route of this.eligibleRoutes(task, isAvailable, preferLocal)) {
+      return route;
     }
     return undefined;
   }
@@ -260,16 +281,50 @@ export class LlmRouter {
     }
   }
 
+  /**
+   * Walks the task's priority order, trying each eligible route until one answers.
+   *
+   * This used to resolve ONE route and call it, with no try/catch — tolerable while every route
+   * was local, because the availability probe genuinely predicted reachability. Cloud adapters
+   * answer availability OFFLINE (slice 2b §7.4), so a remote route reports available whatever the
+   * network is doing, and a single-shot call would turn "no internet" into a hard failure even
+   * with a healthy local model next in line. The roadmap row this serves promises local FALLBACK.
+   *
+   * The retry rule is deliberately NARROW: only a TRANSPORT-class failure continues the walk. An
+   * auth- or request-class failure fails identically at the next vendor, so retrying would send
+   * the same prompt to a second destination — one more real outbound request and one more
+   * `egress_ledger` row — for no better answer. An error with NO classification is treated as
+   * non-retryable for the same reason: retrying is the action that costs egress, so it is what has
+   * to be earned.
+   *
+   * ONE PROMPT CAN PRODUCE N LEDGER ROWS across N destinations, and that is CORRECT — each row
+   * records a real outbound request. Do not "deduplicate" them; a ledger that collapsed them would
+   * under-report egress. They appear naturally, one per attempt, because each attempt goes through
+   * its own wrapped provider.
+   */
   async generate(opts: LlmGenerateOptions): Promise<LlmGenerateResult> {
-    const route = await this.selectRoute(opts.task);
-    if (route === undefined) {
+    let lastError: unknown;
+    let tried = false;
+
+    for await (const route of this.eligibleRoutes(opts.task, (r) => this.probeAvailable(r))) {
+      tried = true;
+      const adjusted = await this.fitPromptOrFallback(opts, route);
+      const target = adjusted.kind === "route" ? adjusted.route : route;
+      try {
+        return await target.provider.generate(adjusted.opts);
+      } catch (err) {
+        lastError = err;
+        if (err instanceof LlmProviderError && err.kind === "transport") {
+          continue; // Try the next destination.
+        }
+        throw err; // Auth, request, or unclassified: the next vendor cannot do better.
+      }
+    }
+
+    if (!tried) {
       throw new Error(`No LLM provider available for task: ${opts.task}`);
     }
-    const adjusted = await this.fitPromptOrFallback(opts, route);
-    if (adjusted.kind === "route") {
-      return adjusted.route.provider.generate(adjusted.opts);
-    }
-    return route.provider.generate(adjusted.opts);
+    throw lastError;
   }
 
   private async fitPromptOrFallback(
