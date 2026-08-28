@@ -126,4 +126,85 @@ describe("spawnCapture", () => {
     expect("env" in (bare ?? {})).toBe(false);
     expect("cwd" in (bare ?? {})).toBe(false);
   });
+
+  test("captures stderr alongside stdout", async () => {
+    const r = await withStub(
+      () => fakeChild(1, "out", "boom"),
+      () => spawnCapture(["aws", "x"]),
+    );
+    expect(r.stdout).toBe("out");
+    expect(r.stderr).toBe("boom");
+  });
+
+  test("an async 'error' event (ENOENT: CLI not installed) resolves ok:false", async () => {
+    // Distinct from the synchronous throw above: a missing executable is reported by node as an
+    // `error` EVENT after spawn returns, not as a throw. Without the listener the promise would
+    // never settle and the sync would hang forever rather than degrade.
+    const r = await withStub(
+      () => {
+        const proc = new EventEmitter() as EventEmitter & {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+          kill: () => void;
+        };
+        proc.stdout = new EventEmitter();
+        proc.stderr = new EventEmitter();
+        proc.kill = (): void => {};
+        queueMicrotask(() => proc.emit("error", new Error("spawn aws ENOENT")));
+        return proc;
+      },
+      () => spawnCapture(["aws"]),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.code).toBeNull();
+  });
+
+  test("timeoutMs kills a child that never closes, resolving ok:false", async () => {
+    // A vendor CLI hanging on a network read would otherwise pin the sync forever.
+    let killed = false;
+    const r = await withStub(
+      () => {
+        const proc = new EventEmitter() as EventEmitter & {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+          kill: () => void;
+        };
+        proc.stdout = new EventEmitter();
+        proc.stderr = new EventEmitter();
+        proc.kill = (): void => {
+          killed = true;
+        };
+        // Never emits `close` — the hang this option exists for.
+        return proc;
+      },
+      () => spawnCapture(["aws"], { timeoutMs: 20 }),
+    );
+    expect(killed).toBe(true);
+    expect(r.ok).toBe(false);
+    expect(r.code).toBeNull();
+  });
+
+  test("a close that arrives AFTER the timeout does not overwrite the result", async () => {
+    // `done()` is idempotent by design: the timeout already resolved, and a late close must not
+    // flip a timed-out call to ok:true.
+    let emitClose: (() => void) | undefined;
+    const r = await withStub(
+      () => {
+        const proc = new EventEmitter() as EventEmitter & {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+          kill: () => void;
+        };
+        proc.stdout = new EventEmitter();
+        proc.stderr = new EventEmitter();
+        proc.kill = (): void => {};
+        emitClose = () => proc.emit("close", 0);
+        return proc;
+      },
+      () => spawnCapture(["aws"], { timeoutMs: 15 }),
+    );
+    expect(r.ok).toBe(false);
+    emitClose?.();
+    expect(r.ok).toBe(false);
+  });
 });

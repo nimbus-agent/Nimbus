@@ -116,8 +116,10 @@ export function spawnCapture(
         child.kill();
         done({ ok: false, stdout: out, stderr: err, code: null });
       }, options.timeoutMs);
-      // Do not hold the event loop open on the timeout alone.
-      timer.unref?.();
+      // NOT unref'd. An unref'd timer does not hold the event loop open, so when the child is
+      // hung and nothing else has work queued the timeout can fail to fire at all — defeating it
+      // in precisely the case it exists for. It cannot leak: `done()` always clears it, and
+      // `done()` runs on every exit path.
     }
 
     // ENOENT (CLI not installed) arrives as an `error` event, not a non-zero exit.

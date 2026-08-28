@@ -60,6 +60,8 @@ describe("runGcloudCommand", () => {
   });
 
   test("degrades to { ok:false, text:'' } when spawn throws (gcloud missing)", async () => {
+    // The handling lives in `spawnCapture` now, not in a local try/catch here — that catch was
+    // deleted as unreachable. This asserts the contract still holds through the seam.
     stubSpawn(() => {
       throw new Error("ENOENT: gcloud not found");
     });
