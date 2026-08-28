@@ -2181,6 +2181,21 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     ]);
   });
 
+  // D22(e) stops a SECOND file entering the route table unwrapped. This stops the ONE
+  // permitted file entering it with nothing to ledger to: `addRoute` hands `this.db` to
+  // `wrapLedgeredProvider`, so an optional `db` meant a registry could exist that could not
+  // record egress. That was a runtime refusal until 2026-08-28 and is now a type error --
+  // asserted here on the SOURCE, because a type error is invisible to a runtime suite and
+  // would otherwise be pinned nowhere the invariant's own tests can see.
+  test("I29: LlmRegistryOptions.db is non-optional, so an unledgerable registry cannot exist", async () => {
+    const src = stripComments(await readFile("packages/gateway/src/llm/registry.ts", "utf8"));
+    const optionsBlock = /export type LlmRegistryOptions = \{([\s\S]*?)\}/.exec(src)?.[1] ?? "";
+    expect(optionsBlock).not.toBe("");
+    // The whole assertion: `db: Database`, never `db?: Database`.
+    expect(/\bdb\s*\?\s*:/.test(optionsBlock)).toBe(false);
+    expect(/\bdb\s*:\s*Database\b/.test(optionsBlock)).toBe(true);
+  });
+
   test("I29: the checker actually rejects an unwrapped route registration", () => {
     const violations = checkEgressChokepointConfinement([
       {
