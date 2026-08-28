@@ -129,6 +129,36 @@ describe("runLlmStatusImpl", () => {
   });
 });
 
+describe("not_configured — the remote-only availability reason", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("renders its own remedy, never a bare unavailable", async () => {
+    // Three different fixes hide behind one word: start the daemon, pull the model, add a key.
+    // Collapsing the third into `provider_unreachable` would send a user to check their network
+    // for a missing credential.
+    const ipc = createMockIpcClient([
+      {
+        routes: [
+          {
+            routeId: "openai/gpt-5",
+            providerId: "openai",
+            modelName: "gpt-5",
+            isLocal: false,
+            available: false,
+            reason: "not_configured",
+          },
+        ],
+      },
+    ]);
+    await runLlmStatusImpl(ipc.client, { json: false });
+    expect(out.stdout).toContain("no (no api key)");
+    expect(out.stdout).not.toContain("provider unreachable");
+    expect(out.stdout).not.toContain("model not pulled");
+  });
+});
+
 describe("runLlm (dispatcher)", () => {
   beforeEach(() => {
     out.reset();

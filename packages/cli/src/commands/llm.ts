@@ -4,7 +4,7 @@ import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 // Mirrors gateway `llm/route-availability.ts`'s `RouteAvailability["reason"]` — kept as an
 // open string here (not re-imported: cli has no source dependency on gateway, IPC-only) so a
 // future reason value degrades to its raw text rather than a type error.
-type RouteReason = "ok" | "provider_unreachable" | "model_absent" | string;
+type RouteReason = "ok" | "provider_unreachable" | "model_absent" | "not_configured" | string;
 
 type RouteStatus = {
   routeId: string;
@@ -36,6 +36,9 @@ function availabilityText(route: RouteStatus): string {
   if (route.available) return "yes";
   if (route.reason === "provider_unreachable") return "no (provider unreachable)";
   if (route.reason === "model_absent") return "no (model not pulled)";
+  // A cloud route that is enabled but keyless. Its remedy is a Vault key -- not starting a daemon
+  // and not pulling a model -- so it must stay distinguishable from the two above.
+  if (route.reason === "not_configured") return "no (no api key)";
   return `no (${route.reason})`;
 }
 
