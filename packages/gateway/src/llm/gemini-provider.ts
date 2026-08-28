@@ -1,8 +1,19 @@
 // packages/gateway/src/llm/gemini-provider.ts
 
-import type { ApiKeyResolver, OpenAiCompatibleOptions } from "./openai-provider.ts";
-import { classifyHttpStatus, LlmProviderError } from "./provider-error.ts";
-import type { LlmGenerateOptions, LlmGenerateResult, LlmModelInfo, LlmProvider } from "./types.ts";
+import {
+  CloudLlmProvider,
+  type CloudProviderOptions,
+  postJson,
+  requireApiKey,
+} from "./cloud-provider-base.ts";
+import {
+  asJsonArray,
+  asJsonRecord,
+  classifyHttpStatus,
+  LlmProviderError,
+  readJsonBody,
+} from "./provider-error.ts";
+import type { LlmGenerateOptions, LlmGenerateResult, LlmProvider } from "./types.ts";
 
 const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 
@@ -17,69 +28,42 @@ const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
  * `isLocal` is HARDCODED FALSE and never derived from `baseUrl`; see `OpenAiProvider`'s note and
  * invariant I34.
  */
-export class GeminiProvider implements LlmProvider {
+export class GeminiProvider extends CloudLlmProvider implements LlmProvider {
   readonly providerId = "gemini";
   readonly isLocal = false;
-  private readonly apiKey: ApiKeyResolver;
-  private readonly modelName: string;
-  private readonly baseUrl: string;
-
-  constructor(opts: OpenAiCompatibleOptions) {
-    this.apiKey = opts.apiKey;
-    this.modelName = opts.modelName;
-    this.baseUrl = (opts.baseUrl ?? GEMINI_DEFAULT_BASE_URL).replace(/\/$/, "");
-  }
-
-  /** Offline; see `OpenAiProvider.isAvailable` for why no probe is issued. */
-  async isAvailable(): Promise<boolean> {
-    const key = await this.apiKey();
-    return key !== undefined && key.trim() !== "";
-  }
-
-  async listModels(): Promise<LlmModelInfo[]> {
-    return [{ provider: this.providerId, modelName: this.modelName }];
+  constructor(opts: CloudProviderOptions) {
+    super(opts, GEMINI_DEFAULT_BASE_URL);
   }
 
   async generate(opts: LlmGenerateOptions): Promise<LlmGenerateResult> {
-    const key = await this.apiKey();
-    if (key === undefined || key.trim() === "") {
-      throw new LlmProviderError("gemini: no API key configured", "auth");
-    }
+    const key = await requireApiKey(this.apiKey, this.providerId);
 
     // `encodeURIComponent` on the model is load-bearing: an id containing `/` or a space would
-    // otherwise change the path's meaning.
+    // otherwise change the path's meaning. The KEY rides in the query string, which is why no
+    // error below ever includes this URL.
     const url =
       `${this.baseUrl}/v1beta/models/${encodeURIComponent(this.modelName)}:generateContent` +
       `?key=${encodeURIComponent(key)}`;
 
-    let resp: Response;
-    try {
-      resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
-          ...(opts.systemPrompt === undefined
-            ? {}
-            : { systemInstruction: { parts: [{ text: opts.systemPrompt }] } }),
-          ...(opts.maxTokens === undefined && opts.temperature === undefined
-            ? {}
-            : {
-                generationConfig: {
-                  ...(opts.maxTokens === undefined ? {} : { maxOutputTokens: opts.maxTokens }),
-                  ...(opts.temperature === undefined ? {} : { temperature: opts.temperature }),
-                },
-              }),
-        }),
-      });
-    } catch (err) {
-      // Only the error's NAME, never its message: a fetch failure message can embed the request
-      // URL, and this vendor's URL carries the api key.
-      throw new LlmProviderError(
-        `gemini: request failed: ${err instanceof Error ? err.name : "unknown"}`,
-        "transport",
-      );
-    }
+    const resp = await postJson(
+      this.providerId,
+      url,
+      {},
+      {
+        contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+        ...(opts.systemPrompt === undefined
+          ? {}
+          : { systemInstruction: { parts: [{ text: opts.systemPrompt }] } }),
+        ...(opts.maxTokens === undefined && opts.temperature === undefined
+          ? {}
+          : {
+              generationConfig: {
+                ...(opts.maxTokens === undefined ? {} : { maxOutputTokens: opts.maxTokens }),
+                ...(opts.temperature === undefined ? {} : { temperature: opts.temperature }),
+              },
+            }),
+      },
+    );
 
     if (!resp.ok) {
       throw new LlmProviderError(
@@ -89,21 +73,22 @@ export class GeminiProvider implements LlmProvider {
       );
     }
 
-    const body = (await resp.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }>;
-      usageMetadata?: { promptTokenCount?: unknown; candidatesTokenCount?: unknown };
-    };
+    const body = asJsonRecord(await readJsonBody(resp, this.providerId));
     // CONCATENATE every part, for the same reason Anthropic's blocks are concatenated: taking
     // only [0] would silently truncate a multi-part reply.
-    const text = (body.candidates?.[0]?.content?.parts ?? [])
-      .map((part) => (typeof part.text === "string" ? part.text : ""))
+    const firstCandidate = asJsonRecord(asJsonArray(body["candidates"])[0]);
+    const parts = asJsonArray(asJsonRecord(firstCandidate["content"])["parts"]);
+    const text = parts
+      .map((part) => asJsonRecord(part)["text"])
+      .map((t) => (typeof t === "string" ? t : ""))
       .join("");
-    const usage = body.usageMetadata;
+    const usage = asJsonRecord(body["usageMetadata"]);
 
     return {
       text,
-      tokensIn: typeof usage?.promptTokenCount === "number" ? usage.promptTokenCount : 0,
-      tokensOut: typeof usage?.candidatesTokenCount === "number" ? usage.candidatesTokenCount : 0,
+      tokensIn: typeof usage["promptTokenCount"] === "number" ? usage["promptTokenCount"] : 0,
+      tokensOut:
+        typeof usage["candidatesTokenCount"] === "number" ? usage["candidatesTokenCount"] : 0,
       modelUsed: this.modelName,
       isLocal: false,
       provider: this.providerId,

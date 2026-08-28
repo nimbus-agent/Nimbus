@@ -211,6 +211,30 @@ describe("OpenAiProvider", () => {
     expect((err as LlmProviderError).kind).toBe("transport");
     expect((err as Error).message).toContain("unknown");
   });
+
+  test("a 200 whose body is NOT JSON is transport-class, not an unclassified SyntaxError", async () => {
+    // A proxy on `base_url` can return HTML with status 200; the SyntaxError from `resp.json()`
+    // would otherwise escape unclassified and stop the router's priority walk.
+    globalThis.fetch = (async () =>
+      new Response("<html>proxy error</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      })) as unknown as typeof globalThis.fetch;
+    const p = new OpenAiProvider({ apiKey: async () => "sk-test", modelName: "m" });
+    const err = await p.generate({ task: "reasoning", prompt: "hi" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmProviderError);
+    expect((err as LlmProviderError).kind).toBe("transport");
+  });
+
+  test("a literal null JSON body degrades instead of dereferencing null", async () => {
+    stubFetch(200, null);
+    const p = new OpenAiProvider({ apiKey: async () => "sk-test", modelName: "m" });
+    expect(await p.generate({ task: "reasoning", prompt: "hi" })).toMatchObject({
+      text: "",
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+  });
 });
 
 describe("XaiProvider", () => {

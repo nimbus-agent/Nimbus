@@ -183,10 +183,10 @@ import { extractKbPageRef } from "../ipc/server/dispatchers.ts";
 import type { TribalSubmitAction } from "../ipc/tribal-rpc.ts";
 import { AnthropicProvider } from "../llm/anthropic-provider.ts";
 import { isLoopbackBaseUrl } from "../llm/base-url-locality.ts";
+import type { ApiKeyResolver, CloudProviderOptions } from "../llm/cloud-provider-base.ts";
 import { GeminiProvider } from "../llm/gemini-provider.ts";
 import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
-import type { ApiKeyResolver, OpenAiCompatibleOptions } from "../llm/openai-provider.ts";
 import { OpenAiProvider } from "../llm/openai-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
 import { makeRouteId, parseRouteRef } from "../llm/route-id.ts";
@@ -1337,7 +1337,7 @@ export type ResolvedRemoteVendor = {
  */
 const REMOTE_PROVIDER_FACTORIES: Record<
   RemoteVendorId,
-  (opts: OpenAiCompatibleOptions) => LlmProvider
+  (opts: CloudProviderOptions) => LlmProvider
 > = {
   anthropic: (opts) => new AnthropicProvider(opts),
   openai: (opts) => new OpenAiProvider(opts),

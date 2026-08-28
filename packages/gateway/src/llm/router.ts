@@ -231,10 +231,15 @@ export class LlmRouter {
     isAvailable: (route: ModelRoute) => Promise<boolean>,
     preferLocal?: boolean,
   ): Promise<ModelRoute | undefined> {
-    for await (const route of this.eligibleRoutes(task, isAvailable, preferLocal)) {
-      return route;
-    }
-    return undefined;
+    // Pull ONE value from the lazy generator rather than `for await ... return`, which reads as
+    // a loop whose body always exits on the first iteration — correct, but a static analyser
+    // flags it and a reader has to prove it. Taking the iterator explicitly says "the first
+    // eligible route" outright, and `return()` releases the generator so the routes behind it are
+    // never probed.
+    const routes = this.eligibleRoutes(task, isAvailable, preferLocal);
+    const first = await routes.next();
+    await routes.return(undefined);
+    return first.done === true ? undefined : first.value;
   }
 
   // Orders every registered route: `config.routePriority` entries first (in the order given,
@@ -304,12 +309,19 @@ export class LlmRouter {
    */
   async generate(opts: LlmGenerateOptions): Promise<LlmGenerateResult> {
     let lastError: unknown;
-    let tried = false;
+    // Route ids already INVOKED, not merely visited. `fitPromptOrFallback` can redirect an
+    // overflowing prompt onto a DIFFERENT route than the one the walk is currently on, and that
+    // route is still ahead in the walk — so without this the same destination is called twice for
+    // one prompt: two real outbound requests and two `egress_ledger` rows, the second buying
+    // nothing. The rule above earns one row per DISTINCT destination attempted; this keeps that
+    // true.
+    const attempted = new Set<string>();
 
     for await (const route of this.eligibleRoutes(opts.task, (r) => this.probeAvailable(r))) {
-      tried = true;
       const adjusted = await this.fitPromptOrFallback(opts, route);
       const target = adjusted.kind === "route" ? adjusted.route : route;
+      if (attempted.has(target.routeId)) continue;
+      attempted.add(target.routeId);
       try {
         return await target.provider.generate(adjusted.opts);
       } catch (err) {
@@ -321,7 +333,10 @@ export class LlmRouter {
       }
     }
 
-    if (!tried) {
+    // `attempted.size`, not a visited flag: a walk whose every candidate was already invoked via
+    // a fallback redirect has still tried something, and must report THAT failure rather than the
+    // misleading "no provider available".
+    if (attempted.size === 0) {
       throw new Error(`No LLM provider available for task: ${opts.task}`);
     }
     throw lastError;

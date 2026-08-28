@@ -17,13 +17,10 @@ export const VAULT_KEY_ALLOW_LIST = [
   "packages/gateway/src/embedding/create-embedding-runtime.ts",
   "packages/gateway/src/connectors/connector-secrets-manifest.ts",
   "packages/gateway/src/extensions/publisher-keys.ts",
-  // Slice 2b cloud adapters: each names its own `<vendor>.api_key` when resolving the
-  // credential per call from the Vault.
-  "packages/gateway/src/llm/anthropic-provider.ts",
-  "packages/gateway/src/llm/gemini-provider.ts",
-  "packages/gateway/src/llm/openai-provider.ts",
+  // The SOLE vendor-key exemption. The four cloud adapters do NOT need one: they receive an
+  // injected `ApiKeyResolver` and never name a `<vendor>.api_key` literal themselves, so
+  // exempting them would widen the audit surface for nothing.
   "packages/gateway/src/llm/vendor-vault-keys.ts",
-  "packages/gateway/src/llm/xai-provider.ts",
 ];
 
 /**

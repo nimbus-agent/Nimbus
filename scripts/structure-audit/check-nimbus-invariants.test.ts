@@ -222,12 +222,12 @@ describe("D11 — checkVaultKeyAllowList", () => {
 });
 
 describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
-  test("VAULT_KEY_ALLOW_LIST has exactly 14 entries", () => {
-    // 9 → 14: slice 2b's four cloud adapters, plus `llm/vendor-vault-keys.ts` which owns the
+  test("VAULT_KEY_ALLOW_LIST has exactly 10 entries", () => {
+    // 9 → 10: slice 2b adds ONLY `llm/vendor-vault-keys.ts`, which owns the vendor keyspace. The
     // `<vendor>.api_key` when resolving the credential per call. The count is frozen ON PURPOSE —
     // a file gaining permission to construct a vault key is a decision, so it must be made
     // deliberately in a commit that also explains it, never absorbed silently.
-    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(14);
+    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(10);
   });
 });
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GeminiProvider } from "./gemini-provider.ts";
-import type { LlmProviderError } from "./provider-error.ts";
+import { LlmProviderError } from "./provider-error.ts";
 
 // NO TEST IN THIS FILE MAY REACH THE NETWORK.
 const realFetch = globalThis.fetch;
@@ -183,5 +183,33 @@ describe("GeminiProvider", () => {
     });
     await p.generate({ task: "reasoning", prompt: "hi" });
     expect(seen[0]?.url).toContain("https://proxy.internal/v1beta/models/m:generateContent");
+  });
+
+  test("a 200 whose body is NOT JSON is transport-class, not an unclassified SyntaxError", async () => {
+    // A proxy named by `base_url` can return an HTML error page with status 200. `resp.json()`
+    // throws a SyntaxError, which is not an LlmProviderError -- so the router would treat it as
+    // unclassified and STOP the priority walk, never trying the healthy local route next in
+    // line. That is the exact failure the fallback rule exists to prevent.
+    globalThis.fetch = (async () =>
+      new Response("<html>proxy error</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      })) as unknown as typeof globalThis.fetch;
+    const p = new GeminiProvider({ apiKey: async () => "g-key", modelName: "m" });
+    const err = await p.generate({ task: "reasoning", prompt: "hi" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmProviderError);
+    expect((err as LlmProviderError).kind).toBe("transport");
+  });
+
+  test("a literal null JSON body degrades instead of dereferencing null", async () => {
+    // A TypeScript `as` assertion does not validate JSON: `null` satisfies the compiler and then
+    // throws TypeError on the first property read.
+    stubFetch(200, null);
+    const p = new GeminiProvider({ apiKey: async () => "g-key", modelName: "m" });
+    expect(await p.generate({ task: "reasoning", prompt: "hi" })).toMatchObject({
+      text: "",
+      tokensIn: 0,
+      tokensOut: 0,
+    });
   });
 });

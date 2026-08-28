@@ -866,3 +866,50 @@ describe("generate-time route fallback", () => {
     expect(remoteCalls).toBe(0);
   });
 });
+
+describe("generate-time walk — no destination is invoked twice", () => {
+  test("an overflow redirect does not let the walk revisit the same route", async () => {
+    // `fitPromptOrFallback` can redirect an overflowing prompt onto a DIFFERENT route, and that
+    // route is still ahead in the walk. Without a guard the same destination is called twice for
+    // one prompt -- two real outbound requests and two ledger rows, the second buying nothing.
+    let remoteCalls = 0;
+    const cfg: LlmRouterConfig = {
+      preferLocal: true,
+      remoteModel: "remote-model",
+      localModel: "local-model",
+      minReasoningParams: 0,
+      enforceAirGap: false,
+      routePriority: ["ollama/local-model", "remote/remote-model"],
+    };
+    const mk = (id: "ollama" | "remote", model: string, onGen: () => void): LlmProvider => ({
+      providerId: id,
+      isLocal: id !== "remote",
+      isAvailable: async () => true,
+      listModels: async () => [{ provider: id, modelName: model }],
+      generate: async () => {
+        onGen();
+        throw new LlmProviderError("down", "transport", 503);
+      },
+    });
+
+    const r = new LlmRouter(cfg);
+    // A tiny context window on the local route forces the overflow redirect onto the remote one.
+    r.registerRoute(
+      mk("ollama", "local-model", () => undefined),
+      "local-model",
+      {
+        contextWindow: 10,
+      },
+    );
+    r.registerRoute(
+      mk("remote", "remote-model", () => {
+        remoteCalls += 1;
+      }),
+      "remote-model",
+      { contextWindow: 100000 },
+    );
+
+    await r.generate({ task: "reasoning", prompt: "x".repeat(5000) }).catch(() => undefined);
+    expect(remoteCalls).toBe(1);
+  });
+});

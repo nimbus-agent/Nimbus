@@ -35,6 +35,43 @@ export function classifyHttpStatus(status: number): LlmFailureKind {
  * `LlmRouter.generate`'s priority walk can branch without knowing any vendor's status codes —
  * classification lives with the adapter because that is the only layer that can read them.
  */
+/**
+ * Reads a 2xx response body as JSON, classifying a parse failure rather than letting it escape.
+ *
+ * `Response.json()` THROWS a `SyntaxError` when a 2xx body is not JSON — which a proxy named by
+ * `base_url` will happily produce, returning an HTML error page with status 200. That
+ * `SyntaxError` is not an `LlmProviderError`, so `LlmRouter.generate` would treat it as
+ * unclassified and STOP the priority walk, never trying the healthy local route next in line.
+ * That is the exact failure the fallback rule exists to prevent, so it is classified TRANSPORT:
+ * whatever answered was not the vendor API, and another destination may do better.
+ */
+export async function readJsonBody(resp: Response, providerId: string): Promise<unknown> {
+  try {
+    return await resp.json();
+  } catch {
+    throw new LlmProviderError(`${providerId}: response body was not JSON`, "transport");
+  }
+}
+
+/**
+ * Narrows a parsed JSON value to a plain object, or `{}` when it is anything else.
+ *
+ * A TypeScript `as` assertion does NOT validate JSON: a literal `null` body satisfies the
+ * compiler and then throws `TypeError` on the first property read. Returning `{}` for a null,
+ * array or primitive root lets every field read below degrade to the same honest empty answer a
+ * missing field already produces, instead of a crash the router cannot classify.
+ */
+export function asJsonRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** An array field from external JSON, or `[]` — `.filter()` on a non-array throws. */
+export function asJsonArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 export class LlmProviderError extends Error {
   readonly kind: LlmFailureKind;
   readonly status?: number;
