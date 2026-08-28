@@ -2783,24 +2783,24 @@ git commit -m "docs: the model egress class is now exercised; four vendors, one 
 
 ---
 
-### Task 12: Full verification
+### Task 12: Full verification — ✅ DONE
 
 The per-task gate deliberately skipped the wide suite. `LlmRouter.generate`, `RouteAvailability` and
 the agent constructor are all widely consumed.
 
-- [ ] **Step 1: The gateway `test/` tree** — `bun test packages/gateway/test`. Not loaded by a `src`
+- [x] **Step 1: The gateway `test/` tree** — `bun test packages/gateway/test`. Not loaded by a `src`
   run, and `mock.module` is process-global, so a per-package run and a whole-repo run do not have
   the same mocks in play.
 
-- [ ] **Step 2: The CI command, verbatim** — `bun test packages/gateway packages/cli scripts`.
+- [x] **Step 2: The CI command, verbatim** — `bun test packages/gateway packages/cli scripts`.
   Do not substitute a narrower one.
 
-- [ ] **Step 3: Typecheck both trees** — `bun run typecheck && bun run typecheck:tests`.
+- [x] **Step 3: Typecheck both trees** — `bun run typecheck && bun run typecheck:tests`.
   `typecheck:tests` is **advisory on win32**: read its output, do not trust its exit code.
 
-- [ ] **Step 4: Static gates** — `bun run preflight:fast` (does NOT include the coverage floor).
+- [x] **Step 4: Static gates** — `bun run preflight:fast` (does NOT include the coverage floor).
 
-- [ ] **Step 5: Linux-authoritative coverage.** `llm/` and `egress/` sit under the Engine ≥85% gate,
+- [x] **Step 5: Linux-authoritative coverage.** `llm/` and `egress/` sit under the Engine ≥85% gate,
   and this slice adds ~6 files there. `verify:docker --changed` runs only the changed TESTS — the
   coverage floor is in the `--full` tier, which OOMs on an 8 GB WSL cap. Use the documented
   substitute: run the docker block of `scripts/coverage-floor/reseed-docker.sh` **with the
@@ -2808,7 +2808,7 @@ the agent constructor are all widely consumed.
   `bun run audit:coverage-scopes` against the COMMITTED baseline. Reseeding would accept whatever
   the branch produces and report green regardless.
 
-- [ ] **Step 6: Prove no test reaches a vendor**
+- [x] **Step 6: Prove no test reaches a vendor**
 
 ```bash
 grep -rn "api\.anthropic\.com\|api\.openai\.com\|generativelanguage\|api\.x\.ai" \
@@ -2819,7 +2819,7 @@ Expected: only URL-ASSERTION lines inside adapter tests that stub `fetch`. Any t
 issue a real request is a defect. Confirm every adapter test file restores `globalThis.fetch` in
 `afterEach`.
 
-- [ ] **Step 7: Open the PR**
+- [ ] **Step 7: Open the PR** — NOT DONE, awaiting the user
 
 Title carries the conventional-commit type for release-please; the PR title and body BECOME the
 squash commit. Balance every parenthesis in the body — an unbalanced `(` has silently dropped a
