@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787931133224,
+  "lastUpdate": 1787932586908,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16625,6 +16625,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 336.971313200007,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0ca82323f26dbd10dc59efa28eab3c43ba9c593e",
+          "message": "fix(llm)!: remove the inert remote_model key and document the vendor tables (#1368)\n\nFollow-on to #1366, found while verifying the **Gemini adapter against\nthe live API** — which was the one thing #1366 left open.\n\n## What the live check found\n\nThe adapter itself is **correct**. Verified against the real endpoint\nwith a key read straight from the Vault: URL-path model, query-string\nkey, `systemInstruction`, `generationConfig`, multi-part concatenation\nand `usageMetadata` all work, and `?key=` and `x-goog-api-key` both\nauthenticate.\n\n```\ngemini-3.5-flash          200  text=\"pong\" in=8 out=1\ngemini-flash-lite-latest  200  text=\"pong\" in=8 out=1\n```\n\nWhat is **not** correct is the model id every internal document had been\nusing:\n\n```\ngemini-2.5-pro    404  NOT_FOUND: This model models/gemini-2.5-pro is no longer available\n                       to new users. Please update your code to use models/gemini-3.1-pro-preview\ngemini-2.5-flash  404  NOT_FOUND: … no longer available to new users\n```\n\nBoth still appear in Google's `GET /v1beta/models` listing, so \"it's in\nthe model list\" is not evidence the model answers. Anyone following our\nexamples got a hard 404 from a model we told them to use.\n\n## The larger finding\n\nChasing where that default was documented turned up that\n**`[llm.remote.*]` has no user-facing reference documentation at all**,\ndespite shipping in `v5.0.0` — and that what `docs/cli-reference.md`\n*does* document for cloud models is dead:\n\n- `getEffectiveAgentModel()` has **no production caller**. Slice 2b\nmoved the engine agent onto `[llm.remote.<vendor>] model` and left the\nwhole `remote_model → tomlAgentModel → getEffectiveAgentModel()` chain\ndead-ended.\n- So `[llm] remote_model` and `NIMBUS_AGENT_MODEL` changed nothing —\nwhile `nimbus config list` still surfaced `llm.remote_model` as a live\nenv-overridable key, and `cli-reference.md` and `docs/README.md` both\ndocumented `nimbus config set llm.remote_model claude-sonnet-4-6` as\n**the** way to choose a cloud model.\n- A comment in `engine/agent.ts` asserted the keys *\"still override the\nMODEL NAME within the enabled vendor, so no existing config breaks\nsilently\"*. Nothing wired that. `deps.agentModel` is a test injection\nseam and no production call site passes it.\n\nThis is the same defect class as the `classifier_model` removal in\n#1366, found one file over.\n\n## Removed, not rewired\n\nWith four vendors the key is no longer well defined — a bare\n`claude-sonnet-4-6` says nothing about which vendor is enabled, and that\nambiguity is exactly why the per-vendor `model` key exists. So both keys\ngo, the same way `classifier_model` did: a stale entry in an existing\n`nimbus.toml` is **ignored**, as any unrecognised `[llm]` key is, never\nan error that would revert the section and take the live keys with it.\n\n## Documentation added\n\n`docs/cli-reference.md` gains the `[llm.remote.<vendor>]` section it\nshipped without: the `enabled` + `model` pair (both required, `enabled`\nnever inferred from a key), the four Vault key names, the note that\n`openai.api_key` is deliberately shared with the embedding runtime, the\ntwo independent failure modes (key without opt-in → no route; opt-in\nwithout key → `no (no api key)`), and that no vendor credential or\nselection is env-overridable by design.\n\nIt also says to check the vendor's current model list rather than copy\nan id from a document, with `gemini-2.5-pro` as the worked example — a\nretired id that still appears in the listing is the failure mode a\nreader will not predict.\n\n`docs/README.md`'s prerequisites table replaces the two `export\nANTHROPIC_API_KEY` / `nimbus config set llm.remote_model` rows with the\nreal two-halves setup.\n\n## Verification\n\n- `bun run typecheck`, `bun run preflight:fast` — pass.\n- The verbatim CI command `bun test packages/gateway packages/cli\nscripts` — 19,437 pass; the three `tui` failures are the known\nload-flake (they pass in isolation, on this branch and on `main`).\n- **Both Linux-authoritative coverage gates** rebuilt through the\n`reseed-docker.sh` docker block against the committed baseline:\n`audit:coverage-floor` ok, `audit:coverage-scopes` ok across all 23\nscopes.\n- The `listTomlKeysWithEnv` suite was rebuilt on `telemetry.endpoint`\nrather than deleted — env-source, file-source, env-beats-file,\nwhitespace-trim and omitted-when-unset all still covered — plus a new\ncase asserting the two removed keys do **not** surface even when set in\nboth the environment and the file.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+          "timestamp": "2026-08-28T18:45:05+03:00",
+          "tree_id": "5a6a3fe40d85750d248bdcdd5c9eb1a6f5b5c7b7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0ca82323f26dbd10dc59efa28eab3c43ba9c593e"
+        },
+        "date": 1787932584443,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 326.13479855000077,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 318.95270905000035,
             "unit": "ms"
           }
         ]
