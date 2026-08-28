@@ -2,6 +2,17 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [5.0.0](https://github.com/nimbus-agent/Nimbus/compare/v4.1.0...v5.0.0) (2026-08-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **llm:** the Mastra engine agent no longer falls back to a vendor API key found in the environment. An install that today relies on `ANTHROPIC_API_KEY` alone, with no `[llm.remote.*]` configuration, will stop constructing the agent — `nimbus ask` then answers from the local router if one is configured, and workflows refuse with a message naming the fix. To restore the previous behaviour, add `[llm.remote.anthropic] enabled = true` with a `model`, and store `anthropic.api_key` in the Vault. This is the point of the change rather than a side effect: a capability that turns itself on because a credential happens to exist is the air-gap defect's shape, one level up.
+
+### Features
+
+* **llm:** register four cloud vendors behind a default-off per-vendor opt-in ([#1359](https://github.com/nimbus-agent/Nimbus/issues/1359)) ([1a59735](https://github.com/nimbus-agent/Nimbus/commit/1a59735f7ee5cf3fcfe2866d804e149b3bbc3c73))
+
 ## [4.1.0](https://github.com/nimbus-agent/Nimbus/compare/v4.0.1...v4.1.0) (2026-08-28)
 
 
