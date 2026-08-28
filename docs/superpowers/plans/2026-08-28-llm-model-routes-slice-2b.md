@@ -489,7 +489,7 @@ git commit -m "feat(vault): register the four slice-2b vendor api_key entries"
 
 ---
 
-### Task 3: The error classifier and the OpenAI-shape adapters
+### Task 3: The error classifier and the OpenAI-shape adapters — ✅ DONE (468a9976)
 
 Spec §7.3, §6.4. Two vendors, one wire format. This task also creates the error type Task 8's
 priority walk branches on — the walk cannot be written until failures are classifiable, and only an
@@ -517,7 +517,7 @@ adapter can read a vendor's status codes.
     `(opts: { apiKey: ApiKeyResolver; modelName: string; baseUrl?: string })`
   - `class XaiProvider implements LlmProvider` — same constructor shape
 
-- [ ] **Step 1: Write the failing classifier test**
+- [x] **Step 1: Write the failing classifier test**
 
 Create `packages/gateway/src/llm/provider-error.test.ts`:
 
@@ -564,13 +564,13 @@ describe("LlmProviderError", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `bun test packages/gateway/src/llm/provider-error.test.ts`
 
 Expected: FAIL — `Cannot find module './provider-error.ts'`.
 
-- [ ] **Step 3: Write the classifier**
+- [x] **Step 3: Write the classifier**
 
 Create `packages/gateway/src/llm/provider-error.ts`:
 
@@ -625,13 +625,13 @@ export class LlmProviderError extends Error {
 }
 ```
 
-- [ ] **Step 4: Run the classifier tests**
+- [x] **Step 4: Run the classifier tests**
 
 Run: `bun test packages/gateway/src/llm/provider-error.test.ts`
 
 Expected: all 5 PASS.
 
-- [ ] **Step 5: Write the failing OpenAI adapter tests**
+- [x] **Step 5: Write the failing OpenAI adapter tests**
 
 Create `packages/gateway/src/llm/openai-provider.test.ts`. **No test in this file may reach the
 network** — `globalThis.fetch` is stubbed in `beforeEach` and restored in `afterEach`.
@@ -793,13 +793,13 @@ describe("OpenAiProvider", () => {
 });
 ```
 
-- [ ] **Step 6: Run them to verify they fail**
+- [x] **Step 6: Run them to verify they fail**
 
 Run: `bun test packages/gateway/src/llm/openai-provider.test.ts`
 
 Expected: FAIL — `Cannot find module './openai-provider.ts'`.
 
-- [ ] **Step 7: Write the OpenAI adapter**
+- [x] **Step 7: Write the OpenAI adapter**
 
 Create `packages/gateway/src/llm/openai-provider.ts`:
 
@@ -956,7 +956,7 @@ export class OpenAiProvider implements LlmProvider {
 }
 ```
 
-- [ ] **Step 8: Write the xAI adapter**
+- [x] **Step 8: Write the xAI adapter**
 
 Create `packages/gateway/src/llm/xai-provider.ts`. It reuses the exported mapping rather than
 copying it — xAI is OpenAI-compatible on the wire.
@@ -1040,7 +1040,7 @@ describe("XaiProvider", () => {
 
 Import `XaiProvider` at the top of that test file.
 
-- [ ] **Step 9: Add both files to the vault allow-list**
+- [x] **Step 9: Add both files to the vault allow-list**
 
 In `scripts/structure-audit/check-nimbus-invariants.ts`, add to `VAULT_KEY_ALLOW_LIST`:
 
@@ -1049,13 +1049,13 @@ In `scripts/structure-audit/check-nimbus-invariants.ts`, add to `VAULT_KEY_ALLOW
   "packages/gateway/src/llm/xai-provider.ts",
 ```
 
-- [ ] **Step 10: Run the tests, the typecheck and the audit**
+- [x] **Step 10: Run the tests, the typecheck and the audit**
 
 Run: `bun test packages/gateway/src/llm && bun run typecheck && bun run audit:invariants`
 
 Expected: all PASS.
 
-- [ ] **Step 11: Red-prove the two properties that matter most**
+- [x] **Step 11: Red-prove the two properties that matter most**
 
 1. Change `readonly isLocal = false` to `= true` in `openai-provider.ts`. Re-run: the "is NOT
    local, even on a loopback base_url" test FAILS. Restore.
@@ -1063,7 +1063,7 @@ Expected: all PASS.
    auth-class" FAILS. Restore. This matters because a transport-class keyless failure would make
    Task 8's walk forward the prompt to the next vendor on a configuration mistake.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add packages/gateway/src/llm/provider-error.ts packages/gateway/src/llm/provider-error.test.ts \
@@ -1074,7 +1074,7 @@ git commit -m "feat(llm): add the OpenAI and xAI adapters with retry classificat
 
 ---
 
-### Task 4: The Anthropic adapter
+### Task 4: The Anthropic adapter — ✅ DONE (5eac45a3)
 
 Spec §7.3. Native `POST /v1/messages` — a different wire format from Task 3, not a variant of it.
 
@@ -1090,7 +1090,7 @@ Spec §7.3. Native `POST /v1/messages` — a different wire format from Task 3, 
 - Produces, relied on by Task 7: `class AnthropicProvider implements LlmProvider` — constructor
   `(opts: { apiKey: ApiKeyResolver; modelName: string; baseUrl?: string })`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `packages/gateway/src/llm/anthropic-provider.test.ts`. Reuse the stub-fetch harness shape
 from Task 3 verbatim — same `beforeEach`/`afterEach` restore discipline, no network.
@@ -1232,13 +1232,13 @@ describe("AnthropicProvider", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/gateway/src/llm/anthropic-provider.test.ts`
 
 Expected: FAIL — `Cannot find module './anthropic-provider.ts'`.
 
-- [ ] **Step 3: Write the adapter**
+- [x] **Step 3: Write the adapter**
 
 Create `packages/gateway/src/llm/anthropic-provider.ts`:
 
@@ -1367,23 +1367,23 @@ export class AnthropicProvider implements LlmProvider {
 }
 ```
 
-- [ ] **Step 4: Add the file to the vault allow-list**
+- [x] **Step 4: Add the file to the vault allow-list**
 
 Add `"packages/gateway/src/llm/anthropic-provider.ts",` to `VAULT_KEY_ALLOW_LIST`.
 
-- [ ] **Step 5: Run the tests, typecheck and audit**
+- [x] **Step 5: Run the tests, typecheck and audit**
 
 Run: `bun test packages/gateway/src/llm && bun run typecheck && bun run audit:invariants`
 
 Expected: all PASS.
 
-- [ ] **Step 6: Red-prove the multi-block concatenation**
+- [x] **Step 6: Red-prove the multi-block concatenation**
 
 Replace the `.filter(...).map(...).join("")` chain with `String(body.content?.[0]?.text ?? "")`.
 Re-run: "concatenates multiple text blocks" FAILS. Restore. A single-block happy path passes either
 way, so only the multi-block case proves the chain is doing work.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/gateway/src/llm/anthropic-provider.ts packages/gateway/src/llm/anthropic-provider.test.ts \
@@ -1393,7 +1393,7 @@ git commit -m "feat(llm): add the Anthropic messages-API adapter"
 
 ---
 
-### Task 5: The Gemini adapter
+### Task 5: The Gemini adapter — ✅ DONE (4d079cc6)
 
 Spec §7.3. Third wire format: the model name is in the PATH, the key is a query parameter, and the
 reply nests under `candidates[].content.parts[].text`.
@@ -1410,7 +1410,7 @@ reply nests under `candidates[].content.parts[].text`.
 - Produces, relied on by Task 7: `class GeminiProvider implements LlmProvider` — constructor
   `(opts: { apiKey: ApiKeyResolver; modelName: string; baseUrl?: string })`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `packages/gateway/src/llm/gemini-provider.test.ts` using the same stub-fetch harness as
 Tasks 3 and 4 (copy the `realFetch` / `stubFetch` / `beforeEach` / `afterEach` block verbatim).
@@ -1500,11 +1500,11 @@ describe("GeminiProvider", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/gateway/src/llm/gemini-provider.test.ts` — FAIL, module not found.
 
-- [ ] **Step 3: Write the adapter**
+- [x] **Step 3: Write the adapter**
 
 Create `packages/gateway/src/llm/gemini-provider.ts`, following `AnthropicProvider`'s structure
 exactly (same offline `isAvailable`/`listModels`, same keyless-auth throw, same non-echoing error
@@ -1581,7 +1581,7 @@ const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
   }
 ```
 
-- [ ] **Step 4: Allow-list, run, red-prove, commit**
+- [x] **Step 4: Allow-list, run, red-prove, commit**
 
 Add `"packages/gateway/src/llm/gemini-provider.ts",` to `VAULT_KEY_ALLOW_LIST`.
 
@@ -1598,7 +1598,7 @@ git commit -m "feat(llm): add the Gemini generateContent adapter"
 
 ---
 
-### Task 6: `not_configured` availability and the I34 cloud rows
+### Task 6: `not_configured` availability and the I34 cloud rows — ✅ DONE (af4ac49b)
 
 Spec §7.4, §8, §11. Adds the third availability reason so `nimbus llm status` sends the user to the
 right remedy, and extends I34's enforcement block to cover the four new adapters.
@@ -1614,7 +1614,7 @@ right remedy, and extends I34's enforcement block to cover the four new adapters
 - Consumes: the four adapter classes from Tasks 3-5.
 - Produces, relied on by Task 10: `RouteAvailability["reason"]` gains `"not_configured"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `packages/gateway/src/llm/route-availability.test.ts`:
 
@@ -1667,13 +1667,13 @@ test("an unavailable LOCAL route still reports provider_unreachable", async () =
 
 Import `ModelRoute` from `./types.ts` if the file does not already.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/gateway/src/llm/route-availability.test.ts -t "not_configured"`
 
 Expected: FAIL — the reason is `provider_unreachable`.
 
-- [ ] **Step 3: Add the reason**
+- [x] **Step 3: Add the reason**
 
 In `packages/gateway/src/llm/route-availability.ts`:
 
@@ -1704,7 +1704,7 @@ In the probe's unavailable branch, split on locality:
     }
 ```
 
-- [ ] **Step 4: Run the availability tests**
+- [x] **Step 4: Run the availability tests**
 
 Run: `bun test packages/gateway/src/llm && bun run typecheck`
 
@@ -1712,7 +1712,7 @@ Expected: PASS. Any existing test asserting `provider_unreachable` for a NON-loc
 re-read before being changed — if it was asserting the old collapsed behaviour, update it and note
 why in the test; if it was asserting local behaviour, it should still pass untouched.
 
-- [ ] **Step 5: Extend the I34 block**
+- [x] **Step 5: Extend the I34 block**
 
 Add to the `describe("I34 — locality is declared once…")` block in
 `packages/gateway/src/security-invariants.test.ts` (created by slice 2a):
@@ -1745,7 +1745,7 @@ Add to the `describe("I34 — locality is declared once…")` block in
 
 Import the four adapters at the top of the file.
 
-- [ ] **Step 6: Run and red-prove**
+- [x] **Step 6: Run and red-prove**
 
 Run: `bun test packages/gateway/src/security-invariants.test.ts -t "I34"` — PASS.
 
@@ -1754,7 +1754,7 @@ Red-prove: change `AnthropicProvider`'s `readonly isLocal = false` to
 test and the import scan. Restore. This is the single most important red-prove in the slice: it is
 the exact mistake §7.4 says is easiest to make.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/gateway/src/llm/route-availability.ts packages/gateway/src/llm/route-availability.test.ts \
