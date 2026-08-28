@@ -125,7 +125,7 @@ occur. No change.
 
 ---
 
-### Task 1: `[llm.remote.<vendor>]` config parsing
+### Task 1: `[llm.remote.<vendor>]` config parsing — ✅ DONE (d14e2899)
 
 Spec §7.1. Parsing ONLY — no validation. Validation lives in `assemble.ts` (Task 7), because a throw
 inside the `[llm]` parser is swallowed by `loadTomlSection`'s bare catch and silently reverts the
@@ -145,7 +145,7 @@ WHOLE section to defaults, `enforce_air_gap` included.
     verbatim from the header, NOT validated against a known-vendor list here.
   - `DEFAULT_NIMBUS_LLM_TOML.remoteVendors` is an empty `Map`.
 
-- [ ] **Step 1: Generalize the sub-table collector**
+- [x] **Step 1: Generalize the sub-table collector**
 
 `collectLlmLocalKvSections` hardcodes `LLM_LOCAL_TABLE_PREFIX`. Remote needs the identical
 header/reset/bucket logic, and a second copy would duplicate ~60 lines of edge-case handling — the
@@ -211,7 +211,7 @@ function collectLlmLocalKvSections(source: string): Map<string, Record<string, s
 }
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Add to `packages/gateway/src/config/nimbus-toml.test.ts`. Match how the neighbouring
 `[llm.local.*]` tests in this file feed TOML source — if they write a temp file and call a loader
@@ -294,13 +294,13 @@ enabled = true
 });
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `bun test packages/gateway/src/config/nimbus-toml.test.ts -t "llm.remote"`
 
 Expected: FAIL — `remoteVendors` is `undefined` on the parsed result.
 
-- [ ] **Step 4: Add the type, the default, and the parser**
+- [x] **Step 4: Add the type, the default, and the parser**
 
 ```ts
 /**
@@ -375,21 +375,21 @@ function parseLlmRemoteVendors(source: string): Map<string, NimbusLlmRemoteVendo
 Assign `parseLlmRemoteVendors(source)` onto the returned `NimbusLlmToml` at the same site
 `parseLlmLocalRoutes(source)` is assigned.
 
-- [ ] **Step 5: Run the tests and the typecheck**
+- [x] **Step 5: Run the tests and the typecheck**
 
 Run: `bun test packages/gateway/src/config/nimbus-toml.test.ts && bun run typecheck`
 
 Expected: all six new tests PASS, every existing `[llm.local.*]` test still PASSES — the shared
 collector must not have changed local behaviour — and typecheck is clean.
 
-- [ ] **Step 6: Red-prove the default-off property**
+- [x] **Step 6: Red-prove the default-off property**
 
 Change `enabled: enabledRaw === undefined ? false : ...` to `? true :` and re-run.
 Expected: "parses a vendor table, defaulting enabled to false" FAILS. Restore, confirm it passes.
 This is the default the entire opt-in rests on; a default never observed failing is not known to be
 load-bearing.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/gateway/src/config/nimbus-toml.ts packages/gateway/src/config/nimbus-toml.test.ts
