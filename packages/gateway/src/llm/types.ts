@@ -41,6 +41,19 @@ export type LlmGenerateOptions = {
   temperature?: number;
   stream?: boolean;
   onToken?: (token: string) => void;
+  /**
+   * The `method` this call records in `egress_ledger` when it reaches a NON-LOCAL route.
+   * Omitted, the wrapper derives `llm.generate.<task>`.
+   *
+   * It exists so a synthesized brief keeps naming ITS OWN kind
+   * (`agents.catchup.synthesis`) after the append moved off the synthesis call site and
+   * into `egress/model-egress.ts`. Without it every model row would read
+   * `llm.generate.reasoning` and `nimbus prove` could no longer say which brief sent what.
+   *
+   * It does NOT control WHETHER a row is appended -- that is derived from
+   * `provider.isLocal` inside the wrapper and is not something a caller can influence.
+   */
+  egressMethod?: string;
 };
 
 export type LlmGenerateResult = {
