@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787938190623,
+  "lastUpdate": 1787939701006,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16727,6 +16727,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 328.88800425000375,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c6cc4641d6c629998b1410cd3caf9c5ee430959",
+          "message": "chore: release main (#1371)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>6.0.1</summary>\n\n##\n[6.0.1](https://github.com/nimbus-agent/Nimbus/compare/v6.0.0...v6.0.1)\n(2026-08-28)\n\n\n### Bug Fixes\n\n* **connectors:** stop connector CLI spawns flashing console windows on\nWindows ([#1370](https://github.com/nimbus-agent/Nimbus/issues/1370))\n([184dc42](https://github.com/nimbus-agent/Nimbus/commit/184dc42aed22b4156d1f8367f69e60118ebcffab))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-08-28T20:43:14+03:00",
+          "tree_id": "1c25c6497e223b662fc0e05f8192f67a2ef890d3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4c6cc4641d6c629998b1410cd3caf9c5ee430959"
+        },
+        "date": 1787939698542,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 332.7614881499961,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 332.49636665000725,
             "unit": "ms"
           }
         ]
