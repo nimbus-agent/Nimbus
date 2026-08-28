@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [4.1.0](https://github.com/nimbus-agent/Nimbus/compare/v4.0.1...v4.1.0) (2026-08-28)
+
+
+### Features
+
+* **egress:** ledger every non-local LLM route at the provider chokepoint ([#1357](https://github.com/nimbus-agent/Nimbus/issues/1357)) ([278e6b2](https://github.com/nimbus-agent/Nimbus/commit/278e6b2412d80d4cd7aa064e250a9a2f406b129a))
+
 ## [4.0.1](https://github.com/nimbus-agent/Nimbus/compare/v4.0.0...v4.0.1) (2026-08-28)
 
 
