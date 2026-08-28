@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [4.0.1](https://github.com/nimbus-agent/Nimbus/compare/v4.0.0...v4.0.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* resolve the brief timeout from one definition, and make the ask context budget configurable ([#1354](https://github.com/nimbus-agent/Nimbus/issues/1354)) ([30c1ce6](https://github.com/nimbus-agent/Nimbus/commit/30c1ce61afedf459651a25dc1fb88cc32b1152f4))
+
 ## [4.0.0](https://github.com/nimbus-agent/Nimbus/compare/v3.1.0...v4.0.0) (2026-08-27)
 
 
