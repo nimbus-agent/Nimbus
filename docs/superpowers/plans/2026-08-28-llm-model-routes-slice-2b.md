@@ -32,6 +32,42 @@ adapter per vendor) is **not needed**; and §12's conditional "the Mastra metada
 verification finds one" **does not apply** — do not add that I29 exclusion, because it would document a
 gap that does not exist.
 
+## Review disposition (Antigravity, 2026-08-28)
+
+Review: [`…-slice-2b-review.md`](./2026-08-28-llm-model-routes-slice-2b-review.md). Each finding was
+checked against the code or run before being accepted.
+
+**2.1 Proxy receiver and `#private` fields — ADOPTED, though not a live bug.** The mechanism is
+real: `ModelRouterLanguageModel` does declare `#private`, and a getter reading a private field
+throws when invoked with a Proxy as receiver. But it does not currently break — spiked both forms
+against a real instance on `@mastra/core@1.61.0`, touching `specificationVersion`, `provider`,
+`modelId`, `gatewayId`, `supportedUrls`, `supportsImageUrls` and `serializeForSpan()`: neither
+receiver threw, because that surface is plain data fields today. Adopted anyway — zero cost, no
+behavioural difference now, and correct on its own terms, since a decorator should not change
+`this` for the target's own accessors. **Task 9 also gains a test the review did not ask for**: the
+fake model in those tests has no `#private` fields, so it can never exercise this hazard at all —
+only a REAL `ModelRouterLanguageModel` can, and now one is exercised.
+
+**2.2 Non-exhaustive vendor switch — ADOPTED, and taken further.** Correct, and worse than the
+review frames it: `default: return new XaiProvider(opts)` meant a fifth vendor id added without a
+case would be constructed as an **xAI** provider carrying that vendor's model name and reading its
+`<id>.api_key` — prompts to `api.x.ai` under a credential minted for someone else. The review
+suggests `default: throw`, which catches it at runtime. This plan instead uses a **total
+`Record<RemoteVendorId, …>` map**, so the same mistake is a COMPILE error — matching the
+`EGRESS_BEARING_CLIENT_KINDS` precedent, where a new transport is a compile error rather than a
+silent missing ledger row.
+
+**2.3 `accum.get(currentId)` strict-mode narrowing — DECLINED, premise does not hold.** The
+suggestion is conditional on `applyLlmLocalTableLine` expecting a non-nullable record. It does not:
+its signature is `(bucket: Record<string, string> | undefined, trimmed: string)` and its first
+statement is `if (bucket === undefined) return;`
+(`packages/gateway/src/config/nimbus-toml.ts:320-321`). Passing a possibly-`undefined` value is the
+existing, intended contract, and the plan's code copies the shipped call site verbatim. Adding an
+`if (section)` wrapper would introduce a second, redundant guard for a compile error that cannot
+occur. No change.
+
+---
+
 ## Corrections to the spec, applied by this plan
 
 - **§10 is stale on the LOCAL column.** It says `nimbus llm status` "gains a `LOCAL` column". It already
@@ -1833,10 +1869,15 @@ In `packages/gateway/src/platform/assemble.ts`:
 
 ```ts
 /** The four vendors this build knows how to CONSTRUCT an adapter for. */
-const KNOWN_REMOTE_VENDORS = new Set(["anthropic", "openai", "gemini", "xai"]);
+const REMOTE_VENDOR_IDS = ["anthropic", "openai", "gemini", "xai"] as const;
+export type RemoteVendorId = (typeof REMOTE_VENDOR_IDS)[number];
+
+function isKnownVendorId(id: string): id is RemoteVendorId {
+  return (REMOTE_VENDOR_IDS as readonly string[]).includes(id);
+}
 
 export type ResolvedRemoteVendor = {
-  vendorId: string;
+  vendorId: RemoteVendorId;
   modelName: string;
   apiKey: ApiKeyResolver;
   baseUrl?: string;
@@ -1864,9 +1905,9 @@ export function resolveEnabledVendors(
   const out: ResolvedRemoteVendor[] = [];
   for (const [vendorId, cfg] of llmToml.remoteVendors) {
     if (!cfg.enabled) continue; // Default-off. Not an error, not warned: it is the norm.
-    if (!KNOWN_REMOTE_VENDORS.has(vendorId)) {
+    if (!isKnownVendorId(vendorId)) {
       logger.warn(
-        `[llm.remote.${vendorId}] unknown vendor — dropped. Known: ${[...KNOWN_REMOTE_VENDORS].join(", ")}`,
+        `[llm.remote.${vendorId}] unknown vendor — dropped. Known: ${REMOTE_VENDOR_IDS.join(", ")}`,
       );
       continue;
     }
@@ -1886,22 +1927,39 @@ export function resolveEnabledVendors(
   return out;
 }
 
+type RemoteProviderOptions = {
+  apiKey: ApiKeyResolver;
+  modelName: string;
+  baseUrl?: string;
+};
+
+/**
+ * TOTAL over `RemoteVendorId`, so adding a vendor id without adding its factory is a COMPILE
+ * ERROR rather than a silent fallthrough — the same shape `EGRESS_BEARING_CLIENT_KINDS` uses to
+ * make a new transport a compile error instead of a missing ledger row.
+ *
+ * This deliberately replaces a `switch` whose `default` returned an xAI provider. That default
+ * was not merely untidy: a fifth vendor added to the id list without a case here would have been
+ * constructed as an XaiProvider carrying THAT vendor's model name and reading THAT vendor's
+ * `<id>.api_key` — prompts posted to `api.x.ai` under a credential minted for someone else. A
+ * `default: throw` fixes it at runtime; a total map fixes it before the code can be committed.
+ */
+const REMOTE_PROVIDER_FACTORIES: Record<
+  RemoteVendorId,
+  (opts: RemoteProviderOptions) => LlmProvider
+> = {
+  anthropic: (opts) => new AnthropicProvider(opts),
+  openai: (opts) => new OpenAiProvider(opts),
+  gemini: (opts) => new GeminiProvider(opts),
+  xai: (opts) => new XaiProvider(opts),
+};
+
 function makeRemoteProvider(v: ResolvedRemoteVendor): LlmProvider {
-  const opts = {
+  return REMOTE_PROVIDER_FACTORIES[v.vendorId]({
     apiKey: v.apiKey,
     modelName: v.modelName,
     ...(v.baseUrl === undefined ? {} : { baseUrl: v.baseUrl }),
-  };
-  switch (v.vendorId) {
-    case "anthropic":
-      return new AnthropicProvider(opts);
-    case "openai":
-      return new OpenAiProvider(opts);
-    case "gemini":
-      return new GeminiProvider(opts);
-    default:
-      return new XaiProvider(opts);
-  }
+  });
 }
 ```
 
@@ -2311,6 +2369,32 @@ describe("wrapLedgeredMastraModel", () => {
     expect(wrapped.provider).toBe("anthropic");
     expect(wrapped.modelId).toBe("claude-sonnet-4-6");
   });
+
+  test("pass-through works against a REAL ModelRouterLanguageModel, not just the fake", () => {
+    // The fake above has NO `#private` fields, so it can never exercise the hazard the Proxy's
+    // `Reflect.get(target, prop, target)` receiver exists to avoid -- a getter reading a private
+    // field throws when `this` is the Proxy. A fake cannot catch a contract mismatch with the
+    // real class; only the real class can. No network: construction is offline (verified), and
+    // nothing here calls doGenerate.
+    const real = new ModelRouterLanguageModel({
+      id: "anthropic/claude-sonnet-4-6",
+      apiKey: "sk-not-used",
+    });
+    const wrapped = wrapLedgeredMastraModel(db, real, {
+      providerId: "anthropic",
+      modelId: "claude-sonnet-4-6",
+    });
+    // Touch every public member Mastra itself reads. If a future release turns any of them into
+    // a private-field getter, this throws HERE rather than in production.
+    expect(() => {
+      void wrapped.specificationVersion;
+      void wrapped.provider;
+      void wrapped.modelId;
+      void wrapped.supportedUrls;
+      wrapped.serializeForSpan();
+    }).not.toThrow();
+    expect(listEgress(db, {})).toHaveLength(0); // touching fields is not egress
+  });
 });
 ```
 
@@ -2386,9 +2470,18 @@ export function wrapLedgeredMastraModel<T extends object>(
         };
       }
       // A Proxy rather than a hand-built object literal: `ModelRouterLanguageModel` carries
-      // private (`#`) fields and getters whose `this` must stay the real instance. Copying its
-      // surface field-by-field would break on the next Mastra release that adds one.
-      const v = Reflect.get(target, prop, receiver);
+      // private (`#`) fields, and copying its surface field-by-field would break on the next
+      // Mastra release that adds one.
+      //
+      // RECEIVER IS `target`, NOT `receiver`. If any of the class's public members is (or
+      // becomes) a GETTER that reads a `#private` field, invoking it with the Proxy as receiver
+      // binds `this` to the Proxy and throws `TypeError: Cannot read private member from an
+      // object whose class did not declare it`. Verified on @mastra/core 1.61.0 that its current
+      // public surface is plain data fields, so BOTH forms work today -- this is insurance
+      // against a routine upstream refactor, not a fix for a live break. It is also the
+      // semantically correct choice regardless: a decorator has no business changing `this` for
+      // the target's own accessors.
+      const v = Reflect.get(target, prop, target);
       return typeof v === "function" ? v.bind(target) : v;
     },
   }) as T;
