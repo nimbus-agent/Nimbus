@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787933987717,
+  "lastUpdate": 1787938190623,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16693,6 +16693,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 314.1019683000042,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "184dc42aed22b4156d1f8367f69e60118ebcffab",
+          "message": "fix(connectors): stop connector CLI spawns flashing console windows on Windows (#1370)\n\nFixes the console windows opening and closing continuously on an idle\nWindows machine, diagnosed live on a v6.0.0 install.\n\n## What was happening\n\n```\nconhost.exe  <  aws.exe  <  nimbus-gateway.exe\naws lambda list-functions --max-items 35 --output json\n```\n\n20 of 23 shell-process starts in a 60-second sample, roughly one every\n1.8 s. The Gateway runs **detached**, so on Windows a console-subsystem\nchild with no console to inherit gets a brand-new console allocated —\nplus a `conhost.exe` to host it, which is the visible window.\n\nIt is not a rare event at connector rates:\n\n| Syncable | CLI calls per run | Interval |\n| --- | --- | --- |\n| `cloudwatch`, `sagemaker` | **one `aws` process per indexed item**\n(`runAwsCliPaginatedWalk` → `processEntry`) | 10 min |\n| `aws` (Lambda) | 1 per page | **120 s** |\n\nSo a burst of dozens of windows arrives on each sync tick.\n\n## The fix\n\nNew `platform/spawn-capture.ts`: spawn via `node:child_process` with\n`windowsHide` (`CREATE_NO_WINDOW`), capture stdout, never reject. The\nsix connector CLI runners move onto it — `aws`, `gcloud` (×2), `az`,\n`bq`, `kubectl`.\n\n**Why not `Bun.spawn` + `windowsHide`.** `windowsHide` appears nowhere\nin `@types/bun`; passing it to `Bun.spawn` requires a cast and has no\ndeclared effect. The repo already depends on the flag working in three\nplaces, all via `node:child_process`. A fix that *might* be a no-op is\nnot a fix, so this goes through the API where the flag is specified.\n\n**Static rule D25** stops a new connector reintroducing a raw\n`Bun.spawn`. It is static because the failure is invisible to every\nother gate: it reproduces only on Windows, only when the parent has no\nconsole, and it **breaks nothing** — the sync still succeeds. A reviewer\non macOS or Linux cannot see it, and neither can the Windows CI leg,\nwhich runs tests from a shell that *has* a console.\n`blame-index-sync.ts` and `filesystem-v2-sync.ts` are exempted by name:\nthey take `Bun.spawn` as an injected default parameter rather than\ncalling it inline, so converting that seam is a wider change — they\nspawn `git` and are equally affected, tracked rather than silently\nblessed.\n\n## Verification — and one honest limit\n\n- `spawn-capture.test.ts` asserts `windowsHide: true` reaches the spawn\ncall on **every** invocation, plus capture, non-zero exit,\nsynchronous-throw, empty-argv and option-passthrough behaviour.\n- That test caught a real bug in the first draft: `done()` read `timer`\nfrom the temporal dead zone on the synchronous-throw path, a\n`ReferenceError` rather than the intended graceful `ok: false`.\n- D25 red-proved: reintroducing a `Bun.spawn` into `gcp-sync.ts` fails\nthe audit with the D25 message; clean before and after.\n- All 33 `aws-sync` tests pass **unchanged** — `MockSpawn` now stubs\nboth spawn paths from one stub table, so tests keep asserting the same\nargv and env.\n- Full CI command `bun test packages/gateway packages/cli scripts`:\n**19,449 pass, 0 fail**.\n- `bun run preflight:fast` — pass.\n\n**What is NOT proven here:** that no window appears end to end.\nDemonstrating that needs a parent with *no console at all*, and every\nway I could launch one from tooling (`Start-Process -WindowStyle\nHidden`, a Bun parent, a Node parent) gives the parent a console the\nchild then inherits — so no new console is allocated either way and both\npaths measure identically. Two earlier probes produced\nconfident-looking, inverted results for exactly this reason before I\ncaught it. The remaining confirmation is running the built Gateway on\nWindows and watching for `conhost` children; the mechanism, the flag and\nthe option-boundary assertion are what this PR stands on.\n\n## Not addressed here\n\nThe `aws` syncable re-lists Lambda functions every **120 s** while every\nother AWS-derived syncable uses 10 minutes. That asymmetry looks\nunintentional and is real outbound API traffic, but it is a behaviour\nchange rather than a Windows fix, so it is left for a separate decision.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added consistent command execution with captured output, error\ndetails, exit status, optional timeouts, and working-directory support.\n* Improved handling of failed, missing, or timed-out command-line\noperations.\n  * Windows command windows are now hidden during execution.\n\n* **Bug Fixes**\n* Cloud connector operations now handle command failures and empty\nresults more reliably.\n\n* **Tests**\n* Added comprehensive coverage for command output, failures, timeouts,\nenvironment settings, and platform-specific behavior.\n\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-28T17:18:07Z",
+          "tree_id": "a48e4b07117462adac94fc1d8bd36f56b3ac7f33",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/184dc42aed22b4156d1f8367f69e60118ebcffab"
+        },
+        "date": 1787938187582,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 329.80417915000106,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 328.88800425000375,
             "unit": "ms"
           }
         ]
