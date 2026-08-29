@@ -5,6 +5,7 @@ import { CO_OWNED_ENTITY_TYPES } from "../../packages/gateway/src/graph/relation
 import {
   assertScanIsMeaningful,
   checkAgentEmitterImportConfinement,
+  checkChatopsUnwrappedPost,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
@@ -1408,5 +1409,59 @@ describe("D25 — a connector cannot spawn without windowsHide", () => {
       { relPath: "packages/gateway/src/connectors/evil-sync.test.ts", contents: "Bun.spawn(x);\n" },
     ];
     expect(checkConnectorSpawnIsHidden(files)).toEqual([]);
+  });
+});
+
+describe("D17-chatops-unwrapped-post — buildConnectorPost may only appear as an argument to buildLedgeredChatPosts", () => {
+  test("D17 rejects a buildConnectorPost call that is not an argument to buildLedgeredChatPosts", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+        contents: "const post = buildConnectorPost(runTool, fn);\n",
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D17-chatops-unwrapped-post"]);
+  });
+
+  test("D17 accepts the inline form", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+        contents:
+          "const posts = buildLedgeredChatPosts(db, buildConnectorPost(runTool, fn), salt);\n",
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  // THE TEST THAT MATTERS. A file-level "does this file contain a wrapped call?" early-return
+  // skips the whole file when BOTH forms are present -- and the one file that legitimately
+  // contains a wrapped call is `chatops-boot.ts`, i.e. exactly the file where an added unwrapped
+  // call would be invisible. Counting the two tokens does not fix it either: a wrapped call whose
+  // argument is something else keeps the counts equal while the bypass survives.
+  test("D17 catches an unwrapped call in a file that ALSO has a wrapped one", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+        contents:
+          "const posts = buildLedgeredChatPosts(db, buildConnectorPost(runTool, fn), salt);\n" +
+          "const sneaky = buildConnectorPost(runTool, fn);\n",
+      },
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.line).toBe(2);
+  });
+
+  test("D17 catches a wrapper call whose argument is NOT buildConnectorPost", () => {
+    // Counts are equal (1 and 1); adjacency is what distinguishes them.
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+        contents:
+          "const posts = buildLedgeredChatPosts(db, somethingElse, salt);\n" +
+          "const post = buildConnectorPost(runTool, fn);\n",
+      },
+    ]);
+    expect(v.length).toBe(1);
   });
 });

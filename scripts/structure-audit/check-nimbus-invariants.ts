@@ -436,13 +436,13 @@ export function checkPolicyTomlImportInvariant(files: readonly FileEntry[]): Vio
 // referenced ONLY from `packages/gateway/src/chatops/reply-dispatcher.ts` and
 // `packages/gateway/src/chatops/transport/`. Any other module posting directly would bypass the
 // bounded-destination reply surface (I23) and could launder the HITL-gated `*.message.post` action.
-// The connector server modules are the tools' DEFINITION home (the `reg("slack_chat_post", …)`
-// registration) — exempt, since defining the tool is not the same as invoking it from the gateway.
+// The connector server modules that used to need a DEFINITION-home exemption here
+// (`packages/mcp-connectors/{slack,teams}/src/server.ts`) left this repo in the v3.0.0 extraction
+// to nimbus-mcp-servers — `git ls-files packages/mcp-connectors` returns nothing — so there is
+// nothing left in this repo to exempt them for.
 const CHATOPS_POST_ALLOWED_PREFIXES = [
   "packages/gateway/src/chatops/reply-dispatcher.ts",
   "packages/gateway/src/chatops/transport/",
-  "packages/mcp-connectors/slack/src/server.ts",
-  "packages/mcp-connectors/teams/src/server.ts",
 ];
 const CHATOPS_POST_RE = /\b(?:slack_chat_post|teams_chat_post)\b/;
 
@@ -463,6 +463,66 @@ export function checkChatopsReplySurfaceInvariant(files: readonly FileEntry[]): 
           snippet: (originalLines[i] ?? "").trim(),
         });
       }
+    }
+  }
+  return out;
+}
+
+// D17 (I23/I29) — `buildConnectorPost(...)` produces an UNLEDGERED post function. It may be
+// CALLED only as an argument to `buildLedgeredChatPosts(...)`, never bound to a name, so no
+// consumer can reach an unwrapped post. Without this the ledger covers the consumers that exist
+// and silently misses the next one added.
+//
+// PER OCCURRENCE, never per file. A file-level "does this file contain a wrapped call?"
+// early-return skips the whole file once BOTH forms are present — and `chatops-boot.ts` is the one
+// file that legitimately contains a wrapped call, so it is exactly the file where an added
+// unwrapped call would go unseen. Token COUNTING has the same weakness from the other direction:
+// `buildLedgeredChatPosts(db, somethingElse, salt)` keeps the counts equal while wrapping nothing.
+// Adjacency is the property, so adjacency is what gets checked.
+const UNWRAPPED_POST_RE = /\bbuildConnectorPost\s*\(/g;
+const WRAPPER_RE = /\bbuildLedgeredChatPosts\s*\(/g;
+
+/** Byte offset -> 1-based line, so a per-offset finding can name a line. */
+function lineOfOffset(text: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < text.length; i++) if (text[i] === "\n") line++;
+  return line;
+}
+
+export function checkChatopsUnwrappedPost(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (f.relPath.endsWith("chatops/transport/connector-post.ts")) continue; // definition site
+    const stripped = stripComments(f.contents);
+    const original = f.contents.split("\n");
+
+    // Statement-scoped: a `;` ends the construct we care about, and the legal form is a single
+    // statement. Splitting keeps offsets recoverable by accumulating the consumed length.
+    let base = 0;
+    for (const stmt of stripped.split(";")) {
+      const posts = [...stmt.matchAll(UNWRAPPED_POST_RE)].map((m) => m.index ?? 0);
+      if (posts.length > 0) {
+        const wrappers = [...stmt.matchAll(WRAPPER_RE)].map((m) => m.index ?? 0);
+        // Each `buildConnectorPost(` must be preceded, in this same statement, by its own
+        // `buildLedgeredChatPosts(`. Pair them off in order: the Nth post call needs an Nth
+        // wrapper opening before it.
+        for (let n = 0; n < posts.length; n++) {
+          const wrapper = wrappers[n];
+          const post = posts[n] ?? 0;
+          if (wrapper === undefined || wrapper > post) {
+            const off = base + post;
+            const line = lineOfOffset(stripped, off);
+            out.push({
+              rule: "D17-chatops-unwrapped-post",
+              file: f.relPath,
+              line,
+              snippet: (original[line - 1] ?? "").trim(),
+            });
+          }
+        }
+      }
+      base += stmt.length + 1; // + the `;` that split consumed
     }
   }
   return out;
@@ -1462,6 +1522,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D17 chatops post tool referenced outside reply-dispatcher/transport — bypasses I23: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkChatopsUnwrappedPost(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D17 buildConnectorPost called without buildLedgeredChatPosts — bypasses the I29 chatops egress ledger: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
