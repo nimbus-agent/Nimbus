@@ -174,7 +174,8 @@ at temp-dir SQLite work, so every wall-clock assumption in a test is a different
   `v2.21.0` to `v7.0.0` in two days across five majors, and exactly ONE of them
   (`v5.0.0`, #1359, which removed the `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env fallback) was
   a change a user had to do anything about. The other four were not: deleting the internal
-  `packages/mcp-connectors` workspace (`v3.0.0`), an internal router retype whose own plan
+  `mcp-connectors` workspace, which ships from npm now (`v3.0.0`), an internal router retype
+  whose own plan
   promised "total config back-compat" (`v4.0.0`), removing `[llm] classifier_model` and
   `remote_model` after they had become **inert** (`v6.0.0`), and tightening
   `LlmRegistryOptions.db` to required in a `private: true` package (`v7.0.0`) — a PR whose own
