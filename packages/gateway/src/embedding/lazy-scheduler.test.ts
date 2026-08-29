@@ -18,13 +18,17 @@ function vecAvailable(): boolean {
 }
 const VEC_AVAILABLE = vecAvailable();
 
-function fakeEmbedder(model = "local:test", dims = 384): Embedder {
+// `isLocal` is DECLARED here, never inferred from the model string. Inference (the previous
+// shape: `!model.startsWith("openai:")`) is exactly what this branch's invariant forbids in
+// production code -- locality must be declared, never guessed from a vendor name, because a
+// wrong `true` is silent: no ledger row, no error, and `nimbus prove` reports a clean zero over
+// real outbound traffic. A fixture that infers would silently misclassify a future non-OpenAI
+// remote model (`anthropic:`, `voyage:`, a proxy URL) as local.
+function fakeEmbedder(model: string, dims: number, isLocal: boolean): Embedder {
   return {
     model,
     dims,
-    // Callers here name either a local stand-in or ("openai:big") a remote one — derive rather
-    // than thread a fifth param through every call.
-    isLocal: !model.startsWith("openai:"),
+    isLocal,
     async embed(texts: string[]): Promise<Float32Array[]> {
       return texts.map((_, i) => {
         const v = new Float32Array(dims);
@@ -86,7 +90,7 @@ describe("createLazyEmbeddingRuntime — synchronous getters before pipeline loa
         h.dataDir,
         silentLogger,
         h.toml,
-        fakeEmbedder("preloaded:abc", 768),
+        fakeEmbedder("preloaded:abc", 768, true),
       );
       expect(runtime.getEmbeddingModel()).toBe("preloaded:abc");
       expect(runtime.getEmbeddingDims()).toBe(768);
@@ -136,7 +140,7 @@ describe("createLazyEmbeddingRuntime — ensurePipeline gate", () => {
         h.dataDir,
         silentLogger,
         h.toml,
-        fakeEmbedder(),
+        fakeEmbedder("local:test", 384, true),
       );
       const vec = await runtime.embedQuery("hello");
       expect(vec).toBeNull();
@@ -155,7 +159,7 @@ describe("createLazyEmbeddingRuntime — ensurePipeline gate", () => {
         h.dataDir,
         silentLogger,
         h.toml,
-        fakeEmbedder(),
+        fakeEmbedder("local:test", 384, true),
       );
       expect(() => runtime.scheduleItemEmbedding("never")).not.toThrow();
       await new Promise((r) => setTimeout(r, 20));
@@ -173,7 +177,7 @@ describe("createLazyEmbeddingRuntime — ensurePipeline gate", () => {
         h.dataDir,
         silentLogger,
         h.toml,
-        fakeEmbedder(),
+        fakeEmbedder("local:test", 384, true),
       );
       expect(() => runtime.startBackgroundJobs()).not.toThrow();
       expect(() => runtime.startBackgroundJobs()).not.toThrow();
@@ -195,7 +199,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.dataDir,
           silentLogger,
           h.toml,
-          fakeEmbedder("local:test", 384),
+          fakeEmbedder("local:test", 384, true),
         );
         const vec = await runtime.embedQuery("hello");
         expect(vec).toBeInstanceOf(Float32Array);
@@ -217,7 +221,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.dataDir,
           silentLogger,
           h.toml,
-          fakeEmbedder("local:test", 384),
+          fakeEmbedder("local:test", 384, true),
         );
         const dual = await runtime.embedQueryDual("hello");
         expect(dual.vec384).toBeInstanceOf(Float32Array);
@@ -238,7 +242,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.dataDir,
           silentLogger,
           h.toml,
-          fakeEmbedder("openai:big", 1536),
+          fakeEmbedder("openai:big", 1536, false),
         );
         const dual = await runtime.embedQueryDual("hello");
         expect(dual.vec1536).toBeInstanceOf(Float32Array);
@@ -284,7 +288,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.dataDir,
           silentLogger,
           h.toml,
-          fakeEmbedder(),
+          fakeEmbedder("local:test", 384, true),
         );
         runtime.scheduleItemEmbedding("not-in-db");
         await new Promise((r) => setTimeout(r, 60));
@@ -304,7 +308,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.dataDir,
           silentLogger,
           h.toml,
-          fakeEmbedder(),
+          fakeEmbedder("local:test", 384, true),
         );
         runtime.scheduleItemEmbedding("unit:item-1");
         await new Promise((r) => setTimeout(r, 100));
@@ -371,7 +375,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.dataDir,
           silentLogger,
           h.toml,
-          fakeEmbedder(),
+          fakeEmbedder("local:test", 384, true),
         );
         runtime.startBackgroundJobs();
         runtime.startBackgroundJobs();
@@ -393,7 +397,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.dataDir,
           silentLogger,
           h.toml,
-          fakeEmbedder("seq:test", 384),
+          fakeEmbedder("seq:test", 384, true),
         );
         const v1 = await runtime.embedQuery("first");
         const v2 = await runtime.embedQuery("second");
@@ -441,7 +445,7 @@ async function throwingCreateEmbedder(): Promise<Embedder> {
   throw new Error("synthetic createLocalEmbedder failure");
 }
 async function fromMockCreateEmbedder(): Promise<Embedder> {
-  return fakeEmbedder("loaded:from-mock", 384);
+  return fakeEmbedder("loaded:from-mock", 384, true);
 }
 
 describe.skipIf(!VEC_AVAILABLE)(
@@ -535,7 +539,7 @@ describe("createLazyEmbeddingRuntime — getReadiness", () => {
         h.dataDir,
         silentLogger,
         h.toml,
-        fakeEmbedder(),
+        fakeEmbedder("local:test", 384, true),
       );
       await new Promise((r) => setTimeout(r, 20));
       const r = runtime.getReadiness();
@@ -552,7 +556,7 @@ describe("createLazyEmbeddingRuntime — getReadiness", () => {
       let created = 0;
       createLazyEmbeddingRuntime(h.db, h.dataDir, silentLogger, h.toml, undefined, async () => {
         created += 1;
-        return fakeEmbedder();
+        return fakeEmbedder("local:test", 384, true);
       });
       // uv<6 short-circuits before the embedder, so assert on the observable state instead:
       // the warm-up ran without anyone querying.
@@ -572,7 +576,7 @@ describe.skipIf(!VEC_AVAILABLE)("createLazyEmbeddingRuntime — getReadiness (ve
         h.dataDir,
         silentLogger,
         h.toml,
-        fakeEmbedder("local:test", 384),
+        fakeEmbedder("local:test", 384, true),
       );
       for (let i = 0; i < 50 && runtime.getReadiness().state === "warming"; i++) {
         await new Promise((r) => setTimeout(r, 10));
@@ -621,7 +625,7 @@ describe("createLazyEmbeddingRuntime — warm-up that cannot progress", () => {
       h.dataDir,
       silentLogger,
       h.toml,
-      fakeEmbedder(),
+      fakeEmbedder("local:test", 384, true),
     );
     for (let i = 0; i < 50 && runtime.getReadiness().state === "warming"; i++) {
       await new Promise((r) => setTimeout(r, 10));
