@@ -494,7 +494,11 @@ export function checkChatopsUnwrappedPost(files: readonly FileEntry[]): Violatio
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
     if (f.relPath.endsWith("chatops/transport/connector-post.ts")) continue; // definition site
-    const stripped = stripComments(f.contents);
+    // Comments AND string/template literals blanked (length-preserving, per stripStringLiterals's
+    // own contract), so a `;` inside a string argument (e.g. a channel name) cannot fragment one
+    // statement into two and produce a false positive. `${...}` substitutions stay live code, so
+    // a call written inside one is still visible to the regexes below.
+    const stripped = stripStringLiterals(stripComments(f.contents));
     const original = f.contents.split("\n");
 
     // Statement-scoped: a `;` ends the construct we care about, and the legal form is a single

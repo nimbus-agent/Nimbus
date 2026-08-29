@@ -1453,7 +1453,13 @@ describe("D17-chatops-unwrapped-post — buildConnectorPost may only appear as a
   });
 
   test("D17 catches a wrapper call whose argument is NOT buildConnectorPost", () => {
-    // Counts are equal (1 and 1); adjacency is what distinguishes them.
+    // Proves per-file token COUNTING is defeated here: both tokens appear once (1 wrapper, 1
+    // post), so a count-based check would see balanced totals and pass this. It does not exercise
+    // the within-statement positional-pairing logic above -- both calls here are separate
+    // `;`-terminated statements, so plain per-statement scoping already catches the second one on
+    // its own. A single statement that interleaves a wrapper and an unwrapped call in a passing
+    // order is the brief's explicitly accepted residual bound (a lexical guard, not a parser) and
+    // is deliberately not tested here.
     const v = checkChatopsUnwrappedPost([
       {
         relPath: "packages/gateway/src/chatops/chatops-boot.ts",
@@ -1463,5 +1469,21 @@ describe("D17-chatops-unwrapped-post — buildConnectorPost may only appear as a
       },
     ]);
     expect(v.length).toBe(1);
+  });
+
+  // Regression: a `;` INSIDE a string-literal argument must not fragment one statement into two.
+  // Before stripStringLiterals was composed in, `stripComments` alone left the `;def"` fragment
+  // live, so `.split(";")` cut this single correctly-wrapped call into two segments -- the wrapper
+  // token landed in the first segment and the buildConnectorPost( call landed in the second with
+  // no wrapper visible there, a false positive on code that is correct.
+  test("D17 does not fragment a statement on a semicolon inside a string literal", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+        contents:
+          'const posts = buildLedgeredChatPosts(db, "abc;def", buildConnectorPost(runTool, fn), salt);\n',
+      },
+    ]);
+    expect(v).toEqual([]);
   });
 });
