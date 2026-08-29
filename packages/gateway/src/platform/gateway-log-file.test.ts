@@ -582,3 +582,74 @@ describe("emergencyGatewayLog", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// err serializer — an Error must not log as {}
+// ---------------------------------------------------------------------------
+describe("err serializer", () => {
+  const capture = (): { chunks: string[]; stream: NodeJS.WritableStream } => {
+    const chunks: string[] = [];
+    const stream = {
+      write(chunk: Buffer | string) {
+        chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+        return true;
+      },
+    } as NodeJS.WritableStream;
+    return { chunks, stream };
+  };
+
+  // `Error`'s `message` and `stack` are NON-ENUMERABLE, so `JSON.stringify({ err })` yields
+  // `{"err":{}}`. Eleven sites across the gateway log a bare `{ err }`, and every one of them was
+  // writing an empty object. Observed in production: a real gateway logged
+  // `"embedding worker failed to initialize"` with `"err":{}` across 397 heartbeats — semantic
+  // search was disabled and the reason was unknowable from the log.
+  test("an Error logs its message rather than an empty object", async () => {
+    const { chunks, stream } = capture();
+    const log = createGatewayPinoLoggerForStream(stream, "warn");
+    log.warn({ err: new Error("MiniLM download failed") }, "boom");
+    await Promise.resolve();
+    const line = chunks.join("");
+    expect(line).not.toContain('"err":{}');
+    expect(line).toContain("MiniLM download failed");
+  });
+
+  // Asserted on the PARSED `err.name` field, not on the raw line. A substring check for
+  // "TypeError" passes off the STACK text even when the class is not recorded at all — it did
+  // exactly that during development, which is why this reads the field. `type` is deliberately
+  // not asserted: pino's own err serializer runs after the formatter and overwrites it with
+  // "Object".
+  test("the error class is recorded in err.name alongside the message", async () => {
+    const { chunks, stream } = capture();
+    const log = createGatewayPinoLoggerForStream(stream, "warn");
+    log.warn({ err: new TypeError("bad kind") }, "boom");
+    await Promise.resolve();
+    const rec = JSON.parse(chunks.join("").trim()) as { err?: { name?: string; message?: string } };
+    expect(rec.err?.name).toBe("TypeError");
+    expect(rec.err?.message).toBe("bad kind");
+  });
+
+  // A thrown non-Error must not become `{}` either — `String(err)` is the floor.
+  test("a non-Error value still serializes to something readable", async () => {
+    const { chunks, stream } = capture();
+    const log = createGatewayPinoLoggerForStream(stream, "warn");
+    log.warn({ err: "plain string failure" }, "boom");
+    await Promise.resolve();
+    expect(chunks.join("")).toContain("plain string failure");
+  });
+
+  // Non-negotiable #3: no plaintext credentials in logs. `redact` is KEY-PATH based, so it cannot
+  // scrub inside a message string — surfacing `err.message` without scrubbing would newly write
+  // secrets that the empty-object bug had been accidentally hiding. The message goes through the
+  // same `redactAuditPayload` the audit log uses.
+  test("a secret embedded in the error message is redacted", async () => {
+    const { chunks, stream } = capture();
+    const log = createGatewayPinoLoggerForStream(stream, "warn");
+    log.warn(
+      { err: new Error("auth failed for ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") },
+      "boom",
+    );
+    await Promise.resolve();
+    const line = chunks.join("");
+    expect(line).not.toContain("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+  });
+});

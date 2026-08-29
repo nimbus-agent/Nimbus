@@ -99,7 +99,24 @@ function pinoLogFormatter(o: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...o };
   const e = out["err"];
   if (e !== null && typeof e === "object") {
-    const eObj = { ...(e as Record<string, unknown>) };
+    // An `Error`'s `message` and `stack` are NON-ENUMERABLE, so `{ ...err }` yields `{}` — the
+    // scrubbing below then has nothing to scrub and pino writes `"err":{}`. Every one of the
+    // gateway's bare `logger.warn({ err }, ...)` sites was logging an empty object because of
+    // this line. Observed in production: "embedding worker failed to initialize; semantic search
+    // disabled" logged with `"err":{}` across 397 heartbeats — the capability was off and the
+    // reason was unknowable from the log.
+    //
+    // A pino `serializers.err` does NOT fix it: `formatters.log` runs BEFORE serializers, so the
+    // spread here destroys the Error before a serializer would ever see it (verified directly —
+    // adding one leaves the output as `{}`). The named properties have to be read out here.
+    //
+    // The class goes in `name`, not `type`: pino's own err serializer runs AFTER this formatter
+    // and overwrites `type` with the constructor name of whatever plain object it receives, which
+    // is always "Object" once we have converted the Error. `name` survives untouched.
+    const eObj =
+      e instanceof Error
+        ? { name: e.name, message: e.message, stack: e.stack }
+        : { ...(e as Record<string, unknown>) };
     const msg = eObj["message"];
     if (typeof msg === "string") {
       eObj["message"] = scrubRedactedValuePatterns(msg);
