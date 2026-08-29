@@ -870,13 +870,17 @@ describe("D22(f) — the embedding appender is confined", () => {
     }
   });
 
-  test("a call SPLIT ACROSS LINES is still flagged", () => {
-    // The D25 lesson: a per-line scan matches neither line of `wrapLedgeredEmbedder\n  (db, e)`.
-    const v = checkEmbeddingAppenderConfinement(
-      file("packages/gateway/src/agents/rogue.ts", "const x = wrapLedgeredEmbedder\n  (db, e);\n"),
-    );
-    expect(v).toHaveLength(1);
-  });
+  // No "split across lines" test here, unlike D25's checkConnectorSpawnIsHidden. D25's regex is
+  // /\bBun\s*\.\s*spawn\b/ -- the `\s*` legitimately spans a newline inserted between `Bun` and
+  // `.spawn`, so a naive per-line loop misses `Bun\n  .spawn(...)` and only a whole-source scan
+  // catches it; that is a real property to test. D22_EMBED_WRAP_RE is the bare identifier
+  // /\bwrapLedgeredEmbedder\b/: a JS/TS identifier token cannot itself contain a newline, so
+  // `wrapLedgeredEmbedder` always sits fully on one line even when the CALL that follows it is
+  // split (`wrapLedgeredEmbedder\n  (db, e)`) -- a naive per-line loop matches that line just as
+  // well as a whole-source scan does. There is no input on which the two implementations
+  // disagree, so no test can discriminate them; a test asserting they do would look like coverage
+  // of a gap it does not actually cover. The whole-source scan is kept anyway, for consistency
+  // with D25 and D22(e) and in case this regex ever grows a `\s*` of its own.
 });
 
 describe("graph-entity-flat-coowned — flat upsertGraphEntity pinned away from co-owned types", () => {

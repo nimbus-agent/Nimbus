@@ -2222,7 +2222,12 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     for (const rel of sites) {
       const src = stripComments(await readFile(resolve(REPO_ROOT, rel), "utf8"));
       expect(src).toContain("createOpenAIEmbedder");
-      expect(src).toContain("wrapLedgeredEmbedder");
+      // A plain `toContain` is satisfied by the IMPORT line alone (every site imports
+      // `wrapLedgeredEmbedder` to wrap with it), so deleting only the CALL and leaving the
+      // import behind would still pass. Every site names it at least twice -- once importing
+      // it, at least once calling it -- so requiring >=2 occurrences catches the call-only
+      // regression that a single `toContain` cannot.
+      expect((src.match(/wrapLedgeredEmbedder/g) ?? []).length).toBeGreaterThanOrEqual(2);
     }
   });
 });
