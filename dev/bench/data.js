@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788019691991,
+  "lastUpdate": 1788021254820,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "71eaddb28a8eed1b635730bad823ab75576954ca",
-          "message": "chore(main): release 0.9.1 (#657)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.9.1](https://github.com/nimbus-agent/Nimbus/compare/v0.9.0...v0.9.1)\n(2026-06-16)\n\n\n### Bug Fixes\n\n* **ci:** restore lint + license gates after Biome 2.5.0 / ovsx 1.0.1\nbumps ([#656](https://github.com/nimbus-agent/Nimbus/issues/656))\n([76e4a88](https://github.com/nimbus-agent/Nimbus/commit/76e4a88999ddef1915b6e6c74b3c705281edf891))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n## Release Notes\n\n* **Bug Fixes**\n* Restored lint and license verification checks following recent\ndependency updates.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-16T19:15:02+03:00",
-          "tree_id": "f098bd083dcb9f0a6db4731f46a624f22ee0e185",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/71eaddb28a8eed1b635730bad823ab75576954ca"
-        },
-        "date": 1781627167163,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 280.20665565000087,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 280.1991967000049,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 305.30324494999877,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7734ab10b68ea5c221b56cfc8ccfabe555ef80ca",
+          "message": "fix(logging): stop logging every Error as {} (#1393)\n\n## The bug\n\n`pinoLogFormatter` built its scrubbed copy with `{ ...err }`. An\n`Error`'s `message` and `stack` are **non-enumerable**, so that spread\nyields `{}` — the scrubbing below it then had nothing to scrub, and pino\nwrote `\"err\":{}`.\n\nEvery bare `logger.warn({ err }, …)` in the gateway — **11 sites** — was\nlogging an empty object.\n\nObserved in production, not hypothetically: a real gateway logged\n\n```\n\"embedding worker failed to initialize; semantic search disabled\n until the next gateway restart\"    err: {}\n```\n\nacross **397 heartbeats**. The capability was off and the reason was\nunknowable from the log.\n\n## The fix\n\nRead the named properties out when the value is an `Error`; leave the\nexisting spread for anything else.\n\nScrubbing is unchanged — the formatter already runs\n`scrubRedactedValuePatterns` over `message` and `stack`, and it now has\nsomething to run on. That matters because this newly surfaces text the\nempty-object bug had been accidentally hiding, so it is a direct hit on\nnon-negotiable #3. Verified end to end: a `ghp_…` token inside an error\nmessage comes out `[REDACTED]`.\n\n## Two wrong turns worth recording\n\n**A pino `serializers.err` does not fix this.** `formatters.log` runs\nBEFORE serializers, so the spread destroys the Error before a serializer\never sees it. I built that version first and it changed nothing — output\nstayed `{}`. Testing the option combinations in isolation is what\nidentified the formatter as the real cause:\n\n```\ngateway-shaped formatter          -> \"err\":{}\n  + err serializer                -> \"err\":{}     still broken\n```\n\n**The class is reported as `name`, not `type`.** Pino's own err\nserializer runs AFTER this formatter and overwrites `type` with the\nconstructor name of the plain object it receives — always `\"Object\"`\nonce the Error has been converted. `name` survives untouched.\n\n## Test quality\n\nThe `name` test asserts the **parsed field**, not a substring of the\nline. A `toContain(\"TypeError\")` check passes off the stack text even\nwhen the class is not recorded at all, and did exactly that until it was\ntightened. Mutation-tested: dropping `name` from the emitted object\nfails it.\n\n## Verification\n\n- Red-proved by reverting the source: 2 tests fail without the fix, 0\nwith it.\n- 4 new tests: Error message visible, class recorded, non-Error still\nreadable, and a secret in the message redacted.\n- 328 platform tests pass; `preflight:fast` 32/32.\n\n## Why now\n\nThis is the prerequisite for diagnosing why the embedding worker fails\nat all — currently impossible from the log. That failure blocks the Gate\n1 macOS checkbox, which requires confirming semantic search works after\na cold first run.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc",
+          "timestamp": "2026-08-29T16:17:52Z",
+          "tree_id": "d75cd2ef33c1603605359febce3e8196ad0df528",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7734ab10b68ea5c221b56cfc8ccfabe555ef80ca"
+        },
+        "date": 1788021251931,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 327.8453068000013,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 325.7138472000057,
             "unit": "ms"
           }
         ]
