@@ -640,7 +640,8 @@ test("a pinned route that is UNAVAILABLE falls through to the next eligible rout
     ...DEFAULT_CONFIG,
     taskPins: new Map([["reasoning", "ollama/down"]]),
   });
-  router.registerRoute(makeFakeProvider("ollama", true, { available: false }), "down");
+    // `makeFakeProvider(id, available)` -- two args; the fake derives `isLocal` from `id`.
+  router.registerRoute(makeFakeProvider("ollama", false), "down");
   router.registerRoute(makeFakeProvider("ollama", true), "up");
   expect((await router.selectRoute("reasoning"))?.routeId).toBe("ollama/up");
 });
@@ -660,7 +661,7 @@ test("a pin does NOT override air-gap", async () => {
 
 - [ ] **Step 2: Run and watch fail.**
 
-- [ ] **Step 3: Implement** — in `orderedRoutes`, when `config.taskPins` names a route id for this task and that id resolves to a registered route, move it to the FRONT of the ordering. Do not bypass `eligibleRoutes`' air-gap and capability-floor filters: the pin reorders candidates, it never exempts one. Thread `taskPins` through `assemble.ts` into `LlmRouterConfig`.
+- [ ] **Step 3: Implement** — seed a private mutable `Map<LlmTaskType, string>` from `config.taskPins` in the constructor (`config` is `private readonly` and `taskPins` is a `ReadonlyMap`, so Task 7's `setTaskPin` needs a mutable copy to write). In `orderedRoutes`, when THAT map names a route id for this task and the id resolves to a registered route, move it to the FRONT of the ordering. Do not bypass `eligibleRoutes`' air-gap and capability-floor filters: the pin reorders candidates, it never exempts one. Thread `taskPins` through `assemble.ts` into `LlmRouterConfig`.
 
 - [ ] **Step 4: Run tests.** Also run `bun test packages/gateway/src/llm` to confirm no existing routing test regressed.
 
@@ -686,6 +687,8 @@ test("a pin does NOT override air-gap", async () => {
 > **Design note — one store, not two.** `llm.use` writes `[llm.tasks].<task>` into `nimbus.toml`, the same table Task 5 parses and Task 6 reads. It does **not** write `llm_task_defaults`. See Review Response 1 for why a second store was rejected.
 
 - [ ] **Step 1: Write the failing IPC tests**
+
+> `makeLlmRpcFixture` and `dispatch` below are SHAPE, not existing helpers — `llm-rpc.test.ts` has neither. Use whatever harness that file already uses to build a registry and invoke a method, and keep the assertions as written.
 
 ```ts
 test("llm.use writes the pin into [llm.tasks] and updates the live router", async () => {
@@ -755,7 +758,7 @@ async function handleLlmUse(params: unknown): Promise<{ ok: true }> {
 }
 ```
 
-Add `setTaskPin(task, routeId)` to `LlmRouter`, mutating the same map `orderedRoutes` reads in Task 6.
+Add `setTaskPin(task, routeId)` to `LlmRouter`. **It cannot mutate `config.taskPins`** — `config` is `private readonly` and `taskPins` is a `ReadonlyMap`. Task 6 therefore seeds a private mutable `Map<LlmTaskType, string>` from `config.taskPins` at construction, `orderedRoutes` reads THAT map, and `setTaskPin` mutates it. The config object stays immutable; only the router's own copy moves.
 
 - [ ] **Step 4: Add the CLI subcommand**
 
