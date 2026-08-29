@@ -8,6 +8,22 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-29 — `v7.0.0` is ABANDONED. Do not look for its artifacts; there are none.** The tag
+  exists and is immutable (the *Protected release tags* ruleset has no bypass actors), but the
+  Release workflow's **Build CLI — macos** job died in `Upload artifact` with
+  `Failed to CreateArtifact: Unable to make request: ENOTFOUND`, alongside harden-runner
+  reporting "The Internet connection appears to be offline" — a GitHub Actions network/DNS
+  outage on the macOS runner, not a defect in the code. No GitHub Release was published, so
+  `v6.0.1` remained the latest until **`v7.0.1`** superseded it. Same handling as `v1.11.0`
+  (#957 → superseded by 1.12.0): the failed version is left dead and the next one is cut.
+
+  Worth recording alongside it: `v7.0.0` should not have been a MAJOR at all. Its only breaking
+  entry was #1372, which made `LlmRegistryOptions.db` required — a `private: true` package with
+  no published surface, in a PR that said as much and carried a `!` anyway. The same mistake
+  produced `v3.0.0`, `v4.0.0` and `v6.0.0`; of the five majors between `v2.21.0` and `v7.0.0`,
+  only `v5.0.0` required a user to do anything. The rule that should have applied is now written
+  down in `CLAUDE.md` / `GEMINI.md` under *Development Workflow*.
+
 - **2026-08-28 — The `ask` intent classifier stops being the one path that egressed outside the
   ledger, and `route_priority` learns to name a cloud vendor.** Four defects found on a live
   v5.0.0 install, in severity order.
