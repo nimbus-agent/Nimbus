@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788025607385,
+  "lastUpdate": 1788027989572,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e433ec71c9651f07cb8109e848a97b4923a8d95b",
-          "message": "feat(perf): wire up the sustained-drift detector (daily _perf-drift.yml) (#659)\n\n## Problem\n\nThe hybrid perf strategy (#642) shipped a complete sustained-drift\ndetector (`scripts/perf/drift-check.ts`) but **nothing invoked it** —\nthe alerting was dormant, and its issue-filing I/O wrapper was untested.\n\n## What this does\n\nActivates the detector via a new daily workflow and clears the four\n#642-deferred refactors so the unattended issue-filing path is **tested\nbefore it goes live**.\n\n- **`scripts/perf/history-jsonl.ts`** (new) — shared\n`parseLastHistoryLine`, now used by both `emit-benchmark-json.ts` and\n`drift-check.ts` (dedup).\n- **`GhCli.issueList` + `issueCreate`** — injectable, retry-wrapped,\n`--body-file`, mirroring the existing `prComment*` methods (so the\nupsert path becomes unit-testable).\n- **`drift-check.ts`** — `rollingMedian` → shared `medianOf`; gh issue\nops routed through the injectable `GhCli`; **one v2 sample per run**\n(`parseLatestV2Line`); **create-only** upsert (an already-open issue is\nleft untouched — no daily re-comment); lazy issue fetch (no issue API\ncalls unless a surface drifts); dropped the ad-hoc\n`ghSpawn`/`ghIssueList`.\n- **`.github/workflows/_perf-drift.yml`** (new) — daily `schedule`\n(06:00 UTC) + `workflow_dispatch`; workflow-level `permissions: {}`\ndefault-deny with minimal job grants (`contents:read`, `actions:read`,\n`issues:write`); idempotent `gh label create perf-drift --force`\n(because `gh issue create --label` fails on a missing label); runs the\ndetector over `gha-ubuntu` history. Advisory — never gates a build.\n\nThresholds are **untouched** (`k=7`, `n=3`, floor 10%, 14-run window).\nNo schema migration, no new security invariant. Issue resolution is\n**manual** in this phase (auto-close deferred — these are noisy trend\nsurfaces that would flap; see spec §9).\n\n## Tests\n\nNew: `parseLastHistoryLine` (4), `GhCli.issueList/issueCreate` (5),\n`runDriftCheckMain` wrapper (3, injected `GhCli` + staged artifacts —\nexercises the real download→parse→detect→create-only pipeline). Existing\n`detectDrift` (7) stay green through the `medianOf` swap.\n\n## Verification\n\nFull local pre-flight: 278 perf tests pass; typecheck clean (all\npackages); biome clean (2766 files); markdownlint clean. Coverage-floor:\nthe only floor-gated file touched (`bench-ci-gh.ts`) is not flagged; the\nCI-Linux coverage job is authoritative.\n\nSpec: `docs/superpowers/specs/2026-06-16-perf-drift-wiring-design.md` ·\nPlan: `docs/superpowers/plans/2026-06-16-perf-drift-wiring.md`. Both\nincorporate an external design + plan review.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-16T17:05:27Z",
-          "tree_id": "57c3b20db99487d8177527e74c6aa5e561715479",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e433ec71c9651f07cb8109e848a97b4923a8d95b"
-        },
-        "date": 1781630277828,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 308.8634498000047,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 310.42595180000205,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 343.8442682499968,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b3ed09d5e2f5677d812715234d8821b5de9eda2",
+          "message": "feat(doctor): report embedding runtime state (#1397)\n\n## The gap\n\n`nimbus doctor` had **zero mentions of \"embedding\"**. The gateway knew\nsemantic search was dead and never said so — a real gateway logged\n`embeddings: \"unavailable\"` across **397 consecutive heartbeats** while\ndoctor reported nothing wrong.\n\nThat is the same blind spot #925 closed for the Vault, one subsystem\nover: doctor \"probed nothing but `Bun.which('secret-tool')` and so\nreported `[ok]` where the Vault could not work\". It is also why #1396\nwent unnoticed for so long.\n\n## The change\n\n`diag.snapshot` now carries `embedding` — the existing\n`EmbeddingReadiness`, already computed in `assemble.ts` and until now\nconsumed only by `index.searchRanked` — threaded through the diagnostics\ndispatcher. The CLI renders it with `doctorPrintEmbeddingFromSnapshot`.\n\n## Severity follows each state's documented lifetime\n\nDeliberately not \"anything that isn't ready is broken\":\n\n| State | Verdict | Why |\n| --- | --- | --- |\n| `ready` | `[ok]` | names the model |\n| `disabled` | `[ok]` | off **by design** — calling a deliberate setting\na fault is how a check trains people to ignore it |\n| `warming` | `[warn]` | **transient**, per `embedding-readiness.ts` — a\ncold first run must not read as broken |\n| `unavailable` | `[fail]` | names the **reason**, which is the whole\npoint |\n| unrecognised | `[fail]` | an unknown state is not evidence of health |\n| absent | *silent* | an older gateway reports no field — say nothing\nrather than invent a verdict about a capability we cannot observe |\n\nThe `reason` is the payload that matters. A bare \"unavailable\" is\nexactly what the log already said and what nobody could act on.\n\n## Verified across the real wire\n\nNot both ends faked — that is the failure mode where a test per side\nproves the ends and never the wire. A **source gateway** and a **source\nCLI** over real IPC:\n\n```\n[fail] Embeddings: unavailable — semantic search is disabled for this gateway run:\n       ResolveMessage: Cannot find module\n       '../bin/napi-v3/win32/x64/onnxruntime_binding.node'\n       from '...\\dist\\workers\\embedding-worker.js'\n```\n\nThat is #1396's root cause, surfaced by the tool a user actually runs.\n\n## Why now\n\nThis is the measuring instrument for #1396. Fix the meter before the\nengine: without it the three-platform sidecar fix would be verified by\ngrepping log files, and nothing would stop the capability going silently\ndead again.\n\n## Verification\n\n- Red-proved by reverting the source — the suite fails without it.\n- 6 new tests, one per state plus the absent-field and\nunrecognised-state bounds.\n- 138 tests pass across `doctor-core` and `diagnostics-rpc`;\n`preflight:fast` 32/32.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n  - Added embedding readiness diagnostics to the CLI health check.\n- Reports whether embeddings are ready, warming up, disabled,\nunavailable, or in an unknown state.\n  - Displays relevant model and status details when available.\n- Overall diagnostic results now reflect embedding availability and\nseverity.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-29T21:12:52+03:00",
+          "tree_id": "9b1f8ddae3e76ca2757bb11861a521b3d225e691",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9b3ed09d5e2f5677d812715234d8821b5de9eda2"
+        },
+        "date": 1788027986721,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 321.53028295,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 323.90726629999335,
             "unit": "ms"
           }
         ]
