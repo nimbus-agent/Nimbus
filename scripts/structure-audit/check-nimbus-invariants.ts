@@ -47,6 +47,7 @@ export const PLATFORM_VAULT_KEYS = [
   "openai.api_key",
   "gemini.api_key",
   "xai.api_key",
+  "chatops.channel.salt",
 ] as const;
 
 const SPAWN_RE = /\b(?:Bun\.spawn|Bun\.spawnSync|child_process\.spawn|spawn)\s*\(/;
