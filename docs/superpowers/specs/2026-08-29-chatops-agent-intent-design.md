@@ -1,0 +1,569 @@
+# ChatOps Agent Intent — Agents on the Channel
+
+**Date:** 2026-08-29
+**Status:** design — not started
+**Slot:** Spine S2 sidecar / Track 2 → Client surfaces, row *"Messaging (ChatOps) — agents on the channel"*
+**Roadmap:** [`docs/roadmap.md` § Track 2 → Client surfaces](../../roadmap.md#client-surfaces), the
+"Messaging surface — agents on the channel (direction, not yet built)" block
+**Delivers as:** two PRs, in order — see §4
+
+The roadmap block is the origin of this work but is **not** the binding authority for it: §2.1 and
+§2.3 record two claims in it that reading the code contradicted. Where this document and the roadmap
+disagree, this document is correct and the roadmap row is updated in PR 2.
+
+---
+
+## 1. Problem
+
+The `@nimbus` bot shipped in Phase 6 Slice 5 and answers questions. It cannot run an agent.
+
+`IntentRouter.handle` (`packages/gateway/src/chatops/intent-router.ts:34`) classifies every inbound
+message into exactly two intents. `parseCommand` (`chatops/command-parser.ts:27`) returns
+`{ kind: "read", query }` for anything that does not begin with `run`, so a read is the fallthrough
+and the fallthrough is `askEngine`. There is no `agents.*` call anywhere under `chatops/` —
+`grep -rn "agents\." packages/gateway/src/chatops/` returns nothing.
+
+The consequence is a dependency profile that is upside down:
+
+- A channel read calls `askEngine`, which **requires a configured LLM**. On a gateway with no model
+  configured, `@nimbus <question>` cannot answer.
+- The fourteen built-in agents render **deterministically with no LLM at all** — the property that
+  made zero-config onboarding possible — and they are precisely the ones a channel cannot reach.
+
+So the cheapest and most reliable output the product has is unavailable on its most reachable
+surface: the only surface that reaches a person who has installed nothing.
+
+Investigating this uncovered a second, unrelated problem that must be fixed first. It is described
+in §2.3 and is the whole of PR 1.
+
+---
+
+## 2. What investigation changed
+
+### 2.1 I17 is not on this path — CORRECTION to the roadmap block
+
+The roadmap says:
+
+> A channel is a multi-user space and the index is one person's. The channel↔namespace binding and
+> the `I17` grant/role/consent filter are load-bearing here, not incidental.
+
+The first sentence is true and the second is not. **I17 governs federated answering only** — it
+lives in `federation/query-gate.ts` and gates queries arriving from paired peers. A brief
+synthesized from the *local* index and posted to a channel never passes through it. I17 is not a
+control on this path and cannot be made one without moving it.
+
+The namespace half is wrong in a more specific way. `namespaces` in the agents API is **not a
+content filter**. Only three of the eleven agents accept it — `ghost` and `conflicts` via
+`requireFileParam` (`ipc/agents-rpc.ts:248`), `huddle` via `requireHuddleParams` (`:263`) — and all
+three are the `federatedAgentBase` agents. `agents/ghost.ts:60` shows what it does:
+`input.namespaces.map((ns) => …)` fans out **to peers**. It selects which peers to ask, not which
+local rows are visible.
+
+There is therefore no local namespace filter to inherit, apply, or plumb through. The consequence
+is stated as a non-goal in §3 and disclosed in §9.
+
+### 2.2 `binding.namespace` is already discarded on the read path
+
+`createChatOpsAskEngine` (`packages/gateway/src/gateway-main.ts:54`) has the signature
+`(query: string, namespace: string) => Promise<string>` and its implementation is
+`async (query, _namespace) => …`. The namespace is named with a leading underscore and never read.
+
+This is a **documented** Slice 5 deferral — `gateway-main.ts:164` says "Per-namespace content
+filtering of local reads remains the slice's documented deferral" — so it is not a defect. It is
+recorded here because it establishes the precedent the agent intent follows: a channel read today
+already answers from the whole local index, and the agent intent will not be more permissive than
+the surface it joins, only equally so.
+
+### 2.3 ChatOps egress is unledgered AND undisclosed — the reason for PR 1
+
+This is the finding that changed the shape of the work.
+
+**No ChatOps post is ledgered.** The reply path is
+`ReplyDispatcher.send` → `post` → `buildConnectorPost` (`chatops/transport/connector-post.ts:13`)
+→ `runChatopsTool` → `spawnChatopsBotToolAndCall` — an ephemeral bot-credentialed connector spawn.
+It does not go through the executor: `connectors.dispatch` has exactly one caller in the tree
+(`engine/executor.ts:401`) and this is not it. So I29's primary chokepoint never sees a chat post,
+and no other appender covers one.
+
+**Nor is the gap disclosed.** Grepping I29's section of `docs/SECURITY-INVARIANTS.md` for
+`chatops`, `slack` or `reply` returns nothing, and `COVERAGE_CLASSES`
+(`egress/egress-coverage.ts:19`) has no member for it.
+
+That distinction is the point. The `mcp` and `http` classes cover less than their names suggest and
+`egress-coverage.ts` spends three paragraphs saying exactly which parts they exclude — that is a
+*stated* narrowing. ChatOps is not narrowed; it is **absent**. `nimbus prove` therefore reports zero
+for a window in which an answer synthesized from the private index was posted to Slack's servers.
+
+This is the same defect shape as the `ask` intent classifier closed on 2026-08-28, which
+`CLAUDE.md` records as "an UNDISCLOSED exclusion rather than a stated one, so `nimbus prove`
+reported `0` for a query that had made a real outbound request carrying user text".
+
+It is pre-existing, it is not caused by this feature, and building an agent surface on top of it
+would deepen it. It is PR 1.
+
+### 2.4 There is exactly one post chokepoint, and it already exists
+
+`chatops-boot.ts:164` builds `post` **once**:
+
+```ts
+const post = buildConnectorPost(runTool, (conversationId) =>
+  teamsServiceUrlByConversation.get(conversationId),
+);
+```
+
+`ReplyDispatcher` (`:168`) and `ApprovalPresenter` (`:182`) both close over that same value.
+Static rule **D17** already confines the `slack_chat_post` / `teams_chat_post` tool ids to
+`chatops/reply-dispatcher.ts` and `chatops/transport/`.
+
+So a decorator applied to that one closure covers every outbound chat post — operational replies,
+HITL approval cards, tribal-watcher suggestions, and any caller written later — without any of them
+cooperating. This is the same shape as `wrapLedgeredProvider` (I29/D22(e)) and
+`wrapLedgeredEmbedder` (D22(f)), chosen for the same reason.
+
+### 2.5 Smaller findings, folded in
+
+- **`chatops/` has no truncation of any kind.** `grep` for `truncat|slice(0,|MAX_.*LEN` across
+  `chatops/*.ts` returns nothing; replies post raw. An agent brief is markdown of unbounded length,
+  so §6.6 must decide a policy rather than inherit one.
+- **D17's allowlist names two deleted paths.** `CHATOPS_POST_ALLOWED_PREFIXES`
+  (`scripts/structure-audit/check-nimbus-invariants.ts:440`) still lists
+  `packages/mcp-connectors/slack/src/server.ts` and `.../teams/src/server.ts`. That workspace was
+  removed in `v3.0.0` when the connectors moved to `nimbus-mcp-servers`; `git ls-files
+  packages/mcp-connectors` returns **zero** tracked files and neither `server.ts` exists. The
+  entries are dead — they match nothing — so this is untidiness, not a hole. Cleaned up in PR 1
+  since PR 1 edits this rule anyway; called out so the deletion is not mistaken for a scope change.
+
+  **Trap for whoever implements this:** a stale *untracked* `packages/mcp-connectors/` directory
+  survives on machines that predate the extraction (it is untracked, not gitignored, so it is
+  invisible to `git status --short` filters that skip untracked paths and it is never cleaned by a
+  branch switch). Verify the entries are dead with `git ls-files`, not with `ls` — `ls` answers a
+  different question and answers it wrongly here. `audit:doc-refs` gives no signal either way: it
+  passed with those paths cited in this document.
+- **The permitted-agent exclusions are already computed once.** `HTTP_EXCLUDED_AGENT_METHODS`
+  (`ipc/agents-rpc.ts:969`) excludes `preflight`, `premortem`, `whyPeek` and `negotiate`, leaving
+  eleven, and `HTTP_AGENT_NAMES` (`:983`) is **derived** from `AGENTS_RPC_HANDLERS` rather than
+  hand-maintained. ChatOps needs the same eleven for the same reasons, so §6.4 generalizes the name
+  rather than adding a second list.
+
+---
+
+## 3. Goals / Non-goals
+
+**Goals**
+
+1. Every outbound ChatOps post appends one `egress_ledger` row, fail-closed. (PR 1)
+2. `@nimbus agent why file=src/auth.ts line=42` in a bound channel returns the same brief payload as
+   `nimbus why`, from the same `agents.*` dispatch. (PR 2)
+3. Full `k=v` parity with all eleven permitted agents, with **no second copy** of
+   `agents-rpc.ts`'s validators or bounds constants. (PR 2, §6.2)
+4. The intent resolves with **no LLM configured** — a deterministic brief posts to a channel where
+   `nimbus ask` would refuse. This is the criterion that proves §1's inversion is actually fixed.
+5. Drift between the coercion map and the validators is a **build failure**, not a review catch.
+   (§7)
+
+**Non-goals**
+
+- **Per-namespace filtering of local content.** Out of scope for the reasons in §2.1 — it does not
+  exist to inherit, and building it is a new capability, not a slice of this one. Disclosed, not
+  hidden (§9).
+- **Widening `public-read`.** An unmapped user cannot invoke an agent (§6.5).
+- **The three excluded agents.** `preflight` and `premortem` for their side effects, `negotiate`
+  because `--person` makes it a dossier-builder; `whyPeek` is a companion, not an agent. Every one
+  of those reasons is *stronger* in a shared channel, so the exclusion is inherited, not re-decided.
+- **New platforms.** `ChatPlatform` stays `"slack" | "teams"`.
+- **Changing the agents.** They stay read-only and HITL-free; `approval-presenter.ts` is not on this
+  path.
+- **Streaming or progress updates.** One post, when the brief is ready.
+
+---
+
+## 4. Delivery order — two PRs, and the order is load-bearing
+
+**PR 1 — `feat(egress): ledger every outbound ChatOps post`.** Closes §2.3. Provable standalone: a
+`@nimbus <question>` on today's build produces a row where it produced none, and `nimbus prove`
+gains a class that was previously silent.
+
+**PR 2 — `feat(chatops): run agents from a channel`.** Needs **zero** egress work: the seam is
+already covered and the new caller inherits it by construction. That is the entire reason for
+choosing a decorator over a call-site append.
+
+Landing PR 1 first also satisfies the roadmap's own acceptance criterion — *"the egress question
+above is answered in code before merge"* — before the feature it was written about exists.
+
+Neither PR is breaking. Per `CLAUDE.md`'s rule, the test is "what does an existing user have to
+change to keep working?" and the answer for both is nothing: PR 1 adds rows to an append-only
+ledger, PR 2 adds a message grammar that did not previously resolve.
+
+---
+
+## 5. PR 1 — ledger every outbound ChatOps post
+
+### 5.1 The appender
+
+New file `egress/chatops-egress.ts`, exporting `wrapLedgeredChatPost`:
+
+```ts
+export function wrapLedgeredChatPost(
+  db: Database,
+  post: (platform: ChatPlatform, channelId: string, text: string) => Promise<void>,
+): (platform: ChatPlatform, channelId: string, text: string) => Promise<void>
+```
+
+Applied once, at `chatops-boot.ts:164`, wrapping the closure `ReplyDispatcher` and
+`ApprovalPresenter` both receive. A **decorator, not a call-site append** — §2.4.
+
+It appends **before** delegating, and an append failure propagates: no row, no post. A zero-row
+window means no chat message left the machine, never that one left unrecorded. This mirrors
+`wrapLedgeredProvider` exactly.
+
+Consequence to state plainly: if the ledger cannot be written, a HITL approval card is not posted,
+the approval times out, and the action is **denied**. That is fail-closed in the correct direction —
+an action that could not be recorded does not execute.
+
+### 5.2 The new source type and coverage class
+
+`EGRESS_SOURCE_TYPES` (`egress/egress-source-type.ts`) gains a twelfth member, `chatops`. It is an
+**egress class, not a marker** — the content genuinely leaves the machine to a third-party server,
+which is a stronger claim than `mcp`/`http`, where a brief is handed to a local process.
+
+`COVERAGE_CLASSES` (`egress/egress-coverage.ts:19`) gains `chatops` **at index 0**. The array is
+key-sorted and `serializeCoverage` maps over it to build the string stored in a boot marker's hashed
+`source_id`, so the order *is* the wire format; `chatops` sorts before `http`. Appending instead of
+inserting would typecheck, round-trip within one binary, and produce a canonical string no other
+binary agrees with.
+
+`THIS_BINARY_COVERAGE` sets `chatops: "per-call"` — one row per post, which is literally what the
+decorator does.
+
+The reuse-an-existing-member option is rejected for the fourth time, on
+`egress-source-type.ts`'s own recorded reasoning: `source_type` strings are permanent in the data,
+and one string covering two different attribution strengths is unrecoverable afterwards.
+
+### 5.3 What a row records
+
+| Column | Value |
+| --- | --- |
+| `source_type` | `chatops` |
+| `source_id` | the **hashed** channel id — never the channel id itself (see below) |
+| `destination` | the platform, `slack` or `teams` |
+| `method` | `chatops.reply`, `chatops.approvalCard`, or `chatops.agentBrief` (PR 2) |
+| `payload_summary` | `redactEgressSummary` over `{ bytes }` |
+| `hitl_status` | `not_required` |
+| `result_status` | `authorized` |
+
+**The channel id is hashed, not stored.** A channel id is an identifier for a group of people, the
+ledger is append-only, and its only mutation path is a HITL-gated prune. `nimbus prove` needs to
+answer "how many messages left, to which platform", not "which rooms did the owner talk in". The
+hash keeps per-channel counting possible without the ledger becoming a record of the owner's
+social graph. *(Use the existing BLAKE3 helper; no new primitive.)*
+
+`method` distinguishes the three post kinds so the class can be read at finer grain than its
+coverage claim. It is derived server-side from the call site, never supplied by a caller.
+
+### 5.4 Cost, stated
+
+`parseCoverage` returns `null` — never a partial vector, never a guess — unless the string carries
+**exactly** the known class set. So after this lands, an old binary cannot merge a new binary's boot
+marker and a new binary cannot merge an old one's. That is inherent to adding any coverage class and
+`mcp`, `http` and `model` each paid it. It is named here so it is a known cost rather than a
+surprise.
+
+The CLI's `COVERAGE_CLASS_LABELS` (`packages/cli/src/commands/prove.ts`) is a hand-maintained mirror
+— the CLI cannot import the gateway — and needs the same edit in the same PR.
+
+### 5.5 Docs
+
+`docs/SECURITY-INVARIANTS.md`'s I29 section gains a `chatops` paragraph stating what the class
+covers (every outbound post on the `chatops-boot.ts` `post` closure) and, explicitly, that it was
+**absent rather than narrowed** before this change — matching how the `ask`-classifier gap was
+recorded rather than quietly closed.
+
+---
+
+## 6. PR 2 — the agent intent
+
+### 6.1 Grammar
+
+`parseCommand` gains a third arm, ahead of the `read` fallthrough:
+
+```
+@nimbus agent <name> [k=v ...]
+```
+
+Chosen to mirror the existing `run <action> k=v` write grammar rather than invent a second shape —
+`normalizeChatText` already strips mentions, Slack link markup, smart quotes and backticks, and
+`KV_RE` already parses `k=v` with quoted-value stripping. Both are reused unchanged.
+
+`ParsedCommand` (`chatops/types.ts:22`) gains:
+
+```ts
+| { readonly kind: "agent"; readonly agent: string; readonly args: Readonly<Record<string, string>> }
+```
+
+`RefusalReason` gains `unknown_agent` and `bad_agent_params`.
+
+Deliberately **not** `@nimbus why …` without the `agent` keyword: agent names would collide with the
+free-text read fallthrough, so `@nimbus why is checkout slow?` would stop being a question and
+become a malformed agent call. The keyword keeps the two grammars disjoint by construction.
+
+### 6.2 Params: coercion, not builders — the no-duplication core
+
+The validators in `ipc/agents-rpc.ts` already take `unknown` and already own **every** semantic
+rule: type checks, bounds, required-ness, trimming, aliasing (`namespaces` beats `namespace`),
+mutual exclusion (`ownership`'s `path` vs `service`), and the `-32602` messages. A caller may hand
+them params directly — which is exactly what `agent-http-invoke.ts` does.
+
+The only mismatch is that `k=v` yields **strings** and some params are not strings. So the work is
+type coercion, not validation. Surveying every `typeof` check across all eleven validators, the
+whole vocabulary is four kinds:
+
+| Kind | Fields |
+| --- | --- |
+| `string` | `topicOrFile`, `fileOrPrUrl`, `file`, `path`, `service`, `ref`, `prUrl`, `term`, `personId` |
+| `number` | `limit`, `depth`, `sinceMs`, `line`, `minConfidence` (a **float** in 0..1, not an integer — `Number()` covers both) |
+| `string[]` | `namespaces` — and `parseNamespaces` already accepts a scalar, so `namespace=team-a` needs no coercion |
+| `boolean` | `repropose` — **`premortem` only, which is excluded**. Zero boolean fields in scope. |
+
+Nothing nested, nothing per-agent beyond a field's primitive kind. **`expert`'s entire "builder" is
+`{ topicOrFile: "string", limit: "number" }`.**
+
+Two modules, split by what resists drift:
+
+- **`ipc/agent-param-kinds.ts`** — the per-agent field→kind map. Lives *beside* `agents-rpc.ts` on
+  purpose: a param added to a validator is one line away from the map that must learn about it.
+  ~40 lines, no logic.
+- **`agent-commands/parse-agent-command.ts`** — the grammar and the coercion. Surface-neutral, pure,
+  imports nothing from `chatops/`, so a later CLI or browser text surface reuses it unchanged. This
+  is the standalone module.
+
+**Bounds constants are never copied.** `MAX_LIMIT`, `MAX_SINCE_MS`, `MAX_FILE_LEN` and the rest stay
+module-private to `agents-rpc.ts`. The MCP surface mirrors them into zod today and carries a comment
+admitting it; this surface does not.
+
+**Rejected: heuristic coercion** ("if it parses as a number, make it one"). It silently corrupts a
+legitimately numeric-looking string — `expert topicOrFile=2026`, a `ref` that is digits — into a
+number, producing a `-32602` "must be a string" for input that was correct. A declared map cannot do
+that.
+
+**Rejected: teaching the validators to accept strings.** That widens the IPC contract for the socket
+and HTTP surfaces to buy convenience on a third, weakening two callers to serve one.
+
+### 6.3 The invoker
+
+New file `agent-runs/agent-chatops-invoke.ts`, a sibling of `agent-http-invoke.ts` and deliberately
+close to it in shape:
+
+- Reaches agents **only** through `dispatchAgentsRpc` — never an `agents/<name>.ts` emitter, which
+  static rule **D22(d)** forbids anyway and which is what keeps the egress append total.
+- Builds its `runner` with the same `buildAgentSynthesisRunner` factory the socket and HTTP paths
+  use, from the same `configDir`, so a channel brief and a CLI brief are the same answer under every
+  `[agents].synthesis` mode.
+- `notify` resolves a one-shot promise keyed on the returned `sessionId`, rather than writing into an
+  `AgentRunController`. A channel has no polling client; it has a reply. Agents emit
+  `<agent>.briefReady` with `{ sessionId, brief: markdown, findings, synthesis }`
+  (`agents/_lib/emit-brief.ts:64`) and `<agent>.briefError`; the invoker awaits whichever lands.
+- Bounded by a wall-clock timeout, default **60 s** — matching the MCP surface's default rather than
+  the CLI's 30 s, because three of the eleven wait on paired peers.
+
+**`caller`.** `dispatchAgentsRpc` selects its egress source type from `ctx.caller.kind` through
+`EGRESS_BEARING_CLIENT_KINDS`, a `Record<ClientKind, …>` that is **total by construction**. A new
+`ClientKind` member is therefore a compile error until its egress status is decided — which is the
+mechanism working as designed.
+
+The decision: **add `chatops` to `ClientKind` and map it to `null`.** Not because a channel brief is
+not egress — it plainly is — but because **PR 1 already ledgers it**, at the post, where the bytes
+actually leave. Appending here as well would write two rows for one outbound event: exactly the
+double-count that `outcome` was made a marker to avoid. The `null` entry carries a comment saying
+so, since `null` elsewhere in that map means "the owner reading their own index" and this is a
+different reason for the same value.
+
+`chatops` is **not** added to `RECOGNISED` in `client-kind.ts` — like `http`, it is constructed
+server-side and never declarable by a socket client, so no local process can file its briefs under
+it.
+
+### 6.4 The permitted set
+
+The eleven are already derived, once, at `ipc/agents-rpc.ts:983`. Rather than add a second list,
+generalize the existing pair:
+
+- `HTTP_EXCLUDED_AGENT_METHODS` → `EXTERNAL_EXCLUDED_AGENT_METHODS`
+- `resolveHttpAgentMethod` → `resolveExternalAgentMethod`
+- `HTTP_AGENT_NAMES` → `EXTERNAL_AGENT_NAMES` (still derived from `AGENTS_RPC_HANDLERS`)
+
+Pure renames plus call-site updates; the derivation is unchanged. If the two surfaces ever need
+different exclusions, that is the moment to split them — and a rename now makes that split a
+deliberate act rather than a silent divergence between two hand-maintained lists.
+
+`AGENTS_RPC_HANDLERS` stays unexported. Handing the map out would let another file invoke an agent
+directly, a bypass D22(d) cannot see.
+
+### 6.5 Identity and permissions
+
+**An agent intent requires a mapped identity.** `binding.unmapped === "public-read"` admits unmapped
+users to the `read` intent only; the agent intent does not inherit it.
+
+1. Fail-closed is the reversible direction — relaxing later is a config change, tightening later
+   breaks channels that came to depend on it.
+2. Three of the eleven (`ghost`, `conflicts`, `huddle`) fan out to **paired peers**. An unmapped
+   stranger in a `public-read` channel triggering federated requests against the owner's peers is a
+   materially different act from reading a local answer.
+3. `public-read` was scoped to `ask` deliberately. Widening a shipped permission by inheritance
+   rather than by decision is how permissions grow without anyone choosing it.
+
+**The cost, disclosed rather than papered over:** in a `public-read` channel an unmapped user gets an
+answer to `@nimbus why is checkout slow?` and a refusal for `@nimbus agent why file=…`. That is a
+real inconsistency. It is the correct one — the free-text path's permissiveness is the older
+decision, not the better one — but it is documented in the ChatOps docs, not left to be discovered.
+
+An unbound channel stays silent; `IntentRouter.handle`'s existing `binding === undefined` early
+return is untouched and no agent intent widens it.
+
+Refusals go through the existing `auditRefusal` path with a named reason, never silently.
+
+### 6.6 Rendering and length
+
+There is no truncation anywhere in `chatops/` today (§2.5), and an agent brief is markdown of
+unbounded length. Policy:
+
+- Post the `brief` markdown from `briefReady`. The bot may restyle; it must never re-derive.
+- **Cap at a per-platform limit and truncate at a section boundary**, appending an explicit
+  `_(truncated — N sections omitted; run `nimbus <agent>` locally for the full brief)_` line. A
+  truncation that does not announce itself is the `wordCount` defect from the web clipper (#1005)
+  in a new place: reporting on content that was discarded.
+- **Never truncate away a reserved disclosure section.** `## Gaps` — and `negotiate`'s `## Sources`
+  / `## Evidence not available from the index`, though `negotiate` is excluded here — are
+  constructed by the renderer and re-attached verbatim under **I31**, precisely so a rewrite cannot
+  drop them. Silently truncating one would defeat I31 at the last hop, after the invariant did its
+  job. If the brief does not fit, drop **body** sections and keep the disclosures.
+
+That last rule is the one to get right, and it needs its own test: a brief whose `## Gaps` sits past
+the byte cap must still post its gaps.
+
+---
+
+## 7. Anti-drift: making the no-duplication claim enforceable
+
+A field-kind map can fall behind the validators it describes. Two mechanisms, both required.
+
+**A structure audit** (`scripts/structure-audit/`, the D-rule idiom): parse `ipc/agents-rpc.ts` per
+validator function for `typeof p.<field> !== "<kind>"`, map each function to its agent through
+`AGENTS_RPC_HANDLERS`, and fail the build when `agent-param-kinds.ts` does not cover exactly that
+set. Drift becomes a red gate.
+
+**This is the piece with real implementation risk.** Associating a `typeof` site with its enclosing
+function is the fiddly part, and a guard that silently matches nothing is worse than no guard —
+`allowlist-guards-fail-silently` is a recorded lesson in this codebase. The audit must therefore be
+**red-proved by reverting**: remove one field from the kinds map and confirm the gate fails, rather
+than inferring correctness from a green run. If it cannot be made reliable inside PR 2's budget, it
+ships as a follow-up and the round-trip tests below carry the load in the interim — but that is a
+stated fallback, not a silent one.
+
+**Round-trip tests**, per agent per field: feed a `k=v` line through `parse-agent-command.ts` into
+the real `dispatchAgentsRpc` and assert it is not rejected on *type* grounds. This proves the map
+against the validators rather than trusting it, and unlike the audit it cannot match nothing.
+
+---
+
+## 8. Surface
+
+**Config.** None. The intent is available wherever ChatOps is already enabled and a channel is
+bound. No new key, and specifically no per-agent enable list — that would be a second permitted-set
+authority alongside §6.4.
+
+**IPC.** None. No new gateway method; the intent dispatches through the existing `agents.*`
+namespace in-process.
+
+**CLI.** `nimbus prove` gains the `chatops` class in its output via `COVERAGE_CLASS_LABELS` (PR 1).
+No new subcommand.
+
+**Wiring.** The invoker is late-bound onto `ChatopsBoot` as `bindAgentInvoker`, mirroring the
+existing `bindAskEngine` (`chatops/chatops-boot.ts:76`, called from `gateway-main.ts:170`).
+`ChatopsBootDeps` carries no `db`/`index`/`configDir` today and this design does not add them —
+matching how the ask engine is already supplied.
+
+---
+
+## 9. Disclosures
+
+Stated in `docs/` and `SECURITY-INVARIANTS.md`, not as a per-reply banner. A footer on every brief
+saying "this was not filtered by channel" is noise that gets tuned out, and it would be the only
+surface disclaiming a property that already holds for every `ask` answer in the same room.
+
+1. **A brief is not filtered by channel or namespace.** It is synthesized from the owner's whole
+   local index and posted into a room whose members may include people with no Nimbus identity. §2.1
+   explains why no filter exists to apply.
+2. **Every post is ledgered** (PR 1) — including the ones that predate this feature.
+3. **The permitted set is eleven, not fourteen**, and why.
+4. **Unmapped users cannot invoke an agent**, and the resulting inconsistency with `ask` (§6.5).
+
+---
+
+## 10. Testing
+
+**PR 1**
+
+- A `@nimbus <question>` reply appends exactly one `chatops` row; the chain verifies.
+- An approval card appends one row with `method='chatops.approvalCard'`.
+- **A failed append posts nothing** — assert the post seam's call count is `0`, not merely that an
+  error was thrown. (`fixing-one-door-leaves-the-adjacent-one-open`: assert the callee's call count.)
+- The channel id does not appear in the ledger in cleartext — assert against the raw row.
+- `serializeCoverage` round-trips with `chatops` at index 0; `parseCoverage` rejects a vector
+  missing it.
+- The CLI label mirror covers every `COVERAGE_CLASS` (a drift test, since it cannot import).
+
+**PR 2**
+
+- **The zero-LLM criterion (goal 4).** On a gateway with no model configured and
+  `[agents].synthesis = "off"`, an agent intent posts a deterministic brief while `ask` refuses. A
+  slice that only works with a model configured has not delivered this row.
+- Payload parity: for one subject, the channel path and `dispatchAgentsRpc` return the same brief —
+  asserted on the IPC response, not on two renderings.
+- Round-trip coercion, per agent per field (§7).
+- An unmapped user in a `public-read` channel is refused with `unmapped_user`, and **no agent runs**
+  — assert the dispatch call count is `0`.
+- An unknown or excluded agent name refuses via `auditRefusal` with `unknown_agent`; the four
+  excluded methods are each named in a test.
+- A `-32602` from a real validator reaches the channel as its own message.
+- **Truncation keeps `## Gaps`** even when it falls past the byte cap (§6.6).
+- Exactly one ledger row per brief — the PR 1 post row, and no second row from the invoker (§6.3).
+
+Cross-platform: `chatops/` tests are pure and OS-independent, but per `CLAUDE.md` the PR legs run
+the same whole-repo paths as the push matrix, so `bun run preflight` is the gate, not a scoped run.
+
+---
+
+## 11. Docs
+
+- `docs/SECURITY-INVARIANTS.md` — I29 gains the `chatops` class (PR 1).
+- `docs/architecture.md` — the ChatOps subsystem gains the agent intent (PR 2).
+- `docs/CHANGELOG.md` — one dated entry per PR.
+- `docs/roadmap.md` — the messaging-surface block moves from *direction* to shipped, **and its I17
+  claim is corrected** per §2.1 (PR 2).
+- `CLAUDE.md` / `GEMINI.md` — I29's summary gains the `chatops` class; both files, per the mirror
+  rule.
+
+---
+
+## 12. Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| The structure audit (§7) matches nothing and passes vacuously | Red-prove by reverting a map entry; round-trip tests carry the load if it slips |
+| Adding a coverage class breaks cross-binary marker merges | Inherent and precedented (§5.4); named as a known cost |
+| Truncation drops an I31 disclosure section | Dedicated test (§6.6, §10); disclosures are kept and body sections dropped |
+| A brief posted to a room leaks more than the asker expected | Not solvable here (§2.1); disclosed (§9). The honest position is that this surface is exactly as permissive as the `ask` path it joins |
+| `bindAgentInvoker` late-binding leaves the intent inert if wiring is missed | The `fakes-cant-catch-contract-mismatch` shape. One integration test through the real `chatops-boot` wiring, not two unit tests either side of the seam |
+
+---
+
+## 13. Decomposition
+
+**PR 1** — `egress/chatops-egress.ts`; `EGRESS_SOURCE_TYPES` + `COVERAGE_CLASSES` +
+`THIS_BINARY_COVERAGE`; wrap at `chatops-boot.ts:164`; CLI label mirror; D17 dead-path cleanup;
+I29 docs; CHANGELOG.
+
+**PR 2** — `ipc/agent-param-kinds.ts`; `agent-commands/parse-agent-command.ts`;
+`agent-runs/agent-chatops-invoke.ts`; `ClientKind` + `EGRESS_BEARING_CLIENT_KINDS` gain `chatops`;
+`parseCommand` third arm + `ParsedCommand` / `RefusalReason` members; `IntentRouter` agent branch;
+`bindAgentInvoker` on `ChatopsBoot` + `gateway-main.ts` wiring; §6.4 renames; the structure audit;
+truncation; docs + roadmap correction.
