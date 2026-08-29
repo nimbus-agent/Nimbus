@@ -16,6 +16,15 @@ export type Granularity = (typeof GRANULARITIES)[number];
  * the list rather than trailing it. Appending a new class instead of inserting it in sort order
  * would still typecheck, still round-trip within one binary, and produce a canonical string no
  * other binary agrees with.
+ *
+ * That also means MEMBERSHIP, not just order, is part of the wire format, in both directions:
+ * `parseCoverage` requires every member of this array to be present in a marker string with a
+ * recognized `Granularity`, so ADDING a class here invalidates every marker written by a binary
+ * built before the addition (it is missing the new key) just as surely as an OLDER binary's marker
+ * is unreadable by code that no longer knows one of its keys. This break is fail-safe, not a
+ * soundness bug: an unparseable marker returns `null`, which the caller folds into
+ * `ALL_NONE_COVERAGE`, so `nimbus prove` reports the window as `indeterminate` rather than
+ * silently under-counting it as a clean zero.
  */
 export const COVERAGE_CLASSES = [
   "chatops",

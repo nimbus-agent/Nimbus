@@ -1421,6 +1421,17 @@ export const RULE_ANCHORS: readonly string[] = [
   // rule SCANS (it is on the allow-list, so it is read and then permitted) rather than the
   // definition file the rule also permits. Same shape as the D23 anchor above.
   "packages/gateway/src/embedding/create-routing-runtime.ts",
+  // D17-chatops-unwrapped-post — anchored on `chatops-boot.ts`, the ONE file that legitimately
+  // contains a `buildLedgeredChatPosts(..., buildConnectorPost(...), ...)` call and so the one
+  // file whose content this rule must actually parse to enforce anything. The reply-dispatcher.ts
+  // anchor above is for the OLDER, separate D17-chatops-reply-surface rule (literal
+  // slack_chat_post/teams_chat_post tool-id references) — that rule allow-lists
+  // reply-dispatcher.ts, so its presence in the scanned set proves nothing about whether THIS
+  // rule (the unwrapped-`buildConnectorPost` check) can see anything, since reply-dispatcher.ts
+  // never calls buildConnectorPost. Without an anchor of its own, D17-chatops-unwrapped-post would
+  // report clean while scanning nothing the moment `iterateSourceFiles()` stopped loading
+  // `chatops/` — the exact inert-guard failure mode D22(f)/D23 exist to catch.
+  "packages/gateway/src/chatops/chatops-boot.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
