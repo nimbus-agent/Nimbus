@@ -899,7 +899,9 @@ test("code index picks up `export default function`", async () => {
   const rows = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
     .all() as Array<{ title: string }>;
-  expect(rows.some((r) => r.title.includes("isPlainObject"))).toBe(true);
+  // Title is `${name} (${kind})`, so this pins the CLASSIFICATION too — `includes("isPlainObject")`
+  // alone would pass if the symbol were mis-kinded.
+  expect(rows.map((r) => r.title)).toEqual(["isPlainObject (function)"]);
 });
 
 test("code index picks up `export default class` and `export default async function`", async () => {
@@ -914,8 +916,9 @@ test("code index picks up `export default class` and `export default async funct
   const rows = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
     .all() as Array<{ title: string }>;
-  expect(rows.some((r) => r.title.includes("Widget"))).toBe(true);
-  expect(rows.some((r) => r.title.includes("loadThing"))).toBe(true);
+  // Kind matters: a name-only assertion passes if `Widget` were indexed as a function or
+  // `loadThing` as a class, which would silently break the classification this PR adds.
+  expect(rows.map((r) => r.title).sort()).toEqual(["Widget (class)", "loadThing (function)"]);
 });
 
 // The bound in the other direction: `export default` must not swallow the NAMED forms, and a
@@ -932,12 +935,16 @@ test("named exports still resolve alongside a default export in the same file", 
     roots: [{ path: dir, gitAware: false, codeIndex: true, dependencyGraph: false, exclude: [] }],
   });
   const db = createMemoryIndexDb();
-  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
+  const result = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
   const rows = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
     .all() as Array<{ title: string }>;
-  expect(rows.some((r) => r.title.includes("NAMED"))).toBe(true);
-  expect(rows.some((r) => r.title.includes("theDefault"))).toBe(true);
+  // EXACTLY ONCE is the actual claim — `some()` proves only that both names exist, which a
+  // double-extracting regex would also satisfy. `itemsUpserted` is the load-bearing assertion:
+  // `extId` keys on `name:kind`, so a symbol matched twice by the same pattern collapses to ONE
+  // row while still being upserted twice. Row count alone would not see it.
+  expect(result.itemsUpserted).toBe(2);
+  expect(rows.map((r) => r.title).sort()).toEqual(["NAMED (const)", "theDefault (function)"]);
 });
 
 test("an ANONYMOUS default export still yields no symbol", async () => {
