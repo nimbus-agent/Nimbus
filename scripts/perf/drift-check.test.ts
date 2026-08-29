@@ -4,11 +4,33 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { GhCli, type GhSpawnFn } from "../../packages/gateway/src/perf/bench-ci-gh.ts";
+import type { SloThreshold } from "../../packages/gateway/src/perf/slo-thresholds.ts";
 import { detectDrift, isRunnerKind, parseLatestV2Line, runDriftCheckMain } from "./drift-check.ts";
+
+/**
+ * A synthetic threshold at a chosen relative floor with NO absolute floor, so these cases keep
+ * exercising the percentage rule on its own.
+ *
+ * `detectDrift` takes the surface's own SLO now rather than a global constant. The hardcoded
+ * 10 % it used to apply is what filed #1308 and #1309 against S11-a / S11-b, whose declared
+ * floor is 40 % precisely because their spawn-dominated latency is runner noise.
+ */
+function sloAt(noiseFloorPct: number, noiseFloorAbs = 0): SloThreshold {
+  return {
+    surfaceId: "S1",
+    gateClass: "trend",
+    metric: "p95_ms",
+    refMax: 1_000,
+    ghaMax: 5_000,
+    noiseFloorPct,
+    noiseFloorAbs,
+    noiseFloorAbsUnit: "ms",
+  } as SloThreshold;
+}
 
 describe("detectDrift", () => {
   test("returns false when there is not enough history to fill the window", () => {
-    expect(detectDrift([{ value: 100 }, { value: 100 }], 10)).toBe(false);
+    expect(detectDrift([{ value: 100 }, { value: 100 }], sloAt(10))).toBe(false);
   });
 
   test("a single late spike does NOT trip drift (needs n consecutive worse samples)", () => {
@@ -22,7 +44,7 @@ describe("detectDrift", () => {
       { value: 100 },
       { value: 200 },
     ];
-    expect(detectDrift(history, 10)).toBe(false);
+    expect(detectDrift(history, sloAt(10))).toBe(false);
   });
 
   test("a sustained regression (n consecutive samples worse than the rolling median) trips drift", () => {
@@ -38,7 +60,7 @@ describe("detectDrift", () => {
       { value: 200 },
       { value: 200 },
     ];
-    expect(detectDrift(history, 10)).toBe(true);
+    expect(detectDrift(history, sloAt(10))).toBe(true);
   });
 
   test("worse-but-within-the-noise-floor does not trip drift", () => {
@@ -54,7 +76,7 @@ describe("detectDrift", () => {
       { value: 105 },
       { value: 105 },
     ];
-    expect(detectDrift(history, 10)).toBe(false);
+    expect(detectDrift(history, sloAt(10))).toBe(false);
   });
 
   test("a worse sample that breaks the consecutive run resets the counter", () => {
@@ -71,7 +93,7 @@ describe("detectDrift", () => {
       { value: 100 },
       { value: 200 },
     ];
-    expect(detectDrift(history, 10)).toBe(false);
+    expect(detectDrift(history, sloAt(10))).toBe(false);
   });
 
   test("the rolling median is over the last k samples, not the whole history", () => {
@@ -93,7 +115,7 @@ describe("detectDrift", () => {
       { value: 200 },
       { value: 200 },
     ];
-    expect(detectDrift(history, 10)).toBe(true);
+    expect(detectDrift(history, sloAt(10))).toBe(true);
   });
 
   test("honors a custom k and n", () => {
@@ -104,7 +126,7 @@ describe("detectDrift", () => {
       { value: 150 },
       { value: 150 },
     ];
-    expect(detectDrift(history, 10, 3, 2)).toBe(true);
+    expect(detectDrift(history, sloAt(10), 3, 2)).toBe(true);
   });
 });
 
@@ -158,7 +180,15 @@ describe("runDriftCheckMain", () => {
   // 14 runs, oldest-first sha-0..sha-13. The newest 3 (>=11) regress to 130 over
   // a stable 100 baseline → a sustained drift on S1 (and only S1).
   const shas = Array.from({ length: 14 }, (_, i) => `sha-${i}`);
-  const driftValue = (sha: string): number => (Number(sha.slice(4)) >= 11 ? 130 : 100);
+  // Sized against S1's REAL declared floor, which is what `detectDrift` now applies:
+  // `noiseFloorPct: 25` OR `noiseFloorAbs: 300` ms as a percentage of the rolling median,
+  // whichever is larger. At a 1000 ms baseline the absolute floor is the binding one (30 %),
+  // so the drifting samples sit at 1600 ms (+60 %) -- unambiguously past both.
+  //
+  // The old fixture drifted 100 -> 130 (+30 %), which cleared the hardcoded 10 % this used to
+  // apply but would NOT clear S1's own floor. That gap is the bug: the detector was four times
+  // more sensitive than the surfaces it watched.
+  const driftValue = (sha: string): number => (Number(sha.slice(4)) >= 11 ? 1_600 : 1_000);
 
   function v2Line(p95: number): string {
     return JSON.stringify({
@@ -242,5 +272,53 @@ describe("isRunnerKind", () => {
   test("rejects an unknown runner value", () => {
     expect(isRunnerKind("m1-air")).toBe(false);
     expect(isRunnerKind("")).toBe(false);
+  });
+});
+
+describe("detectDrift — the #1308 / #1309 false positives", () => {
+  /**
+   * The real gha-ubuntu window that filed both issues, taken from the `perf-data` branch's
+   * `dev/bench/data.js`. Read it before widening any floor again: the "regression" is the last
+   * two samples, and they are the runner RETURNING TO NORMAL.
+   *
+   * Series median across all 495 recorded samples is ~311 ms. This window is a cluster of
+   * unusually FAST runs (224-261), which drags the rolling MEDIAN down to 253 -- and 316 then
+   * reads as +25 % against that depressed baseline. Nothing got slower.
+   */
+  const S11_A_WINDOW = [224, 249, 261, 253, 247, 333, 306, 316, 333, 341].map((v) => ({
+    value: v,
+  }));
+
+  // S11-a / S11-b as actually declared: 40 % relative, 50 ms / 10 ms absolute.
+  const S11_A = sloAt(40, 50);
+  const S11_B = sloAt(40, 10);
+
+  test("the shipped 10% floor fires on this window — the bug", () => {
+    expect(detectDrift(S11_A_WINDOW, sloAt(10))).toBe(true);
+  });
+
+  test("the surface's OWN 40% floor does not", () => {
+    expect(detectDrift(S11_A_WINDOW, S11_A)).toBe(false);
+    expect(detectDrift(S11_A_WINDOW, S11_B)).toBe(false);
+  });
+
+  test("a real 2x regression still trips at the 40% floor", () => {
+    // The floor must not be so wide that it stops detecting anything. Same baseline, doubled.
+    const regressed = [
+      ...[300, 305, 298, 302, 310, 295, 300].map((v) => ({ value: v })),
+      ...[620, 640, 610].map((v) => ({ value: v })),
+    ];
+    expect(detectDrift(regressed, S11_A)).toBe(true);
+  });
+
+  test("the absolute floor binds when the baseline is small", () => {
+    // 40% of 20ms is 8ms -- scheduler noise. `noiseFloorAbs: 50` raises the bar to 250%,
+    // which is why the two floors are combined rather than the percentage used alone.
+    const tiny = [
+      ...Array.from({ length: 7 }, () => ({ value: 20 })),
+      ...[40, 42, 41].map((v) => ({ value: v })),
+    ];
+    expect(detectDrift(tiny, sloAt(40))).toBe(true); // 40% floor alone: +100% trips
+    expect(detectDrift(tiny, S11_A)).toBe(false); // with the 50ms absolute floor: does not
   });
 });

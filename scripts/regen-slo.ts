@@ -104,6 +104,10 @@ For every measurement entry, \`threshold\` is the maximum allowed value for the 
 A bench fails when either:
 - the measured aggregate exceeds the absolute reference or GHA threshold, **or**
 - the run delta vs the most recent \`main\` history entry for the same \`runner\` exceeds the per-surface noise floor (\`max(noise_floor_pct, absolute_noise_floor / previous × 100)\`).
+
+**Sustained-drift detection uses the same per-surface floor.** \`scripts/perf/drift-check.ts\` walks a rolling median of the last 7 \`main\` samples and files an issue only when 3 consecutive samples each exceed that surface's own floor. It applied a hardcoded **10 %** until 2026-08-29, which is what filed the false #1308 / #1309 alarms against \`S11-a\` / \`S11-b\` — surfaces whose declared floor is 40 % precisely because their spawn-dominated latency is a runner property, not a code signal.
+
+The failure mode is worth knowing before widening a floor again: a rolling median MOVES WITH THE DATA, so a cluster of unusually **fast** runs drags it down, and the next ordinary samples then read as a regression against a depressed baseline. The window that fired both issues was \`224, 249, 261, 253, 247, 333, 306\` (median 253) against a series median of 311 — the "regression" was the runner returning to normal.
 `;
 
 const FOOTER = `

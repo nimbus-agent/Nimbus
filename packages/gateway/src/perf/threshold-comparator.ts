@@ -102,8 +102,7 @@ function compareOne(
 
   const deltaPct = ((measured - prev) / prev) * 100;
   const regressionPct = isFloorMetric(slo.metric) ? -deltaPct : deltaPct;
-  const floorAbsAsPct = (slo.noiseFloorAbs / prev) * 100;
-  const effectiveFloorPct = Math.max(slo.noiseFloorPct, floorAbsAsPct);
+  const effectiveFloorPct = effectiveNoiseFloorPct(slo, prev);
   if (regressionPct > effectiveFloorPct) {
     return {
       kind: "delta-fail",
@@ -114,6 +113,20 @@ function compareOne(
     };
   }
   return { kind: "pass" };
+}
+
+/**
+ * The noise floor a regression must clear, as a percentage of `baseline`.
+ *
+ * Combines the surface's relative floor with its ABSOLUTE one: on a fast surface a 40 % swing
+ * can be a handful of milliseconds of scheduler noise, so `noiseFloorAbs` raises the bar when
+ * the baseline is small. Exported so the drift detector uses the SAME formula rather than a
+ * second copy -- it previously used a hardcoded 10 % that ignored both fields, which is what
+ * filed #1308 and #1309 against surfaces whose own declared floor is 40 %.
+ */
+export function effectiveNoiseFloorPct(slo: SloThreshold, baseline: number): number {
+  if (baseline <= 0) return slo.noiseFloorPct;
+  return Math.max(slo.noiseFloorPct, (slo.noiseFloorAbs / baseline) * 100);
 }
 
 export function compareAgainstHistory(
