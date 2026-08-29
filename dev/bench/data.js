@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787990400912,
+  "lastUpdate": 1787991094029,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16965,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 335.4460096000068,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "378a46468ba7287e1bebe5588b37ff8438548263",
+          "message": "docs: write down when a change is actually breaking, and mark v7.0.0 abandoned (#1380)\n\nTwo record-keeping changes, both prompted by the same mistake.\n\n## 1. When a change is actually breaking\n\n`main` went from `v2.21.0` to `v7.0.0` in two days across five majors.\nExactly **one** of them required a user to do anything:\n\n| Release | Cause | Did a user have to act? |\n| --- | --- | --- |\n| `v3.0.0` | deleted the internal `packages/mcp-connectors` workspace |\n**No** — npm consumers unaffected |\n| `v4.0.0` | router retyped by provider+model | **No** — its own plan\npromised \"total config back-compat\" |\n| `v5.0.0` | removed the `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env\nfallback | **Yes** |\n| `v6.0.0` | removed `[llm] classifier_model` and `remote_model` |\n**No** — both keys were already **inert**; nothing read them |\n| `v7.0.0` | `LlmRegistryOptions.db` made required | **No** — `private:\ntrue` package, and the PR body said \"no published surface changes\" |\n\nFour majors were spent on internal tidiness. The marker was tracking\n*how significant the change felt to its author* rather than *what it\ncosts a user*, which is the only thing a major is allowed to mean.\n\nThe rule now written down in both context files:\n\n> Before writing `!` or `BREAKING CHANGE:`, answer one question: **what\ndoes an existing user have to change to keep working?** If the honest\nanswer is \"nothing\", it is not breaking.\n\nWith the four cases that keep recurring named explicitly, since each\nlooked breaking at the time: removing a key nothing reads, a type change\nconfined to a `private: true` package, deleting an internal workspace\nwhose consumers already resolve it from npm, and a tightened internal\ninvariant.\n\nWhy it matters beyond tidiness: **majors are permanent.** The *Protected\nrelease tags* ruleset has no bypass actors, so a burned major cannot be\nreclaimed — and a user sitting on `v2` now sees `v7` and reasonably\nassumes a migration that does not exist. The signal that says \"read the\nrelease notes before upgrading\" only works if it is rare.\n\n## 2. `v7.0.0` is abandoned\n\nIts tag exists and is immutable, but **no GitHub Release was ever\npublished**: the Release workflow's **Build CLI — macos** job died in\n`Upload artifact` with\n\n```\nFailed to CreateArtifact: Unable to make request: ENOTFOUND\nharden-runner: \"The Internet connection appears to be offline\"\n```\n\na GitHub Actions network/DNS outage on the macOS runner — **not a defect\nin the code**. `v6.0.1` stayed latest until `v7.0.1` superseded it.\n\nThis is the handling `CLAUDE.md` already prescribes and that `v1.11.0`\nreceived: leave the failed version dead, cut the next one. The CHANGELOG\nentry exists so nobody later finds a `v7.0.0` tag with no artifacts and\ngoes looking for a cause in the code.\n\n## Scope\n\nDocumentation only — `CLAUDE.md`, `GEMINI.md` and `docs/CHANGELOG.md`.\nNo code, no behaviour. The two context files are verified byte-identical\nfor the added block, per the project rule that they mirror each other.\n\nOne incidental fix: the new CHANGELOG entry originally used\n`_underscore_` emphasis, which became the file's first emphasis and\nflipped markdownlint's inferred MD049 style, turning every existing\n`*asterisk*` further down the file into an error. Matched to the file's\nexisting style instead.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Added release-versioning guidance clarifying when changes require\nbreaking-change notation or a major version.\n* Documented that internal-only changes generally do not warrant a major\nrelease.\n* Recorded the abandonment of version 7.0.0 after its macOS release\nworkflow failed, with version 7.0.1 superseding it.\n* Clarified that major-version signals are permanent and should reflect\nuser-impacting changes.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-29T07:51:00Z",
+          "tree_id": "2b9cfd9128d8980a2e767e58a2c800ad355f9f27",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/378a46468ba7287e1bebe5588b37ff8438548263"
+        },
+        "date": 1787991091262,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 309.41805254999997,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 309.82394205000526,
             "unit": "ms"
           }
         ]
