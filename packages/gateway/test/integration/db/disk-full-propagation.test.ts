@@ -269,6 +269,7 @@ describe("disk-full propagation through migrated stores", () => {
       const fakeEmbedder = {
         model: "test-model",
         dims: 384,
+        isLocal: true,
         async embed(texts: string[]): Promise<Float32Array[]> {
           return texts.map(() => new Float32Array(384));
         },

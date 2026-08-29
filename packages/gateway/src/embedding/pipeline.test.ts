@@ -135,7 +135,7 @@ function stubEmbedder(model: string, dims: number): Embedder {
   return {
     model,
     dims,
-    isLocal: true,
+    isLocal: !model.startsWith("openai:"),
     async embed(texts) {
       return texts.map(() => new Float32Array(dims));
     },
