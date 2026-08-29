@@ -16,6 +16,14 @@ export interface Embedder {
   model: string;
   dims: number;
   embed(texts: string[]): Promise<Float32Array[]>;
+  /**
+   * Whether embedding runs ON this machine. DECLARED by each implementation, never inferred
+   * from a URL by a caller: `egress/embedding-egress.ts` reads this to decide whether a batch
+   * appends an `egress_ledger` row, and a wrong `true` is silent — no row, no error, and
+   * `nimbus prove` reports a clean zero over real outbound traffic. Same contract as
+   * `LlmProvider.isLocal` (invariant I34).
+   */
+  readonly isLocal: boolean;
 }
 
 /** Result shape of the dual-dimension query embedding (384 local / 1536 OpenAI). */

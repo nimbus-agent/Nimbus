@@ -22,6 +22,9 @@ function fakeEmbedder(model = "local:test", dims = 384): Embedder {
   return {
     model,
     dims,
+    // Callers here name either a local stand-in or ("openai:big") a remote one — derive rather
+    // than thread a fifth param through every call.
+    isLocal: !model.startsWith("openai:"),
     async embed(texts: string[]): Promise<Float32Array[]> {
       return texts.map((_, i) => {
         const v = new Float32Array(dims);
@@ -254,6 +257,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         const emptyEmbedder: Embedder = {
           model: "empty",
           dims: 384,
+          isLocal: true,
           async embed(): Promise<Float32Array[]> {
             return [];
           },
@@ -336,6 +340,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         const throwingEmbedder: Embedder = {
           model: "boom",
           dims: 384,
+          isLocal: true,
           async embed(): Promise<Float32Array[]> {
             throw new Error("synthetic embed failure");
           },
@@ -406,6 +411,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         const slowEmbedder: Embedder = {
           model: "slow",
           dims: 384,
+          isLocal: true,
           async embed(texts: string[]): Promise<Float32Array[]> {
             initCalls += 1;
             return texts.map(() => new Float32Array(384));

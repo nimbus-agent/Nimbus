@@ -12,7 +12,12 @@ interface CallLog {
 }
 
 function makeFakeEmbedder(perCallMs: number): {
-  embedder: { model: string; dims: number; embed: (t: string[]) => Promise<Float32Array[]> };
+  embedder: {
+    model: string;
+    dims: number;
+    isLocal: boolean;
+    embed: (t: string[]) => Promise<Float32Array[]>;
+  };
   calls: CallLog[];
   startTime: number;
 } {
@@ -22,6 +27,7 @@ function makeFakeEmbedder(perCallMs: number): {
   const embedder = {
     model: "fake-mini",
     dims: 384,
+    isLocal: true,
     async embed(texts: string[]): Promise<Float32Array[]> {
       calls.push({ texts: [...texts], beforeTimer: !timerStarted });
       if (calls.length === 1) {
@@ -144,6 +150,7 @@ describe("runEmbeddingThroughputOnce — shared model load", () => {
         return {
           model: "fake-mini",
           dims: 384,
+          isLocal: true,
           embed: async (texts: string[]): Promise<Float32Array[]> =>
             texts.map(() => new Float32Array(384)),
         };

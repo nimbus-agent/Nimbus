@@ -19,6 +19,9 @@ function stubEmbedder(model: string, dims: number): Embedder {
   return {
     model,
     dims,
+    // Every callsite in this file names either the local MiniLM stand-in or the OpenAI one —
+    // derive locality from that naming instead of threading a fourth param through every call.
+    isLocal: !model.startsWith("openai:"),
     async embed(texts) {
       return texts.map(() => new Float32Array(dims));
     },

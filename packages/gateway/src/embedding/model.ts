@@ -48,6 +48,7 @@ export async function createLocalEmbedder(
   return {
     model: LOCAL_EMBEDDING_MODEL_ID,
     dims: 384,
+    isLocal: true,
     async embed(texts: string[]): Promise<Float32Array[]> {
       if (texts.length === 0) {
         return [];

@@ -408,6 +408,8 @@ function makeFakeEmbedder(): Embedder {
   return {
     model: "fake:embedder",
     dims: 384,
+    // Stands in for `createOpenAIEmbedder` in the tests below.
+    isLocal: false,
     async embed(texts: string[]): Promise<Float32Array[]> {
       return texts.map(() => new Float32Array(384));
     },

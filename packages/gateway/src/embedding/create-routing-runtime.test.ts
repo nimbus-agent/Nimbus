@@ -41,6 +41,7 @@ function fakeEmbedder(model: string, dims: number): Embedder {
   return {
     model,
     dims,
+    isLocal: true,
     async embed(texts: string[]): Promise<Float32Array[]> {
       return texts.map((_, i) => {
         const v = new Float32Array(dims);
@@ -435,6 +436,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         return {
           model: "local:all-MiniLM-L6-v2",
           dims: 384,
+          isLocal: true,
           async embed(_texts: string[]): Promise<Float32Array[]> {
             return [];
           },
@@ -458,6 +460,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         return {
           model: "local:all-MiniLM-L6-v2",
           dims: 384,
+          isLocal: true,
           async embed(_texts: string[]): Promise<Float32Array[]> {
             return [];
           },
@@ -493,6 +496,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         return {
           model: "local:all-MiniLM-L6-v2",
           dims: 384,
+          isLocal: true,
           async embed(_texts: string[]): Promise<Float32Array[]> {
             throw new Error("synthetic embed failure");
           },

@@ -16,6 +16,7 @@ export async function createOpenAIEmbedder(
   return {
     model: modelTag,
     dims: dimensions,
+    isLocal: false,
     async embed(texts: string[]): Promise<Float32Array[]> {
       if (texts.length === 0) {
         return [];

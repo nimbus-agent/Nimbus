@@ -21,6 +21,7 @@ function mockEmbedder(dim: number, model: string): Embedder {
   return {
     model,
     dims: dim,
+    isLocal: true,
     async embed(texts: string[]) {
       return texts.map(() => new Float32Array(dim).fill(0.01));
     },
@@ -134,6 +135,7 @@ function stubEmbedder(model: string, dims: number): Embedder {
   return {
     model,
     dims,
+    isLocal: true,
     async embed(texts) {
       return texts.map(() => new Float32Array(dims));
     },
@@ -277,6 +279,7 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     const badEmbedder: Embedder = {
       model: "Xenova/all-MiniLM-L6-v2",
       dims: 384,
+      isLocal: true,
       async embed(_texts) {
         // Always return exactly 1 vector regardless of how many chunks were produced
         return [new Float32Array(384)];
@@ -308,6 +311,7 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     const wrongDimEmbedder: Embedder = {
       model: "Xenova/all-MiniLM-L6-v2",
       dims: 384,
+      isLocal: true,
       async embed(texts) {
         // Return the right count but wrong dims
         return texts.map(() => new Float32Array(128));
@@ -365,6 +369,7 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     const flakyEmbedder: Embedder = {
       model: "Xenova/all-MiniLM-L6-v2",
       dims: 384,
+      isLocal: true,
       async embed(texts) {
         embedCallCount += 1;
         if (embedCallCount === 2) {
@@ -476,6 +481,7 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     const flakyEmbedder: Embedder = {
       model: "Xenova/all-MiniLM-L6-v2",
       dims: 384,
+      isLocal: true,
       async embed(texts) {
         callIdx += 1;
         if (callIdx === 2) {
@@ -685,6 +691,7 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     const trackingEmbedder: Embedder = {
       model: "Xenova/all-MiniLM-L6-v2",
       dims: 384,
+      isLocal: true,
       async embed(texts) {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
