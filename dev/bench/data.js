@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788007644477,
+  "lastUpdate": 1788009511362,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "cc0490eb21a10162403048376523a61c6553a606",
-          "message": "chore(main): release 0.9.0 (#645)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.9.0](https://github.com/nimbus-agent/Nimbus/compare/v0.8.0...v0.9.0)\n(2026-06-15)\n\n\n### Features\n\n* **perf:** hybrid perf-CI strategy — gate stable surfaces, trend the\nnoisy ones ([#642](https://github.com/nimbus-agent/Nimbus/issues/642))\n([abfdfbe](https://github.com/nimbus-agent/Nimbus/commit/abfdfbe8c76ec59dcd3337317bc0c3241775a2db))\n\n\n### Bug Fixes\n\n* **deps:** clear high audit advisories (vite/protobufjs/form-data)\n([#644](https://github.com/nimbus-agent/Nimbus/issues/644))\n([24169d9](https://github.com/nimbus-agent/Nimbus/commit/24169d9928b9317bd0ed19982eaad9f0b2e5e925))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n  * Version 0.9.0 released\n* Changelog updated with new release notes documenting performance\nimprovements and dependency audit advisory cleanup\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-16T06:57:24+03:00",
-          "tree_id": "a628d9378f8d0669ec6f1059a0acaebda58e3200",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/cc0490eb21a10162403048376523a61c6553a606"
-        },
-        "date": 1781582936293,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 297.6278346999992,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 297.1809992500101,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 318.3399633500063,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33273b27aa387d0fb8232847757b95d198efe602",
+          "message": "feat(egress): ledger remote embeddings and add per-task model routing (#1384)\n\nCloses invariant **I29**'s last `model`-class exclusion, then adds\nper-task model routing. Two parts, one branch, 17 commits — none\nbreaking.\n\nPlan:\n`docs/superpowers/plans/2026-08-29-embedding-egress-and-task-routing.md`\n(committed here, with the cross-model review's findings and a Review\nResponses section recording which were fixed differently and why).\n\n## Part A — remote embeddings now appear in the egress ledger\n\n`nimbus prove` reports what left the machine. Embeddings were the last\npath it could not see: a user could be told **`model: 0`** while their\ntext really went to OpenAI. `PROSE_HEAVY_TYPES` routed prose to OpenAI's\n1536-dim table with no appender.\n\n- **`Embedder.isLocal`**, declared per implementation — hardcoded\n`false` on the OpenAI embedder, `true` on-device. Never inferred from a\nURL by a caller.\n- **`egress/embedding-egress.ts`'s `wrapLedgeredEmbedder`**, a decorator\napplied at construction, mirroring `wrapLedgeredProvider` (I29/D22(e)).\nBecause it wraps the *instance*, every caller is covered —\n`embedQueryDual`, `backfillAll`, the reembed sink — without any of them\ncooperating.\n- **One row per BATCH**, not per text: one HTTP request carries the\nwhole array. `method='embedding.embed'`, batch size in the payload\nsummary, never the texts.\n- **Fail-closed.** The append precedes the request; a failure throws\n`EgressAppendFailedError` and the delegate never runs.\n- **Locality is DERIVED**, not passed. A local embedder is returned by\n*identity* — `expect(wrapped).toBe(inner)` — so there is no wrapper to\nappend from.\n- **Static rule D22(f)** confines both the decorator *and*\n`createOpenAIEmbedder` itself, plus a runtime enforcement test.\n\nThe `model` class now has four appenders — route-table generates, the\nMastra agent, the `ask` classifier, and embeddings — and **carries no\nnamed exclusion**. A local embedder still appends nothing: that is the\nclass working as designed, not a residual exclusion, and the prose says\nso explicitly rather than claiming \"every embedding is logged\".\n\n### One behaviour change worth naming\n\nA remote embed now **hard-fails when the ledger cannot be written**.\nThat is the intended fail-closed posture — a zero window must mean\nnothing left, never that something left unrecorded — and the CHANGELOG\nsays so.\n\n## Part B — per-task model routing\n\n`[llm.tasks]` in `nimbus.toml` pins a task type to a route, so a 3B\nmodel can classify while a 14B model reasons:\n\n```toml\n[llm.tasks]\nclassification = \"ollama/llama3.2:latest\"\nreasoning      = \"ollama/qwen3:14b\"\n```\n\n- **A pin REORDERS candidates; it never EXEMPTS one.** `enforce_air_gap`\nand the capability floor still apply — a pin cannot resurrect a remote\nroute under air-gap.\n- **Fail-open on a stale pin** (read side): an unregistered or\nunavailable pin falls through to normal ordering. Deliberate, and\ncommented — a stale pin should degrade to a working answer, not an\noutage, and it can only choose among routes already registered and\nalready ledgered.\n- **Fail-closed on the write side:** `nimbus llm use` refuses an unknown\ntask or an unregistered route id and writes nothing.\n- **`nimbus llm use <task> <routeId>`** writes that **same** table and\napplies the pin live — no restart, and it survives one.\n- The dead `getDefault` accessor is deleted.\n\n### One store, not two\n\nAn earlier draft had `llm.use` write the `llm_task_defaults` DB table\nwhile boot read only the TOML — the command would have appeared to work\nand changed nothing. A cross-model review caught it and proposed merging\nthe two with a precedence rule. **Rejected:** needing to ask *\"which\nwins, the file or the table?\"* is the signal a design has two sources of\ntruth. There is one store. This also follows existing precedent —\n`nimbus connector set-interval` writes the index and there is\ndeliberately no TOML key for sync cadence.\n\n## What the reviews caught\n\nEight tasks, each implemented by a fresh agent and reviewed\nindependently, then a whole-branch review and one fix wave. The findings\nworth knowing:\n\n- **A plan defect that would have broken the desktop UI.** The plan said\nto delete `setDefault` *and* `getDefault` as dead. Only `getDefault` is.\n`setDefault` backs `llm.setDefault` — in the Tauri `ALLOWED_METHODS`,\ncalled by the desktop UI. The task's precondition check **blocked**\nrather than deleting, and the scope was cut to `getDefault` only.\n- **Four tests that could not fail**, all fixed: one satisfied by an\nimport line; one whose \"split across lines\" regex could not span lines;\nand — the serious one — the *only* test guarding \"a pin cannot resurrect\na remote route under air-gap\" passed for two reasons unrelated to\nair-gap, so deleting the air-gap check left it green.\n- **A guard that guarded the wrong thing.** D22(f) originally confined\nthe decorator, so a new file calling `createOpenAIEmbedder` bare was\ninvisible to it — while its comment attested it caught exactly that. It\nnow confines the entry point, like D22(e).\n- **A user-visible stale claim.** `nimbus prove` printed `model:\n\"prompts sent to a non-local model route\"` — a scope label that excludes\nan embedding batch. Fixed.\n\n## Verification\n\n- **The I29 claim was traced end to end, not assumed.**\n`createOpenAIEmbedder` is the only remote `Embedder` factory and the\nonly `api.openai.com/v1/embeddings` caller; it has exactly three\nnon-test importers and all three wrap at construction. No path reaches a\nreal network embed without a row.\n- **Positive end-to-end proof at a real wiring site:**\n`create-routing-runtime.test.ts` asserts a row actually lands via the\nreal ledger — the branch's central claim as a test, not a static trace.\n- Red-proves throughout, including two verified independently by a\nreviewer reverting the production line itself rather than trusting a\ntranscript.\n- `bun run preflight:fast` — pass. Full CI command `bun test\npackages/gateway packages/cli scripts` — **19,501 pass**. The 3 `tui`\nfailures are the known load-flake (4/4 in isolation, on this branch and\non `main`).\n- Also fixes **`main`'s red Static job**: a broken\n`packages/mcp-connectors` doc reference I introduced in #1380, which\npassed locally only because an untracked leftover directory still exists\non my machine.\n\n### Not verified locally\n\n**The CI-Linux coverage floor was not run** — Docker Desktop is down on\nthis machine, and a scoped native run is not authoritative (different\nfile set, different platform). Native numbers on the new files are\ncomfortably above the floor (`embedding-egress.ts` 100/85.7,\n`toml-section-writer.ts` 92.5/86.5, `router.ts` 97.1/93.9), but CI is\nthe first real check.\n\n## Filed, not fixed\n\n- **#1382** — `nimbus config set llm.tasks.<task> <id>` silently no-ops.\nThe helper splits a dotted key on the *first* dot, writing a line the\nparser ignores. Newly *reachable* because this PR adds `[llm.tasks]`,\nnot newly caused. Deferred because it lives in shared CLI code this PR\ndoesn't otherwise touch, and squash-merge would attribute a CLI fix to a\n`feat(llm)` commit.\n- **#1383** — `llm.setDefault` is **write-only**: the desktop UI sets a\nper-task default nothing ever reads. Pre-existing. Removing a\nrenderer-exposed IPC method is a breaking surface change, and\nre-pointing it needs a product decision.\n\n## Not breaking\n\nEvery commit is `feat`/`fix`/`test`/`docs`/`refactor` with no `!`.\n`Embedder.isLocal` is a required field on an interface inside\n`packages/gateway`, which is `private: true` with no published surface.\n`[llm.tasks]` is optional. `llm.use` is additive and deliberately absent\nfrom both the Tauri allowlist and the HTTP write allowlist, with a test\npinning each absence.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus llm use <task> <routeId>` to pin tasks to routes,\nvalidate selections, save configuration, and apply changes immediately.\n* Added per-task route preference support with fallback when a pinned\nroute is unavailable.\n* Remote embedding batches are now recorded in egress coverage, while\nlocal embeddings remain unrecorded.\n\n* **Documentation**\n* Updated CLI, routing, egress coverage, security invariant, and roadmap\ndocumentation.\n* Documented additional LLM status and model-pull cancellation methods.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-29T13:08:39Z",
+          "tree_id": "8b618bc534ed3ce03cb8c629215efe4befb91d35",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/33273b27aa387d0fb8232847757b95d198efe602"
+        },
+        "date": 1788009508364,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 259.4946654499963,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 262.5990062499965,
             "unit": "ms"
           }
         ]
