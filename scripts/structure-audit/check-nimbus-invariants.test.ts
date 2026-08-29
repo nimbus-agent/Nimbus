@@ -8,6 +8,7 @@ import {
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
+  checkEmbeddingAppenderConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkForwardShareConfinement,
   checkRunConfinedConfinement,
@@ -842,6 +843,39 @@ describe("D22(d) — agent emitter import confinement", () => {
         },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("D22(f) — the embedding appender is confined", () => {
+  const file = (relPath: string, contents: string) => [{ relPath, contents }];
+
+  test("flags wrapLedgeredEmbedder called outside the allowed sites", () => {
+    const v = checkEmbeddingAppenderConfinement(
+      file("packages/gateway/src/agents/rogue.ts", "wrapLedgeredEmbedder(db, e);\n"),
+    );
+    expect(v.map((x) => x.rule)).toEqual(["embedding-appender-confined"]);
+  });
+
+  test("the three construction sites and the definition are allowed", () => {
+    const allowed = [
+      "packages/gateway/src/embedding/create-routing-runtime.ts",
+      "packages/gateway/src/embedding/create-embedding-runtime.ts",
+      "packages/gateway/src/ipc/index-reembed-rpc.ts",
+      "packages/gateway/src/egress/embedding-egress.ts",
+    ];
+    for (const relPath of allowed) {
+      expect(
+        checkEmbeddingAppenderConfinement(file(relPath, "wrapLedgeredEmbedder(db, e);\n")),
+      ).toEqual([]);
+    }
+  });
+
+  test("a call SPLIT ACROSS LINES is still flagged", () => {
+    // The D25 lesson: a per-line scan matches neither line of `wrapLedgeredEmbedder\n  (db, e)`.
+    const v = checkEmbeddingAppenderConfinement(
+      file("packages/gateway/src/agents/rogue.ts", "const x = wrapLedgeredEmbedder\n  (db, e);\n"),
+    );
+    expect(v).toHaveLength(1);
   });
 });
 

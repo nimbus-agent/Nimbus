@@ -2210,6 +2210,21 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     ]);
     expect(violations.map((v) => v.rule)).toContain("D22-register-route");
   });
+
+  test("I29: every remote-embedder construction site wraps with the appender", async () => {
+    // Rule (f) stops a NEW file calling the appender; this stops an EXISTING construction site
+    // quietly dropping it. Asserted on source because the sites build real network clients.
+    const sites = [
+      "packages/gateway/src/embedding/create-routing-runtime.ts",
+      "packages/gateway/src/embedding/create-embedding-runtime.ts",
+      "packages/gateway/src/ipc/index-reembed-rpc.ts",
+    ];
+    for (const rel of sites) {
+      const src = stripComments(await readFile(resolve(REPO_ROOT, rel), "utf8"));
+      expect(src).toContain("createOpenAIEmbedder");
+      expect(src).toContain("wrapLedgeredEmbedder");
+    }
+  });
 });
 
 describe("I34 — locality is declared once, and a cloud adapter can never claim to be local", () => {

@@ -981,6 +981,42 @@ export function checkAgentEmitterImportConfinement(files: readonly FileEntry[]):
   return out;
 }
 
+// D22 (f): the EMBEDDING appender. `egress/embedding-egress.ts`'s `wrapLedgeredEmbedder` is
+// the I29 `model`-class appender for embeddings. A file that constructs a remote embedder
+// without it puts an unrecorded egress path in the index pipeline -- the exact false zero
+// `nimbus prove` would then report a clean window over.
+const D22_EMBED_WRAP_RE = /\bwrapLedgeredEmbedder\b/;
+const D22_EMBED_WRAP_ALLOWED: readonly string[] = [
+  "packages/gateway/src/egress/embedding-egress.ts",
+  "packages/gateway/src/embedding/create-routing-runtime.ts",
+  "packages/gateway/src/embedding/create-embedding-runtime.ts",
+  "packages/gateway/src/ipc/index-reembed-rpc.ts",
+];
+
+export function checkEmbeddingAppenderConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (D22_EMBED_WRAP_ALLOWED.includes(f.relPath)) continue;
+    // Whole-source scan, not per-line: `stripComments` preserves length, so a match offset
+    // maps 1:1 onto the original line numbering.
+    const stripped = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const re = new RegExp(D22_EMBED_WRAP_RE.source, "g");
+    for (const m of stripped.matchAll(re)) {
+      const line = stripped.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "embedding-appender-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -1207,6 +1243,10 @@ export const RULE_ANCHORS: readonly string[] = [
   // `iterateSourceFiles()` stopped loading `exec/`, and the D10–D22 anchors would still be present
   // to make the run look healthy.
   "packages/gateway/src/exec/exec-run.ts",
+  // D22(f) — anchored on one of the three embedding-appender construction sites, a file the
+  // rule SCANS (it is on the allow-list, so it is read and then permitted) rather than the
+  // definition file the rule also permits. Same shape as the D23 anchor above.
+  "packages/gateway/src/embedding/create-routing-runtime.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -1407,6 +1447,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D22(d) agent emitter imported outside ipc/agents-rpc.ts — a second entry point would serve a brief with no egress row; I29 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkEmbeddingAppenderConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D22(f) wrapLedgeredEmbedder referenced outside the three construction sites/embedding-egress.ts — an unrecorded remote embed; I29 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { Logger } from "pino";
+import { wrapLedgeredEmbedder } from "../egress/embedding-egress.ts";
 import { createLocalEmbedder } from "../embedding/model.ts";
 import { createOpenAIEmbedder } from "../embedding/openai-embedder.ts";
 import { SqliteEmbeddingPipeline } from "../embedding/pipeline.ts";
@@ -98,7 +99,10 @@ export async function resolveEmbedder(
       );
     }
     const openaiModel = model.slice("openai:".length);
-    return createOpenAIEmbedder({ apiKey, model: openaiModel, dimensions: 1536 });
+    return wrapLedgeredEmbedder(
+      ctx.db,
+      await createOpenAIEmbedder({ apiKey, model: openaiModel, dimensions: 1536 }),
+    );
   }
   if (model === "Xenova/all-MiniLM-L6-v2" || model === "local") {
     return createLocalEmbedder({ cacheDir: join(ctx.paths.dataDir, "models") });

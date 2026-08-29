@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
+import { wrapLedgeredEmbedder } from "../egress/embedding-egress.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
@@ -71,11 +72,14 @@ async function tryCreateOpenAIEmbeddingRuntime(
     openaiModel = "text-embedding-3-small";
   }
   try {
-    const embedder = await openaiEmbedderFactory({
-      apiKey,
-      model: openaiModel,
-      dimensions: 1536,
-    });
+    const embedder = wrapLedgeredEmbedder(
+      db,
+      await openaiEmbedderFactory({
+        apiKey,
+        model: openaiModel,
+        dimensions: 1536,
+      }),
+    );
     return createLazyEmbeddingRuntime(db, paths.dataDir, logger, slice, embedder);
   } catch (err) {
     logger.warn(

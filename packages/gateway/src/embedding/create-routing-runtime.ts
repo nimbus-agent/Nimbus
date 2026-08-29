@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
+import { wrapLedgeredEmbedder } from "../egress/embedding-egress.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import { processEnvGet } from "../platform/env-access.ts";
@@ -45,11 +46,14 @@ export async function tryCreateRoutingEmbeddingRuntime(
   let openaiEmbedder: Embedder;
   try {
     localEmbedder = await createEmbedder({ cacheDir: join(paths.dataDir, "models") });
-    openaiEmbedder = await createOpenAIEmbedder({
-      apiKey,
-      model: "text-embedding-3-small",
-      dimensions: EMBEDDING_DIM_OPENAI,
-    });
+    openaiEmbedder = wrapLedgeredEmbedder(
+      db,
+      await createOpenAIEmbedder({
+        apiKey,
+        model: "text-embedding-3-small",
+        dimensions: EMBEDDING_DIM_OPENAI,
+      }),
+    );
   } catch (err) {
     logger.warn(
       {

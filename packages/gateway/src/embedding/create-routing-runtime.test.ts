@@ -354,7 +354,10 @@ describe.skipIf(!VEC_AVAILABLE)(
     });
 
     test("embedQueryDual returns both vectors with both model tags", async () => {
-      const h = makeHarness({ migrateTo: 30, setApiKey: true });
+      // migrateTo: 44, not the block's usual 30 — this is the one test in the block that
+      // actually calls the OpenAI leg's embed(), which now goes through wrapLedgeredEmbedder
+      // (I29 D22(f)) and needs the V44 egress_ledger table to append into.
+      const h = makeHarness({ migrateTo: 44, setApiKey: true });
       try {
         const factory = await importFactory();
         const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
@@ -466,7 +469,9 @@ describe.skipIf(!VEC_AVAILABLE)(
           },
         };
       }
-      const h = makeHarness({ migrateTo: 30, setApiKey: true });
+      // migrateTo: 44 — this test also drives the OpenAI leg's embed() (wrapLedgeredEmbedder,
+      // I29 D22(f)), which needs the V44 egress_ledger table.
+      const h = makeHarness({ migrateTo: 44, setApiKey: true });
       try {
         const factory = await importFactory(emptyLocalEmbedder);
         const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
