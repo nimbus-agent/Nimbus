@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787991678516,
+  "lastUpdate": 1788007644477,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "24169d9928b9317bd0ed19982eaad9f0b2e5e925",
-          "message": "fix(deps): clear high audit advisories (vite/protobufjs/form-data) (#644)\n\n## Problem\n\nThe `bun audit --audit-level high` CI gate is red (surfaced on the\nrelease PR #643 and on every PR + the next `main` push). Three new high\nadvisories landed in the advisory DB:\n\n| Package | Was | Now | Advisory |\n|---|---|---|---|\n| `vite` | 7.3.3 | **7.3.5** |\n[GHSA-fx2h-pf6j-xcff](https://github.com/advisories/GHSA-fx2h-pf6j-xcff)\n— `server.fs.deny` bypass on Windows alternate paths |\n| `protobufjs` | 7.5.8 | **7.6.4** |\n[GHSA-wcpc-wj8m-hjx6](https://github.com/advisories/GHSA-wcpc-wj8m-hjx6)\n— unbounded `Any` expansion DoS |\n| `form-data` | 4.0.5 | **4.0.6** |\n[GHSA-hmw2-7cc7-3qxx](https://github.com/advisories/GHSA-hmw2-7cc7-3qxx)\n— CRLF injection via field names |\n\n`vite` and `protobufjs` already had root `overrides` pinned to the\n(now-vulnerable) versions; this bumps both pins. `form-data` is a new\noverride (pulled transitively via `@vscode/vsce`, dev-only). All three\nfixes stay within the same major line — no breaking upgrades.\n\nThis is the follow-on to the `ws` bump merged in #642; the moderate/low\nadvisories (`qs`, `yaml`, `node-tar`, `@ai-sdk/provider-utils`) remain\nbelow the `--audit-level high` gate and are out of scope here.\n\n## Verification\n\n- `bun audit --audit-level high` → clean (exit 0)\n- `bun run typecheck` (all packages) → green\n- `@nimbus/docs` build (exercises vite 7.3.5) → green\n- gateway embedding tests (exercise protobufjs 7.6.4 via\n`@xenova/transformers`) → 174 pass, 0 fail\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated dependencies: `protobufjs` (7.5.8 → 7.6.4) and `vite` (7.3.3 →\n7.3.5).\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-15T18:55:37Z",
-          "tree_id": "a73d877e8c0ee79e4f0c539ea83877987a1534b3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/24169d9928b9317bd0ed19982eaad9f0b2e5e925"
-        },
-        "date": 1781550576022,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 298.01959495000153,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 305.7873003999954,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 248.59105424999143,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ea92fa30952bc032943750d1cc2361801296ad0e",
+          "message": "docs(roadmap): record the agent-reach direction and two rejected directions (#1385)\n\nDocs-only. A **direction record, not a re-sequencing** — the build slot\nstays S2, no phase moved, and nothing here is committed to a slot.\n\n## What prompted this\n\nA brainstorm about whether Nimbus should fork VS Code the way Cursor\ndid, and which features from OpenClaw and Hermes Agent are worth\nadopting.\n\n## The finding that reshaped it\n\n**Five of the six capabilities the OpenClaw / Hermes survey turned up\nwere already roadmap rows.** Filing them would have produced six\nduplicates:\n\n| Capability | Already lives at |\n| --- | --- |\n| Self-authored / runtime-generated skills | S2 runtime tool generation;\nPhase 14 stretch |\n| Persistent cross-session memory | Phase 10 — long-term episodic memory\n|\n| Proactive scheduled runs / morning digest | Phase 10 — scheduled\nworkflows, morning briefing |\n| Trajectory export for fine-tuning | Phase 14 — tool-use trace dataset\nbuilder |\n| Any OpenAI-compatible endpoint | S2 already names a local\nOpenAI-compatible runtime as still open |\n\nThey are recorded as a \"do not re-file\" table so the survey is not\nrepeated.\n\n## The one real gap\n\nVerified in the tree rather than assumed. `IntentRouter.handle` in\n`chatops/intent-router.ts` dispatches on exactly two `parseCommand`\noutcomes — `read` calls `askEngine`, `write` calls `runGatedWrite` — and\nthere is no `agents.*` call anywhere under `chatops/`.\n\nSo the fourteen built-in agents, the output that renders\n**deterministically with no LLM**, are the one thing a channel cannot\nget, while the reachable read path requires a model. The dependency\nprofile is inverted. Phase 6 marks the bot shipped, which is true and\ndoes not cover this.\n\nRecorded as a surface direction in § Track 2 → Client surfaces, with\nacceptance criteria. The `egress_ledger` question is left **explicitly\nopen** rather than assumed: `recordAgentBriefEgress` selects on\n`ClientKind`, whose `mcp` and `http` arms do not cover a ChatOps origin.\nThat map is total by construction, so adding this surface is a compile\nerror until the class is decided — the intended behaviour, not an\nobstacle.\n\n## New section: Rejected Directions\n\nEach entry carries the condition that would reopen it. A matching\nconvention was added to § How to Update This Document.\n\n- **Forking VS Code.** The four wants behind it — distribution, UI\ncontrol, code-writing, marketplace independence — each have a cheaper\ninstrument. The load-bearing premise \"the extension API blocks us\" is\n**untested**: the `why`-lens hover is specified and unbuilt. That is the\nreopen condition, and it is a cheap experiment.\n- **Agent-authored code generation.** Scoped narrowly so adjacent\nplanned work is not read as rejected: Phase 9.7 connector writes stay\nplanned, and owner-invoked `nimbus exec` already ships under I33. What\nis rejected is an LLM that authors and applies changes to the user's\nsource — which walks through the exact door I33's own scope bound names\nas the first assumption to re-examine, since indexed Slack / Jira /\nemail text would reach the prompt.\n- **Default-on browser and shell automation.** The posture, not the\ncapability; S2's computer-use row is the sanctioned form.\n\n## Files\n\n- `docs/roadmap.md` — messaging promoted to a client surface, new\nRejected Directions section plus Contents entry, Last-updated entry,\nHow-to-Update convention\n- `docs/architecture.md` — the ChatOps two-intent surface stated as a\nload-bearing fact\n- `docs/README.md` — Slack/Teams bot added to the surfaces diagram; a\nlabelled direction-not-built paragraph\n- `CLAUDE.md` / `GEMINI.md` — **drive-by, required for this branch to be\ngreen:** the `packages/mcp-connectors` path has not existed since v3.0.0\nand was already reding `audit:doc-refs` on main. Fixed with the same\nwording the in-flight embedding branch uses, so the two cannot diverge.\n\n## Verification\n\n- `bun run preflight:fast` — all 32 gates pass\n- `bun run audit:links` — 1,661 links, 0 errors\n- No source touched, so no test-suite delta\n\n## Note for whoever merges second\n\n`dev/asaf/embedding-egress-task-routing` makes S2's \"embeddings remain\nI29's one model-class exclusion\" sentence stale. This PR deliberately\ndoes not touch that sentence, so there is no conflict — but it should be\nre-read after both land.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01XYrDUio5eZvPhLEbh45zXR\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-29T12:33:53Z",
+          "tree_id": "f3146d89304d700248ce3163d05cebf34212099c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ea92fa30952bc032943750d1cc2361801296ad0e"
+        },
+        "date": 1788007641334,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 316.94844329999904,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 318.3399633500063,
             "unit": "ms"
           }
         ]
