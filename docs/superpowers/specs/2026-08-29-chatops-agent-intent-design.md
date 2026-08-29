@@ -6,6 +6,7 @@
 **Roadmap:** [`docs/roadmap.md` § Track 2 → Client surfaces](../../roadmap.md#client-surfaces), the
 "Messaging surface — agents on the channel (direction, not yet built)" block
 **Delivers as:** two PRs, in order — see §4
+**Reviewed:** [design review](./2026-08-29-chatops-agent-intent-design-review.md) (Antigravity, 2026-08-29) — responses in §13
 
 The roadmap block is the origin of this work but is **not** the binding authority for it: §2.1 and
 §2.3 record two claims in it that reading the code contradicted. Where this document and the roadmap
@@ -115,7 +116,7 @@ const post = buildConnectorPost(runTool, (conversationId) =>
 Static rule **D17** already confines the `slack_chat_post` / `teams_chat_post` tool ids to
 `chatops/reply-dispatcher.ts` and `chatops/transport/`.
 
-So a decorator applied to that one closure covers every outbound chat post — operational replies,
+So decorating that one closure covers every outbound chat post — operational replies,
 HITL approval cards, tribal-watcher suggestions, and any caller written later — without any of them
 cooperating. This is the same shape as `wrapLedgeredProvider` (I29/D22(e)) and
 `wrapLedgeredEmbedder` (D22(f)), chosen for the same reason.
@@ -200,17 +201,40 @@ ledger, PR 2 adds a message grammar that did not previously resolve.
 
 ### 5.1 The appender
 
-New file `egress/chatops-egress.ts`, exporting `wrapLedgeredChatPost`:
+New file `egress/chatops-egress.ts`. The post kind is bound **at construction**, not passed per
+call, so one factory returns one wrapped function per kind:
 
 ```ts
-export function wrapLedgeredChatPost(
+export type ChatPostKind = "reply" | "approvalCard" | "agentBrief";
+export type ChatPost = (platform: ChatPlatform, channelId: string, text: string) => Promise<void>;
+
+export function buildLedgeredChatPosts(
   db: Database,
-  post: (platform: ChatPlatform, channelId: string, text: string) => Promise<void>,
-): (platform: ChatPlatform, channelId: string, text: string) => Promise<void>
+  raw: ChatPost,
+): Readonly<Record<ChatPostKind, ChatPost>>
 ```
 
-Applied once, at `chatops-boot.ts:164`, wrapping the closure `ReplyDispatcher` and
-`ApprovalPresenter` both receive. A **decorator, not a call-site append** — §2.4.
+Applied once at `chatops-boot.ts:164`. `ReplyDispatcher` receives `posts.reply`,
+`ApprovalPresenter` receives `posts.approvalCard`, and the agent invoker (PR 2) receives
+`posts.agentBrief`. A **decorator, not a call-site append** — §2.4.
+
+**Why a factory rather than one wrapper, and why not an optional parameter.** The wrapped signature
+is `(platform, channelId, text)`, which carries no indication of *which* consumer is calling. A
+single wrapper therefore cannot derive the `method` in §5.3 — it would have to sniff the text, which
+is fragile and wrong. Adding an optional `kind?` argument fixes that but breaks two properties at
+once: the value becomes **caller-supplied** (contradicting §5.3's claim outright) and **omittable**,
+so a consumer that forgets it is silently mis-attributed rather than rejected.
+
+Binding the kind at the wiring site keeps both properties. The kind is a construction-time constant
+chosen at the one place that already knows which consumer it is building, no caller can influence
+it, and `Record<ChatPostKind, ChatPost>` is total — a new kind does not compile until it is wired.
+
+**The raw `post` must not survive the factory call.** `buildConnectorPost(...)` is passed directly
+into `buildLedgeredChatPosts(...)` and never bound to a name in `chatops-boot.ts`, so there is no
+unwrapped function in scope for a future consumer to reach for. D17 is extended to enforce this:
+`buildConnectorPost` may be *called* only as an argument to `buildLedgeredChatPosts`. Without that,
+"covers any caller written later" would be true of the two consumers that exist and false of the
+third someone adds.
 
 It appends **before** delegating, and an append failure propagates: no row, no post. A zero-row
 window means no chat message left the machine, never that one left unrecorded. This mirrors
@@ -244,18 +268,34 @@ and one string covering two different attribution strengths is unrecoverable aft
 | Column | Value |
 | --- | --- |
 | `source_type` | `chatops` |
-| `source_id` | the **hashed** channel id — never the channel id itself (see below) |
+| `source_id` | the **salted hash** of the channel id — never the channel id itself (see below) |
 | `destination` | the platform, `slack` or `teams` |
 | `method` | `chatops.reply`, `chatops.approvalCard`, or `chatops.agentBrief` (PR 2) |
 | `payload_summary` | `redactEgressSummary` over `{ bytes }` |
 | `hitl_status` | `not_required` |
 | `result_status` | `authorized` |
 
-**The channel id is hashed, not stored.** A channel id is an identifier for a group of people, the
-ledger is append-only, and its only mutation path is a HITL-gated prune. `nimbus prove` needs to
-answer "how many messages left, to which platform", not "which rooms did the owner talk in". The
-hash keeps per-channel counting possible without the ledger becoming a record of the owner's
-social graph. *(Use the existing BLAKE3 helper; no new primitive.)*
+**The channel id is hashed with a per-install salt, not stored.** A channel id identifies a group of
+people, the ledger is append-only, and its only mutation path is a HITL-gated prune. `nimbus prove`
+needs to answer "how many messages left, to which platform", not "which rooms did the owner talk
+in". A salted hash keeps per-channel *counting* possible without the ledger becoming a record of the
+owner's social graph.
+
+**The salt is required, not belt-and-braces.** A bare hash is reversible here by dictionary, not by
+brute force: Slack channel ids come from a small, enumerable set — anyone with workspace access can
+list every channel, hash each one, and match against the ledger, recovering exactly which rooms the
+gateway posted into. The id's own entropy is irrelevant when the candidate set is known and small.
+
+`BLAKE3(salt ‖ channelId)` with a 32-byte salt generated once per install and stored in the Vault
+under a new key. Implementation notes: the key must be added to the **vault-key allow-list** that
+`check-nimbus-invariants.ts` enforces statically, or the build fails. Reversal is never required —
+nothing reads the hash back to a channel — so a lost or rotated salt costs only the ability to
+correlate rows across the rotation, which is a fail-safe direction.
+
+**Rejected salt sources.** The DPAPI entropy file (`vault/win32.ts`, I12) is Windows-only and
+reusing it would make the ledger's shape platform-dependent, against non-negotiable #5. A machine
+UUID is stable but not secret, so it is not a salt — an attacker who can enumerate channels can
+usually read it too.
 
 `method` distinguishes the three post kinds so the class can be read at finer grain than its
 coverage claim. It is derived server-side from the call site, never supplied by a caller.
@@ -320,7 +360,7 @@ whole vocabulary is four kinds:
 | Kind | Fields |
 | --- | --- |
 | `string` | `topicOrFile`, `fileOrPrUrl`, `file`, `path`, `service`, `ref`, `prUrl`, `term`, `personId` |
-| `number` | `limit`, `depth`, `sinceMs`, `line`, `minConfidence` (a **float** in 0..1, not an integer — `Number()` covers both) |
+| `number` | `limit`, `depth`, `sinceMs`, `line`, `minConfidence` (a **float** in 0..1, not an integer — `Number()` covers both; see the finiteness rule below) |
 | `string[]` | `namespaces` — and `parseNamespaces` already accepts a scalar, so `namespace=team-a` needs no coercion |
 | `boolean` | `repropose` — **`premortem` only, which is excluded**. Zero boolean fields in scope. |
 
@@ -335,6 +375,31 @@ Two modules, split by what resists drift:
 - **`agent-commands/parse-agent-command.ts`** — the grammar and the coercion. Surface-neutral, pure,
   imports nothing from `chatops/`, so a later CLI or browser text surface reuses it unchanged. This
   is the standalone module.
+
+**A coerced number must be finite, and this is load-bearing, not hygiene.** `Number("three")` is
+`NaN`, and `typeof NaN === "number"` — so a `NaN` is not obviously rejected by a validator that
+checks the type. Four of the five numeric fields survive it anyway, because `limit`, `depth`,
+`sinceMs` and `line` all carry `!Number.isInteger(...)`, which `NaN` fails.
+
+**`minConfidence` does not, and it is the only one.** Its check is, correctly for a float:
+
+```ts
+typeof p.minConfidence !== "number" || p.minConfidence < 0 || p.minConfidence > 1
+```
+
+`NaN < 0` is `false` and `NaN > 1` is `false`, so the whole condition is `false` and **`NaN` passes
+validation into `DecisionsInput`**. Downstream every `confidence >= NaN` comparison is also `false`,
+so `@nimbus agent decisions minConfidence=high` would return a brief listing **zero decisions, with
+no error** — a silent wrong answer, which is worse than a refusal.
+
+So `parse-agent-command.ts` rejects a non-finite coercion with `bad_agent_params` before dispatch.
+The guard is `Number.isFinite`, not `!Number.isNaN`: it rejects `Infinity` too, which `minConfidence`
+would otherwise catch by bounds but which no rule guarantees for a field added later.
+
+This is a *defence-in-depth* fix, not a fix to `agents-rpc.ts`. The same `NaN` is reachable today
+over IPC and HTTP by any caller sending `{"minConfidence": null}`-adjacent JSON — tightening the
+validator itself is correct but belongs in its own PR, since it changes behaviour on two shipped
+surfaces. Noted in §13.3 as a follow-up rather than smuggled in here.
 
 **Bounds constants are never copied.** `MAX_LIMIT`, `MAX_SINCE_MS`, `MAX_FILE_LEN` and the rest stay
 module-private to `agents-rpc.ts`. The MCP surface mirrors them into zod today and carries a comment
@@ -438,6 +503,22 @@ unbounded length. Policy:
 
 That last rule is the one to get right, and it needs its own test: a brief whose `## Gaps` sits past
 the byte cap must still post its gaps.
+
+**Use I31's own section machinery — do not write a second markdown parser.** `agents/_lib/` already
+exports everything needed: `reservedHeadingsFor(brief)` / `reservedBlocksFor(brief)` and
+`RESERVED_HEADINGS_BY_KIND` (`reserved-sections.ts`) name the protected sections per brief kind, and
+`stripSections` / `sectionBody` / `joinReserved` (`markdown-sections.ts`) split and reassemble them.
+
+The truncator therefore: takes the reserved blocks via `reservedBlocksFor`, fits the **body** to the
+remaining budget by dropping whole `##` sections from the end, and reassembles with `joinReserved`.
+
+A fresh `^## ` regex would work most of the time and fail in exactly the wrong place. I31's
+guarantee is expressed in terms of *these* functions — `normalizeSectionText`, the any-heading-level
+strip, the non-heading `Gaps:` form — so a truncator with its own notion of "a section" can disagree
+with the invariant at the boundary, and the disagreement surfaces as a dropped disclosure on the one
+brief whose formatting differs. Reusing the functions makes the two definitionally the same. Note
+also that `GAPS_HEADING` is not the whole protected set: `RESERVED_HEADINGS_BY_KIND` is per-kind, so
+hard-coding `"## Gaps"` would under-protect any kind carrying more.
 
 ---
 
@@ -556,7 +637,82 @@ the same whole-repo paths as the push matrix, so `bun run preflight` is the gate
 
 ---
 
-## 13. Decomposition
+## 13. Review responses (Antigravity, 2026-08-29)
+
+Reviewed in [`2026-08-29-chatops-agent-intent-design-review.md`](./2026-08-29-chatops-agent-intent-design-review.md).
+All four suggestions accepted; both open questions answered here and folded into the sections above.
+
+| # | Point | Disposition |
+| --- | --- | --- |
+| 2.1 | The `post` wrapper cannot know its caller | **Fixed**, differently — §5.1 |
+| 2.2 | Salt the hashed channel id | **Fixed** — §5.3 |
+| 2.3 | `NaN` from `Number()` coercion | **Fixed**, and one live hole found — §6.2 |
+| 2.4 | Truncation must splice around `## Gaps` | **Fixed**, strengthened — §6.6 |
+| 3.1 | Diagnostics when the ledger append fails | **Answered** — §13.1 |
+| 3.2 | Federated identity for a chat-triggered peer query | **Answered** — §13.2 |
+
+2.1 was a genuine self-contradiction: §5.3 claimed `method` was "derived server-side from the call
+site" while §5.1 wrapped a closure that has no call-site information. The review's own remedy — an
+optional `context?` argument — resolves the contradiction by conceding the claim, since the value
+becomes caller-supplied *and* omittable. Binding the kind at construction (§5.1) keeps the original
+property instead of trading it away.
+
+2.3 was accepted as written and then found to be live rather than theoretical: `minConfidence` is
+the one numeric field with no `Number.isInteger` guard, so `NaN` passes its validator today. §6.2
+carries the detail; the follow-up below covers the surfaces this design does not touch.
+
+### 13.1 A failed ledger append is silent in-channel and loud in the log
+
+Nothing is posted, and **no error message is posted either.** That is not a UX shrug, it is forced:
+an error reply would itself be an outbound chat post, so posting it would require an append that has
+just been proven to fail. Any "sorry, I could not record this" message is either unledgered — the
+exact hole PR 1 exists to close — or an infinite regress. Silence is the only fail-closed option.
+
+Nor does it emit a `degraded` marker. That source type exists for lost-append *recovery*, and it is
+itself a row: if the ledger is unwritable, writing the marker fails for the same reason.
+
+So the diagnostic goes to the gateway log at `error`, naming the channel (locally, unhashed — the
+log is not the ledger and has different retention and different threat model), the post kind, and
+the underlying error. The reviewer's concern about debugging confusion is real and was, until three
+days ago, worse than they knew: `logger.error({ err }, …)` serialised as `{"err":{}}`, because
+`Error`'s `message` and `stack` are non-enumerable. That is fixed on `main` as of #1393
+(`fix(logging): stop logging every Error as {}`), so this log line will actually carry its cause.
+Without that fix this answer would have been "log it" and the log would have said nothing.
+
+### 13.2 A chat-triggered peer query carries the OWNER's federation identity
+
+Confirmed by reading the path, and it is worth stating because it is not obvious. `ghost`,
+`conflicts` and `huddle` route through `federatedAgentBase(ctx, …)`, which uses `ctx.selfIdentity` —
+the **gateway's** keypair. On the receiving side, I17's `query-gate.ts` evaluates grant, role and
+consent against *that* identity. The chat user's SCIM identity is used to decide whether they may
+invoke an agent at all (§6.5); it is not propagated to the peer, and the peer transport carries no
+indication that the request originated in a channel.
+
+So a mapped chat user borrows the owner's federation identity for the duration of the call.
+
+**Decision: allow it, disclose it, and pin it with a test.** Three reasons. It is identical to the
+shipped HTTP surface, where any `agents`-scoped bearer token already invokes `huddle` under the
+owner's identity — excluding it here while leaving that open would be inconsistent without being
+safer. It is also what these agents are *for*: `huddle` is a cross-team standup summary, and a
+version that could not reach peers would be an empty brief. And §6.5's mapped-identity requirement
+already exists partly to keep this reachable only by enrolled users.
+
+What changes: a test asserts the peer-visible identity is the owner's, so the behaviour is pinned
+rather than incidental, and §9 gains it as a disclosure. **The cheap fallback, if a deployment finds
+this unacceptable:** add the three to `EXTERNAL_EXCLUDED_AGENT_METHODS` — a one-line change that
+costs those three agents on both the ChatOps *and* HTTP surfaces, which is the honest price of the
+consistency argument above.
+
+### 13.3 Follow-up this design deliberately does not do
+
+**Tighten `requireDecisionsParams` to reject non-finite `minConfidence`.** §6.2 blocks `NaN` at the
+ChatOps boundary, which is all this design owes. But the same value is reachable today over IPC and
+HTTP, so the validator itself should reject it — a change on two shipped surfaces, in its own PR,
+with its own tests. Recording it here rather than widening this one.
+
+---
+
+## 14. Decomposition
 
 **PR 1** — `egress/chatops-egress.ts`; `EGRESS_SOURCE_TYPES` + `COVERAGE_CLASSES` +
 `THIS_BINARY_COVERAGE`; wrap at `chatops-boot.ts:164`; CLI label mirror; D17 dead-path cleanup;
