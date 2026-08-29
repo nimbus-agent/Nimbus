@@ -2,6 +2,22 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.0.0](https://github.com/nimbus-agent/Nimbus/compare/v6.0.1...v7.0.0) (2026-08-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **llm:** make LlmRegistryOptions.db required so an unledgered non-local route is a compile error ([#1372](https://github.com/nimbus-agent/Nimbus/issues/1372))
+
+### Bug Fixes
+
+* **perf:** drift-check must use each surface own noise floor, not a hardcoded 10% ([#1374](https://github.com/nimbus-agent/Nimbus/issues/1374)) ([8607743](https://github.com/nimbus-agent/Nimbus/commit/860774328ca64b358c1259b3ab29178f9b63375b))
+
+
+### Code Refactoring
+
+* **llm:** make LlmRegistryOptions.db required so an unledgered non-local route is a compile error ([#1372](https://github.com/nimbus-agent/Nimbus/issues/1372)) ([97ce904](https://github.com/nimbus-agent/Nimbus/commit/97ce9043cb6c08e9e7c5c06a3db5bf71f0bda1c0))
+
 ## [6.0.1](https://github.com/nimbus-agent/Nimbus/compare/v6.0.0...v6.0.1) (2026-08-28)
 
 
