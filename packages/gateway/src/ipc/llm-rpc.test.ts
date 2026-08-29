@@ -1,9 +1,36 @@
 import { describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { parseNimbusTomlLlmSection } from "../config/nimbus-toml.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import { RouteAvailabilityProbe } from "../llm/route-availability.ts";
+import { LlmRouter } from "../llm/router.ts";
 import type { LlmModelInfo, ModelRoute } from "../llm/types.ts";
 import type { LlmRouteStatus, LlmRpcContext } from "./llm-rpc.ts";
 import { dispatchLlmRpc, LlmRpcError } from "./llm-rpc.ts";
+
+// TEST-DATA SAFETY: every `tomlPath` below lives under a fresh `os.tmpdir()` directory,
+// never the real per-machine config dir — `llm.use` writes files, and this suite must never
+// touch a real `nimbus.toml`.
+function makeTempTomlPath(initialContent = ""): { tomlPath: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-llm-rpc-test-"));
+  const tomlPath = join(dir, "nimbus.toml");
+  writeFileSync(tomlPath, initialContent, "utf8");
+  return { tomlPath, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+function makeFakeProviderForRouter(id: string, reportedModels: string[]) {
+  return {
+    providerId: id,
+    isLocal: true,
+    isAvailable: async () => true,
+    listModels: async () => reportedModels.map((modelName) => ({ provider: id, modelName })),
+    generate: async () => {
+      throw new Error("generate() not used by this test");
+    },
+  };
+}
 
 function makeFakeRegistry(models: LlmModelInfo[] = []): LlmRpcContext["registry"] {
   return {
@@ -549,5 +576,106 @@ describe("llm.status reads the registry-owned probe (Fix E)", () => {
     const val = (r as { kind: "hit"; value: { routes: LlmRouteStatus[] } }).value;
     expect(checkRoute).toHaveBeenCalledTimes(1);
     expect(val.routes[0]).toMatchObject({ available: true, reason: "ok" });
+  });
+});
+
+describe("llm.use", () => {
+  test("writes the pin into [llm.tasks] and updates the live router", async () => {
+    const { tomlPath, cleanup } = makeTempTomlPath();
+    try {
+      const router = new LlmRouter({
+        preferLocal: true,
+        localModel: "llama3.2:latest",
+        minReasoningParams: 0,
+        enforceAirGap: false,
+      });
+      router.registerRoute(
+        makeFakeProviderForRouter("ollama", ["llama3.2:latest"]),
+        "llama3.2:latest",
+      );
+      const registry = { llmRouter: router } as unknown as LlmRegistry;
+      const ctx: LlmRpcContext = { registry, notify: () => {}, tomlPath };
+
+      const result = await dispatchLlmRpc(
+        "llm.use",
+        { task: "classification", routeId: "ollama/llama3.2:latest" },
+        ctx,
+      );
+      expect(result.kind).toBe("hit");
+
+      // Persisted: survives a restart, because boot re-reads exactly this table.
+      const written = readFileSync(tomlPath, "utf8");
+      expect(written).toContain('classification = "ollama/llama3.2:latest"');
+      // Round trip, not just "a file was touched": re-parse with the SAME parser boot uses.
+      const reparsed = parseNimbusTomlLlmSection(written);
+      expect(reparsed.taskPins?.get("classification")).toBe("ollama/llama3.2:latest");
+
+      // AND live: the running router honours it without a restart.
+      expect((await router.selectRoute("classification"))?.routeId).toBe("ollama/llama3.2:latest");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("REFUSES a route id that is not registered, and writes nothing", async () => {
+    const { tomlPath, cleanup } = makeTempTomlPath("[llm]\nprefer_local = true\n");
+    try {
+      const before = readFileSync(tomlPath, "utf8");
+      const router = new LlmRouter({
+        preferLocal: true,
+        localModel: "llama3.2:latest",
+        minReasoningParams: 0,
+        enforceAirGap: false,
+      });
+      router.registerRoute(makeFakeProviderForRouter("ollama", ["big"]), "big");
+      const registry = { llmRouter: router } as unknown as LlmRegistry;
+      const ctx: LlmRpcContext = { registry, notify: () => {}, tomlPath };
+
+      await expect(
+        dispatchLlmRpc("llm.use", { task: "reasoning", routeId: "ollama/ghost" }, ctx),
+      ).rejects.toThrow(/not a registered route/);
+      expect(readFileSync(tomlPath, "utf8")).toBe(before);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("REFUSES an unknown task type", async () => {
+    const { tomlPath, cleanup } = makeTempTomlPath();
+    try {
+      const router = new LlmRouter({
+        preferLocal: true,
+        localModel: "llama3.2:latest",
+        minReasoningParams: 0,
+        enforceAirGap: false,
+      });
+      router.registerRoute(makeFakeProviderForRouter("ollama", ["x"]), "x");
+      const registry = { llmRouter: router } as unknown as LlmRegistry;
+      const ctx: LlmRpcContext = { registry, notify: () => {}, tomlPath };
+
+      await expect(
+        dispatchLlmRpc("llm.use", { task: "teleportation", routeId: "ollama/x" }, ctx),
+      ).rejects.toThrow(/classification|reasoning|summarisation|agent_step/);
+      // Nothing was written — the task check runs before the route/persist steps.
+      expect(readFileSync(tomlPath, "utf8")).toBe("");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("refuses when the gateway has no resolved configDir (tomlPath absent)", async () => {
+    const router = new LlmRouter({
+      preferLocal: true,
+      localModel: "llama3.2:latest",
+      minReasoningParams: 0,
+      enforceAirGap: false,
+    });
+    router.registerRoute(makeFakeProviderForRouter("ollama", ["x"]), "x");
+    const registry = { llmRouter: router } as unknown as LlmRegistry;
+    const ctx: LlmRpcContext = { registry, notify: () => {} }; // no tomlPath
+
+    await expect(
+      dispatchLlmRpc("llm.use", { task: "classification", routeId: "ollama/x" }, ctx),
+    ).rejects.toThrow(LlmRpcError);
   });
 });

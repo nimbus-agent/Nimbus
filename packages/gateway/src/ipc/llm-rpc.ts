@@ -1,5 +1,7 @@
+import { setNimbusTomlSectionKey } from "../config/toml-section-writer.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { RouteAvailability } from "../llm/route-availability.ts";
+import type { LlmTaskType } from "../llm/types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class LlmRpcError extends Error {
@@ -14,6 +16,14 @@ export class LlmRpcError extends Error {
 export type LlmRpcContext = {
   registry: LlmRegistry;
   notify: (method: string, params: unknown) => void;
+  /**
+   * The resolved `nimbus.toml` path (`resolveNimbusTomlForProfile(configDir)`), needed only
+   * by `llm.use`, which is the one handler in this file that WRITES config rather than just
+   * reading the registry. Optional so every other handler's test fixture — none of which
+   * needs it — stays unchanged; `handleLlmUse` throws a clear error if it is missing rather
+   * than writing to an undefined path.
+   */
+  tomlPath?: string;
 };
 
 const activePulls = new Map<string, AbortController>();
@@ -171,6 +181,47 @@ async function handleSetDefault(
   return { taskType, provider, modelName };
 }
 
+/**
+ * Pins a task type to a specific route id (`nimbus llm use <task> <routeId>`) — the ONLY
+ * writer of `[llm.tasks]` other than a human hand-editing `nimbus.toml`, and the same table
+ * Task 5's parser reads and Task 6's router honours. Deliberately GATEWAY-side rather than
+ * CLI-side: the gateway is what owns `nimbus.toml` and what knows which routes are currently
+ * registered, so validating and writing here — in one process, one call — closes the window
+ * a CLI-validates/CLI-writes split would leave between the two.
+ *
+ * Fail-CLOSED on both checks, deliberately unlike the router's own fail-open on a stale pin
+ * at READ time (`LlmRouter.orderedRoutes`): writing an unresolvable task or route id would
+ * persist a pin that silently never applies — the orphaned-config shape this whole plan
+ * exists to stop repeating. Nothing is written to `nimbus.toml` unless both checks pass.
+ */
+async function handleLlmUse(params: unknown, ctx: LlmRpcContext): Promise<{ ok: true }> {
+  const p = requireParamsObject(params, "llm.use requires task and routeId");
+  const task = p["task"];
+  const routeId = p["routeId"];
+  if (typeof task !== "string" || !VALID_LLM_TASKS.has(task)) {
+    throw new LlmRpcError(
+      -32602,
+      `Unknown task type "${String(task)}". Expected one of: ${[...VALID_LLM_TASKS].join(", ")}.`,
+    );
+  }
+  if (typeof routeId !== "string" || ctx.registry.llmRouter.routeFor(routeId) === undefined) {
+    const known = ctx.registry.llmRouter
+      .routes()
+      .map((r) => r.routeId)
+      .join(", ");
+    throw new LlmRpcError(
+      -32602,
+      `"${String(routeId)}" is not a registered route. Registered: ${known}`,
+    );
+  }
+  if (ctx.tomlPath === undefined) {
+    throw new LlmRpcError(-32603, "llm.use requires a configured configDir");
+  }
+  setNimbusTomlSectionKey(ctx.tomlPath, "[llm.tasks]", task, routeId);
+  ctx.registry.llmRouter.setTaskPin(task as LlmTaskType, routeId);
+  return { ok: true };
+}
+
 function handleCancelPull(params: unknown): { cancelled: boolean } {
   const p = requireParamsObject(params, "cancelPull requires pullId");
   const pullId = p["pullId"];
@@ -202,5 +253,6 @@ export async function dispatchLlmRpc(
     // richer model data" as this comment used to claim; the two shapes have diverged.
     "llm.getRouterStatus": async (_p, c) => ({ decisions: await c.registry.getRouterStatus() }),
     "llm.setDefault": handleSetDefault,
+    "llm.use": handleLlmUse,
   });
 }

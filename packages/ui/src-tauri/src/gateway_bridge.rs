@@ -415,6 +415,15 @@ mod tests {
         assert!(is_method_allowed("llm.setDefault"));
     }
 
+    // `llm.use` (embedding-egress-and-task-routing Task 7) writes `[llm.tasks]` in
+    // nimbus.toml via a CLI-only path (`nimbus llm use`) — deliberately NOT exposed to the
+    // renderer, unlike the model-lifecycle writes above. A later bulk edit to the llm.*
+    // allowlist block must not add it silently.
+    #[test]
+    fn allowlist_rejects_llm_use() {
+        assert!(!is_method_allowed("llm.use"));
+    }
+
     #[test]
     fn allowlist_ws5c_connector_writes() {
         assert!(is_method_allowed("connector.setConfig"));

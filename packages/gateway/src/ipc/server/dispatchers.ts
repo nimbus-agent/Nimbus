@@ -3,6 +3,7 @@ import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-run
 import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
+  resolveNimbusTomlForProfile,
 } from "../../config/nimbus-toml.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
@@ -111,6 +112,12 @@ export async function tryDispatchLlmRpc(
     const out = await dispatchLlmRpc(method, params, {
       registry: ctx.options.llmRegistry,
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+      // Only `llm.use` reads this (see `LlmRpcContext.tomlPath`'s doc) — resolved the same
+      // way `platform/assemble.ts` resolves the router's own `activeTomlPath`, so a pin
+      // written here lands in the exact file boot re-reads.
+      ...(ctx.options.configDir === undefined
+        ? {}
+        : { tomlPath: resolveNimbusTomlForProfile(ctx.options.configDir) }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

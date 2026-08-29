@@ -1,0 +1,123 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setNimbusTomlSectionKey } from "./toml-section-writer.ts";
+
+// TEST-DATA SAFETY: every path here lives under a fresh `os.tmpdir()` directory — this
+// module writes files, and this suite must never touch a real `nimbus.toml`.
+function makeTempDir(): { dir: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-toml-section-writer-test-"));
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+describe("setNimbusTomlSectionKey", () => {
+  test("creates the file and section when neither exists", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      setNimbusTomlSectionKey(tomlPath, "[llm.tasks]", "classification", "ollama/llama3.2");
+      const content = readFileSync(tomlPath, "utf8");
+      expect(content).toContain("[llm.tasks]");
+      expect(content).toContain('classification = "ollama/llama3.2"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("appends a new section to a file that has other content", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      writeFileSync(tomlPath, "[llm]\nprefer_local = true\n", "utf8");
+      setNimbusTomlSectionKey(tomlPath, "[llm.tasks]", "reasoning", "ollama/big");
+      const content = readFileSync(tomlPath, "utf8");
+      expect(content).toContain("[llm]\nprefer_local = true");
+      expect(content).toContain("[llm.tasks]");
+      expect(content).toContain('reasoning = "ollama/big"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("inserts a new key into an existing section without disturbing its other keys", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      writeFileSync(
+        tomlPath,
+        '[llm.tasks]\nclassification = "ollama/small"\n\n[llm]\nprefer_local = true\n',
+        "utf8",
+      );
+      setNimbusTomlSectionKey(tomlPath, "[llm.tasks]", "reasoning", "ollama/big");
+      const content = readFileSync(tomlPath, "utf8");
+      expect(content).toContain('classification = "ollama/small"');
+      expect(content).toContain('reasoning = "ollama/big"');
+      expect(content).toContain("prefer_local = true");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("replaces an existing key in place rather than duplicating it", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      writeFileSync(tomlPath, '[llm.tasks]\nclassification = "ollama/small"\n', "utf8");
+      setNimbusTomlSectionKey(tomlPath, "[llm.tasks]", "classification", "ollama/big");
+      const content = readFileSync(tomlPath, "utf8");
+      expect(content.match(/classification\s*=/g)).toHaveLength(1);
+      expect(content).toContain('classification = "ollama/big"');
+      expect(content).not.toContain("ollama/small");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("does not bleed into a later section sharing a name prefix", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      writeFileSync(
+        tomlPath,
+        '[llm.tasks]\nreasoning = "ollama/a"\n\n[llm.tasks.extra]\nreasoning = "ollama/b"\n',
+        "utf8",
+      );
+      setNimbusTomlSectionKey(tomlPath, "[llm.tasks]", "reasoning", "ollama/changed");
+      const content = readFileSync(tomlPath, "utf8");
+      const lines = content.split("\n");
+      const extraIdx = lines.findIndex((l) => l.trim() === "[llm.tasks.extra]");
+      expect(lines[extraIdx + 1]?.trim()).toBe('reasoning = "ollama/b"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a non-numeric, non-boolean value is quoted; booleans and integers pass through", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      setNimbusTomlSectionKey(tomlPath, "[example]", "flag", "true");
+      setNimbusTomlSectionKey(tomlPath, "[example]", "count", "7");
+      setNimbusTomlSectionKey(tomlPath, "[example]", "name", "hello world");
+      const content = readFileSync(tomlPath, "utf8");
+      expect(content).toContain("flag = true");
+      expect(content).toContain("count = 7");
+      expect(content).toContain('name = "hello world"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("escapes backslashes and quotes in a string value", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      setNimbusTomlSectionKey(tomlPath, "[example]", "path", String.raw`C:\models\a"b`);
+      const content = readFileSync(tomlPath, "utf8");
+      expect(content).toContain(String.raw`path = "C:\\models\\a\"b"`);
+    } finally {
+      cleanup();
+    }
+  });
+});

@@ -154,6 +154,24 @@ export async function runLlmStatusImpl(client: IPCClient, opts: { json: boolean 
   printRouteTable(routes.map((row, i) => toRouteStatus(row, i)));
 }
 
+/**
+ * `nimbus llm use <task> <routeId>` — pins a task type to a route id.
+ *
+ * A thin IPC call, deliberately: `llm.use` validates the task type and the route id and
+ * writes `[llm.tasks]` in `nimbus.toml` GATEWAY-side (`ipc/llm-rpc.ts`'s `handleLlmUse`), not
+ * here. Splitting that — validate here, write there — would put the check and the write in
+ * different processes with a window between them; see the gateway-side doc comment for the
+ * full reasoning. Both forms (this command, or hand-editing the file) write the SAME table.
+ */
+export async function runLlmUseImpl(
+  client: IPCClient,
+  opts: { task: string; routeId: string },
+): Promise<void> {
+  await client.call<{ ok: true }>("llm.use", { task: opts.task, routeId: opts.routeId });
+  console.log(`Pinned "${opts.task}" to "${opts.routeId}" in [llm.tasks].`);
+  console.log("Applied immediately — no restart needed — and persisted for the next one.");
+}
+
 export async function runLlm(args: string[]): Promise<void> {
   const [subcommand, ...rest] = args;
 
@@ -161,7 +179,8 @@ export async function runLlm(args: string[]): Promise<void> {
     console.log("Usage: nimbus llm <subcommand>");
     console.log("");
     console.log("Subcommands:");
-    console.log("  status    Show every registered LLM route and its availability");
+    console.log("  status                 Show every registered LLM route and its availability");
+    console.log("  use <task> <routeId>   Pin a task type to a registered route");
     console.log("");
     console.log("Flags:");
     console.log("  --json    Emit machine-readable JSON");
@@ -171,6 +190,17 @@ export async function runLlm(args: string[]): Promise<void> {
   if (subcommand === "status") {
     const json = rest.includes("--json");
     await withGatewayIpc((c) => runLlmStatusImpl(c, { json }));
+    return;
+  }
+
+  if (subcommand === "use") {
+    const [task, routeId] = rest;
+    if (task === undefined || routeId === undefined) {
+      throw new Error(
+        "Usage: nimbus llm use <task> <routeId>   (see `nimbus llm status` for route ids)",
+      );
+    }
+    await withGatewayIpc((c) => runLlmUseImpl(c, { task, routeId }));
     return;
   }
 

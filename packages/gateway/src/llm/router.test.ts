@@ -979,3 +979,33 @@ describe("LlmRouter task pins ([llm.tasks])", () => {
     expect(await router.selectRoute("reasoning")).toBeUndefined();
   });
 });
+
+describe("LlmRouter.setTaskPin", () => {
+  test("re-pins a task at runtime without touching the config object it was constructed with", async () => {
+    const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: true };
+    const router = new LlmRouter(config);
+    router.registerRoute(makeFakeProvider("ollama", true), "big");
+    router.registerRoute(makeFakeProvider("ollama", true), "small");
+    // No pin yet: normal preferLocal ordering picks registration order among locals.
+    expect((await router.selectRoute("classification"))?.routeId).toBe("ollama/big");
+
+    router.setTaskPin("classification", "ollama/small");
+    expect((await router.selectRoute("classification"))?.routeId).toBe("ollama/small");
+
+    // The immutable config snapshot this router was built with is untouched.
+    expect(config.taskPins).toBeUndefined();
+  });
+
+  test("overrides a pin that came from [llm.tasks] config at construction", async () => {
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      taskPins: new Map([["reasoning", "ollama/big"]]),
+    });
+    router.registerRoute(makeFakeProvider("ollama", true), "big");
+    router.registerRoute(makeFakeProvider("ollama", true), "small");
+    expect((await router.selectRoute("reasoning"))?.routeId).toBe("ollama/big");
+
+    router.setTaskPin("reasoning", "ollama/small");
+    expect((await router.selectRoute("reasoning"))?.routeId).toBe("ollama/small");
+  });
+});

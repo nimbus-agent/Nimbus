@@ -4,7 +4,7 @@ import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/c
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
-const { runLlm, runLlmStatusImpl } = await import("./llm.ts");
+const { runLlm, runLlmStatusImpl, runLlmUseImpl } = await import("./llm.ts");
 
 const out = captureOutput();
 
@@ -209,6 +209,57 @@ describe("runLlm (dispatcher)", () => {
     await runLlm(["status", "--json"]);
     const parsed = JSON.parse(out.stdout) as Array<Record<string, unknown>>;
     expect(parsed[0]).toBeDefined();
+  });
+
+  it("throws Usage when `use` is missing task or routeId", async () => {
+    await expect(runLlm(["use"])).rejects.toThrow("Usage: nimbus llm use");
+    await expect(runLlm(["use", "classification"])).rejects.toThrow("Usage: nimbus llm use");
+  });
+
+  it("runs use when gateway is running, calling llm.use with task and routeId", async () => {
+    const ipc = createMockIpcClient([{ ok: true }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runLlm(["use", "classification", "ollama/llama3.2:latest"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "llm.use",
+      params: { task: "classification", routeId: "ollama/llama3.2:latest" },
+    });
+    expect(out.stdout).toContain("classification");
+    expect(out.stdout).toContain("ollama/llama3.2:latest");
+  });
+
+  it("propagates a gateway refusal (e.g. unregistered route) rather than swallowing it", async () => {
+    const ipc = createMockIpcClient([
+      new Error('"ollama/ghost" is not a registered route. Registered: ollama/llama3.2'),
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await expect(runLlm(["use", "classification", "ollama/ghost"])).rejects.toThrow(
+      /not a registered route/,
+    );
+  });
+});
+
+describe("runLlmUseImpl", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("calls llm.use with the given task and routeId and prints a confirmation", async () => {
+    const ipc = createMockIpcClient([{ ok: true }]);
+    await runLlmUseImpl(ipc.client, { task: "reasoning", routeId: "ollama/big" });
+    expect(ipc.calls[0]).toEqual({
+      method: "llm.use",
+      params: { task: "reasoning", routeId: "ollama/big" },
+    });
+    expect(out.stdout).toContain("reasoning");
+    expect(out.stdout).toContain("ollama/big");
+    expect(out.stdout).toContain("[llm.tasks]");
   });
 });
 

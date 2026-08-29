@@ -148,6 +148,14 @@ describe("dispatchWriteRoute", () => {
       "POST /v1/items/fetch",
     ]);
   });
+
+  // `llm.use` (embedding-egress-and-task-routing Task 7) is a local socket/IPC method
+  // (`ipc/llm-rpc.ts`), not an HTTP route — it must never gain a WRITE_ROUTE_ALLOWLIST entry.
+  // The exact-enumeration test above already pins the array shut, but a match here would
+  // otherwise be silent since "llm" appears nowhere in the current 14 entries.
+  it("never exposes an llm.* mutation on the HTTP write surface", () => {
+    expect(WRITE_ROUTE_ALLOWLIST.some((r) => r.toLowerCase().includes("llm"))).toBe(false);
+  });
 });
 
 function scimContext() {

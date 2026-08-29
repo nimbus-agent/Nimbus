@@ -124,6 +124,28 @@ export class LlmRouter {
     return this.routeMap.get(routeId);
   }
 
+  /**
+   * Re-pins `task` to `routeId` for the lifetime of this router instance (`nimbus llm use`).
+   *
+   * Writes the private MUTABLE `taskPins` map seeded from `config.taskPins` at construction,
+   * never `this.config` itself — `config` is `private readonly` and `taskPins` on it is a
+   * `ReadonlyMap`, by design (see the field doc on `LlmRouterConfig.taskPins`): the config
+   * object stays an immutable snapshot of what booted, and only the router's own copy moves.
+   * Persisting the pin so it survives a restart is the CALLER's job (`ipc/llm-rpc.ts`'s
+   * `handleLlmUse` writes `[llm.tasks]` in `nimbus.toml` before calling this) — this method
+   * only ever makes the CURRENTLY RUNNING router honour it immediately, without a restart.
+   *
+   * Deliberately takes `routeId` on faith: `orderedRoutes` already fails open on a pin that
+   * does not resolve to a registered route (falls through to normal ordering), so this method
+   * does not need its own copy of that check. The caller that DOES need a fail-closed check —
+   * "refuse to persist a pin that can never apply" — is `handleLlmUse`, which validates via
+   * `routeFor()` before writing anything, deliberately unlike this method and unlike the
+   * read-time fail-open above.
+   */
+  setTaskPin(task: LlmTaskType, routeId: string): void {
+    this.taskPins.set(task, routeId);
+  }
+
   prefersLocal(): boolean {
     return this.config.preferLocal;
   }

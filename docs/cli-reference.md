@@ -2343,6 +2343,45 @@ The JSON form is the gateway's `routes` array emitted verbatim — a route with 
 reported `contextWindow` simply omits the key (never a fabricated `null` or `0`),
 which is why the table above renders `—` for it instead of a number.
 
+### `nimbus llm use`
+
+Pin a task type (`classification`, `reasoning`, `summarisation`, or `agent_step`) to a
+specific registered route, so that task always tries this route FIRST — ahead of
+`[llm].route_priority` and the `prefer_local` ordering alike.
+
+```text
+nimbus llm use <task> <routeId>
+```
+
+Run `nimbus llm status` first to see the exact route ids this build has registered
+(`"<providerId>/<modelName>"`, e.g. `ollama/llama3.2:latest`).
+
+Both the task type and the route id are validated against what is CURRENTLY
+registered before anything is written — fail-closed, unlike a stale pin at read time
+(which degrades to normal ordering rather than an outage). An unknown task name or an
+unregistered route id is refused with a message listing the valid options, and nothing
+is persisted.
+
+This command writes `<task> = "<routeId>"` under `[llm.tasks]` in `nimbus.toml` — the
+same table a human can hand-edit directly, and the same one `nimbus llm status`'s
+routing and boot both read (`config/nimbus-toml.ts`'s `parseNimbusTomlLlmSection`).
+Both forms end up agreeing because there is exactly one table, never a second
+database-backed store shadowing it. (`nimbus config set` is not that second form here
+— it targets a single flat `section.key` pair and does not address a nested table
+header like `[llm.tasks]`.) The pin also takes effect on the running Gateway
+immediately, with no restart required, in addition to persisting for the next one.
+
+**Example:**
+
+```bash
+nimbus llm use classification ollama/llama3.2:latest
+```
+
+```text
+Pinned "classification" to "ollama/llama3.2:latest" in [llm.tasks].
+Applied immediately — no restart needed — and persisted for the next one.
+```
+
 ---
 
 ## Diagnostics and Observability
