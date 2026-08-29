@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788018875146,
+  "lastUpdate": 1788019691991,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "76e4a88999ddef1915b6e6c74b3c705281edf891",
-          "message": "fix(ci): restore lint + license gates after Biome 2.5.0 / ovsx 1.0.1 bumps (#656)\n\n## Problem\n\nThree Dependabot bumps merged to `main` (#647 Biome 2.5.0, #649 ink\n7.0.6, #650 ovsx 1.0.1) and left two CI gates red:\n\n- **Biome lint** (`#647`): Biome 2.5.0 deprecated `linter.recommended`,\nstale-flagged the 2.4.16 `$schema`, and **newly parses `.svg` files** —\nso the connector icon assets tripped 59 parse/CSS errors (63 total).\n- **JS license compliance** (`#650`): `ovsx@1.0.1` is EPL-2.0 and its\nversion-pinned `PACKAGE_OVERRIDES` key went stale (`ovsx@0.10.12`).\n- **lychee** (`#649`): a one-off external timeout on\n`https://asciinema.org/` (0 errors, 1 timeout → exit 2) — a flake\nunrelated to the `ink` bump; no code change needed, passes on re-run.\n\n## Changes\n\n- **Biome 2.5.0:** `biome migrate` (schema → 2.5.0, `recommended` →\n`preset: \"recommended\"`) + exclude `**/*.svg` from biome (static assets,\nalready validated by the separate `audit:svg` gate). One fixable\nimport-order in a CLI test auto-fixed.\n- **ovsx license:** bump the `PACKAGE_OVERRIDES` key `ovsx@0.10.12` →\n`ovsx@1.0.1` with a justifying comment (build-only Open VSX publish CLI\ndevDependency, never bundled/linked; EPL-2.0 stays off the repo-wide\nallowlist) + sync `docs/license-policy.md`.\n\n## Verification\n\n- `bun run lint` → checks 2777 files clean.\n- `bun run audit:js-licenses` → 1490 packages, all under the allowlist.\n- `preflight:fast` typecheck ✓, lint ✓ (the `lint:markdown` failure is\npre-existing untracked Slice-8 WIP docs, not on this branch).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-16T15:45:31Z",
-          "tree_id": "7b28ccfd9bf3b6ab161261911040a0d84c5bdb1e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/76e4a88999ddef1915b6e6c74b3c705281edf891"
-        },
-        "date": 1781625159746,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.44817725000104,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.4028968500046,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 215.21326175000212,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "78751d2f54ab9898f7e1a0fc77ec3df226003357",
+          "message": "fix(index): extract `export default` symbols in the code indexer (#1391)\n\nCloses #1388.\n\n## Root cause\n\nEvery regex in `extractExportedSymbols` requires `export` to be followed\n**directly** by a declaration keyword:\n\n```js\n/export\\s+async\\s+function\\s+(\\w+)/   /export\\s+function\\s+(\\w+)/\n/export\\s+const\\s+(\\w+)/              /export\\s+class\\s+(\\w+)/\n/export\\s+type\\s+(\\w+)/\n```\n\nSo the entire `export default` family matches none of them, and a module\nwhose whole public surface is a default export indexes **zero** code\nsymbols.\n\n## How it was found\n\nPerforming the Gate 1 Windows runbook against a real third-party repo —\n`sindresorhus/is-plain-obj`, whose `index.js` is exactly `export default\nfunction isPlainObject(value) {`. On a fresh profile it indexed 29\ncommits, 3 dependencies, and no symbols at all. Verified directly\nagainst that file: **0 symbols before, 1 after**.\n\n## Why it matters\n\nNot an edge case — it is the ordinary shape of a small npm package, a\nReact component, and most config modules. And it lands on the wedge\npath. With no symbols:\n\n- `nimbus init` prints \"no symbol to suggest yet\", while the README\npromises it \"prints a real `file:line` from your own repo to try first\"\n- `nimbus why` reports \"No indexed code symbols for this file — **enable\ncode_index on the root and sync**\", advising the user to turn on a\nsetting that is already `true` in the config `init` just generated\n\nThat is the first command a new user runs, and the advice it gives them\nis unactionable.\n\n## The change\n\nAdds the three **named** default forms: `export default function`,\n`export default async function`, `export default class`.\n\nThey cannot double-count against the existing five — an intervening\n`default`, and for the async form an intervening `async`, means only one\npattern can match any given site. Pinned by a test that a file mixing a\nnamed export and a default export yields both, exactly once.\n\n## Deliberately not done\n\n- **Anonymous defaults** stay unnamed and yield nothing, pinned by test.\nNaming one from the filename is a design question, not a bug fix. Worth\nnoting the dead `if (out.length === 0 && filePath !== \"\") return []`\nbranch takes `filePath` and does nothing with it, which suggests that\nfallback was once intended and never implemented — left alone here.\n- Still invisible to the indexer, and unchanged by this PR: `export { a,\nb }` lists, `export * from`, and CommonJS `module.exports`.\n\n## Verification\n\n- **Red-proved by reverting the source: 3 tests fail without the fix, 0\nwith it.**\n- 4 new tests: the reproducing case, the class/async forms, the\nnamed-alongside-default bound, and the anonymous-default bound.\n- `bun test packages/gateway/src/connectors` → 3020 pass, 0 fail.\n- `bun run preflight:fast` → 32/32 green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Code indexing now recognizes named default exports for functions,\nasynchronous functions, and classes.\n- Named exports in files that also contain a default export are\npreserved and indexed correctly.\n\n- **Bug Fixes**\n- Anonymous default expressions continue to be excluded from indexing,\npreventing unsupported or unclear symbols from appearing in search\nresults.\n\n- **Tests**\n- Added coverage for named default exports, mixed export files, and\nanonymous default expressions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-29T18:53:31+03:00",
+          "tree_id": "a38747796d056957878a115a22951ce1825a3133",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/78751d2f54ab9898f7e1a0fc77ec3df226003357"
+        },
+        "date": 1788019689081,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 303.4027204999955,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 305.30324494999877,
             "unit": "ms"
           }
         ]
