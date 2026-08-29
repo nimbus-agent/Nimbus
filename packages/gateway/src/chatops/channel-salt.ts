@@ -32,15 +32,17 @@ export async function ensureChannelSalt(vault: NimbusVault): Promise<string> {
   try {
     await vault.set(CHATOPS_CHANNEL_SALT, salt);
   } catch (err) {
-    // This is called on the chatops boot path, so a Vault write failure BLOCKS THE BOT FROM
-    // STARTING. That is the correct fail-closed posture -- without a salt the alternative is an
-    // unsalted hash, which is reversible by dictionary -- but a bare DPAPI/libsecret error at boot
-    // reads as "chatops is broken" with no indication of why. Name the key and the consequence.
+    // Called on the chatops boot path, which `assemblePlatformServices` awaits directly with
+    // nothing downstream catching it -- so a Vault write failure here BLOCKS THE WHOLE GATEWAY
+    // FROM STARTING, not just ChatOps. That is the correct fail-closed posture -- without a salt
+    // the alternative is an unsalted hash, which is reversible by dictionary -- but a bare
+    // DPAPI/libsecret error at boot must say so plainly, or an operator reads a "chatops" failure
+    // and never suspects the whole process is down. Name the key and the true consequence.
     throw new Error(
       `chatops: cannot persist the channel-hash salt ("${CHATOPS_CHANNEL_SALT}") to the Vault, ` +
-        `so ChatOps will not start. Every outbound post must be ledgered with a salted channel ` +
-        `hash (I29), and an unsalted fallback is not offered because channel ids are enumerable. ` +
-        `Cause: ${err instanceof Error ? err.message : String(err)}`,
+        `so the GATEWAY will not start (not just ChatOps). Every outbound post must be ledgered ` +
+        `with a salted channel hash (I29), and an unsalted fallback is not offered because ` +
+        `channel ids are enumerable. Cause: ${err instanceof Error ? err.message : String(err)}`,
       { cause: err },
     );
   }

@@ -520,6 +520,12 @@ describe("buildChatopsBoot — full production graph", () => {
     const h = await buildHarness();
     await h.boot.replyTo({ kind: "originating", platform: "slack", channelId: "C1" }, "hi");
 
+    // The post half: exactly one post, to the expected channel — proved directly rather than
+    // only indirectly via the harness's runTool throwing on an unexpected tool id.
+    expect(h.posts).toHaveLength(1);
+    expect(h.posts[0]?.channel).toBe("C1");
+
+    // The ledger half.
     const rows = listEgress(db, { limit: 10 });
     expect(rows.length).toBe(1);
     expect(rows[0]?.sourceType).toBe("chatops");
