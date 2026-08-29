@@ -265,10 +265,12 @@ export type NimbusLlmToml = {
    * The `[llm.tasks]` table: task type -> pinned route id, verbatim and un-resolved (same
    * division of labour as `routePriority` — resolving a pin against the route table is the
    * router's job, Task 6, not this parser's). Optional rather than defaulted to an empty map,
-   * unlike `localRoutes`/`remoteVendors`: an absent table means "no per-task pins configured,
-   * fall back to `routePriority` entirely", which the router must be able to tell apart from
-   * "the table exists but every entry in it was dropped as malformed" — collapsing both to an
-   * empty map would erase that distinction for the router to rediscover.
+   * matching the `localRoutes`/`remoteVendors` shape above: set only when at least one entry
+   * survived parsing. "No table configured" and "a table whose entries were all dropped as
+   * malformed" both leave this field `undefined` — that pair is NOT distinguishable here, and
+   * that is fine, because the router's fallback ("no usable pin for this task, fall back to
+   * `routePriority`") is the correct behaviour for both cases; there is no decision downstream
+   * that needs to tell them apart.
    */
   taskPins?: ReadonlyMap<LlmTaskType, string>;
 };
@@ -560,10 +562,10 @@ export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml
   // `assemble.ts` can tell "no vendor tables" from "vendor tables that all dropped".
   const remoteVendors = parseLlmRemoteVendors(source);
   if (remoteVendors.size > 0) out.remoteVendors = remoteVendors;
-  // Same second-scan reasoning as `localRoutes`/`remoteVendors` above, but `taskPins` stays
-  // OPTIONAL on the full `NimbusLlmToml` (not defaulted to an empty map) — see the doc above
-  // `NimbusLlmToml.taskPins` for why an absent table and an all-dropped table must stay
-  // distinguishable.
+  // Same second-scan reasoning as `localRoutes`/`remoteVendors` above: `taskPins` stays OPTIONAL
+  // on the full `NimbusLlmToml` (not defaulted to an empty map), set only when at least one entry
+  // survived parsing — see the doc above `NimbusLlmToml.taskPins` for why collapsing "no table"
+  // and "an all-dropped table" to the same `undefined` is fine here.
   const taskPins = parseLlmTaskPins(source);
   if (taskPins.size > 0) out.taskPins = taskPins;
   return out;

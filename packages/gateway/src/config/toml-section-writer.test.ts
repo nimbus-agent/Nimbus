@@ -120,4 +120,34 @@ describe("setNimbusTomlSectionKey", () => {
       cleanup();
     }
   });
+
+  test("a CRLF file's line ending is PRESERVED, not flattened to LF", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      writeFileSync(tomlPath, '[llm.tasks]\r\nclassification = "ollama/small"\r\n', "utf8");
+      setNimbusTomlSectionKey(tomlPath, "[llm.tasks]", "reasoning", "ollama/big");
+      const content = readFileSync(tomlPath, "utf8");
+      // Every line break in the rewritten file is CRLF -- a lone `\n` not preceded by `\r`
+      // would mean the join flattened it, exactly the regression this test pins against.
+      expect(content).not.toMatch(/[^\r]\n/);
+      expect(content).toContain('classification = "ollama/small"\r\n');
+      expect(content).toContain('reasoning = "ollama/big"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("an LF file's line ending is PRESERVED (the default, unaffected by CRLF handling)", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      writeFileSync(tomlPath, '[llm.tasks]\nclassification = "ollama/small"\n', "utf8");
+      setNimbusTomlSectionKey(tomlPath, "[llm.tasks]", "reasoning", "ollama/big");
+      const content = readFileSync(tomlPath, "utf8");
+      expect(content).not.toContain("\r");
+    } finally {
+      cleanup();
+    }
+  });
 });

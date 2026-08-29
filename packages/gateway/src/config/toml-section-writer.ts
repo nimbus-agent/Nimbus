@@ -111,6 +111,14 @@ function tryReplaceKeyInSection(
  * `parseLlmTaskPins` (`config/nimbus-toml.ts`) — which scans for a literal `[llm.tasks]`
  * header line — would never see it on reparse. Taking the header and key as separate
  * arguments here sidesteps that ambiguity instead of inheriting it.
+ *
+ * LINE-ENDING PRESERVING: the read side already had to be lenient (`full.split(/\r?\n/)`, since
+ * a hand-edited `nimbus.toml` on Windows is plausibly CRLF), but rewriting with a hardcoded `"\n"`
+ * join would silently flatten a CRLF file to LF wholesale on its first `nimbus llm use` — the
+ * file still parses, but every OTHER line in it (nothing to do with this write) changes on disk,
+ * which is a surprising diff for a user to find. The line ending actually present in `full` is
+ * detected once and reused for every line this function joins or appends, so a CRLF file stays
+ * CRLF and an LF file stays LF; a brand-new file (no `full` read, i.e. ENOENT) defaults to `"\n"`.
  */
 export function setNimbusTomlSectionKey(
   tomlPath: string,
@@ -127,13 +135,14 @@ export function setNimbusTomlSectionKey(
       throw e;
     }
   }
+  const eol = full.includes("\r\n") ? "\r\n" : "\n";
   const lines = full.split(/\r?\n/);
   const sectionStart = findSectionHeaderLine(lines, sectionHeader);
   if (sectionStart < 0) {
-    const sep = full.trim() === "" ? "" : "\n\n";
+    const sep = full.trim() === "" ? "" : `${eol}${eol}`;
     writeUtf8FileAtomicReplace(
       tomlPath,
-      `${full.trimEnd()}${sep}${sectionHeader}\n${key} = ${formattedValue}\n`,
+      `${full.trimEnd()}${sep}${sectionHeader}${eol}${key} = ${formattedValue}${eol}`,
     );
     return;
   }
@@ -148,6 +157,6 @@ export function setNimbusTomlSectionKey(
   if (!replaced) {
     newLines.splice(sectionEnd, 0, `${key} = ${formattedValue}`);
   }
-  const body = newLines.join("\n").trimEnd();
-  writeUtf8FileAtomicReplace(tomlPath, `${body}\n`);
+  const body = newLines.join(eol).trimEnd();
+  writeUtf8FileAtomicReplace(tomlPath, `${body}${eol}`);
 }

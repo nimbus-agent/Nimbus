@@ -6,6 +6,7 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { listEgress } from "./egress-verify.ts";
 import { wrapLedgeredEmbedder } from "./embedding-egress.ts";
+import { EgressAppendFailedError } from "./model-egress.ts";
 
 function fake(isLocal: boolean, calls: { n: number }): Embedder {
   return {
@@ -66,7 +67,7 @@ describe("wrapLedgeredEmbedder", () => {
     const calls = { n: 0 };
     const wrapped = wrapLedgeredEmbedder(db, fake(false, calls));
     db.close(); // make the append throw
-    await expect(wrapped.embed(["x"])).rejects.toThrow();
+    await expect(wrapped.embed(["x"])).rejects.toThrow(EgressAppendFailedError);
     expect(calls.n).toBe(0);
     db = new Database(":memory:"); // so afterEach can close something
   });

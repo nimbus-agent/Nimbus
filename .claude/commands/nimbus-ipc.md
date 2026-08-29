@@ -104,12 +104,15 @@ interface HitlAction {
 | Method | Type | Description |
 |---|---|---|
 | `llm.listModels` | request | Merged list from Ollama tags + `llm_models` SQLite table |
+| `llm.getStatus` | request | `{ available }` — whether the registry's current route is reachable |
+| `llm.status` | request | Every registered route with its own availability (`getRouteStatuses`) — a richer, per-route successor to `llm.getRouterStatus`, not a drop-in replacement; the two payload shapes have diverged |
 | `llm.pullModel` | request | Triggers Ollama pull; streams `llm.pullProgress` notifications |
+| `llm.cancelPull` | request | Cancels an in-flight `llm.pullModel` by `pullId` |
 | `llm.loadModel` | request | Loads or warms a local provider model; Ollama auto-loads on first generate |
 | `llm.unloadModel` | request | Unloads a local provider model when the provider supports it |
 | `llm.setDefault` | request | Sets `is_default = 1` for a model id |
-| `llm.getRouterStatus` | request | Current routing decision per task type |
-| `llm.listLocalModels` | request | Scans model dir for GGUF files (including subdirs + symlinks) |
+| `llm.getRouterStatus` | request | Current routing decision per task type (pre-route-list; kept for backwards compatibility) |
+| `llm.use` | request | Pins a task type to a specific route id, persisting the pin to `[llm.tasks]` in `nimbus.toml` |
 
 **Notifications (llm):**
 

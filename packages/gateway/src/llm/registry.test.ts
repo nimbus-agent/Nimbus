@@ -368,7 +368,7 @@ describe("LlmRegistry.pullModel", () => {
   });
 });
 
-describe("LlmRegistry.setDefault / getDefault", () => {
+describe("LlmRegistry.setDefault", () => {
   let env: { db: Database; dir: string } | undefined;
 
   afterEach(() => {
@@ -414,9 +414,12 @@ describe("LlmRegistry.setDefault / getDefault", () => {
   // `getDefault` was deleted on 2026-08-29 (dead code, nothing had ever called it). The latent
   // bug it harbored: it compared `row === undefined`, but `bun:sqlite`'s `.get()` returns
   // **`null`** for no matching row, so a lookup for an unpinned task threw `TypeError: null is
-  // not an object` instead of returning `undefined`. Verified directly against `bun:sqlite`. No
-  // test covered it — both remaining tests were happy-path — so it was latent, not deliberately
-  // encoded. That is the reason deletion beat patching.
+  // not an object` instead of returning `undefined`. Verified directly against `bun:sqlite`. A
+  // test DID cover it — `test("getDefault on a missing-row throws (bun:sqlite .get() returns
+  // null, not undefined)")`, deleted by the same commit (`git show cd86f3e0`) — so this was a
+  // BUG ENCODED IN A TEST, not a latent gap: the test asserted the throw as the expected
+  // behavior rather than flagging it as wrong, which is a more useful lesson than "no test
+  // covered it" -- the test existed and still shipped the bug.
 });
 
 describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {

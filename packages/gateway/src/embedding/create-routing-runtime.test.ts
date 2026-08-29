@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import pino from "pino";
 import { openSeededDbFile } from "../../test/helpers/migrated-db-seed.ts";
 import { requestUrl } from "../../test/helpers/request-url.ts";
+import { listEgress } from "../egress/egress-verify.ts";
 import { isVecLoaded, tryLoadSqliteVec } from "../index/sqlite-vec-load.ts";
 import { processEnvDelete, processEnvSet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
@@ -368,6 +369,11 @@ describe.skipIf(!VEC_AVAILABLE)(
         expect(out?.vec1536).toHaveLength(1536);
         expect(out?.model384).toBe("local:all-MiniLM-L6-v2");
         expect(out?.model1536).toBe("openai:text-embedding-3-small");
+        // The positive end-to-end proof, not just a static trace: the remote (OpenAI) leg of
+        // this dual embed went through `wrapLedgeredEmbedder` and landed exactly ONE row in the
+        // REAL egress ledger at this REAL wiring site -- the local (MiniLM) leg appends nothing,
+        // so the count stays at one rather than two.
+        expect(listEgress(h.db, {})).toHaveLength(1);
       } finally {
         h.cleanup();
       }
