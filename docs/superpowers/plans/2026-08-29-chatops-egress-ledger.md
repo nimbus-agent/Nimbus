@@ -193,17 +193,21 @@ import { describe, expect, test } from "bun:test";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { CHATOPS_CHANNEL_SALT, ensureChannelSalt, hashChannelId } from "./channel-salt.ts";
 
+// All FOUR members of NimbusVault (get/set/delete/listKeys) — no `as` cast. A cast here would
+// hide a real interface change behind a green test.
 function fakeVault(): NimbusVault {
   const store = new Map<string, string>();
   return {
-    get: async (k) => store.get(k) ?? null,
-    set: async (k, v) => {
+    get: async (k: string) => store.get(k) ?? null,
+    set: async (k: string, v: string) => {
       store.set(k, v);
     },
-    delete: async (k) => {
+    delete: async (k: string) => {
       store.delete(k);
     },
-  } as NimbusVault;
+    listKeys: async (prefix?: string) =>
+      [...store.keys()].filter((k) => prefix === undefined || k.startsWith(prefix)),
+  };
 }
 
 describe("channel salt", () => {
@@ -398,7 +402,7 @@ describe("chatops egress appender", () => {
       "chatops.approvalCard",
       "chatops.agentBrief",
     ]);
-    expect(rows.every((r) => r.source_type === "chatops")).toBe(true);
+    expect(rows.every((r) => r.sourceType === "chatops")).toBe(true);
     expect(rows.map((r) => r.destination)).toEqual(["slack", "slack", "teams"]);
   });
 
@@ -407,7 +411,7 @@ describe("chatops egress appender", () => {
     await buildLedgeredChatPosts(db, s.fn, SALT).reply("slack", "C01ABC2DEF3", "hi");
     const raw = JSON.stringify(listEgress(db, { limit: 10 }));
     expect(raw).not.toContain("C01ABC2DEF3");
-    expect(listEgress(db, { limit: 1 })[0]?.source_id).toMatch(/^[0-9a-f]{64}$/);
+    expect(listEgress(db, { limit: 1 })[0]?.sourceId).toMatch(/^[0-9a-f]{64}$/);
   });
 
   test("the message text is never stored", async () => {
@@ -575,7 +579,7 @@ test("a reply through the booted chatops posts AND ledgers exactly one row", asy
 
   const rows = listEgress(db, { limit: 10 });
   expect(rows.length).toBe(1);
-  expect(rows[0]?.source_type).toBe("chatops");
+  expect(rows[0]?.sourceType).toBe("chatops");
   expect(rows[0]?.method).toBe("chatops.reply");
 });
 ```
