@@ -35,10 +35,12 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
  * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run OR a
  * targeted fetch-on-miss call, both landing through `egress/sync-egress.ts`'s `recordSyncEgress` —
- * see the `sync` paragraph below); and `model` (any generate on a NON-LOCAL route, appended by
- * `egress/model-egress.ts`'s `wrapLedgeredProvider` — see the `model` paragraph below for the two
- * exclusions that still make it narrower than the name). Later phases raise `peer`, `session`;
- * raising an entry without landing its appender is the exact defect this vector exists to prevent.
+ * see the `sync` paragraph below); and `model` (any generate OR embed on a NON-LOCAL route, appended
+ * by three cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
+ * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, and `egress/embedding-egress.ts`'s
+ * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers). Later
+ * phases raise `peer`, `session`; raising an entry without landing its appender is the exact defect
+ * this vector exists to prevent.
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
@@ -91,15 +93,23 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * Static rule D22(e) confines `registerRoute` to `llm/registry.ts` so nothing enters the route
  * table unwrapped, and invariant I34 pins the `isLocal` declaration the derivation reads.
  *
- * It is still NOT "all inference", and two exclusions remain. EMBEDDINGS APPEND NOTHING:
- * `PROSE_HEAVY_TYPES` routes to OpenAI's 1536-dim table when a key is set, and that path has no
- * appender — so a zero `model` count does NOT mean no vector left the machine. THE MASTRA ENGINE
- * AGENT APPENDS NOTHING in this slice: `engine/agent.ts` resolves its model through
- * `@mastra/core`, outside the route table entirely, so the wrapper never sees it; under
- * `[llm] enforce_air_gap` that path is now REFUSED rather than silently taken
- * (`engine/run-conversational-agent.ts`), but with air-gap off it remains an open, named gap that
- * slice 2b closes at the AI-SDK seam. Raising this entry further requires landing the embedding
- * appender.
+ * It is still not literally "all inference" over every model call this binary can make, but the
+ * `model` class no longer carries a NAMED exclusion. THE MASTRA ENGINE AGENT is covered by a
+ * SECOND `model` appender: `engine/agent.ts` resolves its model through `@mastra/core`, outside
+ * the route table entirely, so `wrapLedgeredProvider` never sees it — `egress/mastra-model-
+ * egress.ts`'s `wrapLedgeredMastraModel` decorates that model at the AI-SDK seam instead,
+ * appending one row before every `doGenerate`/`doStream`. EMBEDDINGS are covered by a THIRD
+ * `model` appender: `egress/embedding-egress.ts`'s `wrapLedgeredEmbedder`, applied at each of the
+ * embedding pipeline's three construction sites (`embedding/create-routing-runtime.ts`,
+ * `embedding/create-embedding-runtime.ts`, `ipc/index-reembed-rpc.ts` — confined there by static
+ * rule D22(f)), appending one row per embed BATCH (`method='embedding.embed'`) before
+ * `PROSE_HEAVY_TYPES` prose reaches OpenAI's 1536-dim table. So a zero `model` count now means no
+ * non-local generate AND no non-local embed left the machine, across every reachable caller of
+ * either. The bound that SURVIVES, and is not an exclusion: a LOCAL provider, a locally-run
+ * Mastra model, or a LOCAL embedder (MiniLM) is each returned UNCHANGED by its own wrapper and
+ * still appends nothing — that is the class working as designed, not a gap in it. Raising `model`
+ * further (to cover a model call this vector does not yet know about) requires landing that
+ * call's own appender first, the same as every other raise recorded here.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",

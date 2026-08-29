@@ -8,6 +8,28 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-29 — The `model` egress class closes its last named exclusion: remote embeddings.**
+  `egress/embedding-egress.ts`'s `wrapLedgeredEmbedder` is a THIRD I29 `model`-class appender,
+  the same DECORATOR shape as `wrapLedgeredProvider` and `wrapLedgeredMastraModel` — applied at
+  each of the embedding pipeline's three construction sites (`embedding/create-routing-
+  runtime.ts`, `embedding/create-embedding-runtime.ts`, `ipc/index-reembed-rpc.ts`, confined
+  there by new static rule **D22(f)**) rather than at one call site, so it covers every `embed()`
+  caller, including ones written later, without any of them cooperating. It appends ONE row per
+  embed BATCH — never per text — before the request leaves the machine (`method='embedding.embed'`,
+  `destination` the vendor half of the embedder's model id, e.g. `openai`), and an append failure
+  aborts the embed (fail-closed). Locality is DERIVED from `embedder.isLocal`, never a
+  caller-computed flag, mirroring `wrapLedgeredProvider`.
+
+  **What a `model: 0` window now means, and what it still does not.** Before this landed,
+  `PROSE_HEAVY_TYPES` routed prose straight to OpenAI's 1536-dim embedding table with no appender
+  at all, so `nimbus prove` could report `model: 0` over a window in which a real vector had left
+  the machine — true about generates, silent about embeddings. That gap is closed: a `model: 0`
+  window now means no non-local generate AND no non-local embed left the machine, across every
+  reachable caller of either. The bound that SURVIVES, and is correct rather than a residual
+  exclusion: a LOCAL embedder (MiniLM) is returned UNCHANGED by its own wrapper and still appends
+  nothing, by construction — exactly as a local LLM route or a locally-run Mastra model already
+  did. That is the `model` class working as designed, not a gap in it.
+
 - **2026-08-29 — `v7.0.0` is ABANDONED. Do not look for its artifacts; there are none.** The tag
   exists and is immutable (the *Protected release tags* ruleset has no bypass actors), but the
   Release workflow's **Build CLI — macos** job died in `Upload artifact` with
