@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_LOCAL_CONTEXT_TOKENS } from "../llm/ollama-provider.ts";
+import type { LlmTaskType } from "../llm/types.ts";
 
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
@@ -260,6 +261,16 @@ export type NimbusLlmToml = {
    * `[llm.local.*]`) is Task 9's job, not this parser's.
    */
   routePriority: readonly string[];
+  /**
+   * The `[llm.tasks]` table: task type -> pinned route id, verbatim and un-resolved (same
+   * division of labour as `routePriority` — resolving a pin against the route table is the
+   * router's job, Task 6, not this parser's). Optional rather than defaulted to an empty map,
+   * unlike `localRoutes`/`remoteVendors`: an absent table means "no per-task pins configured,
+   * fall back to `routePriority` entirely", which the router must be able to tell apart from
+   * "the table exists but every entry in it was dropped as malformed" — collapsing both to an
+   * empty map would erase that distinction for the router to rediscover.
+   */
+  taskPins?: ReadonlyMap<LlmTaskType, string>;
 };
 
 export const DEFAULT_NIMBUS_LLM_TOML: NimbusLlmToml = {
@@ -480,6 +491,45 @@ function parseLlmLocalRoutes(source: string): Map<string, NimbusLlmLocalRoute> {
 }
 
 /**
+ * Totality-checked membership set for `LlmTaskType`, keyed as a `Record` rather than kept as a
+ * plain string array so that adding a fifth task type to the union without adding it here is a
+ * TYPE ERROR — the parser below cannot silently fall behind the type it validates `[llm.tasks]`
+ * keys against.
+ */
+const LLM_TASK_TYPE_MEMBERS: Record<LlmTaskType, true> = {
+  classification: true,
+  reasoning: true,
+  summarisation: true,
+  agent_step: true,
+};
+
+function isLlmTaskType(key: string): key is LlmTaskType {
+  return Object.hasOwn(LLM_TASK_TYPE_MEMBERS, key);
+}
+
+/**
+ * Parses the flat `[llm.tasks]` table into a task -> route-id map. Unlike `[llm.local.*]` /
+ * `[llm.remote.*]`, this is a single fixed-name table (no per-entry sub-header), so it reuses
+ * `forEachSectionEntry` directly rather than the `collectLlmKvSections` machinery built for
+ * dynamic sub-table ids.
+ *
+ * An unrecognised key (a typo, or a task type a newer build added that this one doesn't know)
+ * is DROPPED, never thrown: same reasoning as `route_priority` above — a throw here would
+ * escape into `loadTomlSection`'s bare catch and revert the WHOLE `[llm]` section,
+ * `enforce_air_gap` included. Resolving a pinned id against the route table is Task 6's job
+ * against the loaded config, not this parser's.
+ */
+function parseLlmTaskPins(source: string): Map<LlmTaskType, string> {
+  const out = new Map<LlmTaskType, string>();
+  forEachSectionEntry(source, "[llm.tasks]", (key, valRaw) => {
+    if (!isLlmTaskType(key)) return;
+    const routeId = parseString(valRaw);
+    if (routeId.length > 0) out.set(key, routeId);
+  });
+  return out;
+}
+
+/**
  * The bounded-integer `[llm]` keys, split out of the switch above to keep it under the
  * cognitive-complexity gate (Sonar `S3776`). Each is "parse, bounds-check, assign" — the same
  * three lines with different bounds, which is exactly the shape that reads better apart from a
@@ -510,6 +560,12 @@ export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml
   // `assemble.ts` can tell "no vendor tables" from "vendor tables that all dropped".
   const remoteVendors = parseLlmRemoteVendors(source);
   if (remoteVendors.size > 0) out.remoteVendors = remoteVendors;
+  // Same second-scan reasoning as `localRoutes`/`remoteVendors` above, but `taskPins` stays
+  // OPTIONAL on the full `NimbusLlmToml` (not defaulted to an empty map) — see the doc above
+  // `NimbusLlmToml.taskPins` for why an absent table and an all-dropped table must stay
+  // distinguishable.
+  const taskPins = parseLlmTaskPins(source);
+  if (taskPins.size > 0) out.taskPins = taskPins;
   return out;
 }
 
