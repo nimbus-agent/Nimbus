@@ -114,6 +114,12 @@ export function splitFlatDottedKey(dotted: string): { section: string; key: stri
     throw new Error(`Invalid key (expected section.name): ${dotted}`);
   }
   const key = dotted.slice(dot + 1);
+  // `telemetry.` split cleanly into section `telemetry` + an EMPTY key, and the writer emitted
+  // ` = value` — a syntactically invalid line written into the user's config, which can break
+  // parsing of the whole file. Same error as the dotless case: both mean "this is not section.key".
+  if (key === "") {
+    throw new Error(`Invalid key (expected section.name): ${dotted}`);
+  }
   if (key.includes(".")) {
     throw new Error(
       `\`${dotted}\` addresses a nested table, which this flat section.key surface cannot ` +
@@ -124,19 +130,26 @@ export function splitFlatDottedKey(dotted: string): { section: string; key: stri
 }
 
 export function getTomlValueFromFile(tomlPath: string, dotted: string): string | undefined {
+  // A dotless key is "not addressable here", which for a READ is simply "not set" — callers rely
+  // on that, so it stays a soft `undefined` rather than a throw.
+  if (dotted.indexOf(".") <= 0) {
+    return undefined;
+  }
+  // Validate the KEY before touching the filesystem. Reading first meant the same nested key threw
+  // on an existing file and returned `undefined` on a missing one, so the refusal depended on
+  // whether the file happened to exist rather than on the key itself.
+  const { section, key } = splitFlatDottedKey(dotted);
   let raw: string;
   try {
     raw = readFileSync(tomlPath, "utf8");
   } catch (e: unknown) {
+    // A missing file is still an ordinary "not set" for a WELL-FORMED key — otherwise
+    // `nimbus config get` would start erroring on a fresh machine.
     if (e !== null && typeof e === "object" && "code" in e && e.code === "ENOENT") {
       return undefined;
     }
     throw e;
   }
-  if (dotted.indexOf(".") <= 0) {
-    return undefined;
-  }
-  const { section, key } = splitFlatDottedKey(dotted);
   return parseSectionKey(raw, section, key);
 }
 

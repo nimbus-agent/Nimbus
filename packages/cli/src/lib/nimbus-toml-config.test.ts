@@ -327,3 +327,65 @@ describe("nested-table keys are refused, not silently mis-written (#1382)", () =
     expect(() => setTomlValueInFile(tomlPath, "telemetry", "true")).toThrow(/section\.name/);
   });
 });
+
+describe("degenerate dotted keys are refused too (review of #1382 fix)", () => {
+  // `telemetry.` split into section `telemetry` + an EMPTY key, and the writer emitted ` = true` —
+  // a syntactically invalid TOML line written into the user's real config, which can break parsing
+  // of the whole file. Pre-existing rather than introduced by the nested-table guard, but the
+  // shared splitter is where a key is validated now, so it belongs here.
+  test("an empty key segment is refused, not written as ` = value`", () => {
+    writeFileSync(tomlPath, "[telemetry]\nenabled = false\n");
+    expect(() => setTomlValueInFile(tomlPath, "telemetry.", "true")).toThrow(/section\.name/);
+  });
+
+  test("the config file is untouched after that refusal", () => {
+    const before = "[telemetry]\nenabled = false\n";
+    writeFileSync(tomlPath, before);
+    expect(() => setTomlValueInFile(tomlPath, "telemetry.", "true")).toThrow();
+    expect(readFileSync(tomlPath, "utf8")).toBe(before);
+  });
+
+  test("an empty SECTION segment is refused as well", () => {
+    expect(() => setTomlValueInFile(tomlPath, ".enabled", "true")).toThrow(/section\.name/);
+  });
+
+  // The key was validated only AFTER the file was read, so the same nested key threw on an
+  // existing file and returned `undefined` on a missing one. Validating arguments before touching
+  // the filesystem makes the refusal a property of the KEY, not of whether the file happens to
+  // exist.
+  test("a nested key is refused even when the file does not exist", () => {
+    const missing = join(dir, "definitely-absent.toml");
+    expect(() => getTomlValueFromFile(missing, "llm.tasks.classification")).toThrow(
+      /nested table/i,
+    );
+  });
+
+  test("the same nested key throws identically whether or not the file exists", () => {
+    writeFileSync(tomlPath, "[llm]\n");
+    const missing = join(dir, "definitely-absent.toml");
+    const a = (() => {
+      try {
+        getTomlValueFromFile(tomlPath, "llm.tasks.classification");
+      } catch (e) {
+        return (e as Error).message;
+      }
+      return "did not throw";
+    })();
+    const b = (() => {
+      try {
+        getTomlValueFromFile(missing, "llm.tasks.classification");
+      } catch (e) {
+        return (e as Error).message;
+      }
+      return "did not throw";
+    })();
+    expect(a).toBe(b);
+  });
+
+  // The bound: a missing file is still a normal "not set" for a WELL-FORMED key. Only a malformed
+  // key throws — otherwise `nimbus config get` on a fresh machine would start erroring.
+  test("a well-formed key on a missing file still returns undefined", () => {
+    const missing = join(dir, "definitely-absent.toml");
+    expect(getTomlValueFromFile(missing, "telemetry.enabled")).toBeUndefined();
+  });
+});
