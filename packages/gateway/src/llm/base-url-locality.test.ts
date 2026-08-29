@@ -127,8 +127,8 @@ describe("enforce_air_gap refuses a non-loopback [llm.local.*] route", () => {
     router.registerRoute(new LlamaCppProvider("http://192.168.1.50:8080", "m.gguf"), "m.gguf");
     const route = await router.selectRoute("reasoning");
     expect(route?.routeId).toBe("llamacpp/m.gguf");
-    // ...and it reports itself as REMOTE, which is what makes `egress/synthesis-egress.ts`
-    // ledger it (I29) and `[agents] synthesis = "local"` refuse it.
+    // ...and it reports itself as REMOTE, which is what makes `egress/model-egress.ts`'s
+    // `wrapLedgeredProvider` ledger it (I29) and `[agents] synthesis = "local"` refuse it.
     expect(route?.provider.isLocal).toBe(false);
   });
 

@@ -2090,17 +2090,23 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // `targetedFetch`'s deps — both closures around ONE appender, `egress/sync-egress.ts`'s
     // `recordSyncEgress`. `per-run`, not `per-call`, because the scheduler side appends ONE row per
     // paginated run (many upstream calls), the weaker of the two shapes this class actually backs.
-    // `model` is now the FIFTH non-`none` class: its ONE appender (`egress/synthesis-egress.ts`'s
-    // `recordSynthesisEgress`) lands in the same commit as this raise. Its only caller is the
-    // synthesis wiring (`agents/_lib/synthesis-llm.ts`, under `[agents] synthesis = "local"` or
-    // `"allow-remote"`), reached in production from `ipc/server/dispatchers.ts` and
-    // `agent-runs/agent-http-invoke.ts` (Task 6's `buildAgentSynthesisRunner`). The
-    // local-vs-remote split is enforced INSIDE the appender (a required `remote: boolean` argument;
-    // `false` appends nothing), not left to that future caller, so a wiring mistake there cannot
-    // fabricate a `model` row for a local generation. It is `per-call` over exactly that, and NOT
-    // "all inference": embeddings still append nothing (`PROSE_HEAVY_TYPES` routes to OpenAI with no
-    // appender), so widening this list further for embeddings would repeat the exact defect this
-    // vector exists to catch. `peer`/`session` stay `none` until THEIR appenders land — raising an
+    // `model` is now the FIFTH non-`none` class, backed by THREE appenders: the route-table
+    // provider wrapper (`egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at
+    // `LlmRegistry.addRoute`, covering `LlmRouter.generate`/`generateMarkdown`/every
+    // `selectProvider()` caller — synthesis among them, via `agents/_lib/synthesis-llm.ts` under
+    // `[agents] synthesis = "local"` or `"allow-remote"`, reached in production from
+    // `ipc/server/dispatchers.ts` and `agent-runs/agent-http-invoke.ts`'s
+    // `buildAgentSynthesisRunner`); the Mastra engine agent (`egress/mastra-model-egress.ts`'s
+    // `wrapLedgeredMastraModel`, since that agent resolves its model through `@mastra/core` outside
+    // the route table entirely); and remote embeddings (`egress/embedding-egress.ts`'s
+    // `wrapLedgeredEmbedder`, applied at each of the embedding pipeline's three construction sites).
+    // The local-vs-remote split is enforced INSIDE each wrapper — derived from `provider.isLocal` /
+    // the embedder's own locality, never a caller-supplied boolean — so a wiring mistake at a call
+    // site cannot fabricate a `model` row for a local generation or embed. It is `per-call` over all
+    // three, and the class now carries no NAMED exclusion: a local provider, a locally-run Mastra
+    // model, or a local embedder (MiniLM) each append nothing by design, not as a gap — that is the
+    // bound that survives, not a claim that no vector or prompt can ever leave unrecorded.
+    // `peer`/`session` stay `none` until THEIR appenders land — raising an
     // entry without a landed appender behind it is a review moment, not a test to re-bank. (An
     // earlier version of this comment pointed to an `EgressCompleteness.tier` #1057 note in
     // `egress/egress-verify.ts` for whoever landed the fifth class to read; that field existed and
@@ -2222,12 +2228,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     for (const rel of sites) {
       const src = stripComments(await readFile(resolve(REPO_ROOT, rel), "utf8"));
       expect(src).toContain("createOpenAIEmbedder");
-      // A plain `toContain` is satisfied by the IMPORT line alone (every site imports
-      // `wrapLedgeredEmbedder` to wrap with it), so deleting only the CALL and leaving the
-      // import behind would still pass. Every site names it at least twice -- once importing
-      // it, at least once calling it -- so requiring >=2 occurrences catches the call-only
-      // regression that a single `toContain` cannot.
-      expect((src.match(/wrapLedgeredEmbedder/g) ?? []).length).toBeGreaterThanOrEqual(2);
+      // A plain `toContain` on the bare name is satisfied by the IMPORT line alone, so deleting
+      // only the CALL and leaving the import behind would still pass. Assert the CALL FORM
+      // directly -- what the ledger ruling actually asked for -- rather than counting bare-name
+      // occurrences as a proxy for it.
+      expect(src).toMatch(/wrapLedgeredEmbedder\s*\(/);
     }
   });
 });

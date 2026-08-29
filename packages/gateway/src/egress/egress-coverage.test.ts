@@ -45,9 +45,13 @@ describe("coverage vector", () => {
     // `recordSyncEgress`) backs two callers with different shapes: `sync/scheduler.ts` appends once
     // per paginated RUN (many upstream calls per row), `sync/targeted-fetch.ts` appends once per
     // CALL — the vector reports the weaker of the two, matching how `weakestCoverage` merges
-    // markers from different binaries. `model` is per-call because its ONE appender
-    // (`egress/synthesis-egress.ts`'s `recordSynthesisEgress`) covers exactly one narrow thing — a
-    // non-local-provider agent brief synthesis — and NOT embeddings, which still append nothing.
+    // markers from different binaries. `model` is per-call and now backed by THREE appenders: the
+    // route-table provider wrapper (`egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at
+    // `LlmRegistry.addRoute`), the Mastra engine agent (`egress/mastra-model-egress.ts`'s
+    // `wrapLedgeredMastraModel`, since that agent resolves its model outside the route table), and
+    // remote embeddings (`egress/embedding-egress.ts`'s `wrapLedgeredEmbedder`, at each embedding
+    // pipeline construction site). The class carries no NAMED exclusion — a local provider, a
+    // locally-run Mastra model, or a local embedder each append nothing by design, not as a gap.
     // Every other class stays `none` until its appender lands — raising an entry on the strength of
     // an unwired seam would be a claim with no code behind it, which is the exact defect this vector
     // prevents.

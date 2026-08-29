@@ -17,8 +17,10 @@
  * silently land outside `MARKER_SOURCE_TYPES` and get miscounted as outbound egress, or inside it and
  * get miscounted as bookkeeping. The union therefore lands COMPLETE, including members whose
  * appenders do not exist yet (`boot`, `degraded` arrive with the boot marker; `sync` and `model`
- * have since landed their appenders — `egress/sync-egress.ts`, `egress/synthesis-egress.ts` — and
- * their `THIS_BINARY_COVERAGE` entries are raised accordingly; `peer` and `session` remain pending,
+ * have since landed their appenders — `egress/sync-egress.ts` for `sync`; for `model`,
+ * `egress/model-egress.ts` (route-table generates), `egress/mastra-model-egress.ts` (the Mastra
+ * engine agent), and `egress/embedding-egress.ts` (remote embeddings) — and their
+ * `THIS_BINARY_COVERAGE` entries are raised accordingly; `peer` and `session` remain pending,
  * arriving in later phases).
  *
  * The union was frozen at eight members in #1038. `mcp` was added deliberately in the

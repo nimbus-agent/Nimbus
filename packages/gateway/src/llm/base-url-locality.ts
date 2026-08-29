@@ -18,8 +18,9 @@
  * (`if (enforceAirGap && !route.provider.isLocal) continue`) did not exclude it and
  * `generate()` sent prompts to that host. `[llm] enforce_air_gap` is a REFUSAL setting, not
  * a preference — a runtime that only *looks* local defeats it entirely. The same hardcoded
- * `true` also fed `egress/synthesis-egress.ts`, which derives "was this remote?" from
- * `provider.isLocal`: a LAN llama.cpp server appended no `egress_ledger` row (I29).
+ * `true` also feeds `egress/model-egress.ts`'s `wrapLedgeredProvider`, which derives "was this
+ * remote?" from `provider.isLocal`: a LAN llama.cpp server would have appended no `egress_ledger`
+ * row (I29).
  *
  * Locality is a property of the endpoint, so it is answered here and read off the provider
  * INSTANCE everywhere else — never re-derived from a vendor id (see `local-definition.test.ts`).
