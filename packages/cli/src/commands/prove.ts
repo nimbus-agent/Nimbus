@@ -36,7 +36,12 @@ type ProveResult = {
  * (`gateway/src/egress/egress-coverage.ts`) — the CLI cannot import it (cli→gateway source imports
  * are forbidden), so this map is a hand-maintained mirror and drifts silently if you forget.
  */
-const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
+export const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
+  // Unlike `mcp` and `http`, this class is NOT narrower than its name: it covers EVERY outbound
+  // post the gateway makes to Slack/Teams — operational replies, HITL approval cards, tribal
+  // suggestions and agent briefs — because the appender decorates the single post closure they all
+  // share. A zero here means the bot said nothing.
+  chatops: "Slack/Teams posts",
   task: "gated connector actions",
   mcp: "agents.* briefs served to MCP clients",
   // NOT "the HTTP API" — the class covers agent briefs only. The other HTTP reads append nothing:
@@ -66,6 +71,12 @@ const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   // not as a gap, so a zero here is still not literally a claim that no vector or prompt left the
   // machine. See the `model` entry in the gateway's `egress/egress-coverage.ts`.
   model: "prompts and embedding batches sent to a non-local model",
+  // Latent — always "none" on this binary; no appender exists yet. Named here anyway so a class
+  // this vector already reserves never prints as a bare identifier once it does.
+  peer: "federated peer sends",
+  // Latent — always "none" on this binary; no appender exists yet. Gateway housekeeping egress:
+  // telemetry, the auto-updater, JWKS refresh.
+  session: "gateway housekeeping egress (telemetry, updater, JWKS)",
 };
 
 /**

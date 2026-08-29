@@ -9,6 +9,7 @@ import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 // audit.test.ts) so the withIpc/withConsentIpc paths resolve the fake gateway state + IPC client.
 const proveMod = await import("./prove.ts");
 const {
+  COVERAGE_CLASS_LABELS,
   formatProveResult,
   resolvePruneBeforeTs,
   runEgress,
@@ -562,4 +563,13 @@ describe("the prove headline names its own narrowness (F9)", () => {
     });
     expect(line).toContain("not observed: model");
   });
+});
+
+test("every coverage class has a hand-written label", () => {
+  // The CLI cannot import the gateway, so this list is mirrored by hand. The drift test is the
+  // only thing standing between a new class and `nimbus prove` printing a bare identifier.
+  const CLASSES = ["chatops", "http", "mcp", "model", "peer", "session", "sync", "task"];
+  for (const c of CLASSES) {
+    expect(COVERAGE_CLASS_LABELS[c]).toBeDefined();
+  }
 });
