@@ -12,16 +12,17 @@
  * everything else is bundled in, so the emitted file has no relative imports to resolve at load.
  *
  * Built through `Bun.build()` rather than the `bun build` CLI for one reason: the CLI has no
- * aliasing flag, and the embedding worker needs `sharp` replaced with a falsy stub. Bundling the
- * real native `sharp` makes the worker fail at load and takes the whole embedding runtime with it
- * (#1396). See `packages/gateway/src/workers/sharp-stub.ts`.
+ * aliasing flag, and the embedding worker needs TWO native modules dealt with: `sharp` replaced
+ * with a falsy stub, and the onnxruntime addon embedded so it can be loaded from a real file at
+ * runtime. Both otherwise kill the embedding runtime at init (#1396). See
+ * `packages/gateway/src/workers/sharp-stub.ts` and `scripts/onnx-binding-plugin.ts`.
  */
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { WORKER_ENTRIES, WORKER_OUT_DIR } from "../packages/gateway/src/workers/worker-entries.ts";
-import { copyOnnxSidecar } from "./copy-onnx-sidecar.ts";
+import { onnxBindingPlugin } from "./onnx-binding-plugin.ts";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const gatewayDir = join(repoRoot, "packages", "gateway");
@@ -62,7 +63,7 @@ async function main(): Promise<void> {
       target: "bun",
       outdir: outDir,
       naming: `${entry.name}.js`,
-      plugins: [stubSharpPlugin],
+      plugins: [stubSharpPlugin, onnxBindingPlugin],
     });
     if (!result.success) {
       process.stderr.write(`build-workers: bun build failed for ${entry.source}\n`);
@@ -76,12 +77,6 @@ async function main(): Promise<void> {
         `(${String(statSync(outfile).size)} bytes)\n`,
     );
   }
-  // The onnxruntime binding must sit beside the bundled worker or the embedding runtime dies at
-  // init — see copy-onnx-sidecar.ts. Done here rather than only in compile-gateway.ts because the
-  // release pipeline does not run that script; vec0 shipped broken once for exactly that reason.
-  const binding = copyOnnxSidecar(outDir);
-  process.stdout.write(`build-workers: onnx sidecar -> ${binding}
-`);
 }
 
 await main();

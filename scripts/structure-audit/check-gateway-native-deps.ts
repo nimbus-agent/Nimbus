@@ -22,7 +22,8 @@ const ALLOWED_NATIVE: ReadonlySet<string> = new Set([
   // declared dependencies only, and reported `ok` while the embedding worker was dead in every
   // install (#1396). Listed explicitly so the exemption is a recorded decision rather than a blind
   // spot, and so adding it to the manifest later does not read as new. The sidecar commitment it
-  // implies is met by `copy-onnx-sidecar.ts`, called from `build-workers.ts`.
+  // implies is met by `scripts/onnx-binding-plugin.ts`, which EMBEDS the addon in the worker
+  // bundle and extracts it at runtime — so there is no sidecar file for a packaging path to drop.
   "onnxruntime-node",
 ]);
 
