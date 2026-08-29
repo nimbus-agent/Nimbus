@@ -173,7 +173,7 @@ describe("formatProveResult", () => {
   // A fresh, ACCURATE fixture here, deliberately not folded into `COVERED` above,
   // for the same reason the `sync` test isn't: `COVERED` is shared by five other tests whose
   // exact-string assertions would all need rewriting for an unrelated reason if it changed.
-  test("the model class renders its OWN label ('prompts and embedding batches sent to a non-local model route'), never falls through to a bare key", () => {
+  test("the model class renders its OWN label ('prompts and embedding batches sent to a non-local model'), never falls through to a bare key", () => {
     const out = formatProveResult({
       delta: 0,
       completeness: {
@@ -192,7 +192,7 @@ describe("formatProveResult", () => {
       chainOk: true,
       label: "during this query",
     });
-    expect(out).toContain("prompts and embedding batches sent to a non-local model route");
+    expect(out).toContain("prompts and embedding batches sent to a non-local model");
     // The bare fallback never fires: a lone "model" (unlabelled) would appear as its own
     // comma-delimited scope-clause token.
     expect(out).not.toMatch(/scope:.*(?:^|, )model(?:,|\))/);

@@ -898,17 +898,51 @@ describe("D22(f) second allow-list — the embedding CONSTRUCTOR is confined", (
     expect(v.map((x) => x.rule)).toEqual(["embedding-constructor-confined"]);
   });
 
-  test("the three construction sites and the definition are allowed", () => {
-    const allowed = [
+  // The definition site is exempt outright -- there is no wrapping to check on a declaration.
+  test("the definition site is allowed unconditionally", () => {
+    expect(
+      checkEmbeddingConstructorConfinement(
+        file(
+          "packages/gateway/src/embedding/openai-embedder.ts",
+          "export async function createOpenAIEmbedder(options) {}\n",
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  // The three real construction sites pass ONLY when the call is actually nested inside a
+  // wrapLedgeredEmbedder(...) argument list -- proving association, not mere file membership.
+  test("the three construction sites pass when the call is wrapped", () => {
+    const sites = [
       "packages/gateway/src/embedding/create-routing-runtime.ts",
       "packages/gateway/src/embedding/create-embedding-runtime.ts",
       "packages/gateway/src/ipc/index-reembed-rpc.ts",
-      "packages/gateway/src/embedding/openai-embedder.ts",
     ];
-    for (const relPath of allowed) {
+    for (const relPath of sites) {
       expect(
-        checkEmbeddingConstructorConfinement(file(relPath, "createOpenAIEmbedder({ apiKey });\n")),
+        checkEmbeddingConstructorConfinement(
+          file(relPath, "wrapLedgeredEmbedder(db, await createOpenAIEmbedder({ apiKey }));\n"),
+        ),
       ).toEqual([]);
+    }
+  });
+
+  // The regression this rule now closes: being on the allow-list used to skip the whole file, so
+  // a SECOND, bare construction beside a real wrapped one was invisible. Same file, same allowed
+  // path, one wrapped call and one bare call -- only the bare one should be flagged.
+  test("an unwrapped createOpenAIEmbedder call inside an approved file is still flagged", () => {
+    for (const relPath of [
+      "packages/gateway/src/embedding/create-routing-runtime.ts",
+      "packages/gateway/src/embedding/create-embedding-runtime.ts",
+      "packages/gateway/src/ipc/index-reembed-rpc.ts",
+    ]) {
+      const contents = [
+        "wrapLedgeredEmbedder(db, await createOpenAIEmbedder({ apiKey }));",
+        "const rogue = await createOpenAIEmbedder({ apiKey: other });",
+      ].join("\n");
+      const v = checkEmbeddingConstructorConfinement(file(relPath, contents));
+      expect(v.map((x) => x.rule)).toEqual(["embedding-constructor-confined"]);
+      expect(v[0]?.snippet).toContain("rogue");
     }
   });
 });

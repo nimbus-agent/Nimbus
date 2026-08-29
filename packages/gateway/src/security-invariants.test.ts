@@ -6,6 +6,7 @@ import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import {
   checkAgentEmitterImportConfinement,
   checkEgressChokepointConfinement,
+  checkEmbeddingConstructorConfinement,
   checkWrapServerSpecInvariant,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments } from "../../../scripts/structure-audit/lib.ts";
@@ -2220,20 +2221,44 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   test("I29: every remote-embedder construction site wraps with the appender", async () => {
     // Rule (f) stops a NEW file calling the appender; this stops an EXISTING construction site
     // quietly dropping it. Asserted on source because the sites build real network clients.
+    //
+    // A plain `toContain("createOpenAIEmbedder")` + `toMatch(/wrapLedgeredEmbedder\(/)` pair --
+    // the previous shape of this test -- proves only CO-OCCURRENCE: a SECOND, unwrapped
+    // `createOpenAIEmbedder(...)` added anywhere else in the same file would satisfy both
+    // assertions while the second call shipped un-ledgered. Delegating to
+    // `checkEmbeddingConstructorConfinement` proves ASSOCIATION instead -- every call is
+    // paren-matched as textually nested inside a `wrapLedgeredEmbedder(...)` argument list --
+    // against the REAL file contents, so this fails the moment a real site regresses.
     const sites = [
       "packages/gateway/src/embedding/create-routing-runtime.ts",
       "packages/gateway/src/embedding/create-embedding-runtime.ts",
       "packages/gateway/src/ipc/index-reembed-rpc.ts",
     ];
     for (const rel of sites) {
-      const src = stripComments(await readFile(resolve(REPO_ROOT, rel), "utf8"));
-      expect(src).toContain("createOpenAIEmbedder");
-      // A plain `toContain` on the bare name is satisfied by the IMPORT line alone, so deleting
-      // only the CALL and leaving the import behind would still pass. Assert the CALL FORM
-      // directly -- what the ledger ruling actually asked for -- rather than counting bare-name
-      // occurrences as a proxy for it.
-      expect(src).toMatch(/wrapLedgeredEmbedder\s*\(/);
+      const contents = await readFile(resolve(REPO_ROOT, rel), "utf8");
+      const violations = checkEmbeddingConstructorConfinement([{ relPath: rel, contents }]);
+      expect(violations).toEqual([]);
     }
+  });
+
+  test("I29: an unwrapped createOpenAIEmbedder call in an approved file is still caught", () => {
+    // The regression this closes: the allow-list used to skip ALL checking once a file's path
+    // matched, so a SECOND, bare `createOpenAIEmbedder(...)` added to an already-approved file
+    // -- as opposed to a brand-new file -- was invisible to every guard. This fixture is exactly
+    // that shape: a real appender call earns the file its place on the allow-list, and a second,
+    // unwrapped construction sits right beside it, unassociated with any `wrapLedgeredEmbedder`.
+    const unwrappedFixture = [
+      "const wrapped = wrapLedgeredEmbedder(db, await createOpenAIEmbedder({ apiKey }));",
+      "const rogue = await createOpenAIEmbedder({ apiKey: other });",
+    ].join("\n");
+    const violations = checkEmbeddingConstructorConfinement([
+      {
+        relPath: "packages/gateway/src/embedding/create-routing-runtime.ts",
+        contents: unwrappedFixture,
+      },
+    ]);
+    expect(violations.map((v) => v.rule)).toEqual(["embedding-constructor-confined"]);
+    expect(violations[0]?.snippet).toContain("rogue");
   });
 });
 

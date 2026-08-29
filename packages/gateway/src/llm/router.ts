@@ -483,6 +483,14 @@ export class LlmRouter {
   private reasonFor(task: LlmTaskType, route: ModelRoute): string {
     const isLocal = route.provider.isLocal;
     if (this.config.enforceAirGap && isLocal) return "air-gap";
+    // A task pin can select a route the preferLocal branches below would otherwise mis-explain:
+    // e.g. `preferLocal: false` with a pin naming a LOCAL route falls through to
+    // "no-remote-provider" below, which is false — a remote route IS registered, it is simply
+    // outranked by the pin — and the mirror case (`preferLocal: true`, a remote pin) falls
+    // through to "no-local-provider"/"local-below-reasoning-floor", equally false. Checked
+    // before every preferLocal-derived branch so the pin, when it is the actual reason this
+    // route won, always wins over a guess based on `preferLocal` alone.
+    if (this.taskPins.get(task) === route.routeId) return "task-pin";
     if (this.config.preferLocal && isLocal) return "prefer-local";
     if (!this.config.preferLocal && !isLocal) return "prefer-remote";
     // The preferred provider does not match the configured preference.

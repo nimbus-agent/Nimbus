@@ -25,7 +25,25 @@ function formatTomlScalar(value: string): string {
 // Atomic (temp file in a fresh mkdtemp'd sibling dir, then rename over the target) so a
 // crash mid-write never leaves a truncated nimbus.toml. Mirrors
 // `packages/cli/src/lib/nimbus-toml-config.ts`'s `writeUtf8FileAtomicReplace` exactly.
-function writeUtf8FileAtomicReplace(path: string, content: string): void {
+//
+// The retry path used to UNLINK `path` before retrying the rename — meaning a crash, or a
+// second `renameSync` failure, right after that unlink left `path` (a user's live nimbus.toml,
+// for every caller of this module) permanently ABSENT. Losing the whole config to a failed pin
+// write is far worse than the write simply failing, so the original is preserved: it is moved
+// ASIDE (a rename, not a copy — atomic and near-instant, and same-filesystem because `swap` is a
+// sibling of `path`) rather than deleted, the retry rename is attempted, and if that ALSO fails
+// the aside is renamed straight back so the original file is exactly as it was before this call.
+/**
+ * @internal test seam: lets a test force BOTH `renameSync(tmp, path)` attempts to fail
+ * deterministically, without mocking `node:fs` (which is process-global and would leak into
+ * every other test sharing this process). Production callers must never pass this — the
+ * exported default forwards to the real `renameSync`.
+ */
+export function writeUtf8FileAtomicReplace(
+  path: string,
+  content: string,
+  _renameSync: (oldPath: string, newPath: string) => void = renameSync,
+): void {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true });
   const swap = mkdtempSync(join(dir, `.${basename(path)}.swap-`));
@@ -33,14 +51,41 @@ function writeUtf8FileAtomicReplace(path: string, content: string): void {
   try {
     writeFileSync(tmp, content, "utf8");
     try {
-      renameSync(tmp, path);
+      _renameSync(tmp, path);
     } catch {
+      const aside = join(swap, "original-backup");
+      let movedAside = false;
       try {
-        unlinkSync(path);
+        _renameSync(path, aside);
+        movedAside = true;
       } catch {
-        /* ignore */
+        // Nothing to preserve — either `path` doesn't exist yet (fresh file: the first
+        // renameSync failed for some other reason) or it's otherwise unmovable. Either way
+        // there is no original to protect, so just retry the direct rename below.
       }
-      renameSync(tmp, path);
+      try {
+        _renameSync(tmp, path);
+      } catch (secondErr) {
+        if (movedAside) {
+          try {
+            _renameSync(aside, path);
+          } catch {
+            /* best-effort restore — the retry failure re-thrown below is the one that matters,
+               and a stuck `aside` file inside `swap` is still recoverable by hand, unlike a
+               deleted nimbus.toml. */
+          }
+        }
+        throw secondErr;
+      }
+      if (movedAside) {
+        try {
+          unlinkSync(aside);
+        } catch {
+          /* the replacement already succeeded; a leftover backup file is cosmetic, not data
+             loss, and would only stop the `rmdirSync(swap)` cleanup below, which itself already
+             tolerates failure. */
+        }
+      }
     }
   } finally {
     try {

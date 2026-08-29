@@ -107,8 +107,12 @@ export function stripComments(src: string): string {
  * A single left-to-right scan rather than a regex, because the cases that matter are exactly the
  * ones a regex gets wrong: an escaped quote inside a literal must not end it early, and an
  * apostrophe inside a double-quoted string must not open one.
+ *
+ * Exported so a guard that needs to paren-match on code (e.g. "is this call nested inside that
+ * one?") can compose it with `stripComments` and not have a stray `)` inside a string literal
+ * throw its depth count off — the same reason `countAnyInSource` composes the two below.
  */
-function stripStringLiterals(src: string): string {
+export function stripStringLiterals(src: string): string {
   const out = src.split("");
   let quote: string | undefined;
   for (let i = 0; i < out.length; i++) {

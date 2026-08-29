@@ -932,7 +932,7 @@ with no published surface — `refactor(llm):`, **not** `refactor(llm)!:`.
 
 **Placeholder scan.** No TBDs. Every code step carries real code; every test step carries real assertions.
 
-**Type consistency.** `Embedder.isLocal` (Task 1) is read by `wrapLedgeredEmbedder` (Task 2) and asserted in Task 3. `taskPins` is `ReadonlyMap<LlmTaskType, string>` in Tasks 5, 6 and 7 alike. `setDefault`/`getDefault` keep their existing V20 signatures.
+**Type consistency.** `Embedder.isLocal` (Task 1) is read by `wrapLedgeredEmbedder` (Task 2) and asserted in Task 3. `taskPins` is `ReadonlyMap<LlmTaskType, string>` in Tasks 5, 6 and 7 alike. Task 8 deleted `getDefault` only — it was dead code, never called — and kept `setDefault`'s existing V20 signature unchanged: `llm.setDefault` is a live, renderer-exposed IPC method the desktop UI calls, so deleting it would have been a breaking change.
 
 **The one open risk is now closed.** Task 3 needs a `Database` at all three construction sites; the cross-model review verified all three have one (`tryCreateRoutingEmbeddingRuntime`, `createEmbeddingRuntime`, and `resolveEmbedder`'s `ctx.db`). No threading is required, and the plan no longer carries an unverified assumption into execution.
 

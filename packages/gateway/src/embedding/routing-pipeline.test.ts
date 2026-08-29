@@ -15,13 +15,16 @@ function vecAvailable(): boolean {
 }
 const VEC_AVAILABLE = vecAvailable();
 
-function stubEmbedder(model: string, dims: number): Embedder {
+// `isLocal` is DECLARED here, never inferred from the model string. Inferring it from a vendor
+// prefix (the previous shape: `!model.startsWith("openai:")`) is exactly what this branch's
+// invariant forbids in production code — locality must be declared, never guessed from a vendor
+// name — and a fixture that infers it would silently misclassify a future non-OpenAI remote
+// model as local.
+function stubEmbedder(model: string, dims: number, isLocal: boolean): Embedder {
   return {
     model,
     dims,
-    // Every callsite in this file names either the local MiniLM stand-in or the OpenAI one —
-    // derive locality from that naming instead of threading a fourth param through every call.
-    isLocal: !model.startsWith("openai:"),
+    isLocal,
     async embed(texts) {
       return texts.map(() => new Float32Array(dims));
     },
@@ -51,11 +54,11 @@ describe("RoutingEmbeddingPipeline", () => {
     insertItem(db, "e1", "slack", "message");
     const local = new SqliteEmbeddingPipeline({
       db,
-      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384, true),
     });
     const openai = new SqliteEmbeddingPipeline({
       db,
-      embedder: stubEmbedder("openai:text-embedding-3-small", 1536),
+      embedder: stubEmbedder("openai:text-embedding-3-small", 1536, false),
     });
     const router = new RoutingEmbeddingPipeline(db, local, openai);
     await router.embedItem({
@@ -77,11 +80,11 @@ describe("RoutingEmbeddingPipeline", () => {
     insertItem(db, "e2", "github", "git_commit");
     const local = new SqliteEmbeddingPipeline({
       db,
-      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384, true),
     });
     const openai = new SqliteEmbeddingPipeline({
       db,
-      embedder: stubEmbedder("openai:text-embedding-3-small", 1536),
+      embedder: stubEmbedder("openai:text-embedding-3-small", 1536, false),
     });
     const router = new RoutingEmbeddingPipeline(db, local, openai);
     await router.embedItem({
@@ -106,11 +109,11 @@ describe("RoutingEmbeddingPipeline", () => {
 
     const local = new SqliteEmbeddingPipeline({
       db,
-      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384, true),
     });
     const openai = new SqliteEmbeddingPipeline({
       db,
-      embedder: stubEmbedder("openai:text-embedding-3-small", 1536),
+      embedder: stubEmbedder("openai:text-embedding-3-small", 1536, false),
     });
     const router = new RoutingEmbeddingPipeline(db, local, openai);
     await router.backfillAll();
@@ -134,11 +137,11 @@ describe("RoutingEmbeddingPipeline", () => {
       insertItem(db, "e1", "slack", "message");
       const local = new SqliteEmbeddingPipeline({
         db,
-        embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+        embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384, true),
       });
       const openai = new SqliteEmbeddingPipeline({
         db,
-        embedder: stubEmbedder("openai:text-embedding-3-small", 1536),
+        embedder: stubEmbedder("openai:text-embedding-3-small", 1536, false),
       });
       const router = new RoutingEmbeddingPipeline(db, local, openai);
       await router.embedItem({

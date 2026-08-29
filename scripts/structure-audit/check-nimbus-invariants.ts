@@ -2,7 +2,7 @@
 
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import { CO_OWNED_ENTITY_TYPES } from "../../packages/gateway/src/graph/relationship-graph.ts";
-import { auditOutputPath, iterateSourceFiles, stripComments } from "./lib.ts";
+import { auditOutputPath, iterateSourceFiles, stripComments, stripStringLiterals } from "./lib.ts";
 
 export type FileEntry = { relPath: string; contents: string };
 export type Violation = { rule: string; file: string; line: number; snippet: string };
@@ -1026,32 +1026,101 @@ export function checkEmbeddingAppenderConfinement(files: readonly FileEntry[]): 
 // goes near `wrapLedgeredEmbedder`. Contrast D22(e), which confines `registerRoute` (the route
 // table's entry point) rather than only `wrapLedgeredProvider` (its decorator) -- this mirrors
 // that shape for the embedding pipeline.
-const D22_EMBED_CTOR_RE = /\bcreateOpenAIEmbedder\b/;
+//
+// An earlier version of this rule skipped ALL checking inside the approved files once their path
+// matched -- so a SECOND, unwrapped `createOpenAIEmbedder(...)` added to an approved file (as
+// opposed to a brand-new file) was invisible to every guard: this rule skipped the whole file, and
+// the decorator rule above only trips on `wrapLedgeredEmbedder`'s absence, never on a *second*,
+// unrelated construction sharing the file with a legitimate wrapped one. That is the I29
+// regression this rule exists to prevent, so "the file is approved" can no longer stand in for
+// "this call is wrapped": an approved file's calls are now paren-matched against every
+// `wrapLedgeredEmbedder(...)` call in the file, and a call is clean only when its
+// `createOpenAIEmbedder(` sits inside one of those argument lists -- proving association, not
+// mere co-occurrence. The definition site is exempted outright (see below), since
+// `export async function createOpenAIEmbedder(` is a declaration, not an invocation, and would
+// otherwise trip the same call-shaped regex.
+const D22_EMBED_CTOR_CALL_RE = /\bcreateOpenAIEmbedder\s*\(/;
+const D22_EMBED_WRAP_CALL_RE = /\bwrapLedgeredEmbedder\s*\(/;
+/** Where `createOpenAIEmbedder` is DECLARED -- exempt outright; there is nothing to wrap here. */
+const D22_EMBED_CTOR_DEFINITION = "packages/gateway/src/embedding/openai-embedder.ts";
+/** The three known construction call sites -- checked for wrapping, never skipped wholesale. */
 const D22_EMBED_CTOR_ALLOWED: readonly string[] = [
-  "packages/gateway/src/embedding/openai-embedder.ts",
   "packages/gateway/src/embedding/create-routing-runtime.ts",
   "packages/gateway/src/embedding/create-embedding-runtime.ts",
   "packages/gateway/src/ipc/index-reembed-rpc.ts",
 ];
+
+/**
+ * Index of the `)` matching the `(` at `openIdx` in `src`, treating string/template-literal
+ * contents as opaque so a stray `)` inside one can't desync the depth count. No AST needed: this
+ * is the one relationship the rule cares about -- "is call A textually nested inside call B's
+ * argument list" -- and a depth-tracked scan answers that exactly. Returns -1 if unterminated.
+ */
+function findMatchingParenClose(src: string, openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < src.length; i++) {
+    const c = src[i];
+    if (c === "(") {
+      depth++;
+    } else if (c === ")") {
+      depth--;
+      if (depth === 0) return i;
+    } else if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      i++;
+      while (i < src.length && src[i] !== quote) {
+        i += src[i] === "\\" ? 2 : 1;
+      }
+    }
+  }
+  return -1;
+}
 
 export function checkEmbeddingConstructorConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
     if (!f.relPath.startsWith("packages/gateway/src/")) continue;
-    if (D22_EMBED_CTOR_ALLOWED.includes(f.relPath)) continue;
-    // Whole-source scan, not per-line -- same shape as the decorator rule above.
-    const stripped = stripComments(f.contents);
+    if (f.relPath === D22_EMBED_CTOR_DEFINITION) continue;
+    // Comments AND string/template literals blanked (length-preserving), so neither a comment
+    // nor a string body can fake a match or desync the paren depth count below.
+    const code = stripStringLiterals(stripComments(f.contents));
     const original = f.contents.split("\n");
-    const re = new RegExp(D22_EMBED_CTOR_RE.source, "g");
-    for (const m of stripped.matchAll(re)) {
-      const line = stripped.slice(0, m.index).split("\n").length;
-      out.push({
+    const snippetAt = (index: number): Violation => {
+      const line = code.slice(0, index).split("\n").length;
+      return {
         rule: "embedding-constructor-confined",
         file: f.relPath,
         line,
         snippet: (original[line - 1] ?? "").trim(),
-      });
+      };
+    };
+
+    const ctorRe = new RegExp(D22_EMBED_CTOR_CALL_RE.source, "g");
+    const ctorMatches = [...code.matchAll(ctorRe)];
+    if (ctorMatches.length === 0) continue;
+
+    if (!D22_EMBED_CTOR_ALLOWED.includes(f.relPath)) {
+      // A brand-new call site outside the allow-list trips regardless of wrapping -- it demands
+      // a deliberate allow-list addition (and the review that goes with one), not a silent pass
+      // just because it happens to already be wrapped.
+      for (const m of ctorMatches) out.push(snippetAt(m.index ?? 0));
+      continue;
+    }
+
+    // Approved call site: every `createOpenAIEmbedder(` must be textually nested inside a
+    // `wrapLedgeredEmbedder(...)` call's argument list -- association, not co-occurrence.
+    const wrapSpans: Array<[number, number]> = [];
+    const wrapRe = new RegExp(D22_EMBED_WRAP_CALL_RE.source, "g");
+    for (const m of code.matchAll(wrapRe)) {
+      const openIdx = (m.index ?? 0) + m[0].length - 1;
+      const closeIdx = findMatchingParenClose(code, openIdx);
+      if (closeIdx !== -1) wrapSpans.push([openIdx, closeIdx]);
+    }
+    for (const m of ctorMatches) {
+      const idx = m.index ?? 0;
+      const wrapped = wrapSpans.some(([open, close]) => idx > open && idx < close);
+      if (!wrapped) out.push(snippetAt(idx));
     }
   }
   return out;

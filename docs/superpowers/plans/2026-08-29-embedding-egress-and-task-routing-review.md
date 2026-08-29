@@ -12,7 +12,7 @@ Since `LlmRouter` does not have access to the database or the `LlmRegistry` dire
 
 ### Suggestion
 
-Modify `buildLlmRegistryFromToml` in [assemble.ts](../../../packages/gateway/src/platform/assemble.ts) to query the database `llm_task_defaults` table at startup, reconstruct the route IDs, and merge them with the TOML-configured `taskPins`.
+Modify `buildLlmRegistryFromToml` in `packages/gateway/src/platform/assemble.ts` to query the database `llm_task_defaults` table at startup, reconstruct the route IDs, and merge them with the TOML-configured `taskPins`.
 
 ```ts
 // Proposed loading logic in buildLlmRegistryFromToml:
@@ -43,7 +43,7 @@ const taskPins = new Map([...dbPins, ...(llmToml.taskPins ?? [])]);
 
 ### Problem
 
-In [registry.ts](../../../packages/gateway/src/llm/registry.ts), `getDefault` is implemented as:
+In `packages/gateway/src/llm/registry.ts`, `getDefault` is implemented as:
 
 ```ts
 getDefault(taskType: string): { provider: string; modelName: string } | undefined {

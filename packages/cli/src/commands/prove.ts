@@ -65,7 +65,7 @@ const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   // LOCAL provider, a locally-run Mastra model, or a LOCAL embedder each append nothing by design,
   // not as a gap, so a zero here is still not literally a claim that no vector or prompt left the
   // machine. See the `model` entry in the gateway's `egress/egress-coverage.ts`.
-  model: "prompts and embedding batches sent to a non-local model route",
+  model: "prompts and embedding batches sent to a non-local model",
 };
 
 /**

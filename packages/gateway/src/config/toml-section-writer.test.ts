@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { setNimbusTomlSectionKey } from "./toml-section-writer.ts";
+import { basename, join } from "node:path";
+import { setNimbusTomlSectionKey, writeUtf8FileAtomicReplace } from "./toml-section-writer.ts";
 
 // TEST-DATA SAFETY: every path here lives under a fresh `os.tmpdir()` directory — this
 // module writes files, and this suite must never touch a real `nimbus.toml`.
@@ -146,6 +146,64 @@ describe("setNimbusTomlSectionKey", () => {
       setNimbusTomlSectionKey(tomlPath, "[llm.tasks]", "reasoning", "ollama/big");
       const content = readFileSync(tomlPath, "utf8");
       expect(content).not.toContain("\r");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// The retry path used to `unlinkSync(path)` before retrying the rename: a crash, or a second
+// `renameSync` failure, right after that unlink permanently deleted the user's nimbus.toml.
+// `writeUtf8FileAtomicReplace` takes an `@internal test seam` rename override precisely so this
+// failure mode can be red-proved without `mock.module`-ing `node:fs` — a process-global mock
+// that would leak into every other test sharing this process.
+describe("writeUtf8FileAtomicReplace — the original file survives a failed replace", () => {
+  test("both rename attempts failing leaves the original file byte-for-byte intact, and throws", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      const original = '[llm.tasks]\nclassification = "ollama/small"\n';
+      writeFileSync(tomlPath, original, "utf8");
+
+      // The tmp file this function writes is always named "content" (see `join(swap,
+      // "content")` in the source). Fail exactly those two `tmp -> path` attempts; forward
+      // every other rename (move-aside, restore) to the real filesystem so the function's own
+      // recovery logic is what's under test, not a stub standing in for it.
+      const failingRename = (oldPath: string, newPath: string): void => {
+        if (basename(oldPath) === "content") {
+          throw new Error("simulated renameSync failure");
+        }
+        renameSync(oldPath, newPath);
+      };
+
+      expect(() =>
+        writeUtf8FileAtomicReplace(tomlPath, "replacement that must never land\n", failingRename),
+      ).toThrow("simulated renameSync failure");
+
+      // Not merely "a file exists at tomlPath" -- the ORIGINAL content, unchanged.
+      expect(readFileSync(tomlPath, "utf8")).toBe(original);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a fresh (nonexistent) target file is unaffected by the aside/restore dance", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      let attempts = 0;
+      const failOnceThenSucceed = (oldPath: string, newPath: string): void => {
+        if (basename(oldPath) === "content") {
+          attempts += 1;
+          if (attempts === 1) throw new Error("simulated first-attempt failure");
+        }
+        renameSync(oldPath, newPath);
+      };
+
+      // First renameSync throws (simulated); there is nothing at `path` yet to move aside, so
+      // the retry proceeds directly and succeeds -- mirroring the real "brand-new file" case.
+      writeUtf8FileAtomicReplace(tomlPath, "fresh content\n", failOnceThenSucceed);
+      expect(readFileSync(tomlPath, "utf8")).toBe("fresh content\n");
     } finally {
       cleanup();
     }

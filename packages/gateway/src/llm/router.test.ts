@@ -985,6 +985,37 @@ describe("LlmRouter task pins ([llm.tasks])", () => {
     router.registerRoute(makeFakeProvider("anthropic", true), "up");
     expect(await router.selectRoute("reasoning")).toBeUndefined();
   });
+
+  // `reasonFor` (feeding `nimbus llm status`) used to ignore pins entirely, deriving a reason
+  // from `preferLocal` alone -- so a pin overriding `preferLocal`'s normal choice produced a
+  // reason that CONTRADICTED the route it was attached to: both routes below are registered and
+  // available, so the "no-*-provider" reasons the buggy code reported were false, not just
+  // imprecise.
+  test("reason is task-pin, not no-remote-provider, when preferLocal=false pins a LOCAL route", async () => {
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      preferLocal: false,
+      taskPins: new Map([["classification", `ollama/${DEFAULT_CONFIG.localModel}`]]),
+    });
+    router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
+    const status = await router.getStatus();
+    expect(status.classification?.providerId).toBe("ollama");
+    expect(status.classification?.reason).toBe("task-pin");
+  });
+
+  test("reason is task-pin, not no-local-provider, when preferLocal=true pins a REMOTE route", async () => {
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      preferLocal: true,
+      taskPins: new Map([["classification", `remote/${REMOTE_MODEL}`]]),
+    });
+    router.registerRoute(makeFakeProvider("ollama", true), DEFAULT_CONFIG.localModel);
+    router.registerRoute(makeFakeProvider("remote", true), REMOTE_MODEL);
+    const status = await router.getStatus();
+    expect(status.classification?.providerId).toBe("remote");
+    expect(status.classification?.reason).toBe("task-pin");
+  });
 });
 
 describe("LlmRouter.setTaskPin", () => {
