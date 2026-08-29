@@ -969,13 +969,20 @@ describe("LlmRouter task pins ([llm.tasks])", () => {
 
   test("a pin does NOT override air-gap", async () => {
     // enforce_air_gap is a refusal, not a preference. A pin naming a remote route under air-gap
-    // must not resurrect it.
+    // must not resurrect it -- even when that route is otherwise fully eligible: AVAILABLE
+    // (`makeFakeProvider("anthropic", true)`) and naming a model the fake actually advertises
+    // ("up", in its `listModels`). Both of those are load-bearing: an unavailable route or an
+    // unadvertised model would be rejected by the availability probe regardless of air-gap, which
+    // is exactly how this test previously passed for two reasons that had nothing to do with the
+    // air-gap check -- deleting `if (this.config.enforceAirGap && !route.provider.isLocal)
+    // continue;` from `router.ts` left it green. With an eligible-but-for-air-gap route pinned,
+    // only the air-gap check can produce `undefined` here.
     const router = new LlmRouter({
       ...DEFAULT_CONFIG,
       enforceAirGap: true,
-      taskPins: new Map([["reasoning", "anthropic/claude-x"]]),
+      taskPins: new Map([["reasoning", "anthropic/up"]]),
     });
-    router.registerRoute(makeFakeProvider("anthropic", false), "claude-x");
+    router.registerRoute(makeFakeProvider("anthropic", true), "up");
     expect(await router.selectRoute("reasoning")).toBeUndefined();
   });
 });

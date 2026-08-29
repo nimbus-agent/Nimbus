@@ -1017,6 +1017,46 @@ export function checkEmbeddingAppenderConfinement(files: readonly FileEntry[]): 
   return out;
 }
 
+// D22 (f), second allow-list: the CONSTRUCTOR, not just the decorator that wraps its result. The
+// rule above sees only a file that already mentions `wrapLedgeredEmbedder` -- a NEW file that
+// calls `createOpenAIEmbedder(...)` bare, never mentioning the decorator at all, spells nothing
+// that rule matches and would put an unrecorded remote embed in the index pipeline while this
+// audit stayed green. Confining the constructor itself to its definition plus today's three
+// construction sites closes that: a fourth construction site trips THIS rule even if it never
+// goes near `wrapLedgeredEmbedder`. Contrast D22(e), which confines `registerRoute` (the route
+// table's entry point) rather than only `wrapLedgeredProvider` (its decorator) -- this mirrors
+// that shape for the embedding pipeline.
+const D22_EMBED_CTOR_RE = /\bcreateOpenAIEmbedder\b/;
+const D22_EMBED_CTOR_ALLOWED: readonly string[] = [
+  "packages/gateway/src/embedding/openai-embedder.ts",
+  "packages/gateway/src/embedding/create-routing-runtime.ts",
+  "packages/gateway/src/embedding/create-embedding-runtime.ts",
+  "packages/gateway/src/ipc/index-reembed-rpc.ts",
+];
+
+export function checkEmbeddingConstructorConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (D22_EMBED_CTOR_ALLOWED.includes(f.relPath)) continue;
+    // Whole-source scan, not per-line -- same shape as the decorator rule above.
+    const stripped = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const re = new RegExp(D22_EMBED_CTOR_RE.source, "g");
+    for (const m of stripped.matchAll(re)) {
+      const line = stripped.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "embedding-constructor-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -1456,6 +1496,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D22(f) wrapLedgeredEmbedder referenced outside the three construction sites/embedding-egress.ts — an unrecorded remote embed; I29 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkEmbeddingConstructorConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D22(f) createOpenAIEmbedder constructed outside the three construction sites/its own definition — a NEW remote embedder built without the wrapLedgeredEmbedder decorator; I29 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

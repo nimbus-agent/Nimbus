@@ -9,6 +9,7 @@ import {
   checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
   checkEmbeddingAppenderConfinement,
+  checkEmbeddingConstructorConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkForwardShareConfinement,
   checkRunConfinedConfinement,
@@ -881,6 +882,35 @@ describe("D22(f) — the embedding appender is confined", () => {
   // disagree, so no test can discriminate them; a test asserting they do would look like coverage
   // of a gap it does not actually cover. The whole-source scan is kept anyway, for consistency
   // with D25 and D22(e) and in case this regex ever grows a `\s*` of its own.
+});
+
+describe("D22(f) second allow-list — the embedding CONSTRUCTOR is confined", () => {
+  const file = (relPath: string, contents: string) => [{ relPath, contents }];
+
+  // The gap this closes: a bare `createOpenAIEmbedder(...)` call, with no mention of
+  // `wrapLedgeredEmbedder` anywhere in the file, spells nothing `checkEmbeddingAppenderConfinement`
+  // matches -- that rule only sees a file that ALREADY calls the decorator. A fourth construction
+  // site written without it is exactly the I29 regression both rules exist to prevent.
+  test("flags createOpenAIEmbedder constructed outside the allowed sites, even with no wrapLedgeredEmbedder mention", () => {
+    const v = checkEmbeddingConstructorConfinement(
+      file("packages/gateway/src/agents/rogue.ts", "const e = createOpenAIEmbedder({ apiKey });\n"),
+    );
+    expect(v.map((x) => x.rule)).toEqual(["embedding-constructor-confined"]);
+  });
+
+  test("the three construction sites and the definition are allowed", () => {
+    const allowed = [
+      "packages/gateway/src/embedding/create-routing-runtime.ts",
+      "packages/gateway/src/embedding/create-embedding-runtime.ts",
+      "packages/gateway/src/ipc/index-reembed-rpc.ts",
+      "packages/gateway/src/embedding/openai-embedder.ts",
+    ];
+    for (const relPath of allowed) {
+      expect(
+        checkEmbeddingConstructorConfinement(file(relPath, "createOpenAIEmbedder({ apiKey });\n")),
+      ).toEqual([]);
+    }
+  });
 });
 
 describe("graph-entity-flat-coowned — flat upsertGraphEntity pinned away from co-owned types", () => {
