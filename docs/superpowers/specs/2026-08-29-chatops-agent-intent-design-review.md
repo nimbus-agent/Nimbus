@@ -25,15 +25,19 @@ Below are specific improvements, suggestions, and open questions to address duri
 ### 2.1 Post Wrapper Context and Signature Change (PR 1)
 
 * **Observation:** In §5.1, the spec proposes wrapping the raw `post` function at `chatops-boot.ts:164`:
+
   ```ts
   post: (platform: ChatPlatform, channelId: string, text: string) => Promise<void>
   ```
+
   In §5.3, it is stated that `method` (e.g., `chatops.reply`, `chatops.approvalCard`, or `chatops.agentBrief`) is derived server-side from the call site and is never supplied by the caller.
 * **Problem:** Since the `post` closure signature only takes `(platform, channelId, text)`, the wrapper has no way of knowing whether the caller was `ReplyDispatcher` (regular reply or agent brief) or `ApprovalPresenter` (approval card) without parsing the text/layout structure (which is highly fragile and prone to false positives/negatives).
 * **Recommendation:** Update the signature of `post` (or pass an optional parameter/metadata) to explicitly declare the post kind, or have `wrapLedgeredChatPost` return specialized handlers (or a structured client interface) instead of a single flat function. For example:
+
   ```ts
   post: (platform: ChatPlatform, channelId: string, text: string, context?: "reply" | "approvalCard" | "agentBrief") => Promise<void>
   ```
+
   This guarantees that the exact `method` type is propagated explicitly rather than guessed via heuristics.
 
 ### 2.2 Salting the Hashed Channel ID (PR 1)
@@ -51,7 +55,7 @@ Below are specific improvements, suggestions, and open questions to address duri
 ### 2.4 Truncation Splicing & Preservation of `## Gaps` (PR 2)
 
 * **Observation:** §6.6 requires keeping the `## Gaps` section intact and re-attaching it verbatim, dropping body sections if necessary to fit the byte limits.
-* **Suggestion:** Since briefs are formatted as structured markdown, a simple line-based splitter or regex matching on `^## ` headings should be used. The parser can identify the `## Gaps` section (and any other target I31 sections), slice the preceding body to fit the budget, and then append the re-assembled gaps footer.
+* **Suggestion:** Since briefs are formatted as structured markdown, a simple line-based splitter or a regex matching `^##` followed by a space should be used. The parser can identify the `## Gaps` section (and any other target I31 sections), slice the preceding body to fit the budget, and then append the re-assembled gaps footer.
 
 ---
 
@@ -62,5 +66,3 @@ Below are specific improvements, suggestions, and open questions to address duri
    * Since this is fail-closed, silence is safer, but it might lead to debugging confusion. Should we log this locally with high visibility?
 2. **Peers and Identity Mapping under `public-read`:**
    * The decision to block unmapped users from running agents is excellent. However, what about mapped users in a shared channel who trigger federated requests (e.g. `ghost` or `huddle`)? Do we inherit their local mapped identity and permissions when invoking the remote peers, and is the peer transport aware that this originated from a ChatOps channel?
-
-

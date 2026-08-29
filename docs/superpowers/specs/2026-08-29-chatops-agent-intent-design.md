@@ -492,7 +492,7 @@ unbounded length. Policy:
 
 - Post the `brief` markdown from `briefReady`. The bot may restyle; it must never re-derive.
 - **Cap at a per-platform limit and truncate at a section boundary**, appending an explicit
-  `_(truncated — N sections omitted; run `nimbus <agent>` locally for the full brief)_` line. A
+  ``_(truncated — N sections omitted; run `nimbus <agent>` locally for the full brief)_`` line. A
   truncation that does not announce itself is the `wordCount` defect from the web clipper (#1005)
   in a new place: reporting on content that was discarded.
 - **Never truncate away a reserved disclosure section.** `## Gaps` — and `negotiate`'s `## Sources`
@@ -512,7 +512,7 @@ exports everything needed: `reservedHeadingsFor(brief)` / `reservedBlocksFor(bri
 The truncator therefore: takes the reserved blocks via `reservedBlocksFor`, fits the **body** to the
 remaining budget by dropping whole `##` sections from the end, and reassembles with `joinReserved`.
 
-A fresh `^## ` regex would work most of the time and fail in exactly the wrong place. I31's
+A fresh regex matching `^##` followed by a space would work most of the time and fail in exactly the wrong place. I31's
 guarantee is expressed in terms of *these* functions — `normalizeSectionText`, the any-heading-level
 strip, the non-heading `Gaps:` form — so a truncator with its own notion of "a section" can disagree
 with the invariant at the boundary, and the disagreement surfaces as a dropped disclosure on the one
@@ -723,5 +723,3 @@ I29 docs; CHANGELOG.
 `parseCommand` third arm + `ParsedCommand` / `RefusalReason` members; `IntentRouter` agent branch;
 `bindAgentInvoker` on `ChatopsBoot` + `gateway-main.ts` wiring; §6.4 renames; the structure audit;
 truncation; docs + roadmap correction.
-
-

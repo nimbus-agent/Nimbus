@@ -20,12 +20,15 @@ One critical logical vulnerability has been identified in the proposed AST/regex
 ### 2.1 Critical Bug in D17 Regex Bypass (Task 5)
 
 * **Observation:** The proposed static rule `checkChatopsUnwrappedPost` in Task 5 performs this check:
+
   ```ts
   if (!UNWRAPPED_POST_RE.test(stripped)) continue;
   if (WRAPPED_POST_RE.test(stripped)) continue;
   ```
+
 * **Risk:** If a file contains **both** a wrapped call to `buildConnectorPost` and an unwrapped call to `buildConnectorPost`, `WRAPPED_POST_RE.test(stripped)` will be `true`, causing the scanner to skip the file entirely and miss the unwrapped call.
 * **Recommendation:** Instead of a file-level early return, count the occurrences of both tokens in the file, or check each occurrence individually. Since every valid use of `buildConnectorPost` must be wrapped, the simplest check is asserting that the total count of `buildConnectorPost` matches the total count of `buildLedgeredChatPosts` in non-test files:
+
   ```ts
   const unwrappedCount = (stripped.match(/\bbuildConnectorPost\s*\(/g) || []).length;
   const wrappedCount = (stripped.match(/\bbuildLedgeredChatPosts\s*\(/g) || []).length;
@@ -33,6 +36,7 @@ One critical logical vulnerability has been identified in the proposed AST/regex
     // Report violation: there is at least one unwrapped call
   }
   ```
+
   This is much more robust and prevents file-level skips when both patterns are present.
 
 ### 2.2 Vault Write Failures in `ensureChannelSalt` (Task 2)

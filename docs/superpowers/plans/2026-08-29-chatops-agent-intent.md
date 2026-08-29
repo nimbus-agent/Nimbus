@@ -176,6 +176,7 @@ git commit -m "feat(agents): declare the param primitive kinds for text surfaces
 
 - Consumes: `AGENT_PARAM_KINDS`, `ParamKind` (Task 1).
 - Produces:
+
   ```ts
   export type AgentCommand =
     | { readonly ok: true; readonly agent: string; readonly params: Record<string, unknown> }
@@ -185,6 +186,7 @@ git commit -m "feat(agents): declare the param primitive kinds for text surfaces
     permitted: ReadonlySet<string>,
   ): AgentCommand | null;   // null = "this is not an agent command"
   ```
+
   Task 7 consumes it.
 
 **The NaN rule, and why it is load-bearing:** `Number("three")` is `NaN` and `typeof NaN === "number"`.
@@ -515,6 +517,7 @@ git commit -m "feat(egress): add the chatops client kind, ledgered at the post n
 
 - Consumes: `resolveExternalAgentMethod` (Task 3), `dispatchAgentsRpc`, `AgentsRpcError`, `buildAgentSynthesisRunner`.
 - Produces:
+
   ```ts
   export type ChatopsAgentResult =
     | { readonly ok: true; readonly markdown: string }
@@ -522,6 +525,7 @@ git commit -m "feat(egress): add the chatops client kind, ledgered at the post n
   export type ChatopsAgentInvoker = (agent: string, params: unknown) => Promise<ChatopsAgentResult>;
   export function buildChatopsAgentInvoker(deps: ChatopsAgentInvokerDeps): ChatopsAgentInvoker;
   ```
+
   Tasks 8–9 consume it.
 
 **Shape:** a sibling of `agent-http-invoke.ts`, deliberately. The difference: a channel has no
@@ -723,7 +727,7 @@ git commit -m "feat(chatops): invoke agents through dispatchAgentsRpc"
 - Consumes: `reservedBlocksFor`, `RESERVED_HEADINGS_BY_KIND` (`agents/_lib/reserved-sections.ts`); `stripSections`, `joinReserved` (`agents/_lib/markdown-sections.ts`).
 - Produces: `truncateBrief(markdown: string, kind: string, maxBytes: number): string`. Task 8 consumes it.
 
-**Do not write a `^## ` regex.** I31's guarantee is expressed in terms of *these* functions —
+**Do not write a regex matching `^##` followed by a space.** I31's guarantee is expressed in terms of *these* functions —
 `normalizeSectionText`, the any-heading-level strip, the non-heading `Gaps:` form. A truncator with
 its own notion of "a section" disagrees with the invariant exactly at the boundary, and the
 disagreement shows up as a dropped disclosure on the one brief whose formatting differs.
@@ -1105,6 +1109,7 @@ Expected: PASS.
 
 If Step 4 cannot be made to pass and fail on demand within a reasonable effort, **do not ship a
 guard that might be inert.** Delete it, and instead:
+
 1. Extend Task 2's round-trip tests to cover every agent × every declared field.
 2. Add a comment in `agent-param-kinds.ts` stating that the audit was attempted and why it was
    dropped, so the next person does not silently re-derive the same dead end.
@@ -1172,5 +1177,3 @@ git commit -m "docs: record the chatops agent intent and correct the roadmap's I
 - **Type consistency:** `ChatopsAgentInvoker` (Task 5) is the type Tasks 8 and 9 consume; `ParamKind` and `AGENT_PARAM_KINDS` (Task 1) are what Tasks 2 and 10 consume; `EXTERNAL_AGENT_NAMES` / `resolveExternalAgentMethod` (Task 3) are what Tasks 5 and 9 consume. No symbol is referenced before the task that defines it.
 - **Two tasks carry a stated fallback rather than a promise:** Task 10 (the audit may be undeliverable — take the fallback rather than shipping something inert) and Task 5's implementer note (the notify/dispatch ordering hazard, with the wrong fix named explicitly).
 - **Three tests assert a CALL COUNT, not just an outcome** (Task 8's unmapped user, PR 1's failed append, Task 9's single ledger row). Each replaces an assertion that would pass against a broken implementation.
-
-

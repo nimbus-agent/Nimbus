@@ -981,5 +981,3 @@ correlation. Recorded here so it is not re-raised.
 - **Spec coverage:** §5.1 → Tasks 3–4; §5.2 → Task 1; §5.3 → Tasks 2–3; §5.4 → Tasks 1 + 6; §5.5 → Task 7; §2.5's dead-path cleanup → Task 5.
 - **Not in this plan, by design:** everything under §6 (the agent intent) is PR 2 and has its own plan. `posts.agentBrief` is built here and consumed there.
 - **The two red-prove steps (3.5 and 5.5) are not optional.** A fail-closed test that has never been run against a fail-open implementation, and an allow-list guard that has never been shown to reject anything, are the two failure shapes this codebase has been bitten by most.
-
-
