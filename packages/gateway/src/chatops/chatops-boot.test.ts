@@ -1,12 +1,51 @@
-import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
+import { listEgress } from "../egress/egress-verify.ts";
 import type { PlannedAction } from "../engine/types.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { buildChatopsBoot, type ChatopsBootDeps, emailFromUserInfo } from "./chatops-boot.ts";
 import type { RunChatopsTool } from "./chatops-tool-runner.ts";
 import type { SocketLike } from "./transport/slack-socket-adapter.ts";
+
+/**
+ * Minimal in-memory NimbusVault (mirrors `policy/anchor-keypair.test.ts`'s `FakeVault`). Only
+ * `get`/`set` are exercised by `ensureChannelSalt`.
+ */
+class FakeVault implements NimbusVault {
+  private readonly store = new Map<string, string>();
+  get(key: string): Promise<string | null> {
+    return Promise.resolve(this.store.get(key) ?? null);
+  }
+  set(key: string, value: string): Promise<void> {
+    this.store.set(key, value);
+    return Promise.resolve();
+  }
+  delete(_key: string): Promise<void> {
+    throw new Error("delete must not be called by this boot path");
+  }
+  listKeys(_prefix?: string): Promise<string[]> {
+    throw new Error("listKeys must not be called by this boot path");
+  }
+}
+
+/** Real, migrated in-memory index DB + a fresh FakeVault per test — `buildChatopsBoot` now
+ *  REQUIRES both (I29 chatops-class ledgering, salted channel hashing). */
+let db: Database;
+let vault: NimbusVault;
+beforeEach(() => {
+  db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  vault = new FakeVault();
+});
+afterEach(() => {
+  db.close();
+});
 
 const SLACK_EMAILS: Record<string, string> = {
   U_BOB: "bob@acme.com",
@@ -86,10 +125,10 @@ interface Harness {
    * dispatch, which is the actual I29 guarantee under test.
    */
   order: string[];
-  boot: ReturnType<typeof buildChatopsBoot>;
+  boot: Awaited<ReturnType<typeof buildChatopsBoot>>;
 }
 
-function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
+async function buildHarness(overrides?: Partial<ChatopsBootDeps>): Promise<Harness> {
   const socket = new FakeSocket();
   const posts: Harness["posts"] = [];
   const dispatched: PlannedAction[] = [];
@@ -137,6 +176,8 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
       isOperatorValid: () => true,
     },
     runTool,
+    db,
+    vault,
     audit: {
       recordAudit: (e) =>
         audits.push({
@@ -165,7 +206,7 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
     ...overrides,
   };
 
-  const boot = buildChatopsBoot(deps);
+  const boot = await buildChatopsBoot(deps);
   boot.bindAskEngine((query, namespace) =>
     Promise.resolve(`[${namespace}] answer to: ${query} → oncall = alice`),
   );
@@ -174,7 +215,7 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
 
 describe("buildChatopsBoot — full production graph", () => {
   test("read: mapped user gets an engine answer in the originating channel", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.service.start();
     h.socket.emit(mention("C0", "U_BOB", "@nimbus who is on call for payment-service?", "1"));
     await until(() => h.posts.length === 1);
@@ -185,7 +226,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("write: owner-routed card → owner approves → dispatched + audit approved", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.service.start();
     h.socket.emit(
       mention(
@@ -211,7 +252,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("write: owner rejects → no dispatch + audit rejected", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.service.start();
     h.socket.emit(
       mention("C0", "U_BOB", "@nimbus run deployment.rollback service=payment-service", "4"),
@@ -228,7 +269,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("write: NON-owner approve click is not honored (I20) → falls back + rejects fail-closed", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.service.start();
     h.socket.emit(
       mention("C0", "U_BOB", "@nimbus run deployment.rollback service=payment-service", "6"),
@@ -246,7 +287,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("unmapped user under refuse mode → refusal reply + refusal audit row", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.service.start();
     h.socket.emit(mention("C0", "U_EVE", "@nimbus who is on call?", "8"));
     await until(() => h.audits.some((a) => a.actionType === "chatops.refusal"));
@@ -258,7 +299,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("unbound channel → bot stays silent (fail-closed)", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.service.start();
     h.socket.emit(mention("C_UNBOUND", "U_BOB", "@nimbus hello", "9"));
     // Give the pipeline a beat; nothing may be posted or audited.
@@ -269,7 +310,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("I23: every operational post lands in the originating channel or a policy notify channel", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.service.start();
     h.socket.emit(mention("C0", "U_BOB", "@nimbus status of payment-service?", "10"));
     h.socket.emit(
@@ -283,7 +324,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("isSenderMapped distinguishes enrolled from unmapped senders (Slice 6c intercept gate)", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.service.start();
     expect(await h.boot.isSenderMapped("slack", "U_BOB")).toBe(true);
     expect(await h.boot.isSenderMapped("slack", "U_EVE")).toBe(false);
@@ -291,7 +332,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("rpcCtx: status reflects transports; testParse parses a known write", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     expect(h.boot.rpcCtx.status().enabled).toBe(true);
     expect(h.boot.rpcCtx.status().platforms.map((p) => p.name)).toEqual(["slack"]);
     const parsed = h.boot.rpcCtx.testParse("run deployment.rollback service=payment-service") as {
@@ -303,7 +344,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("teams surface: records the activity serviceUrl and threads it into replies", async () => {
-    const h = buildHarness({
+    const h = await buildHarness({
       cfg: {
         enabled: true,
         slackEnabled: false,
@@ -340,8 +381,8 @@ describe("buildChatopsBoot — full production graph", () => {
     await h.boot.service.stop();
   });
 
-  test("teams surface is absent when no JWT validator is wired (fail-closed)", () => {
-    const h = buildHarness({
+  test("teams surface is absent when no JWT validator is wired (fail-closed)", async () => {
+    const h = await buildHarness({
       cfg: {
         enabled: true,
         slackEnabled: true,
@@ -357,7 +398,7 @@ describe("buildChatopsBoot — full production graph", () => {
   test("slack socket open with no url → fail-closed throw (never connects to a bogus endpoint)", async () => {
     // The slack transport's `openSocket` unwraps `slack_socket_open`; an empty url is rejected so
     // the adapter never opens a socket to a bogus endpoint.
-    const h = buildHarness({
+    const h = await buildHarness({
       runTool: ((platform, toolId) => {
         if (toolId === "slack_socket_open") return Promise.resolve({ url: "" });
         throw new Error(`unexpected tool ${toolId} (${platform})`);
@@ -368,7 +409,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("rpcCtx start/stop drive the underlying service lifecycle", async () => {
-    const h = buildHarness();
+    const h = await buildHarness();
     await h.boot.rpcCtx.start();
     expect(h.boot.rpcCtx.status().platforms.map((p) => p.name)).toEqual(["slack"]);
     await h.boot.rpcCtx.stop();
@@ -397,7 +438,7 @@ describe("buildChatopsBoot — full production graph", () => {
       }
       throw new Error(`unexpected ${toolId}`);
     };
-    const boot = buildChatopsBoot({
+    const boot = await buildChatopsBoot({
       cfg: {
         enabled: true,
         slackEnabled: true,
@@ -412,6 +453,8 @@ describe("buildChatopsBoot — full production graph", () => {
       },
       identity: { findScimByEmail: (email) => SCIM[email], isOperatorValid: () => true },
       runTool,
+      db,
+      vault,
       audit: { recordAudit: () => {} },
       dispatcher: { dispatch: () => Promise.resolve({}) },
       egressSink: NULL_EGRESS_SINK,
@@ -429,7 +472,7 @@ describe("buildChatopsBoot — full production graph", () => {
   test("local-consent fallback: a bound approver honors the non-delegate write (line 193)", async () => {
     // A non-owner click is not honored as a delegate (I20); the executor then falls back to the
     // bound local consent channel. Binding an approve-returning consent drives the dispatch.
-    const h = buildHarness();
+    const h = await buildHarness();
     h.boot.bindLocalConsent(() => Promise.resolve(true));
     await h.boot.service.start();
     h.socket.emit(
@@ -449,7 +492,7 @@ describe("buildChatopsBoot — full production graph", () => {
   test("I29 fix 3: a chatops-approved dispatch appends a real egress row, not a silent NULL sink", async () => {
     // ChatopsBootDeps.egressSink is now REQUIRED (dropped the `?? NULL_EGRESS_SINK` default) —
     // this proves the executor actually calls the sink it was handed, wired into a real dispatch.
-    const h = buildHarness();
+    const h = await buildHarness();
     h.boot.bindLocalConsent(() => Promise.resolve(true));
     await h.boot.service.start();
     h.socket.emit(
@@ -468,6 +511,19 @@ describe("buildChatopsBoot — full production graph", () => {
     // log can: it must read exactly `["egress", "dispatch"]`, never the reverse.
     expect(h.order).toEqual(["egress", "dispatch"]);
     await h.boot.service.stop();
+  });
+
+  test("a reply through the booted chatops posts AND ledgers exactly one row", async () => {
+    // Task 4: every outbound post now goes through `buildLedgeredChatPosts` (I29 `chatops`
+    // class) rather than the raw connector post directly — a reply that previously left no
+    // trace in the egress ledger now appends exactly one row before it posts.
+    const h = await buildHarness();
+    await h.boot.replyTo({ kind: "originating", platform: "slack", channelId: "C1" }, "hi");
+
+    const rows = listEgress(db, { limit: 10 });
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.sourceType).toBe("chatops");
+    expect(rows[0]?.method).toBe("chatops.reply");
   });
 
   test("identity disabled (no identity dep) → isOperatorValid fallback is false (?? false)", async () => {
@@ -489,7 +545,7 @@ describe("buildChatopsBoot — full production graph", () => {
       if (toolId === "slack_chat_post") return Promise.resolve({ ok: true });
       throw new Error(`unexpected ${toolId}`);
     };
-    const boot = buildChatopsBoot({
+    const boot = await buildChatopsBoot({
       cfg: {
         enabled: true,
         slackEnabled: true,
@@ -503,6 +559,8 @@ describe("buildChatopsBoot — full production graph", () => {
           enforcedWith({ C0: { namespace: "project:pay", unmapped: "refuse", notify: [] } }),
       },
       runTool,
+      db,
+      vault,
       audit: {
         recordAudit: (e) =>
           audits.push({
@@ -534,7 +592,7 @@ describe("buildChatopsBoot — full production graph", () => {
 
   test("user lookup throw is caught + logged → user treated as unmapped (line 169)", async () => {
     const logs: string[] = [];
-    const h = buildHarness({
+    const h = await buildHarness({
       log: (m) => logs.push(m),
       runTool: ((_p, toolId) => {
         if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
@@ -553,7 +611,7 @@ describe("buildChatopsBoot — full production graph", () => {
   test("user lookup returns a non-JSON content envelope → unwrap falls back to raw text (line 77)", async () => {
     // unwrapToolResult tries JSON.parse(textBlock.text); a non-JSON text body hits the catch and
     // returns the raw string, which emailFromUserInfo then reads as a non-object → unmapped.
-    const h = buildHarness({
+    const h = await buildHarness({
       runTool: ((_p, toolId) => {
         if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
         if (toolId === "slack_user_info") {
@@ -572,7 +630,7 @@ describe("buildChatopsBoot — full production graph", () => {
   });
 
   test("teams onActivity without serviceUrl/conversationId → no serviceUrl recorded (lines 323-324)", async () => {
-    const h = buildHarness({
+    const h = await buildHarness({
       cfg: {
         enabled: true,
         slackEnabled: false,
@@ -618,7 +676,7 @@ describe("buildChatopsBoot — full production graph", () => {
     // the boot must unwrap it before reading the profile email. A successful unwrap → mapped user →
     // engine answer posted (no refusal audit row).
     const localPosts: { channel: string; text: string }[] = [];
-    const h = buildHarness({
+    const h = await buildHarness({
       runTool: ((_platform, toolId, args) => {
         if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
         if (toolId === "slack_user_info") {

@@ -1,4 +1,6 @@
+import type { Database } from "bun:sqlite";
 import type { NimbusChatopsToml } from "../config/nimbus-toml.ts";
+import { buildLedgeredChatPosts } from "../egress/chatops-egress.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
@@ -8,7 +10,9 @@ import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
 import { resolveChannelBinding, resolveOwner } from "../policy/chatops-policy.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { isHitlRequiredByPolicy } from "../policy/quorum-override.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { ApprovalPresenter } from "./approval-presenter.ts";
+import { ensureChannelSalt } from "./channel-salt.ts";
 import {
   getChatopsApprovalContext,
   runWithChatopsApprovalContext,
@@ -37,6 +41,11 @@ export interface ChatopsBootDeps {
   };
   /** Bot-credentialed connector tool invocation (chatops-tool-runner). */
   readonly runTool: RunChatopsTool;
+  /** I29 `chatops` class: the ledger every outbound post is appended to. REQUIRED — a chatops
+   *  boot that cannot ledger must not be constructible. */
+  readonly db: Database;
+  /** Holds the per-install channel-hash salt (`chatops.channel.salt`). */
+  readonly vault: NimbusVault;
   readonly audit: AuditSink;
   /** Dispatches an approved action to the live connector mesh (same seam as the engine). */
   readonly dispatcher: ConnectorDispatcher;
@@ -145,7 +154,7 @@ export function emailFromUserInfo(platform: ChatPlatform, result: unknown): stri
  * intent router → HITL gate (I2/I20 via a ChatOps-configured ToolExecutor whose
  * `delegation.requestRemote` is the approval presenter) → bounded reply surface (I23).
  */
-export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
+export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBoot> {
   const { cfg, policyGate, identity, runTool } = deps;
   const nowMs = deps.nowMs ?? ((): number => Date.now());
   const chatopsPolicy = (): EnforcedPolicy["chatops"] => policyGate.enforced().chatops;
@@ -161,12 +170,20 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
   const teamsServiceUrlByConversation = new Map<string, string>();
   const pendingCardByChannel = new Map<string, string>();
 
-  const post = buildConnectorPost(runTool, (conversationId) =>
-    teamsServiceUrlByConversation.get(conversationId),
+  // I29 `chatops` class: every outbound post is ledgered before it leaves the machine. The raw
+  // connector post is passed INLINE, never bound to a name — an unwrapped post in scope would be
+  // a bypass waiting for the next consumer to reach for it (static D17 extension).
+  const channelSalt = await ensureChannelSalt(deps.vault);
+  const posts = buildLedgeredChatPosts(
+    deps.db,
+    buildConnectorPost(runTool, (conversationId) =>
+      teamsServiceUrlByConversation.get(conversationId),
+    ),
+    channelSalt,
   );
 
   const replyDispatcher = new ReplyDispatcher({
-    post,
+    post: posts.reply,
     notifyChannelsFor: (namespace) => {
       const channels: string[] = [];
       for (const binding of chatopsPolicy().channels.values()) {
@@ -184,7 +201,7 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
       // `requestApproval` registers the pending resolver and sets lastRequestId BEFORE posting,
       // so recording the live card here is race-free (see the resolve-race note in the presenter).
       pendingCardByChannel.set(channelId, presenter.lastRequestId());
-      await post(lastPlatformByChannel.get(channelId) ?? "slack", channelId, text);
+      await posts.approvalCard(lastPlatformByChannel.get(channelId) ?? "slack", channelId, text);
     },
     // No DM surface in scope (design §3.1): the card lands in the server-derived originating
     // channel; only the owner's identity-valid click is honored (I20).

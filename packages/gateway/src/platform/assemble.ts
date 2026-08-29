@@ -2253,7 +2253,7 @@ function buildTeamCredentialContexts(deps: {
  *  and wire it into the IPC + HTTP sidecar opts; returns the live ChatopsBoot (or undefined when
  *  disabled). Extracted from assemblePlatformServices to keep its cognitive complexity in budget;
  *  the chatops↔tribal reply cycle is preserved by rebinding `tribalSendHolder.current` here. */
-function bootChatopsIntoAssembly(deps: {
+async function bootChatopsIntoAssembly(deps: {
   chatopsCfg: ReturnType<typeof loadNimbusChatopsFromConfigDir>;
   policyGate: Parameters<typeof buildChatopsBoot>[0]["policyGate"];
   tribalBoot: TribalBoot | undefined;
@@ -2268,7 +2268,7 @@ function bootChatopsIntoAssembly(deps: {
   httpSidecarOpts: HttpSidecarOpts;
   sidecarStops: Array<() => void>;
   tribalSendHolder: { current: (target: ReplyTarget, text: string) => Promise<void> };
-}): ChatopsBoot | undefined {
+}): Promise<ChatopsBoot | undefined> {
   const {
     chatopsCfg,
     policyGate,
@@ -2291,8 +2291,10 @@ function bootChatopsIntoAssembly(deps: {
   // real bot-credentialed connector spawn + mesh dispatch for a file-backed mock — the "mock
   // Slack/Teams transport" the real-gateway e2e drives. Unset in production (the real spawn).
   const chatopsE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
-  const chatopsBoot = buildChatopsBoot({
+  const chatopsBoot = await buildChatopsBoot({
     cfg: chatopsCfg,
+    db,
+    vault,
     policyGate,
     ...(tribalBoot === undefined ? {} : { onInboundMessage: tribalBoot.onInboundMessage }),
     ...(tribalInterceptCommand === undefined ? {} : { interceptCommand: tribalInterceptCommand }),
@@ -3124,7 +3126,7 @@ export async function assemblePlatformServices(
   // does not exist yet); the local-consent fallback binds to the delegated-approval broker after
   // the IPC server exists. Identity disabled → every chat user resolves unmapped (fail-closed).
   // (`chatopsBoot` is declared above so the tribal in-chat capture interceptor can late-bind to it.)
-  chatopsBoot = bootChatopsIntoAssembly({
+  chatopsBoot = await bootChatopsIntoAssembly({
     chatopsCfg,
     policyGate,
     tribalBoot,
