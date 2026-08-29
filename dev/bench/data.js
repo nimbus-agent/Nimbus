@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787986823610,
+  "lastUpdate": 1787989408281,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16897,6 +16897,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 275.1613730999932,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "abdbbdcf41ba91243f3d76e1b5ad301e01aba3a8",
+          "message": "fix(llm): stop Ollama reasoning tokens truncating answers and costing ~16s per ask (#1376)\n\nA local `nimbus ask` paid **~16 seconds** before it began answering, and\ncould still return a half-finished answer. Found while configuring a\nlocal-LLM install on v6.0.1.\n\n## Correctness first, speed second\n\nOllama draws a reasoning model's `<think>` phase from the **same\n`num_predict` budget as the answer**. So thinking does not merely cost\ntime — it *takes tokens away from the reply*. Measured against a live\ndaemon on `qwen3:14b`:\n\n| Call | Thinking on | Thinking off |\n| --- | --- | --- |\n| Summarise (`num_predict` 2048) | **17,974 ms**, cut off mid-sentence |\n**1,497 ms**, complete |\n| Classify (`num_predict` 512) | 19,416 ms | 3,103 ms |\n\nThe truncated one ended `\"…It only transmits data\"`. That is the shape\nof the bug: it is not a slow-but-correct answer, it is an incomplete\none, and it gets worse the tighter the budget.\n\nAt the classifier's 512-token cap the failure is sharper still — no\nparseable JSON means the intent degrades to `unknown` (the graceful path\nadded in #1366), so the router silently loses classification on exactly\nthe local setups this is meant to serve.\n\n## The change\n\n`think: false` on **both** the batch and stream request bodies in\n`ollama-provider.ts`.\n\nNo per-model branch is needed: a model with no thinking mode ignores it.\nVerified on `llama3.2:latest`, which returns HTTP 200 with or without\nthe flag.\n\nThe constant is named and carries the measurements, because the tempting\nfuture edit is \"let the model think, it'll answer better\" — and the\nnumbers above say the opposite while the budget is shared.\n\n## Deliberately not configurable (yet)\n\nIf a route ever wants deliberation back, the right home is a\n`[llm.local.<name>] think = true` key rather than a silent default. That\nis not in this PR: the default should not cost every `ask` ~16 s and\nrisk a truncated answer, and adding a config surface is a separate\ndecision from fixing the default.\n\n## Tests\n\nOne test asserting `think: false` on **both** paths, plus that the two\ncaptured bodies really are the batch and stream paths (`stream: [false,\ntrue]`) — so it cannot pass by exercising the same path twice.\n\n**Red-proved:** removing the flag from the **stream** body alone fails\nthe test. That is the miss a batch-only test would have shipped.\n\n## Verification\n\n- `bun run preflight:fast` — pass.\n- Full CI command `bun test packages/gateway packages/cli scripts` —\n19,462 pass. The 3 `tui` failures are the known load-flake; they pass in\nisolation on this branch.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Improvements**\n* Classification requests now disable reasoning-token generation for\nmore efficient responses.\n  * Applies consistently to both standard and streaming requests.\n\n* **Tests**\n* Added regression coverage to verify the setting across both request\nmodes.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-29T10:32:21+03:00",
+          "tree_id": "81c26d4050314fa96aa100819ef50c3d98ae6c22",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/abdbbdcf41ba91243f3d76e1b5ad301e01aba3a8"
+        },
+        "date": 1787989405477,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 304.3232380999947,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 301.8136606500004,
             "unit": "ms"
           }
         ]
