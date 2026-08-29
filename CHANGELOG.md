@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.1.0](https://github.com/nimbus-agent/Nimbus/compare/v7.0.1...v7.1.0) (2026-08-29)
+
+
+### Features
+
+* **egress:** ledger remote embeddings and add per-task model routing ([#1384](https://github.com/nimbus-agent/Nimbus/issues/1384)) ([33273b2](https://github.com/nimbus-agent/Nimbus/commit/33273b27aa387d0fb8232847757b95d198efe602))
+
 ## [7.0.1](https://github.com/nimbus-agent/Nimbus/compare/v7.0.0...v7.0.1) (2026-08-29)
 
 
