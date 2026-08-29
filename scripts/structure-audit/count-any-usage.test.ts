@@ -1,5 +1,8 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: every string in this file is a
+// source-text FIXTURE fed to a source scanner, so a literal `${...}` is the subject under
+// test, never a botched template literal.
 import { describe, expect, test } from "bun:test";
-import { countAnyInSource, stripComments } from "./lib.ts";
+import { countAnyInSource, stripComments, stripStringLiterals } from "./lib.ts";
 
 describe("stripComments", () => {
   test("removes single-line comments", () => {
@@ -86,5 +89,54 @@ describe("countAnyInSource ignores the word inside string literals", () => {
 
   test("an apostrophe inside a double-quoted string does not open one", () => {
     expect(countAnyInSource(`const s = "don't use any";`)).toBe(0);
+  });
+});
+
+describe("stripStringLiterals preserves template substitutions", () => {
+  // A `${...}` substitution is EXECUTABLE CODE that happens to sit inside backticks — blanking it
+  // with the surrounding template text made every source-scanning guard built on this helper blind
+  // to it. Two guards compose it (`countAnyInSource` and D22(f)'s
+  // `checkEmbeddingConstructorConfinement`), and both want to see that code: an `as any` inside a
+  // substitution is a real `any`, and a `createOpenAIEmbedder(...)` inside one issues a real,
+  // unledgered HTTP request regardless of what the template does with the stringified result.
+  // Reported by CodeRabbit on PR #1384.
+  test("the substitution body survives while the literal text around it is blanked", () => {
+    const out = stripStringLiterals("const s = `pick any ${x as any} one`;");
+    expect(out).toContain("${x as any}");
+    // Surrounding template TEXT is still blanked, so prose can never fake a match.
+    expect(out).not.toContain("pick any");
+    // Length-preserving, which the paren-matching consumer depends on for its indices.
+    expect(out.length).toBe("const s = `pick any ${x as any} one`;".length);
+  });
+
+  test("a nested template inside a substitution is handled recursively", () => {
+    const out = stripStringLiterals("const s = `a ${f(`inner any ${y as any}`)} b`;");
+    expect(out).toContain("y as any");
+    // The NESTED template's own prose is blanked too — it is text, not code.
+    expect(out).not.toContain("inner any");
+  });
+
+  test("a plain string inside a substitution is still blanked", () => {
+    const out = stripStringLiterals('const s = `${label("any")}`;');
+    expect(out).toContain("label(");
+    expect(out).not.toContain('"any"');
+  });
+
+  test("an unterminated substitution does not throw or leak the rest of the file", () => {
+    expect(() => stripStringLiterals("const s = `${f(")).not.toThrow();
+  });
+});
+
+describe("countAnyInSource sees through template substitutions", () => {
+  test("an as-cast inside a substitution counts", () => {
+    expect(countAnyInSource("const s = `v=${x as any}`;")).toBe(1);
+  });
+
+  test("the template's prose still does not count", () => {
+    expect(countAnyInSource("const s = `pick any one ${x}`;")).toBe(0);
+  });
+
+  test("a string literal inside a substitution still does not count", () => {
+    expect(countAnyInSource('const s = `${pick("any")}`;')).toBe(0);
   });
 });

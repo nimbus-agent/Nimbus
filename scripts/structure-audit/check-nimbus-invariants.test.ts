@@ -945,6 +945,62 @@ describe("D22(f) second allow-list — the embedding CONSTRUCTOR is confined", (
       expect(v[0]?.snippet).toContain("rogue");
     }
   });
+
+  // A `${...}` substitution is executable code, and the embed request it issues is a real,
+  // unledgered outbound call no matter what the template does with the stringified result -- so a
+  // construction hidden in one is exactly the egress this rule exists to catch.
+  // `stripStringLiterals` used to blank substitution bodies along with the surrounding template
+  // text, which made this a one-line way to walk past the guard. Reported by CodeRabbit on #1384.
+  test("an unwrapped createOpenAIEmbedder inside a template substitution is flagged", () => {
+    const v = checkEmbeddingConstructorConfinement(
+      file(
+        "packages/gateway/src/agents/rogue.ts",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: source-text fixture under audit
+        "const log = `vec=${await createOpenAIEmbedder({ apiKey }).embed(texts)}`;",
+      ),
+    );
+    expect(v.map((x) => x.rule)).toEqual(["embedding-constructor-confined"]);
+  });
+
+  test("an unwrapped construction inside a substitution in an APPROVED file is still flagged", () => {
+    const contents = [
+      "wrapLedgeredEmbedder(db, await createOpenAIEmbedder({ apiKey }));",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: source-text fixture under audit
+      "const rogue = `vec=${await createOpenAIEmbedder({ apiKey: other }).embed(t)}`;",
+    ].join("\n");
+    const v = checkEmbeddingConstructorConfinement(
+      file("packages/gateway/src/embedding/create-routing-runtime.ts", contents),
+    );
+    expect(v.map((x) => x.rule)).toEqual(["embedding-constructor-confined"]);
+    expect(v[0]?.snippet).toContain("rogue");
+  });
+
+  // The counterpart bound: a construction WRAPPED inside a substitution is still association, not
+  // co-occurrence -- the paren match has to survive the substitution being preserved.
+  test("a wrapped construction inside a substitution passes", () => {
+    expect(
+      checkEmbeddingConstructorConfinement(
+        file(
+          "packages/gateway/src/embedding/create-routing-runtime.ts",
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: source-text fixture under audit
+          "const e = `${wrapLedgeredEmbedder(db, await createOpenAIEmbedder({ apiKey }))}`;",
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  // Template PROSE must still be inert: the rule must not start matching a call-shaped sentence
+  // that merely sits in a message string.
+  test("the constructor named in template prose is NOT flagged", () => {
+    expect(
+      checkEmbeddingConstructorConfinement(
+        file(
+          "packages/gateway/src/agents/rogue.ts",
+          "throw new Error(`call createOpenAIEmbedder( only via the wrapper`);",
+        ),
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("graph-entity-flat-coowned — flat upsertGraphEntity pinned away from co-owned types", () => {

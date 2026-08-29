@@ -102,7 +102,8 @@ export function stripComments(src: string): string {
 }
 
 /**
- * Replace every string / template literal body with spaces, preserving length.
+ * Replace every string / template literal body with spaces, preserving length — but KEEP the
+ * contents of a template's `${...}` substitutions, which are code, not text.
  *
  * A single left-to-right scan rather than a regex, because the cases that matter are exactly the
  * ones a regex gets wrong: an escaped quote inside a literal must not end it early, and an
@@ -111,28 +112,78 @@ export function stripComments(src: string): string {
  * Exported so a guard that needs to paren-match on code (e.g. "is this call nested inside that
  * one?") can compose it with `stripComments` and not have a stray `)` inside a string literal
  * throw its depth count off — the same reason `countAnyInSource` composes the two below.
+ *
+ * **Substitutions are preserved deliberately.** Blanking a `${...}` body along with the prose
+ * around it made every guard built on this helper blind to real code: `${x as any}` is a real
+ * `any` the ratchet must count, and — the reason this was fixed — a
+ * `${createOpenAIEmbedder(...).embed(...)}` issues a real, UNLEDGERED outbound request no matter
+ * what the template does with the stringified result, so D22(f)'s
+ * `checkEmbeddingConstructorConfinement` could be walked past by moving one call inside backticks.
+ * The nesting is arbitrary (a substitution may contain a template that contains a substitution),
+ * so the scan carries an explicit context stack rather than a single `quote` variable. A
+ * substitution's own string literals are still blanked, because inside it we are back in code.
+ * Length is preserved throughout: callers index into the result to recover line numbers and to
+ * paren-match, so every replacement is one char for one char.
  */
+type StripFrame =
+  /** Inside a plain '' / "" string: blank through to the closing quote. */
+  | { readonly kind: "string"; readonly quote: string }
+  /** Inside a template's TEXT: blank, until a `${` opens code or a backtick closes it. */
+  | { readonly kind: "template" }
+  /** Inside a `${...}`: ordinary code. `depth` tracks nested `{}` so the right `}` closes it. */
+  | { kind: "subst"; depth: number };
+
 export function stripStringLiterals(src: string): string {
   const out = src.split("");
-  let quote: string | undefined;
+  const stack: StripFrame[] = [];
   for (let i = 0; i < out.length; i++) {
     const ch = out[i];
-    if (quote === undefined) {
-      if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    const frame = stack[stack.length - 1];
+
+    if (frame?.kind === "string") {
+      if (ch === "\\") {
+        // Blank the escape AND the character it escapes, so a closing quote is never faked.
+        out[i] = " ";
+        if (i + 1 < out.length) out[i + 1] = " ";
+        i++;
+      } else if (ch === frame.quote) {
+        stack.pop();
+      } else {
+        out[i] = " ";
+      }
       continue;
     }
-    if (ch === "\\") {
-      // Blank the escape AND the character it escapes, so a closing quote is never faked.
-      out[i] = " ";
-      if (i + 1 < out.length) out[i + 1] = " ";
-      i++;
+
+    if (frame?.kind === "template") {
+      if (ch === "\\") {
+        out[i] = " ";
+        if (i + 1 < out.length) out[i + 1] = " ";
+        i++;
+      } else if (ch === "$" && out[i + 1] === "{") {
+        // Keep `${` verbatim and switch to code until its matching `}`.
+        stack.push({ kind: "subst", depth: 0 });
+        i++;
+      } else if (ch === "`") {
+        stack.pop();
+      } else {
+        out[i] = " ";
+      }
       continue;
     }
-    if (ch === quote) {
-      quote = undefined;
-      continue;
+
+    // Code — either top level or inside a substitution.
+    if (ch === '"' || ch === "'") {
+      stack.push({ kind: "string", quote: ch });
+    } else if (ch === "`") {
+      stack.push({ kind: "template" });
+    } else if (frame?.kind === "subst") {
+      if (ch === "{") {
+        frame.depth++;
+      } else if (ch === "}") {
+        if (frame.depth === 0) stack.pop();
+        else frame.depth--;
+      }
     }
-    out[i] = " ";
   }
   return out.join("");
 }
