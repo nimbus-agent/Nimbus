@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787980461077,
+  "lastUpdate": 1787986823610,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16863,6 +16863,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 326.1689060000026,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b90476d2df668d29dd0a34d14e6888cbc5c2df6c",
+          "message": "chore: release main (#1375)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.0.0</summary>\n\n##\n[7.0.0](https://github.com/nimbus-agent/Nimbus/compare/v6.0.1...v7.0.0)\n(2026-08-29)\n\n\n### ⚠ BREAKING CHANGES\n\n* **llm:** make LlmRegistryOptions.db required so an unledgered\nnon-local route is a compile error\n([#1372](https://github.com/nimbus-agent/Nimbus/issues/1372))\n\n### Bug Fixes\n\n* **perf:** drift-check must use each surface own noise floor, not a\nhardcoded 10%\n([#1374](https://github.com/nimbus-agent/Nimbus/issues/1374))\n([8607743](https://github.com/nimbus-agent/Nimbus/commit/860774328ca64b358c1259b3ab29178f9b63375b))\n\n\n### Code Refactoring\n\n* **llm:** make LlmRegistryOptions.db required so an unledgered\nnon-local route is a compile error\n([#1372](https://github.com/nimbus-agent/Nimbus/issues/1372))\n([97ce904](https://github.com/nimbus-agent/Nimbus/commit/97ce9043cb6c08e9e7c5c06a3db5bf71f0bda1c0))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-08-29T09:51:40+03:00",
+          "tree_id": "0f1ecd720d361255557945580d144115fe93deb8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b90476d2df668d29dd0a34d14e6888cbc5c2df6c"
+        },
+        "date": 1787986820458,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 272.3573945999968,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 275.1613730999932,
             "unit": "ms"
           }
         ]
