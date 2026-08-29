@@ -16,7 +16,15 @@ const GATEWAY_MANIFEST = join(REPO_ROOT, "packages", "gateway", "package.json");
  * Adding an entry means committing to that sidecar work on all three platforms. "It built on Linux
  * CI" is not evidence that it loads on a user's Windows machine.
  */
-const ALLOWED_NATIVE: ReadonlySet<string> = new Set(["sqlite-vec"]);
+const ALLOWED_NATIVE: ReadonlySet<string> = new Set([
+  "sqlite-vec",
+  // Transitive via `@xenova/transformers`, so this audit never actually SAW it — the gate scans
+  // declared dependencies only, and reported `ok` while the embedding worker was dead in every
+  // install (#1396). Listed explicitly so the exemption is a recorded decision rather than a blind
+  // spot, and so adding it to the manifest later does not read as new. The sidecar commitment it
+  // implies is met by `copy-onnx-sidecar.ts`, called from `build-workers.ts`.
+  "onnxruntime-node",
+]);
 
 export type NativeFinding = { readonly pkg: string; readonly evidence: readonly string[] };
 
