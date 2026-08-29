@@ -372,7 +372,7 @@ OAuth services — Google Drive, Gmail, Slack, … — use `nimbus connector aut
                                                           │
                               your question ─▶ engine ─▶ HITL consent gate ─▶ action
                                                           │
-                                       CLI · VS Code · web clipper · (desktop, coming)
+                        CLI · VS Code · web clipper · Slack/Teams bot · (desktop, coming)
 ```
 
 A headless **Bun Gateway** maintains the private index and runs the agent; clients talk to it only over local JSON-RPC IPC. Credentials live in the OS keystore (DPAPI / Keychain / libsecret) — never in logs, config, or IPC. Full design: [`architecture.md`](./architecture.md).
@@ -417,6 +417,8 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 **S1 (Local Brain) shipped and closed** on 2026-08-20 — the always-on egress ledger and `nimbus prove` (invariant `I29`), the research-briefs HTTP surface, the full-body store that made briefs answerable at all, zero-config onboarding, and the fourteen built-in read-only agents: `expert`, `impact`, `catchup`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `why`, `glossary`, `decisions`, `ownership`, `pre-mortem` and `negotiate`. The Wave 6 answer-quality set followed and closed it out: agent brief synthesis (`[agents] synthesis`, invariant `I31`), `nimbus ask --devil`, the `[persona]` `tone`/`voice` vocabulary, `nimbus stats` for bucketed time series over the index, and first-class negation queries.
 
 **Now building (S2 — Local Compute Fleet)**, opened 2026-08-21 with nothing shipped in it yet: sandboxed code execution, a HITL-gated local computer-use loop where screenshots never leave the machine, runtime tool generation, multimodal I/O, overnight sub-agent fleets on compute you already own, and bring-your-own-frontier-model routing with local fallback. S1 made the local index answerable; S2 makes local compute usable.
+
+**Recorded direction — not built, and not in the current slot.** The agents are the product; a client is only a context-aware way to reach them without leaving where you already are. The Slack/Teams `@nimbus` bot ships today but cannot yet run an agent — a channel can ask a question (which needs an LLM) but cannot get a brief (which does not). Closing that is the next surface direction. Two things were considered and deliberately **rejected**: shipping a Nimbus fork of VS Code, and letting an agent write your source code. The reasoning and the conditions that would reopen either are recorded in [`roadmap.md` § Rejected Directions](./roadmap.md#rejected-directions) — read that before proposing them again.
 
 The dated delivery log is [`CHANGELOG.md`](./CHANGELOG.md) — it is the single source for what landed when. [`roadmap.md`](./roadmap.md) carries the acceptance criteria, sequencing, and per-phase summaries. Command-level detail for everything above is in [`cli-reference.md`](./cli-reference.md).
 
