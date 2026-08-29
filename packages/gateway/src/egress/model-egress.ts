@@ -14,10 +14,19 @@ import { redactEgressSummary } from "./egress-record.ts";
  */
 export class EgressAppendFailedError extends Error {
   override readonly cause: unknown;
-  constructor(cause: unknown) {
+  /**
+   * Optional appender-specific diagnostic context — e.g. `egress/chatops-egress.ts` attaches which
+   * post kind and (unhashed) channel id was mid-post when the append failed, so a catch far up the
+   * call stack (`chatops/chatops-boot.ts`'s `handleMessage`) can log something actionable without
+   * re-deriving it. Diagnostics only: never read by a gate, never required by a caller that does
+   * not need it — every existing throw site omits it and stays exactly as informative as before.
+   */
+  readonly context?: Readonly<Record<string, unknown>>;
+  constructor(cause: unknown, context?: Readonly<Record<string, unknown>>) {
     super("egress ledger append failed");
     this.name = "EgressAppendFailedError";
     this.cause = cause;
+    if (context !== undefined) this.context = context;
   }
 }
 

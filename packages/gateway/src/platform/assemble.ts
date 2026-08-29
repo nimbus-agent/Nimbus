@@ -2349,6 +2349,9 @@ async function bootChatopsIntoAssembly(deps: {
         }
       : {}),
     log: (m) => syncLogger.warn(m),
+    // Design §13.1: an egress-ledger append failure on an outbound post must be LOUD at `error`,
+    // not folded into the generic `warn` seam above.
+    logError: (fields, msg) => syncLogger.error(fields, msg),
   });
   ipcOpts.chatopsRpcCtx = chatopsBoot.rpcCtx;
   const teamsSurface = chatopsBoot.teamsSurface;

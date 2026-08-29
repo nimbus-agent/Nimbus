@@ -713,6 +713,33 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(h.audits.find((a) => a.actionType === "chatops.refusal")).toBeUndefined();
     await h.boot.service.stop();
   });
+
+  test("a failed egress-ledger append on the reply post does not crash the process — logs at `error` instead (fix 4, design §13.1)", async () => {
+    const logErrorCalls: { fields: Record<string, unknown>; msg: string }[] = [];
+    const h = await buildHarness({
+      logError: (fields, msg) => {
+        logErrorCalls.push({ fields, msg });
+      },
+    });
+    await h.boot.service.start();
+    db.close(); // make the reply post's ledger append fail (mirrors chatops-egress.test.ts)
+    // Before fix 4 this propagated all the way to the process's `unhandledRejection` handler and
+    // took the whole gateway down — the crash trace fix 4's doc comment names. If the fix regresses,
+    // this `emit` throws synchronously inside `FakeSocket.emit` (the un-awaited `void this.onFrame`
+    // rejection surfaces there in bun:test) rather than merely timing out.
+    h.socket.emit(mention("C0", "U_BOB", "@nimbus who is on call for payment-service?", "40"));
+    await until(() => logErrorCalls.length === 1);
+    // Fail-closed: the append happens BEFORE the post, so a failed append means nothing posted.
+    expect(h.posts.length).toBe(0);
+    expect(logErrorCalls[0]?.msg).toContain("egress ledger append failed");
+    // Unhashed, per §13.1 — the log is not the ledger and carries a different threat model.
+    expect(logErrorCalls[0]?.fields["channelId"]).toBe("C0");
+    expect(logErrorCalls[0]?.fields["postKind"]).toBe("reply");
+    expect(logErrorCalls[0]?.fields["platform"]).toBe("slack");
+    expect(logErrorCalls[0]?.fields["err"]).toBeInstanceOf(Error);
+    db = new Database(":memory:"); // so afterEach's close() is valid
+    await h.boot.service.stop();
+  });
 });
 
 describe("emailFromUserInfo", () => {

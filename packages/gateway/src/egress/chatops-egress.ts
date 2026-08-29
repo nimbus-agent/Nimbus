@@ -64,7 +64,15 @@ export function buildLedgeredChatPosts(
           resultStatus: "authorized",
         });
       } catch (err) {
-        throw new EgressAppendFailedError(err);
+        // Diagnostic context only (never security-relevant): `chatops-boot.ts`'s `handleMessage`
+        // catches this at the message seam and logs it at `error` per design §13.1 — naming the
+        // kind and the UNHASHED channel id (the log is not the ledger; different retention, and
+        // an operator debugging a boot log needs the id, not its hash) without having to guess
+        // which of the several posts a message can trigger actually failed.
+        throw new EgressAppendFailedError(err, {
+          chatopsPostKind: kind,
+          chatopsChannelId: channelId,
+        });
       }
       await raw(platform, channelId, text);
     };
