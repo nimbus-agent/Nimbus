@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788027989572,
+  "lastUpdate": 1788028512520,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3f84f16ba98c7e3ccc21645f2d81cb4758227cbc",
-          "message": "chore(main): release 0.10.0 (#660)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.10.0](https://github.com/nimbus-agent/Nimbus/compare/v0.9.1...v0.10.0)\n(2026-06-16)\n\n\n### Features\n\n* **perf:** wire up the sustained-drift detector (daily _perf-drift.yml)\n([#659](https://github.com/nimbus-agent/Nimbus/issues/659))\n([e433ec7](https://github.com/nimbus-agent/Nimbus/commit/e433ec71c9651f07cb8109e848a97b4923a8d95b))\n\n\n### Bug Fixes\n\n* **ci:** publish package managers after Release uploads assets (kill\nthe asset-race)\n([#658](https://github.com/nimbus-agent/Nimbus/issues/658))\n([f5f246f](https://github.com/nimbus-agent/Nimbus/commit/f5f246fb9713a023ef8c1eaf8f09ffbac6804b80))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Release**\n  * Version 0.10.0 is now available\n\n* **Bug Fixes**\n* Fixed a timing issue in the release process where package managers\ncould receive updates before release assets were fully prepared,\nensuring more reliable and consistent package distribution\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-16T20:35:49+03:00",
-          "tree_id": "93813677cc98d5bb6f50c239f613a02e288f0d5a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3f84f16ba98c7e3ccc21645f2d81cb4758227cbc"
-        },
-        "date": 1781632052479,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 292.073363149997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 288.1129804500066,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 323.90726629999335,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1f32b2676509c09d1a6e93f474a921a8588a7c26",
+          "message": "test(cli): make tui fallback tests hermetic (#1398)\n\n## Root cause\n\nThe three tests in `nimbus tui fallback behavior`\n(`packages/cli/src/tui/dumb-terminal.test.ts`) spawn `bun run\n<cli-entry> tui` and merge the child's environment as `{ ...process.env,\n...env }`, never touching `APPDATA`/`LOCALAPPDATA`/`HOME`/`XDG_*`.\n\n`runTui` (`packages/cli/src/commands/tui.tsx`) calls\n`readGatewayState(paths)` — which reads `<dataDir>/gateway.json` —\n**before it ever inspects the terminal** (`detectFallbackReason`).\n`dataDir` has no env-var override: unlike `configDir`\n(`NIMBUS_CONFIG_DIR`) and `socketPath` (`NIMBUS_GATEWAY_SOCKET`), it's\nderived straight from `APPDATA`/`LOCALAPPDATA` (win32) or\n`homedir()`/`XDG_*` (darwin/linux) in `packages/cli/src/paths.ts`,\ndeliberately — the comment there says exactly why: \"this cannot silently\nrepoint a live gateway's database or socket.\"\n\nSo a spawned test CLI always resolves the developer's **real** Nimbus\nprofile:\n\n- **No real gateway running:** `gateway.json` doesn't exist →\n`readGatewayState` returns `undefined` → `runTui` prints `Gateway is not\nrunning...` and exits immediately. Fast, and happens to satisfy the\ntests' assertions.\n- **A real gateway running:** `gateway.json` exists with a real,\nconnectable socket → `readGatewayState` returns a real state → `runTui`\nproceeds past the early-return, detects the fallback reason\n(`TERM=dumb`/non-TTY/`CI=true`), prints the fallback notice, and calls\n`runRepl()`, which connects to the **real** gateway's socket and then\nblocks on `rl.question(\"nimbus> \")` reading from the spawned child's\nempty/closed stdin — which never resolves. The test hangs until bun's\ndefault per-test timeout fires.\n\nRoot cause: **the tests dial whatever gateway.json happens to exist in\nthe developer's real profile**, instead of an isolated one. CI never\ncatches this because no user gateway runs there.\n\n## Fix\n\n`packages/cli/src/tui/dumb-terminal.test.ts` now creates one\n`mkdtempSync` scratch directory per test file and points **every** env\nvar `getCliPlatformPaths()` can derive a profile root from — `APPDATA`,\n`LOCALAPPDATA` (win32), `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`\n(darwin/linux), plus `NIMBUS_GATEWAY_SOCKET` as a belt-and-braces\ndefault-socket override — at that scratch directory before spawning the\nCLI. A real `gateway.json` is then **structurally unreachable**, not\nmerely absent by chance, regardless of what's running on the host. The\ndirectory is removed in `afterAll`.\n\nThis follows the \"write the guard as what CANNOT happen\" principle:\nrather than tolerating a real gateway (e.g. by tightening timeouts or\nretry logic), the fix makes it impossible for the spawned CLI to ever\nsee one.\n\n## Red-prove\n\n1. **Reproduced the exact reported symptom safely**, without starting a\nreal gateway or touching the real profile: a throwaway script plants a\n`gateway.json` (valid shape: numeric `pid`, string `socketPath`)\npointing at a stub named-pipe listener (not the nimbus-gateway binary —\njust accepts a connection and does nothing), inside a scratch\n`mkdtempSync` dir, and points `APPDATA`/`LOCALAPPDATA` there.\n2. With the **original** (unfixed) test file (`git stash` to revert),\nrunning `bun test packages/cli/src/tui/dumb-terminal.test.ts` with those\nenv vars ambient (simulating \"developer has a real gateway running\")\nreproduces the bug exactly:\n   ```\n(fail) nimbus tui fallback behavior > TERM=dumb prints fallback notice\nand does not attempt Ink render [5014.92ms]\n     ^ this test timed out after 5000ms.\n(fail) nimbus tui fallback behavior > non-TTY stdout falls back\ngracefully [5016.86ms]\n     ^ this test timed out after 5000ms.\n(fail) nimbus tui fallback behavior > CI=true prints fallback notice\n[5017.33ms]\n     ^ this test timed out after 5000ms.\n   0 pass / 3 fail\n   ```\n   — matching the issue's reported \"~5000ms\" timeout precisely.\n3. With the **fixed** test file, in the exact same ambient environment\n(same fake \"live gateway\" `APPDATA`/`LOCALAPPDATA` still set from\noutside), all 3 tests pass in ~1.2s:\n   ```\n   3 pass\n   0 fail\n   Ran 3 tests across 1 file. [1210.00ms]\n   ```\nproving the fix's internal override neutralizes whatever the ambient\nenvironment claims, not just that it happens to work when nothing is set\nexternally.\n4. `bun run preflight:fast` passes clean on the branch.\n\n## Not verified\n\n- I did not start a real Nimbus gateway process (per the task's hard\nconstraint) to reproduce the *original* bug 1:1 — the red-proof above\nuses a safe stand-in (a stub pipe listener + a synthetic `gateway.json`)\nthat reproduces the same code path (`readGatewayState` finds a live,\nconnectable state → `runRepl` → `rl.question()` hang) and the same\nobserved timeout value, which I'm confident is the real mechanism, but I\ncan't claim byte-for-byte confirmation against an actual\n`nimbus-gateway` binary.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-29T21:13:05+03:00",
+          "tree_id": "dedd8f33b82073a0d1e923fea03b534189e6dcf0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1f32b2676509c09d1a6e93f474a921a8588a7c26"
+        },
+        "date": 1788028509397,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 245.61132789999974,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 244.4451733000031,
             "unit": "ms"
           }
         ]
