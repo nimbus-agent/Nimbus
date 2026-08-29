@@ -53,4 +53,30 @@ describe("channel salt", () => {
       hashChannelId("c2FsdEI=", "C01ABC2DEF3"),
     );
   });
+
+  test("a Vault write failure rejects, names the key, says the GATEWAY (not just ChatOps) will not start, and never leaks the salt", async () => {
+    const vault: NimbusVault = {
+      get: async () => null,
+      set: async () => {
+        throw new Error("DPAPI: access denied");
+      },
+      delete: async () => {},
+      listKeys: async () => [],
+    };
+    let caught: unknown;
+    try {
+      await ensureChannelSalt(vault);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = caught instanceof Error ? caught.message : "";
+    expect(message).toContain(CHATOPS_CHANNEL_SALT);
+    expect(message).toContain("GATEWAY will not start");
+    // The security-relevant assertion: a Vault-write-failure diagnostic must never carry the
+    // (freshly generated, about-to-be-discarded) salt value itself — the message names the KEY,
+    // never the base64 secret it failed to persist.
+    expect(message).not.toMatch(/[A-Za-z0-9+/]{40,}={0,2}/);
+    expect(caught instanceof Error ? caught.cause : undefined).toBeInstanceOf(Error);
+  });
 });
