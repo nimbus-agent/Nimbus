@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787989408281,
+  "lastUpdate": 1787990400912,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
@@ -16931,6 +16931,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 301.8136606500004,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "61173ae92dc87002d3bc844ce0c792257292d677",
+          "message": "fix(connectors): align the aws sync interval with its AWS-CLI siblings (#1377)\n\nThe `aws` syncable re-listed Lambda functions every **120 s** while\nevery sibling AWS-CLI syncable used **10 minutes**:\n\n| Syncable | Interval before |\n| --- | --- |\n| `aws` | **120 s** |\n| `cloudwatch` | 10 min |\n| `sagemaker` | 10 min |\n| `athena` | 10 min |\n\nFive times the outbound API traffic of any sibling, indefinitely, on any\nmachine with `aws.*` credentials in the Vault — and nothing in the code\nor history explains the difference. It reads as an oversight rather than\na decision, which is why this aligns rather than tunes.\n\n## How it surfaced\n\nIt was the visible half of the console-window storm fixed in #1370. Each\nrun shells out to the AWS CLI, and until `platform/spawn-capture.ts`\nlanded, every one of those spawns popped a console window on Windows —\nso the shortest interval in the group was also the loudest symptom.\nObserved live as a `conhost.exe` under `aws.exe` under\n`nimbus-gateway.exe`, roughly one every 1.8 s during a sync tick.\n\n#1370 stopped the windows appearing. This stops the underlying traffic\nbeing five times what the design intends.\n\n## Pinned as a group, not as a number\n\nThe test asserts two things: that the four intervals collapse to a\n**single distinct value**, and that the value the group settled on is\nten minutes.\n\nAsserting only that `aws` equals ten minutes would have kept passing if\na **sibling** drifted instead — the same divergence, just discovered\nfrom the other side. The set check fails whichever member moves; the\nsecond assertion pins which value they agreed on.\n\n**Red-proved:** restoring the 120 s literal fails the test.\n\n## Verification\n\n- `bun run preflight:fast` — pass.\n- Full CI command `bun test packages/gateway packages/cli scripts` —\n19,462 pass. The three `tui` failures are the known load-flake; they\npass in isolation.\n\n## Note for anyone who wanted the faster cadence\n\nIf a two-minute Lambda index is genuinely wanted, `nimbus connector\nset-interval aws 2m` sets it per-install without putting the cost on\neveryone by default. And an install that never queries Lambda functions\nis better served by `nimbus connector pause aws`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+          "timestamp": "2026-08-29T10:32:35+03:00",
+          "tree_id": "670d2bbf7677dd9cb9bee2a826794e7e4f9eec5b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/61173ae92dc87002d3bc844ce0c792257292d677"
+        },
+        "date": 1787990397984,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 338.8023532999938,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 335.4460096000068,
             "unit": "ms"
           }
         ]
