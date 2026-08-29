@@ -533,6 +533,21 @@ function extractExportedSymbols(
   const exportConst = /export\s+const\s+(\w+)/g;
   const exportClass = /export\s+class\s+(\w+)/g;
   const exportType = /export\s+type\s+(\w+)/g;
+  // `export default ...` — every regex above requires `export` to be followed DIRECTLY by the
+  // declaration keyword, so the whole `default` family matched none of them and a module whose
+  // entire public surface is a default export indexed ZERO symbols (#1388). That is not an edge
+  // case: it is the ordinary shape of a small npm package, a React component and most config
+  // modules. Found by running the Gate 1 runbook against sindresorhus/is-plain-obj, whose
+  // `index.js` is exactly `export default function isPlainObject(value) {`.
+  //
+  // These cannot double-count against the five above: an intervening `default` (and, for the
+  // async form, an intervening `async`) means only one pattern can match any given site.
+  // An ANONYMOUS default (`export default { … }`, `export default () => …`) still yields
+  // nothing — there is no name to record, and inventing one from the filename is a separate
+  // design question, not a bug fix.
+  const exportDefaultAsyncFn = /export\s+default\s+async\s+function\s+(\w+)/g;
+  const exportDefaultFn = /export\s+default\s+function\s+(\w+)/g;
+  const exportDefaultClass = /export\s+default\s+class\s+(\w+)/g;
   const add = (re: RegExp, kind: string): void => {
     re.lastIndex = 0;
     for (;;) {
@@ -551,6 +566,9 @@ function extractExportedSymbols(
   add(exportConst, "const");
   add(exportClass, "class");
   add(exportType, "type");
+  add(exportDefaultAsyncFn, "function");
+  add(exportDefaultFn, "function");
+  add(exportDefaultClass, "class");
   if (out.length === 0 && filePath !== "") {
     return [];
   }
