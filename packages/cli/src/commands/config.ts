@@ -107,10 +107,42 @@ export function runConfigList(tomlPath: string, opts: { json?: boolean } = {}): 
   console.log(readFileSync(tomlPath, "utf8"));
 }
 
+/**
+ * Refuse a dotted key that names a NESTED table, naming the command that does work.
+ *
+ * `nimbus config` addresses a flat `section.key`; a two-dot key used to be split on the first dot
+ * and written under the wrong table, where the parser never read it — succeeding loudly and doing
+ * nothing (#1382). The lib-level guard in `splitFlatDottedKey` is what makes that fail-closed; this
+ * adds the part a user needs, which is where to go instead.
+ *
+ * `llm.tasks.<task>` gets the specific answer because it is the shape that made the bug reachable
+ * and it HAS a dedicated command. Anything else gets the generic answer — inventing a command for
+ * a key that has none would trade a silent no-op for a confident wrong instruction.
+ */
+function refuseNestedKey(dotted: string, value?: string): never {
+  const segments = dotted.split(".");
+  const base =
+    `\`${dotted}\` addresses a nested table, which \`nimbus config\` cannot express — ` +
+    "it handles a flat `section.key` only.";
+  if (segments.length === 3 && segments[0] === "llm" && segments[1] === "tasks") {
+    throw new Error(
+      `${base}\nUse: nimbus llm use ${segments[2]} ${value ?? "<routeId>"}` +
+        "\nOr edit the [llm.tasks] table in nimbus.toml directly.",
+    );
+  }
+  throw new Error(`${base}\nEdit the table in nimbus.toml directly.`);
+}
+
+/** True when the key names a nested table (two or more dots), e.g. `llm.tasks.classification`. */
+function isNestedTableKey(key: string): boolean {
+  return key.split(".").length > 2;
+}
+
 export function runConfigGet(tomlPath: string, key: string): void {
   if (key === "" || !key.includes(".")) {
     throw new Error("Usage: nimbus config get <section.key>  (e.g. telemetry.enabled)");
   }
+  if (isNestedTableKey(key)) refuseNestedKey(key);
   const fromEnv = listTomlKeysWithEnv(tomlPath).find((e) => e.key === key && e.source === "env");
   const fromFile = getTomlValueFromFile(tomlPath, key);
   if (fromEnv !== undefined) {
@@ -129,6 +161,7 @@ export function runConfigSet(tomlPath: string, key: string, val: string): void {
   if (key === "" || !key.includes(".") || val === "") {
     throw new Error("Usage: nimbus config set <section.key> <value>");
   }
+  if (isNestedTableKey(key)) refuseNestedKey(key, val);
   setTomlValueInFile(tomlPath, key, val);
   console.log(`Updated ${key} in ${tomlPath}`);
   console.log("Restart the Gateway to apply. Env vars still override file values when set.");

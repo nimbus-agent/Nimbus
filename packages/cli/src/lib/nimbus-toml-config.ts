@@ -94,6 +94,35 @@ function writeUtf8FileAtomicReplace(path: string, content: string): void {
   }
 }
 
+/**
+ * Split `section.key` into its two halves, REFUSING anything that names a nested table.
+ *
+ * Both the reader and the writer below used `dotted.indexOf(".")` — a split on the FIRST dot — so
+ * `llm.tasks.classification` yielded section `llm`, key `tasks.classification`. The writer put that
+ * verbatim under `[llm]`, where `parseLlmTaskPins` (which scans for a literal `[llm.tasks]` table)
+ * never sees it: the command succeeded, the file changed, and the setting did nothing. The reader
+ * then read the same inert line back and echoed it, so `get` appeared to CONFIRM the write.
+ *
+ * The bug was unreachable until `[llm.tasks]` shipped, because no key had two dots. It is refused
+ * rather than fixed by splitting on the LAST dot: last-dot happens to be safe today only because
+ * every caller is single-dot, and it re-introduces the same ambiguity the moment a third dotted
+ * shape appears. A refusal is fail-closed and has no parsing to get wrong.
+ */
+export function splitFlatDottedKey(dotted: string): { section: string; key: string } {
+  const dot = dotted.indexOf(".");
+  if (dot <= 0) {
+    throw new Error(`Invalid key (expected section.name): ${dotted}`);
+  }
+  const key = dotted.slice(dot + 1);
+  if (key.includes(".")) {
+    throw new Error(
+      `\`${dotted}\` addresses a nested table, which this flat section.key surface cannot ` +
+        `express. Edit the table in nimbus.toml directly.`,
+    );
+  }
+  return { section: dotted.slice(0, dot), key };
+}
+
 export function getTomlValueFromFile(tomlPath: string, dotted: string): string | undefined {
   let raw: string;
   try {
@@ -104,12 +133,10 @@ export function getTomlValueFromFile(tomlPath: string, dotted: string): string |
     }
     throw e;
   }
-  const dot = dotted.indexOf(".");
-  if (dot <= 0) {
+  if (dotted.indexOf(".") <= 0) {
     return undefined;
   }
-  const section = dotted.slice(0, dot);
-  const key = dotted.slice(dot + 1);
+  const { section, key } = splitFlatDottedKey(dotted);
   return parseSectionKey(raw, section, key);
 }
 
@@ -172,12 +199,7 @@ function writeNewSectionToToml(
 }
 
 export function setTomlValueInFile(tomlPath: string, dotted: string, value: string): void {
-  const dot = dotted.indexOf(".");
-  if (dot <= 0) {
-    throw new Error(`Invalid key (expected section.name): ${dotted}`);
-  }
-  const section = dotted.slice(0, dot);
-  const key = dotted.slice(dot + 1);
+  const { section, key } = splitFlatDottedKey(dotted);
   const formattedValue = formatTomlValue(value);
   let full = "";
   try {

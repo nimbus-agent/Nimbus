@@ -504,3 +504,66 @@ describe("nimbus config list --json", () => {
     expect(out.stdout).not.toContain("NIMBUS_PROFILE");
   });
 });
+
+describe("config set/get refuse a nested-table key with an actionable message (#1382)", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  // `llm.tasks.<task>` is the natural thing to type once per-task routing exists, and it used to
+  // succeed while doing nothing. The refusal has to name the command that DOES work, or the user
+  // is left with a rejection and no route forward.
+  it("names `nimbus llm use` for an llm.tasks.* key", () => {
+    const dir = makeTmp();
+    const p = join(dir, "nimbus.toml");
+    writeFileSync(p, "[llm]\nprefer_local = true\n");
+    expect(() => runConfigSet(p, "llm.tasks.classification", "ollama/llama3.2:latest")).toThrow(
+      /nimbus llm use classification ollama\/llama3\.2:latest/,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes nothing when it refuses", () => {
+    const dir = makeTmp();
+    const p = join(dir, "nimbus.toml");
+    const before = "[llm]\nprefer_local = true\n";
+    writeFileSync(p, before);
+    expect(() => runConfigSet(p, "llm.tasks.classification", "x")).toThrow();
+    expect(readFileSync(p, "utf8")).toBe(before);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A non-llm nested key has no dedicated command to point at, so it must NOT claim one.
+  it("does not invent an llm command for an unrelated nested key", () => {
+    const dir = makeTmp();
+    const p = join(dir, "nimbus.toml");
+    writeFileSync(p, "");
+    expect(() => runConfigSet(p, "sync.service.github", "x")).toThrow(/nested table/i);
+    expect(() => runConfigSet(p, "sync.service.github", "x")).not.toThrow(/nimbus llm use/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("config get refuses the same key rather than echoing an inert line", () => {
+    const dir = makeTmp();
+    const p = join(dir, "nimbus.toml");
+    writeFileSync(p, '[llm]\nprefer_local = true\n\ntasks.classification = "x"\n');
+    expect(() => runConfigGet(p, "llm.tasks.classification")).toThrow(/nested table/i);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("an ordinary section.key still sets and gets", () => {
+    const dir = makeTmp();
+    const p = join(dir, "nimbus.toml");
+    writeFileSync(p, "");
+    runConfigSet(p, "telemetry.enabled", "true");
+    out.reset();
+    runConfigGet(p, "telemetry.enabled");
+    expect(out.stdout).toContain("true");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
