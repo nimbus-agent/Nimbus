@@ -30,7 +30,7 @@ function sloAt(noiseFloorPct: number, noiseFloorAbs = 0): SloThreshold {
 
 describe("detectDrift", () => {
   test("returns false when there is not enough history to fill the window", () => {
-    expect(detectDrift([{ value: 100 }, { value: 100 }], sloAt(10))).toBe(false);
+    expect(detectDrift([{ value: 100 }, { value: 100 }], sloAt(10))).toBeNull();
   });
 
   test("a single late spike does NOT trip drift (needs n consecutive worse samples)", () => {
@@ -44,7 +44,7 @@ describe("detectDrift", () => {
       { value: 100 },
       { value: 200 },
     ];
-    expect(detectDrift(history, sloAt(10))).toBe(false);
+    expect(detectDrift(history, sloAt(10))).toBeNull();
   });
 
   test("a sustained regression (n consecutive samples worse than the rolling median) trips drift", () => {
@@ -60,7 +60,7 @@ describe("detectDrift", () => {
       { value: 200 },
       { value: 200 },
     ];
-    expect(detectDrift(history, sloAt(10))).toBe(true);
+    expect(detectDrift(history, sloAt(10))).not.toBeNull();
   });
 
   test("worse-but-within-the-noise-floor does not trip drift", () => {
@@ -76,7 +76,7 @@ describe("detectDrift", () => {
       { value: 105 },
       { value: 105 },
     ];
-    expect(detectDrift(history, sloAt(10))).toBe(false);
+    expect(detectDrift(history, sloAt(10))).toBeNull();
   });
 
   test("a worse sample that breaks the consecutive run resets the counter", () => {
@@ -93,7 +93,7 @@ describe("detectDrift", () => {
       { value: 100 },
       { value: 200 },
     ];
-    expect(detectDrift(history, sloAt(10))).toBe(false);
+    expect(detectDrift(history, sloAt(10))).toBeNull();
   });
 
   test("the rolling median is over the last k samples, not the whole history", () => {
@@ -115,7 +115,7 @@ describe("detectDrift", () => {
       { value: 200 },
       { value: 200 },
     ];
-    expect(detectDrift(history, sloAt(10))).toBe(true);
+    expect(detectDrift(history, sloAt(10))).not.toBeNull();
   });
 
   test("honors a custom k and n", () => {
@@ -126,7 +126,7 @@ describe("detectDrift", () => {
       { value: 150 },
       { value: 150 },
     ];
-    expect(detectDrift(history, sloAt(10), 3, 2)).toBe(true);
+    expect(detectDrift(history, sloAt(10), 3, 2)).not.toBeNull();
   });
 });
 
@@ -294,12 +294,12 @@ describe("detectDrift — the #1308 / #1309 false positives", () => {
   const S11_B = sloAt(40, 10);
 
   test("the shipped 10% floor fires on this window — the bug", () => {
-    expect(detectDrift(S11_A_WINDOW, sloAt(10))).toBe(true);
+    expect(detectDrift(S11_A_WINDOW, sloAt(10))).not.toBeNull();
   });
 
   test("the surface's OWN 40% floor does not", () => {
-    expect(detectDrift(S11_A_WINDOW, S11_A)).toBe(false);
-    expect(detectDrift(S11_A_WINDOW, S11_B)).toBe(false);
+    expect(detectDrift(S11_A_WINDOW, S11_A)).toBeNull();
+    expect(detectDrift(S11_A_WINDOW, S11_B)).toBeNull();
   });
 
   test("a real 2x regression still trips at the 40% floor", () => {
@@ -308,7 +308,7 @@ describe("detectDrift — the #1308 / #1309 false positives", () => {
       ...[300, 305, 298, 302, 310, 295, 300].map((v) => ({ value: v })),
       ...[620, 640, 610].map((v) => ({ value: v })),
     ];
-    expect(detectDrift(regressed, S11_A)).toBe(true);
+    expect(detectDrift(regressed, S11_A)).not.toBeNull();
   });
 
   test("the absolute floor binds when the baseline is small", () => {
@@ -318,7 +318,34 @@ describe("detectDrift — the #1308 / #1309 false positives", () => {
       ...Array.from({ length: 7 }, () => ({ value: 20 })),
       ...[40, 42, 41].map((v) => ({ value: v })),
     ];
-    expect(detectDrift(tiny, sloAt(40))).toBe(true); // 40% floor alone: +100% trips
-    expect(detectDrift(tiny, S11_A)).toBe(false); // with the 50ms absolute floor: does not
+    expect(detectDrift(tiny, sloAt(40))).not.toBeNull(); // 40% floor alone: +100% trips
+    expect(detectDrift(tiny, S11_A)).toBeNull(); // with the 50ms absolute floor: does not
+  });
+});
+
+describe("detectDrift reports the floor that ACTUALLY fired", () => {
+  test("when the absolute floor binds, the reported floor exceeds noiseFloorPct", () => {
+    // 40 % of a 20 ms median is 8 ms -- scheduler noise. `noiseFloorAbs: 50` raises the
+    // effective bar to 250 %, and THAT is the number the filed issue must state. Reporting
+    // the declared 40 % would send a reader to check a threshold the sample never faced.
+    const history = [
+      ...Array.from({ length: 7 }, () => ({ value: 20 })),
+      ...[80, 82, 81].map((v) => ({ value: v })),
+    ];
+    const hit = detectDrift(history, sloAt(40, 50));
+    expect(hit).not.toBeNull();
+    expect(hit?.median).toBe(20);
+    expect(hit?.effectiveFloorPct).toBe(250); // max(40, 50/20*100)
+    expect(hit?.effectiveFloorPct).toBeGreaterThan(40);
+  });
+
+  test("when the relative floor binds, the reported floor IS noiseFloorPct", () => {
+    const history = [
+      ...Array.from({ length: 7 }, () => ({ value: 1_000 })),
+      ...[1_600, 1_620, 1_610].map((v) => ({ value: v })),
+    ];
+    const hit = detectDrift(history, sloAt(40, 50));
+    expect(hit?.effectiveFloorPct).toBe(40); // max(40, 50/1000*100 = 5)
+    expect(hit?.current).toBe(1_610); // the sample that COMPLETED the run, not the first
   });
 });
