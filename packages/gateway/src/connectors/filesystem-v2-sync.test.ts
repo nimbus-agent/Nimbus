@@ -876,6 +876,84 @@ export async function drawAsync() { return "ok"; }
   expect(rows.some((r) => r.title.includes("drawAsync"))).toBe(true);
 });
 
+// ── extractExportedSymbols: `export default` (#1388) ─────────────────────────
+
+// Found by performing the Gate 1 Windows runbook against a real third-party repo
+// (sindresorhus/is-plain-obj), whose entire public surface is
+// `export default function isPlainObject(value) {`. Every extractor regex requires `export`
+// to be followed directly by the declaration keyword, so `export default ...` matched none of
+// them: the repo indexed 29 commits and 3 dependencies and ZERO code symbols. That is the wedge
+// path — `nimbus init` then has no `file:line` to suggest and `nimbus why` reports "No indexed
+// code symbols for this file", advising the user to enable a setting that is already on.
+test("code index picks up `export default function`", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-defaultfn-"));
+  writeFileSync(
+    join(dir, "index.js"),
+    `export default function isPlainObject(value) { return true; }\n`,
+  );
+  const sync = createFilesystemV2Syncable({
+    roots: [{ path: dir, gitAware: false, codeIndex: true, dependencyGraph: false, exclude: [] }],
+  });
+  const db = createMemoryIndexDb();
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
+  const rows = db
+    .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
+    .all() as Array<{ title: string }>;
+  expect(rows.some((r) => r.title.includes("isPlainObject"))).toBe(true);
+});
+
+test("code index picks up `export default class` and `export default async function`", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-defaultmore-"));
+  writeFileSync(join(dir, "widget.ts"), `export default class Widget { id = 1; }\n`);
+  writeFileSync(join(dir, "load.ts"), `export default async function loadThing() { return 1; }\n`);
+  const sync = createFilesystemV2Syncable({
+    roots: [{ path: dir, gitAware: false, codeIndex: true, dependencyGraph: false, exclude: [] }],
+  });
+  const db = createMemoryIndexDb();
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
+  const rows = db
+    .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
+    .all() as Array<{ title: string }>;
+  expect(rows.some((r) => r.title.includes("Widget"))).toBe(true);
+  expect(rows.some((r) => r.title.includes("loadThing"))).toBe(true);
+});
+
+// The bound in the other direction: `export default` must not swallow the NAMED forms, and a
+// file whose only `default` is an anonymous expression still yields nothing rather than a
+// garbage symbol — naming an anonymous default is a separate design question, deliberately
+// not invented here.
+test("named exports still resolve alongside a default export in the same file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-mixed-"));
+  writeFileSync(
+    join(dir, "mixed.ts"),
+    `export const NAMED = 1;\nexport default function theDefault() { return NAMED; }\n`,
+  );
+  const sync = createFilesystemV2Syncable({
+    roots: [{ path: dir, gitAware: false, codeIndex: true, dependencyGraph: false, exclude: [] }],
+  });
+  const db = createMemoryIndexDb();
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
+  const rows = db
+    .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
+    .all() as Array<{ title: string }>;
+  expect(rows.some((r) => r.title.includes("NAMED"))).toBe(true);
+  expect(rows.some((r) => r.title.includes("theDefault"))).toBe(true);
+});
+
+test("an ANONYMOUS default export still yields no symbol", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-anon-"));
+  writeFileSync(join(dir, "anon.ts"), `export default { a: 1 };\n`);
+  const sync = createFilesystemV2Syncable({
+    roots: [{ path: dir, gitAware: false, codeIndex: true, dependencyGraph: false, exclude: [] }],
+  });
+  const db = createMemoryIndexDb();
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
+  const rows = db
+    .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
+    .all() as Array<{ title: string }>;
+  expect(rows.length).toBe(0);
+});
+
 // ── excerptWithStartLine: flat fallback fits within maxChars (no truncation) ──
 
 test("excerptWithStartLine: flat fallback that fits within maxChars is returned as-is", () => {
