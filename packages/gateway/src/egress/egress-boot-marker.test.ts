@@ -4,11 +4,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { appendBootMarker } from "./egress-boot-marker.ts";
-import { ALL_NONE_COVERAGE, THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
+import { ALL_NONE_COVERAGE, type CoverageVector, THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import { coverageForWindow, listEgress, verifyEgressChain } from "./egress-verify.ts";
 
-const RICH_COVERAGE = {
+// Typed explicitly as `CoverageVector` (rather than left to `as const` inference) so a class added
+// to `COVERAGE_CLASSES` without a matching entry here is a compile error, not a silently
+// unparseable marker at runtime.
+const RICH_COVERAGE: CoverageVector = {
+  chatops: "per-call",
   task: "per-call",
   mcp: "per-call",
   http: "per-call",
@@ -16,7 +20,7 @@ const RICH_COVERAGE = {
   sync: "per-run",
   model: "per-call",
   peer: "per-call",
-} as const;
+};
 
 let db: Database;
 beforeEach(() => {
@@ -33,7 +37,7 @@ describe("boot marker", () => {
     expect(rows[0]?.sourceType).toBe("boot");
     expect(rows[0]?.method).toBe("egress.boot");
     expect(rows[0]?.sourceId).toBe(
-      "http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call",
+      "chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call",
     );
     // The marker participates in the chain like any other row.
     expect(verifyEgressChain(db).ok).toBe(true);
@@ -49,6 +53,7 @@ describe("boot marker", () => {
     appendBootMarker(db, THIS_BINARY_COVERAGE, 400);
     appendBootMarker(db, RICH_COVERAGE, 1_000);
     expect(coverageForWindow(db, { since: 500, until: 3_000 })).toEqual({
+      chatops: "per-call", // both non-none
       task: "per-call", // both non-none
       mcp: "per-call", // both non-none
       http: "per-call", // both non-none
@@ -137,15 +142,15 @@ describe("boot marker", () => {
     // marker existed at all.
     //
     // The `source_id` below MUST be a COMPLETE, parseable coverage vector (every COVERAGE_CLASSES
-    // member, `mcp` included). If it were missing a class, `parseCoverage` would return null and
-    // the window would read all-none for THAT reason — the assertion would still pass even if the
-    // `source_type = 'boot'` filter regressed, which is precisely the regression this test exists
-    // to catch.
+    // member, `mcp`/`chatops` included). If it were missing a class, `parseCoverage` would return
+    // null and the window would read all-none for THAT reason — the assertion would still pass
+    // even if the `source_type = 'boot'` filter regressed, which is precisely the regression this
+    // test exists to catch.
     appendEgressEntry(db, {
       timestamp: 500,
       sourceType: "task",
       sourceId:
-        "http=per-call;mcp=per-call;model=per-call;peer=per-call;session=per-call;sync=per-call;task=per-call",
+        "chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=per-call;session=per-call;sync=per-call;task=per-call",
       destination: "local",
       method: "egress.boot",
       payloadSummary: "{}",

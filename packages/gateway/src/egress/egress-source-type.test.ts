@@ -27,7 +27,11 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
   // `outcome` is the ELEVENTH, and the first admitted as a MARKER rather than an egress class. It
   // records how a targeted fetch ended, which the authorising row structurally cannot say: that row
   // is appended BEFORE the connector call, so its `result_status` is an authorisation decision.
-  test("is exactly these eleven members, in this order", () => {
+  //
+  // `chatops` is the TWELFTH, and an EGRESS class rather than a marker — an outbound Slack/Teams
+  // post. It is a STRONGER claim than `mcp`/`http`, not weaker: those hand a brief to a LOCAL
+  // process, whereas a chat post genuinely leaves the machine to a third-party server.
+  test("is exactly these twelve members, in this order", () => {
     expect(EGRESS_SOURCE_TYPES).toEqual([
       "task",
       "prune",
@@ -40,6 +44,7 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
       "degraded",
       "http",
       "outcome",
+      "chatops",
     ]);
   });
 
@@ -64,6 +69,8 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
     expect(isMarkerSourceType("mcp")).toBe(false);
     // Same for `http` — the transport differs, the disclosure does not.
     expect(isMarkerSourceType("http")).toBe(false);
+    // `chatops` rows are real egress too — a post that genuinely left the machine, not bookkeeping.
+    expect(isMarkerSourceType("chatops")).toBe(false);
     // An unrecognized value must NOT be treated as a marker — an unknown row counts as egress.
     expect(isMarkerSourceType("wat")).toBe(false);
   });

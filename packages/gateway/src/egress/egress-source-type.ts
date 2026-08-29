@@ -62,6 +62,20 @@
  * marker, so every outcome row would count as outbound unless the counting predicate grew a
  * method-level special case. That would reintroduce by hand the miscount `MARKER_SOURCE_TYPES`
  * exists to make structural.
+ *
+ * `chatops` is the twelfth member, and an EGRESS class rather than a marker. It records an
+ * outbound Slack/Teams post. It is a STRONGER claim than `mcp`/`http`, not a weaker one: those
+ * two hand a brief to a LOCAL process, whereas a chat post genuinely leaves the machine to a
+ * third-party server.
+ *
+ * Reusing an existing member was rejected for the fourth time, and this time the candidates are
+ * worse than before: `task` would imply the executor gated it (it does not — the post path never
+ * reaches `connectors.dispatch`), and `mcp`/`http` would merge a real third-party send with a
+ * local hand-off under one permanent string.
+ *
+ * Unlike `mcp` and `http`, this class is NOT narrower than its name: it covers every outbound
+ * post on the `chatops-boot.ts` `post` closure — operational replies, HITL approval cards,
+ * tribal suggestions, and agent briefs once those land.
  */
 export const EGRESS_SOURCE_TYPES = [
   "task", // gated connector action
@@ -75,6 +89,7 @@ export const EGRESS_SOURCE_TYPES = [
   "degraded", // lost-append recovery marker
   "http", // agent brief served over the local HTTP API
   "outcome", // how a targeted fetch ended — a marker, never counted as egress
+  "chatops", // an outbound Slack/Teams post
 ] as const;
 
 export type EgressSourceType = (typeof EGRESS_SOURCE_TYPES)[number];

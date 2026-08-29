@@ -11,6 +11,7 @@ import {
 } from "./egress-coverage.ts";
 
 const NONE: CoverageVector = {
+  chatops: "none",
   task: "none",
   mcp: "none",
   http: "none",
@@ -25,14 +26,14 @@ const NONE: CoverageVector = {
  * `COVERAGE_CLASSES` (which IS the wire order) shows up as a diff here rather than being absorbed
  * by a round-trip through `serializeCoverage`.
  *
- * Every hardcoded coverage string in this file must list ALL SEVEN classes. A string that omits one
+ * Every hardcoded coverage string in this file must list ALL EIGHT classes. A string that omits one
  * makes `parseCoverage` return `null` for the MISSING-class reason, which would let a test that
  * targets some other defect keep passing while exercising nothing.
  *
- * `http` heads the string because the array is key-sorted and `http` < `mcp`.
+ * `chatops` heads the string because the array is key-sorted and `chatops` < `http`.
  */
 const CANONICAL =
-  "http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call";
+  "chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call";
 
 /** The six-class string every binary before the `http` class wrote. See the blackout test below. */
 const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
@@ -56,6 +57,7 @@ describe("coverage vector", () => {
     // an unwired seam would be a claim with no code behind it, which is the exact defect this vector
     // prevents.
     expect(THIS_BINARY_COVERAGE).toEqual({
+      chatops: "per-call",
       task: "per-call",
       mcp: "per-call",
       http: "per-call",
@@ -66,12 +68,13 @@ describe("coverage vector", () => {
     });
   });
 
-  test("COVERAGE_CLASSES stays key-sorted, with http at the head", () => {
+  test("COVERAGE_CLASSES stays key-sorted, with chatops at the head", () => {
     // The array IS the wire format: serializeCoverage maps over it to build the canonical string
     // stored in a boot marker's HASHED source_id. A non-sorted array would still typecheck and
     // still round-trip within one binary — and would produce a different canonical string from any
     // other binary that sorted correctly, silently splitting the fleet.
     expect([...COVERAGE_CLASSES]).toEqual([
+      "chatops",
       "http",
       "mcp",
       "model",
@@ -100,8 +103,9 @@ describe("coverage vector", () => {
     // strictness exists to prevent. This is the fail-safe direction. Do not relax it.
     expect(parseCoverage(PRE_HTTP_MARKER)).toBeNull();
     // ...and the reason is genuinely the missing class, not some unrelated malformation: the same
-    // string with the class restored parses fine.
-    expect(parseCoverage(`http=none;${PRE_HTTP_MARKER}`)).not.toBeNull();
+    // string with BOTH classes missing from this fixture (`http`, and now `chatops` too) restored
+    // parses fine.
+    expect(parseCoverage(`chatops=none;http=none;${PRE_HTTP_MARKER}`)).not.toBeNull();
   });
 
   test("serialize is stable and key-sorted", () => {
@@ -150,6 +154,7 @@ describe("coverage vector", () => {
 
   test("weakest takes the LOWEST granularity per class across binaries", () => {
     const rich: CoverageVector = {
+      chatops: "per-call",
       task: "per-call",
       mcp: "per-call",
       http: "per-call",
@@ -159,6 +164,7 @@ describe("coverage vector", () => {
       peer: "per-call",
     };
     expect(weakestCoverage([rich, THIS_BINARY_COVERAGE])).toEqual({
+      chatops: "per-call", // both per-call
       task: "per-call", // both per-call
       mcp: "per-call", // both per-call
       http: "per-call", // both per-call
@@ -171,5 +177,32 @@ describe("coverage vector", () => {
 
   test("weakest of an empty list is all-none — claim nothing without evidence", () => {
     expect(weakestCoverage([])).toEqual(NONE);
+  });
+});
+
+describe("chatops coverage class", () => {
+  test("chatops is the FIRST class — the array order is the wire format", () => {
+    // Not just "is present": appending would typecheck and round-trip within one binary
+    // while producing a canonical string no other binary agrees with.
+    expect(COVERAGE_CLASSES[0]).toBe("chatops");
+    expect([...COVERAGE_CLASSES]).toEqual([...COVERAGE_CLASSES].sort());
+  });
+
+  test("this binary observes chatops per-call", () => {
+    expect(THIS_BINARY_COVERAGE.chatops).toBe("per-call");
+  });
+
+  test("serialize puts chatops first and parse round-trips it", () => {
+    const s = serializeCoverage(THIS_BINARY_COVERAGE);
+    expect(s.startsWith("chatops=per-call;")).toBe(true);
+    expect(parseCoverage(s)).toEqual(THIS_BINARY_COVERAGE);
+  });
+
+  test("a vector missing chatops parses as null, never a partial vector", () => {
+    const withoutChatops = serializeCoverage(THIS_BINARY_COVERAGE)
+      .split(";")
+      .filter((seg) => !seg.startsWith("chatops="))
+      .join(";");
+    expect(parseCoverage(withoutChatops)).toBeNull();
   });
 });

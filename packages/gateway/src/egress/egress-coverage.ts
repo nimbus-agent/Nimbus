@@ -11,12 +11,14 @@ export type Granularity = (typeof GRANULARITIES)[number];
  * The egress-BEARING source types. Marker classes carry no coverage claim.
  *
  * Kept in key-sorted order — `serializeCoverage` maps over this array to build the canonical
- * string stored in a boot marker's HASHED `source_id`, so the order IS the wire format. `http`
- * sorts before `mcp`, which sorts before `model`; that is why they head the list rather than
- * trailing it. Appending a new class instead of inserting it in sort order would still typecheck,
- * still round-trip within one binary, and produce a canonical string no other binary agrees with.
+ * string stored in a boot marker's HASHED `source_id`, so the order IS the wire format. `chatops`
+ * sorts before `http`, which sorts before `mcp`, which sorts before `model`; that is why they head
+ * the list rather than trailing it. Appending a new class instead of inserting it in sort order
+ * would still typecheck, still round-trip within one binary, and produce a canonical string no
+ * other binary agrees with.
  */
 export const COVERAGE_CLASSES = [
+  "chatops",
   "http",
   "mcp",
   "model",
@@ -30,17 +32,18 @@ export type CoverageClass = (typeof COVERAGE_CLASSES)[number];
 export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 
 /**
- * What THIS binary is built to observe. FIVE classes are non-`none`: `task` (the executor's
+ * What THIS binary is built to observe. SIX classes are non-`none`: `task` (the executor's
  * gated-action append, `engine/executor.ts`); `mcp` and `http` — the two external transports an
  * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
  * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run OR a
  * targeted fetch-on-miss call, both landing through `egress/sync-egress.ts`'s `recordSyncEgress` —
- * see the `sync` paragraph below); and `model` (any generate OR embed on a NON-LOCAL route, appended
+ * see the `sync` paragraph below); `model` (any generate OR embed on a NON-LOCAL route, appended
  * by three cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
  * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, and `egress/embedding-egress.ts`'s
- * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers). Later
- * phases raise `peer`, `session`; raising an entry without landing its appender is the exact defect
- * this vector exists to prevent.
+ * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers); and
+ * `chatops` (every outbound Slack/Teams post, appended by ONE decorator over the shared `post`
+ * closure — see the `chatops` paragraph below). Later phases raise `peer`, `session`; raising an
+ * entry without landing its appender is the exact defect this vector exists to prevent.
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
@@ -110,8 +113,16 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * still appends nothing — that is the class working as designed, not a gap in it. Raising `model`
  * further (to cover a model call this vector does not yet know about) requires landing that
  * call's own appender first, the same as every other raise recorded here.
+ *
+ * `chatops` is `per-call` and, unlike `mcp`/`http`, is NOT narrower than its name. Its appender
+ * (`egress/chatops-egress.ts`'s `buildLedgeredChatPosts`) decorates the single `post` closure
+ * that every chat consumer shares, so one row is appended per outbound post regardless of which
+ * consumer sent it. Before it landed the class did not exist at all — chat posts were neither
+ * covered nor disclosed, which is why `nimbus prove` could report a zero over a window in which a
+ * brief synthesized from the private index was posted to Slack.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
+  chatops: "per-call",
   task: "per-call",
   mcp: "per-call",
   http: "per-call",
@@ -127,6 +138,7 @@ export const THIS_BINARY_COVERAGE: CoverageVector = {
  * sibling marker's richer claim stand unchallenged.
  */
 export const ALL_NONE_COVERAGE: CoverageVector = {
+  chatops: "none",
   task: "none",
   mcp: "none",
   http: "none",
