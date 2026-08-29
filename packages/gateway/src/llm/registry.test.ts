@@ -387,8 +387,10 @@ describe("LlmRegistry.setDefault / getDefault", () => {
     env = makeDbWithSchema();
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: env.db });
     await reg.setDefault("reasoning", "ollama", "llama3.2");
-    const got = reg.getDefault("reasoning");
-    expect(got).toEqual({ provider: "ollama", modelName: "llama3.2" });
+    const row = env.db
+      .query("SELECT provider, model_name FROM llm_task_defaults WHERE task_type = ?")
+      .get("reasoning") as { provider: string; model_name: string } | undefined;
+    expect(row).toEqual({ provider: "ollama", model_name: "llama3.2" });
   });
 
   test("ON CONFLICT updates the existing row on second setDefault", async () => {
@@ -396,7 +398,10 @@ describe("LlmRegistry.setDefault / getDefault", () => {
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: env.db });
     await reg.setDefault("reasoning", "ollama", "llama3.2");
     await reg.setDefault("reasoning", "remote", "claude");
-    expect(reg.getDefault("reasoning")).toEqual({ provider: "remote", modelName: "claude" });
+    const row = env.db
+      .query("SELECT provider, model_name FROM llm_task_defaults WHERE task_type = ?")
+      .get("reasoning") as { provider: string; model_name: string } | undefined;
+    expect(row).toEqual({ provider: "remote", model_name: "claude" });
   });
 
   // The two "when DB is undefined" tests that stood here are DELETED, not ported: `db` became
@@ -406,11 +411,12 @@ describe("LlmRegistry.setDefault / getDefault", () => {
   // fail. The replacement guard is `db is REQUIRED at COMPILE time` below, which `bun run
   // typecheck` enforces.
 
-  test("getDefault on a missing-row throws (bun:sqlite .get() returns null, not undefined)", () => {
-    env = makeDbWithSchema();
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: env.db });
-    expect(() => reg.getDefault("classification")).toThrow();
-  });
+  // `getDefault` was deleted on 2026-08-29 (dead code, nothing had ever called it). The latent
+  // bug it harbored: it compared `row === undefined`, but `bun:sqlite`'s `.get()` returns
+  // **`null`** for no matching row, so a lookup for an unpinned task threw `TypeError: null is
+  // not an object` instead of returning `undefined`. Verified directly against `bun:sqlite`. No
+  // test covered it — both remaining tests were happy-path — so it was latent, not deliberately
+  // encoded. That is the reason deletion beat patching.
 });
 
 describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {

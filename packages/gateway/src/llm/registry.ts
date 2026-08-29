@@ -38,6 +38,16 @@ export type LlmRegistryOptions = {
  */
 export type LlmLifecycleTarget = { routeId?: string };
 
+/**
+ * `llm_task_defaults` (V20) is intentionally left in the schema and intentionally unused.
+ * `getDefault` was deleted on 2026-08-29 as dead code — nothing had ever called it. `setDefault`
+ * remains ONLY because `llm.setDefault` is a live, renderer-exposed IPC method the desktop UI
+ * calls (see `ipc/llm-rpc.ts:255` and `packages/ui/src/ipc/client.ts:312`). The table therefore
+ * now has a writer and **no reader**: per-task pins live in `[llm.tasks]` in nimbus.toml, which
+ * the router actually reads (Task 5–6). That gap is tracked in #1383. Do not re-wire `getDefault`
+ * to "fix" this: two sources of truth for one setting is what made these accessors dead in the
+ * first place.
+ */
 export class LlmRegistry {
   private readonly router: LlmRouter;
   private readonly db: Database;
@@ -329,13 +339,6 @@ export class LlmRegistry {
 
   async getRouterStatus(): Promise<Awaited<ReturnType<LlmRouter["getStatus"]>>> {
     return await this.router.getStatus();
-  }
-
-  getDefault(taskType: string): { provider: string; modelName: string } | undefined {
-    const row = this.db
-      .query("SELECT provider, model_name FROM llm_task_defaults WHERE task_type = ?")
-      .get(taskType) as { provider: string; model_name: string } | undefined;
-    return row === undefined ? undefined : { provider: row.provider, modelName: row.model_name };
   }
 
   private syncModelsToDb(models: LlmModelInfo[]): void {
