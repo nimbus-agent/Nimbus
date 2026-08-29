@@ -426,11 +426,13 @@ describe("AWS-CLI syncables share one sync cadence", () => {
   // reason for the difference. Pinned as a GROUP rather than as `aws === 600_000`, so the next
   // divergence fails here whichever member drifts.
   test("aws, cloudwatch, sagemaker and athena all use the same defaultIntervalMs", () => {
+    // Each factory names its own ensure-running hook, so `ENSURE_MCP` is not reusable here.
+    const noop = async (): Promise<void> => {};
     const intervals = {
-      aws: createAwsSyncable(ENSURE_MCP).defaultIntervalMs,
-      cloudwatch: createCloudwatchSyncable(ENSURE_MCP).defaultIntervalMs,
-      sagemaker: createSagemakerSyncable(ENSURE_MCP).defaultIntervalMs,
-      athena: createAthenaSyncable(ENSURE_MCP).defaultIntervalMs,
+      aws: createAwsSyncable({ ensureAwsMcpRunning: noop }).defaultIntervalMs,
+      cloudwatch: createCloudwatchSyncable({ ensureCloudwatchMcpRunning: noop }).defaultIntervalMs,
+      sagemaker: createSagemakerSyncable({ ensureSagemakerMcpRunning: noop }).defaultIntervalMs,
+      athena: createAthenaSyncable({ ensureAthenaMcpRunning: noop }).defaultIntervalMs,
     };
     expect(new Set(Object.values(intervals)).size).toBe(1);
     expect(intervals.aws).toBe(10 * 60 * 1000);
