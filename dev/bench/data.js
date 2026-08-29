@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788028512520,
+  "lastUpdate": 1788030544369,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c4f12d382be6e8601858605089b664f7c5604e0c",
-          "message": "feat(share): Phase 6 Slice 8a — Share foundation (I27 share-gate, verify-share, V41) (#661)\n\n## Phase 6 Slice 8a — Share & Virality foundation\n\nShips the foundation of the Share subsystem: the **first deliberate\noutbound data path** in Nimbus, behind new structural invariant **I27 /\nstatic D21**, migration **V41**.\n\nAn outbound share leaves the machine only through `share/share-gate.ts`\n`createShare()`: collect session → default+caller **redaction** → the\nLOCAL owner approves the **exact redacted preview bytes** via the\n`share.publish` HITL action (I2 frozen set) → **Ed25519 sign** with a\nVault-only key → persist to `share_records` → **audit-log** the applied\nredaction set. A denied/timed-out approval persists + signs + emits\n**nothing** (fail-closed). `verify-share` reuses the same codec.\n\n### What's here\n- **`share/` subsystem** — `share-redaction` (secrets + PII families +\ncaller patterns), `safe-fetch` (SSRF-guarded, documented DNS-rebind\nresidual), `share-keypair` (Vault-only `share.signing.*`),\n`share-format` (`nimbus-share/v1` codec: canonical body, BLAKE3 hash,\nsign/verify, **advisory** expiry), `share-store` (V41 CRUD),\n`share-gate` (the I27 chokepoint) + `share-consent-broker`,\n`verify-share`.\n- **Migration V41** — `share_records` ledger. `CURRENT_SCHEMA_VERSION` →\n41.\n- **Surfaces** —\n`share.{create,verify,list,get,pubkey,prune,approvalRespond}` IPC\n(`share.create`/`prune` LAN-forbidden); `nimbus share\n<create|list|prune|pubkey|approve|reject>` + `nimbus verify-share\n<file|url>` CLI; config-pinned `[share.http_sink]`; the 4 read-only\n`share.{get,list,pubkey,verify}` on the Tauri renderer allowlist\n(mutating methods stay CLI-only, I7).\n- **Invariant I27 / static D21** — runtime block in\n`security-invariants.test.ts` (`share.publish ∈ HITL_REQUIRED`;\nLAN-forbid of create/prune) + static confinement of the `share.publish`\nliteral, the `share.signing.privkey` Vault key, and the `createShare`\ncall site, plus an assemble-wiring assertion.\n- **Docs** — I27 + D21 in `SECURITY-INVARIANTS.md`, CLAUDE.md/GEMINI.md\ninvariant list, CHANGELOG.\n\nOut of 8a scope (Waves 8b–8d): recipe, replay, peer forwarding — the\n`forwarding` field ships inert.\n\n### Verification (all green)\n- typecheck (all packages), biome, markdown lint, all `audit:*` static\ngates, jscpd, js-licenses — ✓\n- build ✓ · unit **13151**, integration **358**, gateway-e2e **140**\n(incl. a real-gateway share create→approve→verify round-trip), cli-e2e\n**26** — 0 fail\n- **coverage-floor: ok** against a Docker-Linux-authoritative lcov\n(baseline `files: {}`; every share file clears ≥80% line+branch) ·\nlychee ✓\n- `origin/main` merged in (clean).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `share` and `verify-share` CLI commands enabling users to\ncreate, list, verify, and manage shared session artifacts with HITL\napproval gating and PII redaction.\n* Share artifacts now support multiple sinks (file, HTTP, peer) with\nconfigurable HTTP endpoint via `[share.http_sink]` in `nimbus.toml`.\n* Added four new IPC read-only methods for renderer access:\n`share.verify`, `share.list`, `share.get`, `share.pubkey`.\n\n* **Documentation**\n* Documented security invariant **I27** defining the single outbound\nshare emission path with mandatory owner approval, Vault-only signing,\nand automatic PII redaction.\n\n* **Chores**\n* Database schema updated to v41 with new `share_records` ledger for\npersistent share storage.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-16T19:13:33Z",
-          "tree_id": "8afc92a25b9a989e7b284fd0546ca9110ee3af5f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c4f12d382be6e8601858605089b664f7c5604e0c"
-        },
-        "date": 1781638444897,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 298.51003695000327,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 293.28471820000414,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 244.4451733000031,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2356e6a7e4d25aab4baf954ce8a2e1d17df604f6",
+          "message": "fix(embedding): ship the onnx binding and stub sharp so the worker can start (#1399)\n\nAddresses the load failure in #1396. **Semantic search was dead in every\ninstall** — not degraded, dead.\n\n## The single-binding theory in the issue was wrong\n\nThere are **two** native modules in the chain, and fixing only the first\nmoves the error rather than clearing it.\n\n**1. `onnxruntime-node`** does\n`require(\"../bin/napi-v3/<platform>/<arch>/onnxruntime_binding.node\")`\nrelative to itself. Once the worker is bundled to\n`dist/workers/embedding-worker.js`, that resolves to\n`dist/bin/napi-v3/…` — which nothing ever created.\n\n`copy-onnx-sidecar.ts` places it there, mirroring `copy-vec0-sidecar.ts`\n**including its recorded lesson**: that copy once lived only in\n`compile-gateway.ts`, which the release pipeline never runs, so binaries\nshipped without it and failed silently. This is called from\n`build-workers.ts` for exactly that reason.\n\n**2. `sharp`** then fails identically. Transformers imports it\nstatically for **image** preprocessing and it is also native. The\nembedding worker does text feature-extraction only; transformers guards\nevery use with `else if (sharp)`; and upstream already maps `\"sharp\":\nfalse` in its own browser field. A falsy stub is the sanctioned shape\nhere, not a workaround.\n\n`build-workers.ts` moves from the `bun build` CLI to `Bun.build()`\npurely because the CLI has no aliasing flag.\n\n## Why no gate caught this\n\n`onnxruntime-node` joins `ALLOWED_NATIVE`, with the reasoning inline.\nThe audit never fired because it scans **declared** dependencies and\nthis arrives transitively — it reported `ok (19 declared dependencies\nchecked)` while the capability was dead. Its own doc comment predicted\nthis gap.\n\n## Verification, from source\n\n```\nbefore          -> ResolveMessage: Cannot find module '…/onnxruntime_binding.node'\nbinding only    -> Could not load the \"sharp\" module using the win32-x64 runtime\nbinding + stub  -> embedding worker initialized; semantic search is now active\n```\n\nThat last line is the first success on this machine. 728 structure-audit\n+ worker tests pass; `preflight:fast` 32/32.\n\n## ⚠️ Not yet verified — please weigh this in review\n\n**The compiled binary.** Inside it the worker lives on a virtual FS\n(`B:/~BUN/root/…`), and a native `.node` cannot load from there — so the\nrelative lookup may need to become an absolute one, the way\n`tryLoadFromSidecar()` works for `vec0`. Source-tree success is **not**\nevidence about the packaged build, and that exact gap is the bug class\nthis sits in (F15/F22, both of which shipped dead workers while every\nsource test passed).\n\nThe release packaging path is untouched by this PR. If the binary needs\nthe absolute lookup, that is a follow-up on top of this, not a revision\nof it — the sidecar still has to exist either way.\n\nAlso unverified: macOS and Linux. The copier derives platform/arch and\nthe layout is identical, but only `win32/x64` has actually been\nexercised.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-29T21:56:53+03:00",
+          "tree_id": "2d8e7280e70ec1c50d93ea89e1c9cfb62052dca3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2356e6a7e4d25aab4baf954ce8a2e1d17df604f6"
+        },
+        "date": 1788030541661,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 339.65434800000077,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 336.3757689499995,
             "unit": "ms"
           }
         ]
