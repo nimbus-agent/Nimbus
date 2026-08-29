@@ -10,6 +10,8 @@
 
 **Spec:** [`docs/superpowers/specs/2026-08-29-chatops-agent-intent-design.md`](../specs/2026-08-29-chatops-agent-intent-design.md) §5 (this PR), §13 (review responses).
 
+**Reviewed:** [plan review](./2026-08-29-chatops-egress-ledger-review.md) (Antigravity, 2026-08-29) — responses in § Review Responses.
+
 ## Global Constraints
 
 - **No `any`.** Use `unknown` for external data. TypeScript strict is non-negotiable.
@@ -282,7 +284,21 @@ export async function ensureChannelSalt(vault: NimbusVault): Promise<string> {
   const existing = await vault.get(CHATOPS_CHANNEL_SALT);
   if (existing !== null && isValidSalt(existing)) return existing;
   const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(SALT_BYTES))).toString("base64");
-  await vault.set(CHATOPS_CHANNEL_SALT, salt);
+  try {
+    await vault.set(CHATOPS_CHANNEL_SALT, salt);
+  } catch (err) {
+    // This is called on the chatops boot path, so a Vault write failure BLOCKS THE BOT FROM
+    // STARTING. That is the correct fail-closed posture -- without a salt the alternative is an
+    // unsalted hash, which is reversible by dictionary -- but a bare DPAPI/libsecret error at boot
+    // reads as "chatops is broken" with no indication of why. Name the key and the consequence.
+    throw new Error(
+      `chatops: cannot persist the channel-hash salt ("${CHATOPS_CHANNEL_SALT}") to the Vault, ` +
+        `so ChatOps will not start. Every outbound post must be ledgered with a salted channel ` +
+        `hash (I29), and an unsalted fallback is not offered because channel ids are enumerable. ` +
+        `Cause: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
   return salt;
 }
 
@@ -656,6 +672,37 @@ test("D17 accepts the inline form", () => {
   ]);
   expect(v).toEqual([]);
 });
+
+// THE TEST THAT MATTERS. A file-level "does this file contain a wrapped call?" early-return
+// skips the whole file when BOTH forms are present -- and the one file that legitimately
+// contains a wrapped call is `chatops-boot.ts`, i.e. exactly the file where an added unwrapped
+// call would be invisible. Counting the two tokens does not fix it either: a wrapped call whose
+// argument is something else keeps the counts equal while the bypass survives.
+test("D17 catches an unwrapped call in a file that ALSO has a wrapped one", () => {
+  const v = checkChatopsUnwrappedPost([
+    {
+      relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+      contents:
+        "const posts = buildLedgeredChatPosts(db, buildConnectorPost(runTool, fn), salt);\n" +
+        "const sneaky = buildConnectorPost(runTool, fn);\n",
+    },
+  ]);
+  expect(v.length).toBe(1);
+  expect(v[0]?.line).toBe(2);
+});
+
+test("D17 catches a wrapper call whose argument is NOT buildConnectorPost", () => {
+  // Counts are equal (1 and 1); adjacency is what distinguishes them.
+  const v = checkChatopsUnwrappedPost([
+    {
+      relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+      contents:
+        "const posts = buildLedgeredChatPosts(db, somethingElse, salt);\n" +
+        "const post = buildConnectorPost(runTool, fn);\n",
+    },
+  ]);
+  expect(v.length).toBe(1);
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -670,8 +717,22 @@ Expected: FAIL — `checkChatopsUnwrappedPost` is not defined.
 // CALLED only as an argument to `buildLedgeredChatPosts(...)`, never bound to a name, so no
 // consumer can reach an unwrapped post. Without this the ledger covers the consumers that exist
 // and silently misses the next one added.
-const UNWRAPPED_POST_RE = /\bbuildConnectorPost\s*\(/;
-const WRAPPED_POST_RE = /\bbuildLedgeredChatPosts\s*\(\s*[^)]*\bbuildConnectorPost\s*\(/s;
+//
+// PER OCCURRENCE, never per file. A file-level "does this file contain a wrapped call?"
+// early-return skips the whole file once BOTH forms are present — and `chatops-boot.ts` is the one
+// file that legitimately contains a wrapped call, so it is exactly the file where an added
+// unwrapped call would go unseen. Token COUNTING has the same weakness from the other direction:
+// `buildLedgeredChatPosts(db, somethingElse, salt)` keeps the counts equal while wrapping nothing.
+// Adjacency is the property, so adjacency is what gets checked.
+const UNWRAPPED_POST_RE = /\bbuildConnectorPost\s*\(/g;
+const WRAPPER_RE = /\bbuildLedgeredChatPosts\s*\(/g;
+
+/** Byte offset -> 1-based line, so a per-offset finding can name a line. */
+function lineOfOffset(text: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < text.length; i++) if (text[i] === "\n") line++;
+  return line;
+}
 
 export function checkChatopsUnwrappedPost(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -679,24 +740,46 @@ export function checkChatopsUnwrappedPost(files: readonly FileEntry[]): Violatio
     if (f.relPath.endsWith(".test.ts")) continue;
     if (f.relPath.endsWith("chatops/transport/connector-post.ts")) continue; // definition site
     const stripped = stripComments(f.contents);
-    if (!UNWRAPPED_POST_RE.test(stripped)) continue;
-    if (WRAPPED_POST_RE.test(stripped)) continue;
-    const lines = stripped.split("\n");
     const original = f.contents.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      if (UNWRAPPED_POST_RE.test(lines[i] ?? "")) {
-        out.push({
-          rule: "D17-chatops-unwrapped-post",
-          file: f.relPath,
-          line: i + 1,
-          snippet: (original[i] ?? "").trim(),
-        });
+
+    // Statement-scoped: a `;` ends the construct we care about, and the legal form is a single
+    // statement. Splitting keeps offsets recoverable by accumulating the consumed length.
+    let base = 0;
+    for (const stmt of stripped.split(";")) {
+      const posts = [...stmt.matchAll(UNWRAPPED_POST_RE)].map((m) => m.index ?? 0);
+      if (posts.length > 0) {
+        const wrappers = [...stmt.matchAll(WRAPPER_RE)].map((m) => m.index ?? 0);
+        // Each `buildConnectorPost(` must be preceded, in this same statement, by its own
+        // `buildLedgeredChatPosts(`. Pair them off in order: the Nth post call needs an Nth
+        // wrapper opening before it.
+        for (let n = 0; n < posts.length; n++) {
+          const wrapper = wrappers[n];
+          const post = posts[n] ?? 0;
+          if (wrapper === undefined || wrapper > post) {
+            const off = base + post;
+            const line = lineOfOffset(stripped, off);
+            out.push({
+              rule: "D17-chatops-unwrapped-post",
+              file: f.relPath,
+              line,
+              snippet: (original[line - 1] ?? "").trim(),
+            });
+          }
+        }
       }
+      base += stmt.length + 1; // + the `;` that split consumed
     }
   }
   return out;
 }
 ```
+
+**Residual bound, stated rather than implied:** this is a lexical guard, not a parser. A single
+statement deliberately crafted to interleave a wrapper and an unwrapped call in a passing order
+could still slip through. That is acceptable — the guard's job is to catch the realistic accident
+(`const post = buildConnectorPost(...)` added as its own statement), not to defeat an author who is
+trying to evade it. What it must never do again is miss that accident because a *different* line in
+the same file looked correct.
 
 Register it in the runner alongside `checkChatopsReplySurfaceInvariant`.
 
@@ -717,8 +800,17 @@ Verify they are dead with **`git ls-files packages/mcp-connectors`** (expect zer
 
 Run: `bun test scripts/structure-audit/ && bun run audit:invariants`
 Expected: PASS.
-Then red-prove: temporarily change `chatops-boot.ts` to `const post = buildConnectorPost(...)` and
-confirm `audit:invariants` FAILS naming `D17-chatops-unwrapped-post`. Restore.
+
+Then red-prove **twice**, because the two runs prove different things:
+
+1. Replace the wiring in `chatops-boot.ts` with `const post = buildConnectorPost(...)` (no wrapper
+   anywhere in the file). `audit:invariants` must FAIL naming `D17-chatops-unwrapped-post`.
+2. **Restore the wrapper and ADD `const sneaky = buildConnectorPost(runTool, fn);` beside it**, so
+   the file contains both forms. `audit:invariants` must FAIL again, naming line of `sneaky`.
+
+Run 1 proves the guard fires at all. **Only run 2 proves it fires in the file it actually has to
+watch** — `chatops-boot.ts` is the one file that legitimately contains a wrapped call, so a
+file-level check would pass run 1 and silently fail run 2. Restore after both.
 
 - [ ] **Step 6: Commit**
 
@@ -815,6 +907,55 @@ the spec/plan cross-links — check those by hand if you touched them.
 git add docs/ CLAUDE.md GEMINI.md
 git commit -m "docs: record the chatops egress class under I29"
 ```
+
+---
+
+## Review Responses (Antigravity, 2026-08-29)
+
+Reviewed in [`2026-08-29-chatops-egress-ledger-review.md`](./2026-08-29-chatops-egress-ledger-review.md).
+
+| # | Point | Disposition |
+| --- | --- | --- |
+| 2.1 | D17's file-level skip is a bypass | **Fixed** — Task 5, per-occurrence; their *counting* remedy declined |
+| 2.2 | Vault write failure at boot needs a distinguishable log | **Fixed** — Task 2 |
+| 3.1 | Salt differs across gateway instances | **No change**, and the constraint is older than the salt |
+
+**2.1 was the real find, and the diagnosis was exactly right.** `WRAPPED_POST_RE.test(stripped) →
+continue` skips the entire file once any wrapped call is present, and `chatops-boot.ts` is the only
+file that legitimately contains one — so the guard would have been blind in precisely the file it
+exists to watch. Two new tests pin it, and the red-prove step now has a second run that adds an
+unwrapped call *beside* the wrapper, because the first run passes even against the broken version.
+
+The suggested remedy — comparing token counts — was **not** taken, because it decouples the two
+tokens and leaves the bypass open from the other side:
+
+```ts
+const posts = buildLedgeredChatPosts(db, somethingElse, salt);  // wrapped count 1
+const post  = buildConnectorPost(runTool, fn);                  // unwrapped count 1  -> passes
+```
+
+Counting answers "are there enough wrapper calls?" when the question is "is *this* call wrapped?".
+The review's own first suggestion — check each occurrence individually — is what the rule now does,
+statement-scoped, pairing each `buildConnectorPost(` with a `buildLedgeredChatPosts(` that opens
+before it. A fourth test covers the equal-counts case above.
+
+**2.2 accepted as stated.** The failure posture was already right; what was missing was that the
+error said nothing useful. The message now names the vault key, says ChatOps will not start, and
+says why no unsalted fallback is offered. Worth noting this only became useful three days ago —
+until #1393 (`fix(logging): stop logging every Error as {}`) a logged `Error` serialised to `{}`,
+so a carefully written message would have reached the log as an empty object.
+
+**3.1 needs no change, and the reason is stronger than the review's.** The scenario is two gateways
+sharing one database with separate Vaults. That is already unsupported, and not because of the
+salt: `egress_ledger` is a BLAKE3 **hash chain**, and `appendEgressEntry` reads the head hash and
+then inserts. Two concurrent writers race on that read and produce a broken chain, which
+`verifyEgressChain` rejects. Single-writer is a pre-existing property of the ledger, so the salt
+introduces no constraint that was not already there.
+
+The reviewer's conclusion — hashes do not correlate across machines, and that is fine for a
+local-first model — is correct, and the local-first framing is the right one: a hash that *did*
+correlate across installs would mean a shared secret, which is a worse property than the lost
+correlation. Recorded here so it is not re-raised.
 
 ---
 
