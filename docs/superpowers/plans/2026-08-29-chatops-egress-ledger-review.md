@@ -18,6 +18,7 @@ One critical logical vulnerability has been identified in the proposed AST/regex
 ## 2. Improvements & Suggestions
 
 ### 2.1 Critical Bug in D17 Regex Bypass (Task 5)
+
 * **Observation:** The proposed static rule `checkChatopsUnwrappedPost` in Task 5 performs this check:
   ```ts
   if (!UNWRAPPED_POST_RE.test(stripped)) continue;
@@ -35,6 +36,7 @@ One critical logical vulnerability has been identified in the proposed AST/regex
   This is much more robust and prevents file-level skips when both patterns are present.
 
 ### 2.2 Vault Write Failures in `ensureChannelSalt` (Task 2)
+
 * **Observation:** If the vault DPAPI/libsecret storage fails or is read-only at runtime, `vault.set` will throw.
 * **Suggestion:** Since `ensureChannelSalt` is called during the boot path (`chatops-boot.ts`), a Vault write failure will block the bot from starting. This is the correct fail-closed posture, but we should make sure that the boot logs clearly distinguish a vault write failure from other connection errors to aid diagnostics.
 

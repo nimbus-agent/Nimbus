@@ -43,11 +43,13 @@
 ## Task 1: The `chatops` source type and coverage class
 
 **Files:**
+
 - Modify: `packages/gateway/src/egress/egress-source-type.ts:88-101` (the `EGRESS_SOURCE_TYPES` array)
 - Modify: `packages/gateway/src/egress/egress-coverage.ts:19-27` (`COVERAGE_CLASSES`), and `THIS_BINARY_COVERAGE`
 - Test: `packages/gateway/src/egress/egress-coverage.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing (first task).
 - Produces: `EgressSourceType` now includes `"chatops"`; `CoverageClass` includes `"chatops"`. Task 4 writes rows with `sourceType: "chatops"`.
 
@@ -107,7 +109,7 @@ In `egress-source-type.ts`, insert into `EGRESS_SOURCE_TYPES` (position in this 
 
 Above the array, extend the header comment with the decision (this file records every source-type decision; a casual append is the documented anti-pattern):
 
-```
+```text
  * `chatops` is the twelfth member, and an EGRESS class rather than a marker. It records an
  * outbound Slack/Teams post. It is a STRONGER claim than `mcp`/`http`, not a weaker one: those
  * two hand a brief to a LOCAL process, whereas a chat post genuinely leaves the machine to a
@@ -148,7 +150,7 @@ Add to `THIS_BINARY_COVERAGE`:
 
 And extend that object's doc comment:
 
-```
+```text
  * `chatops` is `per-call` and, unlike `mcp`/`http`, is NOT narrower than its name. Its appender
  * (`egress/chatops-egress.ts`'s `buildLedgeredChatPosts`) decorates the single `post` closure
  * that every chat consumer shares, so one row is appended per outbound post regardless of which
@@ -174,11 +176,13 @@ git commit -m "feat(egress): add the chatops source type and coverage class"
 ## Task 2: Per-install channel-id salt
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/channel-salt.ts`
 - Create: `packages/gateway/src/chatops/channel-salt.test.ts`
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts:31` (`PLATFORM_VAULT_KEYS`)
 
 **Interfaces:**
+
 - Consumes: `NimbusVault` (`get(key): Promise<string|null>`, `set(key, value): Promise<void>`).
 - Produces: `ensureChannelSalt(vault: NimbusVault): Promise<string>` (base64, 32 bytes) and `hashChannelId(salt: string, channelId: string): string` (hex). Task 3 consumes both.
 
@@ -346,10 +350,12 @@ git commit -m "feat(chatops): per-install salt for channel-id hashing"
 ## Task 3: The appender — `buildLedgeredChatPosts`
 
 **Files:**
+
 - Create: `packages/gateway/src/egress/chatops-egress.ts`
 - Create: `packages/gateway/src/egress/chatops-egress.test.ts`
 
 **Interfaces:**
+
 - Consumes: `appendEgressEntry(db, entry)` and `redactEgressSummary(payload)` from `./egress-ledger.ts` / `./egress-record.ts`; `EgressAppendFailedError` from `./model-egress.ts`; `hashChannelId` from Task 2; `ChatPlatform` from `../chatops/types.ts`.
 - Produces: `ChatPostKind = "reply" | "approvalCard" | "agentBrief"`, `ChatPost = (platform, channelId, text) => Promise<void>`, and `buildLedgeredChatPosts(db, raw, saltB64, now?) => Readonly<Record<ChatPostKind, ChatPost>>`. Task 4 wires it; PR 2 consumes `posts.agentBrief`.
 
@@ -558,12 +564,14 @@ git commit -m "feat(egress): ledger every outbound chatops post, fail-closed"
 ## Task 4: Wire it into `chatops-boot.ts`
 
 **Files:**
+
 - Modify: `packages/gateway/src/chatops/chatops-boot.ts:164-192`
 - Modify: `packages/gateway/src/chatops/chatops-boot.ts` — `ChatopsBootDeps` gains `db` and `vault`
 - Modify: `packages/gateway/src/platform/assemble.ts` — `bootChatopsIntoAssembly` passes them
 - Test: `packages/gateway/src/chatops/chatops-boot.test.ts`
 
 **Interfaces:**
+
 - Consumes: `buildLedgeredChatPosts` (Task 3), `ensureChannelSalt` (Task 2).
 - Produces: `ChatopsBoot` unchanged externally. PR 2 adds `bindAgentInvoker` and reuses `posts.agentBrief`.
 
@@ -645,10 +653,12 @@ git commit -m "feat(chatops): route every post through the ledgered post set"
 ## Task 5: Extend D17 so no unwrapped post can be reached
 
 **Files:**
+
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts:434-468`
 - Test: `scripts/structure-audit/check-nimbus-invariants.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: rule id `D17-chatops-unwrapped-post`.
 
@@ -828,10 +838,12 @@ git commit -m "feat(audit): D17 forbids an unwrapped chatops post, and drop two 
 ## Task 6: The CLI coverage-label mirror
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/prove.ts:39-59`
 - Test: `packages/cli/src/commands/prove.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing (the CLI **cannot** import the gateway; this is a hand-maintained mirror).
 - Produces: a label for `chatops` in `nimbus prove` output.
 
@@ -880,6 +892,7 @@ git commit -m "feat(cli): label the chatops coverage class in nimbus prove"
 ## Task 7: Docs — the triple rule's third leg
 
 **Files:**
+
 - Modify: `docs/SECURITY-INVARIANTS.md` (I29 section)
 - Modify: `docs/CHANGELOG.md`
 - Modify: `CLAUDE.md` and `GEMINI.md` (I29 summary line — both, per the mirror rule)
@@ -968,3 +981,5 @@ correlation. Recorded here so it is not re-raised.
 - **Spec coverage:** §5.1 → Tasks 3–4; §5.2 → Task 1; §5.3 → Tasks 2–3; §5.4 → Tasks 1 + 6; §5.5 → Task 7; §2.5's dead-path cleanup → Task 5.
 - **Not in this plan, by design:** everything under §6 (the agent intent) is PR 2 and has its own plan. `posts.agentBrief` is built here and consumed there.
 - **The two red-prove steps (3.5 and 5.5) are not optional.** A fail-closed test that has never been run against a fail-open implementation, and an allow-list guard that has never been shown to reject anything, are the two failure shapes this codebase has been bitten by most.
+
+

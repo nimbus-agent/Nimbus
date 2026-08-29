@@ -46,10 +46,12 @@
 ## Task 1: The field→kind map
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/agent-param-kinds.ts`
 - Create: `packages/gateway/src/ipc/agent-param-kinds.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `ParamKind = "string" | "number" | "boolean" | "stringArray"`, and
   `AGENT_PARAM_KINDS: Readonly<Record<string, Readonly<Record<string, ParamKind>>>>` keyed by agent
@@ -166,10 +168,12 @@ git commit -m "feat(agents): declare the param primitive kinds for text surfaces
 ## Task 2: The parser and coercion
 
 **Files:**
+
 - Create: `packages/gateway/src/agent-commands/parse-agent-command.ts`
 - Create: `packages/gateway/src/agent-commands/parse-agent-command.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AGENT_PARAM_KINDS`, `ParamKind` (Task 1).
 - Produces:
   ```ts
@@ -365,11 +369,13 @@ git commit -m "feat(agents): parse and coerce k=v agent commands for text surfac
 ## Task 3: Generalize the permitted-set names
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/agents-rpc.ts:969-1013`
 - Modify: `packages/gateway/src/ipc/http-server.ts:33,855`
 - Modify: `packages/gateway/src/agent-runs/agent-http-invoke.ts` (the `resolveHttpAgentMethod` call)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `EXTERNAL_EXCLUDED_AGENT_METHODS`, `EXTERNAL_AGENT_NAMES`, `resolveExternalAgentMethod(agent): string | null`. Tasks 5 and 7 consume them.
 
@@ -426,11 +432,13 @@ git commit -m "refactor(agents): name the permitted-agent set for every external
 ## Task 4: `ClientKind` gains `chatops`
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/server/client-kind.ts:12`
 - Modify: `packages/gateway/src/egress/egress-bearing-kinds.ts`
 - Test: `packages/gateway/src/egress/egress-bearing-kinds.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `ClientKind` includes `"chatops"`; `EGRESS_BEARING_CLIENT_KINDS.chatops === null`. Task 5 passes `kind: "chatops"`.
 
@@ -499,10 +507,12 @@ git commit -m "feat(egress): add the chatops client kind, ledgered at the post n
 ## Task 5: The ChatOps agent invoker
 
 **Files:**
+
 - Create: `packages/gateway/src/agent-runs/agent-chatops-invoke.ts`
 - Create: `packages/gateway/src/agent-runs/agent-chatops-invoke.test.ts`
 
 **Interfaces:**
+
 - Consumes: `resolveExternalAgentMethod` (Task 3), `dispatchAgentsRpc`, `AgentsRpcError`, `buildAgentSynthesisRunner`.
 - Produces:
   ```ts
@@ -704,10 +714,12 @@ git commit -m "feat(chatops): invoke agents through dispatchAgentsRpc"
 ## Task 6: Brief truncation that cannot drop a disclosure
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/brief-truncate.ts`
 - Create: `packages/gateway/src/chatops/brief-truncate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `reservedBlocksFor`, `RESERVED_HEADINGS_BY_KIND` (`agents/_lib/reserved-sections.ts`); `stripSections`, `joinReserved` (`agents/_lib/markdown-sections.ts`).
 - Produces: `truncateBrief(markdown: string, kind: string, maxBytes: number): string`. Task 8 consumes it.
 
@@ -772,11 +784,13 @@ git commit -m "feat(chatops): fit a brief to a platform cap without dropping a d
 ## Task 7: The `agent` arm in `parseCommand`
 
 **Files:**
+
 - Modify: `packages/gateway/src/chatops/types.ts:22-36`
 - Modify: `packages/gateway/src/chatops/command-parser.ts:27`
 - Test: `packages/gateway/src/chatops/command-parser.test.ts`
 
 **Interfaces:**
+
 - Consumes: `parseAgentCommand` (Task 2).
 - Produces: `ParsedCommand` gains `{ kind: "agent"; agent: string; params: Record<string, unknown> }`; `RefusalReason` gains `"unknown_agent"` and `"bad_agent_params"`. Task 8 consumes them.
 
@@ -843,10 +857,12 @@ git commit -m "feat(chatops): parse the agent intent ahead of the read fallthrou
 ## Task 8: The `IntentRouter` agent branch
 
 **Files:**
+
 - Modify: `packages/gateway/src/chatops/intent-router.ts:26-50`
 - Test: `packages/gateway/src/chatops/intent-router.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ChatopsAgentInvoker` (Task 5), `truncateBrief` (Task 6).
 - Produces: `IntentRouterDeps` gains `runAgent: ChatopsAgentInvoker` and `permittedAgents: ReadonlySet<string>`. Task 9 wires them.
 
@@ -938,11 +954,13 @@ git commit -m "feat(chatops): route an agent intent behind a mapped identity"
 ## Task 9: Wire it end to end
 
 **Files:**
+
 - Modify: `packages/gateway/src/chatops/chatops-boot.ts` (`bindAgentInvoker`, `ChatopsBoot`)
 - Modify: `packages/gateway/src/gateway-main.ts:170` (alongside `bindAskEngine`)
 - Test: `packages/gateway/src/chatops/chatops-flow.integration.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything above.
 - Produces: nothing new.
 
@@ -1016,11 +1034,13 @@ git commit -m "feat(chatops): wire the agent invoker into boot"
 ## Task 10: The anti-drift structure audit
 
 **Files:**
+
 - Create: `scripts/structure-audit/check-agent-param-kinds.ts`
 - Create: `scripts/structure-audit/check-agent-param-kinds.test.ts`
 - Modify: `scripts/lib/preflight-gates.ts` (register the gate)
 
 **Interfaces:**
+
 - Consumes: `AGENT_PARAM_KINDS` (Task 1).
 - Produces: a `preflight` gate.
 
@@ -1102,6 +1122,7 @@ git commit -m "feat(audit): fail the build when the param-kinds map drifts from 
 ## Task 11: Docs and the roadmap correction
 
 **Files:**
+
 - Modify: `docs/architecture.md` (ChatOps subsystem)
 - Modify: `docs/roadmap.md` (the messaging-surface block)
 - Modify: `docs/CHANGELOG.md`
@@ -1151,3 +1172,5 @@ git commit -m "docs: record the chatops agent intent and correct the roadmap's I
 - **Type consistency:** `ChatopsAgentInvoker` (Task 5) is the type Tasks 8 and 9 consume; `ParamKind` and `AGENT_PARAM_KINDS` (Task 1) are what Tasks 2 and 10 consume; `EXTERNAL_AGENT_NAMES` / `resolveExternalAgentMethod` (Task 3) are what Tasks 5 and 9 consume. No symbol is referenced before the task that defines it.
 - **Two tasks carry a stated fallback rather than a promise:** Task 10 (the audit may be undeliverable — take the fallback rather than shipping something inert) and Task 5's implementer note (the notify/dispatch ordering hazard, with the wrong fix named explicitly).
 - **Three tests assert a CALL COUNT, not just an outcome** (Task 8's unmapped user, PR 1's failed append, Task 9's single ledger row). Each replaces an assertion that would pass against a broken implementation.
+
+

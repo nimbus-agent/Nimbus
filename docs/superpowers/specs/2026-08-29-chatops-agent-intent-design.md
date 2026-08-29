@@ -326,7 +326,7 @@ recorded rather than quietly closed.
 
 `parseCommand` gains a third arm, ahead of the `read` fallthrough:
 
-```
+```text
 @nimbus agent <name> [k=v ...]
 ```
 
@@ -723,3 +723,5 @@ I29 docs; CHANGELOG.
 `parseCommand` third arm + `ParsedCommand` / `RefusalReason` members; `IntentRouter` agent branch;
 `bindAgentInvoker` on `ChatopsBoot` + `gateway-main.ts` wiring; §6.4 renames; the structure audit;
 truncation; docs + roadmap correction.
+
+
