@@ -7,20 +7,36 @@ import type { LlmProvider } from "./types.ts";
 // along with `[llm] remote_model`; these tests only ever needed an arbitrary non-local id.
 const REMOTE_MODEL = "claude-sonnet-4-6";
 
-function makeFakeProvider(id: "ollama" | "llamacpp" | "remote", available: boolean): LlmProvider {
+function makeFakeProvider(
+  id: "ollama" | "llamacpp" | "remote" | "anthropic",
+  available: boolean,
+): LlmProvider {
   return {
     providerId: id,
-    isLocal: id !== "remote",
+    // "anthropic" stands in for a real cloud vendor id in the task-pin air-gap test below,
+    // where the point is that a non-local route stays excluded under enforce_air_gap however
+    // it got to the front of the ordering — it must derive to non-local exactly like "remote".
+    isLocal: id !== "remote" && id !== "anthropic",
     isAvailable: async () => available,
     // Matches the model callers register this fake under below (localModel for a
     // local id, remoteModel for "remote"), so the model-aware availability probe
     // wired in Task 5 does not fail these route-selection-focused fakes on a model
-    // mismatch they were never testing for.
+    // mismatch they were never testing for. The task-pin tests below register two
+    // routes on ONE provider id under short literal names ("big"/"small"/"up") so the
+    // routes are trivially distinguishable at the routeId level (`ollama/big` vs
+    // `ollama/small`) — this fake has no way to know at construction time which model
+    // name a given `registerRoute` call will use, so those literals are listed
+    // unconditionally alongside the id-derived default rather than threaded through as
+    // a parameter (`makeFakeProvider` deliberately stays two-arg; see makeCaptureProvider
+    // below for the helper that DOES take an explicit models list).
     listModels: async () => [
       {
         provider: id,
         modelName: id === "remote" ? REMOTE_MODEL : DEFAULT_CONFIG.localModel,
       },
+      { provider: id, modelName: "big" },
+      { provider: id, modelName: "small" },
+      { provider: id, modelName: "up" },
     ],
     generate: async (_opts) => ({
       text: `response from ${id}`,
@@ -912,5 +928,54 @@ describe("generate-time walk — no destination is invoked twice", () => {
 
     await r.generate({ task: "reasoning", prompt: "x".repeat(5000) }).catch(() => undefined);
     expect(remoteCalls).toBe(1);
+  });
+});
+
+describe("LlmRouter task pins ([llm.tasks])", () => {
+  test("a pinned task uses its route even when preferLocal would order differently", async () => {
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      preferLocal: true,
+      taskPins: new Map([["classification", "ollama/small"]]),
+    });
+    router.registerRoute(makeFakeProvider("ollama", true), "big");
+    router.registerRoute(makeFakeProvider("ollama", true), "small");
+    const route = await router.selectRoute("classification");
+    expect(route?.routeId).toBe("ollama/small");
+  });
+
+  test("a pin that names an UNREGISTERED route falls back to normal ordering", async () => {
+    // Fail-OPEN here, deliberately, and this is the one place in the egress work where that is
+    // right: a stale pin must degrade to a working answer, not an outage. The pin selects among
+    // routes that are already registered and already ledgered -- it cannot widen egress.
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      taskPins: new Map([["classification", "ollama/gone"]]),
+    });
+    router.registerRoute(makeFakeProvider("ollama", true), "big");
+    expect((await router.selectRoute("classification"))?.routeId).toBe("ollama/big");
+  });
+
+  test("a pinned route that is UNAVAILABLE falls through to the next eligible route", async () => {
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      taskPins: new Map([["reasoning", "ollama/down"]]),
+    });
+    // `makeFakeProvider(id, available)` -- two args; the fake derives `isLocal` from `id`.
+    router.registerRoute(makeFakeProvider("ollama", false), "down");
+    router.registerRoute(makeFakeProvider("ollama", true), "up");
+    expect((await router.selectRoute("reasoning"))?.routeId).toBe("ollama/up");
+  });
+
+  test("a pin does NOT override air-gap", async () => {
+    // enforce_air_gap is a refusal, not a preference. A pin naming a remote route under air-gap
+    // must not resurrect it.
+    const router = new LlmRouter({
+      ...DEFAULT_CONFIG,
+      enforceAirGap: true,
+      taskPins: new Map([["reasoning", "anthropic/claude-x"]]),
+    });
+    router.registerRoute(makeFakeProvider("anthropic", false), "claude-x");
+    expect(await router.selectRoute("reasoning")).toBeUndefined();
   });
 });

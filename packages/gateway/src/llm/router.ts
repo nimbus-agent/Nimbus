@@ -29,6 +29,22 @@ export type LlmRouterConfig = {
    * here still follow, ordered by `preferLocal` — see `orderedRoutes`.
    */
   readonly routePriority?: readonly string[];
+  /**
+   * `[llm.tasks]` route pins: for a given task, always try this route id FIRST — ahead of
+   * `routePriority` and the `preferLocal` ordering alike. A pin REORDERS candidates; it never
+   * exempts one, so `eligibleRoutes`' air-gap exclusion and capability floor still apply to a
+   * pinned route exactly as to any other (a pin naming a remote route under `enforce_air_gap`
+   * must not resurrect it — that would turn a routing preference into a security hole). A pin
+   * naming a route id that is not currently registered, or that resolves but is unavailable,
+   * fails OPEN: the walk falls through to normal ordering rather than coming up empty, since a
+   * stale pin should degrade to a working answer, not an outage — the pin can only choose among
+   * routes that are already registered and already ledgered, so it cannot widen egress.
+   *
+   * `ReadonlyMap` because `config` is `private readonly` here; the constructor copies this into
+   * a private MUTABLE map so a future `setTaskPin(task, routeId)` (runtime re-pinning, e.g. from
+   * `nimbus llm use`) can write without touching this immutable config object.
+   */
+  readonly taskPins?: ReadonlyMap<LlmTaskType, string>;
 };
 
 /**
@@ -81,6 +97,10 @@ export class LlmRouter {
   // own reference and `invalidate()` after a successful pull, and so a caller needing
   // different TTLs has a seam rather than `mock.module`.
   private readonly availability: RouteAvailabilityProbe;
+  // A private MUTABLE copy of `config.taskPins`, seeded once here. `orderedRoutes` reads THIS
+  // map, never `this.config.taskPins` directly, so a future `setTaskPin` can write a runtime pin
+  // without needing write access to the immutable `config` field.
+  private readonly taskPins: Map<LlmTaskType, string>;
 
   constructor(
     config: LlmRouterConfig,
@@ -88,6 +108,7 @@ export class LlmRouter {
   ) {
     this.config = config;
     this.availability = probe;
+    this.taskPins = new Map(config.taskPins ?? []);
   }
 
   registerRoute(provider: LlmProvider, modelName: string, meta: ProviderMeta = {}): void {
@@ -218,7 +239,7 @@ export class LlmRouter {
     isAvailable: (route: ModelRoute) => Promise<boolean>,
     preferLocal?: boolean,
   ): AsyncGenerator<ModelRoute> {
-    for (const route of this.orderedRoutes(preferLocal)) {
+    for (const route of this.orderedRoutes(task, preferLocal)) {
       if (this.config.enforceAirGap && !route.provider.isLocal) continue;
       if (!this.meetsCapabilityFloor(route, task)) continue;
       if (await isAvailable(route)) yield route;
@@ -241,10 +262,33 @@ export class LlmRouter {
     return first.done === true ? undefined : first.value;
   }
 
-  // Orders every registered route: `config.routePriority` entries first (in the order given,
+  // Orders every registered route for a task: this.taskPins' entry for `task` first (if it
+  // resolves to a registered route), then `config.routePriority` entries (in the order given,
   // skipping any that no longer resolve to a registered route), then everything else ordered by
-  // `preferLocal`.
-  private orderedRoutes(preferLocal: boolean = this.config.preferLocal): ModelRoute[] {
+  // `preferLocal`. The pin is applied as a reorder over the fully-computed base ordering — never
+  // a separate "insert unconditionally" branch — so a pin can promote a route already present in
+  // routePriority or the preferLocal tail without duplicating it, and so it never adds a route
+  // this task's caller has not already deemed eligible; `eligibleRoutes` filters (air-gap,
+  // capability floor, availability) are applied to the RESULT of this ordering, unchanged.
+  private orderedRoutes(
+    task: LlmTaskType,
+    preferLocal: boolean = this.config.preferLocal,
+  ): ModelRoute[] {
+    const base = this.baseOrderedRoutes(preferLocal);
+    const pinnedRouteId = this.taskPins.get(task);
+    if (pinnedRouteId === undefined) return base;
+    const pinnedIndex = base.findIndex((r) => r.routeId === pinnedRouteId);
+    // -1 (not registered / not in this ordering at all) and 0 (already first) both need no
+    // change — fail OPEN on the former by returning the untouched normal ordering, deliberately:
+    // a stale pin degrades to a working answer rather than an outage, and this method has no way
+    // to know here whether "not found" means unregistered or excluded by a filter applied later.
+    if (pinnedIndex <= 0) return base;
+    const pinned = base[pinnedIndex];
+    if (pinned === undefined) return base; // unreachable given the bounds check above; type-narrowing only
+    return [pinned, ...base.slice(0, pinnedIndex), ...base.slice(pinnedIndex + 1)];
+  }
+
+  private baseOrderedRoutes(preferLocal: boolean): ModelRoute[] {
     const all = this.routes();
     const explicit = this.config.routePriority;
     if (explicit !== undefined && explicit.length > 0) {
@@ -395,7 +439,7 @@ export class LlmRouter {
     task: LlmTaskType,
     estimatedTokens: number,
   ): Promise<ModelRoute | undefined> {
-    for (const candidate of this.orderedRoutes()) {
+    for (const candidate of this.orderedRoutes(task)) {
       if (this.config.enforceAirGap && !candidate.provider.isLocal) continue;
       if (!this.meetsCapabilityFloor(candidate, task)) continue;
       const window = candidate.meta.contextWindow;
@@ -444,7 +488,7 @@ export class LlmRouter {
   // floor, air-gap) WITHOUT calling isAvailable(). Used by getStatus() so that the status entry
   // reflects config intent; isAvailable() is then probed separately.
   private findPreferredRoute(task: LlmTaskType): ModelRoute | undefined {
-    for (const route of this.orderedRoutes()) {
+    for (const route of this.orderedRoutes(task)) {
       if (this.config.enforceAirGap && !route.provider.isLocal) continue;
       if (!this.meetsCapabilityFloor(route, task)) continue;
       return route;

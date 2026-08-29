@@ -1690,6 +1690,16 @@ export async function buildLlmRegistryFromToml(
       minReasoningParams: llmToml.minReasoningParams,
       enforceAirGap: llmToml.enforceAirGap,
       routePriority: validatedRoutePriority,
+      // Unlike `routePriority`, an unresolvable entry is NOT dropped here: the router's own
+      // `orderedRoutes` already fails open on a pin naming an unregistered or unavailable route
+      // (falls through to normal ordering, never comes up empty), so pre-validating against
+      // `routeIdsToRegister` would only duplicate that behaviour with a warn-log for a case that
+      // is expected to happen routinely (a pinned local model that has not been pulled yet, or a
+      // pinned vendor route that is momentarily down).
+      //
+      // Spread-conditional, not `taskPins: llmToml.taskPins`: under `exactOptionalPropertyTypes`
+      // an explicit `taskPins: undefined` is a different type from an absent key.
+      ...(llmToml.taskPins === undefined ? {} : { taskPins: llmToml.taskPins }),
     },
   });
 
