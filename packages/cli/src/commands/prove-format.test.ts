@@ -78,8 +78,8 @@ describe("formatProveResult", () => {
   // Fix wave: the scope line must name every observed class, not collapse to just "gated connector
   // actions" and silently drop the others from both the scope line AND the "not observed" line.
   // Two observed classes is now the SHIPPED state (`task` + `mcp`), not a hypothetical; this case
-  // adds a third, `session`, which has no label yet and therefore prints its raw key — the mixed
-  // labelled/unlabelled rendering a future coverage class will hit on its first day.
+  // adds a third, `session`, which now has a human-readable label (COVERAGE_CLASS_LABELS) and so
+  // prints that rather than the bare key — `nimbus prove` should never print a raw class name.
   test("scope names every observed class when more than one is observed", () => {
     const out = formatProveResult({
       delta: 0,
@@ -99,9 +99,9 @@ describe("formatProveResult", () => {
       label: "during this query",
     });
     // `observed` is sorted by CLASS KEY before mapping to display names: mcp < session < task, so
-    // the bare "session" lands between the two labelled entries rather than after them.
+    // `session`'s label lands between the two other labelled entries rather than after them.
     expect(out.split("\n")[0]).toBe(
-      "outbound egress events during this query, in the covered classes: 0 (scope: agents.* briefs served to MCP clients, session, gated connector actions)",
+      "outbound egress events during this query, in the covered classes: 0 (scope: agents.* briefs served to MCP clients, gateway housekeeping egress (telemetry, updater, JWKS), gated connector actions)",
     );
     expect(out).toContain("not observed: model, peer, sync");
   });
