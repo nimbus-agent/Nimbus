@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.0.1](https://github.com/nimbus-agent/Nimbus/compare/v7.0.0...v7.0.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **connectors:** align the aws sync interval with its AWS-CLI siblings ([#1377](https://github.com/nimbus-agent/Nimbus/issues/1377)) ([61173ae](https://github.com/nimbus-agent/Nimbus/commit/61173ae92dc87002d3bc844ce0c792257292d677))
+* **llm:** stop Ollama reasoning tokens truncating answers and costing ~16s per ask ([#1376](https://github.com/nimbus-agent/Nimbus/issues/1376)) ([abdbbdc](https://github.com/nimbus-agent/Nimbus/commit/abdbbdcf41ba91243f3d76e1b5ad301e01aba3a8))
+
 ## [7.0.0](https://github.com/nimbus-agent/Nimbus/compare/v6.0.1...v7.0.0) (2026-08-29)
 
 
