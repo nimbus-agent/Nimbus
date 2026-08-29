@@ -13,6 +13,7 @@ import {
   type DoctorGatewayState,
   type DoctorVoiceConfig,
   doctorPrintConfigValidation,
+  doctorPrintEmbeddingFromSnapshot,
   doctorPrintHealthFromSnapshot,
   doctorPrintIndexFromSnapshot,
   doctorVoiceLines,
@@ -175,6 +176,66 @@ describe("doctorPrintIndexFromSnapshot", () => {
   it("returns 0 and prints the count when totalItems is positive", () => {
     expect(doctorPrintIndexFromSnapshot({ index: { totalItems: 1234 } })).toBe(0);
     expect(out.stdout).toContain("[ok] Index: 1234 items.");
+  });
+});
+
+describe("doctorPrintEmbeddingFromSnapshot", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  // The gap this closes: the gateway knew semantic search was dead and never said so. A real
+  // gateway logged `embeddings: "unavailable"` across 397 consecutive heartbeats while
+  // `nimbus doctor` reported nothing at all — `doctor-core.ts` had zero mentions of "embedding".
+  // Same blind spot #925 closed for the Vault, one subsystem over.
+  it("returns 2 and FAILS when the runtime is unavailable, naming the reason", () => {
+    expect(
+      doctorPrintEmbeddingFromSnapshot({
+        embedding: { state: "unavailable", reason: "Cannot find module onnxruntime_binding.node" },
+      }),
+    ).toBe(2);
+    expect(out.stdout).toContain("[fail] Embeddings:");
+    // The REASON is the whole point — a bare "unavailable" is what we already had in the log.
+    expect(out.stdout).toContain("onnxruntime_binding.node");
+  });
+
+  it("returns 0 when ready, naming the model", () => {
+    expect(
+      doctorPrintEmbeddingFromSnapshot({
+        embedding: { state: "ready", model: "Xenova/all-MiniLM-L6-v2", dims: 384 },
+      }),
+    ).toBe(0);
+    expect(out.stdout).toContain("[ok] Embeddings:");
+    expect(out.stdout).toContain("Xenova/all-MiniLM-L6-v2");
+  });
+
+  // `warming` is TRANSIENT (embedding-readiness.ts is explicit about this), so it must not read as
+  // a failure — a cold first run would otherwise always report broken.
+  it("returns 1 and warns while warming", () => {
+    expect(
+      doctorPrintEmbeddingFromSnapshot({ embedding: { state: "warming", elapsedMs: 4200 } }),
+    ).toBe(1);
+    expect(out.stdout).toContain("[warn] Embeddings:");
+  });
+
+  // `disabled` is BY DESIGN, not a fault. Reporting it as a failure would train users to ignore
+  // the line, which is how the Vault check lost its meaning before #925.
+  it("returns 0 when disabled by configuration", () => {
+    expect(doctorPrintEmbeddingFromSnapshot({ embedding: { state: "disabled" } })).toBe(0);
+    expect(out.stdout).toContain("[ok] Embeddings:");
+    expect(out.stdout).toContain("disabled");
+  });
+
+  // An older gateway has no `embedding` key at all. Doctor must not invent a verdict about a
+  // capability it cannot see — silence beats a false green.
+  it("returns 0 and says nothing when the gateway reports no embedding state", () => {
+    expect(doctorPrintEmbeddingFromSnapshot({})).toBe(0);
+    expect(out.stdout).not.toContain("Embeddings:");
+  });
+
+  it("returns 2 on an unrecognised state rather than assuming it is fine", () => {
+    expect(doctorPrintEmbeddingFromSnapshot({ embedding: { state: "wat" } })).toBe(2);
+    expect(out.stdout).toContain("[fail] Embeddings:");
   });
 });
 

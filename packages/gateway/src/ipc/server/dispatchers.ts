@@ -1538,6 +1538,12 @@ export async function tryDispatchDiagnosticsRpc(
       ...(ctx.options.extensionsAutoUpdateDiag === undefined
         ? {}
         : { autoUpdateDiag: ctx.options.extensionsAutoUpdateDiag }),
+      // Forwarded so `diag.snapshot` can report embedding readiness and `nimbus doctor` can say
+      // when semantic search is dead. Omitted when the gateway has no embedding runtime, which
+      // the CLI renders as silence rather than a verdict (#1396).
+      ...(ctx.options.embeddingReadiness === undefined
+        ? {}
+        : { embeddingReadiness: ctx.options.embeddingReadiness }),
     };
     const diagCtx =
       ctx.options.localIndex === undefined
