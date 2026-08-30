@@ -368,60 +368,11 @@ describe("LlmRegistry.pullModel", () => {
   });
 });
 
-describe("LlmRegistry.setDefault", () => {
-  let env: { db: Database; dir: string } | undefined;
-
-  afterEach(() => {
-    if (env !== undefined) {
-      env.db.close();
-      try {
-        rmSync(env.dir, { recursive: true, force: true });
-      } catch {
-        /* harmless */
-      }
-      env = undefined;
-    }
-  });
-
-  test("UPSERTs into llm_task_defaults when DB is provided", async () => {
-    env = makeDbWithSchema();
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: env.db });
-    await reg.setDefault("reasoning", "ollama", "llama3.2");
-    const row = env.db
-      .query("SELECT provider, model_name FROM llm_task_defaults WHERE task_type = ?")
-      .get("reasoning") as { provider: string; model_name: string } | undefined;
-    expect(row).toEqual({ provider: "ollama", model_name: "llama3.2" });
-  });
-
-  test("ON CONFLICT updates the existing row on second setDefault", async () => {
-    env = makeDbWithSchema();
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: env.db });
-    await reg.setDefault("reasoning", "ollama", "llama3.2");
-    await reg.setDefault("reasoning", "remote", "claude");
-    const row = env.db
-      .query("SELECT provider, model_name FROM llm_task_defaults WHERE task_type = ?")
-      .get("reasoning") as { provider: string; model_name: string } | undefined;
-    expect(row).toEqual({ provider: "remote", model_name: "claude" });
-  });
-
-  // The two "when DB is undefined" tests that stood here are DELETED, not ported: `db` became
-  // required (#1356), so `setDefault`'s and `getDefault`'s `this.db === undefined` early-returns
-  // no longer exist and the state they described is unconstructable. Keeping them would have
-  // meant passing a real db and asserting the no-op that no longer happens — a test that cannot
-  // fail. The replacement guard is `db is REQUIRED at COMPILE time` below, which `bun run
-  // typecheck` enforces.
-
-  // `getDefault` was deleted on 2026-08-29 (dead code, nothing had ever called it). The latent
-  // bug it harbored: it compared `row === undefined`, but `bun:sqlite`'s `.get()` returns
-  // **`null`** for no matching row, so a lookup for an unpinned task threw `TypeError: null is
-  // not an object` instead of returning `undefined`. Verified directly against `bun:sqlite`. A
-  // test DID cover it — `test("getDefault on a missing-row throws (bun:sqlite .get() returns
-  // null, not undefined)")`, deleted by the same commit (`git show cd86f3e0`) — so this was a
-  // BUG ENCODED IN A TEST, not a latent gap: the test asserted the throw as the expected
-  // behavior rather than flagging it as wrong, which is a more useful lesson than "no test
-  // covered it" -- the test existed and still shipped the bug.
-});
-
+// `LlmRegistry.setDefault` was removed with #1383. Its two tests asserted an UPSERT into
+// `llm_task_defaults` — a table that had a writer and no reader, so they proved the write
+// happened while the setting it represented did nothing. The behaviour that replaced it is
+// covered where it now lives, in `ipc/llm-rpc.test.ts`: `llm.setDefault` writes `[llm.tasks]`,
+// updates the live router, and refuses an unregistered route or a missing config path.
 describe("LlmRegistry.addRoute + providerId-keyed lifecycle (Task 6)", () => {
   test("pullModel works for a model that has NO route", async () => {
     // The primary use of pull: fetch a model BEFORE configuring a route for it. Keying

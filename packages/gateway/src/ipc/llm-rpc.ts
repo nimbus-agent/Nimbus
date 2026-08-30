@@ -1,7 +1,8 @@
 import { setNimbusTomlSectionKey } from "../config/toml-section-writer.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { RouteAvailability } from "../llm/route-availability.ts";
-import type { LlmTaskType } from "../llm/types.ts";
+import { makeRouteId } from "../llm/route-id.ts";
+import type { LlmTaskType, ProviderId } from "../llm/types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class LlmRpcError extends Error {
@@ -155,6 +156,23 @@ async function handleLoadOrUnload(
   return { isLoaded: false };
 }
 
+/**
+ * Pin a task to a route, from the desktop UI's `(taskType, provider, modelName)` shape.
+ *
+ * This endpoint used to be WRITE-ONLY (#1383): it persisted to `llm_task_defaults` (V20) and
+ * NOTHING read that table, so the control appeared to work and changed nothing about routing.
+ * It now writes the same store `llm.use` writes — `[llm.tasks]` — which is what
+ * `parseLlmTaskPins` reads at boot and what `LlmRouter` honours at runtime.
+ *
+ * The wire shape is deliberately unchanged: this method is renderer-exposed and the desktop UI
+ * calls it. Only the destination moved. `provider` + `modelName` are joined by `makeRouteId`,
+ * which is the same function `registerRoute` uses to mint the id, so the two cannot drift.
+ *
+ * Fail-CLOSED on both an unknown task and an unregistered route, matching `handleLlmUse` below.
+ * The open question #1383 recorded — what should happen with no writable config path — is
+ * answered the same way that handler already answers it: refuse. A silent success that persists
+ * nothing is exactly the bug this change removes.
+ */
 async function handleSetDefault(
   params: unknown,
   ctx: LlmRpcContext,
@@ -169,15 +187,24 @@ async function handleSetDefault(
     !VALID_LLM_TASKS.has(taskType) ||
     typeof provider !== "string" ||
     provider === "" ||
-    typeof modelName !== "string"
+    typeof modelName !== "string" ||
+    modelName === ""
   ) {
     throw new LlmRpcError(-32602, message);
   }
-  await ctx.registry.setDefault(
-    taskType as "classification" | "reasoning" | "summarisation" | "agent_step",
-    provider,
-    modelName,
-  );
+  const routeId = makeRouteId(provider as ProviderId, modelName);
+  if (ctx.registry.llmRouter.routeFor(routeId) === undefined) {
+    const known = ctx.registry.llmRouter
+      .routes()
+      .map((r) => r.routeId)
+      .join(", ");
+    throw new LlmRpcError(-32602, `"${routeId}" is not a registered route. Registered: ${known}`);
+  }
+  if (ctx.tomlPath === undefined) {
+    throw new LlmRpcError(-32603, "llm.setDefault requires a configured configDir");
+  }
+  setNimbusTomlSectionKey(ctx.tomlPath, "[llm.tasks]", taskType, routeId);
+  ctx.registry.llmRouter.setTaskPin(taskType as LlmTaskType, routeId);
   return { taskType, provider, modelName };
 }
 
