@@ -1,9 +1,9 @@
 import type { SynthInput } from "../agents/_lib/brief-kinds.ts";
 import { sectionBody, stripSections, topLevelSections } from "../agents/_lib/markdown-sections.ts";
 import {
-  DISCLOSURE_ONLY_HEADINGS,
   GAPS_HEADING,
   GLOSSARY_TERMS_HEADING,
+  isDisclosureOnlyHeading,
   joinReserved,
   RESERVED_HEADINGS_BY_KIND,
   type ReservedBlock,
@@ -55,9 +55,17 @@ function noticeFor(kind: string, sectionsOmitted: number): string | undefined {
  * the last-resort case, a disclosure itself) had bytes removed from the middle/end of what would
  * otherwise be reserved-whole content. Conflating the two wordings would understate what happened
  * for a reader deciding whether to trust the brief as printed.
+ *
+ * D3 (whole-branch re-review): this path is reached only AFTER the ordinary body-dropping loop
+ * already failed — meaning `bodySectionsOmitted` whole body sections (the preamble possibly among
+ * them) were ALSO dropped, same as the ordinary `noticeFor` path reports. The forced-fit notice
+ * used to drop that count entirely once content was cut too, so the reader learned LESS on the
+ * path where MORE was lost. `extras` carries every applicable clause (the omitted-sections count,
+ * the glossary shrink count) so none of that information goes missing just because a byte-cut was
+ * also needed.
  */
-function forcedOverflowNoticeFor(kind: string, extra?: string): string {
-  const suffix = extra === undefined ? "" : ` — ${extra}`;
+function forcedOverflowNoticeFor(kind: string, extras: readonly string[]): string {
+  const suffix = extras.length === 0 ? "" : ` — ${extras.join(", ")}`;
   return `_(truncated — content was cut to fit the chat size limit${suffix}; run \`nimbus ${kind}\` locally for the full brief)_`;
 }
 
@@ -137,30 +145,44 @@ function glossaryTermsBlockKeeping(
  * real candidate at each `kept` cannot make that mistake, because nothing is ever assumed to fit.
  *
  * `## Terms` (`GLOSSARY_TERMS_HEADING`) is reserved for SYNTHESIS integrity, not disclosure (see
- * `DISCLOSURE_ONLY_HEADINGS`'s doc comment), so it is shrunk FIRST and disclosure blocks are kept
+ * `SYNTHESIS_RESERVED_HEADINGS`'s doc comment), so it is shrunk FIRST and disclosure blocks are kept
  * fully verbatim through every iteration of the loop: an honest partial table loses no
  * disclosure. Only once `## Terms` is shrunk all the way to nothing (or there was none to begin
  * with) and it STILL doesn't fit does this fall through to the absolute last resort below, which
  * reserves room for the notice FIRST and cuts disclosure content to what's left — because a
  * cap-abiding message that doesn't explain itself is barely better than one that silently exceeds
  * the cap, and posting over-cap for the platform to mangle server-side is worse than either.
+ *
+ * `bodySectionsOmitted` (D3, whole-branch re-review) is the count `truncateBrief`'s own
+ * body-dropping loop already computed before falling through here — the same number the ORDINARY
+ * `noticeFor` path would have reported. Threading it through means the forced-fit notice never
+ * says LESS than the path it replaces: the reader still learns how many body sections vanished,
+ * even on the path where content was additionally cut.
  */
 function assembleReservedForcedFit(
   kind: string,
   reservedBlocks: readonly ReservedBlock[],
   maxBytes: number,
+  bodySectionsOmitted: number,
 ): string {
-  // The one reserved block NOT held back for disclosure (I31) — today always `## Terms`, if
-  // present at all — is the shrink candidate. Found via `DISCLOSURE_ONLY_HEADINGS` rather than a
-  // hardcoded `GLOSSARY_TERMS_HEADING` equality check, so a future second synthesis-reserved
-  // heading is picked up here automatically rather than silently falling into "treated as
-  // disclosure" below.
-  const synthBlock = reservedBlocks.find((b) => !DISCLOSURE_ONLY_HEADINGS.has(b.heading));
+  // The one reserved block held back for SYNTHESIS integrity rather than disclosure (I31) —
+  // today always `## Terms`, if present at all — is the shrink candidate. Found via
+  // `isDisclosureOnlyHeading` (fail-CLOSED: an unrecognised heading is never a candidate) rather
+  // than a hardcoded `GLOSSARY_TERMS_HEADING` equality check, so a future second
+  // synthesis-reserved heading is picked up here automatically once it is added to
+  // `SYNTHESIS_RESERVED_HEADINGS` — and, until it is, it stays correctly classified as disclosure
+  // rather than silently becoming droppable.
+  const synthBlock = reservedBlocks.find((b) => !isDisclosureOnlyHeading(b.heading));
   const isGlossaryTerms = synthBlock !== undefined && synthBlock.heading === GLOSSARY_TERMS_HEADING;
   const entryStarts = glossaryEntryStartsOf(synthBlock);
   // A recognised (glossary) synthesis block shrinks per-entry; an unrecognised one — none exist
   // today — is opaque and can only be present (1) or fully dropped (0).
   const maxKept = isGlossaryTerms ? entryStarts.length : synthBlock === undefined ? 0 : 1;
+
+  // D3: every notice built in this function carries the omitted-body-sections count FIRST (when
+  // there is one), then whatever else applies (the glossary shrink count) — never just the latter.
+  const omittedExtra =
+    bodySectionsOmitted > 0 ? `${String(bodySectionsOmitted)} sections omitted` : undefined;
 
   const candidateAt = (kept: number): string => {
     const parts = reservedBlocks
@@ -173,11 +195,13 @@ function assembleReservedForcedFit(
             : "";
       })
       .filter((text) => text !== "");
-    const extra =
+    const extras = [
+      omittedExtra,
       isGlossaryTerms && kept < maxKept
         ? `showing ${String(kept)} of ${String(maxKept)} terms`
-        : undefined;
-    return [...parts, forcedOverflowNoticeFor(kind, extra)].join("\n\n");
+        : undefined,
+    ].filter((e): e is string => e !== undefined);
+    return [...parts, forcedOverflowNoticeFor(kind, extras)].join("\n\n");
   };
 
   for (let kept = maxKept; kept >= 0; kept--) {
@@ -188,14 +212,28 @@ function assembleReservedForcedFit(
   // The synthesis-reserved block is fully gone (or there was none) and it STILL doesn't fit — a
   // disclosure section itself is pathologically large. Reserve room for the notice FIRST, then
   // cut disclosure content to whatever's left.
-  const finalExtra = isGlossaryTerms ? `showing 0 of ${String(maxKept)} terms` : undefined;
-  const notice = forcedOverflowNoticeFor(kind, finalExtra);
+  const finalExtras = [
+    omittedExtra,
+    isGlossaryTerms ? `showing 0 of ${String(maxKept)} terms` : undefined,
+  ].filter((e): e is string => e !== undefined);
+  const notice = forcedOverflowNoticeFor(kind, finalExtras);
   const noticeBytes = Buffer.byteLength(`\n\n${notice}`, "utf8");
   if (noticeBytes >= maxBytes) {
     // The notice alone does not fit — only reachable with a pathologically small maxBytes (e.g. a
     // unit test) — so there is no budget left for any content at all.
     return truncateUtf8Bytes(notice, maxBytes);
   }
+  // D2 (whole-branch re-review, accepted as latent — not fixed here): joins ALL disclosure blocks
+  // in `RESERVED_HEADINGS_BY_KIND` order and cuts from the END, so whichever disclosure heading is
+  // listed LAST for `kind` is the one destroyed first if this line ever has to cut. Every
+  // chat-reachable kind today has at most ONE disclosure block, so this is unreachable in
+  // practice — except `negotiate`, whose order is `[## Sources, ## Evidence not available from the
+  // index, ## Gaps]` (`reserved-sections.ts`), which would put `## Gaps` first on the chopping
+  // block. `negotiate` is excluded from every external surface today
+  // (`agents-rpc.ts`'s `EXTERNAL_EXCLUDED_AGENT_METHODS`), so this never fires — but whoever
+  // admits `negotiate` to a chat-reachable surface must revisit this line first: either reorder so
+  // the least-recoverable disclosure is cut last, or give each disclosure block its own reserved
+  // sub-budget instead of one shared byte-cut across the joined string.
   const otherParts = reservedBlocks
     .filter((b) => b !== synthBlock)
     .map((b) => b.markdown)
@@ -283,10 +321,8 @@ export function truncateBrief(markdown: string, kind: string, maxBytes: number):
   // Every body section — the preamble included — is gone, and it still doesn't fit. This is the
   // reserved-blocks-alone case: try it as-is first (the common case: the reserved content by
   // itself already fits), and only reach for the forced-fit path (FIX 2) when it does not.
-  const reservedOnly = candidateFor(
-    assembleBody(0, false),
-    sections.length + (preamble === "" ? 0 : 1),
-  );
+  const bodySectionsOmitted = sections.length + (preamble === "" ? 0 : 1);
+  const reservedOnly = candidateFor(assembleBody(0, false), bodySectionsOmitted);
   if (Buffer.byteLength(reservedOnly, "utf8") <= maxBytes) return reservedOnly;
-  return assembleReservedForcedFit(kind, reservedBlocks, maxBytes);
+  return assembleReservedForcedFit(kind, reservedBlocks, maxBytes, bodySectionsOmitted);
 }

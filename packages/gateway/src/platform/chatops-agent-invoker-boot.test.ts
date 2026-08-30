@@ -71,6 +71,18 @@ describe("FIX 1 (boot-level): the ChatOps agent invoker carries the real federat
       // Reserve a free LAN port on loopback, mDNS off — same pattern as
       // assemble.test.ts's "boots the federation block" test, so federation actually boots
       // instead of failing to bind.
+      //
+      // D6 (whole-branch re-review): reserving then releasing a port before the real LAN server
+      // binds it is a TOCTOU — a busy CI runner could grab it in between. Left as is rather than
+      // restructured: `[federation]`/`[lan]` in `nimbus.toml` need a concrete port number BEFORE
+      // boot (the LAN server has no "bind 0, report back what you got" capability a test could
+      // poll instead), so there is no cheap way to close this window without either changing
+      // production config semantics or adding bind-retry logic to the test — both are exactly the
+      // kind of restructuring this test cannot afford, since it is the only thing proving the M1
+      // wire (a real `assemblePlatformServices()` boot observing the real internal
+      // `buildChatopsAgentInvoker` call). The pattern is pre-existing (copied from
+      // `assemble.test.ts`), not novel to this file, and a flaky test that can still catch a real
+      // regression beats a restructured one that stops catching it.
       const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
       const lanPort = probe.port;
       probe.stop();

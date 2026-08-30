@@ -51,7 +51,8 @@ import type { ChatMessage, ChatPlatform, ReplyTarget } from "./types.ts";
  * the platform silently mangles server-side for exceeding its own limit. `## Terms`
  * (`glossary` list mode's entry table) is shrunk FIRST, before any disclosure content is ever
  * touched: it is reserved for SYNTHESIS integrity, not disclosure — see
- * `agents/_lib/reserved-sections.ts`'s `DISCLOSURE_ONLY_HEADINGS`.
+ * `agents/_lib/reserved-sections.ts`'s `SYNTHESIS_RESERVED_HEADINGS` (fail-closed: an unrecognised
+ * heading is never treated as droppable).
  */
 export const CHATOPS_AGENT_BRIEF_MAX_BYTES = 3_000;
 

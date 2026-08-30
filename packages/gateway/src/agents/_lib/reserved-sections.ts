@@ -58,25 +58,45 @@ export function reservedHeadingsFor(brief: SynthInput): readonly string[] {
 }
 
 /**
- * Which reserved headings are held back for DISCLOSURE integrity (I31) — content the model must
- * never be allowed to say less than the renderer promised — as opposed to `GLOSSARY_TERMS_HEADING`
- * alone, which is held back for SYNTHESIS integrity: `## Terms` is the brief's own data (F31a),
- * not a disclosure about the brief. That distinction matters to `chatops/brief-truncate.ts`
+ * The reserved headings held back for SYNTHESIS integrity (F31a) rather than DISCLOSURE integrity
+ * (I31) — today, exactly `GLOSSARY_TERMS_HEADING`: `## Terms` is the brief's own DATA (glossary
+ * list mode), not a claim ABOUT the brief. That distinction matters to `chatops/brief-truncate.ts`
  * (FIX 2, whole-branch review): when a chat-size cap cannot be met even with the entire ordinary
  * body dropped, an honest partial `## Terms` table loses no disclosure and is the right thing to
  * shrink FIRST — a `## Gaps`/`## Sources`/`## Evidence not available from the index` section is
- * not, since THOSE are exactly what I31 exists to keep whole.
+ * NOT, since THOSE are exactly what I31 exists to keep whole.
  *
- * A single membership set over the (four) known heading constants, not a per-kind table — every
- * heading a brief could ever reserve is one of these four literals, so this cannot drift out of
- * sync with `RESERVED_HEADINGS_BY_KIND` the way a hand-maintained parallel list keyed by kind
- * could.
+ * This is the POSITIVE, explicit membership set — the only headings the forced-fit path in
+ * `brief-truncate.ts` may ever pick as its drop/shrink candidate. `isDisclosureOnlyHeading` below
+ * treats every heading NOT in this set as disclosure-only, including one this module has never
+ * seen before: **fail-CLOSED on the unknown**.
+ *
+ * That direction is deliberate, and inverts an earlier version of this file that got it backwards
+ * (whole-branch review, finding D1). The original shape was a `DISCLOSURE_ONLY_HEADINGS` set, and
+ * `brief-truncate.ts` treated everything ABSENT from it as droppable — fail-OPEN: a future
+ * disclosure-only heading added to `RESERVED_HEADINGS_BY_KIND` (a fifteenth brief kind, or a new
+ * heading on an existing one) but never added to that set would silently become the FIRST thing
+ * the chat-transport truncator cuts, whole, behind only a generic "content was cut" notice — I31's
+ * failure mode, reintroduced one layer down. That version's own comment claimed the two sets
+ * "cannot drift out of sync" — a FALSE ATTESTATION: nothing enforced it (no type relation, no
+ * test, no static rule; `grep -rn DISCLOSURE_ONLY_HEADINGS packages scripts` found only the
+ * definition, its one consumer, and prose). `reserved-sections.test.ts` now pins the fail-closed
+ * default directly: an unrecognised heading is never treated as droppable.
  */
-export const DISCLOSURE_ONLY_HEADINGS: ReadonlySet<string> = new Set([
-  GAPS_HEADING,
-  NEGOTIATE_SOURCES_HEADING,
-  NEGOTIATE_EVIDENCE_HEADING,
-]);
+export const SYNTHESIS_RESERVED_HEADINGS: ReadonlySet<string> = new Set([GLOSSARY_TERMS_HEADING]);
+
+/**
+ * True for a reserved heading that must be treated as a DISCLOSURE (I31) — never the drop/shrink
+ * candidate in `chatops/brief-truncate.ts`'s forced-fit path. The default is disclosure (`true`)
+ * for anything not explicitly known to be synthesis-reserved: membership in
+ * `SYNTHESIS_RESERVED_HEADINGS` is the only way to become droppable, so an unrecognised heading —
+ * one this function has never been told about — degrades to the SAFE outcome (kept whole, at worst
+ * cut only as the absolute last resort alongside every other disclosure) rather than the unsafe one
+ * (dropped first, silently).
+ */
+export function isDisclosureOnlyHeading(heading: string): boolean {
+  return !SYNTHESIS_RESERVED_HEADINGS.has(heading);
+}
 
 /**
  * The reserved blocks for this brief, built from the brief's own data by the SAME builders

@@ -131,29 +131,34 @@ describe("truncateBrief", () => {
   });
 
   test("FIX 2 coverage: a maxBytes that fits the raw notice but not its 2-byte join separator returns the notice UNCUT", () => {
-    // Byte-precise, computed rather than guessed: forcedOverflowNoticeFor("why", undefined) is
-    // exactly 105 UTF-8 bytes; `noticeBytes` (what gates the early return) measures
-    // `"\n\n" + notice`, 107 bytes. At maxBytes=106, the gate (107 >= 106) fires, but the notice
-    // ALONE (105 bytes) already fits 106 — so it must come back byte-identical, not chopped by a
-    // stray byte or two. This pins that the 2-byte `\n\n` separator counted against the gate is
-    // never counted against the actual truncation of the notice text itself.
+    // Byte-precise, computed rather than guessed: this brief has one droppable body section (the
+    // preamble "# Why", since the whole rest is `## Gaps`), so D3's `bodySectionsOmitted` is 1 and
+    // the forced-fit notice carries "1 sections omitted" — forcedOverflowNoticeFor("why", ["1
+    // sections omitted"]) is exactly 128 UTF-8 bytes. `noticeBytes` (what gates the early return)
+    // measures `"\n\n" + notice`, 130 bytes. At maxBytes=129, the gate (130 >= 129) fires, but the
+    // notice ALONE (128 bytes) already fits 129 — so it must come back byte-identical, not
+    // chopped by a stray byte or two. This pins that the 2-byte `\n\n` separator counted against
+    // the gate is never counted against the actual truncation of the notice text itself.
     const bigGap = `- ${"x".repeat(150)}`;
     const brief = `# Why\n\n## Gaps\n\n${bigGap}\n`;
-    const out = truncateBrief(brief, "why", 106);
+    const out = truncateBrief(brief, "why", 129);
     const notice =
-      "_(truncated — content was cut to fit the chat size limit; run `nimbus why` locally for the full brief)_";
-    expect(Buffer.byteLength(notice, "utf8")).toBe(105);
+      "_(truncated — content was cut to fit the chat size limit — 1 sections omitted; run `nimbus why` locally for the full brief)_";
+    expect(Buffer.byteLength(notice, "utf8")).toBe(128);
     expect(out).toBe(notice);
-    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(106);
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(129);
   });
 
-  test("FIX 2 coverage: glossary shrinks all the way to ZERO entries but still fits — ## Gaps survives WHOLE, untouched", () => {
-    // Chosen so that even 0 kept entries (just the ## Terms preamble) doesn't fit alongside ##
-    // Gaps and the notice at maxBytes=200 (computed: preamble 91 + gaps 15 + notice-with-count 135
-    // + 2 separators = 245 > 200) — this is qualitatively different from the "shrunk but still
-    // has SOME entries" test above: it forces `assembleReservedForcedFit`'s for-loop all the way
-    // down to kept=0 without ever returning from inside it, so this exercises
-    // `glossaryTermsBlockKeeping`'s kept<=0 branch specifically, not merely a smaller `kept`.
+  test("FIX 2 coverage: glossary shrinks all the way to ZERO entries but the ABSOLUTE-LAST-RESORT is still needed — ## Gaps survives WHOLE, untouched", () => {
+    // D4 (whole-branch re-review) corrected this test's own rationale: the fixture below reaches
+    // the ABSOLUTE-LAST-RESORT fallback (past the for-loop entirely), not merely "the loop reaches
+    // kept=0" — `glossaryTermsBlockKeeping`'s kept<=0 branch IS exercised (the loop's own kept=0
+    // iteration calls it before that candidate fails to fit), but this test's real distinguishing
+    // property is that the loop's kept=0 CANDIDATE ITSELF does not fit maxBytes=200 either (##
+    // Terms's preamble alone, 91 bytes, plus ## Gaps and the notice-with-count, 245 bytes total,
+    // exceeds 200) — so `## Terms` is excluded ENTIRELY from the output (verified below), not
+    // merely shrunk to its preamble. The companion test right after this one exercises the
+    // genuinely different branch: the loop succeeding AT kept=0, keeping `## Terms`'s preamble.
     const entries = [0, 1, 2]
       .map(
         (i) =>
@@ -173,6 +178,11 @@ describe("truncateBrief", () => {
     expect(out).toContain("- none");
     expect(out).toMatch(/showing 0 of 3 terms/);
     expect(out).toContain("content was cut");
+    expect(out).toContain("1 sections omitted");
+    // The distinguishing property (see rationale above): ## Terms is excluded ENTIRELY here, not
+    // merely shrunk — the absolute-last-resort fallback never includes the synthesis-reserved
+    // block at all (`otherParts` filters it out by construction).
+    expect(out).not.toContain("## Terms");
   });
 
   test("FIX 2 coverage: glossary's ## Terms with no parseable entries degrades to zero total, not a crash", () => {
@@ -210,28 +220,52 @@ describe("truncateBrief", () => {
     expect(out).not.toContain(bigGap); // but its full body does not — that's the cut happening
     expect(out).toMatch(/showing 0 of 3 terms/);
     expect(out).toContain("content was cut");
+    // D3 (whole-branch re-review): the forced-fit notice must not drop the omitted-body-sections
+    // count just because content was ALSO cut — the preamble ("# Glossary") was dropped too, and
+    // the reader must learn that, same as the ordinary path would have said.
+    expect(out).toContain("1 sections omitted");
   });
 
-  test("FIX 2 coverage: content already fits the budget once ## Terms is excluded — no truncateUtf8Bytes cut needed for the disclosure", () => {
-    // Distinct from the two cut tests above: here the ONLY reason the loop's kept=0 candidate
-    // (## Terms preamble + ## Gaps + notice, 245 bytes) doesn't fit 200 is the ## Terms preamble
-    // itself (91 bytes) — with it excluded, ## Gaps (15 bytes) fits the remaining budget (63
-    // bytes) untouched. Pins that the disclosure is returned byte-identical in this branch, not
-    // needlessly run through the byte-cutter.
-    const entries = [0, 1, 2]
-      .map(
-        (i) =>
-          `- **term${String(i)}** — ${String(i)} mention(s), score 0.90\n  - definition ${String(i)}`,
-      )
-      .join("\n");
+  test("D3: the forced-fit notice carries the omitted-body-sections count even with NO glossary involved", () => {
+    const bigGap = `- ${"detail ".repeat(200).trim()}`;
+    // A real droppable body section (not just the preamble), so `bodySectionsOmitted` is 2.
+    const brief = `# Why\n\n## Findings\n${"x".repeat(500)}\n\n## Gaps\n\n${bigGap}\n`;
+    const out = truncateBrief(brief, "why", 300);
+
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(300);
+    expect(out).toContain("content was cut");
+    expect(out).toContain("2 sections omitted");
+  });
+
+  test("FIX 2 coverage: the loop itself succeeds at kept=0 — ## Terms's preamble, ## Gaps, and the notice all fit together, no last-resort fallback needed", () => {
+    // D4 (whole-branch re-review) replaced this test: it previously used a BYTE-IDENTICAL fixture
+    // and cap to the "shrinks all the way to ZERO entries" test above and exercised the exact same
+    // absolute-last-resort branch — verified by running the module directly, both produced the
+    // identical 152-byte output. This fixture is deliberately DIFFERENT: entries large enough
+    // (~360 bytes each) that keeping even ONE overflows, but the loop's OWN kept=0 candidate
+    // (`## Terms`'s 3-line preamble + `## Gaps` + the notice) fits `maxBytes=280` on its own,
+    // so `candidateAt(0)` returns successfully FROM INSIDE THE LOOP (`:186` in
+    // `assembleReservedForcedFit`) — the absolute-last-resort fallback below the loop is never
+    // reached at all. The tell distinguishing this from the last-resort branch: `## Terms`'s
+    // heading and preamble are PRESENT in the output — the last-resort fallback excludes the
+    // synthesis-reserved block entirely, so its output could never contain that heading.
+    const bigEntry = (i: number): string =>
+      `- **term${String(i)}** — ${String(i)} mention(s), score 0.90\n  - ${"definition text "
+        .repeat(20)
+        .trim()}`;
+    const entries = [0, 1, 2].map(bigEntry).join("\n");
     const terms =
       "## Terms\n\n_Ranked by relevance score, authored definitions first — not by mention count._\n\n" +
       entries;
     const brief = `# Glossary\n\n${terms}\n\n## Gaps\n\n- none\n`;
-    const out = truncateBrief(brief, "glossary", 200);
+    const out = truncateBrief(brief, "glossary", 280);
 
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(280);
+    // The loop-success tell: `## Terms`'s heading survives (excluded entirely in the last-resort
+    // branch), and the disclosure is untouched.
+    expect(out).toContain("## Terms");
     expect(out).toContain("## Gaps\n\n- none");
-    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(200);
+    expect(out).toMatch(/showing 0 of 3 terms/);
   });
 
   test("FIX 2 coverage: notice fits but the disclosure content needs a real byte cut (no glossary involved)", () => {
