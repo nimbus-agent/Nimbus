@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788076187513,
+  "lastUpdate": 1788077450684,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3da460991b487b68fad2ea1febc9c32a148db807",
-          "message": "fix(ci): gitleaks allowlist synthetic TestFlight PEM fixture (#670)\n\n## Summary\n\nAdds `packages/gateway/src/connectors/lazy-mesh/phase3-config.test.ts`\nto the `.gitleaks.toml` path allowlist.\n\n## Why\n\nThe lazy-mesh phase-3 connector spawn test sets a **synthetic**\nTestFlight credential:\n\n```ts\nawait vault.set(\"testflight.private_key\", \"-----BEGIN PRIVATE KEY-----\\nabc\\n\");\n```\n\nThe `-----BEGIN PRIVATE KEY-----` header trips gitleaks' default\n`private-key` rule on the full-history/all-refs scan, but the body is\nthe literal `abc` — **never a real key**. This is the same\nfalse-positive class already handled for four other fixture files\n(secret-patterns.test.ts, gateway-log-file.test.ts, etc.), so it gets\nthe same durable **path-based** allowlist (fingerprint pins break on\nsquash-merge — see the config header).\n\nThe fixture was introduced on a coverage branch and surfaced gitleaks\nfailures across unrelated PRs (e.g. a docs-only PR) because the scan\ncrosses refs. Landing the allowlist on `main` clears it for every branch\non update.\n\nNo code change; one path added to the existing allowlist.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated security scanning configuration to accommodate test fixtures\ncontaining synthetic credentials.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-17T08:02:41+03:00",
-          "tree_id": "f3c0c889087f92099db03147caae667b1739b06b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3da460991b487b68fad2ea1febc9c32a148db807"
-        },
-        "date": 1781673193551,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 232.36495715000018,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 230.5147353999957,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 312.347693049999,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d32c8468b93ce7d5c7d40cb7016761f10007376a",
+          "message": "ci: gate PRs on the ONNX clean-room check (#1407)\n\nThe follow-up #1405 asked for. Without it, nothing stops the regression\nthat shipped twice from shipping a third time.\n\n## Why this gate\n\nThe **same bug** was fixed twice and verified twice in environments that\nmasked the failure:\n\n- **#1399** — verified in the source tree, which has `dist/bin/`. Users\ndon't.\n- **#1402** — verified on a Windows box carrying `onnxruntime.dll` in\nSystem32. Users may not.\n\nBoth reported success. Neither worked for a user.\n`verify-onnx-cleanroom.sh` **refuses to report a pass** unless it first\nproves the run image is clean (`system-onnx-libs=0`), so a green here\ncannot come from a preinstalled runtime the way those two did.\n\n## Scoped, not universal\n\nThe harness pulls two container images, so running it on every PR would\ntax changes that cannot affect the payload. A new `embedding-native`\nfilter output fires on:\n\n- `scripts/onnx-binding-plugin.ts`, `scripts/build-workers.ts`,\n`scripts/verify-onnx-cleanroom.sh`\n- `packages/gateway/src/{workers,embedding}/`\n- `packages/gateway/package.json`\n- **`bun.lock`** — a dependency bump can swap the onnxruntime version\nout from under us, which is precisely the change that would break this\nsilently\n- `.github/workflows/ci.yml`\n\nIt carries the same fail-safe as `code-changed`: an unresolvable diff\n**runs** the gate rather than skipping it.\n\nAdded to the `required gates` aggregator, so it blocks rather than\nmerely reporting.\n\n## Filter verified, not eyeballed\n\n```\nMATCH  scripts/onnx-binding-plugin.ts\nMATCH  packages/gateway/src/workers/sharp-stub.ts\nMATCH  bun.lock\nMATCH  packages/gateway/package.json\nskip   docs/README.md\nskip   packages/cli/src/index.ts\n```\n\n`audit:workflow-lint` OK across 25 workflows; `preflight:fast` 32/32.\n\n## Note for review\n\nThis PR touches `ci.yml`, which its own filter matches — so the gate\nshould run on this PR itself. That is the intended first proof that it\nworks in CI rather than only on my machine.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Added clean-environment validation for the embedded ONNX runtime in\npull requests.\n* Expanded required pull-request checks to include the new runtime\nvalidation gate.\n* **Chores**\n* Improved change detection for ONNX-related updates, including source,\nbuild, dependency, lockfile, and workflow changes.\n  * Added safe handling for empty diffs.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-30T10:58:44+03:00",
+          "tree_id": "16ad740e1521937fa80c6e87513e9cbf49bfe035",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d32c8468b93ce7d5c7d40cb7016761f10007376a"
+        },
+        "date": 1788077448141,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 315.4145425999981,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 315.9918580999976,
             "unit": "ms"
           }
         ]
