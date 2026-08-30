@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.2.1](https://github.com/nimbus-agent/Nimbus/compare/v7.2.0...v7.2.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **llm:** make llm.setDefault write the store the router actually reads ([#1410](https://github.com/nimbus-agent/Nimbus/issues/1410)) ([9f69790](https://github.com/nimbus-agent/Nimbus/commit/9f69790ca0e29795997e614732539dce5792bfae))
+
 ## [7.2.0](https://github.com/nimbus-agent/Nimbus/compare/v7.1.2...v7.2.0) (2026-08-30)
 
 

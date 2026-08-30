@@ -423,23 +423,133 @@ describe("llm.status", () => {
 });
 
 describe("llm.setDefault", () => {
-  test("persists default per task type and echoes back", async () => {
-    const setDefault = mock(async () => {});
-    const registry = { setDefault } as unknown as LlmRegistry;
-    const r = await dispatchLlmRpc(
+  // #1383: this endpoint was WRITE-ONLY. It persisted to `llm_task_defaults` (V20) and nothing
+  // read that table — the desktop control appeared to work and changed nothing about routing.
+  // It now writes the SAME store `nimbus llm use` writes, `[llm.tasks]`, which is what the
+  // router actually honours. The wire shape is unchanged, because the renderer calls it.
+  test("writes the pin into [llm.tasks] and updates the live router", async () => {
+    const { tomlPath, cleanup } = makeTempTomlPath();
+    try {
+      const router = new LlmRouter({
+        preferLocal: true,
+        localModel: "llama3.2:latest",
+        minReasoningParams: 0,
+        enforceAirGap: false,
+      });
+      router.registerRoute(
+        makeFakeProviderForRouter("ollama", ["llama3.2:latest"]),
+        "llama3.2:latest",
+      );
+      const registry = { llmRouter: router } as unknown as LlmRegistry;
+      const ctx: LlmRpcContext = { registry, notify: () => {}, tomlPath };
+
+      const r = await dispatchLlmRpc(
+        "llm.setDefault",
+        { taskType: "classification", provider: "ollama", modelName: "llama3.2:latest" },
+        ctx,
+      );
+      expect(r.kind).toBe("hit");
+      expect((r as { kind: "hit"; value: { taskType: string } }).value.taskType).toBe(
+        "classification",
+      );
+
+      // Round-tripped through the SAME parser boot uses — "a file was touched" is not the claim.
+      const reparsed = parseNimbusTomlLlmSection(readFileSync(tomlPath, "utf8"));
+      expect(reparsed.taskPins?.get("classification")).toBe("ollama/llama3.2:latest");
+      // AND live, without a restart — the half that was missing entirely before.
+      expect((await router.selectRoute("classification"))?.routeId).toBe("ollama/llama3.2:latest");
+    } finally {
+      cleanup();
+    }
+  });
+
+  // Fail-CLOSED, matching `llm.use`. Persisting a pin to a route that does not exist is the
+  // orphaned-config shape #1383 is itself an instance of.
+  test("REFUSES a provider/model that is not a registered route, and writes nothing", async () => {
+    const { tomlPath, cleanup } = makeTempTomlPath("[llm]\nprefer_local = true\n");
+    try {
+      const before = readFileSync(tomlPath, "utf8");
+      const router = new LlmRouter({
+        preferLocal: true,
+        localModel: "llama3.2:latest",
+        minReasoningParams: 0,
+        enforceAirGap: false,
+      });
+      router.registerRoute(makeFakeProviderForRouter("ollama", ["big"]), "big");
+      const registry = { llmRouter: router } as unknown as LlmRegistry;
+      const ctx: LlmRpcContext = { registry, notify: () => {}, tomlPath };
+
+      await expect(
+        dispatchLlmRpc(
+          "llm.setDefault",
+          { taskType: "reasoning", provider: "ollama", modelName: "ghost" },
+          ctx,
+        ),
+      ).rejects.toThrow(/not a registered route/);
+      expect(readFileSync(tomlPath, "utf8")).toBe(before);
+    } finally {
+      cleanup();
+    }
+  });
+
+  // The question #1383 was blocked on: what should the UI do with no writable config path?
+  // Answered the same way `llm.use` already answers it — refuse, loudly. A silent success that
+  // persists nothing is precisely the bug being fixed.
+  test("refuses when there is no configured toml path", async () => {
+    const router = new LlmRouter({
+      preferLocal: true,
+      localModel: "llama3.2:latest",
+      minReasoningParams: 0,
+      enforceAirGap: false,
+    });
+    router.registerRoute(
+      makeFakeProviderForRouter("ollama", ["llama3.2:latest"]),
+      "llama3.2:latest",
+    );
+    const registry = { llmRouter: router } as unknown as LlmRegistry;
+    await expect(
+      dispatchLlmRpc(
+        "llm.setDefault",
+        { taskType: "classification", provider: "ollama", modelName: "llama3.2:latest" },
+        { registry, notify: () => {} },
+      ),
+    ).rejects.toThrow(/configDir/);
+  });
+
+  // `makeRouteId` throws a RAW Error on a slash in the provider, and the dispatcher does not
+  // convert handler errors into `LlmRpcError` — so this input escaped as an internal-error shape
+  // instead of invalid-params. Verified before fixing: the thrown value had no `code` at all.
+  test("rejects a provider containing a slash with invalid-params, not a raw Error", async () => {
+    const router = new LlmRouter({
+      preferLocal: true,
+      localModel: "llama3.2:latest",
+      minReasoningParams: 0,
+      enforceAirGap: false,
+    });
+    const registry = { llmRouter: router } as unknown as LlmRegistry;
+    const err = await dispatchLlmRpc(
       "llm.setDefault",
-      { taskType: "classification", provider: "ollama", modelName: "gemma:2b" },
-      { registry, notify: () => {} },
+      { taskType: "classification", provider: "foo/bar", modelName: "m" },
+      { registry, notify: () => {}, tomlPath: "/nonexistent/nimbus.toml" },
+    ).then(
+      () => undefined,
+      (e: unknown) => e as { rpcCode?: number; name?: string },
     );
-    expect(r.kind).toBe("hit");
-    expect((r as { kind: "hit"; value: { taskType: string } }).value.taskType).toBe(
-      "classification",
-    );
-    expect(setDefault).toHaveBeenCalledWith("classification", "ollama", "gemma:2b");
+    // Asserted on `rpcCode`, the field `LlmRpcError` actually carries — not `code`, which is
+    // undefined on BOTH a raw Error and an LlmRpcError and so would pass for the wrong reason.
+    expect(err?.name).toBe("LlmRpcError");
+    expect(err?.rpcCode).toBe(-32602);
   });
 
   test("rejects invalid taskType", async () => {
-    const registry = { setDefault: mock(async () => {}) } as unknown as LlmRegistry;
+    const registry = {
+      llmRouter: new LlmRouter({
+        preferLocal: true,
+        localModel: "x",
+        minReasoningParams: 0,
+        enforceAirGap: false,
+      }),
+    } as unknown as LlmRegistry;
     await expect(
       dispatchLlmRpc(
         "llm.setDefault",
@@ -450,7 +560,14 @@ describe("llm.setDefault", () => {
   });
 
   test("rejects empty provider", async () => {
-    const registry = { setDefault: mock(async () => {}) } as unknown as LlmRegistry;
+    const registry = {
+      llmRouter: new LlmRouter({
+        preferLocal: true,
+        localModel: "x",
+        minReasoningParams: 0,
+        enforceAirGap: false,
+      }),
+    } as unknown as LlmRegistry;
     await expect(
       dispatchLlmRpc(
         "llm.setDefault",
@@ -458,20 +575,6 @@ describe("llm.setDefault", () => {
         { registry, notify: () => {} },
       ),
     ).rejects.toThrow();
-  });
-
-  // Deleted symbol (Task 10): `VALID_LLM_PROVIDERS` used to reject any provider outside
-  // {"ollama", "llamacpp", "remote"}. Validity is now the registry's answer alone.
-  test("accepts a provider string outside the old closed set", async () => {
-    const setDefault = mock(async () => {});
-    const registry = { setDefault } as unknown as LlmRegistry;
-    const r = await dispatchLlmRpc(
-      "llm.setDefault",
-      { taskType: "reasoning", provider: "gemini", modelName: "gemini-pro" },
-      { registry, notify: () => {} },
-    );
-    expect(r.kind).toBe("hit");
-    expect(setDefault).toHaveBeenCalledWith("reasoning", "gemini", "gemini-pro");
   });
 });
 

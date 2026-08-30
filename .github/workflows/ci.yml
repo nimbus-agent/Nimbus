@@ -45,6 +45,7 @@ jobs:
       # (which checks doc-ref drift — the relevant gate for docs PRs) without
       # paying for a full 3-runner test cycle.
       code-changed: ${{ steps.changes.outputs.code-changed }}
+      embedding-native: ${{ steps.changes.outputs.embedding-native }}
       # There is deliberately no per-package narrowing output here any more.
       # `pr-quality-cross-platform` used to emit a {os, pkg} matrix so a cli-only
       # PR could drop the two gateway legs; it now runs ONE leg per OS executing
@@ -74,8 +75,8 @@ jobs:
             BASE="HEAD~1"
           fi
           CHANGED=$(git diff --name-only "$BASE" "${{ github.sha }}" 2>/dev/null || echo "")
-          echo "ui=$(echo "$CHANGED" | grep -qE '^packages/ui/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "rust=$(echo "$CHANGED" | grep -qE '^packages/ui/src-tauri/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "ui=$(grep -qE '^packages/ui/' <<<"$CHANGED" && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "rust=$(grep -qE '^packages/ui/src-tauri/' <<<"$CHANGED" && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
           # Fail-safe: an empty diff (e.g. base resolution glitch) is treated as
           # "code might have changed" so we never skip the test suite on an
@@ -93,6 +94,22 @@ jobs:
             else
               echo "code-changed=true" >> "$GITHUB_OUTPUT"
             fi
+          fi
+
+          # NB: these use a here-string, not `echo "$CHANGED" | grep -q`. Under `pipefail`,
+          # `grep -q` exits on the first match and can SIGPIPE the producer, so the pipeline
+          # reports non-zero and the `|| echo false` branch wins — a FALSE NEGATIVE that silently
+          # skips the job. Reproduced with a large change set: piped said `false` where the
+          # here-string said `true`.
+          # The onnx clean-room check is expensive (two container images), so it is scoped to the
+          # paths that can actually break the embedded native payload — the plugin, the worker
+          # build, the harness itself, the embedding/worker sources, and any dependency change
+          # that could swap the onnxruntime version out from under it. Same fail-safe as above:
+          # an unknown change set runs it rather than skipping.
+          if [[ -z "$CHANGED" ]]; then
+            echo "embedding-native=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "embedding-native=$(grep -qE '^(scripts/(onnx-binding-plugin\.ts|build-workers\.ts|verify-onnx-cleanroom\.sh)|packages/gateway/src/(workers|embedding)/|packages/gateway/package\.json$|bun\.lock|\.github/workflows/ci\.yml$)' <<<"$CHANGED" && echo true || echo false)" >> "$GITHUB_OUTPUT"
           fi
 
   # ── PR: fast feedback (three jobs run in parallel) ─────────────────────────
@@ -443,6 +460,42 @@ jobs:
   # Code duplication scan — runs in parallel with the above two jobs.
   # Scans only packages/ for code duplication; docs-only PRs can't introduce
   # new code-duplication regressions, so we skip when code-changed is false.
+  # Proves the embedded onnxruntime payload loads on a machine with NOTHING of ours installed.
+  #
+  # This gate exists because the same bug was "fixed" twice and verified twice in environments
+  # that masked the failure: once in the source tree (which has `dist/bin/`) and once on a Windows
+  # box that happened to carry `onnxruntime.dll` in System32. Both reported success; neither
+  # worked for users. The harness refuses to report a pass unless it first proves the run image is
+  # clean, so a green here cannot come from a preinstalled runtime.
+  pr-quality-onnx-cleanroom:
+    name: PR quality — ONNX clean room
+    if: github.event_name == 'pull_request' && needs.filter.outputs.embedding-native == 'true'
+    needs: filter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          # The harness pulls two images and the probe downloads nothing, but the BUILD stage
+          # resolves the onnx payload out of node_modules, so egress stays audited rather than
+          # blocked.
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      - name: Verify the onnx payload in a clean room
+        run: bash scripts/verify-onnx-cleanroom.sh
+
   pr-quality-duplication:
     name: PR quality — Duplication scan
     if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
@@ -585,6 +638,7 @@ jobs:
       - pr-quality-rust
       - pr-quality-cross-platform
       - pr-quality-duplication
+      - pr-quality-onnx-cleanroom
       - pr-quality-structure
       - pr-quality-release-safety
     runs-on: ubuntu-24.04
@@ -611,7 +665,7 @@ jobs:
           # empty list would otherwise skip the loop entirely and report green —
           # turning the one job that exists to catch failures into a rubber
           # stamp. Keep EXPECTED in step with the `needs:` list above.
-          EXPECTED=7
+          EXPECTED=8
           count=$(printf '%s\n' ${RESULTS} | grep -c . || true)
           if [[ "${count}" -ne "${EXPECTED}" ]]; then
             echo "::error::expected ${EXPECTED} gate results, got ${count} (${RESULTS}) — the needs: list and this check have drifted"

@@ -39,14 +39,14 @@ export type LlmRegistryOptions = {
 export type LlmLifecycleTarget = { routeId?: string };
 
 /**
- * `llm_task_defaults` (V20) is intentionally left in the schema and intentionally unused.
- * `getDefault` was deleted on 2026-08-29 as dead code — nothing had ever called it. `setDefault`
- * remains ONLY because `llm.setDefault` is a live, renderer-exposed IPC method the desktop UI
- * calls (see `ipc/llm-rpc.ts:255` and `packages/ui/src/ipc/client.ts:312`). The table therefore
- * now has a writer and **no reader**: per-task pins live in `[llm.tasks]` in nimbus.toml, which
- * the router actually reads (Task 5–6). That gap is tracked in #1383. Do not re-wire `getDefault`
- * to "fix" this: two sources of truth for one setting is what made these accessors dead in the
- * first place.
+ * `llm_task_defaults` (V20) is intentionally left in the schema and now has NEITHER a reader nor
+ * a writer. `getDefault` went on 2026-08-29 as dead code; `setDefault` went with #1383, once
+ * `llm.setDefault` was repointed at `[llm.tasks]` — the store the router actually reads. The
+ * table survives only because migrations are append-only and forward-only; nothing consults it.
+ *
+ * Do not re-wire either accessor to "fix" that emptiness. Two sources of truth for one setting is
+ * exactly what made the endpoint write-only in the first place: the UI wrote here, the router
+ * read `[llm.tasks]`, and the control silently changed nothing for as long as it shipped.
  */
 export class LlmRegistry {
   private readonly router: LlmRouter;
@@ -318,23 +318,6 @@ export class LlmRegistry {
     // pulled model keeps reporting `model_absent` for up to
     // ROUTE_AVAILABILITY_POSITIVE_TTL_MS, which looks exactly like the pull having failed.
     this.probe.invalidate(provider);
-  }
-
-  async setDefault(
-    taskType: "classification" | "reasoning" | "summarisation" | "agent_step",
-    provider: ProviderId,
-    modelName: string,
-  ): Promise<void> {
-    dbRun(
-      this.db,
-      `INSERT INTO llm_task_defaults (task_type, provider, model_name, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(task_type) DO UPDATE SET
-         provider = excluded.provider,
-         model_name = excluded.model_name,
-         updated_at = excluded.updated_at`,
-      [taskType, provider, modelName, Date.now()],
-    );
   }
 
   async getRouterStatus(): Promise<Awaited<ReturnType<LlmRouter["getStatus"]>>> {
