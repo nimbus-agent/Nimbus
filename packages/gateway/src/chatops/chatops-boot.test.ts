@@ -740,6 +740,65 @@ describe("buildChatopsBoot — full production graph", () => {
     db = new Database(":memory:"); // so afterEach's close() is valid
     await h.boot.service.stop();
   });
+
+  test("a failed approval-card append leaves no resolvable pending approval (regression: containment must not leave stale pending state)", async () => {
+    // Fails exactly the FIRST `.run()` (the approval card's INSERT — nothing is posted before it
+    // for a write command) and behaves normally after, so the SAME boot/db survives to prove what
+    // happens to a later, unrelated message — unlike `db.close()`, which breaks every future
+    // append and cannot show a "recovered" channel's behavior.
+    let armed = true;
+    const flakyDb = {
+      query: (sql: string) => db.query(sql),
+      run: (sql: string, params?: unknown[]) => {
+        if (armed) {
+          armed = false;
+          throw new Error("simulated egress-ledger append failure");
+        }
+        return params === undefined ? db.run(sql) : db.run(sql, params as never);
+      },
+      exec: (sql: string) => db.exec(sql),
+      close: () => db.close(),
+    } as unknown as Database;
+
+    const logErrorCalls: { fields: Record<string, unknown>; msg: string }[] = [];
+    const h = await buildHarness({
+      db: flakyDb,
+      logError: (fields, msg) => {
+        logErrorCalls.push({ fields, msg });
+      },
+    });
+    await h.boot.service.start();
+    h.socket.emit(
+      mention(
+        "C0",
+        "U_BOB",
+        "@nimbus run deployment.rollback service=payment-service version=v1.4",
+        "50",
+      ),
+    );
+    await until(() => logErrorCalls.length === 1);
+    // Fail-closed: append-before-post means the owner was never shown a card.
+    expect(logErrorCalls[0]?.fields["postKind"]).toBe("approvalCard");
+    expect(h.posts.some((p) => p.text.includes("Approval needed"))).toBe(false);
+
+    // The regression this guards against: before the fix, `pendingCardByChannel` still held the
+    // entry set just before the failed post, so a mapped owner's "approve" for a card that was
+    // never shown still found it "live" and silently resolved/consumed it there. That specific
+    // write was always doomed regardless of this fix (the same `EgressAppendFailedError` also
+    // propagates, uncaught, through `resolveDelegatedApproval`'s `requestRemote()` call and fails
+    // THAT request closed before this second message is even sent) — so the connector
+    // dispatcher's call count alone is zero in both the fixed and unfixed states and cannot, by
+    // itself, distinguish them. The distinguishing, revert-sensitive signal is what happens to
+    // the *second* message: unfixed, the stale entry makes it match the live-card branch and
+    // return silently with no reply; fixed, it falls through to ordinary command routing (a plain
+    // "read" query, since "approve" alone is not a `run …` command) and gets a normal reply.
+    // Assert both: the safety invariant, and the discriminator that actually red-proves the fix.
+    h.socket.emit(mention("C0", "U_ALICE", "@nimbus approve", "51"));
+    await until(() => h.posts.some((p) => p.channel === "C0" && p.text.includes("approve")));
+    expect(h.dispatched).toHaveLength(0); // the connector dispatcher's call count — the invariant
+
+    await h.boot.service.stop();
+  });
 });
 
 describe("emailFromUserInfo", () => {

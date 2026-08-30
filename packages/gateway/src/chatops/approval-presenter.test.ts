@@ -73,4 +73,34 @@ describe("ApprovalPresenter + request context", () => {
       }),
     ).toBe(false);
   });
+
+  test("a failed post leaves no resolvable pending entry (regression: a card never shown must not be clickable)", async () => {
+    const presenter = new ApprovalPresenter({
+      post: async () => {
+        throw new Error("post failed");
+      },
+      ownerChannelFor: () => "C_ALICE",
+    });
+    const ctx = {
+      ownerEmail: "alice@acme.com",
+      ownerExternalId: "ext-alice",
+      originatingChannelId: "C_ORIG",
+      requesterExternalId: "ext-bob",
+      actionLabel: "deployment.rollback service=payment-service",
+    };
+    await expect(
+      runWithChatopsApprovalContext(ctx, () => presenter.requestApproval()),
+    ).rejects.toThrow("post failed");
+    // The request id was minted (and would be read via `lastRequestId()` by a caller wiring the
+    // pending-card map, as `chatops-boot.ts` does) before the post failed — resolving a click
+    // against it must find nothing, because the card behind it was never posted.
+    const staleRequestId = presenter.lastRequestId();
+    expect(
+      presenter.resolveClick({
+        requestId: staleRequestId,
+        approverExternalId: "ext-alice",
+        approved: true,
+      }),
+    ).toBe(false);
+  });
 });

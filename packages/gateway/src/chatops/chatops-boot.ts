@@ -212,8 +212,20 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     post: async (channelId, text) => {
       // `requestApproval` registers the pending resolver and sets lastRequestId BEFORE posting,
       // so recording the live card here is race-free (see the resolve-race note in the presenter).
-      pendingCardByChannel.set(channelId, presenter.lastRequestId());
-      await posts.approvalCard(lastPlatformByChannel.get(channelId) ?? "slack", channelId, text);
+      const requestId = presenter.lastRequestId();
+      pendingCardByChannel.set(channelId, requestId);
+      try {
+        await posts.approvalCard(lastPlatformByChannel.get(channelId) ?? "slack", channelId, text);
+      } catch (err) {
+        // The append-before-post ledger (I29 `chatops` class) failed, so nothing was posted — the
+        // owner never saw a card. The pending entry must not outlive that failure, or a later
+        // "approve" in this channel would resolve an approval card that was never shown (fail-
+        // closed: only clear OUR entry, in case a newer request already replaced it).
+        if (pendingCardByChannel.get(channelId) === requestId) {
+          pendingCardByChannel.delete(channelId);
+        }
+        throw err;
+      }
     },
     // No DM surface in scope (design §3.1): the card lands in the server-derived originating
     // channel; only the owner's identity-valid click is honored (I20).

@@ -47,10 +47,18 @@ export class ApprovalPresenter {
     const outcome = new Promise<RemoteApprovalOutcome>((resolve) => {
       this.pending.set(requestId, { ownerExternalId: ctx.ownerExternalId, resolve });
     });
-    await this.deps.post(
-      channel,
-      `Approval needed from ${ctx.ownerEmail}: ${ctx.actionLabel} (requested by ${ctx.requesterExternalId}). Reply Approve/Reject.`,
-    );
+    try {
+      await this.deps.post(
+        channel,
+        `Approval needed from ${ctx.ownerEmail}: ${ctx.actionLabel} (requested by ${ctx.requesterExternalId}). Reply Approve/Reject.`,
+      );
+    } catch (err) {
+      // The card was never shown to the owner (post failed, e.g. the I29 append-before-post
+      // egress ledger rejected it) — this pending entry must not survive the failure, or a
+      // later `resolveClick` on a stale/reused request id could still resolve `outcome`.
+      this.pending.delete(requestId);
+      throw err;
+    }
     return await outcome;
   }
 
