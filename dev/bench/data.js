@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788112127946,
+  "lastUpdate": 1788113227472,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8c3bbb35f2dad3b250943de2b39dfa4b0204beaa",
-          "message": "refactor(dedup): Stage A — gateway paginated-sync helper (#673)\n\n## Stage A — gateway paginated-sync helper\n\nFirst PR of the [jscpd duplication-reduction\nprogram](docs/superpowers/specs/2026-06-17-jscpd-duplication-reduction-design.md).\n**Pure dedup, zero behavior change.**\n\n### What\nExtracts the byte-identical single-pass paginated connector-sync\nscaffolding into a new gateway-internal helper\n`packages/gateway/src/connectors/_lib/paginated-sync.ts`:\n- `runSinglePassPaginatedSync<C>(ctx, cursor, spec)` — owns the\n`performance.now()` timing, noop-on-unconfigured-creds, the page loop\nwith first-page `http_error`/`parse_error` degradation, the per-item\nmap+upsert loop, and the pass-1 success return. Threads an opaque\n`pageCursor` (`\"\"` → previous page's `nextPageCursor`) so it covers\n**both** page-number and continuation-token connectors.\n- `upsertMapped(ctx, items, map)` — the per-connector `upsert*` loop.\n- `bareArrayPage(parsed, pageSize)` — the bare-array page parser.\n\nEach connector keeps only what genuinely varies (constants, creds,\nper-page path/auth, response parsing, the mapping fn) and delegates via\na thin `createXSyncable`.\n\n### Connectors migrated (20)\ngreenhouse, readwise, stackoverflow, hubspot (exemplars) + airflow,\ncanva, dependencytrack, intercom, lever, miro, mlflow, netlify,\npipedrive, prefect, raindrop, salesforce, stripe, vercel, zendesk,\nzotero.\n\n**Deferred (1):** `superset` — its pre-loop login step accumulates bytes\nand returns a distinct http-empty result on auth failure, which the\nsingle-pass helper's byte-accounting doesn't model (force-fitting would\nchange `bytesTransferred`). Left untouched.\n\nThe 9 larger Tier-2 multi-resource syncs (databricks, dbt, flagsmith,\nlaunchdarkly, mendeley, ramp, semgrep, sonarqube, wiz) remain for a\nseparate Stage A2 plan.\n\n### Measurement (strict = `bunx jscpd packages`, baseline @ `5993765b`)\n| | clones | strict % |\n| --- | --- | --- |\n| before | 711 | **5.51%** |\n| after | 648 | **5.09%** |\n\nThe `zotero-sync.ts` centroid dropped from **85 clones → 0** — the whole\nzotero-partner sync clique collapsed. The residual hotspots are now the\nMCP `server.ts` family (Stage B), oauth-registry (Stage D), and the\ncli↔gateway type pair (Stage E).\n\nThe **CI duplication gate** (`pr-quality-duplication`, lenient\n`--min-lines 10 --threshold 5`) improves **3.53% → 3.25%** and stays\ngreen. **The gate is NOT tightened in this PR** — that lands in the\nprogram's final stage once strict is under 3% with margin.\n\n### Verification\n- No behavior change: every connector's `*-sync-fake-server.test.ts`\nguardrail stays green **unedited** — full connector integration suite\n**254 pass / 0 fail**.\n- New helper has 14 dedicated unit tests covering every branch.\n- No `any` (external payloads stay `unknown` at the boundary); gateway\n`tsc --noEmit` clean; Biome clean.\n- Coverage-floor (Docker-Linux authoritative): **green** —\n`paginated-sync.ts` and all migrated connectors clear the ≥80%\nline+branch floor.\n- Whole-branch adversarial review: no real defects (the one flagged\n\"tightening\" of salesforce/hubspot stop conditions exactly reproduces\neach original's `length === 0 ||` break — verified).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Documentation**\n* Added design specification and implementation plan for code\nduplication reduction across gateway connectors.\n\n* **Refactor**\n* Consolidated paginated synchronization logic for 20 gateway connectors\ninto a shared utility, reducing duplicate code while maintaining\nexisting behavior and functionality.\n\n* **Tests**\n* Added comprehensive test suite for paginated sync utilities with\nin-memory SQLite harness.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T09:56:06+03:00",
-          "tree_id": "d4585267901a074f9b8b6f7adad766363000f48e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8c3bbb35f2dad3b250943de2b39dfa4b0204beaa"
-        },
-        "date": 1781680166542,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 268.46059334999444,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 268.4895493999975,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 319.12867754999604,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8ab190bd60c1e5a49e5b0711b536bac525cd3e2a",
+          "message": "chore: release main (#1413)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.3.0</summary>\n\n##\n[7.3.0](https://github.com/nimbus-agent/Nimbus/compare/v7.2.1...v7.3.0)\n(2026-08-30)\n\n\n### Features\n\n* **chatops:** invoke the built-in read-only agents from a Slack or\nTeams channel\n([#1412](https://github.com/nimbus-agent/Nimbus/issues/1412))\n([a6a052e](https://github.com/nimbus-agent/Nimbus/commit/a6a052e2d019eb077a0b90d3a352c0d5d58cf590))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-08-30T17:57:54Z",
+          "tree_id": "4d3d513758cc70a8e176f3d28889abed45e35d83",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8ab190bd60c1e5a49e5b0711b536bac525cd3e2a"
+        },
+        "date": 1788113224886,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 251.21268214999654,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 250.1168375999987,
             "unit": "ms"
           }
         ]
