@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788063883966,
+  "lastUpdate": 1788069529016,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0870362301fecd1c6742c799ece667edf1d8f671",
-          "message": "fix(ci): session-memory getRecentTurns must not require sqlite-vec (share e2e I27) (#664)\n\n## Problem\n\nThe I27 share e2e redaction round-trip (`approved create redacts PII,\nsigns, writes the file; verify reports a VALID signature`) fails\n**identically on all 3 OS legs** of the push-to-`main` matrix (run\n27642549323). It is a logic bug, not a platform flake.\n\nThe written share body carried `\"turns\":[]`, `\"toolCalls\":[]`,\n`\"redactionSet\":[]`, so redaction had no PII to strip and the\n`expect(fileText).toContain(\"[REDACTED]\")` assertion failed.\n\n## Root cause\n\n`SessionMemoryStore.getRecentTurns` gated on `ensureReady()`, which\nrequires the **optional sqlite-vec extension** to load\n(`ensureSqliteVecForConnection`). On CI runners with no sqlite-vec\nprebuilt and no `vec0.*` sidecar, the read short-circuited to `[]` —\neven though the seeded `session_memory` rows were present and the\n`SELECT` touches only the `session_memory` table, never a vec virtual\ntable.\n\nThe unit suite is `describe.skipIf(!VEC_AVAILABLE)`, so it's silently\nskipped on those runners — only the unguarded e2e test caught the\nregression. The sibling reads (`listSessions`, `deleteSession`)\ncorrectly gate on table existence (`user_version >= 10`) only.\n\n## Fix\n\nGate `getRecentTurns` on `readIndexedUserVersion(this.db) < 10` (table\nexistence) only, mirroring `listSessions()`/`deleteSession()`. The vec\ndependency was spurious for this read.\n\nThis also restores **platform equality** (Non-Negotiable #5):\nsession-transcript recall now works on any box at schema V10, regardless\nof whether the optional vec extension loaded.\n\n## Verification\n\n- `bun test packages/gateway/src/memory/session-memory-store.test.ts\npackages/gateway/test/e2e/share-e2e.test.ts` → 23 pass / 0 fail.\n- `bun run preflight:fast` → PASSED (typecheck, biome, all static\naudits, duplication).\n- The `version < 10 → []` unit case is preserved.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved session memory retrieval to work reliably without requiring\noptional extension support, ensuring consistent access to session data\nacross all environments and configurations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-16T22:24:17Z",
-          "tree_id": "a2ef6254478c58f0754bb6f6028d441af44d3533",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0870362301fecd1c6742c799ece667edf1d8f671"
-        },
-        "date": 1781649390917,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.8974438500041,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.5835399999974,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 328.0734841999962,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d38e79f5bdcf68b9a58763cc7267ab34f1843b5",
+          "message": "fix(embedding): embed the onnxruntime runtime library, not just the addon (#1405)\n\nCloses the rest of #1396. **#1402 was incomplete, and my verification of\nit was a false positive.** The second point matters more than the first.\n\n## Why #1402 looked fine\n\n`C:\\WINDOWS\\system32\\onnxruntime.dll` exists on my machine. Windows' DLL\nsearch includes System32, so the extracted addon found its dependency\n**there** — nothing to do with the fix.\n\nEvery `Embeddings: ready` I reported on Windows was\nenvironment-dependent, **including the run I made from a directory\nisolated from the repo and treated as a clean-room check**. It was not\nclean: System32 is global.\n\nA bare Linux container failed immediately:\n\n```\nlibonnxruntime.so.1.14.0: cannot open shared object file: No such file or directory\n```\n\n## What was missing\n\nEvery platform ships a large runtime library beside the addon:\n\n| Platform | addon | runtime library |\n| --- | --- | --- |\n| linux/x64 | 278 KB | `libonnxruntime.so.1.14.0` — 16 MB |\n| win32/x64 | 215 KB | `onnxruntime.dll` — 8.9 MB, +\n`onnxruntime_providers_shared.dll` |\n| darwin | — | `libonnxruntime.1.14.0.dylib` |\n\n`readelf` shows the addon declares `NEEDED libonnxruntime.so.1.14.0`\nwith **`RPATH: [$ORIGIN/]`** — it looks in its own directory. So the\nwhole directory is embedded and extracted together.\n\nFiles keep their **original names**, because `$ORIGIN` resolution\nmatches on soname; the **directory** carries the content hash instead.\nStaleness protection without renaming a file whose name is load-bearing.\nPer-file hash verification, `lstat` and the O_EXCL write from #1402 are\npreserved and now applied to every payload file.\n\n**Cost:** the worker bundle grows to 14.3 MB on win32, more on linux.\nThat is the price of the native backend, stated here rather than\ndiscovered at release.\n\n## The real fix is the harness\n\n`scripts/verify-onnx-cleanroom.sh` builds a standalone probe in one\ncontainer and runs it in a **bare** image — no repo, no `node_modules`,\nno bun, no system onnxruntime. The only thing mounted is the binary\nunder test.\n\nIt **refuses to report a pass** unless it first proves the image is\nclean (`system-onnx-libs=0`), so a green result cannot come from a\nmasked environment the way the last two did.\n\n```\n[cleanroom] running in a bare image with NOTHING of ours mounted...\n  system-onnx-libs=0\n  ONNX_OK exports,InferenceSession\n[cleanroom] PASS — addon and its runtime library load with nothing preinstalled.\n```\n\n**Mutation-tested, not assumed:** reverting the payload to addon-only —\nexactly what #1402 shipped — makes it exit 1 with the dlopen error. It\nalso *prints* that error, because an earlier draft died under `set -e`\nbefore saying why, and a harness that fails silently is precisely what\nit exists to prevent.\n\nThis is the piece I should have built first. Two fixes for this bug were\nverified in environments that could not fail; this one cannot be\nverified that way.\n\n## Suggested follow-up\n\nWire the harness into CI so this cannot regress silently. It is also the\nnatural automated counterpart to the Gate 1 \"foreign machine\" runbook.\n\n1626 script tests pass; `preflight:fast` 32/32.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc",
+          "timestamp": "2026-08-30T08:46:07+03:00",
+          "tree_id": "3bf58698e52f4367ead1c5b3054af62905c42990",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7d38e79f5bdcf68b9a58763cc7267ab34f1843b5"
+        },
+        "date": 1788069525943,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 340.11578670000017,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 338.5761175000036,
             "unit": "ms"
           }
         ]
