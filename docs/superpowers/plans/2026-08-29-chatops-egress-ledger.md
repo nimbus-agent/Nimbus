@@ -544,7 +544,7 @@ export function buildLedgeredChatPosts(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/gateway/src/egress/chatops-egress.test.ts`
-Expected: PASS, all six.
+Expected: PASS, all five.
 
 - [ ] **Step 5: Red-prove the fail-closed test**
 

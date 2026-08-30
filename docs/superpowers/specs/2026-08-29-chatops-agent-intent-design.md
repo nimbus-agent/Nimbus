@@ -140,11 +140,15 @@ cooperating. This is the same shape as `wrapLedgeredProvider` (I29/D22(e)) and
   branch switch). Verify the entries are dead with `git ls-files`, not with `ls` — `ls` answers a
   different question and answers it wrongly here. `audit:doc-refs` gives no signal either way: it
   passed with those paths cited in this document.
-- **The permitted-agent exclusions are already computed once.** `HTTP_EXCLUDED_AGENT_METHODS`
-  (`ipc/agents-rpc.ts:969`) excludes `preflight`, `premortem`, `whyPeek` and `negotiate`, leaving
-  eleven, and `HTTP_AGENT_NAMES` (`:983`) is **derived** from `AGENTS_RPC_HANDLERS` rather than
-  hand-maintained. ChatOps needs the same eleven for the same reasons, so §6.4 generalizes the name
-  rather than adding a second list.
+- **The permitted-agent exclusions are already computed once.** `AGENTS_RPC_HANDLERS`
+  (`ipc/agents-rpc.ts:913`) has FIFTEEN entries, not fourteen — the fourteen agents plus `whyPeek`,
+  which shares the map because it is ledgered and dispatched the same way but is a companion to
+  `why`, not a fifteenth agent (§3 non-goals). `HTTP_EXCLUDED_AGENT_METHODS` (`:969`) excludes four
+  of those fifteen — `preflight`, `premortem`, `negotiate` (three real agents) and `whyPeek` (the
+  companion) — leaving eleven, and `HTTP_AGENT_NAMES` (`:983`) is **derived** from
+  `AGENTS_RPC_HANDLERS` rather than hand-maintained. The same arithmetic reads either way: **11
+  permitted = 14 agents − 3 excluded agents = 15 handlers − 4 excluded methods.** ChatOps needs the
+  same eleven for the same reasons, so §6.4 generalizes the name rather than adding a second list.
 
 ---
 
@@ -153,7 +157,7 @@ cooperating. This is the same shape as `wrapLedgeredProvider` (I29/D22(e)) and
 **Goals**
 
 1. Every outbound ChatOps post appends one `egress_ledger` row, fail-closed. (PR 1)
-2. `@nimbus agent why file=src/auth.ts line=42` in a bound channel returns the same brief payload as
+2. `@nimbus agent why ref=src/auth.ts line=42` in a bound channel returns the same brief payload as
    `nimbus why`, from the same `agents.*` dispatch. (PR 2)
 3. Full `k=v` parity with all eleven permitted agents, with **no second copy** of
    `agents-rpc.ts`'s validators or bounds constants. (PR 2, §6.2)
@@ -168,9 +172,12 @@ cooperating. This is the same shape as `wrapLedgeredProvider` (I29/D22(e)) and
   exist to inherit, and building it is a new capability, not a slice of this one. Disclosed, not
   hidden (§9).
 - **Widening `public-read`.** An unmapped user cannot invoke an agent (§6.5).
-- **The three excluded agents.** `preflight` and `premortem` for their side effects, `negotiate`
-  because `--person` makes it a dossier-builder; `whyPeek` is a companion, not an agent. Every one
-  of those reasons is *stronger* in a shared channel, so the exclusion is inherited, not re-decided.
+- **The three excluded agents.** Of the fourteen, `preflight` and `premortem` are excluded for their
+  side effects, and `negotiate` because `--person` makes it a dossier-builder. Every one of those
+  reasons is *stronger* in a shared channel, so the exclusion is inherited, not re-decided. (A
+  fourth name, `whyPeek`, is also absent from the permitted set — but it was never one of the
+  fourteen agents to begin with, only a companion RPC method to `why` that happens to share
+  `AGENTS_RPC_HANDLERS`; see the permitted-agent-exclusions bullet in §2.)
 - **New platforms.** `ChatPlatform` stays `"slack" | "teams"`.
 - **Changing the agents.** They stay read-only and HITL-free; `approval-presenter.ts` is not on this
   path.
@@ -332,13 +339,23 @@ recorded rather than quietly closed.
 
 Chosen to mirror the existing `run <action> k=v` write grammar rather than invent a second shape —
 `normalizeChatText` already strips mentions, Slack link markup, smart quotes and backticks, and
-`KV_RE` already parses `k=v` with quoted-value stripping. Both are reused unchanged.
+`KV_RE` already parses `k=v` with quoted-value stripping. Both are reused unchanged, though
+`normalizeChatText` moves to a small neutral module (`chatops/normalize-chat-text.ts`) so that the
+new agent-command parser and `command-parser.ts` — which comes to import the agent-command parser —
+do not import each other (see the implementation plan's Task 2).
 
 `ParsedCommand` (`chatops/types.ts:22`) gains:
 
 ```ts
-| { readonly kind: "agent"; readonly agent: string; readonly args: Readonly<Record<string, string>> }
+| { readonly kind: "agent"; readonly agent: string; readonly params: Record<string, unknown> }
 ```
+
+`params`, not `args`, and `Record<string, unknown>`, not a string-only record: Task 2's
+`parseAgentCommand` COERCES each `k=v` value to the primitive kind `AGENT_PARAM_KINDS` declares for
+that field — a number, a boolean, or a `stringArray` — so the values reaching `dispatchAgentsRpc`
+are not all strings, and a string-only type here would either reject that coercion outright or hide
+the mismatch until the router boundary. One shared, coerced-parameter type runs through the
+specification, the parser, and `ParsedCommand` alike; see §6.2's coercion table.
 
 `RefusalReason` gains `unknown_agent` and `bad_agent_params`.
 
@@ -359,10 +376,17 @@ whole vocabulary is four kinds:
 
 | Kind | Fields |
 | --- | --- |
-| `string` | `topicOrFile`, `fileOrPrUrl`, `file`, `path`, `service`, `ref`, `prUrl`, `term`, `personId` |
-| `number` | `limit`, `depth`, `sinceMs`, `line`, `minConfidence` (a **float** in 0..1, not an integer — `Number()` covers both; see the finiteness rule below) |
+| `string` | `topicOrFile`, `fileOrPrUrl`, `file`, `path`, `service`, `ref`, `prUrl`, `term`, `namespace`, `resourceRef`, `cleanupAction` |
+| `number` | `limit`, `depth`, `sinceMs`, `line`, `idleDays`, `minConfidence` (a **float** in 0..1, not an integer — `Number()` covers both; see the finiteness rule below) |
 | `string[]` | `namespaces` — and `parseNamespaces` already accepts a scalar, so `namespace=team-a` needs no coercion |
-| `boolean` | `repropose` — **`premortem` only, which is excluded**. Zero boolean fields in scope. |
+| `boolean` | `allowGaps` (`janitor`) and `explain` (`decisions`) — both genuinely in scope, in permitted agents. `repropose` (`premortem`) is the only EXCLUDED boolean field. |
+
+`personId` is deliberately absent from this table: it belongs to `requireNegotiateParams`, and
+`negotiate` is one of the three excluded agents (§3 non-goals) — it never reaches the coerced-params
+path this table describes. Reconciled against `AGENT_PARAM_KINDS` (the plan's Task 1, the actual
+map this table must match field-for-field) rather than re-derived by inspection a second time here,
+so the table, the map, and the round-trip tests (§10, "per agent per field") stay provably the same
+vocabulary.
 
 Nothing nested, nothing per-agent beyond a field's primitive kind. **`expert`'s entire "builder" is
 `{ topicOrFile: "string", limit: "number" }`.**
@@ -396,10 +420,16 @@ So `parse-agent-command.ts` rejects a non-finite coercion with `bad_agent_params
 The guard is `Number.isFinite`, not `!Number.isNaN`: it rejects `Infinity` too, which `minConfidence`
 would otherwise catch by bounds but which no rule guarantees for a field added later.
 
-This is a *defence-in-depth* fix, not a fix to `agents-rpc.ts`. The same `NaN` is reachable today
-over IPC and HTTP by any caller sending `{"minConfidence": null}`-adjacent JSON — tightening the
-validator itself is correct but belongs in its own PR, since it changes behaviour on two shipped
-surfaces. Noted in §13.3 as a follow-up rather than smuggled in here.
+This is a *defence-in-depth* fix, not a fix to `agents-rpc.ts`, and specific to THIS surface: ChatOps
+is the one caller of `requireDecisionsParams` that can hand it a raw, in-process JS value it computed
+itself (`Number("high")`) rather than a value that has passed through `JSON.parse`. **Standard JSON
+cannot encode `NaN` or `Infinity` at all**, and `null` — the value `JSON.stringify` actually produces
+for a non-finite number — fails `typeof p.minConfidence !== "number"` and is correctly rejected with
+`-32602`, so there is no live IPC/HTTP path today: both those surfaces round-trip params through
+`JSON.parse`/`JSON.stringify`, which structurally blocks it. The validator itself is nonetheless
+worth tightening defensively — a future transport or a decoder that preserves non-finite numbers
+(neither of which exists in this codebase today) would have no other backstop, and `Number.isFinite`
+costs nothing to add now. Noted in §13.3 as that (unproven, no known live path) follow-up.
 
 **Bounds constants are never copied.** `MAX_LIMIT`, `MAX_SINCE_MS`, `MAX_FILE_LEN` and the rest stay
 module-private to `agents-rpc.ts`. The MCP surface mirrors them into zod today and carries a comment
@@ -476,7 +506,7 @@ users to the `read` intent only; the agent intent does not inherit it.
    rather than by decision is how permissions grow without anyone choosing it.
 
 **The cost, disclosed rather than papered over:** in a `public-read` channel an unmapped user gets an
-answer to `@nimbus why is checkout slow?` and a refusal for `@nimbus agent why file=…`. That is a
+answer to `@nimbus why is checkout slow?` and a refusal for `@nimbus agent why ref=…`. That is a
 real inconsistency. It is the correct one — the free-text path's permissiveness is the older
 decision, not the better one — but it is documented in the ChatOps docs, not left to be discovered.
 
@@ -706,9 +736,12 @@ consistency argument above.
 ### 13.3 Follow-up this design deliberately does not do
 
 **Tighten `requireDecisionsParams` to reject non-finite `minConfidence`.** §6.2 blocks `NaN` at the
-ChatOps boundary, which is all this design owes. But the same value is reachable today over IPC and
-HTTP, so the validator itself should reject it — a change on two shipped surfaces, in its own PR,
-with its own tests. Recording it here rather than widening this one.
+ChatOps boundary, which is all this design owes. There is no KNOWN live path to the same value over
+IPC or HTTP today — both round-trip through standard `JSON.parse`/`JSON.stringify`, which cannot
+carry `NaN`/`Infinity` and turns them into a `null` the validator already rejects — so this is a
+defensive tightening against a future transport or decoder, not a fix for a currently reachable
+hole. Still worth doing, in its own PR with its own tests, since the validator having no backstop
+today is one decoder change away from mattering; recording it here rather than widening this one.
 
 ---
 

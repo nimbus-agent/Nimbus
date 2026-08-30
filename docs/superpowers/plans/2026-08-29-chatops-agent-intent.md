@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `@nimbus agent why file=src/auth.ts line=42` in a bound channel returns the same brief payload as `nimbus why`, with full `k=v` parity across all eleven permitted agents — and it works on a gateway with **no LLM configured**.
+**Goal:** `@nimbus agent why ref=src/auth.ts line=42` in a bound channel returns the same brief payload as `nimbus why`, with full `k=v` parity across all eleven permitted agents — and it works on a gateway with **no LLM configured**.
 
 **Architecture:** A third intent in `IntentRouter`, ahead of the free-text `read` fallthrough. Params are **coerced, not validated**: `ipc/agents-rpc.ts`'s validators already take `unknown` and own every semantic rule, so the only gap between a `k=v` message and the IPC contract is that `k=v` yields strings. A per-agent field→primitive-kind map plus a surface-neutral parser closes it, and no bounds constant is ever copied. The invoker reaches agents only through `dispatchAgentsRpc`, exactly as the HTTP surface does.
 
@@ -169,12 +169,28 @@ git commit -m "feat(agents): declare the param primitive kinds for text surfaces
 
 **Files:**
 
+- Create: `packages/gateway/src/chatops/normalize-chat-text.ts` — `normalizeChatText`, moved out of
+  `command-parser.ts` verbatim (no behavior change) so it has a home neither `command-parser.ts` nor
+  `parse-agent-command.ts` needs to import THE OTHER to reach.
+- Modify: `packages/gateway/src/chatops/command-parser.ts` — re-export `normalizeChatText` from the
+  new module (existing importers of it from here keep working) and switch `parseCommand`'s own use
+  of it to the new import.
 - Create: `packages/gateway/src/agent-commands/parse-agent-command.ts`
 - Create: `packages/gateway/src/agent-commands/parse-agent-command.test.ts`
 
+**Why the extraction, and why it must happen in THIS task, not Task 7:** `parse-agent-command.ts`
+needs `normalizeChatText`, and the obvious source is `command-parser.ts`, which already exports it.
+But Task 7 makes `command-parser.ts` import `parseAgentCommand` FROM `parse-agent-command.ts` — so
+importing the normalizer the obvious way would make the two files import each other
+(`command-parser.ts` → `parse-agent-command.ts` → `command-parser.ts`), which
+`CLAUDE.md`'s "Circular dependencies are forbidden" rules out. Moving the normalizer into its own
+neutral module before anything consumes it avoids the cycle from the start rather than discovering
+it at Task 7 and having to unwind Task 2's import.
+
 **Interfaces:**
 
-- Consumes: `AGENT_PARAM_KINDS`, `ParamKind` (Task 1).
+- Consumes: `AGENT_PARAM_KINDS`, `ParamKind` (Task 1); `normalizeChatText` (this task, from the new
+  neutral module — never from `command-parser.ts` directly).
 - Produces:
 
   ```ts
@@ -269,9 +285,14 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
 
+First, extract the normalizer: cut `normalizeChatText` (and its doc comment) out of
+`command-parser.ts` verbatim into the new `chatops/normalize-chat-text.ts`, then have
+`command-parser.ts` do `export { normalizeChatText } from "./normalize-chat-text.ts";` and use that
+same import for its own `parseCommand`. No behavior changes — only the function's home does.
+
 ```ts
 import { AGENT_PARAM_KINDS, type ParamKind } from "../ipc/agent-param-kinds.ts";
-import { normalizeChatText } from "../chatops/command-parser.ts";
+import { normalizeChatText } from "../chatops/normalize-chat-text.ts";
 
 export type AgentCommand =
   | { readonly ok: true; readonly agent: string; readonly params: Record<string, unknown> }
@@ -316,8 +337,10 @@ function isError(v: unknown): v is { error: string } {
  * This function COERCES and never validates. It does not know a bound, a required field, or that
  * `ownership`'s `path` and `service` are mutually exclusive — `agents-rpc.ts` owns all of that and
  * its own `-32602` text is what the user should see, because it is the real message rather than a
- * mirrored one. Surface-neutral by design: no `chatops/` import beyond the shared text normalizer,
- * so a CLI or browser text surface can reuse it unchanged.
+ * mirrored one. Surface-neutral by design: its only import beyond the param-kinds map is the
+ * neutral `normalizeChatText` — never `chatops/command-parser.ts` itself, which would cycle back
+ * here once `command-parser.ts` imports `parseAgentCommand` (Task 7) — so a CLI or browser text
+ * surface can reuse it unchanged.
  */
 export function parseAgentCommand(
   rawText: string,
@@ -362,7 +385,7 @@ exists for; seeing it once is worth more than trusting the comment.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/gateway/src/agent-commands/
+git add packages/gateway/src/agent-commands/ packages/gateway/src/chatops/normalize-chat-text.ts packages/gateway/src/chatops/command-parser.ts
 git commit -m "feat(agents): parse and coerce k=v agent commands for text surfaces"
 ```
 
@@ -631,6 +654,21 @@ function readBrief(p: unknown): string | null {
  * Unlike the HTTP invoker there is no `AgentRunController`: a channel has no polling client, it has
  * a reply. `notify` resolves a one-shot promise keyed on the dispatch's own `sessionId`.
  *
+ * The deadline is armed BEFORE `dispatchAgentsRpc` is even called, so a dispatch that itself hangs
+ * (or never resolves — `dispatchByMethod` calling into a peer-fanning agent, say) is bounded by the
+ * SAME timeout as the wait for the resulting brief, not left unbounded ahead of it. A notification
+ * that arrives before dispatch has told us the run's real `sessionId` is BUFFERED, never accepted
+ * unfiltered — `ctx.notify` is the same shared sink `AgentRunController.observe` documents itself
+ * as reusing "for unrelated notifications", so a notification for a DIFFERENT concurrent run can
+ * reach this closure before `expected` is known; accepting it while the filter is a no-op (as an
+ * earlier draft did) could resolve this request with another run's private brief. Buffered entries
+ * are replayed through the real filter the moment `expected` is set, whether dispatch reports a
+ * genuine session or a `miss` (in which case they are filtered exactly as a live notification would
+ * be from that point on — this function does not change what `expected === null` means, only WHEN
+ * that meaning starts applying). A `settled` guard additionally drops any notification — buffered
+ * or live — arrived after the deadline already fired, so a late reply can never resurrect a request
+ * this function has already returned an answer for.
+ *
  * No `egress_ledger` append happens here, and that is deliberate: PR 1's post appender ledgers the
  * brief where it actually leaves the machine. See `egress-bearing-kinds.ts`'s `chatops: null`.
  */
@@ -648,6 +686,9 @@ export function buildChatopsAgentInvoker(deps: ChatopsAgentInvokerDeps): Chatops
       rejectBrief = rej;
     });
     let expected: string | null = null;
+    let expectedKnown = false; // distinct from `expected === null` — "null" is a real, decided value
+    let settled = false; // true once the race is over; guards a late/buffered notify from mattering
+    const buffered: { method: string; params: unknown }[] = [];
 
     const runner = buildAgentSynthesisRunner({
       configDir: deps.configDir,
@@ -656,19 +697,40 @@ export function buildChatopsAgentInvoker(deps: ChatopsAgentInvokerDeps): Chatops
       method,
     });
 
+    const applyNotification = (m: string, p: unknown): void => {
+      if (settled) return;
+      if (expected !== null && readSessionId(p) !== expected) return;
+      if (m.endsWith(".briefReady")) {
+        const b = readBrief(p);
+        if (b !== null) resolveBrief(b);
+      } else if (m.endsWith(".briefError")) {
+        rejectBrief(new Error("the agent reported an error"));
+      }
+    };
+
+    const handleNotification = (m: string, p: unknown): void => {
+      if (settled) return;
+      if (!expectedKnown) {
+        buffered.push({ method: m, params: p });
+        return;
+      }
+      applyNotification(m, p);
+    };
+
+    // The deadline timer starts here, BEFORE `dispatchAgentsRpc` is called below — see the doc
+    // comment above. It covers dispatch itself, not just the subsequent wait for `briefPromise`.
     let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
+    const deadline = new Promise<never>((_, rej) => {
+      timer = setTimeout(() => {
+        settled = true;
+        rej(new Error("timed out"));
+      }, timeoutMs);
+    });
+
+    const work = (async (): Promise<string> => {
       const out = await dispatchAgentsRpc(method, params, {
         db: deps.db,
-        notify: (m, p): void => {
-          if (expected !== null && readSessionId(p) !== expected) return;
-          if (m.endsWith(".briefReady")) {
-            const b = readBrief(p);
-            if (b !== null) resolveBrief(b);
-          } else if (m.endsWith(".briefError")) {
-            rejectBrief(new Error("the agent reported an error"));
-          }
-        },
+        notify: handleNotification,
         ...(deps.configDir === undefined ? {} : { configDir: deps.configDir }),
         ...(deps.index === undefined ? {} : { index: deps.index }),
         ...(deps.selfIdentity === undefined ? {} : { selfIdentity: deps.selfIdentity }),
@@ -677,29 +739,36 @@ export function buildChatopsAgentInvoker(deps: ChatopsAgentInvokerDeps): Chatops
         caller: { clientId: "chatops", kind: "chatops" },
       });
       expected = out.kind === "hit" ? readSessionId(out.value) : null;
+      expectedKnown = true;
+      // Replay anything that arrived before `expected` was known, now correctly filtered.
+      for (const { method: m, params: p } of buffered.splice(0)) applyNotification(m, p);
+      return briefPromise;
+    })();
 
-      const markdown = await Promise.race([
-        briefPromise,
-        new Promise<never>((_, rej) => {
-          timer = setTimeout(() => rej(new Error("timed out")), timeoutMs);
-        }),
-      ]);
+    try {
+      const markdown = await Promise.race([work, deadline]);
       return { ok: true, markdown };
     } catch (e) {
       if (e instanceof AgentsRpcError) return { ok: false, detail: e.message };
       return { ok: false, detail: e instanceof Error ? e.message : String(e) };
     } finally {
+      settled = true;
       if (timer !== undefined) clearTimeout(timer);
     }
   };
 }
 ```
 
-> **Implementer note — a real ordering hazard.** `notify` can fire *before* `dispatchAgentsRpc`
-> returns, so `expected` may still be `null` when the first notification lands. The code above
-> therefore only filters once `expected` is set. If you find briefs being dropped, buffer the
-> notifications instead of filtering them; do **not** "fix" it by removing the session check, which
-> would let a concurrent run's brief resolve this one.
+> **Implementer note — a real ordering hazard, already buffered above, not just filtered.** `notify`
+> can fire *before* `dispatchAgentsRpc` returns, so the real session id may not be known yet when
+> the first notification lands. An earlier draft of this code only *filtered* once `expected` was
+> set — leaving the filter a no-op (since `expected !== null` was false) for anything that arrived
+> first, which a concurrent run's own `.briefReady` could reach before this one's dispatch call
+> returned. The code above buffers instead: `handleNotification` queues anything that arrives before
+> `expectedKnown` flips true, and `work` replays the queue through the real filter (`applyNotification`)
+> the instant the session id — or its absence, on a `miss` — is known. Do **not** "fix" a dropped
+> brief by removing the session check; that would still let a concurrent run's brief resolve this
+> one, just without the buffering delay to hide it.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -724,13 +793,26 @@ git commit -m "feat(chatops): invoke agents through dispatchAgentsRpc"
 
 **Interfaces:**
 
-- Consumes: `reservedBlocksFor`, `RESERVED_HEADINGS_BY_KIND` (`agents/_lib/reserved-sections.ts`); `stripSections`, `joinReserved` (`agents/_lib/markdown-sections.ts`).
+- Consumes: `reservedBlocksFor` (`agents/_lib/reserved-sections.ts`); `joinReserved`
+  (`agents/_lib/reserved-sections.ts`); `stripSections` (`agents/_lib/markdown-sections.ts`).
 - Produces: `truncateBrief(markdown: string, kind: string, maxBytes: number): string`. Task 8 consumes it.
 
 **Do not write a regex matching `^##` followed by a space.** I31's guarantee is expressed in terms of *these* functions —
 `normalizeSectionText`, the any-heading-level strip, the non-heading `Gaps:` form. A truncator with
 its own notion of "a section" disagrees with the invariant exactly at the boundary, and the
 disagreement shows up as a dropped disclosure on the one brief whose formatting differs.
+
+**The "drop whole body sections from the end" step (below) inherits the same rule.** `stripSections`
+is LEVEL-AGNOSTIC on purpose (F29, see its doc comment) — a reserved section is fabrication at
+`#`, `##` or `###` alike. The sections truncation drops for SPACE, not disclosure content, must use
+the SAME any-level heading boundary `markdown-sections.ts`'s `headingOf`/`headingLines` already
+define, not a hand-rolled `##`-only split: a body written with `#` or `###` headings (a model does
+not always match the renderer's own level-2 convention) would otherwise never be recognized as a
+droppable section at all, and could survive over `maxBytes` complete — the exact failure mode this
+task exists to prevent, just for ordinary content instead of a disclosure. `headingLines` is
+currently module-private; exporting it (or a thin `topLevelSections(markdown): { start: number; end:
+number }[]` built on it) from `markdown-sections.ts` is the one-scan-not-two way to get this — see
+that file's own header comment on why a second, independent heading scan is the wrong move here.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -753,6 +835,17 @@ test("a brief under the cap is returned byte-identical", () => {
   const brief = "# Why\n\n## Gaps\n\n- none\n";
   expect(truncateBrief(brief, "why", 10_000)).toBe(brief);
 });
+
+test("drops a droppable section regardless of its heading level (# and ### too, not only ##)", () => {
+  const brief =
+    `# Why\n\n# Promoted Section\n${"x".repeat(3000)}\n` +
+    `### Demoted Section\n${"y".repeat(3000)}\n` +
+    `## Gaps\n\n- none\n`;
+  const out = truncateBrief(brief, "why", 500);
+  expect(out).not.toContain("Promoted Section");
+  expect(out).not.toContain("Demoted Section");
+  expect(out).toContain("## Gaps"); // the disclosure survives regardless of what else was dropped
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -763,8 +856,9 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 Take the reserved blocks with `reservedBlocksFor`, strip them from the body with `stripSections`,
-drop whole `##` body sections from the **end** until the body plus the reserved blocks plus the
-notice fits `maxBytes`, then reassemble with `joinReserved`. Append
+drop whole body sections from the **end** — at ANY heading level, using the exported any-level
+heading scan rather than a `##`-only split (see the note above) — until the body plus the reserved
+blocks plus the notice fits `maxBytes`, then reassemble with `joinReserved`. Append
 ``_(truncated — N sections omitted; run `nimbus <agent>` locally for the full brief)_``.
 
 Key rule to encode: **the reserved blocks are never candidates for dropping.** If the reserved
@@ -1076,6 +1170,16 @@ test("THE GUARD IS NOT INERT: a realistic parse of the real file finds fields", 
   expect(Object.keys(parsed).length).toBeGreaterThanOrEqual(10);
   expect(parsed["requireExpertParams"]?.fields).toMatchObject({ topicOrFile: "string" });
 });
+
+test("an empty/near-empty parse degrades to indeterminate, never a flood of false drift", () => {
+  // Mirrors the codebase's existing indeterminate convention (`_gh-audit.ts`'s
+  // `classifyReadFailure`, `_release-train-core.ts`'s `EdgeVerdict`): a read/parse that came back
+  // suspiciously empty is a reason to distrust the CHECK, not a reason to report every declared
+  // field as missing. A future `agents-rpc.ts` reshape that this line-walker no longer recognizes
+  // must not manufacture a "your map drifted" finding for every one of the eleven agents at once.
+  const v = checkAgentParamKinds({});
+  expect(v).toEqual([{ rule: "indeterminate", detail: expect.stringContaining("0 validators") }]);
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1089,6 +1193,17 @@ Parse `agents-rpc.ts` by walking lines, tracking the current `function require<X
 collecting `typeof p.<field> !== "<kind>"` matches within it. Map validator name → agent via the
 handler map's `handle<X>` → `require<X>Params` correspondence; hard-code the three that do not
 follow it (`ghost`/`conflicts` both use `requireFileParam`, `why` uses `requireWhyParams`).
+
+**The indeterminate path.** Before comparing anything, `checkAgentParamKinds` counts the validators
+it was handed. Below a floor (10 — one less than the eleven permitted agents, since `ghost`/
+`conflicts` share one validator) it returns a single `{ rule: "indeterminate", detail: "… N
+validators …" }` finding instead of walking the comparison at all — a near-empty parse is a reason
+to distrust the PARSE (the file's shape moved past what this line-walker recognizes), not grounds to
+report every declared field as missing from every one of the eleven agents simultaneously. The CI
+gate (Step 6) must not fail the build on an `indeterminate` result the same way it fails on a real
+drift finding — print it as a warning and let the human investigate, mirroring how
+`_release-train-core.ts` treats a `verdict === "indeterminate"` edge as `::warning::`, not
+`::error::`.
 
 - [ ] **Step 4: RED-PROVE IT — do not skip this**
 
