@@ -513,9 +513,22 @@ function wrapperSpans(stmt: string): { open: number; close: number }[] {
       if (stmt[i] === "(") depth++;
       else if (stmt[i] === ")") depth--;
     }
-    // An unbalanced call (should not happen over valid TS) closes at end-of-statement rather than
-    // silently treating the rest of the file as "inside" it.
-    spans.push({ open, close: depth === 0 ? i - 1 : stmt.length });
+    // An UNBALANCED span grants NO containment — it is dropped, not extended to end-of-statement.
+    //
+    // This is the fail direction that matters. `stripStringLiterals` has a documented KNOWN
+    // LIMITATION (`lib.ts`): it is not regex-literal aware, so a `(` inside a regex body — `/[(]/`
+    // — survives stripping and inflates `depth`, which then never returns to 0. Closing the span
+    // at `stmt.length` (the previous behaviour) made every later raw `buildConnectorPost(` in that
+    // statement land INSIDE the span and be accepted as wrapped: a silent false NEGATIVE in the
+    // one guard whose entire job is to catch an unledgered post.
+    //
+    // Dropping the span inverts that into a loud false POSITIVE: a real raw call in such a
+    // statement is flagged, and so is a legitimately wrapped one. That is the correct trade for a
+    // security guard, and it needs no `/`-as-regex-vs-division lexer heuristics — which `lib.ts`
+    // deliberately declines to hand-roll, since three other passing audits depend on that helper.
+    if (depth === 0) {
+      spans.push({ open, close: i - 1 });
+    }
   }
   return spans;
 }

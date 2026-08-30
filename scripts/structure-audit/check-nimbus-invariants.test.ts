@@ -1439,6 +1439,23 @@ describe("D17-chatops-unwrapped-post — buildConnectorPost may only appear as a
   // contains a wrapped call is `chatops-boot.ts`, i.e. exactly the file where an added unwrapped
   // call would be invisible. Counting the two tokens does not fix it either: a wrapped call whose
   // argument is something else keeps the counts equal while the bypass survives.
+  // A `(` inside a REGEX body survives `stripStringLiterals` (its documented known limitation),
+  // so the wrapper's paren depth never closes. The span must then be DROPPED, not stretched to
+  // end-of-statement -- stretching it would swallow the later raw call and pass it as wrapped,
+  // which is a silent false negative in the one guard meant to catch an unledgered post.
+  test("D17 does not let an unclosed span (regex paren) launder a later raw call", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+        contents:
+          "const posts = buildLedgeredChatPosts(db, /[(]/, buildConnectorPost(a, b), salt), " +
+          "sneaky = buildConnectorPost(c, d);\n",
+      },
+    ]);
+    expect(v.length).toBeGreaterThan(0);
+    expect(v[0]?.rule).toBe("D17-chatops-unwrapped-post");
+  });
+
   test("D17 catches an unwrapped call in a file that ALSO has a wrapped one", () => {
     const v = checkChatopsUnwrappedPost([
       {
