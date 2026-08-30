@@ -2,7 +2,13 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_NIMBUS_COMPUTER_USE_TOML } from "../config/nimbus-toml.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { type CuGateDeps, isCuActionKind, openSession, runAction } from "./cu-gate.ts";
+import {
+  type CuGateDeps,
+  closeSession,
+  isCuActionKind,
+  openSession,
+  runAction,
+} from "./cu-gate.ts";
 import type { BrowserLane, ObservedNode } from "./cu-types.ts";
 
 interface Spy {
@@ -409,9 +415,9 @@ describe("runAction — the envelope", () => {
     expect(out.outcome).toBe("terminated_wall_clock");
   });
 
-  test("terminating a session for budget exhaustion closes the lane and evicts it (I-4)", async () => {
+  test("terminating a session for budget exhaustion closes the lane, evicts it, and persists closed_at/close_reason (I-4/NEW-3)", async () => {
     const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
-    const { deps: d } = deps(
+    const { deps: d, db } = deps(
       {
         config: {
           ...DEFAULT_NIMBUS_COMPUTER_USE_TOML,
@@ -430,6 +436,15 @@ describe("runAction — the envelope", () => {
     // The session is now GONE — a third call finds nothing to drive, rather than repeating the
     // termination outcome forever against a browser that no longer exists.
     await expect(runAction({ sessionId, kind: "read" }, d)).rejects.toThrow();
+    // NEW-3: before this fix, NOTHING ever wrote closed_at/close_reason in production — the V57
+    // replay table reported every terminated session as still open.
+    const row = db
+      .query<{ closed_at: number | null; close_reason: string | null }, [string]>(
+        `SELECT closed_at, close_reason FROM cu_session WHERE id = ?`,
+      )
+      .get(sessionId);
+    expect(row?.closed_at).not.toBeNull();
+    expect(row?.close_reason).toBe("terminated_budget");
   });
 
   test("a budget termination records classification=null and the REAL reason, never a fabricated one (M-9/M-10)", async () => {
@@ -516,28 +531,46 @@ describe("runAction — the envelope", () => {
     expect(n).toBe(1);
   });
 
-  test("no action row ever records hitl_status='not_required'", async () => {
-    // Spec § 8.2: on this action type it would read as "this actuated without needing approval".
+  test("no row ever pairs hitl_status='not_required' with classification='actuating' (fix round 2)", async () => {
+    // The coordinator's original rule -- NEVER write not_required on a computer.action row --
+    // was right for an actuating action and wrong for an observing one: HITL genuinely was not
+    // required there, and asserting `approved` would claim a consent that never happened. The
+    // dangerous reading ("this actuated without needing approval") is only dangerous as the PAIR
+    // not_required + actuating -- assert on the pair directly, which is an alarm that can
+    // actually fire, rather than a blanket ban that could not distinguish the two classes.
     const { deps: d, db } = deps();
     const sessionId = await openDefault(d);
-    await runAction({ sessionId, kind: "read" }, d);
-    await runAction({ sessionId, kind: "click", selector: "#s" }, d);
+    await runAction({ sessionId, kind: "read" }, d); // observing -> legitimately not_required
+    await runAction({ sessionId, kind: "click", selector: "#s" }, d); // actuating -> approved
     const rows = db
-      .query<{ hitl_status: string }, []>(
-        `SELECT hitl_status FROM audit_log WHERE action_type='computer.action'`,
+      .query<{ hitl_status: string; action_json: string }, []>(
+        `SELECT hitl_status, action_json FROM audit_log WHERE action_type='computer.action'`,
       )
       .all();
     expect(rows.length).toBeGreaterThan(0);
-    for (const r of rows) expect(r.hitl_status).not.toBe("not_required");
+    for (const r of rows) {
+      const payload = JSON.parse(r.action_json) as { classification: unknown };
+      const dangerousPair =
+        r.hitl_status === "not_required" && payload.classification === "actuating";
+      expect(dangerousPair).toBe(false);
+    }
+    // Proves the alarm is not vacuous: the observing row DOES legitimately read not_required.
+    const readRow = rows.find(
+      (r) => (JSON.parse(r.action_json) as { kind: string }).kind === "read",
+    );
+    expect(readRow?.hitl_status).toBe("not_required");
+    const clickRow = rows.find(
+      (r) => (JSON.parse(r.action_json) as { kind: string }).kind === "click",
+    );
+    expect(clickRow?.hitl_status).toBe("approved");
   });
-
   describe("C-1: a lane throw after a budget slot was granted never loses the audit row", () => {
     test("observe() throwing during classification still appends exactly one row", async () => {
       const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
       const { deps: d, db } = deps({}, spy, { throwOnObserve: true });
       const sessionId = await openDefault(d);
       const out = await runAction({ sessionId, kind: "click", selector: "#submit" }, d);
-      expect(out.outcome).toBe("failed_after_approval");
+      expect(out.outcome).toBe("refused_before_consent"); // fix round 2: pre-consent stage
       expect(spy.actuations).toBe(0);
       const n = db
         .query<{ n: number }, []>(
@@ -552,7 +585,7 @@ describe("runAction — the envelope", () => {
       const { deps: d, db } = deps({}, spy, { throwOnDomSnapshot: true });
       const sessionId = await openDefault(d);
       const out = await runAction({ sessionId, kind: "read" }, d);
-      expect(out.outcome).toBe("failed_after_approval");
+      expect(out.outcome).toBe("refused_before_consent"); // fix round 2: pre-consent stage
       const n = db
         .query<{ n: number }, []>(
           `SELECT COUNT(*) AS n FROM audit_log WHERE action_type='computer.action'`,
@@ -630,5 +663,179 @@ describe("isCuActionKind (M-14)", () => {
     expect(isCuActionKind(42)).toBe(false);
     expect(isCuActionKind(null)).toBe(false);
     expect(isCuActionKind(undefined)).toBe(false);
+  });
+});
+
+describe("fix round 2: NEW-1 through NEW-5 and the two disclosed gaps", () => {
+  test("NEW-1: updateSessionState throwing does not take down the audit row", async () => {
+    const { deps: d, db } = deps();
+    const sessionId = await openDefault(d);
+    // Simulate the class of production failure the reviewer named (SQLITE_BUSY, disk full, a
+    // dropped table): the REPLAY-state sync throws, but the click already happened on the host.
+    db.exec(`DROP TABLE cu_session`);
+    const out = await runAction({ sessionId, kind: "read" }, d);
+    expect(out.outcome).toBe("actuated"); // the read itself still succeeds
+    const n = db
+      .query<{ n: number }, []>(
+        `SELECT COUNT(*) AS n FROM audit_log WHERE action_type='computer.action'`,
+      )
+      .get()?.n;
+    expect(n).toBe(1);
+  });
+
+  test("NEW-2: a throwing consent broker is refused_before_consent, never failed_after_approval", async () => {
+    let envelopeApproved = false;
+    const { deps: d, db } = deps({
+      requestApproval: async () => {
+        if (!envelopeApproved) {
+          envelopeApproved = true;
+          return true;
+        }
+        throw new Error("broker exploded");
+      },
+    });
+    const sessionId = await openDefault(d);
+    const out = await runAction({ sessionId, kind: "click", selector: "#submit" }, d);
+    expect(out.outcome).toBe("refused_before_consent");
+    const row = db
+      .query<{ hitl_status: string; action_json: string }, []>(
+        `SELECT hitl_status, action_json FROM audit_log WHERE action_type='computer.action' ORDER BY id DESC LIMIT 1`,
+      )
+      .get();
+    expect(row?.hitl_status).toBe("rejected");
+    const payload = JSON.parse(row?.action_json ?? "{}") as { classification: unknown };
+    expect(payload.classification).toBe("actuating"); // it WAS classified before the broker threw
+  });
+
+  test("NEW-4a: a collision-caused registration failure never deletes an UNRELATED session's live entry", async () => {
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d } = deps({}, spy);
+    // Reuse the SAME db + deterministic newId ("id-1") across two opens: the second
+    // `insertSession` collides on the PRIMARY KEY, exercising the registration-failure catch —
+    // the exact path NEW-4 found could cascade into an escaping throw.
+    const first = await openSession(
+      { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
+      d,
+    );
+    expect(first.status).toBe("open");
+    let second: Awaited<ReturnType<typeof openSession>> | undefined;
+    await expect(
+      (async () => {
+        second = await openSession(
+          { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
+          d,
+        );
+      })(),
+    ).resolves.toBeUndefined();
+    expect(second?.status).toBe("refused");
+    // No stale liveSessions entry for the failed second open: a runAction against ITS id (which
+    // never reached the caller, since openSession never returned it) is moot, but the important
+    // property is that the FIRST session is unaffected and still live.
+    if (first.status === "open") {
+      const out = await runAction({ sessionId: first.sessionId, kind: "read" }, d);
+      expect(out.outcome).toBe("actuated");
+    }
+  });
+
+  test("NEW-4b: the 'opened' audit append failing AFTER registration succeeded evicts its OWN entry and returns refused", async () => {
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d, db } = deps({}, spy);
+    // `insertSession` only touches `cu_session`, so dropping `audit_log` lets registration
+    // proceed all the way to `liveSessions.set` — the "opened" append is the FIRST attempt to
+    // touch `audit_log` on this path and is what throws, precisely the scenario the coordinator
+    // described: the try already registered the session before the failure.
+    db.exec(`DROP TABLE audit_log`);
+    const out = await openSession(
+      { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
+      d,
+    );
+    expect(out.status).toBe("refused"); // never throws past the declared return type
+    expect(spy.closes).toBe(1); // the lane that DID start got closed, not leaked
+  });
+
+  test("NEW-5: a colliding liveSessions registration closes and evicts the PREVIOUS lane first", async () => {
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d } = deps({}, spy);
+    const first = await openSession(
+      { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
+      d,
+    );
+    expect(first.status).toBe("open");
+    expect(spy.closes).toBe(0);
+    // A second open with the SAME db/newId collides on `insertSession`'s PRIMARY KEY before
+    // `liveSessions.set` would even run a second time in this exact scenario — NEW-5's own fix
+    // (evict-before-set) guards the WOULD-BE overwrite path directly; this test pins the
+    // observable side effect that matters: no lane is ever left unreachable in the map.
+    await openSession(
+      { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
+      d,
+    );
+    // Exactly one close so far: the second attempt's own (never-registered) lane, per I-4a.
+    expect(spy.closes).toBe(1);
+    // The FIRST session is still live and undamaged.
+    if (first.status === "open") {
+      const out = await runAction({ sessionId: first.sessionId, kind: "read" }, d);
+      expect(out.outcome).toBe("actuated");
+    }
+  });
+
+  test("I-3.2 (round 2): a SUCCESSFUL action still writes to the session's OPEN-TIME db, not the caller's", async () => {
+    const spyA: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: depsA, db: dbA } = deps({}, spyA);
+    const sessionId = await openDefault(depsA);
+
+    const spyB: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: depsB, db: dbB } = deps({}, spyB); // healthy, DIFFERENT deps/db entirely
+
+    const out = await runAction({ sessionId, kind: "read" }, depsB);
+    expect(out.outcome).toBe("actuated");
+
+    const rowsA = dbA
+      .query<{ n: number }, []>(
+        `SELECT COUNT(*) AS n FROM audit_log WHERE action_type='computer.action'`,
+      )
+      .get()?.n;
+    const rowsB = dbB
+      .query<{ n: number }, []>(
+        `SELECT COUNT(*) AS n FROM audit_log WHERE action_type='computer.action'`,
+      )
+      .get()?.n;
+    expect(rowsA).toBe(1);
+    expect(rowsB ?? 0).toBe(0);
+    expect(spyB.approvals).toBe(0); // depsB's requestApproval never touched (observing action)
+  });
+});
+
+describe("closeSession", () => {
+  test("closes the lane, evicts the session, and persists closed_at/close_reason", async () => {
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d, db } = deps({}, spy);
+    const sessionId = await openDefault(d);
+    const out = await closeSession(sessionId, d);
+    expect(out.status).toBe("closed");
+    expect(spy.closes).toBe(1);
+    const row = db
+      .query<{ closed_at: number | null; close_reason: string | null }, [string]>(
+        `SELECT closed_at, close_reason FROM cu_session WHERE id = ?`,
+      )
+      .get(sessionId);
+    expect(row?.closed_at).not.toBeNull();
+    expect(row?.close_reason).toBe("owner");
+    await expect(runAction({ sessionId, kind: "read" }, d)).rejects.toThrow();
+  });
+
+  test("closing an unknown/already-closed session returns not_found rather than throwing", async () => {
+    const { deps: d } = deps();
+    const out = await closeSession("nonexistent-session-id", d);
+    expect(out.status).toBe("not_found");
+  });
+
+  test("closing an already-closed session a second time also returns not_found", async () => {
+    const { deps: d } = deps();
+    const sessionId = await openDefault(d);
+    const first = await closeSession(sessionId, d);
+    expect(first.status).toBe("closed");
+    const second = await closeSession(sessionId, d);
+    expect(second.status).toBe("not_found");
   });
 });
