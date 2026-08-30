@@ -58,6 +58,27 @@ export function reservedHeadingsFor(brief: SynthInput): readonly string[] {
 }
 
 /**
+ * Which reserved headings are held back for DISCLOSURE integrity (I31) — content the model must
+ * never be allowed to say less than the renderer promised — as opposed to `GLOSSARY_TERMS_HEADING`
+ * alone, which is held back for SYNTHESIS integrity: `## Terms` is the brief's own data (F31a),
+ * not a disclosure about the brief. That distinction matters to `chatops/brief-truncate.ts`
+ * (FIX 2, whole-branch review): when a chat-size cap cannot be met even with the entire ordinary
+ * body dropped, an honest partial `## Terms` table loses no disclosure and is the right thing to
+ * shrink FIRST — a `## Gaps`/`## Sources`/`## Evidence not available from the index` section is
+ * not, since THOSE are exactly what I31 exists to keep whole.
+ *
+ * A single membership set over the (four) known heading constants, not a per-kind table — every
+ * heading a brief could ever reserve is one of these four literals, so this cannot drift out of
+ * sync with `RESERVED_HEADINGS_BY_KIND` the way a hand-maintained parallel list keyed by kind
+ * could.
+ */
+export const DISCLOSURE_ONLY_HEADINGS: ReadonlySet<string> = new Set([
+  GAPS_HEADING,
+  NEGOTIATE_SOURCES_HEADING,
+  NEGOTIATE_EVIDENCE_HEADING,
+]);
+
+/**
  * The reserved blocks for this brief, built from the brief's own data by the SAME builders
  * the renderer uses — never recovered by scanning the rendered markdown.
  *

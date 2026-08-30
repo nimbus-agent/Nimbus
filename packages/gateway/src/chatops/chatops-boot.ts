@@ -40,11 +40,55 @@ import type { ChatMessage, ChatPlatform, ReplyTarget } from "./types.ts";
  * in the separate nimbus-mcp-servers repo and is not installed here, so neither platform's real
  * ceiling can be verified from this codebase). A multi-kilobyte wall of markdown in a shared
  * channel is already past readable regardless of what either platform would technically accept,
- * and bytes ≤ chars keeps the cap conservative rather than generous. `truncateBrief` never drops
- * a disclosure regardless of the cap chosen (I31) — this constant only trades off how much
- * ordinary body content survives before the "run `nimbus <kind>` locally" notice takes over.
+ * and bytes ≤ chars keeps the cap conservative rather than generous.
+ *
+ * FIX 2 (whole-branch review) corrected a claim this comment used to make: `truncateBrief` does
+ * NOT simply "never drop a disclosure regardless of the cap chosen". It still never drops a
+ * DISCLOSURE (I31's `## Gaps` and negotiate's two sections) — but this cap always binds. When
+ * even the disclosure-only reserved content alone cannot fit (rare, and rarer still now that the
+ * chat surface clamps `glossary`'s `limit`, see `CHATOPS_GLOSSARY_LIST_LIMIT_MAX` below), it is
+ * cut too, with an unambiguous "content was cut" notice — a truncated message is better than one
+ * the platform silently mangles server-side for exceeding its own limit. `## Terms`
+ * (`glossary` list mode's entry table) is shrunk FIRST, before any disclosure content is ever
+ * touched: it is reserved for SYNTHESIS integrity, not disclosure — see
+ * `agents/_lib/reserved-sections.ts`'s `DISCLOSURE_ONLY_HEADINGS`.
  */
 export const CHATOPS_AGENT_BRIEF_MAX_BYTES = 3_000;
+
+/**
+ * FIX 2 (whole-branch review): clamps `agent glossary limit=<n>` on the CHAT surface only, so
+ * `truncateBrief`'s forced-fit path above is reached rarely rather than routinely — glossary is
+ * the agent most likely to exceed `CHATOPS_AGENT_BRIEF_MAX_BYTES`, since in list mode `## Terms`
+ * (a reserved, undroppable-by-default section) IS the entire brief.
+ *
+ * Deliberately NOT a change to `ipc/agents-rpc.ts`'s `requireGlossaryParams`, which enforces only
+ * "a positive integer" and is shared with the IPC and HTTP surfaces — `nimbus glossary
+ * limit=5000` from the CLI, or the identical call over `POST /v1/agents/glossary`, is untouched;
+ * only a chat-issued command is clamped.
+ */
+export const CHATOPS_GLOSSARY_LIST_LIMIT_MAX = 20;
+
+/**
+ * Clamp `params.limit` down to `CHATOPS_GLOSSARY_LIST_LIMIT_MAX` for a chat-issued `agent
+ * glossary ...` command — only when it is otherwise well-formed (a finite integer above the
+ * clamp). Any other shape (missing, non-numeric, non-integer, negative) passes through
+ * unchanged so `requireGlossaryParams`'s own validation still produces the real error for it;
+ * this function's job is narrowing an over-large but valid request, not validating one.
+ */
+function clampGlossaryLimitForChat(agent: string, params: unknown): unknown {
+  if (agent !== "glossary") return params;
+  if (params === null || typeof params !== "object" || Array.isArray(params)) return params;
+  const p = params as Record<string, unknown>;
+  const limit = p["limit"];
+  if (
+    typeof limit !== "number" ||
+    !Number.isInteger(limit) ||
+    limit <= CHATOPS_GLOSSARY_LIST_LIMIT_MAX
+  ) {
+    return params;
+  }
+  return { ...p, limit: CHATOPS_GLOSSARY_LIST_LIMIT_MAX };
+}
 
 export interface ChatopsBootDeps {
   readonly cfg: NimbusChatopsToml;
@@ -109,9 +153,12 @@ export interface ChatopsBoot {
   /** Late-bind the engine read path (the engine agent is wired after assembly in index.ts). */
   bindAskEngine(fn: (query: string, namespace: string) => Promise<string>): void;
   /**
-   * Late-bind the `agents.*` invoker (`buildChatopsAgentInvoker`), mirroring `bindAskEngine`:
-   * `ChatopsBootDeps` does not carry the `LocalIndex`/`configDir`/`selfIdentity`/`SynthesisRouter`
-   * deps that invoker needs, so `gateway-main.ts` wires it after assembly, next to `bindAskEngine`.
+   * Late-bind the `agents.*` invoker (`buildChatopsAgentInvoker`): `ChatopsBootDeps` does not
+   * carry the `LocalIndex`/`configDir`/`selfIdentity`/`SynthesisRouter` deps that invoker needs,
+   * so `platform/assemble.ts`'s `bootChatopsAgentInvoker` wires it right after this boot
+   * function returns — inside `assemblePlatformServices`, not (as it used to be) after it, in
+   * `gateway-main.ts`. That move is FIX 1 of the whole-branch review: the old post-assembly call
+   * site had no federation-identity field to read at all, so `selfIdentity` was always omitted.
    * Unbound, `runAgent` falls back to a fail-closed stub (same shape as the pre-bind `askEngine`).
    */
   bindAgentInvoker(fn: ChatopsAgentInvoker): void;
@@ -352,7 +399,9 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
       // set, and every agent here is read-only by construction (nimbus-agent-patterns).
       permittedAgents: new Set(EXTERNAL_AGENT_NAMES),
       runAgent: async (agent, params) => {
-        const result = await agentInvoker(agent, params);
+        // FIX 2: clamp glossary's `limit` before dispatch, so the forced-fit path in
+        // `truncateBrief` below is the rare case, not the routine one.
+        const result = await agentInvoker(agent, clampGlossaryLimitForChat(agent, params));
         if (!result.ok) return result;
         // Truncation to a platform byte cap is boot wiring's job (Task 9), not the router's or
         // the invoker's — see `IntentRouterDeps.runAgent`'s doc comment.

@@ -24,6 +24,7 @@ import { ApprovalPresenter } from "./approval-presenter.ts";
 import {
   buildChatopsBoot,
   CHATOPS_AGENT_BRIEF_MAX_BYTES,
+  CHATOPS_GLOSSARY_LIST_LIMIT_MAX,
   type ChatopsBootDeps,
 } from "./chatops-boot.ts";
 import { runWithChatopsApprovalContext } from "./chatops-request-context.ts";
@@ -499,5 +500,36 @@ describe("ChatOps end-to-end: real buildChatopsBoot wires an agent command throu
       CHATOPS_AGENT_BRIEF_MAX_BYTES + 200,
     );
     expect(text).toContain("truncated");
+  });
+
+  // FIX 2 (whole-branch review): the chat surface clamps an over-large `limit` BEFORE dispatch,
+  // through the real `buildChatopsBoot` → `routerFor` → `IntentRouter` → `runAgent` path — the
+  // same seam the truncation test above proves, for the other half of FIX 2.
+  test("FIX 2: agent glossary limit=<huge> is clamped to CHATOPS_GLOSSARY_LIST_LIMIT_MAX before the invoker ever sees it", async () => {
+    const boot = await bootForTest({ db });
+    let capturedParams: unknown;
+    boot.bindAgentInvoker((_agent, params) => {
+      capturedParams = params;
+      return Promise.resolve({ ok: true, markdown: "# Glossary\n\n## Gaps\n\n- none\n" });
+    });
+
+    await deliverMessage(boot, "@nimbus agent glossary limit=5000");
+    await boot.service.stop();
+
+    expect(capturedParams).toMatchObject({ limit: CHATOPS_GLOSSARY_LIST_LIMIT_MAX });
+  });
+
+  test("FIX 2: agent glossary limit=<small> is passed through unchanged — the clamp only narrows, never widens", async () => {
+    const boot = await bootForTest({ db });
+    let capturedParams: unknown;
+    boot.bindAgentInvoker((_agent, params) => {
+      capturedParams = params;
+      return Promise.resolve({ ok: true, markdown: "# Glossary\n\n## Gaps\n\n- none\n" });
+    });
+
+    await deliverMessage(boot, "@nimbus agent glossary limit=3");
+    await boot.service.stop();
+
+    expect(capturedParams).toMatchObject({ limit: 3 });
   });
 });

@@ -62,14 +62,64 @@ describe("truncateBrief", () => {
     expect(out).toContain("## Gaps");
   });
 
-  test("reserved blocks alone over the cap still come back whole, with a notice, never half-printed", () => {
+  // FIX 2 (whole-branch review) overturns the old spec here on purpose: the cap must always bind,
+  // even across the reserved blocks alone. A stated, honest cut is the required outcome now, not
+  // an accepted overflow.
+  test("FIX 2: the cap always binds, even when it means cutting a disclosure itself as the absolute last resort", () => {
     const bigGap = `- ${"detail ".repeat(200).trim()}`;
     const brief = `# Why\n\n## Findings\nsmall\n\n## Gaps\n\n${bigGap}\n`;
     const out = truncateBrief(brief, "why", 50);
+    // The cap always binds now — never a silent multi-hundred-byte overflow.
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(50);
+    expect(out).not.toContain("Findings");
+    expect(out).toContain("content was cut");
+  });
+
+  test("FIX 2: the forced-fit path is reached only when dropping the ordinary body isn't enough — otherwise the old 'sections omitted' wording still applies", () => {
+    // A moderate `## Gaps` — comfortably under `maxBytes` on its own — plus a huge `## Findings`
+    // body: dropping Findings alone is enough, so this should resolve in the MAIN body-dropping
+    // loop and never reach `assembleReservedForcedFit` at all.
+    const bigGap = `- ${"detail ".repeat(200).trim()}`;
+    const brief = `# Why\n\n## Findings\n${"x".repeat(5000)}\n\n## Gaps\n\n${bigGap}\n`;
+    const out = truncateBrief(brief, "why", 2000);
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(2000);
     expect(out).toContain("## Gaps");
     expect(out).toContain(bigGap);
     expect(out).not.toContain("Findings");
-    expect(out).toContain("truncated");
+    expect(out).toContain("sections omitted");
+    expect(out).not.toContain("content was cut");
+  });
+
+  test("FIX 2: glossary's ## Terms table is shrunk with an honest count BEFORE any disclosure is touched", () => {
+    const entries = Array.from(
+      { length: 20 },
+      (_, i) =>
+        `- **term${String(i)}** — ${String(i)} mention(s), score 0.90\n  - definition for term ${String(i)}`,
+    ).join("\n");
+    const terms =
+      "## Terms\n\n_Ranked by relevance score, authored definitions first — not by mention count._\n\n" +
+      entries;
+    const brief = `# Glossary\n\n${terms}\n\n## Gaps\n\n- none\n`;
+    const out = truncateBrief(brief, "glossary", 500);
+
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(500);
+    // The disclosure survives WHOLE — nothing was cut from it, since shrinking `## Terms` alone
+    // was enough.
+    expect(out).toContain("## Gaps");
+    expect(out).toContain("- none");
+    expect(out).toContain("## Terms");
+    expect(out).toMatch(/showing \d+ of 20 terms/);
+    expect(out).toContain("content was cut");
+    // Fewer than all 20 entries survived — the whole point of shrinking at all.
+    expect(out).not.toContain("term19");
+  });
+
+  test("FIX 2: an unreasonably tiny cap still returns SOMETHING that says content was cut, never empty or silently truncated mid-word", () => {
+    const bigGap = `- ${"detail ".repeat(500).trim()}`;
+    const brief = `# Why\n\n## Gaps\n\n${bigGap}\n`;
+    const out = truncateBrief(brief, "why", 20);
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(20);
+    expect(out.length).toBeGreaterThan(0);
   });
 
   test("a brief with no reserved section content at all still truncates the body", () => {
