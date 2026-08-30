@@ -6,14 +6,6 @@ export { normalizeChatText } from "./normalize-chat-text.ts";
 
 const KV_RE = /^([A-Za-z][\w.-]*)=(.+)$/;
 
-// `parseAgentCommand`'s own refusal text is the only signal available here — it never returns a
-// structured reason code, by design (see its doc comment: `agents-rpc.ts` owns validation and its
-// `-32602` text is the message the user should see). This substring match is therefore keyed to the
-// ONE detail string `parseAgentCommand` emits for an unknown/unavailable agent name; every other
-// refusal from it (missing agent name, bad `k=v` syntax, unknown param, bad param value) is a
-// malformed-command shape, not an unknown-agent shape, hence `bad_agent_params`.
-const UNKNOWN_AGENT_RE = /^Unknown or unavailable agent /;
-
 export function parseCommand(
   rawText: string,
   knownActions: ReadonlySet<string>,
@@ -32,11 +24,7 @@ export function parseCommand(
     if (agentCmd.ok) {
       return { kind: "agent", agent: agentCmd.agent, params: agentCmd.params };
     }
-    return {
-      kind: "refused",
-      reason: UNKNOWN_AGENT_RE.test(agentCmd.detail) ? "unknown_agent" : "bad_agent_params",
-      detail: agentCmd.detail,
-    };
+    return { kind: "refused", reason: agentCmd.reason, detail: agentCmd.detail };
   }
 
   if (!/^run(\s|$)/i.test(text)) {

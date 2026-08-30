@@ -3,7 +3,11 @@ import { AGENT_PARAM_KINDS, type ParamKind } from "../ipc/agent-param-kinds.ts";
 
 export type AgentCommand =
   | { readonly ok: true; readonly agent: string; readonly params: Record<string, unknown> }
-  | { readonly ok: false; readonly detail: string };
+  | {
+      readonly ok: false;
+      readonly reason: "unknown_agent" | "bad_agent_params";
+      readonly detail: string;
+    };
 
 const KV_RE = /^([A-Za-z][\w.-]*)=(.+)$/;
 
@@ -48,9 +52,12 @@ function isError(v: unknown): v is { error: string } {
  * `ownership`'s `path` and `service` are mutually exclusive — `agents-rpc.ts` owns all of that and
  * its own `-32602` text is what the user should see, because it is the real message rather than a
  * mirrored one. Surface-neutral by design: its only import beyond the param-kinds map is the
- * neutral `normalizeChatText` — never `chatops/command-parser.ts` itself, which would cycle back
- * here once `command-parser.ts` imports `parseAgentCommand` (Task 7) — so a CLI or browser text
- * surface can reuse it unchanged.
+ * neutral `normalizeChatText` — never `chatops/command-parser.ts` itself, which imports
+ * `parseAgentCommand` (not the reverse) — so a CLI or browser text surface can reuse it unchanged.
+ *
+ * A refusal carries a structured `reason` alongside its human-readable `detail` precisely so a
+ * caller like `command-parser.ts` never has to regex-match the prose to recover why the parse
+ * failed — `detail` is for the user, `reason` is for the caller.
  */
 export function parseAgentCommand(
   rawText: string,
@@ -64,21 +71,32 @@ export function parseAgentCommand(
     .slice(1)
     .filter((t) => t.length > 0);
   const agent = tokens.shift();
-  if (agent === undefined) return { ok: false, detail: "`agent` needs an agent name." };
+  if (agent === undefined)
+    return { ok: false, reason: "bad_agent_params", detail: "`agent` needs an agent name." };
   if (!permitted.has(agent))
-    return { ok: false, detail: `Unknown or unavailable agent '${agent}'.` };
+    return {
+      ok: false,
+      reason: "unknown_agent",
+      detail: `Unknown or unavailable agent '${agent}'.`,
+    };
 
   const kinds = AGENT_PARAM_KINDS[agent] ?? {};
   const params: Record<string, unknown> = {};
   for (const t of tokens) {
     const m = KV_RE.exec(t);
-    if (m === null) return { ok: false, detail: `Bad argument '${t}' (use k=v).` };
+    if (m === null)
+      return { ok: false, reason: "bad_agent_params", detail: `Bad argument '${t}' (use k=v).` };
     const field = m[1] as string;
     const value = (m[2] as string).replace(/^"(.*)"$/, "$1");
     const kind = kinds[field];
-    if (kind === undefined) return { ok: false, detail: `'${agent}' has no parameter '${field}'.` };
+    if (kind === undefined)
+      return {
+        ok: false,
+        reason: "bad_agent_params",
+        detail: `'${agent}' has no parameter '${field}'.`,
+      };
     const coerced = coerce(value, kind, field);
-    if (isError(coerced)) return { ok: false, detail: coerced.error };
+    if (isError(coerced)) return { ok: false, reason: "bad_agent_params", detail: coerced.error };
     params[field] = coerced;
   }
   return { ok: true, agent, params };

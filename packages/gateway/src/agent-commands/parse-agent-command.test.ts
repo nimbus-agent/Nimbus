@@ -27,7 +27,11 @@ describe("parseAgentCommand", () => {
 
   test("REJECTS a non-finite number — minConfidence would otherwise pass its validator", () => {
     const r = parseAgentCommand("agent decisions minConfidence=high", PERMITTED);
-    expect(r).toEqual({ ok: false, detail: expect.stringContaining("minConfidence") });
+    expect(r).toEqual({
+      ok: false,
+      reason: "bad_agent_params",
+      detail: expect.stringContaining("minConfidence"),
+    });
   });
 
   test("rejects Infinity too, not just NaN", () => {
@@ -39,8 +43,23 @@ describe("parseAgentCommand", () => {
   test("refuses an agent outside the permitted set", () => {
     expect(parseAgentCommand("agent premortem epic=X", PERMITTED)).toEqual({
       ok: false,
+      reason: "unknown_agent",
       detail: expect.stringContaining("premortem"),
     });
+  });
+
+  test("structurally pins reason: unknown_agent for an unpermitted agent name", () => {
+    // Asserts the field directly rather than through the `Unknown or unavailable agent ` prose —
+    // `command-parser.ts` used to regex-match that string; `reason` is what it reads now.
+    const r = parseAgentCommand("agent nope", PERMITTED);
+    expect(r?.ok).toBe(false);
+    if (r !== null && !r.ok) expect(r.reason).toBe("unknown_agent");
+  });
+
+  test("structurally pins reason: bad_agent_params for a malformed-params refusal", () => {
+    const r = parseAgentCommand("agent why not-kv", PERMITTED);
+    expect(r?.ok).toBe(false);
+    if (r !== null && !r.ok) expect(r.reason).toBe("bad_agent_params");
   });
 
   test("refuses an undeclared param rather than passing it through", () => {
@@ -78,6 +97,7 @@ describe("parseAgentCommand", () => {
     // this is the one place a typo like 'yes' is reported to the user at all.
     expect(parseAgentCommand("agent decisions explain=yes", PERMITTED)).toEqual({
       ok: false,
+      reason: "bad_agent_params",
       detail: expect.stringContaining("explain"),
     });
   });
@@ -95,6 +115,7 @@ describe("parseAgentCommand", () => {
   test("refuses a bare token that isn't k=v shaped", () => {
     expect(parseAgentCommand("agent why ref=a.ts justtext", PERMITTED)).toEqual({
       ok: false,
+      reason: "bad_agent_params",
       detail: expect.stringContaining("Bad argument"),
     });
   });
