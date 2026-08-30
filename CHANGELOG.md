@@ -2,6 +2,21 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.2.0](https://github.com/nimbus-agent/Nimbus/compare/v7.1.2...v7.2.0) (2026-08-30)
+
+
+### Features
+
+* **doctor:** report embedding runtime state ([#1397](https://github.com/nimbus-agent/Nimbus/issues/1397)) ([9b3ed09](https://github.com/nimbus-agent/Nimbus/commit/9b3ed09d5e2f5677d812715234d8821b5de9eda2))
+* **egress:** ledger every outbound ChatOps post ([#1403](https://github.com/nimbus-agent/Nimbus/issues/1403)) ([fcef76f](https://github.com/nimbus-agent/Nimbus/commit/fcef76f46e0e6a07f6028e91fb3ba2e6d6c1953e))
+
+
+### Bug Fixes
+
+* **embedding:** embed the onnx addon so the compiled binary can load it ([#1402](https://github.com/nimbus-agent/Nimbus/issues/1402)) ([7ca8379](https://github.com/nimbus-agent/Nimbus/commit/7ca83798c1c2d40e91ab6839e5c94cf54646a88d))
+* **embedding:** embed the onnxruntime runtime library, not just the addon ([#1405](https://github.com/nimbus-agent/Nimbus/issues/1405)) ([7d38e79](https://github.com/nimbus-agent/Nimbus/commit/7d38e79f5bdcf68b9a58763cc7267ab34f1843b5))
+* **embedding:** ship the onnx binding and stub sharp so the worker can start ([#1399](https://github.com/nimbus-agent/Nimbus/issues/1399)) ([2356e6a](https://github.com/nimbus-agent/Nimbus/commit/2356e6a7e4d25aab4baf954ce8a2e1d17df604f6))
+
 ## [7.1.2](https://github.com/nimbus-agent/Nimbus/compare/v7.1.1...v7.1.2) (2026-08-29)
 
 
