@@ -27,6 +27,7 @@ import {
 } from "../chatops/chatops-tool-runner-e2e-sink.ts";
 import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
 import { PairingWindowController } from "../clips/pairing-window.ts";
+import { cuActionConsent, cuEnvelopeConsent } from "../computer-use/cu-consent-broker.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   type ConnectorsConfig,
@@ -36,6 +37,7 @@ import {
   loadNimbusBriefsFromPath,
   loadNimbusChatopsFromConfigDir,
   loadNimbusCodeExecutionFromConfigDir,
+  loadNimbusComputerUseFromConfigDir,
   loadNimbusConnectorsFromConfigDir,
   loadNimbusDecisionsFromConfigDir,
   loadNimbusEmbeddingFromPath,
@@ -3219,6 +3221,52 @@ export async function assemblePlatformServices(
     },
   };
 
+  // I35 (S2 slice 2): the computer-use surface. DEFAULT OFF — `enabled` and `allowed_lanes` are
+  // read from `[computer_use]`, and the gate refuses before consent when either is empty, so wiring
+  // the ctx unconditionally enables nothing. The org-policy half is read LAZILY through
+  // `policyGate.enforced()` rather than snapshotted, so a policy installed after boot tightens the
+  // next session rather than the next restart.
+  //
+  // `resolveBrowserPath`/`openLane` are `CuGateDeps` seams the browser driver owns. That driver
+  // does NOT exist yet — its library failed a compile gate and is being re-planned against raw
+  // CDP — so these are wired honestly rather than stubbed to look functional: resolving no browser
+  // makes the gate refuse BEFORE consent with `ERR_CU_NO_BROWSER` (fail-closed), and `openLane`
+  // is consequently unreachable in production until the driver task lands.
+  const computerUseCfg = loadNimbusComputerUseFromConfigDir(paths.configDir);
+  ipcOpts.computerRpcCtx = {
+    envelopeConsent: cuEnvelopeConsent,
+    actionConsent: cuActionConsent,
+    gateDeps: {
+      config: computerUseCfg,
+      get enforced() {
+        return policyGate.enforced();
+      },
+      runner: sandboxRunner,
+      db,
+      now: () => Date.now(),
+      newId: () => randomUUID(),
+      resolveBrowserPath: () => null,
+      openLane: () => {
+        throw new Error(
+          "computer-use browser lane not implemented — owned by the re-planned CDP driver task",
+        );
+      },
+      // `CuGateDeps.requestApproval` takes the UNION of the two approval-input shapes (Task 10's
+      // own signature); routed to the matching broker by the one field that tells them apart —
+      // `seq`, present only on a per-ACTION approval, never on an envelope-open approval.
+      requestApproval: (input) =>
+        "seq" in input
+          ? cuActionConsent.request(
+              input,
+              (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000,
+            )
+          : cuEnvelopeConsent.request(
+              input,
+              (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000,
+            ),
+    },
+  };
+
   const shareHttpSink = loadNimbusShareHttpSink(paths.configDir);
   ipcOpts.shareRpcCtx = {
     db,
@@ -3302,6 +3350,16 @@ export async function assemblePlatformServices(
   // times out and the capability silently never works (fail-closed, but indistinguishable from a
   // bug). The gate is still fail-closed either way: no answer means no spawn.
   execConsent.setBroadcast((method, params) => ipc.broadcast(method, asBroadcastParams(params)));
+
+  // I35 (S2 slice 2): the computer-use approval prompts (session-open envelope + per-action) reach
+  // the local owner via the same broadcast channel; they answer through computer.approvalRespond.
+  // UNCONDITIONAL for the same reason as share/exec above.
+  cuEnvelopeConsent.setBroadcast((method, params) =>
+    ipc.broadcast(method, asBroadcastParams(params)),
+  );
+  cuActionConsent.setBroadcast((method, params) =>
+    ipc.broadcast(method, asBroadcastParams(params)),
+  );
 
   if (federationBooted) {
     federationConsent.setBroadcast((method, params) =>

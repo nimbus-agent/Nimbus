@@ -30,6 +30,11 @@ const FORBIDDEN_OVER_LAN = new Set([
   // on the owner's machine, defeating the entire I33 gate. There are no read verbs here to
   // preserve, so the namespace forbid costs nothing.
   "exec",
+  // S2 slice 2 — computer-use: the WHOLE namespace, matching exec. `computer.act` drives the
+  // owner's browser, and `computer.approvalRespond` is the LOCAL owner answering an actuation
+  // prompt — admitting it would let a paired peer approve actions on the owner's machine,
+  // defeating the entire I35 gate. There are no read verbs here worth preserving.
+  "computer",
   "audit", // exfiltration-class namespace
   "data", // exfiltration-class namespace
   "security", // exfiltration-class — credential locations must not leak to LAN peers

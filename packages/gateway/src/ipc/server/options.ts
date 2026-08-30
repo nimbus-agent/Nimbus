@@ -30,6 +30,7 @@ import type { VoiceService } from "../../voice/service.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
+import type { ComputerRpcCtx } from "../computer-rpc.ts";
 import type { EgressRpcCtx } from "../egress-rpc.ts";
 import type { ExecRpcCtx } from "../exec-rpc.ts";
 import type { BoxKeypair } from "../lan-crypto.ts";
@@ -143,6 +144,11 @@ export type CreateIpcServerOptions = {
   // only when assembled at boot; the dispatcher skips cleanly when unset. exec.run is RCE-class:
   // NOT Tauri-exposed (I7), and LAN-forbidden (I5).
   execRpcCtx?: ExecRpcCtx;
+  // Computer-use browser lane (I35). computer.act gates through the two owner consent brokers
+  // (envelope open + per-action) inside `openSession`/`runAction`; computer.approvalRespond is the
+  // owner's answer channel. Present only when assembled at boot; the dispatcher skips cleanly when
+  // unset. The whole namespace is RCE-class: NOT Tauri-exposed (I7), and LAN-forbidden (I5).
+  computerRpcCtx?: ComputerRpcCtx;
   // Egress Ledger. The dependency seam behind the egress.* IPC namespace (list, verify, head,
   // proveWindow, prune). egress.prune gates through requestPruneApproval (owner HITL, I2, fail-closed).
   // Present only when assembled at boot; the dispatcher skips cleanly when unset. egress.prune is

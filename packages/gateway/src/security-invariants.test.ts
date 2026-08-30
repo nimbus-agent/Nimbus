@@ -332,6 +332,18 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(() => checkLanMethodAllowed("exec.anythingAddedLater", peer)).toThrow();
   });
 
+  test("FORBIDDEN_OVER_LAN blocks the whole computer namespace (S2 slice 2 / I35)", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // computer.act drives the owner's machine. computer.approvalRespond matters just as much:
+    // admitting it would let a paired peer APPROVE an actuation on the owner's machine, defeating
+    // the I35 gate without ever calling computer.act over the wire.
+    expect(() => checkLanMethodAllowed("computer.act", peer)).toThrow();
+    expect(() => checkLanMethodAllowed("computer.approvalRespond", peer)).toThrow();
+    // Namespace-level, so a future computer.* verb is forbidden by default rather than by memory.
+    expect(() => checkLanMethodAllowed("computer.anythingAddedLater", peer)).toThrow();
+  });
+
   test("FORBIDDEN_OVER_LAN blocks filesystem.ensureRoot (Stage 2a)", async () => {
     const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
     const peer = { peerId: "peer:x", writeAllowed: true };

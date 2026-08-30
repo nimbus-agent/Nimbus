@@ -22,6 +22,7 @@ import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
 import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { dispatchClipRpc } from "../clip-rpc.ts";
+import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DecisionsRpcError, dispatchDecisionsRpc } from "../decisions-rpc.ts";
@@ -992,6 +993,31 @@ export async function tryDispatchExecRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * Computer-use browser lane (Spine S2 slice 2, invariant I35). Same 3-arg shape as exec: the
+ * HITL here is the two broadcast consent brokers (envelope-open + per-action) answered by the
+ * local owner, not a per-client `ToolExecutor` channel. Present only when assembled at boot, so
+ * the dispatcher skips cleanly when the capability is not wired. The whole namespace is RCE-class
+ * and is NOT Tauri-exposed (I7).
+ */
+export async function tryDispatchComputerRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("computer.")) return phase4RpcSkipped;
+  const rpc = ctx.options.computerRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchComputerRpc(method, params, rpc);
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof ComputerRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchShareRpc(
   ctx: ServerCtx,
   method: string,
@@ -1263,6 +1289,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchTribalRpc,
   tryDispatchShareRpc,
   tryDispatchExecRpc,
+  tryDispatchComputerRpc,
   tryDispatchEgressRpc,
   tryDispatchGlossaryRpc,
   tryDispatchDecisionsRpc,
