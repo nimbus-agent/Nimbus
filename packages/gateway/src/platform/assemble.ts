@@ -5,6 +5,10 @@ import os from "node:os";
 import { join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { Logger } from "pino";
+import {
+  buildChatopsAgentInvoker,
+  type ChatopsAgentInvoker,
+} from "../agent-runs/agent-chatops-invoke.ts";
 import { type AgentHttpInvoker, buildAgentHttpInvoker } from "../agent-runs/agent-http-invoke.ts";
 import { AgentRunController } from "../agent-runs/agent-run-store.ts";
 import type { SynthesisRouter } from "../agents/_lib/synthesis-llm.ts";
@@ -2542,6 +2546,50 @@ function bootAgentsIntoHttpSidecar(deps: {
 }
 
 /**
+ * Bind the ChatOps agent-intent invoker (`@nimbus agent <name> k=v ...`) onto a booted ChatOps
+ * graph. Mirrors `bootAgentsIntoHttpSidecar` immediately above it — same db/index/configDir/
+ * llmRouter/selfIdentity shape — because both build a `buildChatopsAgentInvoker`/
+ * `buildAgentHttpInvoker` deps object from the exact same boot-time collaborators.
+ *
+ * FIX 1 (whole-branch review): this used to be wired in `gateway-main.ts`, AFTER
+ * `assemblePlatformServices` had already returned — a point at which `PlatformServices` carries
+ * no federation-identity field at all, so that call site structurally could not supply
+ * `selfIdentity` and always bound the invoker without one. `ipc/agents-rpc.ts`'s
+ * `federatedAgentBase` falls back to `ZERO_IDENTITY` in that case, so all four
+ * `federatedAgentBase` callers reachable from chat (`ghost`, `conflicts`, `huddle`, `janitor`)
+ * fanned out to peers with a zero keypair and failed every peer call. Binding here instead —
+ * inside `assemblePlatformServices`, right after `chatopsBoot` exists and AFTER
+ * `bootFederationIntoIpcOpts` has populated `ipcOpts.federationIdentity` — gives the invoker the
+ * same real identity the HTTP agent invoker already gets.
+ *
+ * `buildInvoker` is DI (defaults to the real `buildChatopsAgentInvoker`) purely so a test can
+ * capture the deps this function assembles without a full federated dispatch or `mock.module`.
+ */
+export function bootChatopsAgentInvoker(deps: {
+  // `Pick`, not the full `ChatopsBoot` — this function only ever calls `bindAgentInvoker`, and the
+  // narrower type lets a test supply a minimal fake rather than a full `ChatopsBoot` double.
+  chatopsBoot: Pick<ChatopsBoot, "bindAgentInvoker"> | undefined;
+  db: Database;
+  localIndex: LocalIndex;
+  configDir: string;
+  selfIdentity: Parameters<typeof createIpcServer>[0]["federationIdentity"];
+  llmRouter: SynthesisRouter | undefined;
+  buildInvoker?: (deps: Parameters<typeof buildChatopsAgentInvoker>[0]) => ChatopsAgentInvoker;
+}): void {
+  if (deps.chatopsBoot === undefined) return;
+  const build = deps.buildInvoker ?? buildChatopsAgentInvoker;
+  deps.chatopsBoot.bindAgentInvoker(
+    build({
+      db: deps.db,
+      index: deps.localIndex,
+      configDir: deps.configDir,
+      router: deps.llmRouter,
+      ...(deps.selfIdentity === undefined ? {} : { selfIdentity: deps.selfIdentity }),
+    }),
+  );
+}
+
+/**
  * `POST /v1/items/fetch`'s one `http:` exception source (Task 11): the literal `URL.origin` of a
  * service's own self-hosted origin secret — but ONLY when that origin is itself `http:`.
  *
@@ -3144,6 +3192,22 @@ export async function assemblePlatformServices(
     httpSidecarOpts,
     sidecarStops,
     tribalSendHolder,
+  });
+
+  // ChatOps agent-intent path (Task 9 / FIX 1): `@nimbus agent <name> k=v ...` runs a real
+  // built-in agent through `dispatchAgentsRpc`. Bound HERE rather than post-boot in
+  // `gateway-main.ts` so it can carry the real `federationIdentity` — see
+  // `bootChatopsAgentInvoker`'s doc comment above for why the old call site could not.
+  bootChatopsAgentInvoker({
+    chatopsBoot,
+    db,
+    localIndex,
+    configDir: paths.configDir,
+    // The fix: `ipcOpts.federationIdentity` is populated by `bootFederationIntoIpcOpts` above
+    // (undefined when `[federation]` is disabled — `federatedAgentBase` falls back to
+    // `ZERO_IDENTITY` in that case, same as the HTTP invoker).
+    selfIdentity: ipcOpts.federationIdentity,
+    llmRouter: llmRegistry.llmRouter,
   });
 
   // Observability snapshot (Task 15). Cheap, synchronous readers assembled here where every

@@ -1,7 +1,6 @@
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 
-import { buildChatopsAgentInvoker } from "./agent-runs/agent-chatops-invoke.ts";
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { createConnectorDispatcher, type McpToolListingClient } from "./connectors/index.ts";
@@ -193,19 +192,13 @@ export async function main(): Promise<void> {
 
   // ChatOps agent-intent path (Task 9): `@nimbus agent <name> k=v ...` runs a real built-in agent
   // through `dispatchAgentsRpc` and posts the (truncated) brief via `posts.agentBrief` — the I29
-  // `chatops` class's appender, ledgered `method='chatops.agentBrief'`. Late-bound for the same
-  // reason as `bindAskEngine` above: `ChatopsBootDeps` does not carry the LocalIndex/configDir/
-  // SynthesisRouter deps `buildChatopsAgentInvoker` needs.
-  platform.chatops?.bindAgentInvoker(
-    buildChatopsAgentInvoker({
-      // NOT `platform.db` — `PlatformServices` has no such field; reached through the index, same
-      // as `askEgressSink`/`auditDb`/`egressDb` above.
-      db: platform.localIndex.getDatabase(),
-      index: platform.localIndex,
-      configDir: platform.paths.configDir,
-      router: platform.llmRegistry.llmRouter,
-    }),
-  );
+  // `chatops` class's appender, ledgered `method='chatops.agentBrief'`. FIX 1 (whole-branch
+  // review): this used to be bound HERE, after `assemblePlatformServices` had already returned —
+  // a point with no federation-identity field to read at all — so `selfIdentity` was always
+  // omitted and every peer-fanning chat agent (`ghost`/`conflicts`/`huddle`/`janitor`) ran with a
+  // zero keypair. It is now bound inside `assemblePlatformServices` itself
+  // (`platform/assemble.ts`'s `bootChatopsAgentInvoker`), right after `ipcOpts.federationIdentity`
+  // is populated, so nothing is left to do here.
 
   platform.ipc.setWorkflowRunHandler(async (ctx) => {
     // `runWorkflowExecution` genuinely REQUIRES an agent — unlike `runAsk`, it has no

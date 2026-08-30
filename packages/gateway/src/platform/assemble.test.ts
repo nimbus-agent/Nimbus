@@ -13,16 +13,20 @@ import net from "node:net";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
+import type { ChatopsAgentInvokerDeps } from "../agent-runs/agent-chatops-invoke.ts";
 import { resetPersonaWarningsForTest } from "../config/persona.ts";
 import { writeConnectorSecret } from "../connectors/connector-vault.ts";
 import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { appendEgressEntry } from "../egress/egress-ledger.ts";
 import { coverageForWindow } from "../egress/egress-verify.ts";
+import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
+import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import type { Syncable } from "../sync/types.ts";
 import {
   appendBootMarkerOrWarn,
   assemblePlatformServices,
+  bootChatopsAgentInvoker,
   createUnimplementedNotifications,
   httpOriginFor,
 } from "./assemble.ts";
@@ -103,6 +107,106 @@ describe("appendBootMarkerOrWarn", () => {
 
     expect(warnCalls).toHaveLength(0);
     expect(coverageForWindow(db, {})).toEqual(THIS_BINARY_COVERAGE);
+  });
+});
+
+// FIX 1 (whole-branch review of dev/asaf/chatops-agent-intent): `bootChatopsAgentInvoker` is the
+// exact call `assemblePlatformServices` makes to bind the ChatOps `agents.*` invoker. Before the
+// fix that binding happened in `gateway-main.ts`, AFTER `assemblePlatformServices` had already
+// returned — a point with no federation-identity field to read at all — so the invoker was always
+// bound with no `selfIdentity`, and every chat-reachable `federatedAgentBase` agent (`ghost`,
+// `conflicts`, `huddle`, `janitor`) fanned out to peers with a zero keypair. This test targets the
+// NEW call site directly rather than a full federated dispatch (which needs a paired peer to show
+// any observable difference) or `mock.module` (house style here is DI): `buildInvoker` is real
+// production DI on `bootChatopsAgentInvoker`, so the test captures exactly the deps object the
+// real `buildChatopsAgentInvoker` would receive, with no test double standing in for production
+// code.
+describe("bootChatopsAgentInvoker (FIX 1: selfIdentity reaches the ChatOps agent invoker)", () => {
+  it("passes the real federation selfIdentity through to buildChatopsAgentInvoker's deps", async () => {
+    const db = openMigratedMemoryDb();
+    try {
+      const localIndex = new LocalIndex(db);
+      const vault = makeInMemoryVault();
+      const identity = await loadOrCreateFederationIdentity(vault);
+
+      let captured: ChatopsAgentInvokerDeps | undefined;
+      let bound: unknown;
+      bootChatopsAgentInvoker({
+        chatopsBoot: {
+          bindAgentInvoker: (fn) => {
+            bound = fn;
+          },
+        },
+        db,
+        localIndex,
+        configDir: "unused-in-this-test",
+        selfIdentity: identity,
+        llmRouter: undefined,
+        buildInvoker: (deps) => {
+          captured = deps;
+          return () => Promise.resolve({ ok: false, detail: "stub" });
+        },
+      });
+
+      expect(bound).toBeDefined();
+      expect(captured).toBeDefined();
+      // The failure mode this test pins: `selfIdentity` silently absent/undefined even though a
+      // real identity was supplied — exactly what the old gateway-main.ts call site produced,
+      // since it had no federation-identity field to read.
+      expect(captured?.selfIdentity).toBeDefined();
+      expect(captured?.selfIdentity).toEqual(identity);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("omits selfIdentity (rather than passing a fabricated one) when federation is not booted", () => {
+    const db = openMigratedMemoryDb();
+    try {
+      const localIndex = new LocalIndex(db);
+      let captured: ChatopsAgentInvokerDeps | undefined;
+      bootChatopsAgentInvoker({
+        chatopsBoot: { bindAgentInvoker: () => {} },
+        db,
+        localIndex,
+        configDir: "unused-in-this-test",
+        selfIdentity: undefined,
+        llmRouter: undefined,
+        buildInvoker: (deps) => {
+          captured = deps;
+          return () => Promise.resolve({ ok: false, detail: "stub" });
+        },
+      });
+      expect(captured).toBeDefined();
+      expect(captured?.selfIdentity).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does nothing when chatopsBoot is undefined (ChatOps not enabled)", () => {
+    const db = openMigratedMemoryDb();
+    try {
+      const localIndex = new LocalIndex(db);
+      let buildCalled = false;
+      expect(() =>
+        bootChatopsAgentInvoker({
+          chatopsBoot: undefined,
+          db,
+          localIndex,
+          configDir: "unused-in-this-test",
+          selfIdentity: undefined,
+          llmRouter: undefined,
+          buildInvoker: () => {
+            buildCalled = true;
+            return () => Promise.resolve({ ok: false, detail: "stub" });
+          },
+        }),
+      ).not.toThrow();
+      expect(buildCalled).toBe(false);
+    } finally {
+      db.close();
+    }
   });
 });
 
