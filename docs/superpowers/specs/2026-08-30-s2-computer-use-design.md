@@ -927,6 +927,23 @@ puts the honesty-costly lane last, where it can be dropped without unpicking any
 3. **Screen** — adds the input helper, the window-confinement rules, the `opaque` marker and the
    `prove` indeterminacy change. Carries the Wayland decision from bound 4.
 
+**Driver decision (2026-08-30): playwright-core does not survive `bun build --compile` — using raw
+CDP over WebSocket.** `playwright-core@1.62.1`'s bundled `lib/coreBundle.js` contains an
+unconditional, statically-resolved `require("chromium-bidi/lib/cjs/...")` inside a lazy-init block
+for its (unused, non-default) WebDriver BiDi transport; bun's `--compile` bundler resolves every
+reachable `require()` ahead of time and fails the build outright (`Could not resolve:
+"chromium-bidi/lib/cjs/bidiMapper/BidiMapper"`) — reproduced identically against both `packages/cli`'s
+and `packages/gateway`'s own `bun build --compile` step, so it is not an artifact of where the import
+lives. The published `chromium-bidi` npm package does not fix it: its public layout
+(`out/Default/gen/src/bidiMapper/...`) does not match the internal path Playwright's build vendors
+(`lib/cjs/bidiMapper/BidiMapper`), so installing it changes nothing. `bun build --external
+chromium-bidi` does produce a binary (and `chromium.launch` reports present), but that reintroduces
+an unresolved-at-runtime module into a binary the architecture requires to "ship alone — no bun on
+PATH, no source tree beside it" (`packages/gateway/src/index.ts`), and even with that workaround a
+supplementary headless-launch probe against a real installed Chrome hung indefinitely and had to be
+force-killed rather than returning `BUTTON`. Task 9 re-plans against raw CDP over WebSocket per this
+task's brief. Full record: `.superpowers/sdd/2026-08-30-computer-use-slice-1-browser/task-1-report.md`.
+
 ---
 
 ## 15. Review disposition (2026-08-30)
