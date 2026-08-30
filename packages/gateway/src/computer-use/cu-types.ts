@@ -73,7 +73,15 @@ export type CuOutcome =
   | "refused_out_of_envelope"
   | "terminated_budget"
   | "terminated_wall_clock"
-  | "terminated_target_lost";
+  | "terminated_target_lost"
+  /**
+   * A LIVE session was stopped mid-run because the local kill-switch or a tightening org policy
+   * (I22) now forbids the capability -- checked on EVERY runAction, not only at open time, so a
+   * policy change actually stops a running session rather than letting it coast to its budget/
+   * wall-clock ceiling. Distinct from every other terminated_* tag: nothing about THIS action was
+   * wrong, the capability itself was withdrawn out from under it.
+   */
+  | "terminated_policy";
 
 export type CuBudgetVerdict =
   | { readonly ok: true; readonly seq: number }

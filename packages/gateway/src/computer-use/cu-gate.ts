@@ -49,6 +49,20 @@ export type OpenSessionResult =
 const ACTION_KINDS = ["click", "type", "navigate", "read", "screenshot", "download"] as const;
 export type CuActionKind = (typeof ACTION_KINDS)[number];
 
+/**
+ * Runtime guard over `CuActionKind` (fix round 1, M-14). `RunActionRequest.kind` is typed, but a
+ * TS type is erased at the JSON-RPC boundary Task 11 builds on top of this gate — an
+ * externally-supplied `kind` reaches this module as `unknown` in practice, and without a runtime
+ * check an unrecognised value would ride all the way to `buildBrowserActionInput`'s `never`
+ * default branch, which throws (safely, now that every post-`seq` throw is captured by
+ * `runAction`'s `finally` — see the C-1 fix). Task 11 should call this BEFORE constructing a
+ * `RunActionRequest`, so a malformed `kind` is rejected at the transport boundary rather than by
+ * consuming a budget slot first.
+ */
+export function isCuActionKind(v: unknown): v is CuActionKind {
+  return typeof v === "string" && (ACTION_KINDS as readonly string[]).includes(v);
+}
+
 export interface RunActionRequest {
   readonly sessionId: string;
   readonly kind: CuActionKind;
@@ -88,19 +102,32 @@ const CAPABILITY = "computer_use";
 /**
  * A representative `SandboxPolicy` for the PRE-LAUNCH confinement check ONLY (spec § 3.3 step 4:
  * `SandboxRunner.canConfine(policy)`, asked BEFORE consent so the owner is never asked to approve
- * a session the sandbox could not confine anyway). Network is granted, matching spec § 3.5 ("a
- * browser without network is not a browser"); the ORIGIN-level restriction that keeps that grant
- * from meaning "any destination" is enforced by `decideRequest` at the CDP layer (§ 3.5.1), not by
- * this OS-level policy — so this object never describes an allowed host set and never reaches an
- * actual spawn. The browser lane driver (Task 9, re-planned) builds its own policy at spawn time;
- * this one exists solely to ask "can this platform confine a networked, profile-writing child at
- * all" before the owner is asked anything.
+ * a session the sandbox could not confine anyway).
+ *
+ * `permissions.network` is a HOST LIST consulted by the PAL runners (fix round 1, I-5) — NOT a
+ * wildcard mode. An empty list is the correct value here: per spec § 3.5.1 the origin-level
+ * restriction that keeps the browser's network grant from meaning "any destination" is enforced
+ * by `decideRequest` at the CDP layer, not by OS-level per-host filtering, so this lane does not
+ * want `linux.ts`'s "per-host" network mode at all — which additionally requires
+ * `nimbus-sandbox-helper`, a binary CI does not install, so a non-empty (and in particular a
+ * literal `"*"` hostname, which is not a wildcard to any of the three PAL runners) list made
+ * `canConfine` refuse on Linux unconditionally. `decideNetworkMode` in `linux.ts` returns
+ * `"no-net"` only for an EMPTY set, so this is also the closest available approximation of "grant
+ * network, but restrict it at the CDP layer" that today's per-host permission model can express.
+ *
+ * KNOWN LIMIT, disclosed rather than glossed over: this object is a PLACEHOLDER. It is asserted
+ * against `canConfine` before consent, but it is never the object an actual browser spawns with —
+ * Task 9's re-planned CDP driver builds its own policy at spawn time. That is a real gap: the
+ * pre-consent assertion and the eventual spawn are not provably the same policy yet. Task 9 must
+ * either construct its real launch policy here (so this function becomes the single source) or
+ * otherwise guarantee the two agree — until then, a `canConfine` pass is a statement about this
+ * placeholder, not a proof about what actually launches.
  */
 function browserLanePolicy(sessionId: string, profileDir: string): SandboxPolicy {
   return {
     id: `computer-use-browser-${sessionId}`,
     permissions: {
-      network: ["*"],
+      network: [],
       filesystem: { read: [], write: profileDir === "" ? [] : [profileDir] },
     },
   };
@@ -129,6 +156,7 @@ const CU_OUTCOMES: ReadonlySet<string> = new Set<CuOutcome>([
   "terminated_budget",
   "terminated_wall_clock",
   "terminated_target_lost",
+  "terminated_policy",
 ]);
 
 function isCuOutcome(v: string | undefined): v is CuOutcome {
@@ -141,9 +169,10 @@ function isCuOutcome(v: string | undefined): v is CuOutcome {
  * is NEVER used here (spec § 8.2): on a `computer.action` row it would read as "this actuated
  * without needing approval", the most dangerous thing an auditor could wrongly conclude — even
  * for an `observing` action that legitimately never sought per-action consent, since the SESSION
- * envelope is what covers reads structurally. `approved` therefore means "this action ran" and
- * `rejected` means "it did not" — exhaustive over `CuOutcome`, so a value added to that union
- * without a case here is a compile error rather than a silent fall-through.
+ * envelope is what covers reads structurally. `approved` therefore means "this action ran, or the
+ * owner's approval for it was genuinely obtained" and `rejected` means "it did not, or nothing was
+ * ever offered for approval" — exhaustive over `CuOutcome`, so a value added to that union without
+ * a case here is a compile error rather than a silent fall-through.
  */
 function hitlStatusForOutcome(outcome: CuOutcome): "approved" | "rejected" {
   switch (outcome) {
@@ -156,6 +185,7 @@ function hitlStatusForOutcome(outcome: CuOutcome): "approved" | "rejected" {
     case "terminated_budget":
     case "terminated_wall_clock":
     case "terminated_target_lost":
+    case "terminated_policy":
       return "rejected";
     default: {
       const exhaustive: never = outcome;
@@ -177,7 +207,7 @@ function normalizeOriginList(raw: readonly string[]): string[] {
 }
 
 function appendSessionAudit(
-  deps: CuGateDeps,
+  deps: Pick<CuGateDeps, "db" | "now">,
   sessionId: string,
   hitlStatus: "approved" | "rejected",
   payload: Record<string, unknown>,
@@ -192,10 +222,45 @@ function appendSessionAudit(
 }
 
 /**
- * One live computer-use session: the frozen envelope plus the driver handle beside it.
- * Module-private, holding every session this gate has opened and not yet closed.
+ * Best-effort lane teardown. Used on every terminal path (fix round 1, I-4): a session that is
+ * about to become unreachable (closed, evicted, or never successfully registered) must not leave
+ * its browser process running with nothing left that can ever close it. A failure closing an
+ * already-broken lane must not mask the ORIGINAL error/outcome that triggered the teardown.
  */
-const liveSessions = new Map<string, { session: CuSession; lane: BrowserLane }>();
+async function bestEffortCloseLane(lane: BrowserLane): Promise<void> {
+  try {
+    await lane.close();
+  } catch {
+    // Intentionally swallowed — see the doc comment above.
+  }
+}
+
+interface LiveSession {
+  readonly session: CuSession;
+  readonly lane: BrowserLane;
+  /**
+   * The FULL `CuGateDeps` this session was OPENED with (fix round 1, I-3.2). Every DB write this
+   * gate makes for this session — `appendAuditEntry`, `insertAction`, `updateSessionState`, and
+   * the session's own wall-clock `now()` — uses THESE deps, never whatever `runAction`'s CALLER
+   * happened to pass in. The forensic record must follow the session, not whoever calls next: two
+   * `runAction` calls against the same session from two different `CuGateDeps` (Task 11 builds a
+   * fresh one per request) must still land in ONE chain, in ONE database.
+   *
+   * The one thing `runAction` deliberately reads from the CALLER's `deps` instead of this stored
+   * copy is `config.enabled` / `enforced.capabilitiesDisabled` (I-3.1) — the live per-action
+   * policy re-check has to observe a CHANGE since open time, so it must not consult a frozen
+   * snapshot — and `requestApproval`, which is a live broker channel, not session state.
+   */
+  readonly openDeps: CuGateDeps;
+}
+
+/**
+ * One live computer-use session: the frozen envelope, the driver handle, and the deps it opened
+ * with, held beside it. Module-private, holding every session this gate has opened and not yet
+ * closed. An entry is evicted on every terminal outcome (fix round 1, I-4) — a session id that
+ * has already terminated must never be found here again.
+ */
+const liveSessions = new Map<string, LiveSession>();
 
 /**
  * Open a computer-use session (spec § 3.3 "session open"; invariant I35).
@@ -261,6 +326,25 @@ export async function openSession(
         ? Math.min(req.maxWallClockMs, deps.config.maxWallClockMs)
         : deps.config.maxWallClockMs;
 
+    // (fix round 1, I-2) VALIDATE THE BOUNDS BEFORE THE PROMPT, not inside `CuSession`'s
+    // constructor after approval. `Math.min(0, 50) === 0` and `Math.min(NaN, 50) === NaN` both
+    // survive the clamp above unchanged, so without this check a zero or NaN budget reached
+    // `requestApproval` (showing the owner a budget line reading `0` or `NaN`), and only THEN
+    // failed inside `new CuSession(...)` — after the owner had already said yes. Same code
+    // (`ERR_CU_BAD_BOUNDS`) `CuSessionError` uses, so a caller sees one code either way.
+    if (!Number.isFinite(maxActions) || maxActions <= 0) {
+      throw new CuGateError(
+        "ERR_CU_BAD_BOUNDS",
+        `maxActions must be a finite number > 0, got ${maxActions}`,
+      );
+    }
+    if (!Number.isFinite(maxWallClockMs) || maxWallClockMs <= 0) {
+      throw new CuGateError(
+        "ERR_CU_BAD_BOUNDS",
+        `maxWallClockMs must be a finite number > 0, got ${maxWallClockMs}`,
+      );
+    }
+
     const envelope: CuEnvelope = {
       sessionId,
       lane: req.lane,
@@ -317,19 +401,36 @@ export async function openSession(
       return { status: "refused", code: "ERR_CU_LAUNCH_FAILED" };
     }
 
-    insertSession(deps.db, {
-      id: sessionId,
-      lane: req.lane,
-      envelopeJson: JSON.stringify(envelope),
-      openedAt: envelope.approvedAt,
-    });
-    liveSessions.set(sessionId, { session, lane });
+    // (fix round 1, I-4a) The lane DID start at this point. If registering the session fails
+    // (e.g. `insertSession`'s PRIMARY KEY collision), nothing else will EVER be able to close this
+    // browser — it is not yet in `liveSessions`, so no future `runAction`/close path can find it.
+    // Close it here, on this exact failure, rather than leaking it.
+    try {
+      insertSession(deps.db, {
+        id: sessionId,
+        lane: req.lane,
+        envelopeJson: JSON.stringify(envelope),
+        openedAt: envelope.approvedAt,
+      });
+      liveSessions.set(sessionId, { session, lane, openDeps: deps });
+      appendSessionAudit(deps, sessionId, "approved", {
+        outcome: "opened",
+        sessionId,
+        lane: req.lane,
+      });
+    } catch (e) {
+      await bestEffortCloseLane(lane);
+      session.close("failed_after_approval", deps.now());
+      appendSessionAudit(deps, sessionId, "approved", {
+        outcome: "failed_after_approval",
+        sessionId,
+        lane: req.lane,
+        stage: "register_session",
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return { status: "refused", code: "ERR_CU_LAUNCH_FAILED" };
+    }
 
-    appendSessionAudit(deps, sessionId, "approved", {
-      outcome: "opened",
-      sessionId,
-      lane: req.lane,
-    });
     return { status: "open", sessionId };
   } catch (e) {
     const code = e instanceof CuGateError || e instanceof CuSessionError ? e.code : "ERR_CU_FAILED";
@@ -342,7 +443,8 @@ export async function openSession(
     } else {
       // Fail-closed backstop: reachable only if something threw between approval and the
       // `openLane` try/catch above (e.g. `new CuSession(envelope)` rejecting a malformed
-      // envelope) — that inner try/catch already returns directly for an `openLane` failure.
+      // envelope) — both inner try/catch blocks above already return directly on their own
+      // failures.
       appendSessionAudit(deps, sessionId, "approved", {
         outcome: "failed_after_approval",
         code,
@@ -406,7 +508,14 @@ interface ActionAuditFields {
   readonly sessionId: string;
   readonly seq: number | null;
   readonly kind: CuActionKind;
-  readonly classification: CuActionClass;
+  /**
+   * `null` when this attempt exited BEFORE the classifier ever ran (fix round 1, M-9): a
+   * termination, a policy revocation, or an out-of-envelope refusal was never classified, and
+   * hardcoding `"actuating"` there would fabricate a field this audit surface promises is a
+   * derived fact. `insertAction`'s V57 replay-body row is skipped whenever this is `null` — there
+   * is no classification, and no DOM snapshot, to attach to it.
+   */
+  readonly classification: CuActionClass | null;
   readonly observedTarget: string;
   readonly modelDescription: string | null;
   readonly outcome: CuOutcome;
@@ -414,15 +523,23 @@ interface ActionAuditFields {
   readonly domAfter?: string | null;
   readonly screenshotDigest?: string | null;
   readonly snapshotMaxBytes: number;
+  /**
+   * The RAW reason a session was already closed, when it does not map onto a known `CuOutcome`
+   * (fix round 1, M-10) — recorded VERBATIM rather than guessed at. `null` when not applicable.
+   */
+  readonly terminationReason?: string | null;
+  /** Which stage of the pipeline a post-`seq` throw occurred at (fix round 1, C-1). */
+  readonly stage?: string;
 }
 
 /**
- * Append the ONE chained `audit_log` row every outcome owes (I35), and — only when a real `seq`
- * exists (i.e. the session's budget was actually consumed for this attempt) — the V57 replay-body
- * row alongside it. A budget/wall-clock termination never reaches a `seq` at all (`consumeAction`
- * did not grant one), so it gets the permanent decision row and no replay body to invent one for.
+ * Append the ONE chained `audit_log` row every outcome owes (I35), and — only when this attempt
+ * actually reached classification (`f.classification !== null`, which also implies a real `seq`)
+ * — the V57 replay-body row alongside it. A termination, a policy revocation, or an
+ * out-of-envelope refusal never reaches classification, so it gets the permanent decision row and
+ * no replay body to invent fields for.
  */
-function writeActionAudit(deps: CuGateDeps, f: ActionAuditFields): void {
+function writeActionAudit(deps: Pick<CuGateDeps, "db" | "now">, f: ActionAuditFields): void {
   const now = deps.now();
   const hitlStatus = hitlStatusForOutcome(f.outcome);
   appendAuditEntry(deps.db, {
@@ -436,12 +553,14 @@ function writeActionAudit(deps: CuGateDeps, f: ActionAuditFields): void {
       classification: f.classification,
       observedTarget: f.observedTarget,
       modelDescription: f.modelDescription,
+      terminationReason: f.terminationReason ?? null,
+      stage: f.stage ?? null,
     }),
     timestamp: now,
     sessionId: f.sessionId,
   });
 
-  if (f.seq === null) return;
+  if (f.classification === null || f.seq === null) return;
   insertAction(
     deps.db,
     {
@@ -466,161 +585,229 @@ function writeActionAudit(deps: CuGateDeps, f: ActionAuditFields): void {
 /**
  * Run one action inside a live session's envelope (spec § 3.3 "per action"; invariant I35).
  *
- * The order matches the spec exactly: budget/wall-clock (terminate, never prompt to extend) ->
- * envelope membership (refuse, never prompt) -> structural classification -> single-use consent
- * for an `actuating` verdict -> `performActuation` -> audit with before/after digests -> taint.
+ * The order matches the spec exactly: local policy re-check (fix round 1, I-3.1) -> budget/
+ * wall-clock (terminate, never prompt to extend) -> envelope membership (refuse, never prompt) ->
+ * structural classification -> single-use consent for an `actuating` verdict -> `performActuation`
+ * -> audit with before/after digests -> taint.
+ *
+ * ALL writes for this session — the audit row, the V57 replay body, `cu_session`'s own state —
+ * use the session's OPEN-TIME deps (`openDeps`, fix round 1, I-3.2), never the `deps` this
+ * particular call was invoked with: the forensic record must follow the session, not whoever
+ * calls next. The one thing read from THIS call's `deps` is the live policy re-check and the
+ * consent broker, both of which must reflect the CURRENT world, not a frozen one.
  */
 export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promise<RunActionOutput> {
   const live = liveSessions.get(req.sessionId);
   if (live === undefined) {
     throw new CuGateError("ERR_CU_NO_SESSION", `no live session: ${req.sessionId}`);
   }
-  const { session, lane } = live;
+  const { session, lane, openDeps } = live;
   const modelDescription = req.modelDescription ?? null;
 
-  // 1. Session live? Budget/wall-clock remaining? A refusal here TERMINATES the session rather
-  // than prompting to extend (spec § 4.1) — prompting to extend is how an unbounded sequence
-  // launders itself through a bounded one. No `seq` is ever granted for this attempt.
-  const verdict = session.consumeAction(deps.now());
-  if (!verdict.ok) {
-    const outcome: CuOutcome =
-      verdict.reason === "budget"
-        ? "terminated_budget"
-        : verdict.reason === "wall_clock"
-          ? "terminated_wall_clock"
-          : isCuOutcome(session.reason)
-            ? session.reason
-            : "terminated_budget";
-    writeActionAudit(deps, {
+  // 0. (fix round 1, I-3.1) Re-check the local kill-switch and org policy on EVERY action, using
+  // THIS call's deps — a tightening org policy (I22) or the local config flipping to disabled
+  // must stop a LIVE session, not merely refuse a NEW one; checking only at open time let a
+  // session already running coast to its full budget/wall-clock ceiling regardless. No `seq` is
+  // consumed: this is decided before `consumeAction`, same as every other pre-budget refusal.
+  if (!deps.config.enabled || deps.enforced.capabilitiesDisabled.has(CAPABILITY)) {
+    const reason = !deps.config.enabled ? "disabled by local config" : "disabled by org policy";
+    session.close("terminated_policy", openDeps.now());
+    await bestEffortCloseLane(lane);
+    liveSessions.delete(req.sessionId);
+    writeActionAudit(openDeps, {
       sessionId: req.sessionId,
       seq: null,
       kind: req.kind,
-      classification: "actuating",
+      classification: null,
+      observedTarget: `session terminated: ${reason}`,
+      modelDescription,
+      outcome: "terminated_policy",
+      snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
+      terminationReason: reason,
+    });
+    return { outcome: "terminated_policy" };
+  }
+
+  // 1. Session live? Budget/wall-clock remaining? A refusal here TERMINATES the session rather
+  // than prompting to extend (spec § 4.1) — prompting to extend is how an unbounded sequence
+  // launders itself through a bounded one. No `seq` is ever granted for this attempt. Uses the
+  // session's OWN clock (`openDeps.now`), not this call's, so wall-clock math stays intrinsic to
+  // the session rather than depending on whichever deps happened to invoke it.
+  const verdict = session.consumeAction(openDeps.now());
+  if (!verdict.ok) {
+    let outcome: CuOutcome;
+    let terminationReason: string | null;
+    if (verdict.reason === "budget") {
+      outcome = "terminated_budget";
+      terminationReason = "budget";
+    } else if (verdict.reason === "wall_clock") {
+      outcome = "terminated_wall_clock";
+      terminationReason = "wall_clock";
+    } else {
+      // "closed": the session was ALREADY closed by an earlier call. In practice this is now
+      // unreachable within a single gate process — every OTHER termination path below evicts the
+      // session from `liveSessions`, so a subsequent call instead hits `ERR_CU_NO_SESSION` above —
+      // kept as a defensive fallback, not a live path. (fix round 1, M-10) Record the REAL reason
+      // rather than guessing: use `session.reason` verbatim when it is a recognised `CuOutcome`;
+      // otherwise record the raw value honestly and fall back to the most conservative rejection
+      // tag for the typed `outcome` alone.
+      terminationReason = session.reason ?? null;
+      outcome = isCuOutcome(session.reason) ? session.reason : "terminated_budget";
+    }
+    await bestEffortCloseLane(lane);
+    liveSessions.delete(req.sessionId);
+    writeActionAudit(openDeps, {
+      sessionId: req.sessionId,
+      seq: null,
+      kind: req.kind,
+      classification: null,
       observedTarget: `session terminated before this action ran (${outcome})`,
       modelDescription,
       outcome,
-      snapshotMaxBytes: deps.config.snapshotMaxBytes,
+      snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
+      terminationReason,
     });
     return { outcome };
   }
   const seq = verdict.seq;
 
-  // 2. Target inside the envelope? Refused, never prompted (spec § 4.2). Only `navigate` names a
-  // bare destination to check here — a cross-origin click is instead routed through the
-  // classifier (I4) to per-action consent, since its target is a DOM element the human sees
-  // described, not a bare string.
-  if (req.kind === "navigate") {
-    const targetOrigin = originOf(req.url ?? "");
-    if (targetOrigin === null || !session.envelope.target.navigateOrigins.includes(targetOrigin)) {
-      writeActionAudit(deps, {
-        sessionId: req.sessionId,
-        seq,
-        kind: req.kind,
-        classification: "actuating",
-        observedTarget: `navigate -> ${targetOrigin ?? req.url ?? "unknown"}`,
-        modelDescription,
-        outcome: "refused_out_of_envelope",
-        snapshotMaxBytes: deps.config.snapshotMaxBytes,
-      });
-      return { outcome: "refused_out_of_envelope" };
-    }
-  }
+  // (fix round 1, C-1) From here on, a `seq` has been granted, so this attempt has consumed part
+  // of the session's budget and is owed EXACTLY ONE audit row on every exit — success, denial,
+  // refusal, or ANY throw out of the lane. A click that triggers navigation destroying its own CDP
+  // execution context is the single most common post-click driver failure, and it must not
+  // silently consume a budget slot with nothing recorded. `outcome`/`classification`/the DOM
+  // digests accumulate as the function progresses; the `finally` below writes them
+  // UNCONDITIONALLY, so a thrown error changes WHAT gets recorded, never WHETHER something is.
+  let outcome: CuOutcome = "failed_after_approval";
+  let classification: CuActionClass | null = null;
+  let observedTarget = `${req.kind} (attempt did not reach classification)`;
+  let domBefore: string | null = null;
+  let domAfter: string | null = null;
+  let screenshotDigest: string | null = null;
+  let stage = "envelope_check";
 
-  // 3. Classify structurally from the OBSERVED target — never from the model's description (I3
-  // transplanted; § 4.3).
-  const input = await buildBrowserActionInput(lane, req);
-  const { cls, why } = classifyBrowserAction(input);
-  const observedTarget = describeObservedTarget(req.kind, input);
-
-  // 4. `actuating` -> per-action HITL. Approval is single-use: this exact round-trip governs only
-  // this one action, and an identical follow-up re-prompts.
-  if (cls === "actuating") {
-    const approved = await deps.requestApproval({
-      sessionId: req.sessionId,
-      seq,
-      kind: req.kind,
-      observedTarget,
-      classification: cls,
-      why,
-      actionsUsed: session.actionsUsed,
-      maxActions: session.envelope.maxActions,
-      modelDescription,
-    });
-    if (!approved) {
-      writeActionAudit(deps, {
-        sessionId: req.sessionId,
-        seq,
-        kind: req.kind,
-        classification: cls,
-        observedTarget,
-        modelDescription,
-        outcome: "denied_by_owner",
-        snapshotMaxBytes: deps.config.snapshotMaxBytes,
-      });
-      return { outcome: "denied_by_owner" };
-    }
-  }
-
-  // 5. (Egress row / marker before actuation.) Handled transparently by the browser lane's own
-  // wrapped CDP request routing (`wrapLedgeredBrowserContext`, Task 8), set up once when
-  // `deps.openLane` constructed this context — not a call this gate makes per action.
-
-  // 6-7. performActuation(), then the audit row with before/after digests.
-  const domBefore = await lane.domSnapshot();
-  let result: string | null;
   try {
-    result = await performActuation(lane, {
-      kind: req.kind,
-      // `exactOptionalPropertyTypes` forbids handing an optional `string | undefined` prop
-      // straight through to a target whose optional prop is typed as bare `string` — so an
-      // absent field is OMITTED here rather than explicitly set to `undefined`.
-      ...(req.selector !== undefined ? { selector: req.selector } : {}),
-      ...(req.text !== undefined ? { text: req.text } : {}),
-      ...(req.url !== undefined ? { url: req.url } : {}),
-    });
+    // 2. Target inside the envelope? Refused, never prompted (spec § 4.2). Only `navigate` names
+    // a bare destination to check here — a cross-origin click is instead routed through the
+    // classifier (I4) to per-action consent, since its target is a DOM element the human sees
+    // described, not a bare string. Never classified (M-9): `classification` stays `null`.
+    if (req.kind === "navigate") {
+      const targetOrigin = originOf(req.url ?? "");
+      if (
+        targetOrigin === null ||
+        !session.envelope.target.navigateOrigins.includes(targetOrigin)
+      ) {
+        outcome = "refused_out_of_envelope";
+        observedTarget = `navigate -> ${targetOrigin ?? req.url ?? "unknown"}`;
+        stage = "done";
+        return { outcome };
+      }
+    }
+
+    // 3. Classify structurally from the OBSERVED target — never from the model's description (I3
+    // transplanted; § 4.3).
+    stage = "observe";
+    const input = await buildBrowserActionInput(lane, req);
+    const { cls, why } = classifyBrowserAction(input);
+    classification = cls;
+    observedTarget = describeObservedTarget(req.kind, input);
+
+    // 4. `actuating` -> per-action HITL. Approval is single-use: this exact round-trip governs
+    // only this one action, and an identical follow-up re-prompts.
+    if (cls === "actuating") {
+      stage = "consent";
+      const approved = await deps.requestApproval({
+        sessionId: req.sessionId,
+        seq,
+        kind: req.kind,
+        observedTarget,
+        classification: cls,
+        why,
+        actionsUsed: session.actionsUsed,
+        maxActions: session.envelope.maxActions,
+        modelDescription,
+      });
+      if (!approved) {
+        outcome = "denied_by_owner";
+        stage = "done";
+        return { outcome };
+      }
+    }
+
+    // 5. (Egress row / marker before actuation.) Handled transparently by the browser lane's own
+    // wrapped CDP request routing (`wrapLedgeredBrowserContext`, Task 8), set up once when
+    // `deps.openLane` constructed this context — not a call this gate makes per action.
+
+    // 6. domBefore, THEN taint (fix round 1, M-11). A DOM read is ITSELF an observation of
+    // untrusted content, independent of whether the actuation that follows succeeds — spec § 5:
+    // "a capture taints on its own, independently of any text it returns". Tainting here, rather
+    // than only after a successful `performActuation`, means a capture that reads content and
+    // then fails still latches the envelope's one-way narrowing.
+    stage = "dom_before";
+    domBefore = await lane.domSnapshot();
+    session.taint(openDeps.now());
+
+    stage = "performActuation";
+    let result: string | null;
+    try {
+      result = await performActuation(lane, {
+        kind: req.kind,
+        // `exactOptionalPropertyTypes` forbids handing an optional `string | undefined` prop
+        // straight through to a target whose optional prop is typed as bare `string` — so an
+        // absent field is OMITTED here rather than explicitly set to `undefined`.
+        ...(req.selector !== undefined ? { selector: req.selector } : {}),
+        ...(req.text !== undefined ? { text: req.text } : {}),
+        ...(req.url !== undefined ? { url: req.url } : {}),
+      });
+    } catch (e) {
+      outcome = "failed_after_approval";
+      stage = "performActuation";
+      return { outcome, result: e instanceof Error ? e.message : String(e) };
+    }
+
+    stage = "dom_after";
+    domAfter = await lane.domSnapshot();
+
+    // 7-8. Success: persist the final state, taint (already set above), return.
+    outcome = "actuated";
+    screenshotDigest = req.kind === "screenshot" ? result : null;
+    stage = "done";
+    // The observation crosses back to the caller as plain text; wrapping it through
+    // `wrapToolOutput`/`writeToolCallLog` happens at the `engine/agent.ts` tool-call seam
+    // (Task 12+), not here — this gate has no model-facing surface of its own (spec § 5).
+    return { outcome, result: req.kind === "screenshot" ? null : result };
   } catch (e) {
-    writeActionAudit(deps, {
+    // (fix round 1, C-1) ANY OTHER throw from the lane after a `seq` was granted —
+    // `buildBrowserActionInput`'s `lane.observe`, or the pre-actuation `lane.domSnapshot` — is
+    // recorded as `failed_after_approval` / `hitl_status='approved'`, matching the reviewer's
+    // explicit instruction. DISCLOSED TENSION, not silently smoothed over: for a throw at the
+    // `observe`/`dom_before` stage, no per-action consent had actually been sought yet (this
+    // action might have turned out to be `observing`, needing none at all), so `approved` is a
+    // simplification rather than a literal fact for those two stages specifically — `stage` below
+    // records exactly where it broke so an auditor is never left guessing which case applies.
+    outcome = "failed_after_approval";
+    return { outcome, result: e instanceof Error ? e.message : String(e) };
+  } finally {
+    // Sync `cu_session`'s own DB row on every exit past this point, not only on success — an
+    // action that failed or was denied still consumed a budget slot and (per the M-11 fix above)
+    // may still have tainted the session, and the DB row must not lag behind the in-memory state.
+    updateSessionState(openDeps.db, req.sessionId, {
+      actionsUsed: session.actionsUsed,
+      taintedAt: session.taintedAt ?? null,
+    });
+    writeActionAudit(openDeps, {
       sessionId: req.sessionId,
       seq,
       kind: req.kind,
-      classification: cls,
+      classification,
       observedTarget,
       modelDescription,
-      outcome: "failed_after_approval",
+      outcome,
       domBefore,
-      domAfter: null,
-      screenshotDigest: null,
-      snapshotMaxBytes: deps.config.snapshotMaxBytes,
+      domAfter,
+      screenshotDigest,
+      snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
+      stage,
     });
-    return { outcome: "failed_after_approval", result: e instanceof Error ? e.message : String(e) };
   }
-  const domAfter = await lane.domSnapshot();
-
-  // 8. Taint on every observation (spec § 4.4: "in practice the first observation of any kind"),
-  // BEFORE persisting `actions_used` — the ratchet is one-way and idempotent either way, but
-  // recording it here keeps the DB row's `tainted_at` consistent with the in-memory session.
-  session.taint(deps.now());
-  updateSessionState(deps.db, req.sessionId, {
-    actionsUsed: session.actionsUsed,
-    taintedAt: session.taintedAt ?? null,
-  });
-
-  writeActionAudit(deps, {
-    sessionId: req.sessionId,
-    seq,
-    kind: req.kind,
-    classification: cls,
-    observedTarget,
-    modelDescription,
-    outcome: "actuated",
-    domBefore,
-    domAfter,
-    screenshotDigest: req.kind === "screenshot" ? result : null,
-    snapshotMaxBytes: deps.config.snapshotMaxBytes,
-  });
-
-  // The observation crosses back to the caller as plain text; wrapping it through
-  // `wrapToolOutput`/`writeToolCallLog` happens at the `engine/agent.ts` tool-call seam (Task 12+),
-  // not here — this gate has no model-facing surface of its own (spec § 5).
-  return { outcome: "actuated", result: req.kind === "screenshot" ? null : result };
 }

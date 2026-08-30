@@ -10,12 +10,18 @@ export interface ActuationRequest {
 }
 
 /**
- * The SINGLE actuation primitive (invariant I35, static rule D26(a)).
+ * The SINGLE actuation primitive — the eventual home of invariant I35 / static rule D26(a).
+ *
+ * Neither exists yet as a wired, tested invariant: I35's `security-invariants.test.ts` entry and
+ * D26(a)'s `check-nimbus-invariants.ts` allow-list both land in Task 13. Naming them here before
+ * that lands would assert a defense that is not wired — this repo has been burned by exactly that
+ * shape of comment before (M-15). Until Task 13, the confinement below is a DESIGN INTENT this
+ * function's callers already honour (only `cu-gate.ts` calls it), not a statically-enforced one.
  *
  * Callable only from `cu-gate.ts` plus this definition file. A second caller would be a second path
  * from a model-proposed action to the host, bypassing the envelope check, the structural classifier,
- * the consent round-trip and the ledger append — which is the whole of what I35 forbids. Mirrors
- * D23's `runConfined` confinement exactly.
+ * the consent round-trip and the ledger append — which is the whole of what I35 WILL forbid once
+ * Task 13 wires it. Mirrors D23's `runConfined` confinement exactly.
  */
 export async function performActuation(
   lane: BrowserLane,
