@@ -18,7 +18,7 @@ export interface ChatMessage {
   readonly addressedToBot: boolean;
 }
 
-/** Result of parsing a message: either a free-form read or a structured write. */
+/** Result of parsing a message: either a free-form read, a structured write, or an agent command. */
 export type ParsedCommand =
   | { readonly kind: "read"; readonly query: string }
   | {
@@ -29,6 +29,13 @@ export type ParsedCommand =
       readonly args: Readonly<Record<string, string>>;
       /** The resource the write targets (for owner resolution), e.g. "payment-service". */
       readonly resource: string;
+    }
+  | {
+      readonly kind: "agent";
+      /** The permitted agent name, e.g. "why". */
+      readonly agent: string;
+      /** Coerced `k=v` params — validated later by `dispatchAgentsRpc`, not here. */
+      readonly params: Readonly<Record<string, unknown>>;
     }
   | { readonly kind: "refused"; readonly reason: RefusalReason; readonly detail: string };
 
@@ -52,4 +59,6 @@ export type RefusalReason =
   | "ambiguous_command"
   | "no_owner"
   | "ambiguous_owner"
-  | "not_authorized";
+  | "not_authorized"
+  | "unknown_agent"
+  | "bad_agent_params";

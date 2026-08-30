@@ -433,7 +433,8 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     transports,
     handleMessage,
     channelsForPlatform: () => chatopsPolicy().channels.size,
-    testParse: (text) => parseCommand(text, knownActions),
+    // TODO(Task 8/9): wire the real permitted-agent set here once IntentRouterDeps carries it.
+    testParse: (text) => parseCommand(text, knownActions, new Set()),
     nowMs,
   });
 

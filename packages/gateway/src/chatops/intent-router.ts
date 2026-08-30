@@ -36,7 +36,10 @@ export class IntentRouter {
     if (binding === undefined) return; // unbound channel: bot stays silent (fail-closed)
 
     const idr = await this.deps.resolveIdentity(msg.platform, msg.userId);
-    const cmd = parseCommand(msg.text, this.deps.knownActions);
+    // TODO(Task 8): `IntentRouterDeps` gains `permittedAgents` there; until it does, no agent name
+    // is permitted here, so an `agent <name>` message refuses with `unknown_agent` rather than
+    // running anything — a fail-closed placeholder, not a behavior this task's tests exercise.
+    const cmd = parseCommand(msg.text, this.deps.knownActions, new Set());
 
     if (idr.kind === "unmapped") {
       if (cmd.kind === "read" && binding.unmapped === "public-read") {
@@ -53,6 +56,14 @@ export class IntentRouter {
     }
     if (cmd.kind === "read") {
       await this.deps.reply(await this.deps.askEngine(cmd.query, binding.namespace));
+      return;
+    }
+    if (cmd.kind === "agent") {
+      // Stub only: `permittedAgents` is always the empty set above (Task 8 wires the real
+      // `runAgent` + `permittedAgents` deps and replaces this branch), so `parseCommand` can never
+      // actually produce `{ kind: "agent" }` here yet — this exists solely so the switch below is
+      // exhaustive over `ParsedCommand`, not to define agent-command behavior.
+      await this.refuse("bad_agent_params", "Agent commands are not yet wired.", msg.channelId);
       return;
     }
 
