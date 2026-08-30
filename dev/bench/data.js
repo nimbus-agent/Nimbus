@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788073639429,
+  "lastUpdate": 1788076187513,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4bf93f1c9016b031d3d4614c1e5c7efe0feb7bbd",
-          "message": "chore(main): release 0.11.0 (#667)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.11.0](https://github.com/nimbus-agent/Nimbus/compare/v0.10.0...v0.11.0)\n(2026-06-16)\n\n\n### Features\n\n* **share:** Phase 6 Slice 8a — Share foundation (I27 share-gate,\nverify-share, V41)\n([#661](https://github.com/nimbus-agent/Nimbus/issues/661))\n([c4f12d3](https://github.com/nimbus-agent/Nimbus/commit/c4f12d382be6e8601858605089b664f7c5604e0c))\n\n\n### Bug Fixes\n\n* **ci:** session-memory getRecentTurns must not require sqlite-vec\n(share e2e I27)\n([#664](https://github.com/nimbus-agent/Nimbus/issues/664))\n([0870362](https://github.com/nimbus-agent/Nimbus/commit/0870362301fecd1c6742c799ece667edf1d8f671))\n\n\n### Performance Improvements\n\n* Phase 2 (Bencher) — advisory trend ingest (soak alongside\ngithub-action-benchmark)\n([#666](https://github.com/nimbus-agent/Nimbus/issues/666))\n([5993765](https://github.com/nimbus-agent/Nimbus/commit/5993765bb97b1058676e7ecde34b112d4ed33c87))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Version 0.11.0 released with new features\n\n* **Bug Fixes**\n  * Includes bug fixes for improved stability\n\n* **Performance Improvements**\n  * Enhanced performance optimizations included\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-17T02:28:35+03:00",
-          "tree_id": "dc41268175873382be98808cf53a83c5fbc67203",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4bf93f1c9016b031d3d4614c1e5c7efe0feb7bbd"
-        },
-        "date": 1781653224941,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.2101312999981,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 302.21301004999805,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 322.20834995000405,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "508fb03579509fbf4a42e66440c2563dd2c085ac",
+          "message": "chore: release main (#1408)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.2.0</summary>\n\n##\n[7.2.0](https://github.com/nimbus-agent/Nimbus/compare/v7.1.2...v7.2.0)\n(2026-08-30)\n\n\n### Features\n\n* **doctor:** report embedding runtime state\n([#1397](https://github.com/nimbus-agent/Nimbus/issues/1397))\n([9b3ed09](https://github.com/nimbus-agent/Nimbus/commit/9b3ed09d5e2f5677d812715234d8821b5de9eda2))\n* **egress:** ledger every outbound ChatOps post\n([#1403](https://github.com/nimbus-agent/Nimbus/issues/1403))\n([fcef76f](https://github.com/nimbus-agent/Nimbus/commit/fcef76f46e0e6a07f6028e91fb3ba2e6d6c1953e))\n\n\n### Bug Fixes\n\n* **embedding:** embed the onnx addon so the compiled binary can load it\n([#1402](https://github.com/nimbus-agent/Nimbus/issues/1402))\n([7ca8379](https://github.com/nimbus-agent/Nimbus/commit/7ca83798c1c2d40e91ab6839e5c94cf54646a88d))\n* **embedding:** embed the onnxruntime runtime library, not just the\naddon ([#1405](https://github.com/nimbus-agent/Nimbus/issues/1405))\n([7d38e79](https://github.com/nimbus-agent/Nimbus/commit/7d38e79f5bdcf68b9a58763cc7267ab34f1843b5))\n* **embedding:** ship the onnx binding and stub sharp so the worker can\nstart ([#1399](https://github.com/nimbus-agent/Nimbus/issues/1399))\n([2356e6a](https://github.com/nimbus-agent/Nimbus/commit/2356e6a7e4d25aab4baf954ce8a2e1d17df604f6))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-08-30T10:37:29+03:00",
+          "tree_id": "b15d32142ed1e7a1ae51b7333026fe81f9f62ad3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/508fb03579509fbf4a42e66440c2563dd2c085ac"
+        },
+        "date": 1788076185045,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 313.4091671500013,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 312.347693049999,
             "unit": "ms"
           }
         ]
