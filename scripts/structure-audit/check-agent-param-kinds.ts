@@ -5,6 +5,7 @@ import {
   AGENT_PARAM_KINDS,
   type ParamKind,
 } from "../../packages/gateway/src/ipc/agent-param-kinds.ts";
+import { EXTERNAL_AGENT_NAMES } from "../../packages/gateway/src/ipc/agents-rpc.ts";
 import { REPO_ROOT } from "./lib.ts";
 
 export const AGENTS_RPC_PATH = join(
@@ -77,8 +78,11 @@ export interface ParsedValidator {
  * `typeof p.field`/`typeof p["field"]` comparison inside that span, in either polarity, is recorded
  * against it. This is a line-walker, not a parser: it does not tokenize strings or comments, and it
  * relies on every `{`/`}` in the file occurring in a properly nested pair (true of this file's
- * style — template interpolations are the only source of "incidental" braces, and each `${` is
- * always closed on the same line).
+ * style today — template interpolations are the only source of "incidental" braces, and each `${`
+ * is always closed on the same line). CODE REVIEW NOTE: a future edit that puts an unbalanced brace
+ * inside a string or comment within one of these functions (e.g. a stray closing brace in an error
+ * message) would desynchronize this walker's idea of where the function ends; nothing today guards
+ * against that beyond this comment and the lint rules that already discourage that shape of literal.
  *
  * This walker CANNOT see a field validated via a local alias (`janitor.idleDays`, checked as
  * `typeof idleDaysRaw`, never `typeof p.idleDays`), a field with no `typeof` check at all
@@ -142,15 +146,16 @@ export function parseValidatorFields(source: string): Record<string, ParsedValid
 /**
  * The count a healthy, unreshaped `agents-rpc.ts` parse should clear: eleven externally-permitted
  * agents (see `AGENT_PARAM_KINDS`'s own doc comment) minus one, because `ghost` and `conflicts`
- * share `requireFileParam`. Exported so the "is the parser still working at all" property can be
- * asserted directly against `parseValidatorFields`'s own output, independent of
- * `checkAgentParamKinds`'s (looser, direction-specific) indeterminate guard below.
+ * share `requireFileParam`. This is the ACTUAL gate `checkAgentParamKinds` compares against — not
+ * just a number interpolated into a message — so a partial restructure that leaves, say, 3 or 9
+ * validators recognisable also degrades to indeterminate, not just a parse that recognises zero.
  */
 export const VALIDATOR_FLOOR = 10;
 
 export type ParamKindsFinding =
   | { readonly rule: "indeterminate"; readonly detail: string }
-  | { readonly rule: "missing-in-map"; readonly snippet: string; readonly detail: string };
+  | { readonly rule: "missing-in-map"; readonly snippet: string; readonly detail: string }
+  | { readonly rule: "uncovered-agent"; readonly snippet: string; readonly detail: string };
 
 /**
  * Compares each parsed validator's type-checked fields against `AGENT_PARAM_KINDS`, in ONE
@@ -167,28 +172,43 @@ export type ParamKindsFinding =
  * parser cannot see is widening `parseValidatorFields`, not making this function pretend the field
  * doesn't exist in the map.
  *
- * A `parsed` with ZERO validators (the shape a fully failed read/parse degrades to) returns a
- * single `indeterminate` finding instead of walking the comparison — there is nothing to compare in
- * that direction, so returning "no drift found" would be misleading, and this is the one case where
- * an empty result is itself the interesting signal.
+ * A `parsed` with FEWER THAN `VALIDATOR_FLOOR` validators (not only zero — a partial restructure
+ * that leaves, say, 3 or 9 recognisable is the realistic failure mode, not just a parse that finds
+ * nothing at all) returns a single `indeterminate` finding instead of walking the comparison. This
+ * bound is intentionally on the SAFE side of asymmetric: the comparison below is additive (it only
+ * ever iterates the fields a validator was actually found to check) and never iterates
+ * `AGENT_PARAM_KINDS`'s own keys, so even without this floor a partial parse could only ever
+ * under-report drift, never manufacture a false one. The floor exists to make that degradation
+ * visible (a warning, not silence) rather than to prevent a false-positive flood that the
+ * one-directional design already rules out.
+ *
+ * Above the floor, this also asserts that every `EXTERNAL_AGENT_NAMES` entry — the independently
+ * derived, served set of externally-permitted agents, not `AGENT_PARAM_KINDS`'s own key list —
+ * resolved to at least one parsed validator. `VALIDATOR_AGENT_OVERRIDES` and the generic
+ * `require<Agent>Params` deriver both need manual upkeep for an agent whose validator does not
+ * follow the `handle<X>` -> `require<X>Params` convention; nothing else forces a new entry when one
+ * is added, so an `uncovered-agent` finding is what catches a 12th agent silently falling through
+ * that convention rather than the guard quietly checking fewer agents than it claims to.
  */
 export function checkAgentParamKinds(
   parsed: Readonly<Record<string, ParsedValidator>>,
 ): ParamKindsFinding[] {
   const validatorNames = Object.keys(parsed);
-  if (validatorNames.length === 0) {
+  if (validatorNames.length < VALIDATOR_FLOOR) {
     return [
       {
         rule: "indeterminate",
-        detail: `found 0 validators (a healthy agents-rpc.ts parse finds at least ${VALIDATOR_FLOOR}) — treating this parse as indeterminate rather than reporting drift`,
+        detail: `found ${validatorNames.length} validators (a healthy agents-rpc.ts parse finds at least ${VALIDATOR_FLOOR}) — treating this parse as indeterminate rather than reporting drift`,
       },
     ];
   }
 
   const findings: ParamKindsFinding[] = [];
+  const coveredAgents = new Set<string>();
   for (const validator of Object.values(parsed)) {
     const agents = Array.isArray(validator.agent) ? validator.agent : [validator.agent];
     for (const agent of agents) {
+      coveredAgents.add(agent);
       const known = AGENT_PARAM_KINDS[agent];
       if (known === undefined) continue; // not one of the eleven externally-permitted agents
       for (const [field, kind] of Object.entries(validator.fields)) {
@@ -203,6 +223,16 @@ export function checkAgentParamKinds(
       }
     }
   }
+
+  for (const agent of EXTERNAL_AGENT_NAMES) {
+    if (coveredAgents.has(agent)) continue;
+    findings.push({
+      rule: "uncovered-agent",
+      snippet: agent,
+      detail: `${agent} is one of EXTERNAL_AGENT_NAMES but no parsed validator in agents-rpc.ts resolved to it — VALIDATOR_AGENT_OVERRIDES or the generic require<Agent>Params derivation likely needs a new entry`,
+    });
+  }
+
   return findings;
 }
 
