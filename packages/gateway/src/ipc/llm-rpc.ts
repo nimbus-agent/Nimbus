@@ -188,7 +188,12 @@ async function handleSetDefault(
     typeof provider !== "string" ||
     provider === "" ||
     typeof modelName !== "string" ||
-    modelName === ""
+    modelName === "" ||
+    // `makeRouteId` rejects a slash in the provider by throwing a RAW Error, and the dispatcher
+    // does not convert handler errors into `LlmRpcError` — so without this the caller gets an
+    // internal-error shape for what is plainly bad input. Checked here so the contract stays
+    // "invalid params are -32602".
+    provider.includes("/")
   ) {
     throw new LlmRpcError(-32602, message);
   }

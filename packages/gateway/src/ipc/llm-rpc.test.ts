@@ -516,6 +516,31 @@ describe("llm.setDefault", () => {
     ).rejects.toThrow(/configDir/);
   });
 
+  // `makeRouteId` throws a RAW Error on a slash in the provider, and the dispatcher does not
+  // convert handler errors into `LlmRpcError` — so this input escaped as an internal-error shape
+  // instead of invalid-params. Verified before fixing: the thrown value had no `code` at all.
+  test("rejects a provider containing a slash with invalid-params, not a raw Error", async () => {
+    const router = new LlmRouter({
+      preferLocal: true,
+      localModel: "llama3.2:latest",
+      minReasoningParams: 0,
+      enforceAirGap: false,
+    });
+    const registry = { llmRouter: router } as unknown as LlmRegistry;
+    const err = await dispatchLlmRpc(
+      "llm.setDefault",
+      { taskType: "classification", provider: "foo/bar", modelName: "m" },
+      { registry, notify: () => {}, tomlPath: "/nonexistent/nimbus.toml" },
+    ).then(
+      () => undefined,
+      (e: unknown) => e as { rpcCode?: number; name?: string },
+    );
+    // Asserted on `rpcCode`, the field `LlmRpcError` actually carries — not `code`, which is
+    // undefined on BOTH a raw Error and an LlmRpcError and so would pass for the wrong reason.
+    expect(err?.name).toBe("LlmRpcError");
+    expect(err?.rpcCode).toBe(-32602);
+  });
+
   test("rejects invalid taskType", async () => {
     const registry = {
       llmRouter: new LlmRouter({
