@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788092238177,
+  "lastUpdate": 1788093503576,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bb54d74388978f9ffce30de8b50aaf3d678628ba",
-          "message": "chore(sonar): cleanup 9 — clear all 16 smells, cut top duplication, raise coverage, right-size exclusions (#669)\n\n## Summary\n\nA focused quality pass: **all 16 SonarCloud maintainability smells\nfixed**, the **four biggest duplication offenders deduped**, **coverage\nraised** (~760 new test assertions) with `sonar.coverage.exclusions`\nright-sized so the metric is measured over testable code, plus a\n**Windows `bun test` hang fix**.\n\n> Based on `dev/asafgolombek/fix-share-e2e-getrecentturns-vec` (PR #664)\nso the I27 share e2e passes in CI. That one-commit base (`5c686952`)\ndedupes once #664 merges.\n\n## Maintainability (16/16 smells → 0)\nAll were in the Slice-8a share code: S3358 nested ternaries (extracted\nshared `util/code-unit-compare.ts`; cli share-sink → early-return\nhelper), S7735 negated conditions, S4325 redundant casts, S5843\nover-complex `ips` regex (split IPv4/IPv6 under one family), S6397\n`[\\w]`→`\\w`, S6594 `match`→`exec`, S6551 `String`→`JSON.stringify`,\nS7780 `String.raw`.\n\n## Duplication (toward <0.1%)\n- Extracted a generic `ConsentBroker<TInput>` base — the Share (I27) and\nPreflight (I24) brokers were ~42–43% byte-identical; now thin\nsubclasses.\n- `warehouse-write-tools` (57.7%) → single-line builder per entry,\npreserving the I26 SSoT.\n- `oauth-registry` → `standardAuthorizeParams` + `pkceAuthorizeParams`\nhelpers collapse the repeated `buildAuthorizeParams` blocks across 8\nproviders.\n- `lan-client` → `makeSettler` (the settled+timeout+finish guard shared\nby the one-frame and two-frame exchanges).\n\n## Coverage (~91.3% → ~96.5% line / ~94.5% Sonar-blended)\n- ~760 new additive test assertions (no source logic changed):\nphase3-config 86→100%, discord-sync 88→99%, connector-spawns 95→97%,\nscheduler 86→93%, `tryDispatchShareRpc` 0%→covered (+data/tribal),\n`serializeHealthSnapshot` 0%→covered, connector-rpc-handlers/auth\nprovider arms, http-server DORA/preflight/SCIM/OPTIONS edges,\ninstall-from-local I16 fail-closed arms, cli connector flag/help/env\npaths, connector-shared `search-filter` 53→100%.\n- **Right-sized `sonar.coverage.exclusions`**: folded in the\nstructurally-untestable 0% surfaces already exempt from the per-file\nfloor — per-OS Vault PAL (`win32`/`darwin`),\n`assemble-sync-registrations`, the VS Code extension + admin-console\nUIs, GitHub-Action entrypoints, and the gateway build/terminate scripts\n— so the 97% target is measured over testable code. Registry\n(`exclusions.ts`) + parity samples updated; `audit:exclusion-parity`\ngreen (49 patterns).\n\n## Windows bun-test hang fix\nThe consent-broker TTL timer called `timer.unref()`. An awaited promise\nsettling from an `unref`'d `setTimeout` spins `bun test` forever on\nWindows (the TTL fail-closed tests await exactly that). Dropped the\n`unref` (gateway is long-lived; added `ConsentBroker.clear()` for\nshutdown/`afterEach`). The originally-hanging combined share+cli+ipc\nrun: hang → 502ms / 92 pass.\n\n## Verification (local, before push)\n- `bun run preflight:fast` → green (typecheck, biome, all audits, jscpd,\nexclusion-parity).\n- `bun run build` → green.\n- Full suite in Docker `oven/bun:latest` (Linux-authoritative) → **0\nfailures**.\n- `audit:coverage-floor` against the Docker lcov → **ok, 0 violations**\n(1015 files scanned).\n- Exclusion-adjusted line coverage from the Docker lcov: **96.55%** (CI\nwill be higher — local build omits `mcp-connectors/shared`, which CI\ncovers).\n\nThe exact Sonar coverage/duplication/smell numbers will be confirmed by\nthe CI Sonar scan on this PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n## Release Notes\n\n* **New Features**\n  * Added Discord connector for syncing server and message data.\n* Extended CLI argument support with short-flag aliases and improved\nhelp output.\n* Expanded OAuth provider support and phase-3 connector capabilities\nacross multiple services.\n\n* **Improvements**\n* Enhanced authentication error handling and environment variable\nfallback logic for various services.\n  * Improved CLI command formatting and validation for edge cases.\n* Refactored consent and share approval workflows for better\nmaintainability.\n\n* **Bug Fixes**\n  * Fixed IPv4 address extraction logic in safe fetch operations.\n* Corrected environment variable handling for warehouse write\noperations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T05:43:22Z",
-          "tree_id": "deed870114dd6feba0e667dc66c8edf39a508e4f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bb54d74388978f9ffce30de8b50aaf3d678628ba"
-        },
-        "date": 1781675771201,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 276.9426746500052,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 277.75554134999913,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 327.03334710000235,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "74773f6ef320b35e2848acd930bb8f27cfcd7778",
+          "message": "chore: release main (#1411)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.2.1</summary>\n\n##\n[7.2.1](https://github.com/nimbus-agent/Nimbus/compare/v7.2.0...v7.2.1)\n(2026-08-30)\n\n\n### Bug Fixes\n\n* **llm:** make llm.setDefault write the store the router actually reads\n([#1410](https://github.com/nimbus-agent/Nimbus/issues/1410))\n([9f69790](https://github.com/nimbus-agent/Nimbus/commit/9f69790ca0e29795997e614732539dce5792bfae))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-08-30T12:25:01Z",
+          "tree_id": "86c851c18e577f91e543df9341a1ed79117448cd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/74773f6ef320b35e2848acd930bb8f27cfcd7778"
+        },
+        "date": 1788093501041,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 333.7131381499988,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 334.87112719999493,
             "unit": "ms"
           }
         ]
