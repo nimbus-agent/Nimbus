@@ -469,6 +469,71 @@ export function doctorPrintIndexFromSnapshot(snap: { index?: { totalItems?: unkn
   return 0;
 }
 
+/**
+ * Report the embedding runtime, so a dead semantic search cannot stay silent.
+ *
+ * The gap this closes: the gateway KNEW the capability was off and never said so. A real gateway
+ * logged `embeddings: "unavailable"` across 397 consecutive heartbeats while `nimbus doctor`
+ * reported nothing — this file had zero mentions of "embedding". That is the same blind spot
+ * #925 closed for the Vault, one subsystem over, and it is why the onnxruntime failure (#1396)
+ * went unnoticed for so long.
+ *
+ * Severity follows the state's own documented lifetime in `embedding-readiness.ts`:
+ * `warming` is TRANSIENT so it warns rather than fails (a cold first run would otherwise always
+ * look broken), and `disabled` is BY DESIGN so it passes — reporting a deliberate setting as a
+ * fault is how a check trains people to ignore it.
+ *
+ * `reason` is the payload that matters. "unavailable" alone is what the log already said and what
+ * nobody could act on.
+ */
+export function doctorPrintEmbeddingFromSnapshot(snap: { embedding?: unknown }): number {
+  const emb = snap.embedding;
+  // A gateway that predates this field says nothing about embeddings. Stay silent rather than
+  // invent a verdict about a capability we cannot observe — a false green is worse than no line.
+  if (emb === null || typeof emb !== "object") {
+    return 0;
+  }
+  const rec = emb as Record<string, unknown>;
+  const state = typeof rec["state"] === "string" ? rec["state"] : "";
+  const reason = typeof rec["reason"] === "string" && rec["reason"] !== "" ? rec["reason"] : null;
+  const model = typeof rec["model"] === "string" && rec["model"] !== "" ? rec["model"] : null;
+
+  if (state === "ready") {
+    console.log(`[ok] Embeddings: ready${model === null ? "" : ` (${model})`}.`);
+    return 0;
+  }
+  if (state === "disabled") {
+    console.log(
+      `[ok] Embeddings: disabled by configuration — semantic search is off by design${
+        reason === null ? "" : ` (${reason})`
+      }.`,
+    );
+    return 0;
+  }
+  if (state === "warming") {
+    const ms = rec["elapsedMs"];
+    const secs =
+      typeof ms === "number" && Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : null;
+    console.log(
+      `[warn] Embeddings: still loading${secs === null ? "" : ` (${String(secs)}s)`} — semantic search is not available yet.`,
+    );
+    return 1;
+  }
+  if (state === "unavailable") {
+    console.log(
+      `[fail] Embeddings: unavailable — semantic search is disabled for this gateway run${
+        reason === null ? "" : `: ${reason}`
+      }`,
+    );
+    return 2;
+  }
+  // An unrecognised state is not evidence of health. Fail loudly rather than pass by default.
+  console.log(
+    `[fail] Embeddings: unrecognised runtime state ${JSON.stringify(state)} — treat as not working.`,
+  );
+  return 2;
+}
+
 export function doctorPrintHealthFromSnapshot(snap: { connectorHealth?: unknown }): number {
   const healthRaw = snap.connectorHealth;
   const health: ConnectorHealthRow[] = Array.isArray(healthRaw)
@@ -503,8 +568,12 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   const snap = await client.call<{
     index?: { totalItems?: unknown };
     connectorHealth?: unknown;
+    embedding?: unknown;
   }>("diag.snapshot", {});
   exit = Math.max(exit, doctorPrintIndexFromSnapshot(snap));
+  // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
+  // whole gateway run, which outranks any one connector being unreachable.
+  exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));
   exit = Math.max(exit, doctorPrintHealthFromSnapshot(snap));
   return exit;
 }

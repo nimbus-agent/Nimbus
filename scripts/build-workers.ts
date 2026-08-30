@@ -8,21 +8,43 @@
  * Output goes to `packages/gateway/dist/workers/<name>.js`, which is gitignored, and is embedded
  * by `packages/gateway/src/workers/embedded-workers.ts` with `{ type: "file" }`.
  *
- * `--target bun` keeps `bun:sqlite` and friends external, which is what the worker realm wants;
+ * `target: "bun"` keeps `bun:sqlite` and friends external, which is what the worker realm wants;
  * everything else is bundled in, so the emitted file has no relative imports to resolve at load.
+ *
+ * Built through `Bun.build()` rather than the `bun build` CLI for one reason: the CLI has no
+ * aliasing flag, and the embedding worker needs TWO native modules dealt with: `sharp` replaced
+ * with a falsy stub, and the onnxruntime addon embedded so it can be loaded from a real file at
+ * runtime. Both otherwise kill the embedding runtime at init (#1396). See
+ * `packages/gateway/src/workers/sharp-stub.ts` and `scripts/onnx-binding-plugin.ts`.
  */
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { WORKER_ENTRIES, WORKER_OUT_DIR } from "../packages/gateway/src/workers/worker-entries.ts";
+import { onnxBindingPlugin } from "./onnx-binding-plugin.ts";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const gatewayDir = join(repoRoot, "packages", "gateway");
 const outDir = join(gatewayDir, ...WORKER_OUT_DIR.split("/"));
 
-function main(): void {
+/**
+ * Replace `sharp` with a falsy stub. `@xenova/transformers` imports it statically for IMAGE
+ * preprocessing; it is a NATIVE module, so bundling the real one makes the worker fail at load
+ * and takes the entire embedding runtime with it (#1396). This worker does text only, and
+ * transformers guards every use with `else if (sharp)` — upstream maps `"sharp": false` in its
+ * own browser field for exactly this reason.
+ */
+const stubSharpPlugin: import("bun").BunPlugin = {
+  name: "stub-sharp",
+  setup(build) {
+    build.onResolve({ filter: /^sharp$/ }, () => ({
+      path: join(gatewayDir, "src", "workers", "sharp-stub.ts"),
+    }));
+  },
+};
+
+async function main(): Promise<void> {
   mkdirSync(outDir, { recursive: true });
 
   for (const entry of WORKER_ENTRIES) {
@@ -36,14 +58,19 @@ function main(): void {
       process.exit(1);
     }
     const outfile = join(outDir, `${entry.name}.js`);
-    const r = spawnSync(
-      process.execPath,
-      ["build", sourceAbs, "--target", "bun", "--outfile", outfile],
-      { cwd: gatewayDir, stdio: "inherit", env: process.env },
-    );
-    if ((r.status ?? 1) !== 0) {
+    const result = await Bun.build({
+      entrypoints: [sourceAbs],
+      target: "bun",
+      outdir: outDir,
+      naming: `${entry.name}.js`,
+      plugins: [stubSharpPlugin, onnxBindingPlugin],
+    });
+    if (!result.success) {
       process.stderr.write(`build-workers: bun build failed for ${entry.source}\n`);
-      process.exit(r.status ?? 1);
+      for (const log of result.logs) {
+        process.stderr.write(`  ${String(log)}\n`);
+      }
+      process.exit(1);
     }
     process.stdout.write(
       `build-workers: ${entry.source} → ${WORKER_OUT_DIR}/${entry.name}.js ` +
@@ -52,4 +79,4 @@ function main(): void {
   }
 }
 
-main();
+await main();

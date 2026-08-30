@@ -19,6 +19,7 @@ import { runReadOnlySelect, SqlGuardError } from "../db/query-guard.ts";
 import { formatRepairReport, repairIndex } from "../db/repair.ts";
 import { listSnapshots, previewRestore, pruneSnapshots, takeSnapshot } from "../db/snapshot.ts";
 import { formatVerifyResult, verifyIndex } from "../db/verify.ts";
+import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
 import { preT2DisabledCount, signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
 import type { LocalIndex } from "../index/local-index.ts";
@@ -50,6 +51,12 @@ export type DiagnosticsRpcContext = {
   readonly gatewayVersion: string;
   readonly startedAtMs: number;
   readonly sandboxRunner?: SandboxRunner;
+  /**
+   * Live embedding-runtime readiness, so `nimbus doctor` can report a dead semantic search.
+   * Optional because a gateway assembled without an embedding runtime has nothing to report —
+   * the CLI stays silent on a missing field rather than inventing a verdict (#1396).
+   */
+  readonly embeddingReadiness?: () => EmbeddingReadiness;
   readonly autoUpdateDiag?: {
     cachedUpdatesCount: () => number;
     intervalHours: number;
@@ -611,6 +618,7 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
       },
       connectorHealth: health,
       index: metrics,
+      embedding: ctx.embeddingReadiness?.(),
       hitl: { pendingConsentRequests: pendingConsent },
       watchers,
       auditLogTail: audit,
