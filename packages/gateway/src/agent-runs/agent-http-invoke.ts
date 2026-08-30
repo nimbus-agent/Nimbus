@@ -5,7 +5,11 @@ import { buildAgentSynthesisRunner } from "../agents/_lib/agent-synthesis-runner
 import type { SynthesisRouter } from "../agents/_lib/synthesis-llm.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RpcMissOrHit } from "../ipc/_lib/dispatch-by-method.ts";
-import { AgentsRpcError, dispatchAgentsRpc, resolveHttpAgentMethod } from "../ipc/agents-rpc.ts";
+import {
+  AgentsRpcError,
+  dispatchAgentsRpc,
+  resolveExternalAgentMethod,
+} from "../ipc/agents-rpc.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 import type { AgentRunController } from "./agent-run-store.ts";
 
@@ -55,7 +59,7 @@ function readSessionId(value: unknown): string | null {
 /**
  * The run id for a completed dispatch, or a thrown TypeError.
  *
- * Both failure paths are unreachable BY CONSTRUCTION — `resolveHttpAgentMethod` and
+ * Both failure paths are unreachable BY CONSTRUCTION — `resolveExternalAgentMethod` and
  * `dispatchByMethod` consult the same handler map, so a `miss` cannot follow a resolved method; and
  * all ten exposed agents return `{sessionId}`. They are kept because the alternative to a loud
  * throw is opening a run under `undefined`, which would strand the caller polling an id that names
@@ -91,7 +95,7 @@ export function requireRunId(agent: string, out: RpcMissOrHit): string {
  */
 export function buildAgentHttpInvoker(deps: AgentHttpInvokerDeps): AgentHttpInvoker {
   return async (agent, params, clientLabel): Promise<AgentInvokeResult> => {
-    const method = resolveHttpAgentMethod(agent);
+    const method = resolveExternalAgentMethod(agent);
     if (method === null) return { ok: false, reason: "unknown_agent" };
 
     // Reserved SYNCHRONOUSLY, before the await: the run id does not exist until dispatch returns,

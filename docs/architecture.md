@@ -1566,11 +1566,12 @@ const streamReq: JSONRPCRequest = {
 //   the injected `ServiceIdentityResolver`, denominates its rate on `measured` (cohort members
 //   actually queried — a resolvable service AND a usable window), never on the full cohort, and
 //   reports `null` rather than a fabricated `0` when nothing could be checked.
-//   `agents.premortem` is EXCLUDED from both the HTTP agent surface (`POST /v1/agents/{agent}`)
-//   and the MCP tool surface — `HTTP_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts` — matching
-//   `agents.preflight`, because an external caller reaching a write with no HITL gate is the
-//   same shape of concern preflight is excluded for. It remains reachable from the CLI socket
-//   and the Tauri renderer (I7's XSS threat model, not "arbitrary network caller").
+//   `agents.premortem` is EXCLUDED from every external agent surface (`POST /v1/agents/{agent}`,
+//   and ChatOps once it lands) and the MCP tool surface — `EXTERNAL_EXCLUDED_AGENT_METHODS` in
+//   `ipc/agents-rpc.ts` — matching `agents.preflight`, because an external caller reaching a
+//   write with no HITL gate is the same shape of concern preflight is excluded for. It remains
+//   reachable from the CLI socket and the Tauri renderer (I7's XSS threat model, not "arbitrary
+//   network caller").
 //   Confidence tops out at 0.86, matching `decisions` (`glossary` has no confidence-ceiling
 //   concept): no connector indexes ticket comments.
 // premortem.refresh — drives an on-demand theme-extraction pass now. Takes NO parameters —
@@ -1641,8 +1642,8 @@ const streamReq: JSONRPCRequest = {
 //   tickets cites only the OPENED issues, never the closed-by-authored-PR hop, which would
 //   cite issues the subject did not file. The writing lane's evidence query reproduces the
 //   `personal_sources` gate exactly, so evidence can never disclose what the counts withhold.
-//   `agents.negotiate` is EXCLUDED from both the HTTP agent surface (`POST /v1/agents/{agent}`,
-//   `HTTP_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts`) and the MCP tool surface
+//   `agents.negotiate` is EXCLUDED from every external agent surface (`POST /v1/agents/{agent}`,
+//   and ChatOps once it lands — `EXTERNAL_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts`) and the MCP tool surface
 //   (`packages/cli/src/mcp/agent-tools.ts`) — but for a DIFFERENT reason than
 //   `agents.preflight`/`agents.premortem`: it has no side effects and its shape fits the
 //   runId+poll contract fine. The reason is the SUBJECT. Combined with `--person`, an exposed
