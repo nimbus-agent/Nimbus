@@ -1761,6 +1761,13 @@ git commit -m "feat(egress): ledger every browser-lane request before it is made
 >
 > All five are REQUIRED (non-optional) on the interface: an optional field would let a producer omit
 > it and silently take the permissive branch.
+>
+> **A THIRD forward constraint, from Task 8's review.** `wrapLedgeredBrowserContext` REPLACES the
+> routed handler: the `handler` argument passed to the wrapped `route()` is discarded (`_handler`),
+> because the decorator's own gate-then-continue/abort logic is the whole handler. Task 9's driver
+> must therefore NOT expect to run any logic of its own inside a routed handler — it registers the
+> route and lets the wrapper decide. Discovering this at implementation time would read as a bug in
+> the appender rather than as its design.
 
 **Files:**
 
