@@ -10,16 +10,17 @@
  * handler for a caller whose bearer token it just verified. It is on this union because the egress
  * ledger records the transport, and one union keeps that record total.
  */
-export type ClientKind = "cli" | "mcp" | "ui" | "http" | "unknown";
+export type ClientKind = "cli" | "mcp" | "ui" | "http" | "chatops" | "unknown";
 
 /**
  * The kinds a client may DECLARE at connect time.
  *
- * `http` is deliberately ABSENT. It is derived, not declared — the HTTP route handler sets it after
- * checking a token against the labeled token map, which makes it the one kind on this union that is
- * a fact the gateway verified rather than a client's word. Adding it here would let any local
- * process on the socket file its briefs under that stronger attribution, turning an observation
- * back into a claim.
+ * `http` and `chatops` are deliberately ABSENT. Both are derived, not declared — the HTTP route
+ * handler sets `http` after checking a token against the labeled token map, and the ChatOps
+ * subsystem sets `chatops` after deciding the caller is the ChatOps process. These are facts the
+ * gateway verified rather than a client's word. Adding them here would let any local process on
+ * the socket file its briefs under that stronger attribution, turning an observation back into a
+ * claim.
  */
 const RECOGNISED: ReadonlySet<string> = new Set(["cli", "mcp", "ui"]);
 
