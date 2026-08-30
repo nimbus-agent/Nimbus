@@ -16,6 +16,11 @@ describe("agent param kinds", () => {
         .filter(([, k]) => k === "stringArray")
         .map(([f]) => `${a}.${f}`),
     );
+    // FIX 5 (whole-branch review): `.every(...)` on an empty array is vacuously `true` — without
+    // this, a future change that removed every `stringArray` field entirely would still pass this
+    // test. The real claim is "there are exactly three (ghost/conflicts/huddle's `namespaces`),
+    // and every one of them is `.namespaces`", so the count has to be pinned too.
+    expect(arrays.length).toBe(3);
     expect(arrays.every((x) => x.endsWith(".namespaces"))).toBe(true);
   });
 

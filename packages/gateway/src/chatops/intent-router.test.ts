@@ -144,14 +144,27 @@ describe("IntentRouter", () => {
     expect(replies[0]?.text).toContain("## Gaps");
   });
 
-  test("a mapped user's bad agent params are refused, without running the agent", async () => {
-    const { deps, replies, audits, agentCalls } = baseDeps();
+  test("a mapped user's bad agent params are refused, and the refusal is driven by runAgent's ok:false — not a success path misread as one", async () => {
+    const { deps, replies, audits } = baseDeps();
+    // FIX 5 (whole-branch review): the original stub here did not record into `agentCalls`, so
+    // `expect(agentCalls).toEqual([])` passed regardless of whether `runAgent` was even called —
+    // `IntentRouter.handle` in fact ALWAYS calls `deps.runAgent` for an `agent` command (params
+    // validation happens one layer down, inside the real `dispatchAgentsRpc`/`agentInvoker`, which
+    // this stub stands in for), so a "the agent never ran" claim at THIS layer was never true and
+    // never checkable by that assertion. This stub records its own call instead, so the test
+    // asserts something that can actually fail: `runAgent` was called exactly once with the
+    // parsed args, and its `ok: false` result — not a thrown error, not a silently-ignored one —
+    // is what drives the refusal reply and audit below.
+    const calls: { agent: string; params: unknown }[] = [];
     const r = new IntentRouter({
       ...deps,
-      runAgent: async () => ({ ok: false as const, detail: "bad params" }),
+      runAgent: async (agent, params) => {
+        calls.push({ agent, params });
+        return { ok: false as const, detail: "bad params" };
+      },
     });
     await r.handle(msg("@nimbus agent why ref=a.ts"));
-    expect(agentCalls).toEqual([]);
+    expect(calls).toEqual([{ agent: "why", params: { ref: "a.ts" } }]);
     expect(audits.map((a) => a.reason)).toContain("bad_agent_params");
     expect(replies[0]?.text).toBe("bad params");
   });
