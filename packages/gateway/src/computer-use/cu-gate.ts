@@ -264,14 +264,13 @@ function syncSessionRow(
  * future path that forgets a step cannot exist.
  *
  * Fixed order, exactly as specified:
- *   1. `writeAudit()` — the permanent decision record, FIRST and UNCONDITIONAL. Deliberately
- *      UNGUARDED: if this throws, later steps do not run and the throw propagates to whichever
- *      call site invoked this helper. For `openSession`'s registration catch that means the
- *      OUTER catch's `safeAppendSessionAudit` is the fallback (NEW-4); for `runAction`'s
- *      termination branches and its per-action `finally`, the call throws — accepted, because
- *      `audit_log` itself being unavailable is categorically worse than the `cu_session`-only
- *      breakage NB-4/NEW-1 targeted, and swallowing it here would hide that a session's
- *      decision record was never written at all.
+ *   1. `writeAudit()` — the permanent decision record, FIRST. If this throws, teardown (2-4)
+ *      still runs (fix round 4) — see below — and then the throw propagates to whichever call
+ *      site invoked this helper. For `openSession`'s registration catch that means the OUTER
+ *      catch's `safeAppendSessionAudit` is the fallback (NEW-4); for `runAction`'s termination
+ *      branches and its per-action `finally`, the call still throws — I35's fail-closed posture:
+ *      a session's decision record failing to write is a real failure, and this gate does not
+ *      pretend otherwise.
  *   2. `syncSessionRow`, in its OWN try/catch, so a failure here (SQLITE_BUSY, disk full,
  *      `cu_session` dropped) can NEVER take the audit write above down with it. Only attempted
  *      when `syncRow` is true.
@@ -280,13 +279,30 @@ function syncSessionRow(
  *      registration later succeeds.
  *   4. Evict the map entry. Only attempted when `evictMap` is true.
  *
+ * Fix round 4: steps 2-4 run inside a `finally` wrapped around step 1, rather than after it in
+ * plain sequence. Round 3's plain-sequence version made teardown ITSELF conditional on the audit
+ * write succeeding — probed on that shape: with `audit_log` unavailable on a termination branch,
+ * `runAction` threw, the lane was NEVER closed, the map entry NEVER evicted, and every subsequent
+ * call re-entered the same throwing branch. A live headless browser with a reachable CDP endpoint
+ * was leaked PERMANENTLY, with nothing left that could ever close it — in a computer-use
+ * chokepoint that is worse than an ordinary resource leak. The `finally` makes teardown
+ * unconditional on step 1's outcome while preserving the fail-closed throw: the caller still
+ * learns the audit write failed, but the browser is gone and the map entry is clean either way.
+ * A pleasant side effect: a failing audit write now still lets `syncSessionRow` commit
+ * `actions_used`/`tainted_at` — the taint latch is one-way, and losing it silently would have
+ * been worse than keeping it even when the permanent record could not be written.
+ *
  * `syncRow` and `evictMap` are independent parameters, not one combined flag, because the
  * per-action success path needs (2) — `cu_session.actions_used`/`tainted_at` must stay current —
  * but NOT (4): the session stays live for further actions. Conversely, `openSession`'s
- * registration catch must pass `syncRow: false, evictMap: false` when `insertSession` itself
- * never ran (a PK collision means the ROW and the MAP ENTRY sharing this id belong to a
- * DIFFERENT, still-valid session) — syncing or evicting them would corrupt or orphan that
- * unrelated session instead of this failed attempt's own (nonexistent) state.
+ * registration catch passes a THIRD, narrower flag for `syncRow` (fix round 4, item 4): a
+ * `rowInserted` boolean set immediately after `insertSession` succeeds, not `registeredInMap`
+ * (which is set two statements later, after `evictExistingSession` and `liveSessions.set`).
+ * `registeredInMap` was the WRONG flag for `syncRow` — if `evictExistingSession` itself throws
+ * (between `insertSession` succeeding and `liveSessions.set` ever running), `registeredInMap`
+ * stays `false` even though THIS attempt's own `cu_session` row was genuinely inserted, so gating
+ * `syncRow` on it left that row's `closed_at` `NULL` forever. `registeredInMap` remains correct
+ * for `evictMap`, since only a `liveSessions.set` that actually ran created an entry to evict.
  */
 async function finalizeSession(params: {
   readonly deps: Pick<CuGateDeps, "db" | "now">;
@@ -297,19 +313,22 @@ async function finalizeSession(params: {
   readonly evictMap: boolean;
   readonly writeAudit: () => void;
 }): Promise<void> {
-  params.writeAudit();
-  if (params.syncRow) {
-    try {
-      syncSessionRow(params.deps, params.sessionId, params.session);
-    } catch {
-      // Intentionally swallowed — see the doc comment above.
+  try {
+    params.writeAudit();
+  } finally {
+    if (params.syncRow) {
+      try {
+        syncSessionRow(params.deps, params.sessionId, params.session);
+      } catch {
+        // Intentionally swallowed — see the doc comment above.
+      }
     }
-  }
-  if (params.lane !== null) {
-    await bestEffortCloseLane(params.lane);
-  }
-  if (params.evictMap) {
-    liveSessions.delete(params.sessionId);
+    if (params.lane !== null) {
+      await bestEffortCloseLane(params.lane);
+    }
+    if (params.evictMap) {
+      liveSessions.delete(params.sessionId);
+    }
   }
 }
 
@@ -495,19 +514,21 @@ export async function openSession(
     // browser — it is not yet in `liveSessions`, so no future `runAction`/close path can find it.
     // Close it here, on this exact failure, rather than leaking it.
     //
-    // `registeredInMap` (fix round 2, NEW-4) distinguishes two different catch scenarios that
-    // look alike from inside this block: `insertSession` throwing BEFORE `liveSessions.set` ever
-    // ran (nothing of THIS attempt's is in the map OR in `cu_session` yet — syncing or deleting
-    // `sessionId` unconditionally would corrupt or remove a DIFFERENT, unrelated, still-valid
-    // session that happens to share the key) vs. the "opened" audit append throwing AFTER
-    // `insertSession`/`liveSessions.set` already succeeded (THIS attempt's own row and entry are
-    // real and must be synced/evicted, or the row survives reporting `closed_at IS NULL` forever
-    // and the map entry survives as a stale, already-closed session a later `runAction` would
-    // find instead of correctly throwing `ERR_CU_NO_SESSION`). The SAME flag gates both
-    // `finalizeSession`'s `syncRow` and `evictMap` below (fix round 3, NB-3): a row only exists
-    // to sync, and an entry only exists to evict, exactly when `insertSession`/`liveSessions.set`
-    // both actually ran. `lane` is passed UNCONDITIONALLY regardless — the browser process itself
-    // started either way.
+    // TWO flags, not one (fix round 4, item 4): `rowInserted` is set immediately after
+    // `insertSession` succeeds; `registeredInMap` is set two statements later, after
+    // `evictExistingSession` and `liveSessions.set` both ran. `registeredInMap` was the WRONG
+    // flag for `finalizeSession`'s `syncRow` — if `evictExistingSession` itself throws (a
+    // DIFFERENT, unrelated session's own teardown failing) BETWEEN `insertSession` succeeding and
+    // `liveSessions.set` ever running, `registeredInMap` stays `false` even though THIS attempt's
+    // own `cu_session` row genuinely exists, so gating the sync on it left OUR OWN row's
+    // `closed_at` `NULL` forever. `rowInserted` tracks exactly "does a row exist for THIS attempt
+    // to sync" — nothing more, nothing less. `registeredInMap` remains the right flag for
+    // `evictMap`: only a `liveSessions.set` that actually ran created a map entry to evict, and
+    // evicting or syncing `sessionId` when NEITHER flag is set would corrupt or remove a
+    // DIFFERENT, unrelated, still-valid session that happens to share the key (a PK collision,
+    // where `insertSession` itself throws before `rowInserted` is ever set). `lane` is passed
+    // UNCONDITIONALLY regardless of either flag — the browser process itself started either way.
+    let rowInserted = false;
     let registeredInMap = false;
     try {
       insertSession(deps.db, {
@@ -516,6 +537,7 @@ export async function openSession(
         envelopeJson: JSON.stringify(envelope),
         openedAt: envelope.approvedAt,
       });
+      rowInserted = true;
       await evictExistingSession(sessionId);
       liveSessions.set(sessionId, { session, lane, openDeps: deps });
       registeredInMap = true;
@@ -535,7 +557,7 @@ export async function openSession(
         sessionId,
         session,
         lane,
-        syncRow: registeredInMap,
+        syncRow: rowInserted,
         evictMap: registeredInMap,
         // Deliberately a normal (throwing) append here too — if it ALSO fails (same root cause
         // as the one above), the throw propagates to the OUTER catch below, whose OWN append IS

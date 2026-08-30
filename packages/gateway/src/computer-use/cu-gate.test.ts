@@ -737,7 +737,7 @@ describe("fix round 2: NEW-1 through NEW-5 and the two disclosed gaps", () => {
     }
   });
 
-  test("NEW-4b: the 'opened' audit append failing AFTER registration succeeded still returns refused, never throws", async () => {
+  test("NEW-4b: the 'opened' audit append failing AFTER registration succeeded still closes the lane and returns refused", async () => {
     const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
     const { deps: d, db } = deps({ newId: () => "id-round3-new4b" }, spy); // unique id (fix round 3)
     // `insertSession` only touches `cu_session`, so dropping `audit_log` lets registration
@@ -749,17 +749,10 @@ describe("fix round 2: NEW-1 through NEW-5 and the two disclosed gaps", () => {
       d,
     );
     expect(out.status).toBe("refused"); // never throws past the declared return type (NEW-4)
-    // DISCLOSED TRADE-OFF (fix round 3): `finalizeSession`'s step 1 (the audit write) is
-    // deliberately FIRST and UNGUARDED, so that "order" is a real, mutation-testable property —
-    // see the dedicated order-sensitivity test below. The cost is that when `audit_log` ITSELF
-    // (not just `cu_session`) is unavailable, steps 2-4 (session-row sync, lane close, map
-    // eviction) never run either, since the throw propagates out of `finalizeSession` before
-    // reaching them. That is narrower than round 2's NEW-4b guarantee (which closed the lane
-    // unconditionally), but `audit_log` being wholly gone while `cu_session` remains is a
-    // categorically rarer failure than the `cu_session`-only breakage NB-4/NEW-1 targeted — both
-    // tables live in the same SQLite file, so a real disk/IO failure would typically hit both
-    // together, not one selectively. `openSession` still never escapes as a throw either way.
-    expect(spy.closes).toBe(0);
+    // fix round 4: finalizeSession's teardown (sync/close-lane/evict) now runs inside a
+    // `finally` wrapped around the audit write, so a broken audit_log no longer also leaks the
+    // lane — restored to round 2's original guarantee.
+    expect(spy.closes).toBe(1);
   });
 
   test("NEW-5: a colliding session id ACROSS TWO DIFFERENT DATABASES still closes and evicts the previous lane", async () => {
@@ -895,21 +888,57 @@ describe("fix round 3: the restructure — booleans over stage-inference, one te
     expect(row?.hitl_status).toBe("approved");
   });
 
-  test("order sensitivity: a broken audit_log means syncSessionRow never runs (the audit row truly comes FIRST)", async () => {
-    // Distinct from NEW-1's own test (which drops cu_session and proves the AUDIT row survives
-    // a broken SYNC): this drops audit_log itself and proves the INVERSE relationship — the sync
-    // step never gets a chance to run when the write ahead of it fails, which is what makes
-    // "order" an actual, mutation-testable property of finalizeSession rather than a comment.
-    const { deps: d, db } = deps({ newId: () => "id-round3-order" });
+  test("teardown always runs (policy branch): a broken audit_log still closes the lane and evicts the session", async () => {
+    // Replaces the deleted "order sensitivity" test, which pinned the LEAK as an expectation
+    // ("audit_log is broken, therefore actions_used stayed 0 — syncSessionRow never got the
+    // chance to run"). Probed on the pre-fix-round-4 code: with audit_log unavailable, runAction
+    // THREW, spy.closes stayed 0, the map entry survived, and every subsequent call re-entered
+    // the same throwing branch — a live headless browser with a reachable CDP endpoint leaked
+    // PERMANENTLY. This test pins the property that actually matters instead.
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d, db } = deps({ newId: () => "id-round4-teardown-policy" }, spy);
     const sessionId = await openDefault(d);
     db.exec(`DROP TABLE audit_log`);
-    await expect(runAction({ sessionId, kind: "read" }, d)).rejects.toThrow();
-    const row = db
-      .query<{ actions_used: number }, [string]>(`SELECT actions_used FROM cu_session WHERE id = ?`)
-      .get(sessionId);
-    // Still 0 (insertSession's own default): syncSessionRow — which would have bumped this to 1
-    // — never ran, because writeAudit (first, unconditional, unguarded) failed before it.
-    expect(row?.actions_used).toBe(0);
+    const disabledDeps: CuGateDeps = { ...d, config: { ...d.config, enabled: false } };
+    await expect(runAction({ sessionId, kind: "read" }, disabledDeps)).rejects.toThrow();
+    expect(spy.closes).toBe(1);
+    // The session is genuinely gone — a follow-up call finds nothing live, rather than
+    // re-entering the same throwing branch against a leaked browser forever.
+    let caught: unknown;
+    try {
+      await runAction({ sessionId, kind: "read" }, d);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as { code?: string } | undefined)?.code).toBe("ERR_CU_NO_SESSION");
+  });
+
+  test("teardown always runs (budget branch): a broken audit_log still closes the lane and evicts the session", async () => {
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d, db } = deps(
+      {
+        newId: () => "id-round4-teardown-budget",
+        config: {
+          ...DEFAULT_NIMBUS_COMPUTER_USE_TOML,
+          enabled: true,
+          allowedLanes: ["browser"],
+          maxActions: 1,
+        },
+      },
+      spy,
+    );
+    const sessionId = await openDefault(d);
+    await runAction({ sessionId, kind: "read" }, d); // consumes the only slot
+    db.exec(`DROP TABLE audit_log`);
+    await expect(runAction({ sessionId, kind: "read" }, d)).rejects.toThrow(); // terminates: budget exhausted, audit write throws
+    expect(spy.closes).toBe(1);
+    let caught: unknown;
+    try {
+      await runAction({ sessionId, kind: "read" }, d);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as { code?: string } | undefined)?.code).toBe("ERR_CU_NO_SESSION");
   });
 
   test("NB-4 (policy branch): cu_session unavailable still returns terminated_policy rather than throwing", async () => {
@@ -938,5 +967,41 @@ describe("fix round 3: the restructure — booleans over stage-inference, one te
     db.exec(`DROP TABLE cu_session`);
     const out = await runAction({ sessionId, kind: "read" }, d); // terminates: budget exhausted
     expect(out.outcome).toBe("terminated_budget");
+  });
+  test("item 4: rowInserted (not registeredInMap) gates syncRow — our own inserted row gets closed_at even when evictExistingSession throws", async () => {
+    // Leave a session LIVE and break ITS OWN db's audit_log, so evicting it later throws.
+    const spyLeftover: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: leftoverDeps, db: leftoverDb } = deps(
+      { newId: () => "id-round4-item4" },
+      spyLeftover,
+    );
+    const leftover = await openSession(
+      { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
+      leftoverDeps,
+    );
+    expect(leftover.status).toBe("open");
+    leftoverDb.exec(`DROP TABLE audit_log`); // breaks the leftover's OWN eviction path
+
+    // A SECOND open with the SAME id but a DIFFERENT, HEALTHY db: insertSession succeeds (no PK
+    // collision — separate databases), but evictExistingSession then throws trying to evict the
+    // LEFTOVER (its audit_log is gone), BEFORE liveSessions.set for THIS attempt ever runs. So
+    // rowInserted is true (insertSession succeeded against dbB) while registeredInMap stays
+    // false (liveSessions.set was never reached) — exactly the split item 4 introduces.
+    const spyB: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: depsB, db: dbB } = deps({ newId: () => "id-round4-item4" }, spyB);
+    const second = await openSession(
+      { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
+      depsB,
+    );
+    expect(second.status).toBe("refused"); // never throws past the declared return type
+
+    // Before this fix, syncRow was gated on registeredInMap — false here — so this row's
+    // closed_at would have stayed NULL forever despite the row genuinely existing.
+    const row = dbB
+      .query<{ closed_at: number | null }, [string]>(
+        `SELECT closed_at FROM cu_session WHERE id = ?`,
+      )
+      .get("id-round4-item4");
+    expect(row?.closed_at).not.toBeNull();
   });
 });
