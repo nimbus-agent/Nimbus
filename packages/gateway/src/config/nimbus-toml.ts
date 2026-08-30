@@ -916,6 +916,117 @@ export function loadNimbusCodeExecutionFromConfigDir(configDir: string): NimbusC
   return loadNimbusCodeExecutionFromPath(join(configDir, "nimbus.toml"));
 }
 
+export const KNOWN_CU_LANES = ["browser", "terminal", "screen"] as const;
+export type CuLane = (typeof KNOWN_CU_LANES)[number];
+
+export type NimbusComputerUseToml = {
+  enabled: boolean;
+  allowedLanes: CuLane[];
+  maxActions: number;
+  maxWallClockMs: number;
+  browserProfileDir: string;
+  snapshotMaxBytes: number;
+  snapshotRetentionDays: number;
+};
+
+/**
+ * DEFAULT OFF, and `allowedLanes` DEFAULT EMPTY — a deliberate SECOND lock, and a departure from
+ * `[code_execution]`'s non-empty `allowed_runtimes = ["bun"]`. `enabled = true` on its own actuates
+ * nothing; the operator must name each lane. The screen lane costs `nimbus prove` its verdict for
+ * any window containing one action, so opting into a lane should be an act rather than something
+ * inherited from flipping one boolean.
+ */
+export const DEFAULT_NIMBUS_COMPUTER_USE_TOML: NimbusComputerUseToml = {
+  enabled: false,
+  allowedLanes: [],
+  maxActions: 50,
+  maxWallClockMs: 300_000,
+  browserProfileDir: "",
+  snapshotMaxBytes: 262_144,
+  snapshotRetentionDays: 7,
+};
+
+/**
+ * Normalise to lowercase and drop unknown lanes. The lowercasing is load-bearing: the gate compares
+ * this array against the lane literal, so if this stopped normalising, `allowed_lanes = ["Browser"]`
+ * would silently refuse every session with a message about the lane not being allowed.
+ */
+function parseAllowedLanes(valRaw: string): CuLane[] {
+  const known = new Set<string>(KNOWN_CU_LANES);
+  const seen = new Set<string>();
+  const out: CuLane[] = [];
+  for (const v of parseStringArray(valRaw)) {
+    const id = v.trim().toLowerCase();
+    if (id === "" || seen.has(id) || !known.has(id)) continue;
+    seen.add(id);
+    out.push(id as CuLane);
+  }
+  return out;
+}
+
+function applyNimbusComputerUseKey(
+  out: Partial<NimbusComputerUseToml>,
+  key: string,
+  valRaw: string,
+): void {
+  const positive = (assign: (n: number) => void): void => {
+    const n = parseIntDec(valRaw);
+    if (n !== undefined && n > 0) assign(n);
+  };
+  switch (key) {
+    case "enabled":
+      out.enabled = valRaw.trim().toLowerCase() === "true";
+      break;
+    case "allowed_lanes":
+      out.allowedLanes = parseAllowedLanes(valRaw);
+      break;
+    case "max_actions":
+      positive((n) => {
+        out.maxActions = n;
+      });
+      break;
+    case "max_wall_clock_ms":
+      positive((n) => {
+        out.maxWallClockMs = n;
+      });
+      break;
+    case "browser_profile_dir":
+      out.browserProfileDir = parseString(valRaw);
+      break;
+    case "snapshot_max_bytes":
+      positive((n) => {
+        out.snapshotMaxBytes = n;
+      });
+      break;
+    case "snapshot_retention_days":
+      positive((n) => {
+        out.snapshotRetentionDays = n;
+      });
+      break;
+    default:
+      break;
+  }
+}
+
+export function parseNimbusComputerUseToml(
+  raw: string,
+  defaults: NimbusComputerUseToml = DEFAULT_NIMBUS_COMPUTER_USE_TOML,
+): NimbusComputerUseToml {
+  const out: Partial<NimbusComputerUseToml> = {};
+  forEachSectionEntry(raw, "[computer_use]", (key, valRaw) => {
+    applyNimbusComputerUseKey(out, key, valRaw);
+  });
+  return { ...defaults, ...out };
+}
+
+export function loadNimbusComputerUseFromConfigDir(configDir: string): NimbusComputerUseToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_COMPUTER_USE_TOML,
+    parseNimbusComputerUseToml,
+  );
+}
+
 export type NimbusFederationToml = {
   enabled: boolean;
   consentTimeoutSeconds: number;

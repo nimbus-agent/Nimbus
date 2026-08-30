@@ -63,6 +63,7 @@ import {
   parseNimbusAuditToml,
   parseNimbusAutomationToml,
   parseNimbusCodeExecutionToml,
+  parseNimbusComputerUseToml,
   parseNimbusFederationToml,
   parseNimbusIdentityToml,
   parseNimbusLanToml,
@@ -1885,6 +1886,42 @@ describe("[code_execution] config", () => {
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
+  });
+});
+
+describe("[computer_use] config", () => {
+  test("defaults are off and grant no lane", () => {
+    const c = parseNimbusComputerUseToml("");
+    expect(c.enabled).toBe(false);
+    expect(c.allowedLanes).toEqual([]);
+    expect(c.maxActions).toBe(50);
+    expect(c.snapshotRetentionDays).toBe(7);
+  });
+
+  test("enabling the capability alone still grants no lane", () => {
+    // The second lock (spec § 9): `enabled = true` with no lane list actuates nothing.
+    const c = parseNimbusComputerUseToml(`[computer_use]\nenabled = true\n`);
+    expect(c.enabled).toBe(true);
+    expect(c.allowedLanes).toEqual([]);
+  });
+
+  test("parses a lane list and drops unknown lanes", () => {
+    const c = parseNimbusComputerUseToml(
+      `[computer_use]\nenabled = true\nallowed_lanes = ["browser", "telepathy"]\n`,
+    );
+    expect(c.allowedLanes).toEqual(["browser"]);
+  });
+
+  test("normalises lane case", () => {
+    // Load-bearing, not cosmetic: the gate compares this array against the lane literal
+    // "browser", so without normalisation `["Browser"]` would silently refuse every session.
+    const c = parseNimbusComputerUseToml(`[computer_use]\nallowed_lanes = ["Browser"]\n`);
+    expect(c.allowedLanes).toEqual(["browser"]);
+  });
+
+  test("rejects a non-positive budget rather than accepting it", () => {
+    const c = parseNimbusComputerUseToml(`[computer_use]\nmax_actions = 0\n`);
+    expect(c.maxActions).toBe(50); // falls back to the default
   });
 });
 
