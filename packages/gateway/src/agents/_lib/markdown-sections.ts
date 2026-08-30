@@ -138,8 +138,10 @@ function headingLines(lines: readonly string[]): { index: number; level: number;
  * truncator dropping whole sections from the end (`chatops/brief-truncate.ts`) wants each heading
  * — a promoted `# Section` and a demoted `### Section` alike — as its own droppable unit, not one
  * swallowed as a sub-heading of the other, since a model rewrite does not reliably match the
- * renderer's own level-2 convention. Text before the first heading of any level (a title-less
- * preamble) is simply not covered by any entry, the same as `preambleBody` defines it.
+ * renderer's own level-2 convention. Text before the FIRST heading of ANY level is simply not
+ * covered by any entry — narrower than `preambleBody`, which scopes to text before the first
+ * level-2 heading specifically (so a level-1 title stays part of ITS preamble). Here, a level-1
+ * title is itself a heading and becomes its own section, same as any other.
  *
  * A thin wrapper over `headingLines` — the one heading scan this file exists to be the sole
  * owner of (see the file header comment) — so a second, independent regex-based split never

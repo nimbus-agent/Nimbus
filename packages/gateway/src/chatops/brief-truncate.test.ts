@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { SynthInput } from "../agents/_lib/brief-kinds.ts";
+import { RESERVED_HEADINGS_BY_KIND } from "../agents/_lib/reserved-sections.ts";
+import { EXTERNAL_AGENT_NAMES } from "../ipc/agents-rpc.ts";
 import { truncateBrief } from "./brief-truncate.ts";
 
 describe("truncateBrief", () => {
@@ -9,6 +12,9 @@ describe("truncateBrief", () => {
     expect(out).toContain("## Gaps");
     expect(out).toContain("category: coverage");
     expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(500 + 200); // + the notice line
+    // Pins the COUNT, not just the word "truncated" — a wrong count is a silent lie about how
+    // much was dropped, and only one body section ("## Findings") was.
+    expect(out).toContain("1 sections omitted");
   });
 
   test("announces the truncation rather than hiding it", () => {
@@ -30,6 +36,9 @@ describe("truncateBrief", () => {
     expect(out).not.toContain("Promoted Section");
     expect(out).not.toContain("Demoted Section");
     expect(out).toContain("## Gaps"); // the disclosure survives regardless of what else was dropped
+    // Both dropped body sections are pinned in the count — a wrong count would pass every other
+    // assertion in this test.
+    expect(out).toContain("2 sections omitted");
   });
 
   test("a kind with no matching SynthInput literal (the conflicts/conflict mismatch) still keeps Gaps", () => {
@@ -68,5 +77,75 @@ describe("truncateBrief", () => {
     const out = truncateBrief(brief, "why", 500);
     expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(700);
     expect(out).toContain("truncated");
+  });
+});
+
+describe("drift guard: every external agent name's real disclosures survive truncateBrief", () => {
+  /**
+   * The external ChatOps/HTTP agent name -> internal `SynthInput["kind"]` literal, for every
+   * name `EXTERNAL_AGENT_NAMES` (`ipc/agents-rpc.ts`) currently publishes. Hand-verified against
+   * the ACTUAL brief-type `kind` literals — `@nimbus-dev/sdk`'s `brief-composites.d.ts` for the
+   * nine `findings.ts`-sourced kinds, plus `glossary-types.ts` / `decisions-types.ts` /
+   * `ownership-types.ts` — never assumed from naming convention. That distinction matters: the
+   * one existing divergence, `"conflicts"` -> `"conflict"`, is exactly the kind of mismatch a
+   * naming-convention assumption would miss, which is the whole reason `brief-truncate.ts`'s
+   * fallback exists in the first place.
+   *
+   * This is deliberately a hand-maintained map, not derived from `AGENTS_RPC_HANDLERS` — its job
+   * is to be an INDEPENDENT source of truth the test below can compare `truncateBrief`'s fallback
+   * behavior against. A derived map would just be the same assumption re-encoded and could never
+   * disagree with itself.
+   */
+  const KNOWN_EXTERNAL_TO_KIND: Readonly<Record<string, SynthInput["kind"]>> = Object.freeze({
+    catchup: "catchup",
+    conflicts: "conflict",
+    decisions: "decisions",
+    expert: "expert",
+    ghost: "ghost",
+    glossary: "glossary",
+    huddle: "huddle",
+    impact: "impact",
+    janitor: "janitor",
+    ownership: "ownership",
+    why: "why",
+  });
+
+  test("EXTERNAL_AGENT_NAMES has no name missing from the known name-to-kind map", () => {
+    // Fails the moment a twelfth agent is published without a matching entry above. A name
+    // missing here is a name `truncateBrief`'s disclosure guarantee has never been checked for —
+    // silent under-protection is exactly the failure mode this describe block exists to close.
+    expect([...EXTERNAL_AGENT_NAMES].sort()).toEqual(Object.keys(KNOWN_EXTERNAL_TO_KIND).sort());
+  });
+
+  test.each(EXTERNAL_AGENT_NAMES.map((name) => [name] as const))(
+    "%s: every real reserved heading for its kind survives a truncation, fallback or not",
+    (name) => {
+      const trueKind = KNOWN_EXTERNAL_TO_KIND[name];
+      expect(trueKind).toBeDefined();
+      const trueHeadings = RESERVED_HEADINGS_BY_KIND[trueKind as SynthInput["kind"]];
+      const body = `# Title\n\n## Body\n${"x".repeat(4000)}\n`;
+      const reserved = trueHeadings.map((h) => `${h}\n\n- content under ${h}\n`).join("");
+      const out = truncateBrief(body + reserved, name, 300);
+      for (const heading of trueHeadings) expect(out).toContain(heading);
+    },
+  );
+
+  test("proves the guarded class of bug: an UNMAPPED kind's extra heading is NOT protected by the [GAPS_HEADING]-only fallback", () => {
+    // "hypothetical-agent" is not a key of RESERVED_HEADINGS_BY_KIND, so truncateBrief takes the
+    // fallback path and protects ONLY "## Gaps" — exactly what would happen today for a future
+    // agent whose external name diverges from its internal kind, if that kind's real reserved set
+    // (like glossary's and negotiate's) carried a SECOND heading and nobody had added it to
+    // KNOWN_EXTERNAL_TO_KIND above. This is the failure the two tests above exist to catch before
+    // it ships: the coverage-completeness test fails the moment a name is added without an entry,
+    // and the per-name test above would fail on exactly this assertion — a real disclosure
+    // heading silently missing from the output — the moment it ran against a name whose real kind
+    // carries a heading like "## Second Disclosure" below and isn't correctly mapped.
+    const brief =
+      `# Title\n\n## Body\n${"x".repeat(4000)}\n` +
+      `## Gaps\n\n- none\n` +
+      `## Second Disclosure\n\n- irreplaceable content\n`;
+    const out = truncateBrief(brief, "hypothetical-agent", 300);
+    expect(out).toContain("## Gaps"); // the fallback's ONE protected heading survives
+    expect(out).not.toContain("## Second Disclosure"); // and a second one is silently lost
   });
 });
