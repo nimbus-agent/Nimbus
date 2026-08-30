@@ -1180,11 +1180,18 @@ test("flags a validator field with no entry in the kinds map", () => {
   expect(v.map((x) => x.snippet)).toContain("expert.newField");
 });
 
-test("flags a kinds-map field the validator does not have", () => {
+// CORRECTION — shipped differently. This step originally specified the REVERSE-direction test
+// ("flags a kinds-map field the validator does not have"), which contradicts the one-way contract
+// this same task states two sections above. The audit is one-directional BY DESIGN: it flags a
+// validator field missing from the kinds map, and deliberately says nothing about a kinds-map
+// entry the validator's parse does not show. The reverse check would fire on every run against a
+// file that has not drifted at all — `janitor.allowGaps`, `decisions.explain` and `idleDays` are
+// all legitimately map-side. The shipped test asserts the SILENCE instead:
+test("does NOT flag a map field the validator's parse does not show (one-directional by design)", () => {
   const v = checkAgentParamKinds({
     "requireExpertParams": { agent: "expert", fields: { topicOrFile: "string" } },
   });
-  expect(v.map((x) => x.snippet)).toContain("expert.limit");
+  expect(v.map((x) => x.snippet)).not.toContain("expert.limit");
 });
 
 test("THE GUARD IS NOT INERT: a realistic parse of the real file finds fields", () => {

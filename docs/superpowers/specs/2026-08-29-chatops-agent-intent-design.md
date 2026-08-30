@@ -1,10 +1,13 @@
 # ChatOps Agent Intent — Agents on the Channel
 
 **Date:** 2026-08-29
-**Status:** design — not started
+**Status:** shipped 2026-08-30 — PR 1 (`egress/chatops-egress.ts`, #1403) and PR 2 (the agent
+intent, #1412). Sections below that describe behaviour describe SHIPPED behaviour; where the
+implementation diverged from the design, the divergence is recorded inline as a **correction**
+rather than by editing the original reasoning away.
 **Slot:** Spine S2 sidecar / Track 2 → Client surfaces, row *"Messaging (ChatOps) — agents on the channel"*
 **Roadmap:** [`docs/roadmap.md` § Track 2 → Client surfaces](../../roadmap.md#client-surfaces), the
-"Messaging surface — agents on the channel (direction, not yet built)" block
+"Messaging surface — agents on the channel (shipped 2026-08-30)" block
 **Delivers as:** two PRs, in order — see §4
 **Reviewed:** [design review](./2026-08-29-chatops-agent-intent-design-review.md) (Antigravity, 2026-08-29) — responses in §13
 
