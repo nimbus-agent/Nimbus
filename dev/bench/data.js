@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788093503576,
+  "lastUpdate": 1788112127946,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f4a9a75d6a07bb787675973c8411d9b1c0a27eef",
-          "message": "chore(sonar): cleanup 9 follow-up — land the share-subsystem smell fixes + coverage/dedup orphaned by #669 (#672)\n\n@\n## Why\n\nPR #669 (\"cleanup 9 — clear all 16 smells…\") was **squash-merged but\nonly captured part of the branch**. The squash commit `bb54d743` on\n`main` does **not** touch a single `share/*` file, so SonarCloud still\nreports **16 open code smells** — all in the Slice 8a share subsystem —\ndespite the #669 title claiming they were cleared.\n\nThe fixing commit `ae48ff33` (\"clear all 16 share-subsystem\nmaintainability smells\") — plus several coverage/dedup/build-lcov\ncommits — live on the branch but never reached `main`. #669 is already\nmerged/closed, so this is a fresh PR to land the orphaned work.\n\n## What this lands\n\n- **`ae48ff33`** — clears all 16 SonarCloud share-subsystem smells:\n- **S3358** nested ternaries → extract shared `codeUnitCompare` into\n`util/code-unit-compare.ts` (kills the `share-format.ts` +\n`share-redaction.ts` duplicates) + de-nest the CLI share-sink ternary\n  - **S7735** negated conditions → positive share-sink resolution\n  - **S4325** redundant type assertions dropped in `share-format.ts`\n  - **S6551** default stringification → explicit in `share-rpc.ts`\n  - plus S5843 / S6397 / S6594 / S7780\n- Coverage/test additions (`connector.test.ts`, `discord-sync.test.ts`,\n`connector-spawns.test.ts`, `scheduler.test.ts`, etc.), `ConsentBroker`\ndedup, warehouse-write dedup, the `build-lcov` TS port, and\n`sonar-project.properties` exclusion right-sizing — all of which also\ndid not make it into #669.\n\n## Verification\n\n- `ae48ff33` recorded share unit tests (69) + `preflight:fast` green at\ncommit time.\n- CI on this PR is the authoritative gate — Sonar should flip the 16\nshare smells to resolved once `main` is re-analyzed post-merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n@\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n# Release Notes\n\n* **Tests**\n* Enhanced Windows-specific test coverage for path resolution and\ncross-drive scenarios.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T06:28:51Z",
-          "tree_id": "d22e891adac549f7fddcae02f9d00ba9577d7c98",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f4a9a75d6a07bb787675973c8411d9b1c0a27eef"
-        },
-        "date": 1781678942873,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 278.4447009000014,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 277.0601232000019,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 334.87112719999493,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a6a052e2d019eb077a0b90d3a352c0d5d58cf590",
+          "message": "feat(chatops): invoke the built-in read-only agents from a Slack or Teams channel (#1412)\n\nAdds an `agent` intent to the ChatOps `IntentRouter`, so a mapped Slack\nor Teams user can run a\nbuilt-in read-only agent from a channel:\n\n```\n@nimbus agent expert query=auth\n@nimbus agent janitor allowGaps=true\n```\n\nIt works with **no LLM configured** — a brief renders deterministically\nunder\n`[agents].synthesis = \"off\"`, where `ask` in the same channel would\nrefuse. That is the point of\nthe feature, not a side effect.\n\nFollows #1403, which ledgered every outbound ChatOps post and is what\nmakes the brief post\nappear in `nimbus prove`.\n\n## Scope: eleven agents, not fourteen\n\n`AGENTS_RPC_HANDLERS` carries fifteen entries — the fourteen built-in\nagents plus `whyPeek`, a\ncompanion that shares `why`'s dispatch rather than a fifteenth agent.\n`EXTERNAL_EXCLUDED_AGENT_METHODS` — the same set the HTTP and MCP\nsurfaces already exclude,\ngeneralized from `HTTP_EXCLUDED_AGENT_METHODS` so ChatOps inherits it\nrather than re-deciding it\n— drops `preflight` and `premortem` for their side effects, `negotiate`\nbecause its `--person`\nargument turns it into a dossier-builder for anyone who can read the\nchannel, and `whyPeek` as a\ncompanion. Every one of those reasons is stronger in a shared room than\non a private surface.\n\n## Params are coerced, not validated\n\n`ipc/agent-param-kinds.ts` declares only the primitive kind of each\nparameter — four kinds:\n`string`, `number`, `boolean`, `stringArray`. `ipc/agents-rpc.ts` keeps\nsole ownership of every\nbound and every `-32602` message, so no bounds constant is duplicated\nonto the chat surface.\nA one-directional static audit,\n`scripts/structure-audit/check-agent-param-kinds.ts`, fails when\na validator gains a field the kinds map does not know about.\n\nOne real bug this closed: a non-finite `minConfidence` passed all three\nof its validator's\nchecks, because `NaN` satisfies `typeof x === \"number\"`, `NaN < 0` is\nfalse, and `NaN > 1` is\nfalse. The parser now refuses it before dispatch.\n\n## Invariants\n\n**I23** — the brief post goes through a second `ReplyDispatcher` bound\nto `posts.agentBrief`,\nnot a direct emitter, so the invariant's \"sole operational post path\"\nclaim stays true in code.\nReview caught this about to be falsified; it was fixed by adding the\ndispatcher rather than by\nsoftening the prose.\n\n**I29** — the post appends exactly one `egress_ledger` row with\n`method='chatops.agentBrief'`,\nfrom the post appender rather than the invoker, so it cannot\ndouble-count.\n\n**I31** — rendering caps the brief at a per-platform byte budget and\nalways binds it. Ordinary\nbody content is dropped from the end first, at any heading level. A\nreserved section is touched\nonly once that is exhausted: glossary's synthesis-reserved `## Terms`\ntable is shrunk first with\nan honest count, and a disclosure section such as `## Gaps` has its own\nbytes cut only as an\nabsolute last resort, always behind an unambiguous \"content was cut\"\nnotice rather than a silent\noverflow. The truncator reuses `agents/_lib`'s own section machinery\nrather than a second\nmarkdown parser, so it cannot disagree with the invariant at the\nboundary.\n\nThe heading classification is **fail-closed**:\n`SYNTHESIS_RESERVED_HEADINGS` is a positive,\nexplicit set, and any reserved heading not in it is treated as a\ndisclosure and is never the\ndrop candidate. An earlier revision derived droppability from *absence*\nfrom a disclosure set,\nwhich meant a future disclosure-only heading would silently become the\nfirst thing cut.\n\n## One wire that no per-task review could see\n\n`selfIdentity` was never wired in production. `PlatformServices` carried\nno federation-identity\nfield, so the ChatOps invoker structurally could not receive one, while\nits HTTP sibling did.\nFour of the eleven — `ghost`, `conflicts`, `huddle`, `janitor` — would\nhave fanned out to peers\nwith a zero keypair and returned briefs full of per-peer gaps, while\nthree docs asserted the\nworking behaviour.\n\nEach half had a passing test. Nothing tested the join.\n`chatops-agent-invoker-boot.test.ts` now\nboots the real `assemblePlatformServices` and observes the deps the real\ninternal call receives.\n\n## Known open, disclosed not fixed\n\nThe agent intent is **not rate-limited**, unlike `POST\n/v1/agents/{agent}`. The pre-existing\n`read` path is equally unbounded, so this is not a regression on its own\n— but the\npeer-amplification arm is new: an unbounded run count now means\nunbounded federated fan-out onto\nother paired machines, and unbounded remote-LLM spend under\n`[agents].synthesis = \"allow-remote\"`,\nwhere before it meant only unbounded local `ask` calls. Recorded in\n`docs/roadmap.md`. A rate\nlimiter is its own change.\n\n## Verification\n\n`bun run preflight`: 35 gates pass. `test:ci` reports 19692 pass / 70\nskip / 3 fail — the three\nfailures are the I33 sandbox precondition tests, which fail loudly\nrather than skip when the\nWindows sandbox helper binary is absent locally. Those three files have\nzero commits on this\nbranch and take the Linux arm on CI.\n\nCoverage floor: 7 violations, all pre-existing Windows platform-arm\nfiles with zero commits here.\nEvery new source file on this branch clears the floor.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_0112DzCFzXs1osvcGLUuGwSQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added ChatOps support for commands invoking eleven built-in agents.\n* Added parameter parsing and validation for agent commands, including\nnumeric, boolean, string, and list values.\n* Added federation-aware agent execution and reliable brief delivery\nwith egress tracking.\n* Added byte-limit handling that preserves important disclosure sections\nin truncated responses.\n\n* **Bug Fixes**\n* Improved handling of malformed commands, unsupported agents, invalid\nparameters, timeouts, and non-finite values.\n\n* **Documentation**\n* Updated architecture, security, roadmap, changelog, and workflow\ndocumentation for ChatOps agent functionality.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-30T17:35:38Z",
+          "tree_id": "5f113244ebcbf302997ad14b17af8e34e9a8eb7a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a6a052e2d019eb077a0b90d3a352c0d5d58cf590"
+        },
+        "date": 1788112125206,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 319.88255224999625,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 319.12867754999604,
             "unit": "ms"
           }
         ]
