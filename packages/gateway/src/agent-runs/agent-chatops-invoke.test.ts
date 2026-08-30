@@ -78,6 +78,38 @@ function startSilentPeer(): { readonly hostPort: number; readonly stop: () => vo
   return { hostPort: server.port, stop: () => server.stop(true) };
 }
 
+/**
+ * Like `startSilentPeer`, but records every byte it receives instead of discarding it — the
+ * `hello` frame (`lan-client.ts`'s `sendFederatedOverWire`) carries the caller's identity as
+ * cleartext base64 (`client_pubkey`) ahead of any encryption, precisely so the responder can
+ * compute the shared box key, so the raw bytes are enough to prove WHICH identity a federated
+ * fan-out presented on the wire (spec §13.2) without faking any crypto seam.
+ */
+function startCapturingPeer(): {
+  readonly hostPort: number;
+  readonly stop: () => void;
+  readonly received: () => Buffer;
+} {
+  const chunks: Buffer[] = [];
+  const server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(_socket, chunk) {
+        chunks.push(Buffer.from(chunk));
+      },
+      open() {},
+      close() {},
+      error() {},
+    },
+  });
+  return {
+    hostPort: server.port,
+    stop: () => server.stop(true),
+    received: () => Buffer.concat(chunks),
+  };
+}
+
 /** Seeds one LAN peer pointed at `hostPort`, so a federated agent's fan-out has somewhere to dial. */
 function seedSilentPeer(db: Database, hostPort: number): LocalIndex {
   const index = new LocalIndex(db);
@@ -160,6 +192,38 @@ describe("buildChatopsAgentInvoker", () => {
       // test would pass green while the timeout hazard went completely unguarded.
       expect(r).toMatchObject({ ok: false });
       if (!r.ok) expect(r.detail).toContain("timed out");
+    } finally {
+      peer.stop();
+    }
+  });
+
+  test("a federated fan-out presents the boot-supplied identity, never a per-message one (§13.2)", async () => {
+    // ghost/conflicts/huddle route through `federatedAgentBase`, which forwards `ctx.selfIdentity`
+    // untouched to the peer fan-out — see agents-rpc.ts's `const selfIdentity = ctx.selfIdentity ??
+    // ZERO_IDENTITY`. `ChatopsAgentInvoker`'s own signature, `(agent, params) =>
+    // Promise<ChatopsAgentResult>`, carries no per-caller identity at all, so the ONLY identity a
+    // peer can ever see is the one bound into `deps.selfIdentity` at construction time — i.e. the
+    // gateway owner's, fixed once at boot, regardless of which mapped chat user typed the command.
+    // This proves it end-to-end rather than by reading the plumbing: a real (if silent) peer
+    // records the cleartext `client_pubkey` the wire actually carried.
+    const peer = startCapturingPeer();
+    try {
+      const db = freshDb();
+      const index = seedSilentPeer(db, peer.hostPort);
+      const ownerIdentity: BoxKeypair = {
+        publicKey: new Uint8Array(32).fill(9),
+        secretKey: new Uint8Array(32).fill(3),
+      };
+      const invoke = buildChatopsAgentInvoker({
+        db,
+        index,
+        selfIdentity: ownerIdentity,
+        router: undefined,
+        timeoutMs: 200,
+      });
+      await invoke("huddle", { namespaces: ["ns1"] });
+      const expectedPubkeyB64 = Buffer.from(ownerIdentity.publicKey).toString("base64");
+      expect(peer.received().toString("latin1")).toContain(expectedPubkeyB64);
     } finally {
       peer.stop();
     }
