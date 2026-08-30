@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788077450684,
+  "lastUpdate": 1788092238177,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "170841b3915cf4975c2017f8769a845ee2e1865b",
-          "message": "docs(roadmap): defer perf surfaces S3 + S5 to Phase 13 (#668)\n\n## Summary\n\nMoves the two stubbed perf-bench UX surfaces **S3 (dashboard first\npaint)** and **S5 (HITL popup paint)** into **Phase 13 (Desktop\nDistribution)**, as a checklist item under \"Desktop Release Vehicle.\"\n\n## Why\n\nBoth surfaces are stubbed with the same reason — `\"renderer\ninstrumentation pending (Tauri perf marks)\"`\n(`packages/gateway/src/perf/surfaces/bench-dashboard-first-paint.ts` +\n`bench-hitl-popup.ts`, both return `[]` → `samples_count=0 →\nskipped(stub)`). Faithful first-paint timing requires the **launchable\nTauri desktop UI**, which is deferred to Phase 13 — so these belong with\nthe desktop-distribution work, not the headless perf-strategy\nworkstream.\n\nFor contrast, the sibling **S4 (TUI first paint)** is *already\nimplemented* (it times the Ink terminal UI's `[tui] first-frame`\nmarker), and is unaffected.\n\nThe new item records what closing S3/S5 entails (instrument the renderer\n→ emit paint marks → implement the drivers → drop the stubs → confirm\n`gateClass`) and notes their thresholds are already pinned in\n`slo-thresholds.ts`. Closing them completes the S1–S11 surface set so\nthe reference runner can gate the full roster.\n\nDocs-only; one line added to `docs/roadmap.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated Phase 13 desktop distribution roadmap with new performance\noptimization tracking items for desktop performance work.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-17T08:04:10+03:00",
-          "tree_id": "3e71ff0515b32e8b62427ce2cdd091abf30c7dac",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/170841b3915cf4975c2017f8769a845ee2e1865b"
-        },
-        "date": 1781673805304,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 269.95864529999596,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 271.02410279998946,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 315.9918580999976,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9f69790ca0e29795997e614732539dce5792bfae",
+          "message": "fix(llm): make llm.setDefault write the store the router actually reads (#1410)\n\nCloses #1383.\n\n`llm.setDefault` was **write-only**: it persisted to `llm_task_defaults`\n(V20) and nothing read that table. The desktop control appeared to work\nand changed nothing about routing.\n\n## The change\n\nIt now writes **`[llm.tasks]`** — the same store `nimbus llm use`\nwrites, that `parseLlmTaskPins` reads at boot and `LlmRouter` honours at\nruntime.\n\nThe **wire shape is unchanged**, because the method is renderer-exposed\nand the desktop UI calls it. Only the destination moved. `provider` +\n`modelName` are joined by `makeRouteId` — the same function\n`registerRoute` uses to mint the id — so the two cannot drift apart.\n\n## Which option, and why\n\nOf the three the issue lists, this is **#3**.\n\n- **#1 (delete the endpoint)** is a user-visible surface change that\nneeds the desktop app updated in step.\n- **#2 (wire the table into routing)** was already rejected for\nreintroducing two sources of truth for one setting — which is what made\nthese accessors dead in the first place.\n\n## The question it was blocked on\n\n> what should the UI do when the gateway has no writable config path?\n\nAnswered the way `handleLlmUse` already answers it: **refuse**, with\n`-32603`. A silent success that persists nothing is precisely the bug\nbeing removed here, so inventing a quieter failure would recreate it in\na new place.\n\nBoth handlers now fail closed on all three: an unknown task, an\nunregistered route, and a missing config path.\n\n## Cleanup\n\n`LlmRegistry.setDefault` is deleted — its last caller is gone.\n`getDefault` went the same way on 2026-08-29, so `llm_task_defaults` now\nhas **neither a reader nor a writer**; it survives only because\nmigrations are append-only and forward-only. The comment there records\nthat, and why re-wiring either accessor would be the wrong fix.\n\nIts two registry tests are **removed rather than adapted**. They\nasserted the UPSERT landed — proving the write happened while the\nsetting it represented did nothing. That is a test passing for a\nbehaviour that had no effect, and adapting it would have carried that\nshape forward. The replacement behaviour is covered where it now lives,\nin `ipc/llm-rpc.test.ts`.\n\n## Verification\n\n- **Red-proved by reverting the handler with the tests in place: 3 fail\nwithout it, 0 with it.**\n- New tests cover the round trip through the *same parser boot uses*,\nthe live router honouring it without a restart, refusal of an\nunregistered route with nothing written, and refusal with no config\npath.\n- 325 llm + llm-rpc tests pass; `preflight:fast` 32/32.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Default language-model selections are now saved in configured settings\nunder task-specific defaults.\n  * Changes take effect immediately in the active routing configuration.\n* **Bug Fixes**\n* Invalid, unregistered, or malformed routes are rejected without\nmodifying configuration.\n* Default-setting requests now fail clearly when configuration is\nunavailable or task types are invalid.\n* **Refactor**\n* Removed the legacy database-based default-setting flow in favor of\nsettings-backed configuration.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-08-30T15:04:52+03:00",
+          "tree_id": "900f91178b2657558a0f19e3b378af1ee00e827d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9f69790ca0e29795997e614732539dce5792bfae"
+        },
+        "date": 1788092235058,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 323.5426671500005,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 327.03334710000235,
             "unit": "ms"
           }
         ]
