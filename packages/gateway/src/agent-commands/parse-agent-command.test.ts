@@ -58,4 +58,54 @@ describe("parseAgentCommand", () => {
       params: { ref: "a.ts" },
     });
   });
+
+  test("coerces boolean 'true' and 'false' to real booleans, not truthy strings", () => {
+    expect(parseAgentCommand("agent decisions explain=true", PERMITTED)).toEqual({
+      ok: true,
+      agent: "decisions",
+      params: { explain: true },
+    });
+    expect(parseAgentCommand("agent decisions explain=false", PERMITTED)).toEqual({
+      ok: true,
+      agent: "decisions",
+      params: { explain: false },
+    });
+  });
+
+  test("rejects a boolean value that is neither 'true' nor 'false'", () => {
+    // `requireDecisionsParams` reads `p.explain === true` with no type check, so anything that
+    // slips past coercion as a non-boolean would silently become `false` rather than erroring —
+    // this is the one place a typo like 'yes' is reported to the user at all.
+    expect(parseAgentCommand("agent decisions explain=yes", PERMITTED)).toEqual({
+      ok: false,
+      detail: expect.stringContaining("explain"),
+    });
+  });
+
+  test("drops empty segments from a stringArray split — a double comma or trailing comma", () => {
+    expect(
+      parseAgentCommand("agent ghost file=a.ts namespaces=team-a,,team-b,", PERMITTED),
+    ).toEqual({
+      ok: true,
+      agent: "ghost",
+      params: { file: "a.ts", namespaces: ["team-a", "team-b"] },
+    });
+  });
+
+  test("refuses a bare token that isn't k=v shaped", () => {
+    expect(parseAgentCommand("agent why ref=a.ts justtext", PERMITTED)).toEqual({
+      ok: false,
+      detail: expect.stringContaining("Bad argument"),
+    });
+  });
+
+  test("null (not an agent command) is distinguishable from a refusal ({ ok: false })", () => {
+    // The caller branches on this: `null` falls through to the free-text read path, a refusal
+    // does not. Collapsing the two would turn an ordinary question into a dead end.
+    const notACommand = parseAgentCommand("why is checkout slow?", PERMITTED);
+    const refused = parseAgentCommand("agent premortem epic=X", PERMITTED);
+    expect(notACommand).toBeNull();
+    expect(refused).not.toBeNull();
+    expect(refused).toMatchObject({ ok: false });
+  });
 });
