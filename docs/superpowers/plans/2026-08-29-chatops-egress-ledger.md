@@ -4,7 +4,7 @@
 
 **Goal:** Every outbound ChatOps post appends one `egress_ledger` row before the bytes leave, fail-closed, so `nimbus prove` stops reporting zero for windows in which the gateway posted to Slack or Teams.
 
-**Architecture:** A decorator over the single `post` closure that `ReplyDispatcher` and `ApprovalPresenter` already share (`chatops-boot.ts:164`). The post *kind* is bound at construction — one factory returns one wrapped function per kind — so `method` stays server-derived rather than caller-supplied. Adds a twelfth `egress_ledger.source_type` (`chatops`) and an eighth coverage class, inserted at sort index 0 because `COVERAGE_CLASSES` order is the wire format.
+**Architecture:** A decorator over the single `post` closure that `ReplyDispatcher` and `ApprovalPresenter` already share (`packages/gateway/src/chatops/chatops-boot.ts`). The post *kind* is bound at construction — one factory returns one wrapped function per kind — so `method` stays server-derived rather than caller-supplied. Adds a twelfth `egress_ledger.source_type` (`chatops`) and an eighth coverage class, inserted at sort index 0 because `COVERAGE_CLASSES` order is the wire format.
 
 **Tech Stack:** Bun 1.2+, TypeScript strict, `bun:sqlite`, `@noble/hashes/blake3`, Biome.
 
