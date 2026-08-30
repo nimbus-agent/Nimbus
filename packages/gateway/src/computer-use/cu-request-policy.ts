@@ -16,8 +16,10 @@ export type CuResourceType =
   | "other";
 
 /**
- * Script-initiated request types. These carry a BODY the page composed, which is what makes them
- * the convenient exfiltration channel a navigation-only allowlist leaves open.
+ * Script-initiated request types, used ONLY to pick a word for the `reason` string below. This
+ * set affects NO decision — the gating set is the union of `navigateOrigins` and `scriptOrigins`,
+ * applied identically to every type reaching that branch, recognised or not. Do not mistake this
+ * for the set that is actually gated.
  */
 const SCRIPT_INITIATED: ReadonlySet<CuResourceType> = new Set<CuResourceType>([
   "xhr",
@@ -53,7 +55,17 @@ const PASSIVE: ReadonlySet<CuResourceType> = new Set<CuResourceType>([
   "script",
 ]);
 
-/** Scheme + host + port. Returns null rather than guessing — the caller fails closed on null. */
+/**
+ * Scheme + host + port. Returns JS `null` only when the input does not parse as a URL at all — the
+ * caller fails closed on that `null`.
+ *
+ * For a URL that DOES parse but has no serializable origin (`javascript:`, `data:`, `about:`,
+ * `file:`), the WHATWG URL algorithm defines `.origin` to be the LITERAL STRING `"null"` — not the
+ * JS value `null` — and this function passes that string straight through. It is not a bug this
+ * function does not special-case: such a string can never equal a real stored origin like
+ * `https://example.com`, so `decideRequest`'s exact-match comparison still fails closed — just by
+ * accident of string inequality, not by an explicit check here.
+ */
 export function originOf(url: string): string | null {
   try {
     return new URL(url).origin;
@@ -72,12 +84,27 @@ export function originOf(url: string): string | null {
  * different strings, so an exact `.includes` would refuse every navigation to an origin the owner
  * did approve. Fail-closed, but a confusing and total failure.
  *
- * A path, query or fragment is REFUSED rather than silently discarded. `new URL()` would happily
- * turn `https://example.com/safe/subdir` into the origin `https://example.com`, which is BROADER
- * than what the owner typed — they scoped to a subdirectory and would be granted the whole site,
- * with the prompt showing the widened value only if they read it carefully. Refusing makes the
- * mistake visible at the point it is made. Origins are origin-scoped by definition; this policy
- * cannot express a path scope, so it must not appear to.
+ * REFUSE-RATHER-THAN-REDUCE is this function's whole doctrine, applied to every part of the input
+ * that is not literally "scheme + host + port":
+ *   - a path, query or fragment is refused rather than silently discarded. `new URL()` would
+ *     happily turn `https://example.com/safe/subdir` into the origin `https://example.com`, which
+ *     is BROADER than what the owner typed — they scoped to a subdirectory and would be granted
+ *     the whole site, with the prompt showing the widened value only if they read it carefully.
+ *     Refusing makes the mistake visible at the point it is made;
+ *   - embedded userinfo (`https://example.com@evil.com`) is refused rather than silently dropped.
+ *     `url.host` here is `evil.com`, not `example.com` — the canonical origin look-alike, where a
+ *     human reads the leading label and approves a grant for the attacker's host instead;
+ *   - a trailing dot on the hostname (`https://example.com.`) is refused. It is a distinct string
+ *     from `https://example.com` that a live request's `originOf` never produces, so a stored
+ *     origin carrying one can never match anything real — silently accepting it would look like a
+ *     successful grant that is actually permanently inert.
+ *
+ * Origins are origin-scoped by definition; this policy cannot express a path scope or a
+ * credentialed identity, so it must not appear to.
+ *
+ * Deliberately NOT loosened to accept a `ws:`/`wss:` scheme: the owner approves an `https`/`http`
+ * origin, and a WebSocket upgrade to the same authority rides on that grant via the mapping in
+ * `decideRequest` — see I8 there.
  */
 export function normalizeOrigin(input: string): string | null {
   let url: URL;
@@ -88,7 +115,25 @@ export function normalizeOrigin(input: string): string | null {
   }
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "") return null;
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  if (url.hostname.endsWith(".")) return null;
   return url.origin;
+}
+
+/**
+ * Map a live request's origin onto the scheme its owner-approved counterpart would carry.
+ *
+ * CDP reports WebSocket request URLs as `ws://`/`wss://`, so `originOf` on one yields
+ * `wss://api.example.com` — a string that can never equal a stored `https://api.example.com`, and
+ * `normalizeOrigin` refuses a `ws:`/`wss:` input outright, so the owner cannot grant the raw
+ * `wss:` form either. Spec § 3.5.1 plainly intends WebSocket to be grantable via the union, so
+ * without this mapping a listed grant is silently inert. Any other origin passes through
+ * unchanged.
+ */
+function mapLiveOriginScheme(origin: string): string {
+  if (origin.startsWith("wss://")) return `https://${origin.slice("wss://".length)}`;
+  if (origin.startsWith("ws://")) return `http://${origin.slice("ws://".length)}`;
+  return origin;
 }
 
 /**
@@ -113,8 +158,9 @@ export function decideRequest(args: {
     return { allow: true, reason: `passive subresource (${resourceType})` };
   }
 
-  const origin = originOf(url);
-  if (origin === null) return { allow: false, reason: "unparseable url" };
+  const rawOrigin = originOf(url);
+  if (rawOrigin === null) return { allow: false, reason: "unparseable url" };
+  const origin = mapLiveOriginScheme(rawOrigin);
 
   if (resourceType === "document" || resourceType === "sub_frame") {
     return target.navigateOrigins.includes(origin)
