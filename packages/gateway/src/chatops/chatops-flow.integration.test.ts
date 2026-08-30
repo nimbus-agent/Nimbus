@@ -9,16 +9,26 @@
  * incl. executor-gate + lazy-mesh connector invocation + team-vault bot tokens) is the remaining
  * boot-wiring step, tracked for follow-up.
  */
-import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { buildChatopsAgentInvoker } from "../agent-runs/agent-chatops-invoke.ts";
+import { listEgress } from "../egress/egress-verify.ts";
 import { resolveDelegatedApproval } from "../engine/delegated-approval.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { resolveChannelBinding, resolveOwner } from "../policy/chatops-policy.ts";
+import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { parsePolicyToml } from "../policy/policy-toml.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { ApprovalPresenter } from "./approval-presenter.ts";
+import { buildChatopsBoot, type ChatopsBootDeps } from "./chatops-boot.ts";
 import { runWithChatopsApprovalContext } from "./chatops-request-context.ts";
 import { ChatopsService } from "./chatops-service.ts";
+import type { RunChatopsTool } from "./chatops-tool-runner.ts";
 import { ChatopsIdentityMapper, type ScimMatch } from "./identity-mapper.ts";
 import { IntentRouter } from "./intent-router.ts";
 import { ReplyDispatcher } from "./reply-dispatcher.ts";
+import type { SocketLike } from "./transport/slack-socket-adapter.ts";
 import type { ChatTransport } from "./transport/transport.ts";
 import type { ChatMessage, ChatPlatform } from "./types.ts";
 
@@ -254,5 +264,197 @@ describe("ChatOps end-to-end flow (in-process integration)", () => {
     await h.slack.deliver(msg("U_BOB", "@nimbus who's on call?"));
     const allowed = new Set(["C0", "C_ALERT", "C_ALICE", "C_BOB"]);
     expect(h.posts.every((x) => allowed.has(x.channelId))).toBe(true);
+  });
+});
+
+/**
+ * Task 9: the end-to-end seam. Everything above stops at a hand-built `IntentRouter` and
+ * deliberately passes an empty `permittedAgents` (see the comment on `buildHarness` above) — it
+ * proves the read/write intents compose, not that an `agent <name> ...` command reaches a real
+ * agent through the REAL production boot wiring (`buildChatopsBoot`'s `routerFor`). A unit test on
+ * each side of that seam already existed and stayed green while the seam itself was two
+ * placeholder `new Set()`s — this section drives a message through `buildChatopsBoot` itself, with
+ * `EXTERNAL_AGENT_NAMES` wired for real and `bindAgentInvoker` bound to the real
+ * `buildChatopsAgentInvoker`, so a regression that reintroduces either placeholder fails here even
+ * if `intent-router.test.ts` and `agent-chatops-invoke.test.ts` both stay green.
+ */
+
+/** Minimal in-memory NimbusVault — mirrors `chatops-boot.test.ts`'s `FakeVault`. Only `get`/`set`
+ *  are exercised by `ensureChannelSalt`. */
+class FakeVault implements NimbusVault {
+  private readonly store = new Map<string, string>();
+  get(key: string): Promise<string | null> {
+    return Promise.resolve(this.store.get(key) ?? null);
+  }
+  set(key: string, value: string): Promise<void> {
+    this.store.set(key, value);
+    return Promise.resolve();
+  }
+  delete(_key: string): Promise<void> {
+    throw new Error("delete must not be called by this boot path");
+  }
+  listKeys(_prefix?: string): Promise<string[]> {
+    throw new Error("listKeys must not be called by this boot path");
+  }
+}
+
+/** Minimal fake Slack Socket Mode transport — mirrors `chatops-boot.test.ts`'s `FakeSocket`. */
+class FakeSocket implements SocketLike {
+  private msgCb: ((raw: string) => void) | undefined;
+  onMessage(cb: (raw: string) => void): void {
+    this.msgCb = cb;
+  }
+  onClose(_cb: () => void): void {}
+  send(_raw: string): void {}
+  close(): void {}
+  emit(frame: unknown): void {
+    this.msgCb?.(JSON.stringify(frame));
+  }
+}
+
+function e2eMention(channel: string, user: string, text: string, ts: string): unknown {
+  return {
+    type: "events_api",
+    envelope_id: `env-${ts}`,
+    payload: { event: { type: "app_mention", channel, user, text, ts } },
+  };
+}
+
+async function e2eUntil(cond: () => boolean, ms = 2000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > ms) throw new Error("e2eUntil: timed out");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+function e2eEnforcedPolicy(): EnforcedPolicy {
+  return {
+    retentionDays: 30,
+    hitlRequired: new Set<string>(),
+    quorum: new Map(),
+    capabilitiesDisabled: new Set(),
+    chatops: {
+      channels: new Map([
+        ["C0", { namespace: "project:pay", unmapped: "refuse" as const, notify: [] }],
+      ]),
+      ownership: new Map([["*", "oncall@acme.com"]]),
+    },
+  };
+}
+
+describe("ChatOps end-to-end: real buildChatopsBoot wires an agent command through", () => {
+  let db: Database;
+  let socket: FakeSocket;
+  let posts: { channel: string; text: string }[];
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    socket = new FakeSocket();
+    posts = [];
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  /**
+   * The real production boot graph (`buildChatopsBoot`), not a hand-built `IntentRouter`. `llm`
+   * is documentation-only here: `ChatopsBootDeps` carries no LLM concept at all, so "no LLM
+   * configured" is entirely a property of the invoker each test binds afterward
+   * (`buildChatopsAgentInvoker({ router: undefined, ... })`) — this parameter exists only so a
+   * reader of the test below sees the intent stated, not inferred.
+   */
+  async function bootForTest(opts: {
+    readonly db: Database;
+    readonly llm?: "none";
+  }): Promise<Awaited<ReturnType<typeof buildChatopsBoot>>> {
+    const runTool: RunChatopsTool = (_platform, toolId, args) => {
+      if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
+      if (toolId === "slack_user_info") {
+        const user = (args as { user: string }).user;
+        return Promise.resolve(
+          user === "U_BOB"
+            ? { user: { profile: { email: "bob@acme.com" } } }
+            : { user: { profile: {} } },
+        );
+      }
+      if (toolId === "slack_chat_post") {
+        const a = args as { channel: string; text: string };
+        posts.push({ channel: a.channel, text: a.text });
+        return Promise.resolve({ ok: true });
+      }
+      throw new Error(`unexpected tool ${toolId}`);
+    };
+
+    const deps: ChatopsBootDeps = {
+      cfg: {
+        enabled: true,
+        slackEnabled: true,
+        teamsEnabled: false,
+        botVaultEntry: "chatops-bot",
+        identityCacheTtlSeconds: 900,
+        teamsBotAppId: "",
+      },
+      policyGate: { enforced: e2eEnforcedPolicy },
+      identity: {
+        findScimByEmail: (email) =>
+          email === "bob@acme.com"
+            ? { externalId: "ext-bob", email, active: true, issuer: "idp" }
+            : undefined,
+        isOperatorValid: () => true,
+      },
+      runTool,
+      db: opts.db,
+      vault: new FakeVault(),
+      audit: { recordAudit: () => {} },
+      dispatcher: { dispatch: () => Promise.resolve({ rolledBack: true }) },
+      egressSink: { append: () => {} },
+      socketFactory: () => socket,
+      log: () => {},
+    };
+
+    const boot = await buildChatopsBoot(deps);
+    await boot.service.start();
+    return boot;
+  }
+
+  async function deliverMessage(
+    boot: Awaited<ReturnType<typeof buildChatopsBoot>>,
+    text: string,
+  ): Promise<void> {
+    void boot; // the message reaches the boot's router via the shared fake socket, not a direct call
+    socket.emit(e2eMention("C0", "U_BOB", text, `${Date.now()}`));
+    await e2eUntil(() => posts.length > 0);
+  }
+
+  function postedText(): string | undefined {
+    return posts.at(-1)?.text;
+  }
+
+  test("end to end: a channel message runs an agent, posts a brief, and ledgers ONE row", async () => {
+    const boot = await bootForTest({ db });
+    boot.bindAgentInvoker(buildChatopsAgentInvoker({ db, router: undefined }));
+
+    await deliverMessage(boot, "@nimbus agent glossary term=SLO");
+
+    expect(postedText()).toContain("## Gaps");
+    const rows = listEgress(db, { limit: 10 });
+    // ONE row, from PR 1's post appender. NOT two: the invoker deliberately appends nothing.
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.method).toBe("chatops.agentBrief");
+
+    await boot.service.stop();
+  });
+
+  test("the brief posts on a gateway with no LLM configured", async () => {
+    const boot = await bootForTest({ db, llm: "none" });
+    boot.bindAgentInvoker(buildChatopsAgentInvoker({ db, router: undefined }));
+
+    await deliverMessage(boot, "@nimbus agent glossary term=SLO");
+
+    expect(postedText()).toContain("## Gaps");
+
+    await boot.service.stop();
   });
 });

@@ -1,10 +1,12 @@
 import type { Database } from "bun:sqlite";
+import type { ChatopsAgentInvoker } from "../agent-runs/agent-chatops-invoke.ts";
 import type { NimbusChatopsToml } from "../config/nimbus-toml.ts";
 import { buildLedgeredChatPosts } from "../egress/chatops-egress.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { EgressAppendFailedError } from "../egress/model-egress.ts";
 import { HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
+import { EXTERNAL_AGENT_NAMES } from "../ipc/agents-rpc.ts";
 import type { ChatopsRpcCtx } from "../ipc/chatops-rpc.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
@@ -13,6 +15,7 @@ import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { isHitlRequiredByPolicy } from "../policy/quorum-override.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { ApprovalPresenter } from "./approval-presenter.ts";
+import { truncateBrief } from "./brief-truncate.ts";
 import { ensureChannelSalt } from "./channel-salt.ts";
 import {
   getChatopsApprovalContext,
@@ -30,6 +33,17 @@ import { SlackSocketAdapter, type SocketLike } from "./transport/slack-socket-ad
 import { TeamsWebhookAdapter } from "./transport/teams-webhook-adapter.ts";
 import type { ChatTransport } from "./transport/transport.ts";
 import type { ChatMessage, ChatPlatform, ReplyTarget } from "./types.ts";
+
+/**
+ * A conservative byte cap shared by every ChatOps-reachable platform: Slack's `blocks[].text`
+ * limit is 3,000 characters (chat.postMessage's plain `text` allows far more, but the socket
+ * adapter posts through the same connector tool other Slack surfaces use, so staying under the
+ * tighter of the two avoids a silent server-side truncation Nimbus never sees); Teams' Activity
+ * text has a much larger ceiling (~28 KB), so this bounds Slack, not Teams. `truncateBrief` never
+ * drops a disclosure regardless of the cap chosen (I31) — this constant only trades off how much
+ * ordinary body content survives before the "run `nimbus <kind>` locally" notice takes over.
+ */
+const CHATOPS_AGENT_BRIEF_MAX_BYTES = 3_000;
 
 export interface ChatopsBootDeps {
   readonly cfg: NimbusChatopsToml;
@@ -93,6 +107,13 @@ export interface ChatopsBoot {
   readonly teamsSurface: TeamsEventsSurface | undefined;
   /** Late-bind the engine read path (the engine agent is wired after assembly in index.ts). */
   bindAskEngine(fn: (query: string, namespace: string) => Promise<string>): void;
+  /**
+   * Late-bind the `agents.*` invoker (`buildChatopsAgentInvoker`), mirroring `bindAskEngine`:
+   * `ChatopsBootDeps` does not carry the `LocalIndex`/`configDir`/`selfIdentity`/`SynthesisRouter`
+   * deps that invoker needs, so `gateway-main.ts` wires it after assembly, next to `bindAskEngine`.
+   * Unbound, `runAgent` falls back to a fail-closed stub (same shape as the pre-bind `askEngine`).
+   */
+  bindAgentInvoker(fn: ChatopsAgentInvoker): void;
   /** Late-bind the local-owner consent fallback (IPC consent exists after createIpcServer). */
   bindLocalConsent(fn: ConsentChannel["requestApproval"]): void;
   /**
@@ -173,6 +194,8 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
 
   let askEngine: (query: string, namespace: string) => Promise<string> = () =>
     Promise.resolve("Nimbus engine is not available yet — try again shortly.");
+  let agentInvoker: ChatopsAgentInvoker = () =>
+    Promise.resolve({ ok: false as const, detail: "Agent commands are not available yet." });
   let localConsent: ConsentChannel["requestApproval"] | undefined;
 
   // Server-side routing state: which platform a channel speaks, the Bot Framework serviceUrl per
@@ -301,16 +324,31 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
   );
   const knownActions = HITL_REQUIRED;
 
-  const routerFor = (msg: ChatMessage): IntentRouter =>
-    new IntentRouter({
+  const routerFor = (msg: ChatMessage): IntentRouter => {
+    // Set by `runAgent` below on a successful brief, consumed by `reply` immediately after —
+    // IntentRouter always calls `deps.reply(result.markdown)` for an ok agent result, and that
+    // single reply is what must go out through `posts.agentBrief` rather than the generic
+    // `posts.reply` every other kind uses, so the ledger records ONE row with
+    // `method='chatops.agentBrief'` (never two: one 'chatops.reply' plus one 'chatops.agentBrief'
+    // for the same text). Scoped to this `routerFor(msg)` closure, which is built fresh per
+    // inbound message, so concurrent messages never share this flag.
+    let agentBriefMarkdown: string | undefined;
+
+    return new IntentRouter({
       knownActions,
-      // TODO(Task 9): wire the real permitted-agent set + `buildChatopsAgentInvoker` here (needs
-      // the LocalIndex/configDir/selfIdentity/SynthesisRouter deps this boot module does not yet
-      // carry). Until then, fail-closed: no agent is permitted, and `runAgent` is unreachable
-      // because `parseCommand` can never produce `{ kind: "agent" }` against an empty permitted set.
-      permittedAgents: new Set(),
-      runAgent: () =>
-        Promise.resolve({ ok: false as const, detail: "Agent commands are not yet wired." }),
+      // The eleven externally-exposed agents (`EXTERNAL_AGENT_NAMES`, derived — never hand-listed)
+      // are permitted for every mapped identity; the executor/HITL gate governs writes, not this
+      // set, and every agent here is read-only by construction (nimbus-agent-patterns).
+      permittedAgents: new Set(EXTERNAL_AGENT_NAMES),
+      runAgent: async (agent, params) => {
+        const result = await agentInvoker(agent, params);
+        if (!result.ok) return result;
+        // Truncation to a platform byte cap is boot wiring's job (Task 9), not the router's or
+        // the invoker's — see `IntentRouterDeps.runAgent`'s doc comment.
+        const markdown = truncateBrief(result.markdown, agent, CHATOPS_AGENT_BRIEF_MAX_BYTES);
+        agentBriefMarkdown = markdown;
+        return { ok: true, markdown };
+      },
       resolveBinding: (channelId) => resolveChannelBinding(chatopsPolicy(), channelId),
       resolveIdentity: (platform, userId) => mapper.resolve(platform, userId),
       resolveOwner: (resource) => resolveOwner(chatopsPolicy(), resource),
@@ -334,11 +372,17 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
             return { approved: result.status === "ok" };
           },
         ),
-      reply: (text) =>
-        replyDispatcher.send(
+      reply: (text) => {
+        if (agentBriefMarkdown !== undefined) {
+          const markdown = agentBriefMarkdown;
+          agentBriefMarkdown = undefined;
+          return posts.agentBrief(msg.platform, msg.channelId, markdown);
+        }
+        return replyDispatcher.send(
           { kind: "originating", platform: msg.platform, channelId: msg.channelId },
           text,
-        ),
+        );
+      },
       auditRefusal: (reason, detail, channelId) =>
         deps.audit.recordAudit({
           actionType: "chatops.refusal",
@@ -347,6 +391,7 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
           timestamp: nowMs(),
         }),
     });
+  };
 
   const handleMessageInner = async (msg: ChatMessage): Promise<void> => {
     lastPlatformByChannel.set(msg.channelId, msg.platform);
@@ -440,8 +485,7 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     transports,
     handleMessage,
     channelsForPlatform: () => chatopsPolicy().channels.size,
-    // TODO(Task 8/9): wire the real permitted-agent set here once IntentRouterDeps carries it.
-    testParse: (text) => parseCommand(text, knownActions, new Set()),
+    testParse: (text) => parseCommand(text, knownActions, new Set(EXTERNAL_AGENT_NAMES)),
     nowMs,
   });
 
@@ -476,6 +520,9 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     teamsSurface,
     bindAskEngine: (fn) => {
       askEngine = fn;
+    },
+    bindAgentInvoker: (fn) => {
+      agentInvoker = fn;
     },
     bindLocalConsent: (fn) => {
       localConsent = fn;
