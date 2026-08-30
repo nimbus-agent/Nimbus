@@ -45,6 +45,7 @@ jobs:
       # (which checks doc-ref drift — the relevant gate for docs PRs) without
       # paying for a full 3-runner test cycle.
       code-changed: ${{ steps.changes.outputs.code-changed }}
+      embedding-native: ${{ steps.changes.outputs.embedding-native }}
       # There is deliberately no per-package narrowing output here any more.
       # `pr-quality-cross-platform` used to emit a {os, pkg} matrix so a cli-only
       # PR could drop the two gateway legs; it now runs ONE leg per OS executing
@@ -93,6 +94,17 @@ jobs:
             else
               echo "code-changed=true" >> "$GITHUB_OUTPUT"
             fi
+          fi
+
+          # The onnx clean-room check is expensive (two container images), so it is scoped to the
+          # paths that can actually break the embedded native payload — the plugin, the worker
+          # build, the harness itself, the embedding/worker sources, and any dependency change
+          # that could swap the onnxruntime version out from under it. Same fail-safe as above:
+          # an unknown change set runs it rather than skipping.
+          if [[ -z "$CHANGED" ]]; then
+            echo "embedding-native=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "embedding-native=$(echo "$CHANGED" | grep -qE '^(scripts/(onnx-binding-plugin\.ts|build-workers\.ts|verify-onnx-cleanroom\.sh)|packages/gateway/src/(workers|embedding)/|packages/gateway/package\.json$|bun\.lock|\.github/workflows/ci\.yml$)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           fi
 
   # ── PR: fast feedback (three jobs run in parallel) ─────────────────────────
@@ -443,6 +455,42 @@ jobs:
   # Code duplication scan — runs in parallel with the above two jobs.
   # Scans only packages/ for code duplication; docs-only PRs can't introduce
   # new code-duplication regressions, so we skip when code-changed is false.
+  # Proves the embedded onnxruntime payload loads on a machine with NOTHING of ours installed.
+  #
+  # This gate exists because the same bug was "fixed" twice and verified twice in environments
+  # that masked the failure: once in the source tree (which has `dist/bin/`) and once on a Windows
+  # box that happened to carry `onnxruntime.dll` in System32. Both reported success; neither
+  # worked for users. The harness refuses to report a pass unless it first proves the run image is
+  # clean, so a green here cannot come from a preinstalled runtime.
+  pr-quality-onnx-cleanroom:
+    name: PR quality — ONNX clean room
+    if: github.event_name == 'pull_request' && needs.filter.outputs.embedding-native == 'true'
+    needs: filter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          # The harness pulls two images and the probe downloads nothing, but the BUILD stage
+          # resolves the onnx payload out of node_modules, so egress stays audited rather than
+          # blocked.
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      - name: Verify the onnx payload in a clean room
+        run: bash scripts/verify-onnx-cleanroom.sh
+
   pr-quality-duplication:
     name: PR quality — Duplication scan
     if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
@@ -585,6 +633,7 @@ jobs:
       - pr-quality-rust
       - pr-quality-cross-platform
       - pr-quality-duplication
+      - pr-quality-onnx-cleanroom
       - pr-quality-structure
       - pr-quality-release-safety
     runs-on: ubuntu-24.04
