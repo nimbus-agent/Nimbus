@@ -121,7 +121,9 @@ export class CuSession {
     return this.#closedAt;
   }
 
-  close(reason: CuOutcome | "owner", now: number): void {
+  /** "owner" = an explicit `closeSession()` call; "evicted" (fix round 3) = superseded by a
+   * colliding session id before this entry was ever driven to its own termination. */
+  close(reason: CuOutcome | "owner" | "evicted", now: number): void {
     if (this.#closed) return;
     this.#closed = true;
     this.#closeReason = reason;

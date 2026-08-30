@@ -180,11 +180,11 @@ function appendSessionAudit(
  * Best-effort wrapper over {@link appendSessionAudit} (fix round 2, NEW-4). `openSession`'s
  * declared discriminated-union return type must hold even when the audit sink ITSELF is broken
  * (DB dropped/corrupted/full) — a caller expects one of three statuses back, never an exception.
- * Without this, a failing "opened" append inside the post-launch registration try/catch threw
- * into that catch, whose OWN failure-audit append could throw again into the outer catch, whose
- * failure-audit append could throw a THIRD time and finally escape `openSession` entirely. The
- * forensic trail a catastrophic DB failure costs is lost regardless of how many times a cascade
- * retries writing it; what matters is that the CALLER still gets a definite answer.
+ * Used ONLY at the true last line of defense: `openSession`'s outermost catch. Every append
+ * ABOVE that stays a normal, throwing append, routed through `finalizeSession` (fix round 3),
+ * because a failure there is deliberately handled by a SPECIFIC enclosing catch rather than
+ * silently swallowed — losing the first permanent decision row for a whole session is serious
+ * enough to treat as a registration failure, not ignore.
  */
 function safeAppendSessionAudit(
   deps: Pick<CuGateDeps, "db" | "now">,
@@ -240,29 +240,6 @@ interface LiveSession {
  */
 const liveSessions = new Map<string, LiveSession>();
 
-/**
- * Close and evict an EXISTING `liveSessions` entry for `sessionId`, if one is present (fix round
- * 2, NEW-5). Called immediately before `liveSessions.set(...)` registers a new one: the map is
- * keyed on `sessionId` alone, so a colliding key would otherwise silently overwrite a still-open
- * session's entry, orphaning ITS lane — the I-4 leak class one level up, on the map itself rather
- * than on a single termination path.
- */
-async function evictExistingSession(sessionId: string): Promise<void> {
-  const existing = liveSessions.get(sessionId);
-  if (existing === undefined) return;
-  await bestEffortCloseLane(existing.lane);
-  liveSessions.delete(sessionId);
-}
-
-/**
- * Persist a session's mutable state — budget used, the taint latch, and (fix round 2, NEW-3) its
- * close bookkeeping — to `cu_session`. Called unconditionally on every write, whether or not the
- * session is actually closed: `session.closedAt`/`session.reason` are `undefined` until `close()`
- * runs, so an open session simply writes `null` over columns that already default to `null`
- * (idempotent). Before this, NOTHING ever wrote `closed_at`/`close_reason` in production —
- * `CuSession.close()` only ever updated the IN-MEMORY object — so the V57 replay table reported
- * every terminated session as still open.
- */
 function syncSessionRow(
   deps: Pick<CuGateDeps, "db" | "now">,
   sessionId: string,
@@ -273,6 +250,102 @@ function syncSessionRow(
     taintedAt: session.taintedAt ?? null,
     closedAt: session.closedAt ?? null,
     closeReason: session.reason ?? null,
+  });
+}
+
+/**
+ * THE terminal-bookkeeping helper (fix round 3). Terminal/replay-state bookkeeping was duplicated
+ * across six sites before this — the main per-action `finally`, the policy-termination branch,
+ * the budget/wall-clock-termination branch, `closeSession`, `openSession`'s registration catch,
+ * and `evictExistingSession` — each hand-rolling its own subset of {write audit row, sync session
+ * row, close lane, evict map entry}. Every fix round so far patched the subset it was SHOWN and
+ * left the siblings alone: NB-3 and NB-4 were literally NEW-3 and NEW-1 recurring, unpatched, on
+ * paths nobody had probed yet. Routing all six through ONE function in ONE fixed order means a
+ * future path that forgets a step cannot exist.
+ *
+ * Fixed order, exactly as specified:
+ *   1. `writeAudit()` — the permanent decision record, FIRST and UNCONDITIONAL. Deliberately
+ *      UNGUARDED: if this throws, later steps do not run and the throw propagates to whichever
+ *      call site invoked this helper. For `openSession`'s registration catch that means the
+ *      OUTER catch's `safeAppendSessionAudit` is the fallback (NEW-4); for `runAction`'s
+ *      termination branches and its per-action `finally`, the call throws — accepted, because
+ *      `audit_log` itself being unavailable is categorically worse than the `cu_session`-only
+ *      breakage NB-4/NEW-1 targeted, and swallowing it here would hide that a session's
+ *      decision record was never written at all.
+ *   2. `syncSessionRow`, in its OWN try/catch, so a failure here (SQLITE_BUSY, disk full,
+ *      `cu_session` dropped) can NEVER take the audit write above down with it. Only attempted
+ *      when `syncRow` is true.
+ *   3. Close the lane, best-effort. Attempted whenever a `lane` is passed, independent of
+ *      `syncRow`/`evictMap` — a launch genuinely starts a process regardless of whether
+ *      registration later succeeds.
+ *   4. Evict the map entry. Only attempted when `evictMap` is true.
+ *
+ * `syncRow` and `evictMap` are independent parameters, not one combined flag, because the
+ * per-action success path needs (2) — `cu_session.actions_used`/`tainted_at` must stay current —
+ * but NOT (4): the session stays live for further actions. Conversely, `openSession`'s
+ * registration catch must pass `syncRow: false, evictMap: false` when `insertSession` itself
+ * never ran (a PK collision means the ROW and the MAP ENTRY sharing this id belong to a
+ * DIFFERENT, still-valid session) — syncing or evicting them would corrupt or orphan that
+ * unrelated session instead of this failed attempt's own (nonexistent) state.
+ */
+async function finalizeSession(params: {
+  readonly deps: Pick<CuGateDeps, "db" | "now">;
+  readonly sessionId: string;
+  readonly session: CuSession;
+  readonly lane: BrowserLane | null;
+  readonly syncRow: boolean;
+  readonly evictMap: boolean;
+  readonly writeAudit: () => void;
+}): Promise<void> {
+  params.writeAudit();
+  if (params.syncRow) {
+    try {
+      syncSessionRow(params.deps, params.sessionId, params.session);
+    } catch {
+      // Intentionally swallowed — see the doc comment above.
+    }
+  }
+  if (params.lane !== null) {
+    await bestEffortCloseLane(params.lane);
+  }
+  if (params.evictMap) {
+    liveSessions.delete(params.sessionId);
+  }
+}
+
+/**
+ * Close and evict an EXISTING `liveSessions` entry for `sessionId`, if one is present (fix round
+ * 2, NEW-5; hardened in fix round 3, NB-3). Called immediately before `liveSessions.set(...)`
+ * registers a new one: the map is keyed on `sessionId` alone, so a colliding key would otherwise
+ * silently overwrite a still-open session's entry, orphaning ITS lane — the I-4 leak class one
+ * level up, on the map itself rather than on a single termination path. This is the ONLY
+ * reachable form of that collision in production, since `newId()` returns a random UUID per
+ * session: two calls sharing an id would have to come from TWO DIFFERENT databases, which
+ * `insertSession`'s PRIMARY KEY cannot catch (each database has its OWN table).
+ *
+ * Routed through `finalizeSession` (fix round 3, NB-3): before this, the evicted session's
+ * `cu_session` row was left with `closed_at`/`close_reason` still `NULL` forever, and no
+ * `computer.session` audit row recorded that it was ever superseded at all.
+ */
+async function evictExistingSession(sessionId: string): Promise<void> {
+  const existing = liveSessions.get(sessionId);
+  if (existing === undefined) return;
+  const { session, lane, openDeps } = existing;
+  session.close("evicted", openDeps.now());
+  await finalizeSession({
+    deps: openDeps,
+    sessionId,
+    session,
+    lane,
+    syncRow: true,
+    evictMap: true,
+    writeAudit: () =>
+      appendSessionAudit(openDeps, sessionId, "rejected", {
+        outcome: "evicted",
+        sessionId,
+        reason:
+          "superseded by a colliding session id before this entry reached its own termination",
+      }),
   });
 }
 
@@ -404,7 +477,9 @@ export async function openSession(
       // The owner DID approve, so this is `approved`/`failed_after_approval` — never
       // `refused_before_consent`. A partially-constructed persistent context holds a LOCK on the
       // profile directory; leaving it would make every subsequent session fail too, with an error
-      // about the profile rather than about this failure. The close is best-effort.
+      // about the profile rather than about this failure. No lane exists to close: `openLane`
+      // itself is what threw, and no `cu_session` row exists yet either (that only happens in
+      // the registration step below) — nothing for `finalizeSession` to sync or evict.
       session.close("failed_after_approval", deps.now());
       appendSessionAudit(deps, sessionId, "approved", {
         outcome: "failed_after_approval",
@@ -422,11 +497,17 @@ export async function openSession(
     //
     // `registeredInMap` (fix round 2, NEW-4) distinguishes two different catch scenarios that
     // look alike from inside this block: `insertSession` throwing BEFORE `liveSessions.set` ever
-    // ran (nothing of THIS attempt's is in the map yet — deleting `sessionId` unconditionally
-    // would remove a DIFFERENT, unrelated, still-valid session that happens to share the key) vs.
-    // the "opened" audit append throwing AFTER `liveSessions.set` already succeeded (THIS
-    // attempt's own just-created entry must be evicted, or it survives as a stale, already-closed
-    // session a later `runAction` would find instead of correctly throwing `ERR_CU_NO_SESSION`).
+    // ran (nothing of THIS attempt's is in the map OR in `cu_session` yet — syncing or deleting
+    // `sessionId` unconditionally would corrupt or remove a DIFFERENT, unrelated, still-valid
+    // session that happens to share the key) vs. the "opened" audit append throwing AFTER
+    // `insertSession`/`liveSessions.set` already succeeded (THIS attempt's own row and entry are
+    // real and must be synced/evicted, or the row survives reporting `closed_at IS NULL` forever
+    // and the map entry survives as a stale, already-closed session a later `runAction` would
+    // find instead of correctly throwing `ERR_CU_NO_SESSION`). The SAME flag gates both
+    // `finalizeSession`'s `syncRow` and `evictMap` below (fix round 3, NB-3): a row only exists
+    // to sync, and an entry only exists to evict, exactly when `insertSession`/`liveSessions.set`
+    // both actually ran. `lane` is passed UNCONDITIONALLY regardless — the browser process itself
+    // started either way.
     let registeredInMap = false;
     try {
       insertSession(deps.db, {
@@ -435,36 +516,38 @@ export async function openSession(
         envelopeJson: JSON.stringify(envelope),
         openedAt: envelope.approvedAt,
       });
-      // (fix round 2, NEW-5) Evict any (pathological) existing entry for this id BEFORE
-      // overwriting it, so a collision can never orphan a still-open lane.
       await evictExistingSession(sessionId);
       liveSessions.set(sessionId, { session, lane, openDeps: deps });
       registeredInMap = true;
-      // Deliberately NOT wrapped in `safeAppendSessionAudit`: a failure recording the "opened"
-      // decision is treated as a REGISTRATION failure (routed to this catch, same as
-      // `insertSession` throwing), not silently ignored — losing the first permanent decision
-      // row for a whole session is serious enough to refuse the open outright, per the
-      // coordinator's own "make the audit-append failure path return refused" instruction.
+      // Deliberately a normal (throwing) append, not `safeAppendSessionAudit`: a failure
+      // recording the "opened" decision is treated as a REGISTRATION failure (routed to this
+      // catch, same as `insertSession` throwing), not silently ignored — losing the first
+      // permanent decision row for a whole session is serious enough to refuse the open outright.
       appendSessionAudit(deps, sessionId, "approved", {
         outcome: "opened",
         sessionId,
         lane: req.lane,
       });
     } catch (e) {
-      if (registeredInMap) {
-        liveSessions.delete(sessionId);
-      }
-      await bestEffortCloseLane(lane);
       session.close("failed_after_approval", deps.now());
-      // Deliberately NOT `safeAppendSessionAudit` either — if THIS append also fails (same root
-      // cause as the one above), the throw propagates to the OUTER catch below, whose OWN append
-      // IS safe and is the true last line of defense, guaranteeing `openSession` still returns.
-      appendSessionAudit(deps, sessionId, "approved", {
-        outcome: "failed_after_approval",
+      await finalizeSession({
+        deps,
         sessionId,
-        lane: req.lane,
-        stage: "register_session",
-        error: e instanceof Error ? e.message : String(e),
+        session,
+        lane,
+        syncRow: registeredInMap,
+        evictMap: registeredInMap,
+        // Deliberately a normal (throwing) append here too — if it ALSO fails (same root cause
+        // as the one above), the throw propagates to the OUTER catch below, whose OWN append IS
+        // safe and is the true last line of defense, guaranteeing `openSession` still returns.
+        writeAudit: () =>
+          appendSessionAudit(deps, sessionId, "approved", {
+            outcome: "failed_after_approval",
+            sessionId,
+            lane: req.lane,
+            stage: "register_session",
+            error: e instanceof Error ? e.message : String(e),
+          }),
       });
       return { status: "refused", code: "ERR_CU_LAUNCH_FAILED" };
     }
@@ -513,18 +596,18 @@ export async function closeSession(
   }
   const { session, lane, openDeps } = live;
   session.close("owner", openDeps.now());
-  await bestEffortCloseLane(lane);
-  liveSessions.delete(sessionId);
-  try {
-    // Best-effort, matching runAction's finally-block hardening: a failure here must not throw
-    // past closeSession's own declared return type.
-    syncSessionRow(openDeps, sessionId, session);
-  } catch {
-    // Intentionally swallowed.
-  }
-  safeAppendSessionAudit(openDeps, sessionId, "approved", {
-    outcome: "closed_by_owner",
+  await finalizeSession({
+    deps: openDeps,
     sessionId,
+    session,
+    lane,
+    syncRow: true,
+    evictMap: true,
+    writeAudit: () =>
+      safeAppendSessionAudit(openDeps, sessionId, "approved", {
+        outcome: "closed_by_owner",
+        sessionId,
+      }),
   });
   return { status: "closed" };
 }
@@ -604,7 +687,13 @@ interface ActionAuditFields {
    * (fix round 1, M-10) — recorded VERBATIM rather than guessed at. `null` when not applicable.
    */
   readonly terminationReason?: string | null;
-  /** Which stage of the pipeline a post-`seq` throw occurred at (fix round 1, C-1). */
+  /**
+   * Which stage of the pipeline a post-`seq` throw occurred at (fix round 1, C-1). PURELY
+   * forensic (fix round 3): the outer catch used to infer the recorded `CuOutcome` from this
+   * string, which is what let `dom_before` — a stage that runs AFTER consent — get silently
+   * reclassified as `refused_before_consent` (NB-1). It no longer decides anything; it only
+   * records where things broke, for a human reading the row afterward.
+   */
   readonly stage?: string;
 }
 
@@ -717,6 +806,22 @@ function writeActionAudit(deps: Pick<CuGateDeps, "db" | "now">, f: ActionAuditFi
   );
 }
 
+const CU_OUTCOME_STRINGS: ReadonlySet<string> = new Set<CuOutcome>([
+  "refused_before_consent",
+  "denied_by_owner",
+  "actuated",
+  "failed_after_approval",
+  "refused_out_of_envelope",
+  "terminated_budget",
+  "terminated_wall_clock",
+  "terminated_target_lost",
+  "terminated_policy",
+]);
+
+function isCuOutcomeString(v: string): boolean {
+  return CU_OUTCOME_STRINGS.has(v);
+}
+
 /**
  * Run one action inside a live session's envelope (spec § 3.3 "per action"; invariant I35).
  *
@@ -747,20 +852,26 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
   if (!deps.config.enabled || deps.enforced.capabilitiesDisabled.has(CAPABILITY)) {
     const reason = !deps.config.enabled ? "disabled by local config" : "disabled by org policy";
     session.close("terminated_policy", openDeps.now());
-    await bestEffortCloseLane(lane);
-    liveSessions.delete(req.sessionId);
-    writeActionAudit(openDeps, {
+    await finalizeSession({
+      deps: openDeps,
       sessionId: req.sessionId,
-      seq: null,
-      kind: req.kind,
-      classification: null,
-      observedTarget: `session terminated: ${reason}`,
-      modelDescription,
-      outcome: "terminated_policy",
-      snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
-      terminationReason: reason,
+      session,
+      lane,
+      syncRow: true,
+      evictMap: true,
+      writeAudit: () =>
+        writeActionAudit(openDeps, {
+          sessionId: req.sessionId,
+          seq: null,
+          kind: req.kind,
+          classification: null,
+          observedTarget: `session terminated: ${reason}`,
+          modelDescription,
+          outcome: "terminated_policy",
+          snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
+          terminationReason: reason,
+        }),
     });
-    syncSessionRow(openDeps, req.sessionId, session); // fix round 2, NEW-3: persist closed_at/close_reason
     return { outcome: "terminated_policy" };
   }
 
@@ -793,20 +904,26 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
           ? (session.reason as CuOutcome)
           : "terminated_budget";
     }
-    await bestEffortCloseLane(lane);
-    liveSessions.delete(req.sessionId);
-    writeActionAudit(openDeps, {
+    await finalizeSession({
+      deps: openDeps,
       sessionId: req.sessionId,
-      seq: null,
-      kind: req.kind,
-      classification: null,
-      observedTarget: `session terminated before this action ran (${outcome})`,
-      modelDescription,
-      outcome,
-      snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
-      terminationReason,
+      session,
+      lane,
+      syncRow: true,
+      evictMap: true,
+      writeAudit: () =>
+        writeActionAudit(openDeps, {
+          sessionId: req.sessionId,
+          seq: null,
+          kind: req.kind,
+          classification: null,
+          observedTarget: `session terminated before this action ran (${outcome})`,
+          modelDescription,
+          outcome,
+          snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
+          terminationReason,
+        }),
     });
-    syncSessionRow(openDeps, req.sessionId, session); // fix round 2, NEW-3
     return { outcome };
   }
   const seq = verdict.seq;
@@ -818,6 +935,18 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
   // silently consume a budget slot with nothing recorded. `outcome`/`classification`/the DOM
   // digests accumulate as the function progresses; the `finally` below writes them
   // UNCONDITIONALLY, so a thrown error changes WHAT gets recorded, never WHETHER something is.
+  //
+  // (fix round 3) `consentGranted`/`actuationAttempted` — NOT the `stage` string — decide the
+  // outcome in the catch below. This mirrors `openSession`'s own `approvedEnvelope` sentinel two
+  // hundred lines above: the file had already solved "was this actually approved before it broke"
+  // once, correctly, and then solved the SAME question a second, worse way here. Inferring intent
+  // from a mutable forensic label is what let round 2's instruction reclassify `dom_before` — a
+  // stage that runs AFTER consent — as `refused_before_consent` (NB-1): an approved actuating
+  // click whose pre-actuation snapshot throws recorded NO approval at all, despite two real ones
+  // having been granted (the envelope, and this action). Two explicit booleans cannot drift that
+  // way: `consentGranted` is set at the ONE site `requestApproval` returns `true`;
+  // `actuationAttempted` is set immediately before `performActuation` is called. `stage` still
+  // exists and is still recorded, purely as forensics — it no longer decides anything.
   let outcome: CuOutcome = "failed_after_approval";
   let classification: CuActionClass | null = null;
   let observedTarget = `${req.kind} (attempt did not reach classification)`;
@@ -825,6 +954,8 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
   let domAfter: string | null = null;
   let screenshotDigest: string | null = null;
   let stage = "envelope_check";
+  let consentGranted = false;
+  let actuationAttempted = false;
 
   try {
     // 2. Target inside the envelope? Refused, never prompted (spec § 4.2). Only `navigate` names
@@ -872,6 +1003,7 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
         stage = "done";
         return { outcome };
       }
+      consentGranted = true;
     }
 
     // 5. (Egress row / marker before actuation.) Handled transparently by the browser lane's own
@@ -888,6 +1020,7 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
     session.taint(openDeps.now());
 
     stage = "performActuation";
+    actuationAttempted = true;
     let result: string | null;
     try {
       result = await performActuation(lane, {
@@ -903,7 +1036,6 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
       // The actuation was ATTEMPTED with consent obtained (if it needed any) — this is genuinely
       // `failed_after_approval`, whatever `hitlStatus` that resolves to for this classification.
       outcome = "failed_after_approval";
-      stage = "performActuation";
       return { outcome, result: e instanceof Error ? e.message : String(e) };
     }
 
@@ -919,60 +1051,41 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
     // (Task 12+), not here — this gate has no model-facing surface of its own (spec § 5).
     return { outcome, result: req.kind === "screenshot" ? null : result };
   } catch (e) {
-    // (fix round 2) Stage decides which `CuOutcome` is honest, replacing round 1's blanket
-    // `failed_after_approval`. `dom_after` fires only once `performActuation` has already
-    // succeeded (the actuation DID happen), so that ONE stage is genuinely
-    // `failed_after_approval`. Every EARLIER stage (`observe`, `dom_before`, `consent`) failed
-    // BEFORE any per-action approval was reached — for an `actuating` candidate nothing was ever
-    // offered for approval, for what might have turned out `observing` none was ever needed —
-    // and `refused_before_consent` (mapping to `rejected`) is the existing `CuOutcome` for
-    // exactly that shape. This is also NEW-2's fix: a THROWING CONSENT BROKER (`stage==="consent"`)
-    // no longer records an approval that was never given.
-    outcome = stage === "dom_after" ? "failed_after_approval" : "refused_before_consent";
+    // (fix round 3) Derived from the two explicit booleans, never from `stage`. `actuationAttempted`
+    // covers the one case where the throw happened AFTER a successful `performActuation` (the
+    // `dom_after` snapshot failing — the reviewer's own C-1 headline scenario: the click DID
+    // happen). `consentGranted` alone (actuation never attempted) is NB-1's fix: the owner
+    // approved this exact action and `dom_before` then threw before any actuation was tried —
+    // that is still `failed_after_approval`, because the record must say the owner said yes, not
+    // pretend nothing was ever offered for approval. Neither flag set means no consent was ever
+    // sought (an `observing` candidate that never reached the point of needing any) OR the
+    // consent broker itself threw (NEW-2) — either way, `refused_before_consent`.
+    outcome =
+      consentGranted || actuationAttempted ? "failed_after_approval" : "refused_before_consent";
     return { outcome, result: e instanceof Error ? e.message : String(e) };
   } finally {
-    // (fix round 2, NEW-1) The permanent decision row is written FIRST and unconditionally,
-    // before ANY other bookkeeping in this block — a failure inside `updateSessionState`
-    // (SQLITE_BUSY, disk full, `cu_session` dropped) must never be able to take the audit row
-    // down with it, since that reintroduces C-1's exact failure mode one line above its own fix.
-    writeActionAudit(openDeps, {
+    await finalizeSession({
+      deps: openDeps,
       sessionId: req.sessionId,
-      seq,
-      kind: req.kind,
-      classification,
-      observedTarget,
-      modelDescription,
-      outcome,
-      domBefore,
-      domAfter,
-      screenshotDigest,
-      snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
-      stage,
+      session,
+      lane: null, // the session STAYS live for further actions; only a termination closes it
+      syncRow: true,
+      evictMap: false,
+      writeAudit: () =>
+        writeActionAudit(openDeps, {
+          sessionId: req.sessionId,
+          seq,
+          kind: req.kind,
+          classification,
+          observedTarget,
+          modelDescription,
+          outcome,
+          domBefore,
+          domAfter,
+          screenshotDigest,
+          snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
+          stage,
+        }),
     });
-    try {
-      // A SECOND, independent line of defense: even if a future edit reordered these two calls
-      // again, this replay-state sync cannot throw past its own try/catch. Lagging
-      // `actions_used`/`tainted_at`/`closed_at` in the replay table is a lesser defect than
-      // losing the permanent `audit_log` row above ever would be.
-      syncSessionRow(openDeps, req.sessionId, session);
-    } catch {
-      // Intentionally swallowed — see the comment above.
-    }
   }
-}
-
-const CU_OUTCOME_STRINGS: ReadonlySet<string> = new Set<CuOutcome>([
-  "refused_before_consent",
-  "denied_by_owner",
-  "actuated",
-  "failed_after_approval",
-  "refused_out_of_envelope",
-  "terminated_budget",
-  "terminated_wall_clock",
-  "terminated_target_lost",
-  "terminated_policy",
-]);
-
-function isCuOutcomeString(v: string): boolean {
-  return CU_OUTCOME_STRINGS.has(v);
 }

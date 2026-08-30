@@ -668,7 +668,7 @@ describe("isCuActionKind (M-14)", () => {
 
 describe("fix round 2: NEW-1 through NEW-5 and the two disclosed gaps", () => {
   test("NEW-1: updateSessionState throwing does not take down the audit row", async () => {
-    const { deps: d, db } = deps();
+    const { deps: d, db } = deps({ newId: () => "id-round3-new1" }); // unique id (fix round 3): leaving "id-1" broken would poison every LATER test's evictExistingSession call, since liveSessions is a shared module map
     const sessionId = await openDefault(d);
     // Simulate the class of production failure the reviewer named (SQLITE_BUSY, disk full, a
     // dropped table): the REPLAY-state sync throws, but the click already happened on the host.
@@ -737,44 +737,78 @@ describe("fix round 2: NEW-1 through NEW-5 and the two disclosed gaps", () => {
     }
   });
 
-  test("NEW-4b: the 'opened' audit append failing AFTER registration succeeded evicts its OWN entry and returns refused", async () => {
+  test("NEW-4b: the 'opened' audit append failing AFTER registration succeeded still returns refused, never throws", async () => {
     const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
-    const { deps: d, db } = deps({}, spy);
+    const { deps: d, db } = deps({ newId: () => "id-round3-new4b" }, spy); // unique id (fix round 3)
     // `insertSession` only touches `cu_session`, so dropping `audit_log` lets registration
     // proceed all the way to `liveSessions.set` — the "opened" append is the FIRST attempt to
-    // touch `audit_log` on this path and is what throws, precisely the scenario the coordinator
-    // described: the try already registered the session before the failure.
+    // touch `audit_log` on this path and is what throws.
     db.exec(`DROP TABLE audit_log`);
     const out = await openSession(
       { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
       d,
     );
-    expect(out.status).toBe("refused"); // never throws past the declared return type
-    expect(spy.closes).toBe(1); // the lane that DID start got closed, not leaked
+    expect(out.status).toBe("refused"); // never throws past the declared return type (NEW-4)
+    // DISCLOSED TRADE-OFF (fix round 3): `finalizeSession`'s step 1 (the audit write) is
+    // deliberately FIRST and UNGUARDED, so that "order" is a real, mutation-testable property —
+    // see the dedicated order-sensitivity test below. The cost is that when `audit_log` ITSELF
+    // (not just `cu_session`) is unavailable, steps 2-4 (session-row sync, lane close, map
+    // eviction) never run either, since the throw propagates out of `finalizeSession` before
+    // reaching them. That is narrower than round 2's NEW-4b guarantee (which closed the lane
+    // unconditionally), but `audit_log` being wholly gone while `cu_session` remains is a
+    // categorically rarer failure than the `cu_session`-only breakage NB-4/NEW-1 targeted — both
+    // tables live in the same SQLite file, so a real disk/IO failure would typically hit both
+    // together, not one selectively. `openSession` still never escapes as a throw either way.
+    expect(spy.closes).toBe(0);
   });
 
-  test("NEW-5: a colliding liveSessions registration closes and evicts the PREVIOUS lane first", async () => {
-    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
-    const { deps: d } = deps({}, spy);
+  test("NEW-5: a colliding session id ACROSS TWO DIFFERENT DATABASES still closes and evicts the previous lane", async () => {
+    // fix round 3: neutering evictExistingSession to a no-op left ALL 158 tests green, because
+    // the only reachable "collision" the OLD test exercised was a same-db PRIMARY KEY conflict —
+    // which insertSession's own constraint catches before evictExistingSession's code ever runs.
+    // Two DIFFERENT databases never share that constraint, so a colliding id across them is the
+    // ONLY scenario that actually reaches evictExistingSession's body in production (newId()
+    // returns a random UUID per session, so the two calls would have to come from different
+    // CuGateDeps entirely — exactly what Task 11 building a fresh one per request looks like).
+    const spyA: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: depsA, db: dbA } = deps({}, spyA); // db A
     const first = await openSession(
       { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
-      d,
+      depsA,
     );
     expect(first.status).toBe("open");
-    expect(spy.closes).toBe(0);
-    // A second open with the SAME db/newId collides on `insertSession`'s PRIMARY KEY before
-    // `liveSessions.set` would even run a second time in this exact scenario — NEW-5's own fix
-    // (evict-before-set) guards the WOULD-BE overwrite path directly; this test pins the
-    // observable side effect that matters: no lane is ever left unreachable in the map.
-    await openSession(
+    expect(spyA.closes).toBe(0);
+
+    const spyB: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: depsB } = deps({}, spyB); // a DIFFERENT db, SAME deterministic newId ("id-1")
+    const second = await openSession(
       { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
-      d,
+      depsB,
     );
-    // Exactly one close so far: the second attempt's own (never-registered) lane, per I-4a.
-    expect(spy.closes).toBe(1);
-    // The FIRST session is still live and undamaged.
+    // insertSession succeeds for BOTH — db A and db B never collide with each other — so this
+    // reaches the SUCCESS path, calling evictExistingSession("id-1") before liveSessions.set.
+    expect(second.status).toBe("open");
+
+    // NEW-5's fix: the FIRST lane (depsA's) must have been closed and evicted before the second
+    // was registered under the same key, or it leaks forever with no way to reach it again.
+    expect(spyA.closes).toBe(1);
+    expect(spyB.closes).toBe(0);
+
+    // NB-3 (fix round 3): before this, evictExistingSession wrote NOTHING — the evicted
+    // session's own cu_session row (in db A) reported closed_at IS NULL forever.
     if (first.status === "open") {
-      const out = await runAction({ sessionId: first.sessionId, kind: "read" }, d);
+      const evictedRow = dbA
+        .query<{ closed_at: number | null; close_reason: string | null }, [string]>(
+          `SELECT closed_at, close_reason FROM cu_session WHERE id = ?`,
+        )
+        .get(first.sessionId);
+      expect(evictedRow?.closed_at).not.toBeNull();
+      expect(evictedRow?.close_reason).toBe("evicted");
+    }
+
+    // The SECOND session is the one now live under "id-1" — driving it succeeds.
+    if (second.status === "open") {
+      const out = await runAction({ sessionId: second.sessionId, kind: "read" }, depsB);
       expect(out.outcome).toBe("actuated");
     }
   });
@@ -837,5 +871,72 @@ describe("closeSession", () => {
     expect(first.status).toBe("closed");
     const second = await closeSession(sessionId, d);
     expect(second.status).toBe("not_found");
+  });
+});
+
+describe("fix round 3: the restructure — booleans over stage-inference, one terminal helper", () => {
+  test("NB-1: an APPROVED actuating action whose dom_before throws is failed_after_approval/approved, never refused_before_consent", async () => {
+    // The coordinator's own round-2 instruction traded this away: `dom_before` runs AFTER
+    // consent, so an actuating click the owner genuinely approved, whose pre-actuation
+    // domSnapshot() throws, must still record that TWO real approvals were already granted (the
+    // envelope, and this action) — not pretend nothing was ever offered for approval.
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d, db } = deps({}, spy, { throwOnDomSnapshot: true });
+    const sessionId = await openDefault(d);
+    const out = await runAction({ sessionId, kind: "click", selector: "#submit" }, d);
+    expect(out.outcome).toBe("failed_after_approval");
+    expect(spy.approvals).toBe(2); // the envelope AND this action's per-action consent
+    expect(spy.actuations).toBe(0); // performActuation was never reached
+    const row = db
+      .query<{ hitl_status: string }, []>(
+        `SELECT hitl_status FROM audit_log WHERE action_type='computer.action' ORDER BY id DESC LIMIT 1`,
+      )
+      .get();
+    expect(row?.hitl_status).toBe("approved");
+  });
+
+  test("order sensitivity: a broken audit_log means syncSessionRow never runs (the audit row truly comes FIRST)", async () => {
+    // Distinct from NEW-1's own test (which drops cu_session and proves the AUDIT row survives
+    // a broken SYNC): this drops audit_log itself and proves the INVERSE relationship — the sync
+    // step never gets a chance to run when the write ahead of it fails, which is what makes
+    // "order" an actual, mutation-testable property of finalizeSession rather than a comment.
+    const { deps: d, db } = deps({ newId: () => "id-round3-order" });
+    const sessionId = await openDefault(d);
+    db.exec(`DROP TABLE audit_log`);
+    await expect(runAction({ sessionId, kind: "read" }, d)).rejects.toThrow();
+    const row = db
+      .query<{ actions_used: number }, [string]>(`SELECT actions_used FROM cu_session WHERE id = ?`)
+      .get(sessionId);
+    // Still 0 (insertSession's own default): syncSessionRow — which would have bumped this to 1
+    // — never ran, because writeAudit (first, unconditional, unguarded) failed before it.
+    expect(row?.actions_used).toBe(0);
+  });
+
+  test("NB-4 (policy branch): cu_session unavailable still returns terminated_policy rather than throwing", async () => {
+    const { deps: d, db } = deps({ newId: () => "id-round3-nb4-policy" });
+    const sessionId = await openDefault(d);
+    db.exec(`DROP TABLE cu_session`);
+    // A tightened policy via a SEPARATE deps object (I-3.1), sharing the SAME (now broken) db —
+    // exactly the shape Task 11 constructing a fresh CuGateDeps per request would produce.
+    const disabledDeps: CuGateDeps = { ...d, config: { ...d.config, enabled: false } };
+    const out = await runAction({ sessionId, kind: "read" }, disabledDeps);
+    expect(out.outcome).toBe("terminated_policy");
+  });
+
+  test("NB-4 (budget branch): cu_session unavailable still returns terminated_budget rather than throwing", async () => {
+    const { deps: d, db } = deps({
+      newId: () => "id-round3-nb4-budget",
+      config: {
+        ...DEFAULT_NIMBUS_COMPUTER_USE_TOML,
+        enabled: true,
+        allowedLanes: ["browser"],
+        maxActions: 1,
+      },
+    });
+    const sessionId = await openDefault(d);
+    await runAction({ sessionId, kind: "read" }, d); // consumes the only slot
+    db.exec(`DROP TABLE cu_session`);
+    const out = await runAction({ sessionId, kind: "read" }, d); // terminates: budget exhausted
+    expect(out.outcome).toBe("terminated_budget");
   });
 });
