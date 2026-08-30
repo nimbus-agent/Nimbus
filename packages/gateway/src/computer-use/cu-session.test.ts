@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CuSession } from "./cu-session.ts";
+import { CuSession, CuSessionError } from "./cu-session.ts";
 import type { CuEnvelope } from "./cu-types.ts";
 
 function envelope(over: Partial<CuEnvelope> = {}): CuEnvelope {
@@ -61,15 +61,15 @@ describe("CuSession — taint ratchet", () => {
   test("starts untainted and latches on", () => {
     const s = new CuSession(envelope());
     expect(s.isTainted()).toBe(false);
-    s.taint();
+    s.taint(0);
     expect(s.isTainted()).toBe(true);
   });
 
   test("the latch NEVER clears", () => {
     // Spec § 4.4: one-way. There is deliberately no untaint() to call.
     const s = new CuSession(envelope());
-    s.taint();
-    s.taint();
+    s.taint(0);
+    s.taint(0);
     expect(s.isTainted()).toBe(true);
     expect("untaint" in s).toBe(false);
   });
@@ -160,41 +160,79 @@ describe("CuSession — timestamps", () => {
   test("taint records taintedAt on first latch only", () => {
     const s = new CuSession(envelope());
     expect(s.taintedAt).toBeUndefined();
-    s.taint();
+    s.taint(0);
     const first = s.taintedAt;
     expect(first).toBeDefined();
-    s.taint();
+    s.taint(0);
     expect(s.taintedAt).toBe(first);
+  });
+
+  test("taintedAt takes the INJECTED clock value, not the ambient wall clock", () => {
+    // Finding 1: taint() must take `now` as a parameter like close()/consumeAction() do, not
+    // reach for Date.now() internally — otherwise a test/replay clock diverges between
+    // tainted_at and closed_at on the same cu_session row, and taintedAt is unassertable here.
+    const s = new CuSession(envelope());
+    s.taint(4242);
+    expect(s.taintedAt).toBe(4242);
+  });
+
+  test("a later taint() call does not move an already-latched taintedAt", () => {
+    const s = new CuSession(envelope());
+    s.taint(4242);
+    s.taint(9999);
+    expect(s.taintedAt).toBe(4242);
   });
 });
 
 describe("CuSession — constructor bounds guard (fail-closed on malformed budgets)", () => {
-  test("rejects maxActions NaN, which would make used >= maxActions permanently false", () => {
-    expect(() => new CuSession(envelope({ maxActions: Number.NaN }))).toThrow();
+  // Finding 2: the guard must throw a typed CuSessionError (code ERR_CU_BAD_BOUNDS), not a bare
+  // Error, so a caller (the Task 10 gate) can distinguish this refusal from any other throw.
+
+  test("rejects maxActions NaN with a typed CuSessionError", () => {
+    // NaN would otherwise make `used >= maxActions` permanently false: unlimited actions.
+    expect(() => new CuSession(envelope({ maxActions: Number.NaN }))).toThrow(CuSessionError);
+    try {
+      new CuSession(envelope({ maxActions: Number.NaN }));
+      throw new Error("expected constructor to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CuSessionError);
+      expect((err as CuSessionError).code).toBe("ERR_CU_BAD_BOUNDS");
+      expect((err as CuSessionError).name).toBe("CuSessionError");
+    }
   });
 
-  test("rejects maxWallClockMs NaN, which would make the wall-clock check permanently false", () => {
-    expect(() => new CuSession(envelope({ maxWallClockMs: Number.NaN }))).toThrow();
+  test("rejects maxWallClockMs NaN with a typed CuSessionError", () => {
+    // NaN would otherwise make the wall-clock check permanently false: never times out.
+    expect(() => new CuSession(envelope({ maxWallClockMs: Number.NaN }))).toThrow(CuSessionError);
+    try {
+      new CuSession(envelope({ maxWallClockMs: Number.NaN }));
+      throw new Error("expected constructor to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CuSessionError);
+      expect((err as CuSessionError).code).toBe("ERR_CU_BAD_BOUNDS");
+    }
   });
 
-  test("rejects maxActions undefined", () => {
-    expect(() => new CuSession(envelope({ maxActions: undefined as unknown as number }))).toThrow();
+  test("rejects maxActions undefined with a typed CuSessionError", () => {
+    expect(() => new CuSession(envelope({ maxActions: undefined as unknown as number }))).toThrow(
+      CuSessionError,
+    );
   });
 
-  test("rejects maxWallClockMs undefined", () => {
+  test("rejects maxWallClockMs undefined with a typed CuSessionError", () => {
     expect(
       () => new CuSession(envelope({ maxWallClockMs: undefined as unknown as number })),
-    ).toThrow();
+    ).toThrow(CuSessionError);
   });
 
-  test("rejects non-positive maxActions", () => {
-    expect(() => new CuSession(envelope({ maxActions: 0 }))).toThrow();
-    expect(() => new CuSession(envelope({ maxActions: -1 }))).toThrow();
+  test("rejects non-positive maxActions with a typed CuSessionError", () => {
+    expect(() => new CuSession(envelope({ maxActions: 0 }))).toThrow(CuSessionError);
+    expect(() => new CuSession(envelope({ maxActions: -1 }))).toThrow(CuSessionError);
   });
 
-  test("rejects non-positive maxWallClockMs", () => {
-    expect(() => new CuSession(envelope({ maxWallClockMs: 0 }))).toThrow();
-    expect(() => new CuSession(envelope({ maxWallClockMs: -1 }))).toThrow();
+  test("rejects non-positive maxWallClockMs with a typed CuSessionError", () => {
+    expect(() => new CuSession(envelope({ maxWallClockMs: 0 }))).toThrow(CuSessionError);
+    expect(() => new CuSession(envelope({ maxWallClockMs: -1 }))).toThrow(CuSessionError);
   });
 
   test("accepts a well-formed envelope", () => {

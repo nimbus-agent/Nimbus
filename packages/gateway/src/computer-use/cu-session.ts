@@ -1,6 +1,22 @@
 import type { CuBudgetVerdict, CuEnvelope, CuOutcome } from "./cu-types.ts";
 
 /**
+ * Thrown when a `CuEnvelope` fails the constructor's bounds guard. Mirrors the shape of
+ * `ExecPolicyError` in `exec/exec-policy.ts` — a typed `code` alongside the message — so a caller
+ * (the Task 10 gate) can distinguish "the envelope was malformed" from any other throw and map it
+ * to a specific refusal, rather than catching a bare `Error` it cannot classify.
+ */
+export class CuSessionError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CuSessionError";
+  }
+}
+
+/**
  * One live computer-use session: the frozen envelope plus the mutable state beside it (I35).
  *
  * The split is the point. The ENVELOPE is what the owner approved and is frozen at construction, so
@@ -38,12 +54,14 @@ export class CuSession {
     // Guarding here — once, at construction — means every future caller inherits the fail-closed
     // posture instead of having to reimplement it.
     if (!Number.isFinite(envelope.maxActions) || envelope.maxActions <= 0) {
-      throw new Error(
+      throw new CuSessionError(
+        "ERR_CU_BAD_BOUNDS",
         `CuEnvelope.maxActions must be a finite number > 0, got ${envelope.maxActions}`,
       );
     }
     if (!Number.isFinite(envelope.maxWallClockMs) || envelope.maxWallClockMs <= 0) {
-      throw new Error(
+      throw new CuSessionError(
+        "ERR_CU_BAD_BOUNDS",
         `CuEnvelope.maxWallClockMs must be a finite number > 0, got ${envelope.maxWallClockMs}`,
       );
     }
@@ -70,12 +88,21 @@ export class CuSession {
     return this.#tainted;
   }
 
-  /** One-way. Called on every observation; idempotent by construction. */
-  taint(): void {
+  /**
+   * One-way. Called on every observation; idempotent by construction.
+   *
+   * Takes `now` as a parameter rather than reaching for `Date.now()`, matching `close()` and
+   * `consumeAction()` and the codebase's established clock-injection pattern (`exec/exec-gate.ts`'s
+   * `readonly now: () => number`, wired in production as `() => Date.now()`). Task 10 writes both
+   * `tainted_at` and `closed_at` to the same `cu_session` row (schema V57) — under a test/replay
+   * clock, an ambient `Date.now()` here would put a real wall-clock millisecond in one column and
+   * the injected value in the other, and would make `taintedAt` unassertable in any test.
+   */
+  taint(now: number): void {
     if (this.#tainted) return;
     this.#tainted = true;
     // Not `??=`: a later call must never move an already-latched timestamp either.
-    if (this.#taintedAt === undefined) this.#taintedAt = Date.now();
+    if (this.#taintedAt === undefined) this.#taintedAt = now;
   }
 
   get taintedAt(): number | undefined {
