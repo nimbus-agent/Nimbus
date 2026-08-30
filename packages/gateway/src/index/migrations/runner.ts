@@ -11,6 +11,7 @@ import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
+import { COMPUTER_USE_V57_SQL } from "../computer-use-v57-sql.ts";
 import { CONNECTOR_CONFIGURED_V56_SQL } from "../connector-configured-v56-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
 import { CONNECTOR_HEALTH_V13_SQL } from "../connector-health-v13-sql.ts";
@@ -557,6 +558,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "sync_state.configured (never-set-up connectors)",
     CONNECTOR_CONFIGURED_V56_SQL,
   ),
+  simpleStep(56, 57, "computer-use session + action stream", COMPUTER_USE_V57_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
