@@ -1729,6 +1729,39 @@ git commit -m "feat(egress): ledger every browser-lane request before it is made
 
 ## Task 9: The browser driver
 
+> **DEFERRED AND RE-PLANNED — read this before implementing.** Task 1 returned **NO-GO**:
+> `playwright-core@1.62.1` does not survive `bun build --compile` (its `coreBundle.js` carries a
+> statically-resolved `require("chromium-bidi/lib/cjs/…")` that bun resolves eagerly and fails on;
+> no binary is produced). Reproduced against both `packages/cli`'s build and `packages/gateway`'s
+> `compile-gateway.ts`. This task is therefore re-planned against **raw CDP over a WebSocket** —
+> spawn Chromium with `--remote-debugging-port`, use `Fetch.enable` / `Fetch.requestPaused` +
+> `Fetch.continueRequest` / `Fetch.failRequest` for the § 3.5.1 request policy, and
+> `DOM.*` / `Runtime.evaluate` for observation. That needs **no dependency at all** (Bun has a
+> native `WebSocket`), so it is strictly better for a compiled binary than the rejected
+> `--external chromium-bidi` workaround. Task 8's `LedgerableContext` / `LedgerableRoute` map 1:1
+> onto the CDP Fetch domain, so **Task 8 needs no rework**. The Playwright code below is retained
+> only as a shape reference — do not implement it as written.
+>
+> **The `ObservedNode` contract CHANGED after this task was written** (Tasks 5+6 fix round 1, closing
+> three Critical classifier findings). The producer MUST supply all of the following, and the
+> classifier's fail-closed posture depends on each:
+>
+> - `isSubmitControl` now means **"is, OR IS A DESCENDANT OF, a submit control"** — resolve it with
+>   `closest("button, input[type=submit], input[type=image], form")`, not by inspecting the clicked
+>   element alone. `<button type=submit><span>Pay</span></button>` is the most common submit-button
+>   markup on the web, and a selector commonly resolves to the inner `<span>`; treating that as inert
+>   let a form submit with no human in the loop.
+> - `hrefScheme` — the **lowercased** scheme of the node's href (`"https"`, `"javascript"`, …), or
+>   `null` when it has no href. A non-http(s) scheme classifies actuating, which is what stops an
+>   `<a href="javascript:…">` from being indistinguishable from an ordinary link.
+> - `hrefOrigin` — the origin the href points to, or `null`. A non-null value differing from
+>   `currentOrigin` classifies actuating, closing the cross-origin-by-click gap.
+> - `inForm` — true when the node sits inside **any** `<form>`, password or not.
+> - `type` must be the raw attribute; the classifier lowercases it itself. Do not canonicalise here.
+>
+> All five are REQUIRED (non-optional) on the interface: an optional field would let a producer omit
+> it and silently take the permissive branch.
+
 **Files:**
 
 - Create: `packages/gateway/src/computer-use/cu-lanes/browser.ts`
