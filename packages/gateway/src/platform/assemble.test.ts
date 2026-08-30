@@ -84,6 +84,7 @@ describe("appendBootMarkerOrWarn", () => {
     // No marker was appended (the append itself failed) — the window this process should have
     // covered stays indeterminate rather than reporting a falsely clean/covered state.
     expect(coverageForWindow(db, { since: 2_000, until: 3_000 })).toEqual({
+      browser: "none",
       chatops: "none",
       task: "none",
       mcp: "none",

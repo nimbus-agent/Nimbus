@@ -76,6 +76,20 @@
  * Unlike `mcp` and `http`, this class is NOT narrower than its name: it covers every outbound
  * post on the `chatops-boot.ts` `post` closure — operational replies, HITL approval cards,
  * tribal suggestions, and agent briefs once those land.
+ *
+ * `browser` is the thirteenth member and an EGRESS class rather than a marker. It records an
+ * outbound request made by the computer-use browser lane — a real request to a third-party server
+ * from the user's machine, carrying the sandboxed profile's cookies.
+ *
+ * Reusing an existing member was rejected for the FIFTH time. `session` must go on claiming `none`
+ * coverage until its own appenders (telemetry, updater, JWKS) land, so recording browser
+ * navigations under it would record them and disclaim them in the same breath — the identical
+ * reason `mcp`, `http` and `chatops` each rejected it. `task` would imply the executor gated the
+ * request; it did not, and this path never reaches `connectors.dispatch`. `chatops` is a different
+ * destination class entirely.
+ *
+ * Like `chatops` and unlike `mcp`/`http`, this class is NOT narrower than its name: every request
+ * the driven browser makes passes through the one decorated `BrowserContext`.
  */
 export const EGRESS_SOURCE_TYPES = [
   "task", // gated connector action
@@ -90,6 +104,7 @@ export const EGRESS_SOURCE_TYPES = [
   "http", // agent brief served over the local HTTP API
   "outcome", // how a targeted fetch ended — a marker, never counted as egress
   "chatops", // an outbound Slack/Teams post
+  "browser", // an outbound request made by the computer-use browser lane
 ] as const;
 
 export type EgressSourceType = (typeof EGRESS_SOURCE_TYPES)[number];

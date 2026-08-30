@@ -12,6 +12,7 @@ import { coverageForWindow, listEgress, verifyEgressChain } from "./egress-verif
 // to `COVERAGE_CLASSES` without a matching entry here is a compile error, not a silently
 // unparseable marker at runtime.
 const RICH_COVERAGE: CoverageVector = {
+  browser: "per-call",
   chatops: "per-call",
   task: "per-call",
   mcp: "per-call",
@@ -37,7 +38,7 @@ describe("boot marker", () => {
     expect(rows[0]?.sourceType).toBe("boot");
     expect(rows[0]?.method).toBe("egress.boot");
     expect(rows[0]?.sourceId).toBe(
-      "chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call",
+      "browser=per-run;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call",
     );
     // The marker participates in the chain like any other row.
     expect(verifyEgressChain(db).ok).toBe(true);
@@ -53,6 +54,7 @@ describe("boot marker", () => {
     appendBootMarker(db, THIS_BINARY_COVERAGE, 400);
     appendBootMarker(db, RICH_COVERAGE, 1_000);
     expect(coverageForWindow(db, { since: 500, until: 3_000 })).toEqual({
+      browser: "per-run", // the covering marker's per-run beats rich's per-call
       chatops: "per-call", // both non-none
       task: "per-call", // both non-none
       mcp: "per-call", // both non-none
@@ -142,15 +144,15 @@ describe("boot marker", () => {
     // marker existed at all.
     //
     // The `source_id` below MUST be a COMPLETE, parseable coverage vector (every COVERAGE_CLASSES
-    // member, `mcp`/`chatops` included). If it were missing a class, `parseCoverage` would return
-    // null and the window would read all-none for THAT reason — the assertion would still pass
-    // even if the `source_type = 'boot'` filter regressed, which is precisely the regression this
-    // test exists to catch.
+    // member, `mcp`/`chatops`/`browser` included). If it were missing a class, `parseCoverage`
+    // would return null and the window would read all-none for THAT reason — the assertion would
+    // still pass even if the `source_type = 'boot'` filter regressed, which is precisely the
+    // regression this test exists to catch.
     appendEgressEntry(db, {
       timestamp: 500,
       sourceType: "task",
       sourceId:
-        "chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=per-call;session=per-call;sync=per-call;task=per-call",
+        "browser=per-call;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=per-call;session=per-call;sync=per-call;task=per-call",
       destination: "local",
       method: "egress.boot",
       payloadSummary: "{}",

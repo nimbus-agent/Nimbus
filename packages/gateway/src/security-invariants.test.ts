@@ -2111,6 +2111,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // narrower than its name: its appender (`egress/chatops-egress.ts`'s `buildLedgeredChatPosts`)
     // decorates the single `post` closure that every chat consumer shares, so one row is appended
     // per outbound post regardless of which consumer sent it.
+    // `browser` is the SEVENTH non-`none` class, `per-run`, and — like `chatops` — NOT narrower
+    // than its name: every request the driven browser makes passes through one decorated
+    // `BrowserContext`. Its appender (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`)
+    // is a deliberately separate, immediately-following unit of work in the same computer-use
+    // slice — not an unwired seam raised carelessly ahead of its own landing.
     // `peer`/`session` stay `none` until THEIR appenders land — raising an
     // entry without a landed appender behind it is a review moment, not a test to re-bank. (An
     // earlier version of this comment pointed to an `EgressCompleteness.tier` #1057 note in
@@ -2119,7 +2124,15 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // is gone; the coverage vector is the only claim" — so the pointer was stale, not fictional, and
     // there was nothing left in that file to settle or re-defer.)
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual(["chatops", "http", "mcp", "model", "sync", "task"]);
+    expect([...claimed].sort()).toEqual([
+      "browser",
+      "chatops",
+      "http",
+      "mcp",
+      "model",
+      "sync",
+      "task",
+    ]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {

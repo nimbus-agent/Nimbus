@@ -11,11 +11,11 @@ export type Granularity = (typeof GRANULARITIES)[number];
  * The egress-BEARING source types. Marker classes carry no coverage claim.
  *
  * Kept in key-sorted order — `serializeCoverage` maps over this array to build the canonical
- * string stored in a boot marker's HASHED `source_id`, so the order IS the wire format. `chatops`
- * sorts before `http`, which sorts before `mcp`, which sorts before `model`; that is why they head
- * the list rather than trailing it. Appending a new class instead of inserting it in sort order
- * would still typecheck, still round-trip within one binary, and produce a canonical string no
- * other binary agrees with.
+ * string stored in a boot marker's HASHED `source_id`, so the order IS the wire format. `browser`
+ * sorts before `chatops`, which sorts before `http`, which sorts before `mcp`, which sorts before
+ * `model`; that is why they head the list rather than trailing it. Appending a new class instead
+ * of inserting it in sort order would still typecheck, still round-trip within one binary, and
+ * produce a canonical string no other binary agrees with.
  *
  * That also means MEMBERSHIP, not just order, is part of the wire format, in both directions:
  * `parseCoverage` requires every member of this array to be present in a marker string with a
@@ -27,6 +27,7 @@ export type Granularity = (typeof GRANULARITIES)[number];
  * silently under-counting it as a clean zero.
  */
 export const COVERAGE_CLASSES = [
+  "browser",
   "chatops",
   "http",
   "mcp",
@@ -41,7 +42,7 @@ export type CoverageClass = (typeof COVERAGE_CLASSES)[number];
 export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 
 /**
- * What THIS binary is built to observe. SIX classes are non-`none`: `task` (the executor's
+ * What THIS binary is built to observe. SEVEN classes are non-`none`: `task` (the executor's
  * gated-action append, `engine/executor.ts`); `mcp` and `http` — the two external transports an
  * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
  * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run OR a
@@ -49,10 +50,12 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * see the `sync` paragraph below); `model` (any generate OR embed on a NON-LOCAL route, appended
  * by three cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
  * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, and `egress/embedding-egress.ts`'s
- * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers); and
- * `chatops` (every outbound Slack/Teams post, appended by ONE decorator over the shared `post`
- * closure — see the `chatops` paragraph below). Later phases raise `peer`, `session`; raising an
- * entry without landing its appender is the exact defect this vector exists to prevent.
+ * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers); `chatops`
+ * (every outbound Slack/Teams post, appended by ONE decorator over the shared `post` closure — see
+ * the `chatops` paragraph below); and `browser` (every outbound request the computer-use browser
+ * lane makes, appended by ONE decorator over the driven `BrowserContext` — see the `browser`
+ * paragraph below). Later phases raise `peer`, `session`; raising an entry without landing its
+ * appender is the exact defect this vector exists to prevent.
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
@@ -129,8 +132,26 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * consumer sent it. Before it landed the class did not exist at all — chat posts were neither
  * covered nor disclosed, which is why `nimbus prove` could report a zero over a window in which a
  * brief synthesized from the private index was posted to Slack.
+ *
+ * `browser` is `per-run` and covers every request the computer-use browser lane makes. The appender
+ * is `egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`, a DECORATOR over the Playwright
+ * `BrowserContext` rather than a call-site append — the same shape as `wrapLedgeredProvider`, and
+ * for the same reason: a call-site append covers the callers that exist today, a wrapped instance
+ * covers the ones written later without their cooperation.
+ *
+ * `per-run` rather than `per-call` is the honest label, matching `sync`. ONE row is appended per
+ * (navigation, distinct destination origin) pair, so a single row can stand for many upstream calls
+ * to that origin. Per-request would be thousands of rows for one page load; one row per navigation
+ * would understate where data went, since a page pulls from origins the owner never named. The
+ * pair shape is bounded at tens and lets `nimbus prove` NAME every host the browser contacted.
+ *
+ * A request REFUSED by the § 3.5.1 policy appends a `blocked` row, exactly as a denied executor
+ * gate does. A cluster of those naming an unapproved origin is the clearest signal in the feature
+ * that something was steering the page toward exfiltration, and it is retained even though nothing
+ * left the machine.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
+  browser: "per-run",
   chatops: "per-call",
   task: "per-call",
   mcp: "per-call",
@@ -147,6 +168,7 @@ export const THIS_BINARY_COVERAGE: CoverageVector = {
  * sibling marker's richer claim stand unchallenged.
  */
 export const ALL_NONE_COVERAGE: CoverageVector = {
+  browser: "none",
   chatops: "none",
   task: "none",
   mcp: "none",
