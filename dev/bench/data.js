@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788030544369,
+  "lastUpdate": 1788063883966,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0adc755606273f86407af8135fe303a5ef0acdba",
-          "message": "chore(sonar): cleanup 8 — clear 11 smells, cut duplication, raise coverage (#662)\n\n## Summary\n\nSonarCloud hygiene pass (cleanup 8). The quality gate on `main` was\nalready **PASS** (0 bugs, 0 vulns, 0 unreviewed hotspots) — this clears\nthe 11 outstanding `CODE_SMELL` findings, reduces duplication, and\nraises coverage on the most tractable partial file. Fix-not-exclude per\nrepo convention.\n\n## Issues cleared (11)\n- **3× S3776** (cognitive complexity): `parseNimbusConnectorsToml` →\n`accumulateConnectorTables` + `resolveConnectorConfig`;\n`assemblePlatformServices` → `buildTeamCredentialContexts` +\n`bootChatopsIntoAssembly` (the late-bound `identityBootRef` became a\nholder; the two duplicated identity spreads collapsed into one);\n`aggregateContributions` → `collectPeerItems`\n- **2× S6582**: optional-chain in `invoke-gate.ts` (I19/I26 load-bearing\n— behavior identical, invariants preserved)\n- **2× S7747**: dropped redundant array-spread in\n`embedding-worker-core` `idle()`\n- **2× S6353**: `\\w` over `[A-Za-z0-9_]` in `format-audit-payload`\n(`_`-boundary semantics preserved)\n- **S4325**: removed redundant `BonjourLike` type assertion\n- **S7781**: `replaceAll` over `replace(/'/g)` in snowflake `sfLiteral`\n\n## Duplication\n- Hoisted the byte-identical GitHub Actions I/O helpers\n(`safeString`/`safeInt`/`getInput`/`getBooleanInput`/`getIntInput`/`writeJobSummary`/`emitAnnotation`)\nplus a `makeSetOutput(allowedNames)` factory into a new\n`packages/github-actions/shared/gha-io.ts`. `preflight-query` +\n`annotate-action` import and re-export what their tests need; dist\nbundles rebuilt. Kills the 83%/81% `output.ts` and the `main.ts`\nscaffolding twins.\n- `monte-carlo/search-filter` now uses the shared `fieldsFromKeys`\n(drops its duplicate `stringAt`/`fieldsOf`), matching the\nbitrise/codemagic pattern.\n\n## Coverage\n- `connector.ts` **91.2% → 95.6%**: real behavior tests for the\n`relTime`/`fmtNextSync` time buckets, `truncateText`, `fmtHealthRetry`,\nand flag-value validation edges.\n- `assemble-sync-registrations.ts` (53%) intentionally **not** chased —\nit is explicitly excluded from the coverage floor as boot wiring-glue,\nand covering its ~95 connector closures would require running 95 real\nsync paths for zero gate value.\n\n## Validation\n- Full sequential typecheck (all packages) ✓\n- Gateway full suite (10006 pass) + CLI (1693) + monte-carlo + gha (55)\n✓\n- Security-invariant structure audit (I19/I22/I25) ✓\n- **Docker Linux-authoritative coverage-floor: ok** (1002 files scanned)\n✓\n- Biome (`bunx biome check packages scripts`, 2765 files) ✓\n- Independent code review of the diff: no blocking issues ✓\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Refactor**\n* Centralized GitHub Actions input/output, annotations, and job\nsummaries into a shared module; updated related actions to re-use shared\nhelpers.\n* Refined Nimbus TOML connector parsing/validation and improved gateway\ncontribution aggregation; extracted helpers across related query and\nassembly flows.\n* **Bug Fixes**\n* Tightened fine-grained GitHub credential redaction patterns and\nimproved Snowflake single-quote escaping.\n* **Tests**\n* Expanded CLI list/auth edge-case tests (time/health buckets,\nformatting, truncation) and added shared action utility unit tests.\n* **Documentation / CI**\n* Updated link checking to use an API token and improved CI coverage for\nshared action utilities.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-16T22:26:57+03:00",
-          "tree_id": "e53ab24ae3f641469c1211f607821cdcba069244",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0adc755606273f86407af8135fe303a5ef0acdba"
-        },
-        "date": 1781639235082,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.2876376000007,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 297.1360037499915,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 336.3757689499995,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7ca83798c1c2d40e91ab6839e5c94cf54646a88d",
+          "message": "fix(embedding): embed the onnx addon so the compiled binary can load it (#1402)\n\nCloses the remaining half of #1396. **#1399 fixed the source tree and\ndid nothing for users.**\n\n## Proof it was still broken\n\nBuilt the binary from `main` after #1399 merged and ran it:\n\n```\n[gateway] embeddings: unavailable (ResolveMessage: Cannot find module\n  '../bin/napi-v3/win32/x64/onnxruntime_binding.node'\n  from 'B:\\~BUN\\root\\embedding-worker-t7wc5b73.js')\n```\n\nThe worker executes from Bun's virtual FS, so the relative path resolves\nto `B:\\~bin\\…` — which cannot exist. A sidecar beside the bundled worker\nonly ever helped the source tree. This is the risk flagged in #1399's\nown body, now confirmed rather than theoretical.\n\n## Two measurements decided the design\n\nBoth taken **inside a real compiled binary**, not reasoned about:\n\n- a `.node` **can** be dlopen'd from an absolute path on disk\n- `readFileSync` **can** read an embedded file synchronously — required,\nbecause we are replacing a *synchronous* `require`\n\n## Why embed rather than ship a sidecar like `vec0`\n\nBoth designs need this same plugin — the baked-in relative path has to\nbe replaced either way. They differ only in where the bytes come from.\nSo a sidecar buys **no** simplicity and costs a file that must be added\nto **seven** shipping paths:\n\n`install.sh` · `install.ps1` · `package-headless-bundle` ·\n`package-linux-installers` · `package-macos-installer.sh` ·\n`package-windows-installer.ps1` · `compile-gateway`\n\n`copy-vec0-sidecar.ts` records in its own header that this exact mistake\nalready happened once and **failed silently**. Embedding touches none of\nthose paths, so `copy-onnx-sidecar.ts` is deleted rather than extended.\n\n## The interception point is `binding.js`, not the `.node`\n\nThat module loads the addon with a **template literal**:\n\n```js\nexports.binding = require(`../bin/napi-v3/${process.platform}/${process.arch}/…node`);\n```\n\nwhich the bundler cannot resolve statically — it emits a runtime\nrequire, so an `onResolve` hook on the specifier never fires. **My first\nattempt filtered on the specifier and silently did nothing**, leaving\nthe bundle byte-identical. Bundle size is what caught it, and it is the\nsignal worth watching: **1,643,078 → 1,931,211**.\n\nThe emitted module is CommonJS and keeps `binding.js`'s exact shape — a\nnamed `binding` export plus the `__esModule` marker. An ESM default\nexport would come back as `{ default: … }` through the interop and leave\n`binding.InferenceSession` undefined **at first use** rather than\nfailing at load.\n\n## Three failure modes handled deliberately\n\n- **Staleness** — the extracted filename carries a content hash, so an\nupgrade cannot keep loading a stale addon. \"Extract once if absent\"\nwould.\n- **Concurrency** — write-to-temp-then-rename, so two gateways starting\ntogether cannot observe a half-written addon. Losing the rename race is\nfine: the name *is* the hash of those bytes.\n- **Truncation** — a size check catches a leftover from a killed\nprocess, whose dlopen error is otherwise inscrutable.\n\n## Verified end to end in the compiled binary\n\nThe thing #1399 could not claim:\n\n```\n[ok] Embeddings: ready (all-MiniLM-L6-v2).\n```\n\nreported by `nimbus doctor` through the #1397 probe over real IPC. The\naddon extracted as `onnxruntime_binding-447b01363735daaf.node` (215,448\nbytes).\n\n1626 script tests pass; `preflight:fast` 32/32.\n\n## Known bound\n\nResolution is keyed to the **build host's** platform/arch, so a\ncross-compiled build would embed the wrong addon. Stated here rather\nthan discovered later. macOS and Linux are unexercised — the mechanism\nis platform-neutral, but only `win32/x64` has actually been run.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc",
+          "timestamp": "2026-08-30T04:12:10Z",
+          "tree_id": "2c0f0d7374aed0aa890d1ac27cb2b14c4b9ace6c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7ca83798c1c2d40e91ab6839e5c94cf54646a88d"
+        },
+        "date": 1788063880734,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 330.0493389500007,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 328.0734841999962,
             "unit": "ms"
           }
         ]
