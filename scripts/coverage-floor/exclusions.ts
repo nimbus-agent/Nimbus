@@ -235,6 +235,11 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // so the gate reads 0% and it can never rejoin the floor. Not named `*types.ts`, so the basename
   // regexes above do not reach it. Guardian header on the file forbids runtime logic.
   { kind: "exact", path: "packages/gateway/src/exec/exec-result.ts" },
+  // cu-types.ts: declaration-only (types and interfaces, no executable statement) by the same
+  // guardian-header rule. Its basename already matches the `-types\.ts$` regex above, so this
+  // entry is belt-and-suspenders rather than load-bearing — listed explicitly anyway so the
+  // exemption is a reviewed fact about this file, not an inference from its name alone.
+  { kind: "exact", path: "packages/gateway/src/computer-use/cu-types.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/workflow-invoke.ts" },
   { kind: "exact", path: "packages/gateway/src/connectors/mapped-row.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/connector-rpc-handlers/context.ts" },
