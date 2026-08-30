@@ -73,10 +73,12 @@ Copied verbatim from the project's non-negotiables and the spec. Every task's re
 **Why this is task 1 and gates everything else.** `packages/cli` ships as a single binary (`bun build src/index.ts --target bun --compile --outfile dist/nimbus`). This repo has already shipped a defect where the source tree was fully green and the compiled binary contained *nothing* of the feature — a native module that a bundler silently dropped, where **bundle size was the only tell**. Playwright is the single heaviest dependency this codebase would have taken on, it resolves a driver over a child process, and it normally expects a `playwright install` browser download. Committing 15 tasks of work on top of an unverified bundling assumption is how that defect happens twice.
 
 **Files:**
+
 - Modify: `packages/gateway/package.json` (add `playwright-core`)
 - Create: `packages/gateway/src/computer-use/cu-lanes/browser-probe.ts` (throwaway — deleted in step 6)
 
 **Interfaces:**
+
 - Produces: a **go/no-go decision** consumed by Task 9. Go → Task 9 uses `playwright-core`. No-go → **stop and re-plan Task 9** against raw CDP over WebSocket (spawn Chromium with `--remote-debugging-port`, speak the protocol directly; `Page.navigate`, `Fetch.enable`/`Fetch.requestPaused` for the § 3.5.1 policy, `DOM.*` for classification). Do not proceed past this task on a no-go.
 
 - [ ] **Step 1: Record the baseline binary size**
@@ -169,11 +171,13 @@ git commit -m "build(computer-use): add playwright-core and verify it survives -
 ## Task 2: V57 schema — `cu_session` + `cu_action`
 
 **Files:**
+
 - Create: `packages/gateway/src/index/computer-use-v57-sql.ts`
 - Create: `packages/gateway/src/index/computer-use-v57.test.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
 
 **Interfaces:**
+
 - Produces: `COMPUTER_USE_V57_SQL: string`. Tables `cu_session` and `cu_action` with the columns below — Task 8 (`cu-store.ts`) writes them and Task 15 prunes them.
 
 - [ ] **Step 1: Write the failing test**
@@ -371,10 +375,12 @@ git commit -m "feat(db): V57 computer-use session + action stream tables"
 ## Task 3: `[computer_use]` configuration section
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts`
 - Modify: `packages/gateway/src/config/nimbus-toml.test.ts`
 
 **Interfaces:**
+
 - Produces: `NimbusComputerUseToml`, `DEFAULT_NIMBUS_COMPUTER_USE_TOML`, `parseNimbusComputerUseToml(raw, defaults?)`, `loadNimbusComputerUseFromConfigDir(configDir)`. Task 10 consumes the config; Task 11 loads it in `assemble.ts`.
 
 - [ ] **Step 1: Write the failing test**
@@ -560,11 +566,13 @@ git commit -m "feat(config): default-off [computer_use] section with empty lane 
 ## Task 4: Session envelope — budgets and the taint ratchet
 
 **Files:**
+
 - Create: `packages/gateway/src/computer-use/cu-types.ts`
 - Create: `packages/gateway/src/computer-use/cu-session.ts`
 - Create: `packages/gateway/src/computer-use/cu-session.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CuLane` from `config/nimbus-toml.ts` (Task 3).
 - Produces:
   - `CuEnvelope` — `{ sessionId, lane, target, maxActions, maxWallClockMs, approvedAt }`, all `readonly`.
@@ -827,10 +835,12 @@ git commit -m "feat(computer-use): session envelope with frozen target and one-w
 ## Task 5: Structural classification — the DOM decides, never the model
 
 **Files:**
+
 - Create: `packages/gateway/src/computer-use/cu-classify.ts`
 - Create: `packages/gateway/src/computer-use/cu-classify.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CuActionClass` from `cu-types.ts` (Task 4).
 - Produces:
   - `interface ObservedNode { readonly tagName: string; readonly type: string | null; readonly inFormWithPassword: boolean; readonly isSubmitControl: boolean; readonly accessibleName: string | null }`
@@ -1032,10 +1042,12 @@ git commit -m "feat(computer-use): structural HITL classification from the obser
 ## Task 6: Browser request policy (spec § 3.5.1)
 
 **Files:**
+
 - Create: `packages/gateway/src/computer-use/cu-request-policy.ts`
 - Create: `packages/gateway/src/computer-use/cu-request-policy.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CuBrowserTarget` from `cu-types.ts` (Task 4).
 - Produces:
   - `type CuResourceType = "document" | "sub_frame" | "xhr" | "fetch" | "eventsource" | "websocket" | "stylesheet" | "image" | "font" | "media" | "script" | "other"`
@@ -1335,12 +1347,14 @@ git commit -m "feat(computer-use): CDP resource-type request policy with two ori
 ## Task 7: The `browser` egress class
 
 **Files:**
+
 - Modify: `packages/gateway/src/egress/egress-source-type.ts`
 - Modify: `packages/gateway/src/egress/egress-coverage.ts`
 - Modify: `packages/gateway/src/egress/egress-source-type.test.ts`
 - Modify: `packages/gateway/src/egress/egress-coverage.test.ts`
 
 **Interfaces:**
+
 - Produces: `"browser"` as a member of `EGRESS_SOURCE_TYPES` and of `COVERAGE_CLASSES`, with `THIS_BINARY_COVERAGE.browser = "per-run"`. Task 8's appender writes rows with `sourceType: "browser"`.
 
 **Do NOT add `opaque` here.** It is the screen lane's marker and belongs to slice 3. It is a *marker*, so unlike `browser` it does not change the coverage wire format — adding it later costs nothing, whereas adding `browser` later would be a second wire break.
@@ -1394,7 +1408,7 @@ Expected: FAIL — `COVERAGE_CLASSES` does not contain `browser`.
 
 In `packages/gateway/src/egress/egress-source-type.ts`, append to the doc header, before `export const EGRESS_SOURCE_TYPES`:
 
-```
+```text
  * `browser` is the thirteenth member and an EGRESS class rather than a marker. It records an
  * outbound request made by the computer-use browser lane — a real request to a third-party server
  * from the user's machine, carrying the sandboxed profile's cookies.
@@ -1424,7 +1438,7 @@ In `packages/gateway/src/egress/egress-coverage.ts`:
 - Add `browser: "per-run",` to `THIS_BINARY_COVERAGE` and `browser: "none",` to `ALL_NONE_COVERAGE`.
 - Append to the `THIS_BINARY_COVERAGE` doc block:
 
-```
+```text
  * `browser` is `per-run` and covers every request the computer-use browser lane makes. The appender
  * is `egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`, a DECORATOR over the Playwright
  * `BrowserContext` rather than a call-site append — the same shape as `wrapLedgeredProvider`, and
@@ -1465,10 +1479,12 @@ git commit -m "feat(egress): add the browser egress class at per-run granularity
 ## Task 8: `wrapLedgeredBrowserContext` — the appender
 
 **Files:**
+
 - Create: `packages/gateway/src/egress/browser-egress.ts`
 - Create: `packages/gateway/src/egress/browser-egress.test.ts`
 
 **Interfaces:**
+
 - Consumes: `appendEgressEntry` (`egress/egress-ledger.ts`), `decideRequest` + `originOf` (Task 6), `CuBrowserTarget` (Task 4).
 - Produces: `wrapLedgeredBrowserContext(ctx: LedgerableContext, deps: BrowserEgressDeps): LedgerableContext` and `class EgressAppendFailedError`. Task 9's driver applies it.
 - `LedgerableContext` is a **structural** interface (`{ route(pattern: string, handler: (route: LedgerableRoute) => Promise<void>): Promise<void> }`), not Playwright's type — so this file has no driver import and stays testable without a browser.
@@ -1714,10 +1730,12 @@ git commit -m "feat(egress): ledger every browser-lane request before it is made
 ## Task 9: The browser driver
 
 **Files:**
+
 - Create: `packages/gateway/src/computer-use/cu-lanes/browser.ts`
 - Create: `packages/gateway/src/computer-use/cu-lanes/browser.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1's driver decision, `wrapLedgeredBrowserContext` (Task 8), `ObservedNode` (Task 5).
 - Produces:
   - `interface BrowserLane { observe(selector: string): Promise<ObservedNode | null>; currentOrigin(): string | null; click(selector: string): Promise<void>; type(selector: string, text: string): Promise<void>; navigate(url: string): Promise<void>; readText(): Promise<string>; domSnapshot(): Promise<string>; screenshot(): Promise<Uint8Array>; close(): Promise<void> }`
@@ -1973,6 +1991,7 @@ git commit -m "feat(computer-use): browser lane driver over a Nimbus-owned sandb
 ## Task 10: The gate — `openSession` and `runAction`
 
 **Files:**
+
 - Create: `packages/gateway/src/computer-use/cu-actuate.ts`
 - Create: `packages/gateway/src/computer-use/cu-consent-broker.ts`
 - Create: `packages/gateway/src/computer-use/cu-store.ts`
@@ -1980,6 +1999,7 @@ git commit -m "feat(computer-use): browser lane driver over a Nimbus-owned sandb
 - Create: `packages/gateway/src/computer-use/cu-gate.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 3–9.
 - Produces: `openSession(req, deps)`, `runAction(req, deps)`, `CuGateError`, `CuGateDeps`. Task 11's IPC calls both.
 
@@ -2376,6 +2396,7 @@ git commit -m "feat(computer-use): the I35 gate — envelope, structural classif
 ## Task 11: IPC surface and boot wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/computer-rpc.ts`
 - Create: `packages/gateway/src/ipc/computer-rpc.test.ts`
 - Modify: `packages/gateway/src/ipc/lan-rpc.ts`
@@ -2383,6 +2404,7 @@ git commit -m "feat(computer-use): the I35 gate — envelope, structural classif
 - Modify: `packages/gateway/src/platform/assemble.ts`
 
 **Interfaces:**
+
 - Consumes: `openSession`/`runAction` (Task 10), the two consent brokers.
 - Produces: methods `computer.sessionOpen`, `computer.sessionClose`, `computer.act`, `computer.sessionStatus`, `computer.approvalRespond`. Task 14's CLI calls them.
 
@@ -2490,11 +2512,13 @@ git commit -m "feat(ipc): computer.* namespace, LAN-forbidden and absent from th
 ## Task 12: Agent tools and the I11 envelope
 
 **Files:**
+
 - Modify: `packages/gateway/src/engine/agent.ts`
 - Create: `packages/gateway/src/computer-use/cu-tools.ts`
 - Create: `packages/gateway/src/computer-use/cu-tools.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runAction` (Task 10).
 - Produces: `buildComputerUseTools(sessionId, deps)` returning Mastra tool definitions registered through `wrapToolForLlm`.
 
@@ -2578,6 +2602,7 @@ git commit -m "feat(computer-use): agent tools behind the I11 envelope, live-ses
 ## Task 13: Invariant I35 and static rule D26
 
 **Files:**
+
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts`
 - Modify: `scripts/structure-audit/check-nimbus-invariants.test.ts`
 - Modify: `packages/gateway/src/security-invariants.test.ts`
@@ -2766,6 +2791,7 @@ bun test scripts/structure-audit/check-nimbus-invariants.test.ts
 bun test packages/gateway/src/security-invariants.test.ts
 bun run audit:structure
 ```
+
 Expected: all PASS, audit exits 0.
 
 - [ ] **Step 6: Red-prove the guards**
@@ -2784,6 +2810,7 @@ git commit -m "feat(security): invariant I35 + static rule D26 for computer-use 
 ## Task 14: CLI surface
 
 **Files:**
+
 - Create: `packages/cli/src/commands/computer.ts`
 - Create: `packages/cli/src/commands/computer.test.ts`
 - Modify: `packages/cli/src/commands/prove.ts` (`COVERAGE_CLASS_LABELS`)
@@ -2829,6 +2856,7 @@ git commit -m "feat(cli): nimbus computer, and the browser coverage-class label 
 ## Task 15: Snapshot retention
 
 **Files:**
+
 - Modify: `packages/gateway/src/computer-use/cu-store.ts`
 - Modify: `packages/gateway/src/computer-use/cu-store.test.ts`
 - Modify: the retention pass (find it via `grep -rn "retention" packages/gateway/src --include=*.ts | grep -v test`)
@@ -2907,6 +2935,7 @@ Mark the S2 computer-use row **partially** delivered — browser lane only — a
 bun run audit:doc-refs
 bun run audit:status-drift
 ```
+
 Expected: both PASS. `audit:status-drift` derives counts from code — if it reports a mismatch, **re-derive the enumeration, not just the number** (a total that is still right can hide a list that is wrong).
 
 - [ ] **Step 6: Commit**
@@ -2947,6 +2976,7 @@ The Task 1 concern applies to the *final* binary, not the probe:
 ```bash
 cd packages/cli && bun run build && ls -l dist/nimbus
 ```
+
 Expected: size materially above the Task 1 baseline.
 
 - [ ] **Step 6: Push and open the PR**

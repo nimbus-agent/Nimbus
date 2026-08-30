@@ -363,6 +363,7 @@ The consequence for § 4.3's table is that the terminal lane has **no `observing
 same as the screen lane and for a different reason: on the screen lane nothing can be classified, and
 here nothing reaches the actuator unapproved. Both lanes therefore auto-satisfy nothing, ever, and
 only the browser lane's `observing` class is load-bearing.
+
 - **The screen lane has no `observing` class at all.** `click(412, 388)` against a foreign window has
   no machine-readable semantics — there is no node, no role, no label the gateway can independently
   verify. So every screen actuation prompts, always, regardless of the session opt-in. This falls out
