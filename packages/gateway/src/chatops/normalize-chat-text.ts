@@ -3,6 +3,12 @@
  * tokens. Handles: leading `@nimbus`/`<@U…>`/`<at>…</at>` mention, Slack link `<url|text>`/`<url>` ->
  * text, `<@U…>`/`<#C…|name>` user/channel refs -> bare form, smart quotes -> ASCII, surrounding
  * backticks, non-breaking spaces, collapsed whitespace.
+ *
+ * NOT idempotent: the leading-mention strip removes exactly ONE leading mention per call, so
+ * `normalizeChatText("@nimbus @nimbus agent why …")` and a second pass over ITS OWN output do not
+ * agree — the second pass strips the remaining leading `@nimbus` too. Benign in effect (every real
+ * caller runs this exactly once, on the raw inbound message), but do not rely on calling it twice
+ * being a no-op.
  */
 export function normalizeChatText(raw: string): string {
   let s = raw.replaceAll("\u00A0", " ");

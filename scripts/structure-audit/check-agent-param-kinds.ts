@@ -146,9 +146,25 @@ export function parseValidatorFields(source: string): Record<string, ParsedValid
 /**
  * The count a healthy, unreshaped `agents-rpc.ts` parse should clear: eleven externally-permitted
  * agents (see `AGENT_PARAM_KINDS`'s own doc comment) minus one, because `ghost` and `conflicts`
- * share `requireFileParam`. This is the ACTUAL gate `checkAgentParamKinds` compares against — not
- * just a number interpolated into a message — so a partial restructure that leaves, say, 3 or 9
- * validators recognisable also degrades to indeterminate, not just a parse that recognises zero.
+ * share `requireFileParam`.
+ *
+ * That arithmetic (11 - 1 = 10) is NOT the same number as "how many `function require...(`
+ * headers `parseValidatorFields` finds in the file" — those are two different counts that this
+ * comment used to read as if they were one. The file has FIFTEEN such headers today (verified by
+ * grep, not assumed): the ten counted above for the eleven externally-permitted agents, plus five
+ * more for agents/helpers this floor does not cover — `requirePreflightParams` and
+ * `requirePremortemParams` (permitted internally but excluded from every EXTERNAL surface,
+ * `EXTERNAL_EXCLUDED_AGENT_METHODS`), `requireNegotiateParams` (excluded the same way), and two
+ * sub-parsers that are not themselves one agent's whole validator — `requireWhyRefParams` (feeds
+ * `requireWhyParams`) and `requireEpicRef` (feeds ownership parsing). `VALIDATOR_FLOOR` is
+ * deliberately the SMALLER, externally-scoped number: this floor exists to catch `agents-rpc.ts`
+ * losing recognisable structure for the agents a chat/HTTP caller can actually reach, not to
+ * assert the total header count, which would break every time an internal-only agent gained or
+ * lost a helper function with no externally-visible change at all.
+ *
+ * This is the ACTUAL gate `checkAgentParamKinds` compares against — not just a number interpolated
+ * into a message — so a partial restructure that leaves, say, 3 or 9 validators recognisable also
+ * degrades to indeterminate, not just a parse that recognises zero.
  */
 export const VALIDATOR_FLOOR = 10;
 
@@ -229,7 +245,7 @@ export function checkAgentParamKinds(
     findings.push({
       rule: "uncovered-agent",
       snippet: agent,
-      detail: `${agent} is one of EXTERNAL_AGENT_NAMES but no parsed validator in agents-rpc.ts resolved to it — VALIDATOR_AGENT_OVERRIDES or the generic require<Agent>Params derivation likely needs a new entry`,
+      detail: `${agent} is one of EXTERNAL_AGENT_NAMES but no parsed validator in agents-rpc.ts resolved to it — VALIDATOR_AGENT_OVERRIDES or the generic require<Agent>Params derivation likely needs a new entry, or the agent genuinely takes no params, in which case add it to an exempt list`,
     });
   }
 

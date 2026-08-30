@@ -28,7 +28,7 @@
 | File | Responsibility |
 | --- | --- |
 | `packages/gateway/src/ipc/agent-param-kinds.ts` | **Create** — per-agent field→kind map. Lives beside the validators it describes |
-| `packages/gateway/src/agent-commands/parse-agent-command.ts` | **Create** — grammar + coercion. Surface-neutral; imports nothing from `chatops/` |
+| `packages/gateway/src/agent-commands/parse-agent-command.ts` | **Create** — grammar + coercion. Surface-neutral; **correction:** it does import from `chatops/` — `../chatops/normalize-chat-text.ts`'s `normalizeChatText` — so "imports nothing from `chatops/`" as shipped is wrong; only the mention/grammar coupling this row was really about (no import of `command-parser.ts` itself, avoiding the cycle described below) holds |
 | `packages/gateway/src/ipc/agents-rpc.ts` | **Modify** — rename `HTTP_*` → `EXTERNAL_*` |
 | `packages/gateway/src/ipc/server/client-kind.ts` | **Modify** — `ClientKind` gains `chatops` (not declarable) |
 | `packages/gateway/src/egress/egress-bearing-kinds.ts` | **Modify** — `chatops: null`, with its own reason |
