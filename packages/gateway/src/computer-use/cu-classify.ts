@@ -1,35 +1,12 @@
-import type { CuActionClass } from "./cu-types.ts";
+import type { CuActionClass, ObservedNode } from "./cu-types.ts";
 
 /**
- * What the GATEWAY observed about the target node, derived from the DOM via CDP.
- *
- * Every field here is a fact the gateway computed. There is deliberately no field carrying the
- * model's description, intent, or rationale — see the header on `classifyBrowserAction`.
+ * `ObservedNode` moved to `cu-types.ts` in Task 10 (ruling R28's amendment A), so that the
+ * declaration-only `BrowserLane` interface there could reference it without a circular import
+ * (`cu-types.ts` -> `cu-classify.ts` -> `cu-types.ts`). Re-exported here, verbatim, so this
+ * module's existing consumers (`cu-classify.test.ts`) keep importing it from this path.
  */
-export interface ObservedNode {
-  readonly tagName: string;
-  readonly type: string | null;
-  /** True when the node sits inside a <form> that contains an <input type="password">. */
-  readonly inFormWithPassword: boolean;
-  /** True when the node sits inside any <form>, password or not (I7: keypress submission). */
-  readonly inForm: boolean;
-  /**
-   * True when the node IS a submit control, OR IS A DESCENDANT of one (the producer resolves this
-   * with `closest()`). `<button type=submit><span>Pay</span></button>` is the most common submit
-   * button markup on the web: the model's selector commonly resolves to the inner `<span>`, the
-   * click bubbles, and the form submits — so "is a submit control" alone is the wrong contract.
-   */
-  readonly isSubmitControl: boolean;
-  /**
-   * Lowercased scheme of the node's href (e.g. "https", "javascript"), or null when it has no
-   * href. Supplied by the producer.
-   */
-  readonly hrefScheme: string | null;
-  /** Origin the node's href points to, or null when it has no href / the href is unparseable. */
-  readonly hrefOrigin: string | null;
-  /** Shown to the human in the prompt. NEVER read by the classifier. */
-  readonly accessibleName: string | null;
-}
+export type { ObservedNode };
 
 export interface BrowserActionInput {
   readonly kind: "click" | "type" | "navigate" | "read" | "screenshot" | "download";
