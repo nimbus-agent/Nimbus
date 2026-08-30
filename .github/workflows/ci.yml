@@ -75,8 +75,8 @@ jobs:
             BASE="HEAD~1"
           fi
           CHANGED=$(git diff --name-only "$BASE" "${{ github.sha }}" 2>/dev/null || echo "")
-          echo "ui=$(echo "$CHANGED" | grep -qE '^packages/ui/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "rust=$(echo "$CHANGED" | grep -qE '^packages/ui/src-tauri/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "ui=$(grep -qE '^packages/ui/' <<<"$CHANGED" && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "rust=$(grep -qE '^packages/ui/src-tauri/' <<<"$CHANGED" && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
           # Fail-safe: an empty diff (e.g. base resolution glitch) is treated as
           # "code might have changed" so we never skip the test suite on an
@@ -96,6 +96,11 @@ jobs:
             fi
           fi
 
+          # NB: these use a here-string, not `echo "$CHANGED" | grep -q`. Under `pipefail`,
+          # `grep -q` exits on the first match and can SIGPIPE the producer, so the pipeline
+          # reports non-zero and the `|| echo false` branch wins — a FALSE NEGATIVE that silently
+          # skips the job. Reproduced with a large change set: piped said `false` where the
+          # here-string said `true`.
           # The onnx clean-room check is expensive (two container images), so it is scoped to the
           # paths that can actually break the embedded native payload — the plugin, the worker
           # build, the harness itself, the embedding/worker sources, and any dependency change
@@ -104,7 +109,7 @@ jobs:
           if [[ -z "$CHANGED" ]]; then
             echo "embedding-native=true" >> "$GITHUB_OUTPUT"
           else
-            echo "embedding-native=$(echo "$CHANGED" | grep -qE '^(scripts/(onnx-binding-plugin\.ts|build-workers\.ts|verify-onnx-cleanroom\.sh)|packages/gateway/src/(workers|embedding)/|packages/gateway/package\.json$|bun\.lock|\.github/workflows/ci\.yml$)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+            echo "embedding-native=$(grep -qE '^(scripts/(onnx-binding-plugin\.ts|build-workers\.ts|verify-onnx-cleanroom\.sh)|packages/gateway/src/(workers|embedding)/|packages/gateway/package\.json$|bun\.lock|\.github/workflows/ci\.yml$)' <<<"$CHANGED" && echo true || echo false)" >> "$GITHUB_OUTPUT"
           fi
 
   # ── PR: fast feedback (three jobs run in parallel) ─────────────────────────
@@ -660,7 +665,7 @@ jobs:
           # empty list would otherwise skip the loop entirely and report green —
           # turning the one job that exists to catch failures into a rubber
           # stamp. Keep EXPECTED in step with the `needs:` list above.
-          EXPECTED=7
+          EXPECTED=8
           count=$(printf '%s\n' ${RESULTS} | grep -c . || true)
           if [[ "${count}" -ne "${EXPECTED}" ]]; then
             echo "::error::expected ${EXPECTED} gate results, got ${count} (${RESULTS}) — the needs: list and this check have drifted"
