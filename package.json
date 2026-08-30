@@ -70,6 +70,7 @@
     "audit:exclusion-parity": "bun scripts/coverage-floor/check-exclusion-parity.ts",
     "audit:any": "bun scripts/structure-audit/count-any-usage.ts",
     "audit:invariants": "bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only",
+    "audit:agent-param-kinds": "bun scripts/structure-audit/check-agent-param-kinds.ts",
     "audit:worker-entries": "bun scripts/structure-audit/check-worker-entries.ts",
     "audit:platform-test-gaps": "bun scripts/ci/platform-test-gaps.ts",
     "audit:connector-registry-drift": "bun scripts/structure-audit/check-connector-registry-drift.ts",

@@ -8,7 +8,11 @@
  * that, and no bounds constant appears in this file.
  *
  * It lives NEXT TO `agents-rpc.ts` on purpose: a param added to a validator is one line away from
- * the map that must learn about it.
+ * the map that must learn about it. `scripts/structure-audit/check-agent-param-kinds.ts`
+ * (`bun run audit:agent-param-kinds`, wired into `preflight:fast`) enforces the one-directional
+ * bound described on its own `checkAgentParamKinds` — every validator field this file's line-walker
+ * can see must have a matching entry here — so a new validator param one line away is also a
+ * build failure one line away if it never lands in this map.
  *
  * Only the ELEVEN externally-permitted agents appear. `preflight`, `premortem`, `whyPeek` and
  * `negotiate` are excluded from every external surface, so declaring their params here would

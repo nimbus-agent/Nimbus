@@ -32,6 +32,16 @@ const FAST: readonly Gate[] = [
   { name: "audit:openapi-drift", cmd: ["bun", "run", "audit:openapi-drift"], tier: "fast" },
   { name: "audit:boundaries", cmd: ["bun", "run", "audit:boundaries"], tier: "fast" },
   { name: "audit:invariants", cmd: ["bun", "run", "audit:invariants"], tier: "fast" },
+  {
+    // `agent-param-kinds.ts` is a hand-maintained coercion table living NEXT TO the validators in
+    // `agents-rpc.ts` on the strength of this gate: without it, a new/renamed validator param can
+    // drift from the map silently, and a `k=v` chat message would coerce it to the wrong
+    // primitive (or not report a bad value at all) with no test failing. Static, not a `bun test`
+    // target, so it needs its own gate the way `audit:invariants` does.
+    name: "audit:agent-param-kinds",
+    cmd: ["bun", "run", "audit:agent-param-kinds"],
+    tier: "fast",
+  },
   { name: "audit:worker-entries", cmd: ["bun", "run", "audit:worker-entries"], tier: "fast" },
   {
     // Advisory, never blocking. A test gated `skipIf(process.platform === "win32")` does not run
