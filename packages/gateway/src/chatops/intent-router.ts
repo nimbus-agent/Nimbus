@@ -46,10 +46,11 @@ export class IntentRouter {
 
     if (idr.kind === "unmapped") {
       // `public-read` admits an unmapped user to `read` only. An `agent` command falls through to
-      // the refusal below with no extra code — three of the eleven agents fan out to paired peers,
-      // and widening a shipped permission by inheritance rather than by decision is exactly the
-      // shape this fail-closed default exists to prevent. See the mapped-identity rule at the top
-      // of this file's brief.
+      // the refusal below with no extra code — four of the eleven agents (`ghost`, `conflicts`,
+      // `huddle`, `janitor` — `federatedAgentBase`'s callers reachable from chat) fan out to paired
+      // peers, and widening a shipped permission by inheritance rather than by decision is exactly
+      // the shape this fail-closed default exists to prevent. See the mapped-identity rule at the
+      // top of this file's brief.
       if (cmd.kind === "read" && binding.unmapped === "public-read") {
         await this.deps.reply(await this.deps.askEngine(cmd.query, binding.namespace));
         return;

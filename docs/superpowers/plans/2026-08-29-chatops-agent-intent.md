@@ -621,7 +621,9 @@ import type { LocalIndex } from "../index/local-index.ts";
 import { AgentsRpcError, dispatchAgentsRpc, resolveExternalAgentMethod } from "../ipc/agents-rpc.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 
-/** 60 s, matching the MCP surface rather than the CLI's 30 s: three of the eleven wait on peers. */
+/** 60 s, matching the MCP surface rather than the CLI's 30 s: four of the eleven externally-exposed
+ *  agents wait on peers (**correction**: not three — `ghost`/`conflicts`/`huddle`/`janitor`,
+ *  `federatedAgentBase`'s five call sites minus the internal-only `preflight`). */
 export const CHATOPS_AGENT_TIMEOUT_MS = 60_000;
 
 export type ChatopsAgentResult =
@@ -803,8 +805,10 @@ git commit -m "feat(chatops): invoke agents through dispatchAgentsRpc"
 
 **Interfaces:**
 
-- Consumes: `reservedBlocksFor` (`agents/_lib/reserved-sections.ts`); `joinReserved`
-  (`agents/_lib/reserved-sections.ts`); `stripSections` (`agents/_lib/markdown-sections.ts`).
+- Consumes (**correction, shipped differently**: NOT `reservedBlocksFor` — that takes a real
+  `SynthInput` brief object, which `truncateBrief` never has): `sectionBody`, `stripSections`,
+  `topLevelSections` (`agents/_lib/markdown-sections.ts`); `RESERVED_HEADINGS_BY_KIND` and
+  `joinReserved` (`agents/_lib/reserved-sections.ts`).
 - Produces: `truncateBrief(markdown: string, kind: string, maxBytes: number): string`. Task 8 consumes it.
 
 **Do not write a regex matching `^##` followed by a space.** I31's guarantee is expressed in terms of *these* functions —
@@ -865,15 +869,21 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
 
-Take the reserved blocks with `reservedBlocksFor`, strip them from the body with `stripSections`,
-drop whole body sections from the **end** — at ANY heading level, using the exported any-level
-heading scan rather than a `##`-only split (see the note above) — until the body plus the reserved
-blocks plus the notice fits `maxBytes`, then reassemble with `joinReserved`. Append
-``_(truncated — N sections omitted; run `nimbus <agent>` locally for the full brief)_``.
+Take the reserved blocks by re-extracting each reserved heading's content from the ALREADY-RENDERED
+markdown with `sectionBody` (**correction, shipped differently**: not `reservedBlocksFor`, which
+takes a real brief object `truncateBrief` never has), strip them from the body with
+`stripSections`, drop whole body sections from the **end** — at ANY heading level, using the
+exported any-level heading scan rather than a `##`-only split (see the note above) — until the body
+plus the reserved blocks plus the notice fits `maxBytes`, then reassemble with `joinReserved`.
+Append ``_(truncated — N sections omitted; run `nimbus <agent>` locally for the full brief)_``.
 
-Key rule to encode: **the reserved blocks are never candidates for dropping.** If the reserved
-blocks alone exceed `maxBytes`, return them plus the notice rather than truncating inside a
-disclosure — a half-printed gap is worse than a stated overflow.
+Key rule to encode: **the reserved blocks are dropped LAST, never first — but not exempt.** If the
+reserved blocks alone exceed `maxBytes`, try them as-is first (**correction, shipped differently**:
+this plan originally stopped here and accepted the overflow — a later whole-branch review
+overturned that: the cap must always bind even here. The shipped byte-cutter shrinks the
+synthesis-reserved `## Terms` block first, with an honest count, and cuts a genuine disclosure's
+own bytes only as the absolute last resort, always with a distinct "content was cut" notice rather
+than the "N sections omitted" one above).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -976,7 +986,8 @@ git commit -m "feat(chatops): parse the agent intent ahead of the read fallthrou
 
 **The mapped-identity rule:** `binding.unmapped === "public-read"` admits unmapped users to the
 `read` intent **only**. The agent intent does not inherit it — fail-closed is the reversible
-direction, and three of the eleven fan out to paired peers.
+direction, and four of the eleven fan out to paired peers (**correction**: `ghost`/`conflicts`/
+`huddle`/`janitor`, not three).
 
 - [ ] **Step 1: Write the failing test**
 
