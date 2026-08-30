@@ -1,3 +1,4 @@
+import type { ChatopsAgentInvoker } from "../agent-runs/agent-chatops-invoke.ts";
 import type { OwnerResolution } from "../policy/chatops-policy.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
 import { parseCommand } from "./command-parser.ts";
@@ -6,6 +7,8 @@ import type { ChatMessage, RefusalReason } from "./types.ts";
 
 export interface IntentRouterDeps {
   readonly knownActions: ReadonlySet<string>;
+  /** Agent names an `agent <name> ...` command may invoke — mapped identities only (see `handle`). */
+  readonly permittedAgents: ReadonlySet<string>;
   readonly resolveBinding: (channelId: string) => ChatopsChannelBinding | undefined;
   readonly resolveIdentity: (platform: "slack" | "teams", userId: string) => Promise<ResolveResult>;
   readonly resolveOwner: (resource: string) => OwnerResolution;
@@ -19,6 +22,9 @@ export interface IntentRouterDeps {
     requesterExternalId: string,
     originatingChannelId: string,
   ) => Promise<{ approved: boolean }>;
+  /** Runs an `agent <name> ...` command. Truncation to a platform byte cap is the boot wiring's
+   *  job (Task 9) — this router stays free of any platform-specific cap. */
+  readonly runAgent: ChatopsAgentInvoker;
   readonly reply: (text: string) => Promise<void>;
   readonly auditRefusal: (reason: RefusalReason, detail: string, channelId: string) => void;
 }
@@ -36,12 +42,14 @@ export class IntentRouter {
     if (binding === undefined) return; // unbound channel: bot stays silent (fail-closed)
 
     const idr = await this.deps.resolveIdentity(msg.platform, msg.userId);
-    // TODO(Task 8): `IntentRouterDeps` gains `permittedAgents` there; until it does, no agent name
-    // is permitted here, so an `agent <name>` message refuses with `unknown_agent` rather than
-    // running anything — a fail-closed placeholder, not a behavior this task's tests exercise.
-    const cmd = parseCommand(msg.text, this.deps.knownActions, new Set());
+    const cmd = parseCommand(msg.text, this.deps.knownActions, this.deps.permittedAgents);
 
     if (idr.kind === "unmapped") {
+      // `public-read` admits an unmapped user to `read` only. An `agent` command falls through to
+      // the refusal below with no extra code — three of the eleven agents fan out to paired peers,
+      // and widening a shipped permission by inheritance rather than by decision is exactly the
+      // shape this fail-closed default exists to prevent. See the mapped-identity rule at the top
+      // of this file's brief.
       if (cmd.kind === "read" && binding.unmapped === "public-read") {
         await this.deps.reply(await this.deps.askEngine(cmd.query, binding.namespace));
         return;
@@ -59,11 +67,12 @@ export class IntentRouter {
       return;
     }
     if (cmd.kind === "agent") {
-      // Stub only: `permittedAgents` is always the empty set above (Task 8 wires the real
-      // `runAgent` + `permittedAgents` deps and replaces this branch), so `parseCommand` can never
-      // actually produce `{ kind: "agent" }` here yet — this exists solely so the switch below is
-      // exhaustive over `ParsedCommand`, not to define agent-command behavior.
-      await this.refuse("bad_agent_params", "Agent commands are not yet wired.", msg.channelId);
+      const result = await this.deps.runAgent(cmd.agent, cmd.params);
+      if (!result.ok) {
+        await this.refuse("bad_agent_params", result.detail, msg.channelId);
+        return;
+      }
+      await this.deps.reply(result.markdown);
       return;
     }
 

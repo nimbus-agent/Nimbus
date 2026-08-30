@@ -304,6 +304,13 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
   const routerFor = (msg: ChatMessage): IntentRouter =>
     new IntentRouter({
       knownActions,
+      // TODO(Task 9): wire the real permitted-agent set + `buildChatopsAgentInvoker` here (needs
+      // the LocalIndex/configDir/selfIdentity/SynthesisRouter deps this boot module does not yet
+      // carry). Until then, fail-closed: no agent is permitted, and `runAgent` is unreachable
+      // because `parseCommand` can never produce `{ kind: "agent" }` against an empty permitted set.
+      permittedAgents: new Set(),
+      runAgent: () =>
+        Promise.resolve({ ok: false as const, detail: "Agent commands are not yet wired." }),
       resolveBinding: (channelId) => resolveChannelBinding(chatopsPolicy(), channelId),
       resolveIdentity: (platform, userId) => mapper.resolve(platform, userId),
       resolveOwner: (resource) => resolveOwner(chatopsPolicy(), resource),

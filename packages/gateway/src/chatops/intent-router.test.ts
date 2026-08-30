@@ -6,12 +6,15 @@ function baseDeps() {
   const audits: { reason: string }[] = [];
   const replies: { text: string }[] = [];
   const gated: { actionType: string }[] = [];
+  const agentCalls: { agent: string; params: unknown }[] = [];
   return {
     audits,
     replies,
     gated,
+    agentCalls,
     deps: {
       knownActions: new Set(["deployment.rollback"]),
+      permittedAgents: new Set(["why"]),
       resolveBinding: (_ch: string) => ({
         namespace: "project:pay",
         unmapped: "refuse" as const,
@@ -27,6 +30,10 @@ function baseDeps() {
       runGatedWrite: async (actionType: string) => {
         gated.push({ actionType });
         return { approved: true };
+      },
+      runAgent: async (agent: string, params: unknown) => {
+        agentCalls.push({ agent, params });
+        return { ok: true as const, markdown: "## Gaps\nnone" };
       },
       reply: async (text: string) => {
         replies.push({ text });
@@ -115,5 +122,45 @@ describe("IntentRouter", () => {
     await r.handle(msg("@nimbus who's on call?"));
     expect(replies[0]?.text).toContain("oncall = alice");
     expect(audits).toEqual([]);
+  });
+
+  test("an unmapped user is refused AND no agent runs, even under public-read", async () => {
+    const { deps, replies, agentCalls } = baseDeps();
+    const r = new IntentRouter({
+      ...deps,
+      resolveBinding: () => ({ namespace: "project:pay", unmapped: "public-read", notify: [] }),
+      resolveIdentity: async () => ({ kind: "unmapped" }),
+    });
+    await r.handle(msg("@nimbus agent why ref=a.ts"));
+    // Asserting the refusal alone would pass against an implementation that refused AFTER running.
+    expect(agentCalls.length).toBe(0);
+    expect(replies).toContainEqual({ text: "You are not enrolled for this channel." });
+  });
+
+  test("a mapped user gets the agent brief posted", async () => {
+    const { deps, replies, agentCalls } = baseDeps();
+    await new IntentRouter(deps).handle(msg("@nimbus agent why ref=a.ts"));
+    expect(agentCalls).toEqual([{ agent: "why", params: { ref: "a.ts" } }]);
+    expect(replies[0]?.text).toContain("## Gaps");
+  });
+
+  test("a mapped user's bad agent params are refused, without running the agent", async () => {
+    const { deps, replies, audits, agentCalls } = baseDeps();
+    const r = new IntentRouter({
+      ...deps,
+      runAgent: async () => ({ ok: false as const, detail: "bad params" }),
+    });
+    await r.handle(msg("@nimbus agent why ref=a.ts"));
+    expect(agentCalls).toEqual([]);
+    expect(audits.map((a) => a.reason)).toContain("bad_agent_params");
+    expect(replies[0]?.text).toBe("bad params");
+  });
+
+  test("an unbound channel stays silent for an agent command too", async () => {
+    const { deps, replies, agentCalls } = baseDeps();
+    const r = new IntentRouter({ ...deps, resolveBinding: () => undefined });
+    await r.handle(msg("@nimbus agent why ref=a.ts"));
+    expect(replies).toEqual([]);
+    expect(agentCalls).toEqual([]);
   });
 });

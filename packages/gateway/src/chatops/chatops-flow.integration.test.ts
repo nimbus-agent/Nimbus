@@ -124,6 +124,14 @@ function buildHarness(): Harness {
 
   const router = new IntentRouter({
     knownActions: new Set(["deployment.rollback"]),
+    // This integration harness exercises the read/write intents; agent-intent routing is covered
+    // by intent-router.test.ts, so no agent is permitted here.
+    permittedAgents: new Set(),
+    runAgent: () =>
+      Promise.resolve({
+        ok: false as const,
+        detail: "Agent commands are not wired in this harness.",
+      }),
     resolveBinding: (ch) => resolveChannelBinding(policy, ch),
     resolveIdentity: (p, u) => mapper.resolve(p, u),
     resolveOwner: (resource) => resolveOwner(policy, resource),
