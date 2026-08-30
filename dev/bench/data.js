@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788069529016,
+  "lastUpdate": 1788073639429,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5993765bb97b1058676e7ecde34b112d4ed33c87",
-          "message": "perf: Phase 2 (Bencher) — advisory trend ingest (soak alongside github-action-benchmark) (#666)\n\n## Summary\n\nPR-1 of the **Perf Strategy Phase 2 (Bencher)** plan. Adds **advisory**\nBencher Cloud trend ingest that runs **alongside** the existing\n`github-action-benchmark` (g-a-b) dashboard during a soak window. The\nin-code `gateClass` comparator stays the **sole** gate — Bencher never\nblocks a merge.\n\n- Spec:\n`docs/superpowers/specs/2026-06-16-perf-phase2-bencher-design.md`\n- Plan:\n`docs/superpowers/plans/2026-06-16-perf-phase2-bencher-phase1.md`\n\n## What's in it\n\n- **`packages/gateway/src/perf/bencher-bmf.ts`** (+ tests) — pure\n`HistoryLine → Bencher Metric Format` mapper (floor-gated, 100%\nline+branch). Unlike the g-a-b emitter it emits **all** metric kinds, so\nthe throughput/tokens trend surfaces (S6/S8/S9/S10) get charted for the\nfirst time.\n- **`scripts/perf/emit-bencher-bmf.ts`** (+ tests) — thin CLI; reuses\n`parseLastHistoryLine` + `toBencherBmf`.\n- **`.github/workflows/_perf.yml`** — Bencher install/emit/publish steps\n(push + same-repo PR, **all matrix legs as separate testbeds**), behind\na `BENCHER_API_KEY`-presence guard + fork-PR skip + empty-BMF skip;\nevery step `continue-on-error: true`. g-a-b steps untouched (parallel\nsoak). Adds `checks: write` for Bencher's advisory check run.\n- **`.github/workflows/_perf-reference.yml`** — dormant\n`reference-m1air` ingest (activates only once that self-hosted runner is\nprovisioned).\n- CHANGELOG entry.\n\n## Advisory guarantee\n\nNo Bencher threshold is configured, and every Bencher step is\n`continue-on-error: true`, so a Bencher/SaaS outage can never red the\nperf job. PRs are still gated solely by the in-code `gateClass`\ncomparator.\n\n## Manual ops prerequisites (operator)\n\nThe Bencher steps **skip cleanly** until `BENCHER_API_KEY` exists, so\nthis PR can merge before or after setup:\n1. Create the public Bencher project `nimbus`.\n2. Pre-create the 5 measures with correct direction\n(latency/memory/first_token ↓; throughput/tokens ↑).\n3. Add a project-scoped `bencher_run_*` key as the `BENCHER_API_KEY`\nGitHub secret.\n\n## Migration\n\nPR-2 (after a ~2-week / ~10-push soak) retires g-a-b and archives the\n`perf-data` branch. Drift-check (`_perf-drift.yml`) is unaffected.\n\n## Verification\n\nScoped tests 14/14 · gateway typecheck clean · biome clean · `regen-slo\n--check` green · coverage-floor: `bencher-bmf.ts` 100/100 · markdownlint\nclean · CI-exact jscpd 3.53% < 5% · whole-branch review APPROVED ·\nrebased onto current `main` (post Slice 8a + sonar-8).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added Bencher Cloud advisory trend ingest to performance workflows,\ngated by secret availability and non-empty emitted reports.\n* Introduced conversion of benchmark run-history data into Bencher\nMetric Format (BMF) for reporting.\n\n* **CI/CD**\n* Updated performance jobs with required permissions and job-level\nBencher API key handling for reliable conditional execution.\n\n* **Tests**\n  * Added unit and CLI pipeline tests for BMF conversion and emission.\n\n* **Documentation**\n* Documented the Bencher Phase 2 design and added a changelog entry for\nthe new soak behavior.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T02:01:43+03:00",
-          "tree_id": "dd4fcb1963d36d8234cee4283128072f9f3eefcd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5993765bb97b1058676e7ecde34b112d4ed33c87"
-        },
-        "date": 1781651620608,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 302.4616851500017,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 300.2180640499955,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 338.5761175000036,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fcef76f46e0e6a07f6028e91fb3ba2e6d6c1953e",
+          "message": "feat(egress): ledger every outbound ChatOps post (#1403)\n\nEvery outbound Slack/Teams post now appends one `egress_ledger` row\n**before** the bytes leave, fail-closed. This is PR 1 of 2; PR 2 adds\nthe ChatOps agent intent and needs no egress work because this seam\nalready covers it.\n\n## The gap this closes\n\nNo ChatOps post was ledgered. The reply path is `ReplyDispatcher` →\n`buildConnectorPost` → an ephemeral bot-credentialed connector spawn,\nwhich never reaches the executor: `connectors.dispatch` has exactly one\ncaller in the tree (`engine/executor.ts:401`) and this is not it. So\nI29's chokepoint never saw a chat post.\n\n**And the gap was not disclosed.** That is the part that matters. The\n`mcp` and `http` classes cover less than their names suggest and say so\nexplicitly; chat posts were neither covered nor disclosed — grepping\nI29's section for `chatops`, `slack` or `reply` returned nothing.\n`nimbus prove` could therefore report **0 outbound events** for a window\nin which an answer synthesized from the private index had been posted to\nSlack's servers. Same defect shape as the `ask` intent classifier closed\non 2026-08-28.\n\n## Approach\n\nA **decorator at construction**, not a call-site append — the same shape\nas `wrapLedgeredProvider` (D22(e)) and `wrapLedgeredEmbedder` (D22(f)),\nand for the same reason: it covers consumers written later without any\nof them cooperating.\n\n`buildLedgeredChatPosts` returns one wrapped function per kind (`reply`,\n`approvalCard`, `agentBrief`), so `method` stays **server-derived**. An\noptional `kind?` argument was rejected: it would make the value\ncaller-supplied *and* omittable, so a consumer that forgot it would be\nsilently mis-attributed.\n\nRow shape: `source_type='chatops'`, `source_id` = a **salted** BLAKE3\nhash of the channel id (per-install salt, Vault-only under\n`chatops.channel.salt`), `destination` = the platform, `payload_summary`\n= the message **byte length only** — never the text. The salt is\nrequired, not belt-and-braces: channel ids are enumerable, so a bare\nhash is reversible by dictionary.\n\n`chatops` joins `COVERAGE_CLASSES` at **index 0** — that array's order\nis the wire format (it is serialised into a hashed boot-marker field),\nso appending would typecheck, round-trip within one binary, and produce\na canonical string no other binary agrees with.\n\n## Static enforcement\n\n`D17-chatops-unwrapped-post` fails the build if\n`buildConnectorPost(...)` is ever called outside\n`buildLedgeredChatPosts(...)`. It is **per-occurrence, not per-file**: a\nfile-level check would skip a file that contains any wrapped call — and\n`chatops-boot.ts` is the only file that legitimately contains one, so it\nwould have been blind in exactly the file it must watch. Token-counting\nfails the same way from the other side (a wrapper whose argument is\nsomething else keeps the counts equal). Red-proved twice: once with no\nwrapper present, once with an unwrapped call added *beside* the correct\none.\n\nTwo dead entries (`packages/mcp-connectors/{slack,teams}/src/server.ts`,\nremoved in `v3.0.0`) dropped from the D17 allowlist — verified dead with\n`git ls-files`, not `ls`, because a stale untracked directory survives\non machines predating the extraction.\n\n## Behaviour changes worth knowing\n\n- **A Vault write failure at boot is gateway-fatal, not merely\nchatops-fatal.** `ensureChannelSalt` throws and nothing catches it up to\n`assemblePlatformServices`. This is deliberate: `[chatops].enabled =\ntrue` is an explicit opt-in (the guard sits *before* the call, so this\ncannot reach a user who did not enable it), and a capability that cannot\nsatisfy its security invariant should refuse to start — the same posture\nI33 takes for a sandbox that cannot confine. The error text says so\nexplicitly. Not a `!`: nobody has to change anything to keep working.\n- **A failed ledger append no longer kills the gateway.** It previously\npropagated to a `void this.onFrame(...)`, became an\n`unhandledRejection`, and hit `host.exit(1)` — so a locked or full index\nDB would take the gateway down on the next inbound chat message. It is\nnow contained at the ChatOps message seam with an `error`-level log\nnaming the channel (unhashed), the post kind and the cause. The catch is\nnarrow: only `EgressAppendFailedError`; everything else still\npropagates. Fail-closed is preserved — nothing is posted when the append\nfailed.\n\n## Verification\n\n`typecheck`, `audit:invariants`, `lint:markdown`, chatops+egress (268),\ncli prove (39), structure-audit (725) — all pass, each run with its own\nexit code.\n\n`audit:coverage-floor` reports 7 violations locally, all in files with\n**zero diff** against this branch and none baseline-grandfathered;\n`exclusions.ts:18` states the exclusion set is written for a Linux\nrunner, so running it on Windows inverts which platform arms are active.\nThe two new files are clean — `channel-salt.ts` is at 100% line.\n\nThree `test:ci` failures are environmental (the Windows sandbox helper\nbinary is not built locally; those suites fail loudly by design rather\nthan skip).\n\n## Included documents\n\nThe design spec, both implementation plans, and the two review documents\nship with the code they argue for. The spec's §13 records responses to a\ndesign review that found a self-contradiction in the appender's `method`\nderivation and a live `NaN` hole in `minConfidence` validation (the\nlatter is a pre-existing IPC/HTTP issue, recorded as its own follow-up\nrather than widened into this PR).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_0112DzCFzXs1osvcGLUuGwSQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Outbound Slack and Teams messages are now recorded in the egress\nledger before delivery.\n* Ledger entries include protected channel identifiers and\nmessage-length summaries.\n* Coverage reporting now includes ChatOps posts as a per-call egress\nclass.\n\n* **Bug Fixes**\n* ChatOps posts are blocked when ledger recording fails, preventing\nuntracked outbound messages.\n\n* **Documentation**\n* Updated security invariants, changelog, coverage guidance, and\nimplementation plans for ChatOps egress tracking.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-30T06:55:17Z",
+          "tree_id": "bc525aae95f88b717ab602ec7ce2fdcc8627b561",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fcef76f46e0e6a07f6028e91fb3ba2e6d6c1953e"
+        },
+        "date": 1788073636878,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 325.04328325000023,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 322.20834995000405,
             "unit": "ms"
           }
         ]
