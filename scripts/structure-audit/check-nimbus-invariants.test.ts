@@ -1471,6 +1471,25 @@ describe("D17-chatops-unwrapped-post — buildConnectorPost may only appear as a
     expect(v.length).toBe(1);
   });
 
+  // Regression: ordinal/positional pairing (the Nth post pairs with the Nth wrapper) let a
+  // comma-separated declaration with TWO wrapped calls plus ONE raw call through — the raw call's
+  // ordinal happened to line up with the SECOND wrapper, which had already closed its own
+  // parenthesis span earlier in the statement, so the raw call "paired" with a wrapper it sat
+  // entirely outside of. Direct containment must reject the raw call regardless of where it falls
+  // relative to an unrelated, already-closed wrapper call earlier in the same statement.
+  test("D17 rejects a raw call that ordinally lines up with an unrelated, already-closed wrapper (two wrapped + one raw in one statement)", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: "packages/gateway/src/chatops/chatops-boot.ts",
+        contents:
+          "const a = buildLedgeredChatPosts(db, buildConnectorPost(runTool, fn), salt1)," +
+          " c = buildLedgeredChatPosts(db, somethingElse, salt2)," +
+          " sneaky = buildConnectorPost(runTool, fn);\n",
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D17-chatops-unwrapped-post"]);
+  });
+
   // Regression: a `;` INSIDE a string-literal argument must not fragment one statement into two.
   // Before stripStringLiterals was composed in, `stripComments` alone left the `;def"` fragment
   // live, so `.split(";")` cut this single correctly-wrapped call into two segments -- the wrapper

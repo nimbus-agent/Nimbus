@@ -478,7 +478,14 @@ export function checkChatopsReplySurfaceInvariant(files: readonly FileEntry[]): 
 // file that legitimately contains a wrapped call, so it is exactly the file where an added
 // unwrapped call would go unseen. Token COUNTING has the same weakness from the other direction:
 // `buildLedgeredChatPosts(db, somethingElse, salt)` keeps the counts equal while wrapping nothing.
-// Adjacency is the property, so adjacency is what gets checked.
+//
+// DIRECT CONTAINMENT, never ordinal pairing. An earlier version paired the Nth `buildConnectorPost(`
+// with the Nth `buildLedgeredChatPosts(` in the statement — positional, not "is this call actually
+// inside that one's argument list". That let a comma-separated statement with two wrapped calls
+// plus one raw call through: the raw call's ordinal happened to line up with the SECOND wrapper's,
+// which had already closed its own parens earlier in the same statement, so the raw call "paired"
+// with a wrapper it sat entirely outside of. Direct containment closes this: a raw call is safe
+// only when its offset falls strictly inside SOME wrapper's own balanced parenthesis span.
 const UNWRAPPED_POST_RE = /\bbuildConnectorPost\s*\(/g;
 const WRAPPER_RE = /\bbuildLedgeredChatPosts\s*\(/g;
 
@@ -487,6 +494,30 @@ function lineOfOffset(text: string, offset: number): number {
   let line = 1;
   for (let i = 0; i < offset && i < text.length; i++) if (text[i] === "\n") line++;
   return line;
+}
+
+/**
+ * Every `buildLedgeredChatPosts(` call's own argument-list span in `stmt`, as `[open, close)`
+ * offsets of its opening and matching closing parenthesis. A balanced left-to-right scan over the
+ * STRIPPED text (comments + string/template bodies already blanked to spaces, length-preserving),
+ * so a stray `(`/`)` inside a blanked string or comment can never desync the depth count.
+ */
+function wrapperSpans(stmt: string): { open: number; close: number }[] {
+  const spans: { open: number; close: number }[] = [];
+  const re = new RegExp(WRAPPER_RE.source, "g");
+  for (let m = re.exec(stmt); m !== null; m = re.exec(stmt)) {
+    const open = m.index + m[0].length - 1; // offset of the call's own "(" (the match ends in it)
+    let depth = 1;
+    let i = open + 1;
+    for (; i < stmt.length && depth > 0; i++) {
+      if (stmt[i] === "(") depth++;
+      else if (stmt[i] === ")") depth--;
+    }
+    // An unbalanced call (should not happen over valid TS) closes at end-of-statement rather than
+    // silently treating the rest of the file as "inside" it.
+    spans.push({ open, close: depth === 0 ? i - 1 : stmt.length });
+  }
+  return spans;
 }
 
 export function checkChatopsUnwrappedPost(files: readonly FileEntry[]): Violation[] {
@@ -505,25 +536,21 @@ export function checkChatopsUnwrappedPost(files: readonly FileEntry[]): Violatio
     // statement. Splitting keeps offsets recoverable by accumulating the consumed length.
     let base = 0;
     for (const stmt of stripped.split(";")) {
-      const posts = [...stmt.matchAll(UNWRAPPED_POST_RE)].map((m) => m.index ?? 0);
-      if (posts.length > 0) {
-        const wrappers = [...stmt.matchAll(WRAPPER_RE)].map((m) => m.index ?? 0);
-        // Each `buildConnectorPost(` must be preceded, in this same statement, by its own
-        // `buildLedgeredChatPosts(`. Pair them off in order: the Nth post call needs an Nth
-        // wrapper opening before it.
-        for (let n = 0; n < posts.length; n++) {
-          const wrapper = wrappers[n];
-          const post = posts[n] ?? 0;
-          if (wrapper === undefined || wrapper > post) {
-            const off = base + post;
-            const line = lineOfOffset(stripped, off);
-            out.push({
-              rule: "D17-chatops-unwrapped-post",
-              file: f.relPath,
-              line,
-              snippet: (original[line - 1] ?? "").trim(),
-            });
-          }
+      const spans = wrapperSpans(stmt);
+      for (const m of stmt.matchAll(UNWRAPPED_POST_RE)) {
+        const post = m.index ?? 0;
+        // Safe ONLY when directly contained in SOME wrapper's own argument list — not merely
+        // preceded by a wrapper opening earlier in the statement (see the D17 comment above).
+        const contained = spans.some((s) => post > s.open && post < s.close);
+        if (!contained) {
+          const off = base + post;
+          const line = lineOfOffset(stripped, off);
+          out.push({
+            rule: "D17-chatops-unwrapped-post",
+            file: f.relPath,
+            line,
+            snippet: (original[line - 1] ?? "").trim(),
+          });
         }
       }
       base += stmt.length + 1; // + the `;` that split consumed
