@@ -96,6 +96,35 @@ describe("wrapLedgeredBrowserContext", () => {
     ]);
   });
 
+  test("the SAME origin gets TWO rows when the verdict differs — dedupe key is (origin, verdict), not origin alone", async () => {
+    // A passive image request from an unapproved origin is allowed (PASSIVE subresources are
+    // allowed from any origin), while a script-initiated fetch to that SAME unapproved origin is
+    // refused (neither navigateOrigins nor scriptOrigins lists it). If the dedupe key were ever
+    // simplified back to origin-only, the second row below would silently vanish — the exact
+    // regression this test exists to catch, since a cluster of BLOCKED rows naming an unapproved
+    // origin is the clearest signal of exfiltration and must never be suppressed by an earlier
+    // ALLOWED row for the same origin.
+    const h = harness();
+    await h.wrapped.route("**/*", async () => {});
+    const cap: Captured = { continued: 0, aborted: 0 };
+    await h.fire(fakeRoute("https://cdn.other.example/x.png", "image", cap));
+    await h.fire(fakeRoute("https://cdn.other.example/collect", "fetch", cap));
+    expect(rows(h.db)).toEqual([
+      {
+        destination: "https://cdn.other.example",
+        result_status: "authorized",
+        method: "browser.request",
+      },
+      {
+        destination: "https://cdn.other.example",
+        result_status: "blocked",
+        method: "browser.request",
+      },
+    ]);
+    expect(cap.continued).toBe(1);
+    expect(cap.aborted).toBe(1);
+  });
+
   test("a refused request appends a BLOCKED row and aborts", async () => {
     const h = harness();
     await h.wrapped.route("**/*", async () => {});

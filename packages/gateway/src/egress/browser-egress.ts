@@ -34,9 +34,12 @@ export interface BrowserEgressDeps {
  * same reason: a call-site append covers the callers that exist today, whereas wrapping the
  * INSTANCE covers every caller including ones written later, without any of them cooperating.
  *
- * ONE ROW PER DISTINCT ORIGIN, not per request — `per-run` granularity (see `egress-coverage.ts`).
+ * ONE ROW PER (ORIGIN, VERDICT), not per request — `per-run` granularity (see `egress-coverage.ts`).
  * A page load makes hundreds of requests to a handful of origins; a row each would bury the ledger,
- * while a single row naming only the origin the owner typed would understate where data went.
+ * while a single row naming only the origin the owner typed would understate where data went. The
+ * key is the PAIR, not the origin alone: a later BLOCKED request to an origin that was previously
+ * ALLOWED still gets its own row, since a cluster of blocked rows naming an unapproved origin is
+ * the clearest signal that something is steering the page toward exfiltration.
  *
  * FAIL-CLOSED: the row is appended BEFORE the request is allowed to continue, and an append failure
  * throws rather than proceeding. A zero-row window therefore means no request was made, never that
