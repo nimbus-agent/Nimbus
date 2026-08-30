@@ -130,6 +130,30 @@ function headingLines(lines: readonly string[]): { index: number; level: number;
 }
 
 /**
+ * A flat, line-index partition of `markdown` by heading, at ANY level.
+ *
+ * Each entry starts at a heading line's index and runs up to (exclusive of) the NEXT heading
+ * line of ANY level, or to the end of the document for the last one — a sequential split, not
+ * `sectionBody`'s nested "same level or higher" rule. That difference is deliberate: a chat-cap
+ * truncator dropping whole sections from the end (`chatops/brief-truncate.ts`) wants each heading
+ * — a promoted `# Section` and a demoted `### Section` alike — as its own droppable unit, not one
+ * swallowed as a sub-heading of the other, since a model rewrite does not reliably match the
+ * renderer's own level-2 convention. Text before the first heading of any level (a title-less
+ * preamble) is simply not covered by any entry, the same as `preambleBody` defines it.
+ *
+ * A thin wrapper over `headingLines` — the one heading scan this file exists to be the sole
+ * owner of (see the file header comment) — so a second, independent regex-based split never
+ * gets a chance to disagree with it at the boundary.
+ */
+export function topLevelSections(
+  markdown: string,
+): { readonly start: number; readonly end: number }[] {
+  const lines = markdown.split("\n");
+  const heads = headingLines(lines);
+  return heads.map((h, i) => ({ start: h.index, end: heads[i + 1]?.index ?? lines.length }));
+}
+
+/**
  * Body text under `## <heading>`, up to the next heading of the SAME OR HIGHER level
  * (same or fewer `#` characters) — not a heading at a deeper level.
  *
