@@ -35,15 +35,16 @@ import type { ChatTransport } from "./transport/transport.ts";
 import type { ChatMessage, ChatPlatform, ReplyTarget } from "./types.ts";
 
 /**
- * A conservative byte cap shared by every ChatOps-reachable platform: Slack's `blocks[].text`
- * limit is 3,000 characters (chat.postMessage's plain `text` allows far more, but the socket
- * adapter posts through the same connector tool other Slack surfaces use, so staying under the
- * tighter of the two avoids a silent server-side truncation Nimbus never sees); Teams' Activity
- * text has a much larger ceiling (~28 KB), so this bounds Slack, not Teams. `truncateBrief` never
- * drops a disclosure regardless of the cap chosen (I31) — this constant only trades off how much
+ * A readability cap, conservatively under every platform ceiling — not a specific Slack/Teams
+ * limit asserted from this repo (the connector body that actually calls chat.postMessage lives
+ * in the separate nimbus-mcp-servers repo and is not installed here, so neither platform's real
+ * ceiling can be verified from this codebase). A multi-kilobyte wall of markdown in a shared
+ * channel is already past readable regardless of what either platform would technically accept,
+ * and bytes ≤ chars keeps the cap conservative rather than generous. `truncateBrief` never drops
+ * a disclosure regardless of the cap chosen (I31) — this constant only trades off how much
  * ordinary body content survives before the "run `nimbus <kind>` locally" notice takes over.
  */
-const CHATOPS_AGENT_BRIEF_MAX_BYTES = 3_000;
+export const CHATOPS_AGENT_BRIEF_MAX_BYTES = 3_000;
 
 export interface ChatopsBootDeps {
   readonly cfg: NimbusChatopsToml;
@@ -217,19 +218,26 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     channelSalt,
   );
 
-  const replyDispatcher = new ReplyDispatcher({
-    post: posts.reply,
-    notifyChannelsFor: (namespace) => {
-      const channels: string[] = [];
-      for (const binding of chatopsPolicy().channels.values()) {
-        if (binding.namespace !== namespace) continue;
-        for (const ch of binding.notify) {
-          if (!channels.includes(ch)) channels.push(ch);
-        }
+  // Shared by both operational (non-HITL) reply dispatchers below -- I23 names
+  // `ReplyDispatcher.send` as the SOLE post path for this class of post; an agent brief is
+  // operational too, so it gets its own `ReplyDispatcher` instance (same server-derived
+  // target-resolution rules) rather than a second, dispatcher-bypassing post helper.
+  const notifyChannelsFor = (namespace: string): string[] => {
+    const channels: string[] = [];
+    for (const binding of chatopsPolicy().channels.values()) {
+      if (binding.namespace !== namespace) continue;
+      for (const ch of binding.notify) {
+        if (!channels.includes(ch)) channels.push(ch);
       }
-      return channels;
-    },
-  });
+    }
+    return channels;
+  };
+  const replyDispatcher = new ReplyDispatcher({ post: posts.reply, notifyChannelsFor });
+  // I23: the agent-brief counterpart of `replyDispatcher` above -- posts through `posts.agentBrief`
+  // (ledgered `chatops.agentBrief`, I29) instead of `posts.reply`, but is otherwise the exact same
+  // dispatcher shape, so `routerFor`'s reply redirect (below) never has to bypass ReplyDispatcher
+  // to change which post kind a reply ledgers as.
+  const agentBriefDispatcher = new ReplyDispatcher({ post: posts.agentBrief, notifyChannelsFor });
 
   const presenter: ApprovalPresenter = new ApprovalPresenter({
     post: async (channelId, text) => {
@@ -327,12 +335,15 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
   const routerFor = (msg: ChatMessage): IntentRouter => {
     // Set by `runAgent` below on a successful brief, consumed by `reply` immediately after —
     // IntentRouter always calls `deps.reply(result.markdown)` for an ok agent result, and that
-    // single reply is what must go out through `posts.agentBrief` rather than the generic
-    // `posts.reply` every other kind uses, so the ledger records ONE row with
-    // `method='chatops.agentBrief'` (never two: one 'chatops.reply' plus one 'chatops.agentBrief'
-    // for the same text). Scoped to this `routerFor(msg)` closure, which is built fresh per
-    // inbound message, so concurrent messages never share this flag.
-    let agentBriefMarkdown: string | undefined;
+    // single reply is what must go out through `agentBriefDispatcher` (→ `posts.agentBrief`)
+    // rather than the generic `replyDispatcher` (→ `posts.reply`) every other kind uses, so the
+    // ledger records ONE row with `method='chatops.agentBrief'` (never two: one 'chatops.reply'
+    // plus one 'chatops.agentBrief' for the same text). A bare boolean, not the markdown itself —
+    // `reply` posts its OWN `text` argument, never a value stashed here, so a future edit that
+    // decorates `result.markdown` before replying can never see the wrapper silently post a stale
+    // copy. Scoped to this `routerFor(msg)` closure, which is built fresh per inbound message, so
+    // concurrent messages never share this flag.
+    let isAgentBrief = false;
 
     return new IntentRouter({
       knownActions,
@@ -346,7 +357,7 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
         // Truncation to a platform byte cap is boot wiring's job (Task 9), not the router's or
         // the invoker's — see `IntentRouterDeps.runAgent`'s doc comment.
         const markdown = truncateBrief(result.markdown, agent, CHATOPS_AGENT_BRIEF_MAX_BYTES);
-        agentBriefMarkdown = markdown;
+        isAgentBrief = true;
         return { ok: true, markdown };
       },
       resolveBinding: (channelId) => resolveChannelBinding(chatopsPolicy(), channelId),
@@ -373,15 +384,16 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
           },
         ),
       reply: (text) => {
-        if (agentBriefMarkdown !== undefined) {
-          const markdown = agentBriefMarkdown;
-          agentBriefMarkdown = undefined;
-          return posts.agentBrief(msg.platform, msg.channelId, markdown);
+        const target = {
+          kind: "originating" as const,
+          platform: msg.platform,
+          channelId: msg.channelId,
+        };
+        if (isAgentBrief) {
+          isAgentBrief = false;
+          return agentBriefDispatcher.send(target, text);
         }
-        return replyDispatcher.send(
-          { kind: "originating", platform: msg.platform, channelId: msg.channelId },
-          text,
-        );
+        return replyDispatcher.send(target, text);
       },
       auditRefusal: (reason, detail, channelId) =>
         deps.audit.recordAudit({

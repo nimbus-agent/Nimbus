@@ -21,7 +21,11 @@ import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { parsePolicyToml } from "../policy/policy-toml.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { ApprovalPresenter } from "./approval-presenter.ts";
-import { buildChatopsBoot, type ChatopsBootDeps } from "./chatops-boot.ts";
+import {
+  buildChatopsBoot,
+  CHATOPS_AGENT_BRIEF_MAX_BYTES,
+  type ChatopsBootDeps,
+} from "./chatops-boot.ts";
 import { runWithChatopsApprovalContext } from "./chatops-request-context.ts";
 import { ChatopsService } from "./chatops-service.ts";
 import type { RunChatopsTool } from "./chatops-tool-runner.ts";
@@ -437,14 +441,22 @@ describe("ChatOps end-to-end: real buildChatopsBoot wires an agent command throu
     boot.bindAgentInvoker(buildChatopsAgentInvoker({ db, router: undefined }));
 
     await deliverMessage(boot, "@nimbus agent glossary term=SLO");
-
     expect(postedText()).toContain("## Gaps");
+
+    // Read the ledger only after the transport is stopped, not the instant the first post lands.
+    // `deliverMessage` resolves as soon as `posts.length > 0`, i.e. right after the (structurally
+    // only possible) post — a second, errant post landing microtasks later would still be missed
+    // by a read at that exact moment. Only one post is reachable today (the `agent` branch calls
+    // `reply` exactly once), so this is a belt-and-suspenders read, not a fix for an observed race
+    // — but it is the actual property "NOT two" claims, so it must be checked past the point where
+    // a stray second post could still be in flight, not merely past the first.
+    await boot.service.stop();
+
+    expect(posts.length).toBe(1); // still the only post: the ledger and the wire agree
     const rows = listEgress(db, { limit: 10 });
     // ONE row, from PR 1's post appender. NOT two: the invoker deliberately appends nothing.
     expect(rows.length).toBe(1);
     expect(rows[0]?.method).toBe("chatops.agentBrief");
-
-    await boot.service.stop();
   });
 
   test("the brief posts on a gateway with no LLM configured", async () => {
@@ -456,5 +468,36 @@ describe("ChatOps end-to-end: real buildChatopsBoot wires an agent command throu
     expect(postedText()).toContain("## Gaps");
 
     await boot.service.stop();
+  });
+
+  test("an over-cap brief is truncated at the boot seam's CHATOPS_AGENT_BRIEF_MAX_BYTES, and ## Gaps survives", async () => {
+    const boot = await bootForTest({ db });
+    // A controlled fake invoker, not `buildChatopsAgentInvoker` — this test pins truncation AT
+    // THE BOOT WIRING (the `routerFor`/`runAgent` seam that calls `truncateBrief`), which is
+    // orthogonal to whether a real agent dispatch produced the markdown. `agent-chatops-invoke.ts`
+    // and `brief-truncate.ts` each already have their own unit tests; this is the one place that
+    // proves the two are actually WIRED TOGETHER, through the real `buildChatopsBoot` → `routerFor`
+    // → `IntentRouter` path, at the real exported cap rather than a value re-typed into the test.
+    const oversized = `# Glossary\n\n## Findings\n\n${"x".repeat(CHATOPS_AGENT_BRIEF_MAX_BYTES * 2)}\n\n## Gaps\n\n- category: coverage\n`;
+    expect(Buffer.byteLength(oversized, "utf8")).toBeGreaterThan(CHATOPS_AGENT_BRIEF_MAX_BYTES);
+    boot.bindAgentInvoker(() => Promise.resolve({ ok: true, markdown: oversized }));
+
+    await deliverMessage(boot, "@nimbus agent glossary term=SLO");
+    await boot.service.stop();
+
+    const text = postedText();
+    expect(text).toBeDefined();
+    // The disclosure survives (I31) even though it sits at the very end of an oversized body.
+    expect(text).toContain("## Gaps");
+    expect(text).toContain("category: coverage");
+    // Actually truncated, not merely under some unrelated cap: the original never fits, and the
+    // posted text does (plus a little headroom for the truncation notice itself).
+    expect(Buffer.byteLength(text ?? "", "utf8")).toBeLessThan(
+      Buffer.byteLength(oversized, "utf8"),
+    );
+    expect(Buffer.byteLength(text ?? "", "utf8")).toBeLessThanOrEqual(
+      CHATOPS_AGENT_BRIEF_MAX_BYTES + 200,
+    );
+    expect(text).toContain("truncated");
   });
 });
