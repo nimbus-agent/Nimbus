@@ -202,7 +202,7 @@ only do that if this side says which.
 **The resolver.** One shared function, living beside `resolve-by-url.ts` because it is the same kind
 of thing: a client coordinate in, a local entity out.
 
-```
+```text
 resolveFileByRemote(db, { service, repo, path }) -> { fileEntityId, repoRoot, path } | miss
 ```
 
