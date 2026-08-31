@@ -88,8 +88,13 @@
  * request; it did not, and this path never reaches `connectors.dispatch`. `chatops` is a different
  * destination class entirely.
  *
- * Like `chatops` and unlike `mcp`/`http`, this class is NOT narrower than its name: every request
- * the driven browser makes passes through the one decorated `BrowserContext`.
+ * Like `chatops` and unlike `mcp`/`http`, this class is DESIGNED to be NOT narrower than its name:
+ * once a driver exists, every request the driven browser makes is meant to pass through the one
+ * decorated `BrowserContext`. That is not live today -- there is no driven browser; the computer-use
+ * browser driver is deferred (invariant I35), and `wrapLedgeredBrowserContext` has no production
+ * caller, which is why `COVERAGE_CLASSES`' `browser` entry stays `"none"` in `egress-coverage.ts`.
+ * This paragraph describes the property this SOURCE TYPE is designed to preserve once the driver
+ * lands, not a claim about what the binary observes right now.
  */
 export const EGRESS_SOURCE_TYPES = [
   "task", // gated connector action

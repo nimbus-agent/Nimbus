@@ -17,7 +17,7 @@
  *
  * Deliberately NOT checked: instruction CONTENT. The repos are different products
  * under different licences (the SDK must stay dependency-free; the gateway carries
- * I1-I34), so a shared-content assertion could only be satisfied by making the
+ * I1-I35), so a shared-content assertion could only be satisfied by making the
  * instructions vaguer. Per-repo content is the local test's job, in the repo that
  * owns it.
  *

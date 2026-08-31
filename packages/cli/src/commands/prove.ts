@@ -37,6 +37,15 @@ type ProveResult = {
  * are forbidden), so this map is a hand-maintained mirror and drifts silently if you forget.
  */
 export const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
+  // Latent -- always "none" on this binary. The appender EXISTS and is tested
+  // (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`, a decorator over the driven
+  // `BrowserContext`, one row per (origin, verdict) on a network request), but nothing constructs a
+  // `BrowserContext` in production: the computer-use browser driver is deferred (re-planned against
+  // raw CDP after `playwright-core` failed a `bun build --compile` gate; see invariant I35). Named
+  // here anyway, same as `peer`/`session` below, so this class never prints as a bare identifier
+  // once it stops being latent -- and so raising it back to "per-run" is never the FIRST place this
+  // trap could resurface (a class going non-none with no label here already reached production once).
+  browser: "outbound requests made by the computer-use browser lane",
   // Unlike `mcp` and `http`, this class is NOT narrower than its name: it covers EVERY outbound
   // post the gateway makes to Slack/Teams — operational replies, HITL approval cards, tribal
   // suggestions and agent briefs — because the appender decorates the single post closure they all

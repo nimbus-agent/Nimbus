@@ -2723,13 +2723,21 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
   test("the classifier takes no model-supplied field", async () => {
     // I3 transplanted: the gate reads a property the gateway derived, never one the caller supplied.
     //
-    // Sliced to the MATCHING closing brace via depth-counting, not the first `}` anywhere after
-    // the opening one: a naive `indexOf("}", …)` truncates at an inline object type's own closing
-    // brace (e.g. a hypothetical `readonly bounds: { w: number };` field), ending the slice before
-    // a banned field that follows it -- proven by inserting exactly such a field ahead of a banned
-    // one and observing the naive version go green. This is "the guard" the docs call out by name
-    // (a TS interface cannot be reflected at runtime), so its own blind spot matters more than most.
-    const src = await Bun.file("packages/gateway/src/computer-use/cu-classify.ts").text();
+    // Sliced to the MATCHING closing brace via depth-counting over the STRIPPED source, not the
+    // first `}` anywhere after the opening one and not the raw source: a naive `indexOf("}", ...)`
+    // truncates at an inline object type's own closing brace (e.g. a hypothetical
+    // `readonly bounds: { w: number };` field), ending the slice before a banned field that follows
+    // it -- proven by inserting exactly such a field ahead of a banned one and observing the naive
+    // version go green. Running depth-counting over RAW source has the same hole from a different
+    // trigger: a `}` written inside PROSE (a JSDoc comment describing "the closing token `}`", say)
+    // still increments the raw scanner's close count, ending the slice early just the same -- proven
+    // by inserting exactly such a comment ahead of a banned field and observing that version go
+    // green too. `stripComments` removes comment text before the scan ever sees it, which is why the
+    // sibling screenshot test two below composes it the same way. This is "the guard" the docs call
+    // out by name (a TS interface cannot be reflected at runtime), so its own blind spots matter more
+    // than most.
+    const rawSrc = await Bun.file("packages/gateway/src/computer-use/cu-classify.ts").text();
+    const src = stripComments(rawSrc);
     const start = src.indexOf("interface BrowserActionInput");
     const openBrace = src.indexOf("{", start);
     let depth = 0;
