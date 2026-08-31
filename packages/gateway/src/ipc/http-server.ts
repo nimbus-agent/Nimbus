@@ -30,7 +30,7 @@ import type { TargetedFetchOutcome } from "../sync/targeted-fetch.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { contentTypeFor, resolveConsoleAsset, safeAssetPath } from "./admin-console-assets.ts";
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
-import { HTTP_AGENT_NAMES } from "./agents-rpc.ts";
+import { EXTERNAL_AGENT_NAMES } from "./agents-rpc.ts";
 import { EMBEDDED_OPENAPI_YAML } from "./embedded-assets.ts";
 import { bearerToken, requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
@@ -852,7 +852,7 @@ async function handleAgentsList(req: Request, opts: ReadOnlyHttpServerOptions): 
   const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_AGENTS_LIST);
   if (!auth.ok) return auth.response;
   // Derived from AGENTS_RPC_HANDLERS, so it cannot advertise a name that POST would then 404.
-  return json({ agents: [...HTTP_AGENT_NAMES] }, 200);
+  return json({ agents: [...EXTERNAL_AGENT_NAMES] }, 200);
 }
 
 async function handleAgentRunGet(

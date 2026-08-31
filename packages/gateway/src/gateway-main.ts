@@ -190,6 +190,16 @@ export async function main(): Promise<void> {
     })),
   );
 
+  // ChatOps agent-intent path (Task 9): `@nimbus agent <name> k=v ...` runs a real built-in agent
+  // through `dispatchAgentsRpc` and posts the (truncated) brief via `posts.agentBrief` — the I29
+  // `chatops` class's appender, ledgered `method='chatops.agentBrief'`. FIX 1 (whole-branch
+  // review): this used to be bound HERE, after `assemblePlatformServices` had already returned —
+  // a point with no federation-identity field to read at all — so `selfIdentity` was always
+  // omitted and every peer-fanning chat agent (`ghost`/`conflicts`/`huddle`/`janitor`) ran with a
+  // zero keypair. It is now bound inside `assemblePlatformServices` itself
+  // (`platform/assemble.ts`'s `bootChatopsAgentInvoker`), right after `ipcOpts.federationIdentity`
+  // is populated, so nothing is left to do here.
+
   platform.ipc.setWorkflowRunHandler(async (ctx) => {
     // `runWorkflowExecution` genuinely REQUIRES an agent — unlike `runAsk`, it has no
     // deterministic path to fall back to. With no `[llm.remote.*]` vendor enabled there is no

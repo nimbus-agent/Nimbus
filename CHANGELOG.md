@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.3.0](https://github.com/nimbus-agent/Nimbus/compare/v7.2.1...v7.3.0) (2026-08-30)
+
+
+### Features
+
+* **chatops:** invoke the built-in read-only agents from a Slack or Teams channel ([#1412](https://github.com/nimbus-agent/Nimbus/issues/1412)) ([a6a052e](https://github.com/nimbus-agent/Nimbus/commit/a6a052e2d019eb077a0b90d3a352c0d5d58cf590))
+
 ## [7.2.1](https://github.com/nimbus-agent/Nimbus/compare/v7.2.0...v7.2.1) (2026-08-30)
 
 

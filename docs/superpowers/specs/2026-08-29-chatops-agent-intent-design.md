@@ -1,10 +1,13 @@
 # ChatOps Agent Intent — Agents on the Channel
 
 **Date:** 2026-08-29
-**Status:** design — not started
+**Status:** shipped 2026-08-30 — PR 1 (`egress/chatops-egress.ts`, #1403) and PR 2 (the agent
+intent, #1412). Sections below that describe behaviour describe SHIPPED behaviour; where the
+implementation diverged from the design, the divergence is recorded inline as a **correction**
+rather than by editing the original reasoning away.
 **Slot:** Spine S2 sidecar / Track 2 → Client surfaces, row *"Messaging (ChatOps) — agents on the channel"*
 **Roadmap:** [`docs/roadmap.md` § Track 2 → Client surfaces](../../roadmap.md#client-surfaces), the
-"Messaging surface — agents on the channel (direction, not yet built)" block
+"Messaging surface — agents on the channel (shipped 2026-08-30)" block
 **Delivers as:** two PRs, in order — see §4
 **Reviewed:** [design review](./2026-08-29-chatops-agent-intent-design-review.md) (Antigravity, 2026-08-29) — responses in §13
 
@@ -56,7 +59,11 @@ control on this path and cannot be made one without moving it.
 The namespace half is wrong in a more specific way. `namespaces` in the agents API is **not a
 content filter**. Only three of the eleven agents accept it — `ghost` and `conflicts` via
 `requireFileParam` (`ipc/agents-rpc.ts:248`), `huddle` via `requireHuddleParams` (`:263`) — and all
-three are the `federatedAgentBase` agents. `agents/ghost.ts:60` shows what it does:
+three ARE `federatedAgentBase` agents, but they are not the only ones: **correction**,
+`federatedAgentBase` has FIVE call sites in `ipc/agents-rpc.ts`, not three — `janitor` and the
+internal-only `preflight` route through it too. `janitor` fans out to peers exactly like these
+three but does not itself accept `namespaces`; `preflight` is excluded from every external surface.
+Four of the five (all but `preflight`) are reachable from chat. `agents/ghost.ts:60` shows what it does:
 `input.namespaces.map((ns) => …)` fans out **to peers**. It selects which peers to ask, not which
 local rows are visible.
 
@@ -458,7 +465,9 @@ close to it in shape:
   `<agent>.briefReady` with `{ sessionId, brief: markdown, findings, synthesis }`
   (`agents/_lib/emit-brief.ts:64`) and `<agent>.briefError`; the invoker awaits whichever lands.
 - Bounded by a wall-clock timeout, default **60 s** — matching the MCP surface's default rather than
-  the CLI's 30 s, because three of the eleven wait on paired peers.
+  the CLI's 30 s, because four of the eleven externally-exposed agents wait on paired peers
+  (**correction**: `ghost`/`conflicts`/`huddle`/`janitor` — `federatedAgentBase`'s five call sites
+  minus the internal-only `preflight`, not three).
 
 **`caller`.** `dispatchAgentsRpc` selects its egress source type from `ctx.caller.kind` through
 `EGRESS_BEARING_CLIENT_KINDS`, a `Record<ClientKind, …>` that is **total by construction**. A new
@@ -499,9 +508,9 @@ users to the `read` intent only; the agent intent does not inherit it.
 
 1. Fail-closed is the reversible direction — relaxing later is a config change, tightening later
    breaks channels that came to depend on it.
-2. Three of the eleven (`ghost`, `conflicts`, `huddle`) fan out to **paired peers**. An unmapped
-   stranger in a `public-read` channel triggering federated requests against the owner's peers is a
-   materially different act from reading a local answer.
+2. Four of the eleven (`ghost`, `conflicts`, `huddle`, `janitor` — **correction**, not three) fan
+   out to **paired peers**. An unmapped stranger in a `public-read` channel triggering federated
+   requests against the owner's peers is a materially different act from reading a local answer.
 3. `public-read` was scoped to `ask` deliberately. Widening a shipped permission by inheritance
    rather than by decision is how permissions grow without anyone choosing it.
 
@@ -535,12 +544,18 @@ That last rule is the one to get right, and it needs its own test: a brief whose
 the byte cap must still post its gaps.
 
 **Use I31's own section machinery — do not write a second markdown parser.** `agents/_lib/` already
-exports everything needed: `reservedHeadingsFor(brief)` / `reservedBlocksFor(brief)` and
-`RESERVED_HEADINGS_BY_KIND` (`reserved-sections.ts`) name the protected sections per brief kind, and
-`stripSections` / `sectionBody` / `joinReserved` (`markdown-sections.ts`) split and reassemble them.
+exports everything needed: `RESERVED_HEADINGS_BY_KIND` (`reserved-sections.ts`) names the protected
+headings per brief kind, and `sectionBody` / `stripSections` / `joinReserved` / `topLevelSections`
+(`markdown-sections.ts`) extract, strip and reassemble them.
 
-The truncator therefore: takes the reserved blocks via `reservedBlocksFor`, fits the **body** to the
-remaining budget by dropping whole `##` sections from the end, and reassembles with `joinReserved`.
+**Correction (shipped implementation differs from this plan):** the truncator does NOT call
+`reservedBlocksFor(brief)` — that function takes a real `SynthInput` brief OBJECT, and the
+truncator (`chatops/brief-truncate.ts`) only ever has the ALREADY-RENDERED markdown plus a `kind`
+string. It instead calls `sectionBody(markdown, heading)` per heading to re-extract each reserved
+block's content directly from the rendered text. It also does not fit the body by dropping whole
+`##` sections — it drops a droppable section at ANY heading level via `topLevelSections` (a model
+rewrite does not reliably match the renderer's own level-2 convention, so a `##`-only split would
+leave a `#`- or `###`-headed section untouched over the cap), and reassembles with `joinReserved`.
 
 A fresh regex matching `^##` followed by a space would work most of the time and fail in exactly the wrong place. I31's
 guarantee is expressed in terms of *these* functions — `normalizeSectionText`, the any-heading-level
@@ -712,7 +727,8 @@ Without that fix this answer would have been "log it" and the log would have sai
 ### 13.2 A chat-triggered peer query carries the OWNER's federation identity
 
 Confirmed by reading the path, and it is worth stating because it is not obvious. `ghost`,
-`conflicts` and `huddle` route through `federatedAgentBase(ctx, …)`, which uses `ctx.selfIdentity` —
+`conflicts`, `huddle` and `janitor` (**correction**: `janitor` routes through it too — four, not
+three) route through `federatedAgentBase(ctx, …)`, which uses `ctx.selfIdentity` —
 the **gateway's** keypair. On the receiving side, I17's `query-gate.ts` evaluates grant, role and
 consent against *that* identity. The chat user's SCIM identity is used to decide whether they may
 invoke an agent at all (§6.5); it is not propagated to the peer, and the peer transport carries no

@@ -1,5 +1,6 @@
 // packages/gateway/src/egress/egress-bearing-kinds.test.ts
 import { describe, expect, test } from "bun:test";
+import { ClientKindStore } from "../ipc/server/client-kind.ts";
 import {
   EGRESS_BEARING_CLIENT_KINDS,
   egressSourceTypeForClientKind,
@@ -12,6 +13,7 @@ describe("egress-bearing client kinds", () => {
     // As a total Record, adding a kind without deciding is a COMPILE error; this test pins the
     // runtime shape so the decision cannot be un-made by loosening the type alone.
     expect(Object.keys(EGRESS_BEARING_CLIENT_KINDS).sort()).toEqual([
+      "chatops",
       "cli",
       "http",
       "mcp",
@@ -44,5 +46,15 @@ describe("egress-bearing client kinds", () => {
     // Guards the direction the type system does not: a typo'd source type would still be a string.
     const values = Object.values(EGRESS_BEARING_CLIENT_KINDS).filter((v) => v !== null);
     expect(values.sort()).toEqual(["http", "mcp"]);
+  });
+
+  test("chatops bears no agent-brief row — PR 1 ledgers it at the post instead", () => {
+    expect(EGRESS_BEARING_CLIENT_KINDS.chatops).toBeNull();
+    expect(egressSourceTypeForClientKind("chatops")).toBeNull();
+  });
+
+  test("chatops is not client-declarable — it is server-constructed like http", () => {
+    const store = new ClientKindStore();
+    expect(store.declare("c1", "chatops")).toBe("unknown");
   });
 });

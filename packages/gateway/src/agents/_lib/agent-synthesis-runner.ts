@@ -39,7 +39,7 @@ export type AgentSynthesisRunnerDeps = {
    * structurally (see `SynthesisRouter`'s doc comment).
    */
   readonly router: SynthesisRouter | undefined;
-  /** The full RPC method, e.g. `"agents.why"` — both `tryDispatchAgentsRpc` and `resolveHttpAgentMethod` already produce this shape. */
+  /** The full RPC method, e.g. `"agents.why"` — both `tryDispatchAgentsRpc` and `resolveExternalAgentMethod` already produce this shape. */
   readonly method: string;
   readonly now?: () => number;
 };

@@ -931,11 +931,18 @@ const AGENTS_RPC_HANDLERS = {
 const AGENTS_METHOD_PREFIX = "agents.";
 
 /**
- * Methods served on the socket but deliberately NOT exposed on the HTTP API.
+ * Methods served on the socket but deliberately NOT exposed on any EXTERNAL surface — today the
+ * HTTP API (`POST /v1/agents/{agent}` / `GET /v1/agents`); ChatOps is the next surface to consume
+ * this same set, via `resolveExternalAgentMethod`/`EXTERNAL_AGENT_NAMES` below. This exclusion set
+ * is not HTTP-specific reasoning re-applied by coincidence — it is INHERITED, not re-decided, by
+ * every external surface that reaches this map: every reason below is *stronger*, not weaker, in a
+ * shared channel like ChatOps, where a prompt is typed by one person and read by everyone in the
+ * room.
  *
  * `agents.preflight` — the I24 federated-action path. A caller that can invoke it can queue consent
  * prompts on the owner's machine; an external caller must never originate one. Carried over
- * unchanged from the MCP tool surface, for the same reason.
+ * unchanged from the MCP tool surface, for the same reason. In a shared channel this is WORSE, not
+ * better: anyone who can type in the channel could queue a consent prompt on the owner's machine.
  *
  * `agents.whyPeek` — the namespace's one SYNCHRONOUS method. It returns a WhyPeek payload directly
  * and never calls `notify`, so it cannot be represented on the HTTP `{runId}` + poll contract: the
@@ -951,22 +958,25 @@ const AGENTS_METHOD_PREFIX = "agents.";
  * because the watcher is created paused rather than armed. `repropose: true` goes further and
  * DELETES this epic's tombstones outright. Those writes were reviewed and accepted for a
  * same-machine caller (CLI socket, Tauri renderer — I7's XSS threat model, not "arbitrary
- * network caller"), but an external HTTP caller reaching them unprompted is the same shape of
+ * network caller"), but an external caller reaching them unprompted is the same shape of
  * concern `agents.preflight` is excluded for: side effects on the owner's machine an external
- * caller can trigger without the owner initiating them. Keep this out of the HTTP surface until
- * that gets its own deliberate review — carried over from the MCP tool surface, which also does
- * not define a premortem tool.
+ * caller can trigger without the owner initiating them. In a shared channel, anyone able to post a
+ * command could trigger these writes — worse than a single bearer-token holder. Keep this out of
+ * every external surface until that gets its own deliberate review — carried over from the MCP
+ * tool surface, which also does not define a premortem tool.
  *
  * `agents.negotiate` — excluded for a DIFFERENT reason than the three above: it has no side
  * effects (it writes nothing) and its response shape fits the runId+poll contract fine, so
  * neither the `preflight`/`premortem` nor the `whyPeek` criterion applies. Combined with
- * `--person`, HTTP exposure would let any holder of the `agents` token assemble a contribution
- * dossier on any indexed person without the owner initiating it. The CLI and Tauri renderer are
- * same-machine, owner-initiated surfaces (I7's XSS threat model, not "arbitrary network caller");
- * the local HTTP API is not — a bearer token can be held and replayed by anything on the
- * loopback/LAN boundary that surface trusts.
+ * `--person`, external exposure would let any holder of the `agents` token/scope assemble a
+ * contribution dossier on any indexed person without the owner initiating it. The CLI and Tauri
+ * renderer are same-machine, owner-initiated surfaces (I7's XSS threat model, not "arbitrary
+ * network caller"); the local HTTP API is not — a bearer token can be held and replayed by
+ * anything on the loopback/LAN boundary that surface trusts. A shared ChatOps channel makes this
+ * exclusion's reasoning *stronger*, not weaker: `negotiate --person` is a dossier-builder for
+ * anyone who can read the room, not just a single token holder.
  */
-const HTTP_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
+const EXTERNAL_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
   "agents.preflight",
   "agents.premortem",
   "agents.whyPeek",
@@ -974,15 +984,17 @@ const HTTP_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The agent names `POST /v1/agents/{agent}` accepts and `GET /v1/agents` publishes.
+ * The agent names every external surface accepts — today `POST /v1/agents/{agent}` and
+ * `GET /v1/agents` publish exactly this set; ChatOps consumes the same names rather than deciding
+ * its own.
  *
  * DERIVED from AGENTS_RPC_HANDLERS so it cannot drift from the served set — a hand-maintained
  * second list of the same names is the defect shape that cost the most on the MCP work. Sorted for
  * a stable wire response.
  */
-export const HTTP_AGENT_NAMES: readonly string[] = Object.freeze(
+export const EXTERNAL_AGENT_NAMES: readonly string[] = Object.freeze(
   Object.keys(AGENTS_RPC_HANDLERS)
-    .filter((m) => !HTTP_EXCLUDED_AGENT_METHODS.has(m))
+    .filter((m) => !EXTERNAL_EXCLUDED_AGENT_METHODS.has(m))
     .map((m) => m.slice(AGENTS_METHOD_PREFIX.length))
     // The SHARED `codeUnitCompare` (`util/code-unit-compare.ts`), not an inline
     // `(a, b) => a < b ? -1 : a > b ? 1 : 0` — that nested ternary was S3358, and the same ordering
@@ -996,20 +1008,20 @@ export const HTTP_AGENT_NAMES: readonly string[] = Object.freeze(
 );
 
 /**
- * The `agents.*` method for an HTTP path segment, or null when that segment names nothing this
- * surface serves.
+ * The `agents.*` method for a caller-supplied agent name (an HTTP path segment, a ChatOps command
+ * argument, …), or null when that name names nothing this — any — external surface serves.
  *
- * `Object.hasOwn`, never `in`: the segment is caller-supplied, and `in` would resolve
+ * `Object.hasOwn`, never `in`: the name is caller-supplied, and `in` would resolve
  * `"constructor"` / `"toString"` against the object prototype. Same reasoning as the egress
  * append's membership gate.
  *
  * AGENTS_RPC_HANDLERS itself is NOT exported. Handing the map out would let another file invoke an
  * agent directly — a bypass D22(d) cannot see, since it is not an `agents/<name>.ts` import.
  */
-export function resolveHttpAgentMethod(agent: string): string | null {
+export function resolveExternalAgentMethod(agent: string): string | null {
   const method = `${AGENTS_METHOD_PREFIX}${agent}`;
   if (!Object.hasOwn(AGENTS_RPC_HANDLERS, method)) return null;
-  if (HTTP_EXCLUDED_AGENT_METHODS.has(method)) return null;
+  if (EXTERNAL_EXCLUDED_AGENT_METHODS.has(method)) return null;
   return method;
 }
 

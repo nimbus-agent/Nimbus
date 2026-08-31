@@ -2,10 +2,16 @@ import { describe, expect, test } from "bun:test";
 import type { ExpertBrief, GapNote } from "./findings.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 import {
+  GAPS_HEADING,
+  GLOSSARY_TERMS_HEADING,
+  isDisclosureOnlyHeading,
   joinReserved,
+  NEGOTIATE_EVIDENCE_HEADING,
+  NEGOTIATE_SOURCES_HEADING,
   RESERVED_HEADINGS_BY_KIND,
   reservedBlocksFor,
   reservedHeadingsFor,
+  SYNTHESIS_RESERVED_HEADINGS,
 } from "./reserved-sections.ts";
 
 const GAP: GapNote = { category: "empty_index", detail: "No items in the local index yet." };
@@ -137,5 +143,41 @@ describe("joinReserved", () => {
       { heading: "## Gaps", markdown: "## Gaps\n\nb" },
     ]);
     expect(out.indexOf("## Sources")).toBeLessThan(out.indexOf("## Gaps"));
+  });
+});
+
+// D1 (whole-branch review of dev/asaf/chatops-agent-intent): the classification used to be
+// expressed as `DISCLOSURE_ONLY_HEADINGS`, and `chatops/brief-truncate.ts` treated everything
+// ABSENT from it as droppable — fail-OPEN. A future disclosure-only heading added to
+// `RESERVED_HEADINGS_BY_KIND` but never added to that set would have silently become the FIRST
+// thing the chat-transport truncator cuts. These tests pin the inverted, fail-CLOSED shape:
+// droppability is now POSITIVE membership in `SYNTHESIS_RESERVED_HEADINGS`, and anything else —
+// including a heading this module has never seen — defaults to disclosure (never dropped first).
+describe("isDisclosureOnlyHeading (D1: fail-closed default)", () => {
+  test("a heading in neither set — the exact case a future omission would produce — is treated as disclosure-only", () => {
+    // This is the failure this fix closes: under the OLD (fail-open) shape, an unrecognised
+    // heading like this would have been treated as the droppable one, since droppability was
+    // derived from ABSENCE. Under the fix, absence means the opposite.
+    expect(isDisclosureOnlyHeading("## Some Future Disclosure Nobody Has Classified Yet")).toBe(
+      true,
+    );
+  });
+
+  test("GLOSSARY_TERMS_HEADING — the one synthesis-reserved heading today — is the only one NOT disclosure-only", () => {
+    expect(isDisclosureOnlyHeading(GLOSSARY_TERMS_HEADING)).toBe(false);
+  });
+
+  test("every real disclosure heading is still correctly classified as disclosure-only", () => {
+    expect(isDisclosureOnlyHeading(GAPS_HEADING)).toBe(true);
+    expect(isDisclosureOnlyHeading(NEGOTIATE_SOURCES_HEADING)).toBe(true);
+    expect(isDisclosureOnlyHeading(NEGOTIATE_EVIDENCE_HEADING)).toBe(true);
+  });
+
+  test("SYNTHESIS_RESERVED_HEADINGS is the sole source of droppability — membership, not absence from some other set", () => {
+    expect(SYNTHESIS_RESERVED_HEADINGS.has(GLOSSARY_TERMS_HEADING)).toBe(true);
+    expect(SYNTHESIS_RESERVED_HEADINGS.size).toBe(1);
+    for (const heading of SYNTHESIS_RESERVED_HEADINGS) {
+      expect(isDisclosureOnlyHeading(heading)).toBe(false);
+    }
   });
 });

@@ -9,8 +9,8 @@ import { LocalIndex } from "../index/local-index.ts";
 import {
   AgentsRpcError,
   dispatchAgentsRpc,
-  HTTP_AGENT_NAMES,
-  resolveHttpAgentMethod,
+  EXTERNAL_AGENT_NAMES,
+  resolveExternalAgentMethod,
 } from "./agents-rpc.ts";
 
 function makeCtx(db: Database, extras?: { runner?: SynthesisRunner; configDir?: string }) {
@@ -972,9 +972,22 @@ describe("dispatchAgentsRpc — agents.negotiate", () => {
   });
 });
 
-describe("the HTTP-invokable agent set", () => {
+describe("the externally-invokable agent set", () => {
+  test("the external agent set is exactly eleven and excludes the four", () => {
+    expect(EXTERNAL_AGENT_NAMES.length).toBe(11);
+    for (const excluded of ["preflight", "premortem", "whyPeek", "negotiate"]) {
+      expect(EXTERNAL_AGENT_NAMES).not.toContain(excluded);
+      expect(resolveExternalAgentMethod(excluded)).toBeNull();
+    }
+  });
+
+  test("resolveExternalAgentMethod does not resolve prototype keys", () => {
+    expect(resolveExternalAgentMethod("constructor")).toBeNull();
+    expect(resolveExternalAgentMethod("toString")).toBeNull();
+  });
+
   test("is exactly the eleven asynchronous, non-preflight, non-premortem agents", () => {
-    expect([...HTTP_AGENT_NAMES]).toEqual([
+    expect([...EXTERNAL_AGENT_NAMES]).toEqual([
       "catchup",
       "conflicts",
       "decisions",
@@ -989,59 +1002,59 @@ describe("the HTTP-invokable agent set", () => {
     ]);
   });
 
-  test("premortem is not reachable over HTTP", () => {
+  test("premortem is not reachable over any external surface", () => {
     // `runPremortem` writes paused watcher rows (and can delete tombstones via `repropose`)
-    // with no HITL gate — an external HTTP caller must not be able to trigger that unprompted,
+    // with no HITL gate — an external caller must not be able to trigger that unprompted,
     // the same reasoning `agents.preflight` is excluded for. Also carried over from the MCP tool
     // surface, which defines no premortem tool.
-    expect(resolveHttpAgentMethod("premortem")).toBeNull();
-    expect(HTTP_AGENT_NAMES).not.toContain("premortem");
+    expect(resolveExternalAgentMethod("premortem")).toBeNull();
+    expect(EXTERNAL_AGENT_NAMES).not.toContain("premortem");
   });
 
-  test("preflight is not reachable over HTTP", () => {
+  test("preflight is not reachable over any external surface", () => {
     // I24: agents.preflight is the federated-action path. A caller that can invoke it can queue
     // consent prompts on the owner's machine — an external caller must never originate one.
-    expect(resolveHttpAgentMethod("preflight")).toBeNull();
-    expect(HTTP_AGENT_NAMES).not.toContain("preflight");
+    expect(resolveExternalAgentMethod("preflight")).toBeNull();
+    expect(EXTERNAL_AGENT_NAMES).not.toContain("preflight");
   });
 
-  test("whyPeek is not reachable over HTTP", () => {
+  test("whyPeek is not reachable over any external surface", () => {
     // Synchronous by design (the why-lens hover): it returns its payload inline and calls notify
     // NEVER, so on the {runId}+poll contract it would create a run that can never complete and
     // would poll until the TTL turned a success into a 410. Exposing it needs its own
     // inline-result route, which is a later decision — not a second response shape bolted on here.
-    expect(resolveHttpAgentMethod("whyPeek")).toBeNull();
-    expect(HTTP_AGENT_NAMES).not.toContain("whyPeek");
+    expect(resolveExternalAgentMethod("whyPeek")).toBeNull();
+    expect(EXTERNAL_AGENT_NAMES).not.toContain("whyPeek");
   });
 
-  test("agents.negotiate is NOT on the HTTP agent surface", () => {
+  test("agents.negotiate is NOT on the external agent surface", () => {
     // Unlike the three exclusions above, negotiate is a pure read with no side effects — it is
-    // excluded for a different reason: combined with `--person`, HTTP exposure would let any
-    // holder of the `agents` token assemble a contribution dossier on any indexed person without
-    // the owner initiating it. CLI and Tauri are same-machine, owner-initiated; the local HTTP
-    // API is not.
-    expect(resolveHttpAgentMethod("negotiate")).toBeNull();
-    expect(HTTP_AGENT_NAMES).not.toContain("negotiate");
+    // excluded for a different reason: combined with `--person`, external exposure would let any
+    // holder of the `agents` token/scope assemble a contribution dossier on any indexed person
+    // without the owner initiating it. CLI and Tauri are same-machine, owner-initiated; the local
+    // HTTP API and ChatOps are not.
+    expect(resolveExternalAgentMethod("negotiate")).toBeNull();
+    expect(EXTERNAL_AGENT_NAMES).not.toContain("negotiate");
   });
 
   test("ghost and huddle stay in, as they did for MCP", () => {
-    expect(resolveHttpAgentMethod("ghost")).toBe("agents.ghost");
-    expect(resolveHttpAgentMethod("huddle")).toBe("agents.huddle");
+    expect(resolveExternalAgentMethod("ghost")).toBe("agents.ghost");
+    expect(resolveExternalAgentMethod("huddle")).toBe("agents.huddle");
   });
 
   test("the resolver is prototype-safe and rejects anything unserved", () => {
     // A caller-supplied path segment reaches this. `Object.hasOwn` (not `in`) is what stops
     // "constructor" / "__proto__" / "toString" resolving against the object prototype.
     for (const junk of ["__proto__", "constructor", "toString", "", "expert.extra", "Expert"]) {
-      expect(resolveHttpAgentMethod(junk)).toBeNull();
+      expect(resolveExternalAgentMethod(junk)).toBeNull();
     }
   });
 
   test("every published name resolves back to a served method", () => {
     // The list and the resolver are two derivations of the same map; this pins them together so a
     // name cannot be advertised by GET /v1/agents and then 404 on invocation.
-    for (const name of HTTP_AGENT_NAMES) {
-      expect(resolveHttpAgentMethod(name)).toBe(`agents.${name}`);
+    for (const name of EXTERNAL_AGENT_NAMES) {
+      expect(resolveExternalAgentMethod(name)).toBe(`agents.${name}`);
     }
   });
 });

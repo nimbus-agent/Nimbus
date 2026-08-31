@@ -572,10 +572,11 @@ mod tests {
         // for some other method, since the count is unchanged by a one-for-one substitution.
         //
         // The exclusions this method DOES carry are enforced on the gateway side, not here:
-        // agents.negotiate is absent from both the HTTP agent surface
-        // (HTTP_EXCLUDED_AGENT_METHODS in ipc/agents-rpc.ts) and the MCP tool surface
+        // agents.negotiate is absent from every external agent surface
+        // (EXTERNAL_EXCLUDED_AGENT_METHODS in ipc/agents-rpc.ts) and the MCP tool surface
         // (packages/cli/src/mcp/agent-tools.ts) — not for side effects, which it has none of,
-        // but because --person makes it a dossier-builder for any bearer-token holder.
+        // but because --person makes it a dossier-builder for any bearer-token holder (or,
+        // once ChatOps consumes the same set, for anyone who can read the room).
         assert!(is_method_allowed("agents.negotiate"));
     }
 

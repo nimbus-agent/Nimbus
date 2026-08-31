@@ -278,7 +278,7 @@ const DEFS: readonly AgentToolDef[] = [
   // watcher rows plus their deliberate-deletion tombstones, and `--repropose` DELETES those
   // tombstones), with no HITL gate on those writes, so it is excluded from BOTH the MCP tool
   // surface and the HTTP agent surface — matching `agents.preflight`, absent here for the same
-  // reason. `HTTP_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts` is the gateway-side half; a
+  // reason. `EXTERNAL_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts` is the gateway-side half; a
   // gateway test pins the exclusion. Adding it here would let an external model trigger those
   // writes unprompted.
   //
@@ -287,7 +287,7 @@ const DEFS: readonly AgentToolDef[] = [
   // person, and `--person <id>` takes any indexed person, so exposing it here would let an
   // external model assemble a compensation-relevant dossier on a colleague without the machine's
   // owner ever asking for one. The CLI and the Tauri renderer are same-machine, owner-initiated
-  // surfaces; a model driving this tool server is not. `HTTP_EXCLUDED_AGENT_METHODS` in
+  // surfaces; a model driving this tool server is not. `EXTERNAL_EXCLUDED_AGENT_METHODS` in
   // `ipc/agents-rpc.ts` excludes it from the HTTP agent surface for the same reason, and a
   // gateway test pins that half.
 ];

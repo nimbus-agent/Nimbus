@@ -1,3 +1,4 @@
+import type { ChatopsAgentInvoker } from "../agent-runs/agent-chatops-invoke.ts";
 import type { OwnerResolution } from "../policy/chatops-policy.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
 import { parseCommand } from "./command-parser.ts";
@@ -6,6 +7,8 @@ import type { ChatMessage, RefusalReason } from "./types.ts";
 
 export interface IntentRouterDeps {
   readonly knownActions: ReadonlySet<string>;
+  /** Agent names an `agent <name> ...` command may invoke — mapped identities only (see `handle`). */
+  readonly permittedAgents: ReadonlySet<string>;
   readonly resolveBinding: (channelId: string) => ChatopsChannelBinding | undefined;
   readonly resolveIdentity: (platform: "slack" | "teams", userId: string) => Promise<ResolveResult>;
   readonly resolveOwner: (resource: string) => OwnerResolution;
@@ -19,6 +22,9 @@ export interface IntentRouterDeps {
     requesterExternalId: string,
     originatingChannelId: string,
   ) => Promise<{ approved: boolean }>;
+  /** Runs an `agent <name> ...` command. Truncation to a platform byte cap is the boot wiring's
+   *  job (Task 9) — this router stays free of any platform-specific cap. */
+  readonly runAgent: ChatopsAgentInvoker;
   readonly reply: (text: string) => Promise<void>;
   readonly auditRefusal: (reason: RefusalReason, detail: string, channelId: string) => void;
 }
@@ -36,9 +42,15 @@ export class IntentRouter {
     if (binding === undefined) return; // unbound channel: bot stays silent (fail-closed)
 
     const idr = await this.deps.resolveIdentity(msg.platform, msg.userId);
-    const cmd = parseCommand(msg.text, this.deps.knownActions);
+    const cmd = parseCommand(msg.text, this.deps.knownActions, this.deps.permittedAgents);
 
     if (idr.kind === "unmapped") {
+      // `public-read` admits an unmapped user to `read` only. An `agent` command falls through to
+      // the refusal below with no extra code — four of the eleven agents (`ghost`, `conflicts`,
+      // `huddle`, `janitor` — `federatedAgentBase`'s callers reachable from chat) fan out to paired
+      // peers, and widening a shipped permission by inheritance rather than by decision is exactly
+      // the shape this fail-closed default exists to prevent. See the mapped-identity rule at the
+      // top of this file's brief.
       if (cmd.kind === "read" && binding.unmapped === "public-read") {
         await this.deps.reply(await this.deps.askEngine(cmd.query, binding.namespace));
         return;
@@ -53,6 +65,15 @@ export class IntentRouter {
     }
     if (cmd.kind === "read") {
       await this.deps.reply(await this.deps.askEngine(cmd.query, binding.namespace));
+      return;
+    }
+    if (cmd.kind === "agent") {
+      const result = await this.deps.runAgent(cmd.agent, cmd.params);
+      if (!result.ok) {
+        await this.refuse("bad_agent_params", result.detail, msg.channelId);
+        return;
+      }
+      await this.deps.reply(result.markdown);
       return;
     }
 

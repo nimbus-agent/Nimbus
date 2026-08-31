@@ -28,7 +28,7 @@
 | File | Responsibility |
 | --- | --- |
 | `packages/gateway/src/ipc/agent-param-kinds.ts` | **Create** — per-agent field→kind map. Lives beside the validators it describes |
-| `packages/gateway/src/agent-commands/parse-agent-command.ts` | **Create** — grammar + coercion. Surface-neutral; imports nothing from `chatops/` |
+| `packages/gateway/src/agent-commands/parse-agent-command.ts` | **Create** — grammar + coercion. Surface-neutral; **correction:** it does import from `chatops/` — `../chatops/normalize-chat-text.ts`'s `normalizeChatText` — so "imports nothing from `chatops/`" as shipped is wrong; only the mention/grammar coupling this row was really about (no import of `command-parser.ts` itself, avoiding the cycle described below) holds |
 | `packages/gateway/src/ipc/agents-rpc.ts` | **Modify** — rename `HTTP_*` → `EXTERNAL_*` |
 | `packages/gateway/src/ipc/server/client-kind.ts` | **Modify** — `ClientKind` gains `chatops` (not declarable) |
 | `packages/gateway/src/egress/egress-bearing-kinds.ts` | **Modify** — `chatops: null`, with its own reason |
@@ -81,11 +81,16 @@ describe("agent param kinds", () => {
     expect(arrays.every((x) => x.endsWith(".namespaces"))).toBe(true);
   });
 
-  test("no boolean field is declared — repropose belongs to premortem, which is excluded", () => {
-    const bools = Object.values(AGENT_PARAM_KINDS).flatMap((f) =>
-      Object.values(f).filter((k) => k === "boolean"),
+  // Exactly TWO booleans are in scope, and both belong to PERMITTED agents. `premortem`'s
+  // `repropose` is the only EXCLUDED one. An earlier draft of this plan asserted zero booleans;
+  // that was wrong and would have failed on arrival.
+  test("the two in-scope boolean fields are declared", () => {
+    const bools = Object.entries(AGENT_PARAM_KINDS).flatMap(([agent, fields]) =>
+      Object.entries(fields)
+        .filter(([, k]) => k === "boolean")
+        .map(([f]) => `${agent}.${f}`),
     );
-    expect(bools).toEqual([]);
+    expect(bools.sort()).toEqual(["decisions.explain", "janitor.allowGaps"]);
   });
 });
 ```
@@ -113,8 +118,13 @@ Expected: FAIL — module not found.
  *
  * Only the ELEVEN externally-permitted agents appear. `preflight`, `premortem`, `whyPeek` and
  * `negotiate` are excluded from every external surface, so declaring their params here would
- * advertise a grammar nothing serves — and `premortem` owns the only `boolean` field
- * (`repropose`), which is why `"boolean"` is in the type union but unused today.
+ * advertise a grammar nothing serves.
+ *
+ * TWO boolean fields are in scope — `janitor.allowGaps` and `decisions.explain`. Note their
+ * validators do NOT type-check them: `requireJanitorParams` reads `p["allowGaps"] === true` and
+ * `requireDecisionsParams` reads `p.explain === true`, so an unrecognised value silently becomes
+ * `false` rather than raising `-32602`. That is why coercing `"true"`/`"false"` HERE matters: it is
+ * the only place a bad boolean is reported to the user instead of being silently dropped.
  */
 export type ParamKind = "string" | "number" | "boolean" | "stringArray";
 
@@ -611,7 +621,9 @@ import type { LocalIndex } from "../index/local-index.ts";
 import { AgentsRpcError, dispatchAgentsRpc, resolveExternalAgentMethod } from "../ipc/agents-rpc.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 
-/** 60 s, matching the MCP surface rather than the CLI's 30 s: three of the eleven wait on peers. */
+/** 60 s, matching the MCP surface rather than the CLI's 30 s: four of the eleven externally-exposed
+ *  agents wait on peers (**correction**: not three — `ghost`/`conflicts`/`huddle`/`janitor`,
+ *  `federatedAgentBase`'s five call sites minus the internal-only `preflight`). */
 export const CHATOPS_AGENT_TIMEOUT_MS = 60_000;
 
 export type ChatopsAgentResult =
@@ -793,8 +805,10 @@ git commit -m "feat(chatops): invoke agents through dispatchAgentsRpc"
 
 **Interfaces:**
 
-- Consumes: `reservedBlocksFor` (`agents/_lib/reserved-sections.ts`); `joinReserved`
-  (`agents/_lib/reserved-sections.ts`); `stripSections` (`agents/_lib/markdown-sections.ts`).
+- Consumes (**correction, shipped differently**: NOT `reservedBlocksFor` — that takes a real
+  `SynthInput` brief object, which `truncateBrief` never has): `sectionBody`, `stripSections`,
+  `topLevelSections` (`agents/_lib/markdown-sections.ts`); `RESERVED_HEADINGS_BY_KIND` and
+  `joinReserved` (`agents/_lib/reserved-sections.ts`).
 - Produces: `truncateBrief(markdown: string, kind: string, maxBytes: number): string`. Task 8 consumes it.
 
 **Do not write a regex matching `^##` followed by a space.** I31's guarantee is expressed in terms of *these* functions —
@@ -855,15 +869,21 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
 
-Take the reserved blocks with `reservedBlocksFor`, strip them from the body with `stripSections`,
-drop whole body sections from the **end** — at ANY heading level, using the exported any-level
-heading scan rather than a `##`-only split (see the note above) — until the body plus the reserved
-blocks plus the notice fits `maxBytes`, then reassemble with `joinReserved`. Append
-``_(truncated — N sections omitted; run `nimbus <agent>` locally for the full brief)_``.
+Take the reserved blocks by re-extracting each reserved heading's content from the ALREADY-RENDERED
+markdown with `sectionBody` (**correction, shipped differently**: not `reservedBlocksFor`, which
+takes a real brief object `truncateBrief` never has), strip them from the body with
+`stripSections`, drop whole body sections from the **end** — at ANY heading level, using the
+exported any-level heading scan rather than a `##`-only split (see the note above) — until the body
+plus the reserved blocks plus the notice fits `maxBytes`, then reassemble with `joinReserved`.
+Append ``_(truncated — N sections omitted; run `nimbus <agent>` locally for the full brief)_``.
 
-Key rule to encode: **the reserved blocks are never candidates for dropping.** If the reserved
-blocks alone exceed `maxBytes`, return them plus the notice rather than truncating inside a
-disclosure — a half-printed gap is worse than a stated overflow.
+Key rule to encode: **the reserved blocks are dropped LAST, never first — but not exempt.** If the
+reserved blocks alone exceed `maxBytes`, try them as-is first (**correction, shipped differently**:
+this plan originally stopped here and accepted the overflow — a later whole-branch review
+overturned that: the cap must always bind even here. The shipped byte-cutter shrinks the
+synthesis-reserved `## Terms` block first, with an honest count, and cuts a genuine disclosure's
+own bytes only as the absolute last resort, always with a distinct "content was cut" notice rather
+than the "N sections omitted" one above).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -966,7 +986,8 @@ git commit -m "feat(chatops): parse the agent intent ahead of the read fallthrou
 
 **The mapped-identity rule:** `binding.unmapped === "public-read"` admits unmapped users to the
 `read` intent **only**. The agent intent does not inherit it — fail-closed is the reversible
-direction, and three of the eleven fan out to paired peers.
+direction, and four of the eleven fan out to paired peers (**correction**: `ghost`/`conflicts`/
+`huddle`/`janitor`, not three).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1107,7 +1128,10 @@ In `gateway-main.ts`, next to the existing `bindAskEngine` call:
 ```ts
   platform.chatops?.bindAgentInvoker(
     buildChatopsAgentInvoker({
-      db: platform.db,
+      // NOT `platform.db` — `PlatformServices` has no such field. The database is reached through
+      // the index, which is how every other call site in `gateway-main.ts` does it (see the
+      // `askEgressSink` / `auditDb` / `egressDb` wiring above).
+      db: platform.localIndex.getDatabase(),
       index: platform.localIndex,
       configDir: platform.paths.configDir,
       router: platform.llmRegistry.llmRouter,
@@ -1156,11 +1180,18 @@ test("flags a validator field with no entry in the kinds map", () => {
   expect(v.map((x) => x.snippet)).toContain("expert.newField");
 });
 
-test("flags a kinds-map field the validator does not have", () => {
+// CORRECTION — shipped differently. This step originally specified the REVERSE-direction test
+// ("flags a kinds-map field the validator does not have"), which contradicts the one-way contract
+// this same task states two sections above. The audit is one-directional BY DESIGN: it flags a
+// validator field missing from the kinds map, and deliberately says nothing about a kinds-map
+// entry the validator's parse does not show. The reverse check would fire on every run against a
+// file that has not drifted at all — `janitor.allowGaps`, `decisions.explain` and `idleDays` are
+// all legitimately map-side. The shipped test asserts the SILENCE instead:
+test("does NOT flag a map field the validator's parse does not show (one-directional by design)", () => {
   const v = checkAgentParamKinds({
     "requireExpertParams": { agent: "expert", fields: { topicOrFile: "string" } },
   });
-  expect(v.map((x) => x.snippet)).toContain("expert.limit");
+  expect(v.map((x) => x.snippet)).not.toContain("expert.limit");
 });
 
 test("THE GUARD IS NOT INERT: a realistic parse of the real file finds fields", () => {
@@ -1190,9 +1221,32 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 Parse `agents-rpc.ts` by walking lines, tracking the current `function require<X>Params(` header, and
-collecting `typeof p.<field> !== "<kind>"` matches within it. Map validator name → agent via the
-handler map's `handle<X>` → `require<X>Params` correspondence; hard-code the three that do not
-follow it (`ghost`/`conflicts` both use `requireFileParam`, `why` uses `requireWhyParams`).
+collecting the type checks within it. Map validator name → agent via the handler map's `handle<X>` →
+`require<X>Params` correspondence; hard-code the three that do not follow it (`ghost`/`conflicts`
+both use `requireFileParam`, `why` uses `requireWhyParams`).
+
+**The validators do NOT all use one form — verified against the tree before this task was written,
+and an earlier draft of this plan got it wrong.** All four of these appear:
+
+| Form | Example | Agent |
+| --- | --- | --- |
+| `typeof p.<field> !== "<kind>"` | `typeof p.topicOrFile !== "string"` | `expert`, `impact`, `catchup`, … |
+| `typeof p["<field>"] === "<kind>"` | `typeof p["resourceRef"] === "string"` | `janitor` (bracket, and `===` not `!==`) |
+| via a LOCAL alias | `const idleDaysRaw = …; typeof idleDaysRaw === "number"` | `janitor.idleDays` |
+| **no type check at all** | `p["allowGaps"] === true`, `p.explain === true` | `janitor.allowGaps`, `decisions.explain` |
+
+The parser must therefore accept dot AND bracket access and both `!==`/`===` polarity. It cannot
+recover the local-alias or the no-check fields at all — and that is the important consequence:
+
+**Check ONE direction only. Every field the validator type-checks must appear in the map; do NOT
+require the reverse.** A map entry with no matching `typeof` is legitimate (`allowGaps`, `explain`,
+`idleDays`), so an equality check would report permanent, unfixable drift on day one. The direction
+that matters is catching a NEW validator param the map has not learned about; the reverse direction
+is covered by Task 2's round-trip tests, which exercise every declared field against the real
+dispatcher.
+
+State this bound in the rule's own doc comment, so the next reader does not "tighten" it into an
+equality check and rediscover the same failure.
 
 **The indeterminate path.** Before comparing anything, `checkAgentParamKinds` counts the validators
 it was handed. Below a floor (10 — one less than the eleven permitted agents, since `ghost`/

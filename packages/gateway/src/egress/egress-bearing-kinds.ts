@@ -31,6 +31,12 @@ export const EGRESS_BEARING_CLIENT_KINDS: Readonly<
   unknown: null,
   mcp: "mcp",
   http: "http",
+  // NOT the same `null` as `cli`/`ui`. Those are the owner reading their own index, which is not
+  // egress at all. A channel brief IS egress — and it is ledgered at the POST, by
+  // `egress/chatops-egress.ts`, where the bytes actually leave the machine. Appending here as well
+  // would write TWO rows for ONE outbound event: exactly the double-count `outcome` was made a
+  // marker to avoid. If the chatops post appender is ever removed, this must become "chatops".
+  chatops: null,
 });
 
 /**

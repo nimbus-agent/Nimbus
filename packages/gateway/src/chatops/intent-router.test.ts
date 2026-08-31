@@ -6,12 +6,15 @@ function baseDeps() {
   const audits: { reason: string }[] = [];
   const replies: { text: string }[] = [];
   const gated: { actionType: string }[] = [];
+  const agentCalls: { agent: string; params: unknown }[] = [];
   return {
     audits,
     replies,
     gated,
+    agentCalls,
     deps: {
       knownActions: new Set(["deployment.rollback"]),
+      permittedAgents: new Set(["why"]),
       resolveBinding: (_ch: string) => ({
         namespace: "project:pay",
         unmapped: "refuse" as const,
@@ -27,6 +30,10 @@ function baseDeps() {
       runGatedWrite: async (actionType: string) => {
         gated.push({ actionType });
         return { approved: true };
+      },
+      runAgent: async (agent: string, params: unknown) => {
+        agentCalls.push({ agent, params });
+        return { ok: true as const, markdown: "## Gaps\nnone" };
       },
       reply: async (text: string) => {
         replies.push({ text });
@@ -115,5 +122,58 @@ describe("IntentRouter", () => {
     await r.handle(msg("@nimbus who's on call?"));
     expect(replies[0]?.text).toContain("oncall = alice");
     expect(audits).toEqual([]);
+  });
+
+  test("an unmapped user is refused AND no agent runs, even under public-read", async () => {
+    const { deps, replies, agentCalls } = baseDeps();
+    const r = new IntentRouter({
+      ...deps,
+      resolveBinding: () => ({ namespace: "project:pay", unmapped: "public-read", notify: [] }),
+      resolveIdentity: async () => ({ kind: "unmapped" }),
+    });
+    await r.handle(msg("@nimbus agent why ref=a.ts"));
+    // Asserting the refusal alone would pass against an implementation that refused AFTER running.
+    expect(agentCalls.length).toBe(0);
+    expect(replies).toContainEqual({ text: "You are not enrolled for this channel." });
+  });
+
+  test("a mapped user gets the agent brief posted", async () => {
+    const { deps, replies, agentCalls } = baseDeps();
+    await new IntentRouter(deps).handle(msg("@nimbus agent why ref=a.ts"));
+    expect(agentCalls).toEqual([{ agent: "why", params: { ref: "a.ts" } }]);
+    expect(replies[0]?.text).toContain("## Gaps");
+  });
+
+  test("a mapped user's bad agent params are refused, and the refusal is driven by runAgent's ok:false — not a success path misread as one", async () => {
+    const { deps, replies, audits } = baseDeps();
+    // FIX 5 (whole-branch review): the original stub here did not record into `agentCalls`, so
+    // `expect(agentCalls).toEqual([])` passed regardless of whether `runAgent` was even called —
+    // `IntentRouter.handle` in fact ALWAYS calls `deps.runAgent` for an `agent` command (params
+    // validation happens one layer down, inside the real `dispatchAgentsRpc`/`agentInvoker`, which
+    // this stub stands in for), so a "the agent never ran" claim at THIS layer was never true and
+    // never checkable by that assertion. This stub records its own call instead, so the test
+    // asserts something that can actually fail: `runAgent` was called exactly once with the
+    // parsed args, and its `ok: false` result — not a thrown error, not a silently-ignored one —
+    // is what drives the refusal reply and audit below.
+    const calls: { agent: string; params: unknown }[] = [];
+    const r = new IntentRouter({
+      ...deps,
+      runAgent: async (agent, params) => {
+        calls.push({ agent, params });
+        return { ok: false as const, detail: "bad params" };
+      },
+    });
+    await r.handle(msg("@nimbus agent why ref=a.ts"));
+    expect(calls).toEqual([{ agent: "why", params: { ref: "a.ts" } }]);
+    expect(audits.map((a) => a.reason)).toContain("bad_agent_params");
+    expect(replies[0]?.text).toBe("bad params");
+  });
+
+  test("an unbound channel stays silent for an agent command too", async () => {
+    const { deps, replies, agentCalls } = baseDeps();
+    const r = new IntentRouter({ ...deps, resolveBinding: () => undefined });
+    await r.handle(msg("@nimbus agent why ref=a.ts"));
+    expect(replies).toEqual([]);
+    expect(agentCalls).toEqual([]);
   });
 });

@@ -2,7 +2,8 @@ name: Structure audit
 
 # Reusable workflow — fast PR check (≤30 s budget) for the binary subset of
 # audit:* gates: D1/D2/D3 (boundaries), D8 (any-count ratchet), D10/D11
-# (Nimbus invariants), the coverage-gate PAL classification
+# (Nimbus invariants), the agent-param-kinds coercion-map drift check
+# (`audit:agent-param-kinds`), the coverage-gate PAL classification
 # (`audit:coverage-gate-pal`), release-please manifest drift, and root
 # `overrides` drift (`audit:override-drift`).
 #
@@ -57,6 +58,9 @@ jobs:
 
       - name: D10/D11 — Nimbus invariants (binary)
         run: bun run audit:invariants
+
+      - name: agent-param-kinds — coercion map matches validators
+        run: bun run audit:agent-param-kinds
 
       - name: Audit coverage-gate PAL classification
         run: bun run audit:coverage-gate-pal
