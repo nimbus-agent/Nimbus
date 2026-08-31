@@ -5,6 +5,7 @@
 **Slot:** Track 2 → Client surfaces, the browser row (`nimbus-web-clipper`)
 **Roadmap:** [`docs/roadmap.md` § Track 2 → Client surfaces](../../roadmap.md#client-surfaces)
 **Delivers as:** three PRs, in order — see §5
+**Reviewed:** [design review](./2026-08-31-agents-for-items-and-files-design-review.md) (Antigravity, 2026-08-31) — responses in §9
 **Consumers:** the browser client's own spec (`nimbus-web-clipper` →
 `docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md`) and the SDK's
 (`nimbus-sdk` → `docs/superpowers/specs/2026-08-31-connections-and-currency-briefs-design.md`).
@@ -180,18 +181,68 @@ rejection) — a URL out of a browser is exactly the input those were written fo
 `runWhy` skips the filesystem-roots read on the `prUrl` arm because that arm has no file subject to
 resolve against a root (`agents-rpc.ts:496`). `itemUrl` has none either, so it takes the same skip.
 
-**`expert`.** Its input is `topicOrFile`, and the browser currently sends the item **title** — a
-lexical guess that answers "who has touched things whose titles look like this". The `itemUrl` arm
-resolves the URL to an item and answers from the entity, which is a different and better question.
-The free-text path stays for callers who want it.
+**`why`'s six sub-agents do not generalise for free, and this is the largest correction in this
+document.** An earlier draft of §4.1 said each arm "runs the agent body that already exists against
+that entity". That is false for `why`. `why.ts` fans out to `subAuthorship` (`:352`),
+`subPullRequest` (`:457`), `subTicket` (`:533`), `subDiscussion` (`:564`), `subDriver` (`:629`) and
+`subDownstream` (`:698`), and their queries are pinned to the arm they were written for.
+`ticketRowsForPr` (`why.ts:320`) is the clearest case:
 
-**`ownership`.** `requireOwnershipParams` (`agents-rpc.ts:699`) already rejects `path` and `service`
-together. `itemUrl` joins that mutual exclusion as a third member; the "pass one, or neither for a
-coverage summary" contract is otherwise unchanged.
+```sql
+JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'pr'
+WHERE r.from_id = ? AND r.type = 'resolves'
+```
 
-**Subject.** All three answer with their existing brief shapes. `why` adds a third optional subject
-field, `itemSubject`, carrying a new `WhyItemSubject` (F2). `subject` and `changeSubject` are null on
-this arm, exactly as `subject` is null on the `prUrl` arm today. Nothing existing changes shape.
+Handed an **issue** entity id, that returns zero rows — not because the issue has no context, but
+because the query asks the edge in the wrong direction from the wrong entity type. Shipped as
+drafted, the item arm would return a well-formed, empty `why` brief on every issue in the index.
+
+So the item arm declares each sub-lane's behaviour explicitly:
+
+| Sub-lane | On `itemUrl` |
+| --- | --- |
+| `subPullRequest` | PRs pointing **at** the item — `graph_relation` where `to_id = entityId` and `type = 'resolves'`. The inverse of the PR arm's traversal, which is exactly what makes it non-automatic. |
+| `subTicket` | Neighbouring issues over `depends_on` / `mentions`. On an item that **is** an issue this is its siblings, never itself. |
+| `subDiscussion` | `message` entities related to the item (`mentions`, `posted`). Closest to arm-independent of the six. |
+| `subAuthorship` | Skipped. It resolves a file line against a filesystem root; an item has none, exactly as on the `prUrl` arm. |
+| `subDriver` | Skipped unless the item reaches a PR through `subPullRequest`, in which case it runs from that PR. |
+| `subDownstream` | Skipped. Its subject is changed code. |
+
+A skipped sub-lane emits its existing gap note, never an empty finding list. "This lane does not
+apply to an issue" and "this lane applies and found nothing" are different answers and the browser
+renders them differently.
+
+**`expert` has no entity path at all today.** `runExpert` takes `input.topicOrFile: string` and its
+five sub-agents — `subBlame`, `subPrAuthored`, `subPrReviewed`, `subIncidentResolved`,
+`subChatMentions` (`expert.ts:175`, `:225`, `:253`, `:424`) — run five
+`LIKE '%' || ? || '%'` scans over titles and previews. So "answers from the entity" in the earlier
+draft named a code path that does not exist.
+
+The item arm therefore adds one: from the item's entity, walk edges into `person` entities
+(`authored`, `reviewed`, `opened`, `posted`, and `resolves` back through a PR). The free-text path
+stays untouched for callers who want it. This is genuinely new query code, not a rewiring of an
+input, and PR 1's estimate must carry it.
+
+**`ownership` cannot answer with its existing brief shape.** `OwnershipTargetView.kind` is
+`"source_file" | "directory" | "service"` and `OwnershipBrief.query` is
+`{ path: string | null; service: string | null }`
+(`agents/_lib/ownership-types.ts:7`, `:27`) — there is no representable target for an item and no
+field to record the request in.
+
+The item arm maps the item to its owning service through `belongs_to` and answers with
+`kind: "service"`, so no new target kind is introduced. `OwnershipBrief.query` gains
+`itemUrl: string | null`, because a brief that cannot say what it was asked is not auditable.
+`requireOwnershipParams` (`agents-rpc.ts:699`) already rejects `path` and `service` together;
+`itemUrl` joins that mutual exclusion as a third member.
+
+**This costs no SDK release.** `OwnershipTargetView` and `OwnershipBrief` are defined in the
+gateway's own `_lib/ownership-types.ts` — only `GapNote` is imported from `@nimbus-dev/sdk` — and
+`ownership` is one of the five agents the SDK's `AGENT_NAMES` deliberately omits. The ownership brief
+is gateway-owned and changing it is a single-repo edit.
+
+**Subject.** `why` adds a third optional subject field, `itemSubject`, carrying a new
+`WhyItemSubject` (F2). `subject` and `changeSubject` are null on this arm, exactly as `subject` is
+null on the `prUrl` arm today. No existing field changes shape.
 
 **Gaps, not empties.** A URL that resolves to nothing returns the agent's existing gap vocabulary
 with a note naming the URL. The browser must distinguish "no answer" from "not indexed", and it can
@@ -202,18 +253,67 @@ only do that if this side says which.
 **The resolver.** One shared function, living beside `resolve-by-url.ts` because it is the same kind
 of thing: a client coordinate in, a local entity out.
 
-```text
-resolveFileByRemote(db, { service, repo, path }) -> { fileEntityId, repoRoot, path } | miss
+```ts
+type ResolveFileResult =
+  | { ok: true; fileEntityId: string; repoRoot: string; path: string }
+  | { ok: false; reason: "remote_not_tracked" | "file_not_indexed"; repo: string };
+
+resolveFileByRemote(db, { service, repo, refAndPath }): ResolveFileResult
 ```
 
 It walks F4's bridge: `graph_entity` where `type = 'repo'` and `external_id = '<service>:<repo>'`, in
-over `tracks_remote` to the `workspace`, then `source_file` by the deterministic external id
-`file:<repoRoot>:<path>`.
+over `tracks_remote` to the `workspace`, then `source_file` by its external id.
 
-Miss reasons are distinct and returned, never collapsed: **no such remote is tracked** (the reader
-has no local checkout of this repo) versus **the repo is tracked but that path is not indexed**
-(checkout exists, file not covered). Those two earn different remediations, and the browser renders
-them differently.
+The miss is a **typed discriminant**, not a sentence. Both reasons reach a browser, which branches on
+them to say either "Nimbus has no local checkout of this repo" or "that repo is indexed, that file is
+not" — and a client that had to match on human-readable prose would break the first time the prose
+was improved.
+
+**Why the input is `refAndPath` and not `path`.** A forge file URL is
+`…/blob/<ref>/<path>`, and **branch names contain slashes**: `github.com/acme/web/blob/feat/auth-v2/src/index.ts`
+splits as ref `feat/auth-v2` + path `src/index.ts`, or ref `feat` + path `auth-v2/src/index.ts`, and
+nothing in the URL says which. The browser cannot resolve that ambiguity — it would need the repo's
+branch list, which is a forge API call this client will never make.
+
+The gateway can, because it holds the file list. `refAndPath` is the opaque remainder after `/blob/`
+(or Bitbucket's `/src/`), and the resolver tries successive split points — shortest ref first —
+against the `source_file` entities indexed for the resolved workspace, taking the first suffix that
+matches an indexed path. A ref containing a slash costs one extra probe per segment against an
+already-scoped set. If no split matches, the reason is `file_not_indexed`, which is the honest answer
+for both "wrong split" and "file genuinely not indexed" — the reader's remediation is the same.
+
+**The external id is built by the writer's own function, never re-formatted here.**
+`fileExternalId(root, path)` (`ownership/ownership-pass.ts:118`) is `file:${root}:${path}`, and
+`syncCodeSymbolGraph` builds the byte-identical string (`graph-populator.ts:535`) — the convergence
+is deliberate and commented as such. A third formatter in this resolver would be a third thing to
+keep in step. It imports and calls the existing one.
+
+That matters most on Windows, where nothing in the codebase normalises separators: `repoRoot` is a
+native path (`C:\gitrep\acme-web`) and the browser's `refAndPath` is always POSIX. The resolver
+normalises the incoming path to the separator convention the indexer actually writes — determined by
+reading the indexer, not assumed — and a Windows test pins it.
+
+**Remote identity is compared case-insensitively.** `parseRemoteUrl` (`ownership/repo-remote.ts:40`)
+already handles both URL forms, strips `.git`, and lower-cases the **host** for its service lookup —
+but it returns `ownerName` verbatim from the remote (`repo-remote.ts:70`). So a checkout cloned from
+`github.com/ACME/Web` stores `github:ACME/Web` while the browser's address bar yields
+`github:acme/web`, and an exact-match lookup misses. The resolver compares case-insensitively rather
+than rewriting stored ids, because lower-casing them would change existing `graph_entity` external
+ids and need a migration for a problem a comparison solves.
+
+A remote on an unrecognised host — an SSH alias like `github.com-work` — already fails closed:
+`HOST_TO_SERVICE.get` returns undefined, `parseRemoteUrl` returns null, and no `tracks_remote` edge
+is written at all. That surfaces as `remote_not_tracked`, which is correct.
+
+**More than one workspace can track one remote, and here that is the common case, not the edge
+case.** `tracks_remote` runs workspace → repo, so every git worktree and every second clone of the
+same repository registered as a filesystem root adds another workspace pointing at the same `repo`
+entity. Walking the edge backwards returns a set.
+
+The resolver picks deterministically: **first the workspaces that actually index the requested
+path** — a worktree on a branch where the file does not exist is not a candidate — and among those,
+the most recently indexed, with the entity id as a final tie-break so the answer is stable across
+runs. Picking arbitrarily would make the same URL answer differently on consecutive calls.
 
 **The `impact` fix (F3).** `resolveStartEntity` gains a `source_file` exact-match branch **before**
 the `symbol` `LIKE`, so a path resolves to the file. The `LIKE` stays for genuine symbol-name input,
@@ -244,6 +344,38 @@ expressed as "depth 2".
 it is not in the answer. An empty result is a real answer — "nothing in your index links to this" —
 and is reported as one rather than padded.
 
+**Wire.** Method `agents.connections`, notification `connections.briefReady` (the convention every
+agent follows — `impact.ts:123`, `conflicts.ts:94`), brief discriminant `kind: "connections"`.
+
+```ts
+type ConnectionNeighbour = {
+  edgeType: GraphEdgeType;          // closed union — see below
+  direction: "inbound" | "outbound";
+  entityId: string;
+  entityType: string;
+  label: string;
+  item: { id: string; service: string; type: string; title: string; url: string | null } | null;
+};
+
+type ConnectionsBrief = AgentBriefBase & {
+  kind: "connections";
+  query: { itemUrl: string };
+  neighbours: ConnectionNeighbour[];
+};
+```
+
+`edgeType` is a **closed union**, not `GraphEdgeType | string`. That widened form was proposed in
+review and it collapses to `string` — TypeScript absorbs the union member — which removes the
+exhaustiveness the field exists to give a consumer. A gateway that grows an edge type this union does
+not name drops those neighbours from the brief rather than emitting an unrenderable discriminant;
+the vocabulary is this repo's own and grows by an explicit edit here.
+
+The union is the **item-linked** subset of the populator's edges — `resolves`, `correlates_with`,
+`mentions`, `backlinks`, `reviewed`, `authored`, `opened`, `merged_as`, `targets`, `belongs_to`,
+`monitors`, `depends_on`, `derived_from`, `upstream_refs`, `posted`. It excludes `defined_in`,
+`in_repo` and `tracks_remote`, which are filesystem/infrastructure edges that never touch an indexed
+item and would only ever appear as noise.
+
 ### 4.4 · `currency` (PR 3)
 
 **Input:** `{ itemUrl }`. **Output:** per-claim evidence, per F6. Each finding names the signal it
@@ -258,6 +390,48 @@ came from:
 **No verdict without evidence.** Where the signals are absent the agent returns a gap, never a
 default "looks current". Recency alone is not a currency claim: the browser already renders age from
 `modified_at` and does not need an agent to restate it.
+
+**Wire.** Method `agents.currency`, notification `currency.briefReady`, discriminant
+`kind: "currency"`.
+
+```ts
+type CurrencyEvidence = {
+  detail: string;
+  sourceItemId: string | null;
+  sourceUrl: string | null;
+  modifiedAt: number | null;
+};
+
+type CurrencyClaim = {
+  claim: string;
+  verdict: "stale" | "current";
+  signal:
+    | "resolved_issue_pr_merged"
+    | "mentioned_item_updated"
+    | "incident_closed"
+    | "inactivity_threshold";
+  /** Non-empty by construction: a claim with no evidence is not a claim. */
+  evidence: [CurrencyEvidence, ...CurrencyEvidence[]];
+};
+
+type CurrencyBrief = AgentBriefBase & {
+  kind: "currency";
+  query: { itemUrl: string };
+  claims: CurrencyClaim[];
+};
+```
+
+Two deliberate departures from the shape proposed in review, both enforcing §4.4's own rule rather
+than restating it:
+
+- **`evidence` is a non-empty tuple.** `CurrencyEvidence[]` admits `[]`, which is precisely the bare
+  verdict this agent exists not to emit. Making emptiness unrepresentable puts the rule in the type,
+  where a later contributor cannot quietly opt out of it.
+- **`verdict` has no `"unverified"` member.** An item the signals cannot speak to produces a **gap**,
+  not a claim with a shrug in it. A third verdict would let the agent fill `claims` with
+  non-answers and still look like it had worked.
+
+`claims: []` remains valid and means the signals were checked and none fired.
 
 ### 4.5 · HTTP exposure
 
@@ -291,6 +465,17 @@ Three PRs. PR 1 is the browser's first unblock and depends on neither of the oth
 - **F3 regression.** `impact`, given a path that exists as a `source_file` and as a substring of
   several `symbol` labels, resolves the file. This test fails against today's code, which is the
   point of writing it first.
+- **Per entity type, per sub-lane.** `why` and `expert` on an `issue`, a `doc` and an `incident`
+  each produce findings **or** a gap per sub-lane — never a well-formed empty brief. This is the
+  test that would have caught the §4.1 defect the review found, so it is written first.
+- **Ref-with-slashes.** `refAndPath` fixtures for a branch (`feat/auth-v2/src/index.ts`), a tag
+  (`v1.0.0-rc.1/src/index.ts`), a commit sha, and a path that matches no split at all.
+- **Windows separators.** `resolveFileByRemote` against a root stored with backslashes and a
+  browser path with forward slashes, including a mixed-separator input.
+- **Remote casing.** A checkout whose remote is `github.com/ACME/Web` resolves for a browser
+  coordinate of `github:acme/web`.
+- **Multiple workspaces on one remote.** Two worktrees tracking the same repo, one of which does not
+  index the requested path: the one that does wins, and the answer is stable across repeated calls.
 - **Local-only fan-out.** `ghost` and `conflicts` through the forge-file arm issue no peer request.
 - **`connections` returns no un-edged neighbour.** Seed two items with similar titles and no
   relation; the answer is empty.
@@ -329,3 +514,23 @@ Three PRs. PR 1 is the browser's first unblock and depends on neither of the oth
 - **A `supersedes` edge in the populator.** F6 derives instead. Writing supersession at sync time is
   a larger design with a schema consequence.
 - **Any new token scope.** All of this is reachable under the existing `agents` scope.
+
+---
+
+## 9. Review responses
+
+Against [`2026-08-31-agents-for-items-and-files-design-review.md`](./2026-08-31-agents-for-items-and-files-design-review.md)
+(Antigravity, 2026-08-31), and the ref-ambiguity finding raised in the browser client's review. Every
+finding was checked against the code before being accepted.
+
+| Finding | Disposition |
+| --- | --- |
+| Q2.1 `why` sub-agents on a non-PR item | **Accepted — the largest correction here.** Verified: `ticketRowsForPr` (`why.ts:320`) joins `pe.type = 'pr'` on `from_id`, so an issue entity returns zero rows. §4.1 now declares all six sub-lanes' item-arm behaviour, and a skipped lane emits a gap rather than an empty finding list. |
+| Q2.2 `expert` has no entity path | **Accepted.** Verified: five `LIKE` scans over `input.topicOrFile: string` (`expert.ts:175`). §4.1 now specifies the person-edge walk and states plainly that it is new query code, not a rewiring. |
+| Q2.3 `OwnershipBrief` has no item target | **Accepted.** Verified `ownership-types.ts:7`, `:27`. §4.1 maps the item to its service via `belongs_to` (no new target kind) and adds `query.itemUrl`. **Added beyond the review:** these types are gateway-local, so this costs no SDK release. |
+| Q2.4 exact wire schemas | **Accepted, with two changes.** §4.3 and §4.4 now carry method names, notification names, discriminants and full payloads. `edgeType` stays a **closed** union — the proposed `GraphEdgeType \| string` collapses to `string` and destroys the exhaustiveness the field is for. `currency` gets a non-empty evidence tuple and **no `"unverified"` verdict**, so §4.4's own rule lives in the type. |
+| I3.1 Windows path separators | **Accepted, strengthened.** Verified: no separator normalisation exists anywhere. §4.2 requires calling the writer's own `fileExternalId` rather than formatting a third copy of the string. |
+| I3.2 remote URL canonicalisation | **Accepted, corrected.** `parseRemoteUrl` already handles both URL forms and strips `.git`; the real gap is that it lower-cases the host but **not** `ownerName` (`repo-remote.ts:70`). Fixed by case-insensitive comparison, not by rewriting stored ids. SSH aliases need no handling — an unknown host already fails closed. |
+| I3.3 multiple workspaces per remote | **Accepted.** Structurally possible and, with git worktrees, common. §4.2 specifies path-containment first, then most-recently-indexed, then entity id. |
+| I3.4 typed miss discriminant | **Accepted.** `ResolveFileResult` in §4.2, with the reason as a discriminant rather than prose a client would have to scrape. |
+| Ref/path ambiguity (from the client review) | **Accepted — a design change.** A branch name with a slash makes `/blob/<ref>/<path>` unsplittable by the client. The input is now the opaque `refAndPath` remainder, disambiguated here against the indexed file list. |
