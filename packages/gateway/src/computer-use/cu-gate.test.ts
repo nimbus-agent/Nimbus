@@ -511,6 +511,37 @@ describe("runAction — the envelope", () => {
     await expect(runAction({ sessionId, kind: "read" }, depsA)).rejects.toThrow();
   });
 
+  test("the owner removing this session's lane from allowed_lanes mid-session TERMINATES it too (review finding)", async () => {
+    // Before this fix, step 0 re-checked ONLY `config.enabled`/`capabilitiesDisabled` on every
+    // action — never `config.allowedLanes` — so a live `browser` session kept running to its full
+    // budget even after the owner removed `browser` from `allowed_lanes`, even though `openSession`
+    // already refuses a NEW session for that exact configuration. Mirrors the config/policy test
+    // above, but narrows `allowedLanes` to empty instead of flipping `enabled`.
+    const spyA: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: depsA, db: dbA } = deps({}, spyA);
+    const sessionId = await openDefault(depsA); // opened with allowedLanes: ["browser"]
+
+    const spyB: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: depsB } = deps(
+      { config: { ...DEFAULT_NIMBUS_COMPUTER_USE_TOML, enabled: true, allowedLanes: [] } },
+      spyB,
+    );
+
+    const out = await runAction({ sessionId, kind: "read" }, depsB);
+    expect(out.outcome).toBe("terminated_policy");
+    expect(spyA.closes).toBe(1); // the live session's OWN lane was torn down
+
+    const row = dbA
+      .query<{ action_json: string }, []>(
+        `SELECT action_json FROM audit_log WHERE action_type='computer.action' ORDER BY id DESC LIMIT 1`,
+      )
+      .get();
+    expect(row?.action_json).toContain("lane no longer allowed");
+
+    // The session is gone: a further action against it finds nothing live.
+    await expect(runAction({ sessionId, kind: "read" }, depsA)).rejects.toThrow();
+  });
+
   test("an observing action inside the envelope does NOT prompt", async () => {
     const { deps: d, spy } = deps();
     const sessionId = await openDefault(d);

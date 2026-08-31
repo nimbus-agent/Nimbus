@@ -2689,16 +2689,23 @@ describe("I32 — clip source metadata is whitelist-constructed, so a page canno
 });
 
 describe("I35 — computer-use actuation only inside an approved envelope", () => {
-  test("performActuation is called only from cu-gate.ts (and defined in cu-actuate.ts)", async () => {
+  test("performActuation is called only from cu-gate.ts (and defined ONCE in cu-actuate.ts)", async () => {
+    // Review finding: the earlier version collected DISTINCT FILE PATHS containing a match, not
+    // OCCURRENCE COUNTS — so a second, illegitimate direct call added anywhere else inside
+    // `cu-actuate.ts` (which is already expected to appear once, for its own declaration) would
+    // leave the file SET unchanged and this test would stay green. Counting matches per file, not
+    // just membership, closes that — matching the same fix just applied to the static audit
+    // (`check-nimbus-invariants.ts`'s `checkActuationConfinement`).
     const files = await readDirFiles("packages/gateway/src");
-    const callers = files
-      .filter((f) => /\bperformActuation\s*\(/.test(stripComments(f.contents)))
-      .map((f) => `packages/gateway/src/${f.rel}`)
-      .sort();
-    expect(callers).toEqual([
-      "packages/gateway/src/computer-use/cu-actuate.ts",
-      "packages/gateway/src/computer-use/cu-gate.ts",
-    ]);
+    const matchesByFile = new Map<string, number>();
+    for (const f of files) {
+      const n = (stripComments(f.contents).match(/\bperformActuation\s*\(/g) ?? []).length;
+      if (n > 0) matchesByFile.set(`packages/gateway/src/${f.rel}`, n);
+    }
+    expect(Object.fromEntries(matchesByFile)).toEqual({
+      "packages/gateway/src/computer-use/cu-actuate.ts": 1, // the declaration, exactly once
+      "packages/gateway/src/computer-use/cu-gate.ts": 1, // the one legitimate call
+    });
   });
 
   test("no browser-driver import exists outside cu-lanes/", async () => {
