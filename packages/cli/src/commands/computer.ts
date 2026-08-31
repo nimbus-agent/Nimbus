@@ -1,38 +1,41 @@
-import { createInterface } from "node:readline/promises";
 import { confirm, isCancel } from "@clack/prompts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 /**
  * Distinct exit codes for the outcomes a wrapper script needs to tell apart, mirroring `exec.ts`'s
- * `EXEC_EXIT_CODES` reasoning — kept in a DIFFERENT numeric band (this command has its own process,
- * so no collision is possible, but a shared band would still read as "the same kind of thing" to a
- * human comparing the two references).
+ * `EXEC_EXIT_CODES` reasoning.
  *
- * `deniedByOwner` covers BOTH shapes of "the owner said no": `OpenSessionResult.status === "denied"`
- * (the envelope itself was refused) and a `RunActionOutput.outcome === "denied_by_owner"` (a single
- * actuating action was refused) — the caller-visible fact is identical either way: a human looked at
- * an exact request and declined it.
+ * `refused` DELIBERATELY shares the value `127` with `EXEC_EXIT_CODES.refused` — that is not a
+ * numbering collision to avoid, it is the same meaning reused: "this command did not run the thing
+ * it was asked to run at all" (a bad argument, a session refused before consent, a transport
+ * failure). The two commands are different processes, so nothing is ambiguous in practice; sharing
+ * the value is a small, deliberate consistency, not an oversight.
  *
- * `refused` is the fail-closed default for everything this command did not run at all (a bad
- * argument, a session refused before consent, a transport failure) and for any action outcome that
- * is not one of the four named here — never 0, because exiting 0 on something unrecognised reads as
- * "it worked".
+ * `deniedByOwner` covers `OpenSessionResult.status === "denied"` — the owner declined the session
+ * envelope itself. This command no longer drives individual actions (see `runComputerBrowser`'s doc
+ * comment for why), so a per-action `denied_by_owner`/`refused_out_of_envelope` outcome is not
+ * something this file can ever observe directly; only the envelope-level denial is reachable here.
+ *
+ * `terminatedBudget`/`terminatedWallClock` are reachable via `computer.sessionStatus.closeReason`
+ * while this command WATCHES an open session that something else (today: nothing, since the
+ * browser driver is deferred; going forward: an agent driving `runAction` in-process) is actuating.
  */
 export const CU_EXIT_CODES = {
   deniedByOwner: 110,
-  refusedOutOfEnvelope: 111,
   terminatedBudget: 112,
   terminatedWallClock: 113,
   refused: 127,
 } as const;
 
 /**
- * Map a `RunActionOutput.outcome` (a `CuOutcome` string, but received over IPC as `unknown` in
- * practice) to a process exit code. Pure and total, so it is testable without a gateway.
+ * Map a `RunActionOutput.outcome` / `cu_session.close_reason` value (a `CuOutcome` string, but
+ * received over IPC as `unknown` in practice) to a process exit code. Pure and total, so it is
+ * testable without a gateway.
  *
- * Only the four outcomes the brief calls out get a dedicated code; every other outcome — including
- * ones this file has never heard of — is `refused`, fail-closed. `"actuated"` is the sole success.
+ * Only the outcomes this command can actually observe get a dedicated code; every other value —
+ * including ones this file has never heard of — is `refused`, fail-closed. `"actuated"` is the sole
+ * success value distinct from a clean session close (see {@link exitCodeForCloseReason}).
  */
 export function cuOutcomeExitCode(outcome: string): number {
   switch (outcome) {
@@ -40,27 +43,27 @@ export function cuOutcomeExitCode(outcome: string): number {
       return 0;
     case "denied_by_owner":
       return CU_EXIT_CODES.deniedByOwner;
-    case "refused_out_of_envelope":
-      return CU_EXIT_CODES.refusedOutOfEnvelope;
     case "terminated_budget":
       return CU_EXIT_CODES.terminatedBudget;
     case "terminated_wall_clock":
       return CU_EXIT_CODES.terminatedWallClock;
     default:
-      // refused_before_consent / failed_after_approval / terminated_target_lost /
-      // terminated_policy / anything this command has never heard of: fail-closed.
+      // refused_before_consent / refused_out_of_envelope / failed_after_approval /
+      // terminated_target_lost / terminated_policy / anything this command has never heard of:
+      // fail-closed.
       return CU_EXIT_CODES.refused;
   }
 }
 
-/** A live session is also terminated server-side by these three outcomes — further actions on the
- * same session would hit `ERR_CU_NO_SESSION`, so the drive loop stops here rather than retrying. */
-function endsSession(outcome: string): boolean {
-  return (
-    outcome === "terminated_budget" ||
-    outcome === "terminated_wall_clock" ||
-    outcome === "terminated_policy"
-  );
+/**
+ * Map a closed session's `closeReason` to an exit code. A `null` reason or the owner's own
+ * explicit `nimbus computer close` (`"owner"`) is a CLEAN shutdown, not a failure, so both map to
+ * 0 — `cuOutcomeExitCode` would wrongly fail-close on `"owner"`, since that string is not one of
+ * the outcomes it recognises.
+ */
+function exitCodeForCloseReason(closeReason: string | null): number {
+  if (closeReason === null || closeReason === "owner") return 0;
+  return cuOutcomeExitCode(closeReason);
 }
 
 /**
@@ -180,6 +183,25 @@ export function parseComputerBrowserArgs(args: readonly string[]): ParsedCompute
 
 const list = (v: readonly string[]): string => (v.length === 0 ? "none" : v.join(", "));
 
+/**
+ * Render a millisecond duration as a human-scaled string (e.g. `90000` -> `"1m 30s"`). Used
+ * ALONGSIDE the raw millisecond figure in {@link formatEnvelopePrompt}, never instead of it — full
+ * disclosure means showing the exact value the gateway will enforce, and this is purely a
+ * readability aid for a prompt a human must read and act on, often under time pressure.
+ */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const totalSeconds = Math.round(ms / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  if (s > 0 || parts.length === 0) parts.push(`${s}s`);
+  return parts.join(" ");
+}
+
 export interface EnvelopePromptInput {
   readonly sessionId: string;
   readonly lane: string;
@@ -208,7 +230,7 @@ export function formatEnvelopePrompt(p: EnvelopePromptInput): string {
     `  navigate to:    ${list(p.navigateOrigins)}`,
     `  scripts reach:  ${list(p.scriptOrigins)}`,
     `  max actions:    ${p.maxActions}`,
-    `  time limit:     ${p.maxWallClockMs} ms`,
+    `  time limit:     ${p.maxWallClockMs} ms (${formatDuration(p.maxWallClockMs)})`,
   ].join("\n");
 }
 
@@ -314,84 +336,10 @@ export async function handleActionBroadcast(
   await respond(p.requestId, !isCancel(answer) && answer === true);
 }
 
-/** One action the local operator typed at the `action>` prompt. */
-export type ActionCommandAction =
-  | { readonly kind: "click"; readonly selector: string }
-  | { readonly kind: "type"; readonly selector: string; readonly text: string }
-  | { readonly kind: "navigate"; readonly url: string }
-  | { readonly kind: "read" }
-  | { readonly kind: "screenshot" }
-  | { readonly kind: "download" };
-
-export type ParsedActionCommand =
-  | { readonly kind: "exit" }
-  | { readonly kind: "empty" }
-  | { readonly kind: "unrecognized"; readonly raw: string }
-  | { readonly kind: "action"; readonly action: ActionCommandAction };
-
-/**
- * Parse one line the local operator typed while driving an open session.
- *
- * Unrecognised input is reported (`unrecognized`), never silently dropped — matching `exec.ts`'s
- * "an omission here is a loud error there" doctrine: a typo the operator does not see would look
- * like an action that simply did nothing.
- */
-export function parseActionCommand(line: string): ParsedActionCommand {
-  const trimmed = line.trim();
-  if (trimmed === "") return { kind: "empty" };
-  if (trimmed === "exit" || trimmed === "quit") return { kind: "exit" };
-
-  const parts = trimmed.split(/\s+/);
-  const verb = parts[0];
-  const rest = parts.slice(1);
-  switch (verb) {
-    case "click": {
-      const selector = rest.join(" ");
-      if (selector === "") return { kind: "unrecognized", raw: line };
-      return { kind: "action", action: { kind: "click", selector } };
-    }
-    case "type": {
-      const selector = rest[0];
-      const text = rest.slice(1).join(" ");
-      if (selector === undefined || text === "") return { kind: "unrecognized", raw: line };
-      return { kind: "action", action: { kind: "type", selector, text } };
-    }
-    case "navigate": {
-      const url = rest.join(" ");
-      if (url === "") return { kind: "unrecognized", raw: line };
-      return { kind: "action", action: { kind: "navigate", url } };
-    }
-    case "read":
-      return { kind: "action", action: { kind: "read" } };
-    case "screenshot":
-      return { kind: "action", action: { kind: "screenshot" } };
-    case "download":
-      return { kind: "action", action: { kind: "download" } };
-    default:
-      return { kind: "unrecognized", raw: line };
-  }
-}
-
-/** The shape of one `computer.act` reply this command reads. */
-export interface ComputerActionOutcomeShape {
-  readonly outcome: string;
-  readonly result?: string | null;
-}
-
 /** Where rendered output goes. Injected so rendering is testable without a live process. */
 export interface OutcomeSink {
   readonly out: (s: string) => void;
   readonly err: (s: string) => void;
-}
-
-/** Render one action outcome — "the action log" the brief asks this command to stream. */
-export function renderActionResult(
-  seq: number,
-  out: ComputerActionOutcomeShape,
-  sink: OutcomeSink,
-): void {
-  const resultPart = out.result !== undefined && out.result !== null ? ` — ${out.result}` : "";
-  sink.out(`[#${seq}] ${out.outcome}${resultPart}\n`);
 }
 
 /**
@@ -439,34 +387,23 @@ export interface ComputerClient {
 
 /**
  * Seams this command needs from the outside world. Injected, matching `exec.ts`'s `RunExecDeps`,
- * so the orchestration is testable without a live Gateway or a live terminal.
+ * so the orchestration is testable without a live Gateway.
  */
 export interface RunComputerDeps {
   readonly runWithClient: <T>(fn: (c: ComputerClient) => Promise<T>) => Promise<T>;
   readonly ask: (message: string) => Promise<unknown>;
   readonly sink: OutcomeSink;
   readonly setExitCode: (code: number) => void;
-  /** Reads one line of operator input while a session is open; resolves `null` at EOF. */
-  readonly readLine: () => Promise<string | null>;
-}
-
-function defaultReadLine(): () => Promise<string | null> {
-  let rl: ReturnType<typeof createInterface> | undefined;
-  return async () => {
-    rl ??= createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      return await rl.question("action> ");
-    } catch {
-      return null;
-    }
-  };
+  /** Paces the session-status poll loop that watches an open session for its close. */
+  readonly sleep: (ms: number) => Promise<void>;
 }
 
 const defaultDeps: RunComputerDeps = {
   runWithClient: (fn) =>
     withGatewayIpc(fn as never, undefined, {
-      // The call can block on the owner answering an envelope/action prompt, and a driven session
-      // can run for a long time — the interactive budget, not the 30s default.
+      // The call can block on the owner answering an envelope/action prompt, and this command then
+      // watches the session for as long as it stays open — the interactive budget, not the 30s
+      // default.
       requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS,
     }) as never,
   ask: (message) => confirm({ message }),
@@ -477,7 +414,7 @@ const defaultDeps: RunComputerDeps = {
   setExitCode: (c) => {
     process.exitCode = c;
   },
-  readLine: defaultReadLine(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
 interface OpenSessionResultShape {
@@ -486,49 +423,68 @@ interface OpenSessionResultShape {
   readonly code?: string;
 }
 
+interface ComputerSessionStatusEntry {
+  readonly sessionId: string;
+  readonly lane: string;
+  readonly closedAt: number | null;
+  readonly closeReason: string | null;
+  readonly actionsUsed: number;
+  readonly open: boolean;
+}
+
+/** How often to re-poll `computer.sessionStatus` while watching an open session. */
+const SESSION_POLL_MS = 2000;
+
 /**
- * Drive an already-open session interactively: read one action command at a time from the
- * operator, call `computer.act`, and render the outcome — "the action log" the brief asks this
- * command to stream. Ends on operator `exit`/`quit`, on EOF, or when the session itself terminates
- * (`terminated_budget`/`terminated_wall_clock`/`terminated_policy` — a further action on the same
- * session would only hit `ERR_CU_NO_SESSION`).
+ * Watch an already-open session until it closes, printing the action count as it changes and the
+ * final close reason — "the action log" the brief asks this command to stream.
  *
- * Returns the exit code for the LAST outcome observed (0 if the operator exited cleanly having
- * triggered nothing but successful actions, or having typed no actions at all).
+ * This is a PASSIVE LISTENER, not a driver. `computer.act` has no production caller from this
+ * command: whatever actuates a session is a different, not-yet-built surface (per I35's own scope
+ * bound, no actuation can reach a host at all yet — `buildComputerUseTools` in `cu-tools.ts`
+ * already anticipates driving `runAction` in-process from inside the gateway, never over this
+ * RPC). This command's only job is to keep both consent-broker handlers registered and show a
+ * human what happened, per spec § 9: "opens a session and streams the action log; the owner
+ * answers prompts inline" — a listen-and-approve terminal, not a command shell.
+ *
+ * An earlier version of this file let the LOCAL OPERATOR type actions here directly. That was
+ * removed: it never populated `modelDescription`, so every actuating prompt an operator drove
+ * themselves rendered `model said (UNTRUSTED — a claim, not a fact): (none)` — every single time —
+ * teaching the operator that line is routinely empty and skippable, which destroys exactly the
+ * vigilance the fact/claim split exists to build on the one surface this whole design leans on a
+ * human reading carefully. It also put "approve a command I just typed" muscle memory directly
+ * beside "approve what a model just proposed," in the same terminal — the fatigue failure this
+ * design exists to prevent, introduced by the tooling meant to expose it.
  */
-async function driveSession(
+async function watchSessionUntilClosed(
   c: ComputerClient,
   sessionId: string,
   deps: RunComputerDeps,
 ): Promise<number> {
-  let seq = 0;
-  let lastOutcome = "actuated";
+  let lastActionsUsed = -1;
   for (;;) {
-    const line = await deps.readLine();
-    if (line === null) break;
-    const cmd = parseActionCommand(line);
-    if (cmd.kind === "empty") continue;
-    if (cmd.kind === "exit") break;
-    if (cmd.kind === "unrecognized") {
-      deps.sink.err(`nimbus: unrecognised action: ${cmd.raw}\n`);
-      continue;
+    const { sessions } = (await c.call("computer.sessionStatus", { sessionId })) as {
+      sessions: ComputerSessionStatusEntry[];
+    };
+    const entry = sessions[0];
+    if (entry === undefined) {
+      deps.sink.err(`nimbus: session ${sessionId} is no longer known to the gateway\n`);
+      return CU_EXIT_CODES.refused;
     }
-    seq += 1;
-    let out: ComputerActionOutcomeShape;
-    try {
-      out = (await c.call("computer.act", {
-        sessionId,
-        ...cmd.action,
-      })) as ComputerActionOutcomeShape;
-    } catch (e) {
-      deps.sink.err(`nimbus: action failed: ${e instanceof Error ? e.message : String(e)}\n`);
-      break;
+    if (entry.actionsUsed !== lastActionsUsed) {
+      deps.sink.out(`actions used: ${entry.actionsUsed}\n`);
+      lastActionsUsed = entry.actionsUsed;
     }
-    renderActionResult(seq, out, deps.sink);
-    lastOutcome = out.outcome;
-    if (endsSession(out.outcome)) break;
+    if (!entry.open) {
+      deps.sink.out(
+        entry.closeReason === null
+          ? "Session closed.\n"
+          : `Session closed (${entry.closeReason}).\n`,
+      );
+      return exitCodeForCloseReason(entry.closeReason);
+    }
+    await deps.sleep(SESSION_POLL_MS);
   }
-  return cuOutcomeExitCode(lastOutcome);
 }
 
 async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promise<void> {
@@ -547,7 +503,7 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
       // Registered BEFORE the call, matching `exec.ts`: a broadcast can share a socket chunk with
       // the RPC response. Both prompt kinds are registered up front — the envelope prompt fires
       // (if at all) during `sessionOpen`; the action prompt fires for every `actuating` action for
-      // the life of the session, including ones this same terminal issues below.
+      // the life of the session, driven by whatever else is acting on it.
       c.onNotification("computer.envelopeRequest", (params: unknown) =>
         handleEnvelopeBroadcast(params, deps.ask, (requestId, approved) =>
           c.call("computer.approvalRespond", { requestId, approved }),
@@ -584,22 +540,13 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
       }
 
       deps.sink.out(`Session opened: ${openResult.sessionId}\n`);
-      exitCode = await driveSession(c, openResult.sessionId, deps);
+      exitCode = await watchSessionUntilClosed(c, openResult.sessionId, deps);
     });
     deps.setExitCode(exitCode);
   } catch (e) {
     deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
     deps.setExitCode(CU_EXIT_CODES.refused);
   }
-}
-
-interface ComputerSessionStatusEntry {
-  readonly sessionId: string;
-  readonly lane: string;
-  readonly closedAt: number | null;
-  readonly closeReason: string | null;
-  readonly actionsUsed: number;
-  readonly open: boolean;
 }
 
 async function runComputerSessions(deps: RunComputerDeps): Promise<void> {

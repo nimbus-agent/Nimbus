@@ -6,9 +6,7 @@ import {
   formatEnvelopePrompt,
   handleActionBroadcast,
   handleEnvelopeBroadcast,
-  parseActionCommand,
   parseComputerBrowserArgs,
-  renderActionResult,
   resolveOrigin,
   runComputer,
 } from "./computer.ts";
@@ -120,19 +118,17 @@ describe("parseComputerBrowserArgs", () => {
 });
 
 describe("cuOutcomeExitCode", () => {
-  test("distinguishes denied_by_owner, refused_out_of_envelope, terminated_budget and terminated_wall_clock", () => {
+  test("distinguishes denied_by_owner, terminated_budget and terminated_wall_clock", () => {
     expect(cuOutcomeExitCode("denied_by_owner")).toBe(CU_EXIT_CODES.deniedByOwner);
-    expect(cuOutcomeExitCode("refused_out_of_envelope")).toBe(CU_EXIT_CODES.refusedOutOfEnvelope);
     expect(cuOutcomeExitCode("terminated_budget")).toBe(CU_EXIT_CODES.terminatedBudget);
     expect(cuOutcomeExitCode("terminated_wall_clock")).toBe(CU_EXIT_CODES.terminatedWallClock);
 
     const codes = new Set([
       cuOutcomeExitCode("denied_by_owner"),
-      cuOutcomeExitCode("refused_out_of_envelope"),
       cuOutcomeExitCode("terminated_budget"),
       cuOutcomeExitCode("terminated_wall_clock"),
     ]);
-    expect(codes.size).toBe(4);
+    expect(codes.size).toBe(3);
   });
 
   test("a clean actuation is a success", () => {
@@ -142,9 +138,14 @@ describe("cuOutcomeExitCode", () => {
   test("an unrecognised or otherwise-failed outcome is a refusal, never 0", () => {
     expect(cuOutcomeExitCode("failed_after_approval")).toBe(CU_EXIT_CODES.refused);
     expect(cuOutcomeExitCode("refused_before_consent")).toBe(CU_EXIT_CODES.refused);
+    expect(cuOutcomeExitCode("refused_out_of_envelope")).toBe(CU_EXIT_CODES.refused);
     expect(cuOutcomeExitCode("terminated_target_lost")).toBe(CU_EXIT_CODES.refused);
     expect(cuOutcomeExitCode("terminated_policy")).toBe(CU_EXIT_CODES.refused);
     expect(cuOutcomeExitCode("something-new")).toBe(CU_EXIT_CODES.refused);
+  });
+
+  test("CU_EXIT_CODES.refused deliberately shares 127 with exec's refused code — same meaning", () => {
+    expect(CU_EXIT_CODES.refused).toBe(127);
   });
 });
 
@@ -176,9 +177,33 @@ describe("the two prompt kinds render as VISIBLY DIFFERENT things", () => {
     expect(envelope).not.toMatch(/\d+ origins?/i);
   });
 
-  test("the envelope prompt shows the budgets", () => {
+  test("the envelope prompt shows the budgets, with a human-scaled duration alongside the raw ms", () => {
     expect(envelope).toContain("10");
     expect(envelope).toContain("60000");
+    expect(envelope).toContain("1m"); // 60000ms rendered human-scaled
+  });
+
+  test("formatEnvelopePrompt renders a human-scaled duration for various sizes", () => {
+    expect(
+      formatEnvelopePrompt({
+        sessionId: "s",
+        lane: "browser",
+        navigateOrigins: [],
+        scriptOrigins: [],
+        maxActions: 1,
+        maxWallClockMs: 500,
+      }),
+    ).toContain("500ms");
+    expect(
+      formatEnvelopePrompt({
+        sessionId: "s",
+        lane: "browser",
+        navigateOrigins: [],
+        scriptOrigins: [],
+        maxActions: 1,
+        maxWallClockMs: 3_661_000,
+      }),
+    ).toContain("1h 1m 1s");
   });
 
   test("the action prompt shows what the GATEWAY observed, as a fact", () => {
@@ -321,75 +346,6 @@ describe("handleActionBroadcast", () => {
   });
 });
 
-describe("parseActionCommand", () => {
-  test("parses click/type/navigate/read/screenshot/download", () => {
-    expect(parseActionCommand("click #submit")).toEqual({
-      kind: "action",
-      action: { kind: "click", selector: "#submit" },
-    });
-    expect(parseActionCommand("type #email me@example.com")).toEqual({
-      kind: "action",
-      action: { kind: "type", selector: "#email", text: "me@example.com" },
-    });
-    expect(parseActionCommand("navigate https://example.com")).toEqual({
-      kind: "action",
-      action: { kind: "navigate", url: "https://example.com" },
-    });
-    expect(parseActionCommand("read")).toEqual({ kind: "action", action: { kind: "read" } });
-    expect(parseActionCommand("screenshot")).toEqual({
-      kind: "action",
-      action: { kind: "screenshot" },
-    });
-    expect(parseActionCommand("download")).toEqual({
-      kind: "action",
-      action: { kind: "download" },
-    });
-  });
-
-  test("exit/quit end the session, and are not actions", () => {
-    expect(parseActionCommand("exit")).toEqual({ kind: "exit" });
-    expect(parseActionCommand("quit")).toEqual({ kind: "exit" });
-  });
-
-  test("blank input is ignored, not an error", () => {
-    expect(parseActionCommand("   ")).toEqual({ kind: "empty" });
-  });
-
-  test("an unrecognised verb is reported, not silently dropped", () => {
-    expect(parseActionCommand("teleport somewhere")).toEqual({
-      kind: "unrecognized",
-      raw: "teleport somewhere",
-    });
-  });
-
-  test("click/navigate with no argument is unrecognised rather than sent empty", () => {
-    expect(parseActionCommand("click")).toEqual({ kind: "unrecognized", raw: "click" });
-    expect(parseActionCommand("navigate")).toEqual({ kind: "unrecognized", raw: "navigate" });
-  });
-});
-
-describe("renderActionResult", () => {
-  function sink() {
-    const out: string[] = [];
-    const err: string[] = [];
-    return { out, err, s: { out: (x: string) => out.push(x), err: (x: string) => err.push(x) } };
-  }
-
-  test("renders the sequence number, outcome and result", () => {
-    const a = sink();
-    renderActionResult(3, { outcome: "actuated", result: "ok" }, a.s);
-    expect(a.out.join("")).toContain("#3");
-    expect(a.out.join("")).toContain("actuated");
-    expect(a.out.join("")).toContain("ok");
-  });
-
-  test("omits the result segment when there is none", () => {
-    const a = sink();
-    renderActionResult(1, { outcome: "denied_by_owner" }, a.s);
-    expect(a.out.join("")).toContain("denied_by_owner");
-  });
-});
-
 describe("runComputer orchestration — browser subcommand", () => {
   function deps(over: Partial<Parameters<typeof runComputer>[1]> = {}) {
     const out: string[] = [];
@@ -406,6 +362,25 @@ describe("runComputer orchestration — browser subcommand", () => {
         if (method === "computer.sessionOpen") {
           return { status: "open", sessionId: "sess-1" };
         }
+        if (method === "computer.sessionStatus") {
+          // Already closed on the FIRST poll (a clean, owner-initiated close) so a test that does
+          // not care about the watch loop's own behaviour resolves immediately with exit code 0,
+          // without ever needing `sleep` to be called.
+          return {
+            sessions: [
+              {
+                sessionId: "sess-1",
+                lane: "browser",
+                openedAt: 0,
+                closedAt: 1,
+                closeReason: "owner",
+                taintedAt: null,
+                actionsUsed: 0,
+                open: false,
+              },
+            ],
+          };
+        }
         return { matched: true };
       },
     };
@@ -414,7 +389,7 @@ describe("runComputer orchestration — browser subcommand", () => {
       ask: async () => true,
       sink: { out: (s: string) => out.push(s), err: (s: string) => err.push(s) },
       setExitCode: (c: number) => codes.push(c),
-      readLine: async () => null, // EOF immediately: operator issues no actions
+      sleep: async () => {},
       ...over,
     };
     return { out, err, codes, calls, notifs, d: base as never };
@@ -490,29 +465,103 @@ describe("runComputer orchestration — browser subcommand", () => {
     expect(h.notifs.has("computer.actionRequest")).toBe(true);
   });
 
-  test("driving a live session to each of the four distinct outcomes sets the matching exit code", async () => {
-    for (const [outcome, code] of [
-      ["denied_by_owner", CU_EXIT_CODES.deniedByOwner],
-      ["refused_out_of_envelope", CU_EXIT_CODES.refusedOutOfEnvelope],
-      ["terminated_budget", CU_EXIT_CODES.terminatedBudget],
-      ["terminated_wall_clock", CU_EXIT_CODES.terminatedWallClock],
-    ] as const) {
-      const lines = ["click #go"];
-      const h = deps({
-        readLine: async () => lines.shift() ?? null,
-        runWithClient: (async (fn: (c: unknown) => Promise<unknown>) =>
-          fn({
-            onNotification: () => {},
-            call: async (method: string) => {
-              if (method === "computer.sessionOpen") return { status: "open", sessionId: "s1" };
-              if (method === "computer.act") return { outcome };
-              return { matched: true };
-            },
-          })) as never,
-      });
-      await runComputer(["browser", "--origin", "https://example.com"], h.d);
-      expect(h.codes).toEqual([code]);
-    }
+  test("never calls computer.act — this command is a passive listener, not a driver", async () => {
+    const h = deps();
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.calls.some((c) => c.method === "computer.act")).toBe(false);
+  });
+
+  test("a clean owner-initiated close (closeReason 'owner') exits 0", async () => {
+    const h = deps(); // default harness already returns closeReason "owner"
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.codes).toEqual([0]);
+    expect(h.out.join("")).toContain("Session closed");
+  });
+
+  test("a session that terminates on its ACTION BUDGET surfaces the matching exit code", async () => {
+    let statusCalls = 0;
+    const h = deps({
+      runWithClient: (async (fn: (c: unknown) => Promise<unknown>) =>
+        fn({
+          onNotification: () => {},
+          call: async (method: string) => {
+            if (method === "computer.sessionOpen") return { status: "open", sessionId: "s1" };
+            if (method === "computer.sessionStatus") {
+              statusCalls += 1;
+              const open = statusCalls < 2;
+              return {
+                sessions: [
+                  {
+                    sessionId: "s1",
+                    lane: "browser",
+                    openedAt: 0,
+                    closedAt: open ? null : 1,
+                    closeReason: open ? null : "terminated_budget",
+                    taintedAt: null,
+                    actionsUsed: statusCalls,
+                    open,
+                  },
+                ],
+              };
+            }
+            return { matched: true };
+          },
+        })) as never,
+    });
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.terminatedBudget]);
+    // The poll loop must have actually paced itself between an open and a closed observation.
+    expect(statusCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a session that terminates on WALL CLOCK surfaces the matching exit code", async () => {
+    let statusCalls = 0;
+    const h = deps({
+      runWithClient: (async (fn: (c: unknown) => Promise<unknown>) =>
+        fn({
+          onNotification: () => {},
+          call: async (method: string) => {
+            if (method === "computer.sessionOpen") return { status: "open", sessionId: "s1" };
+            if (method === "computer.sessionStatus") {
+              statusCalls += 1;
+              const open = statusCalls < 2;
+              return {
+                sessions: [
+                  {
+                    sessionId: "s1",
+                    lane: "browser",
+                    openedAt: 0,
+                    closedAt: open ? null : 1,
+                    closeReason: open ? null : "terminated_wall_clock",
+                    taintedAt: null,
+                    actionsUsed: 0,
+                    open,
+                  },
+                ],
+              };
+            }
+            return { matched: true };
+          },
+        })) as never,
+    });
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.terminatedWallClock]);
+  });
+
+  test("a session that disappears mid-watch (not found) refuses rather than exiting 0", async () => {
+    const h = deps({
+      runWithClient: (async (fn: (c: unknown) => Promise<unknown>) =>
+        fn({
+          onNotification: () => {},
+          call: async (method: string) => {
+            if (method === "computer.sessionOpen") return { status: "open", sessionId: "s1" };
+            if (method === "computer.sessionStatus") return { sessions: [] };
+            return { matched: true };
+          },
+        })) as never,
+    });
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.refused]);
   });
 });
 
@@ -542,7 +591,7 @@ describe("runComputer — sessions / close subcommands", () => {
       ask: async () => true,
       sink: { out: (s: string) => out.push(s), err: () => {} },
       setExitCode: (c: number) => codes.push(c),
-      readLine: async () => null,
+      sleep: async () => {},
     } as never);
     expect(out.join("")).toContain("s1");
   });
@@ -557,7 +606,7 @@ describe("runComputer — sessions / close subcommands", () => {
       ask: async () => true,
       sink: { out: () => {}, err: (s: string) => err.push(s) },
       setExitCode: (c: number) => codes.push(c),
-      readLine: async () => null,
+      sleep: async () => {},
     } as never);
     expect(codes).toEqual([CU_EXIT_CODES.refused]);
     expect(err.join("")).toContain("session-id");
@@ -578,7 +627,7 @@ describe("runComputer — sessions / close subcommands", () => {
       ask: async () => true,
       sink: { out: (s: string) => out.push(s), err: () => {} },
       setExitCode: () => {},
-      readLine: async () => null,
+      sleep: async () => {},
     } as never);
     expect(calls).toEqual([{ method: "computer.sessionClose", params: { sessionId: "s1" } }]);
     expect(out.join("")).toContain("closed");
@@ -596,7 +645,7 @@ describe("an unknown subcommand refuses with a usage message", () => {
       ask: async () => true,
       sink: { out: () => {}, err: (s: string) => err.push(s) },
       setExitCode: (c: number) => codes.push(c),
-      readLine: async () => null,
+      sleep: async () => {},
     } as never);
     expect(codes).toEqual([CU_EXIT_CODES.refused]);
     expect(err.join("")).toContain("Usage");
