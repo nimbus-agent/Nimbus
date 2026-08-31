@@ -1683,8 +1683,13 @@ const streamReq: JSONRPCRequest = {
 // computer.sessionStatus — a plain read of the durable `cu_session` row(s) (V57); no consent gate
 //   applies (it mutates nothing). Backs `nimbus computer sessions` and the CLI's session-watch poll.
 // computer.sessionClose — the owner (or a budget/wall-clock/target-loss condition) ends a session.
-// computer.approvalRespond — the owner's answer to EITHER prompt kind above; routed to the
-//   matching broker by a structural probe (`"seq" in input`, present only on a per-action approval).
+// computer.approvalRespond — the owner's answer to EITHER prompt kind above; the handler
+//   (`ipc/computer-rpc.ts`) tries `envelopeConsent.respond(requestId, approved)` first and falls
+//   through to `actionConsent.respond(...)` only on a miss — routed by REQUESTID MATCH, since each
+//   broker mints its own `randomUUID()`, so at most one of the two calls can ever match. (The
+//   `"seq" in input` structural probe is a DIFFERENT mechanism on the REQUESTING side, not this
+//   one: `platform/assemble.ts`'s `CuGateDeps.requestApproval` uses it to pick which broker's
+//   `.request()` the GATE calls when IT issues a prompt.)
 //
 // The WHOLE `computer` namespace is FORBIDDEN_OVER_LAN (I5) and absent from the Tauri
 // `ALLOWED_METHODS` (I7), exactly as `exec` is and for the same reason: `computer.act` is
