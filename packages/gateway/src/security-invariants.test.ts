@@ -9,7 +9,7 @@ import {
   checkEmbeddingConstructorConfinement,
   checkWrapServerSpecInvariant,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
-import { stripComments } from "../../../scripts/structure-audit/lib.ts";
+import { stripComments, stripStringLiterals } from "../../../scripts/structure-audit/lib.ts";
 import type { ExpertBrief } from "./agents/_lib/findings.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
@@ -2723,21 +2723,28 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
   test("the classifier takes no model-supplied field", async () => {
     // I3 transplanted: the gate reads a property the gateway derived, never one the caller supplied.
     //
-    // Sliced to the MATCHING closing brace via depth-counting over the STRIPPED source, not the
-    // first `}` anywhere after the opening one and not the raw source: a naive `indexOf("}", ...)`
-    // truncates at an inline object type's own closing brace (e.g. a hypothetical
-    // `readonly bounds: { w: number };` field), ending the slice before a banned field that follows
-    // it -- proven by inserting exactly such a field ahead of a banned one and observing the naive
-    // version go green. Running depth-counting over RAW source has the same hole from a different
-    // trigger: a `}` written inside PROSE (a JSDoc comment describing "the closing token `}`", say)
-    // still increments the raw scanner's close count, ending the slice early just the same -- proven
-    // by inserting exactly such a comment ahead of a banned field and observing that version go
-    // green too. `stripComments` removes comment text before the scan ever sees it, which is why the
-    // sibling screenshot test two below composes it the same way. This is "the guard" the docs call
-    // out by name (a TS interface cannot be reflected at runtime), so its own blind spots matter more
-    // than most.
+    // This scan has failed three different ways across three rounds, each a smarter version of the
+    // last, each defeated by a different quoting construct. Recorded here so a future "simplify
+    // this" pass does not reintroduce any of them:
+    //
+    //   1. A naive `indexOf("}", ...)` truncated at an inline object type's own closing brace
+    //      (e.g. `readonly bounds: { w: number };`), ending the slice before a banned field that
+    //      followed it.
+    //   2. A brace-depth counter over RAW source fixed (1), but a `}` written inside PROSE (a
+    //      JSDoc comment describing "the closing token `}`", say) still incremented the raw
+    //      scanner's depth, ending the slice early the same way.
+    //   3. A brace-depth counter over `stripComments`-only source fixed (2), but `stripComments`
+    //      deliberately PRESERVES string-literal contents (a different helper's job), so a `}`
+    //      inside a string literal (`readonly tag: "a}b";`) still closed the scan early.
+    //
+    // The fix composes the repo's own two strippers rather than hand-rolling string-awareness of
+    // a fourth kind: `stripStringLiterals(stripComments(src))` removes comment text AND blanks
+    // every quoted/template string body (preserving only `${...}` substitutions, which are real
+    // code and whose braces must stay balanced) before the depth counter ever runs. This is "the
+    // guard" the docs call out by name (a TS interface cannot be reflected at runtime), so its own
+    // blind spots matter more than most -- do not narrow this composition back to one stripper.
     const rawSrc = await Bun.file("packages/gateway/src/computer-use/cu-classify.ts").text();
-    const src = stripComments(rawSrc);
+    const src = stripStringLiterals(stripComments(rawSrc));
     const start = src.indexOf("interface BrowserActionInput");
     const openBrace = src.indexOf("{", start);
     let depth = 0;
