@@ -208,9 +208,23 @@ So the item arm declares each sub-lane's behaviour explicitly:
 | `subDriver` | Skipped unless the item reaches a PR through `subPullRequest`, in which case it runs from that PR. |
 | `subDownstream` | Skipped. Its subject is changed code. |
 
-A skipped sub-lane emits its existing gap note, never an empty finding list. "This lane does not
-apply to an issue" and "this lane applies and found nothing" are different answers and the browser
-renders them differently.
+**Two kinds of skip, and the existing code already distinguishes them.** `subAuthorship`
+(`why.ts:356`) and `subDownstream` (`:702`) open with `if (lane.arm === "change") return {}` — silent,
+no gap — and the comment on `LaneInput.arm` says why: they are file/line lanes by nature and
+"stay silent on `change` rather than reporting a gap for the file subject a `prUrl` question never
+had". The item arm joins that condition unchanged: an item has no file subject either, so a gap there
+would report something missing that was never asked for.
+
+The other lanes do apply to an item, so when they find nothing they emit their existing gap notes.
+"This lane cannot apply here" (silence) and "this lane applies and found nothing" (a gap) are
+different answers, and the arm — not `subject === null` — is what separates them. That distinction is
+already load-bearing: the same comment records that inferring it would wrongly silence a genuine
+ref-arm resolution failure.
+
+**`arm` is the seam this design extends, not one it adds.** `LaneInput.arm` is already
+`"ref" | "change"` and is already passed explicitly rather than inferred. The item arm is a third
+member of that union, which is why this is a smaller change to `why.ts` than the sub-lane table
+above suggests.
 
 **`expert` has no entity path at all today.** `runExpert` takes `input.topicOrFile: string` and its
 five sub-agents — `subBlame`, `subPrAuthored`, `subPrReviewed`, `subIncidentResolved`,
