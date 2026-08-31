@@ -552,6 +552,41 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
     expect(src).toMatch(/writeToolCallLog\(/);
   });
 
+  // (Task 12 review round 1, finding 4) A THIRD I11 wiring site: computer-use's model-callable
+  // browser tools. This invariant's docs previously named only the two sites above; the wiring
+  // landed without an update to either this file or SECURITY-INVARIANTS.md, which is exactly the
+  // drift the triple rule (wiring + docs + test in one commit) exists to prevent.
+  test("cu-tools.ts (computer-use) wraps textual tool results with envelope AND writes tool_call_log", async () => {
+    const src = await read("packages/gateway/src/computer-use/cu-tools.ts");
+    expect(src).toMatch(/wrapToolOutput\(/);
+    expect(src).toMatch(/writeToolCallLog\(/);
+  });
+
+  test("cu-tools.ts's four textual browser tools all route through the shared runTextualAction wrap+log site", async () => {
+    // Per-tool, not per-file: a per-file check (above) cannot catch ONE tool silently skipping
+    // the shared wrap+log helper while its siblings still pass. Mirrors the agent.ts baseTools
+    // check's reasoning for the same class of gap.
+    const src = stripComments(await read("packages/gateway/src/computer-use/cu-tools.ts"));
+    for (const tool of ["browser_navigate", "browser_click", "browser_type", "browser_read"]) {
+      const re = new RegExp(`id:\\s*"${tool}"[\\s\\S]*?runTextualAction\\(`);
+      expect(src).toMatch(re);
+    }
+  });
+
+  test("cu-tools.ts's browser_screenshot is a DOCUMENTED I11 exception: no wrapToolOutput, but still writeToolCallLog", async () => {
+    // The screenshot channel cannot be covered by a textual envelope (spec: the defense is
+    // lexical, the attack is not) — this pins that the exception is real (no wrapToolOutput call
+    // anywhere in that tool's own execute block) AND still forensically logged, AND that the file
+    // says so out loud rather than silently under-covering.
+    const src = await read("packages/gateway/src/computer-use/cu-tools.ts");
+    const screenshotStart = src.indexOf('id: "browser_screenshot"');
+    expect(screenshotStart).toBeGreaterThanOrEqual(0);
+    const screenshotBlock = src.slice(screenshotStart);
+    expect(screenshotBlock).not.toMatch(/wrapToolOutput\(/);
+    expect(screenshotBlock).toMatch(/writeToolCallLog\(/);
+    expect(src).toMatch(/no textual envelope can defend/i);
+  });
+
   test("db/tool-call-log.ts exports writeToolCallLog and readToolCallLog", async () => {
     const src = await read("packages/gateway/src/db/tool-call-log.ts");
     expect(src).toMatch(/export function writeToolCallLog/);

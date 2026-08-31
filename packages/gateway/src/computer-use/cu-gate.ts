@@ -1070,8 +1070,12 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
     stage = "done";
     // The observation crosses back to the caller as plain text; wrapping it through
     // `wrapToolOutput`/`writeToolCallLog` happens at the `engine/agent.ts` tool-call seam
-    // (Task 12+), not here — this gate has no model-facing surface of its own (spec § 5).
-    return { outcome, result: req.kind === "screenshot" ? null : result };
+    // (Task 12+), not here — this gate has no model-facing surface of its own (spec § 5). A
+    // screenshot's `result` is the BLAKE3 hex digest computed above (fix round 1, Task 12): it is
+    // NOT nulled out here — a digest is not pixels, and `wrapToolOutput` is never applied to it
+    // (I11 review round 1, finding 1): `cu-tools.ts`'s `browser_screenshot` tool reads it straight
+    // from `result` into a non-textual return value, never through the textual envelope.
+    return { outcome, result };
   } catch (e) {
     // (fix round 3) Derived from the two explicit booleans, never from `stage`. `actuationAttempted`
     // covers the one case where the throw happened AFTER a successful `performActuation` (the

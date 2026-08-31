@@ -11,13 +11,18 @@ import { type CuGateDeps, type RunActionOutput, runAction } from "./cu-gate.ts";
  * `writeToolCallLog` at the same site, so attacker-controlled page content cannot terminate the
  * envelope and re-enter instruction mode.
  *
- * `browser_screenshot` is DIFFERENT and deliberately returns a non-string. `wrapToolOutput` is a
- * TEXTUAL envelope that escapes `</tool_output>` in a string. A screenshot is an image: a VLM
- * reading it sees instructions rendered as PIXELS, inside no envelope at all, and escaping a string
- * does nothing to them. There is no version of `wrapToolOutput` that fixes this, because the
- * defense is lexical and the attack is not. The only structural response is the taint latch — a
- * capture taints by KIND, not by inspecting returned text — so from the first screenshot onward the
- * envelope can only narrow and no actuation is ever auto-satisfied.
+ * `browser_screenshot` is DIFFERENT and deliberately returns a non-string: a BLAKE3 content
+ * digest, never pixels and never an embedded image. That bound is LATENT today, not live — no
+ * vision-capable model is wired into the agent, and `cu-actuate.ts` discards the captured bytes
+ * right after hashing them, so nothing image-derived reaches a model on this path as it stands.
+ * The reasoning below is forward, for WHEN (not because) that changes: `wrapToolOutput` is a
+ * TEXTUAL envelope that escapes `</tool_output>` inside a string, and no version of it could
+ * defend an IMAGE channel if one is ever added — a vision-capable model reading pixels sees
+ * whatever they encode with no envelope around it at all, and escaping a string does nothing to
+ * a channel that was never a string to begin with. That is why tainting happens by KIND, not by
+ * inspecting what a capture returned: the one structural response available for a channel a
+ * lexical defense cannot reach is to have every capture narrow the envelope going forward, so no
+ * actuation is ever auto-satisfied from that point on.
  */
 const SERVICE = "computer_use";
 
