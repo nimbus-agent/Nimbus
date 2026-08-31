@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let the gateway's agents answer about an indexed item that is not a pull request, and about a source file identified by a forge coordinate rather than a local path.
+**Goal:** Let the gateway's agents answer about an indexed item that is not a pull request -- an issue or an incident, **not** a Confluence page (spec F8) -- and about a source file identified by a forge coordinate rather than a local path.
 
 **Architecture:** Three additive PRs. PR 1 adds an `itemUrl` input arm to `why`, `expert` and `ownership`, resolved through the shipped `resolveItemByUrl`. PR 2 adds `resolveFileByRemote` — a graph walk from a forge coordinate to the reader's local checkout — plus a forge-file arm on five agents, and fixes `impact` resolving a file path to an arbitrary symbol. PR 3 adds two read-only agents, `connections` and `currency`.
 
@@ -171,36 +171,79 @@ In `why.ts`, widen the `LaneInput.arm` union at line 56 and extend its comment t
 
 Add beside `resolvePrArm`:
 
+**Read `ResolveCandidate` before writing this.** It is
+`{ id, service, type, title, url: string | null }` plus `modified_at: number`
+(`index/resolve-by-url.ts:13`). It has **no `entityId` and no `number`**, `url` is nullable, and
+`modified_at` is *not* — so a `?? null` on it is dead code. The lanes answer from graph edges, so the
+entity is what this arm actually needs, and it must be looked up rather than read off the item.
+
 ```ts
 /** The `itemUrl` arm: resolve the indexed item the lanes answer about. */
 function resolveItemArm(db: Database, itemUrl: string): WhyLaneResolution {
+  const miss: WhyLaneResolution = {
+    subject: null,
+    blame: null,
+    pr: null,
+    itemEntityId: null,
+    // null, not absent: the caller asked about an item and we could not name it.
+    itemSubject: null,
+    queryRef: itemUrl,
+    queryLine: null,
+  };
+
   const resolved = resolveItemByUrl(db, itemUrl);
-  const item = resolved.found ? resolved.item : null;
+  if (!resolved.found) return miss;
+  const item = resolved.item;
+
+  // Every lane on this arm walks `graph_relation`, which hangs off a
+  // `graph_entity`. An indexed item does not always have one:
+  // `syncGraphFromIndexedItem` skips any type outside ITEM_LINKED_ENTITY_TYPES
+  // and GRAPH_SYNC_BY_TYPE, which is why a Confluence page (`type: "page"`) has
+  // none at all. No entity means there is genuinely nothing to answer from.
+  //
+  // Constrained by type as well as external_id: `deterministicGraphEntityId`
+  // hashes (type, externalId), so one external id can legitimately exist under
+  // more than one type.
+  const entity = db
+    .query("SELECT id FROM graph_entity WHERE external_id = ? AND type = ? LIMIT 1")
+    .get(item.id, item.type) as { id?: string } | null;
+  if (entity?.id === undefined) return miss;
+
+  const numberRow = db
+    .query("SELECT json_extract(metadata, '$.number') AS number FROM item WHERE id = ? LIMIT 1")
+    .get(item.id) as { number: number | null } | null;
+
   return {
     subject: null,
     blame: null,
     // The item arm has no PR of its own. `subPullRequest` may find one and the
     // lanes that need it read it from their own result, not from here.
     pr: null,
-    // null, not absent: the caller asked about an item and we could not name it.
-    itemSubject:
-      item === null
-        ? null
-        : {
-            itemId: item.id,
-            entityId: item.entityId,
-            number: item.number ?? null,
-            url: item.url,
-            title: item.title,
-            modifiedAt: item.modified_at ?? null,
-            service: item.service,
-            type: item.type,
-          },
+    itemEntityId: entity.id,
+    itemSubject: {
+      itemId: item.id,
+      entityId: entity.id,
+      number: numberRow?.number ?? null,
+      // `ResolveCandidate.url` is nullable and `WhyItemSubject.url` matches it.
+      // Do NOT fall back to `itemUrl`: that substitutes the URL we were asked
+      // with for the one the item has -- a fabricated field inside a subject.
+      url: item.url,
+      title: item.title,
+      // `modified_at` is `number`, not nullable. No `??` here.
+      modifiedAt: item.modified_at,
+      service: item.service,
+      type: item.type,
+    },
     queryRef: itemUrl,
     queryLine: null,
   };
 }
 ```
+
+**The no-entity case returns the miss deliberately.** Falling back to `entityId: item.id` would put
+an item id where a `graph_entity.id` belongs -- a field that looks resolved, reads as valid, and
+matches nothing in the graph. A miss produces the same honest gap as an unresolvable URL, which is
+the accurate answer: this item cannot be answered about from edges, because it has none.
 
 In `runWhy`, replace the two-way dispatch at line 182 with a three-way one:
 
@@ -517,6 +560,9 @@ git commit -m "feat(agents-rpc): why accepts exactly one of three arms"
 
 - Consumes: `resolveItemByUrl`.
 - Produces: `ExpertInput` widened to `{ topicOrFile: string } | { itemUrl: string }`.
+- **SDK dependency:** `ExpertBrief.query` is `{ topicOrFile: string }` and is SDK-owned
+  (`brief-composites.ts:61`). It gains an optional `itemUrl?: string | null` in the same SDK
+  release as `WhyItemSubject`. This task cannot typecheck before that release.
 
 **Why this is bigger than it looks:** `runExpert` today takes `input.topicOrFile: string` and its five sub-agents run `LIKE '%' || ? || '%'` scans over titles and previews (`expert.ts:175`). There is **no entity-based path to reuse** — this task writes one.
 
@@ -532,7 +578,9 @@ test("the item arm answers from graph edges, not from a title match", async () =
     { itemUrl: "https://acme.atlassian.net/browse/PLAT-9" },
     { db, notify: () => {}, sessionId: "s6" },
   );
-  const names = brief.findings.map((f) => f.title).join(" ");
+  // `ExpertBrief` is `ranked: ExpertFinding[]`, NOT `findings` -- and an
+  // ExpertFinding has `displayName`/`personId`, never `title`.
+  const names = brief.ranked.map((f) => f.displayName).join(" ");
   expect(names).toContain("Dana");
   expect(names).not.toContain("Rae"); // a LIKE scan would have matched this
 });
@@ -669,7 +717,7 @@ git commit -m "feat(ownership): answer about an item through its owning service"
 - [ ] **Step 1: Write the matrix test**
 
 ```ts
-describe.each(["issue", "doc", "incident"])("the item arm on a %s", (itemType) => {
+describe.each(["issue", "incident"])("the item arm on a %s", (itemType) => {
   test("produces findings or gaps, never a well-formed empty brief", async () => {
     const db = seedIndexedItemOfType(itemType);
     const brief = await runWhy(
@@ -678,6 +726,24 @@ describe.each(["issue", "doc", "incident"])("the item arm on a %s", (itemType) =
     );
     expect(brief.findings.length + brief.gaps.length).toBeGreaterThan(0);
   });
+});
+```
+
+Then pin the surface that is deliberately **not** covered, so the exclusion is a decision on record
+rather than an omission someone later "fixes":
+
+```ts
+test("a Confluence page has no graph entity, so it resolves to a miss", async () => {
+  // `type: "page"` is in neither ITEM_LINKED_ENTITY_TYPES nor GRAPH_SYNC_BY_TYPE,
+  // so syncGraphFromIndexedItem writes nothing for it. Spec F8.
+  const db = seedIndexedConfluencePage();
+  const brief = await runWhy(
+    { itemUrl: "https://acme.atlassian.net/wiki/spaces/ENG/pages/1/Runbook" },
+    { db, roots: [], notify: () => {}, sessionId: "m-page" },
+  );
+  expect(brief.itemSubject).toBeNull();
+  expect(brief.findings).toEqual([]);
+  expect(brief.gaps.length).toBeGreaterThan(0);
 });
 ```
 

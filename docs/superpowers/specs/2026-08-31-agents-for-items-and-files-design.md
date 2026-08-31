@@ -30,11 +30,14 @@ param guards in `packages/gateway/src/ipc/agents-rpc.ts` against what a browser 
 | a time window, unscoped | `huddle` |
 | a resource ref + cleanup action | `janitor` |
 
-**No agent takes the URL of an indexed item that is not a pull request.** A Jira issue, a Confluence
-page and a PagerDuty incident are all first-class indexed items with rows in `item` and entities in
+**No agent takes the URL of an indexed item that is not a pull request.** A Jira issue and a
+PagerDuty incident are first-class indexed items with rows in `item` **and** entities in
 `graph_entity`, and none of the fourteen built-in agents will accept one as its subject. The browser
 panel therefore renders a header, a freshness line, Related, and a glossary box — on a page where
 this gateway demonstrably knows more than that.
+
+(A Confluence page is an indexed item too, but it has **no** `graph_entity` — see F8. That is why it
+is not in scope here, and it is the one place where the panel's current emptiness is honest.)
 
 The second half of the problem is the file. A reader on `github.com/acme/web/blob/main/src/foo.ts`
 is looking at a subject five agents can already answer about — but only if they are handed a path
@@ -152,12 +155,50 @@ The two agents added in PR 3 are pure reads with no HITL consequence, so they be
 set — but the count assertion (`expect(agents).toHaveLength(11)`, `agent-http-e2e.test.ts:211`) moves
 to 13, and that edit must be made deliberately, in the same PR, with the reason in the diff.
 
+### F8 — a Confluence page has no graph entity, so `doc` cannot have these lanes
+
+Found while planning Task 2, by following the type error in `resolveItemArm` back to what
+`resolveItemByUrl` actually returns.
+
+Every lane in §4.1 and both agents in §4.3–§4.4 answer from `graph_relation` edges, which hang off
+a `graph_entity`. Graph entities are written by `syncGraphFromIndexedItem`
+(`graph/graph-populator.ts:1062`), which returns early twice: once if the item's type is not in
+`ITEM_LINKED_ENTITY_TYPES` (`graph/relationship-graph.ts:6`), and again if it has no entry in
+`GRAPH_SYNC_BY_TYPE` (`:1018`).
+
+**Confluence pages index as `type: "page"`** (`connectors/confluence-sync.ts:164`), and `"page"`
+appears in **neither** list. So a Confluence page is a fully indexed item — it has an `item` row, it
+resolves by URL, the browser's header and Related work on it today — and it has **no graph entity at
+all**. There is nothing for a lane to walk.
+
+Shipped as originally drafted, every item lane on a `doc` page would have returned an empty answer
+or a gap, permanently, for a structural reason no user could act on. That is precisely the failure
+this whole arc exists to avoid.
+
+**So `doc` is out of scope for the item lanes**, and the surfaces are `pr`, `issue` and `incident`:
+
+| Surface | Item type | Graph entity? |
+| --- | --- | --- |
+| `issue` (Jira, Linear) | `issue` | ✅ `syncIssueGraph` |
+| `incident` (PagerDuty) | `incident` | ✅ `syncIncidentGraph` |
+| `doc` (Confluence) | `page` | ❌ no populator |
+| `build` (Jenkins, CircleCI) | `ci_run` | ❌ no populator — not an item-lane surface anyway |
+
+A Confluence page keeps exactly what it has today: header, freshness, Related and the `glossary`
+term box. **The condition that reopens this** is a `page` entry in both lists upstream — a graph
+populator for wiki pages, which is its own design with its own edge vocabulary (who authored it,
+what it mentions, which service it documents). It is not a rider on this work.
+
+`ci_run` has the same gap and is recorded here so the next person does not rediscover it; `build`
+was never an item-lane surface, so nothing changes for it.
+
 ---
 
 ## 3. What this delivers
 
-- A Jira issue, a Confluence page, a PagerDuty incident, a Linear issue and a CircleCI pipeline
-  become subjects the agents accept — "how did we get here", "who should I talk to".
+- A Jira issue, a Linear issue and a PagerDuty incident become subjects the agents accept — "how did
+  we get here", "who should I talk to". **Not a Confluence page**: it has no graph entity for a lane
+  to walk, and F8 records why and what would change that.
 - A source file open in a browser becomes a subject too, bridged to the reader's own checkout by the
   graph rather than by a guess in the client.
 - Two questions no agent answers today: what is connected to this item, and is it still true.
@@ -236,6 +277,16 @@ The item arm therefore adds one: from the item's entity, walk edges into `person
 (`authored`, `reviewed`, `opened`, `posted`, and `resolves` back through a PR). The free-text path
 stays untouched for callers who want it. This is genuinely new query code, not a rewiring of an
 input, and PR 1's estimate must carry it.
+
+**And it is a second SDK dependency, which an earlier draft of this document missed.** `ExpertBrief`
+is SDK-owned (`brief-composites.ts:61`) and its query is `{ topicOrFile: string }` — a brief answered
+about an item has nothing honest to put there unless the shape grows. The additive fix, matching F2's
+reasoning: `query` gains an optional `itemUrl?: string | null`, and `topicOrFile` carries the item
+URL on that arm so a consumer reading only the old field still gets the thing that was asked about,
+not a fabricated topic. `ownership` needs no such change — its brief is gateway-local (below).
+
+So PR 1's SDK release carries **two** additions, not one: `WhyItemSubject` + `WhyBrief.itemSubject`,
+and `ExpertBrief.query.itemUrl`.
 
 **`ownership` cannot answer with its existing brief shape.** `OwnershipTargetView.kind` is
 `"source_file" | "directory" | "service"` and `OwnershipBrief.query` is
@@ -396,8 +447,11 @@ item and would only ever appear as noise.
 came from:
 
 - the item is an issue, and a PR that `resolves` it merged after the item's `modified_at`
-- the item is a doc, and something it `mentions` changed after the doc last did
 - the item is an incident whose state is closed
+- an item that `mentions` something which changed after the item last did — **note this signal is
+  unreachable for a Confluence page**, which was its most obvious use and which has no graph entity
+  to hang a `mentions` edge on (F8). It stays in the design because an issue can `mention` too, and
+  because a `page` populator would light it up unchanged
 - the item has not changed in longer than its type's own norm — the weakest signal, reported as an
   observation rather than a claim
 
@@ -459,9 +513,9 @@ extended, not touched: a test asserting `preflight` stays 404 must keep passing 
 
 Three PRs. PR 1 is the browser's first unblock and depends on neither of the others.
 
-1. **`itemUrl` arms on `why`, `expert`, `ownership`** — §4.1, plus `WhyBrief.itemSubject` and the new
-   `WhyItemSubject`. The one PR with an SDK consequence, and an additive one; it ships first so the
-   client can start.
+1. **`itemUrl` arms on `why`, `expert`, `ownership`** — §4.1, on `pr`, `issue` and `incident` (not
+   `doc` — see F8). Carries two additive SDK changes: `WhyItemSubject` + `WhyBrief.itemSubject`, and
+   `ExpertBrief.query.itemUrl`. Ships first so the client can start.
 2. **`resolveFileByRemote`, the five forge-file arms, and the `impact` `source_file` fix** — §4.2.
    No new agent, no new brief, no SDK change.
 3. **`connections` and `currency`** — §4.3, §4.4, their briefs, and the exposure-count move in §4.5.
