@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { performActuation } from "./cu-actuate.ts";
+import { type ActuationRequest, performActuation } from "./cu-actuate.ts";
 import type { BrowserLane, ObservedNode } from "./cu-types.ts";
 
 /**
@@ -105,5 +105,18 @@ describe("performActuation", () => {
     expect(calls.click).toEqual([""]);
     expect(calls.type).toEqual([{ selector: "", text: "" }]);
     expect(calls.navigate).toEqual([""]);
+  });
+
+  test("an unrecognised kind that bypasses the type system throws, rather than falling through to another arm (I35 defense-in-depth: `kind` crosses the JSON-RPC boundary as `unknown`, validated by `isCuActionKind` at that transport before this function is ever reached in production -- this proves the SECOND line of defense actually holds if that upstream guard is ever bypassed or removed)", async () => {
+    const calls: Calls = { click: [], type: [], navigate: [] };
+    const bogus = { kind: "bogus" } as unknown as ActuationRequest;
+    await expect(performActuation(laneStub(calls), bogus)).rejects.toThrow(
+      /unrecognised action kind: bogus/,
+    );
+    // Nothing on the lane was called -- the throw happens before any dispatch, not after a
+    // fallback attempt.
+    expect(calls.click).toEqual([]);
+    expect(calls.type).toEqual([]);
+    expect(calls.navigate).toEqual([]);
   });
 });

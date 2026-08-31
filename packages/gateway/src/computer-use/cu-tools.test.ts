@@ -30,10 +30,24 @@ interface LaneSpy {
   navigates: number;
   reads: number;
   screenshots: number;
+  /** The ACTUAL selector/url/text `performActuation` forwarded to the lane -- lets a test pin the
+   * value that crossed cu-tools.ts's conditional-spread ternaries, not merely that a call happened. */
+  clickSelectors: string[];
+  typeCalls: { selector: string; text: string }[];
+  navigateUrls: string[];
 }
 
 function freshSpy(): LaneSpy {
-  return { clicks: 0, types: 0, navigates: 0, reads: 0, screenshots: 0 };
+  return {
+    clicks: 0,
+    types: 0,
+    navigates: 0,
+    reads: 0,
+    screenshots: 0,
+    clickSelectors: [],
+    typeCalls: [],
+    navigateUrls: [],
+  };
 }
 
 interface DepsOptions {
@@ -55,14 +69,17 @@ function laneStub(pageText: string, spy: LaneSpy): BrowserLane {
   return {
     observe: async () => node,
     currentOrigin: () => "https://example.com",
-    click: async () => {
+    click: async (selector: string) => {
       spy.clicks += 1;
+      spy.clickSelectors.push(selector);
     },
-    type: async () => {
+    type: async (selector: string, text: string) => {
       spy.types += 1;
+      spy.typeCalls.push({ selector, text });
     },
-    navigate: async () => {
+    navigate: async (url: string) => {
       spy.navigates += 1;
+      spy.navigateUrls.push(url);
     },
     readText: async () => {
       spy.reads += 1;
@@ -95,15 +112,20 @@ function deps(opts: DepsOptions = {}): {
   db: Database;
   spy: LaneSpy;
   approvalKinds: string[];
+  /** Every approval request in FULL, in call order -- lets a test inspect fields (like
+   * `modelDescription`) that `approvalKinds` deliberately does not carry. */
+  approvals: unknown[];
 } {
   const db = makeTestDb();
   const spy = freshSpy();
   const approvalKinds: string[] = [];
+  const approvals: unknown[] = [];
   const full: CuGateDeps = {
     config: { ...DEFAULT_NIMBUS_COMPUTER_USE_TOML, enabled: true, allowedLanes: ["browser"] },
     enforced: { capabilitiesDisabled: new Set<string>() },
     runner: { canConfine: () => null },
     requestApproval: async (input) => {
+      approvals.push(input);
       if ("kind" in input) approvalKinds.push(input.kind);
       return true;
     },
@@ -113,7 +135,7 @@ function deps(opts: DepsOptions = {}): {
     now: () => 1000,
     newId: () => "id-1",
   };
-  return { deps: full, db, spy, approvalKinds };
+  return { deps: full, db, spy, approvalKinds, approvals };
 }
 
 /** Opens a live session against the given deps and returns its id (mirrors cu-gate.test.ts). */
@@ -294,6 +316,74 @@ describe("computer-use tools", () => {
       expect(approvalKinds).toEqual([]);
       expect(spy.screenshots).toBe(1);
       expect(spy.reads).toBe(0);
+    });
+  });
+
+  describe("optional-field-omitted and modelDescription-present arms (pre-push coverage-floor pass)", () => {
+    // Every OTHER test in this file always supplies the optional selector/text/url field, so the
+    // "omitted" side of each `field === undefined ? {} : { field }` spread ternary in cu-tools.ts
+    // was never exercised. A `navigate` with no resolvable target origin is REFUSED before consent
+    // (runAction's envelope-membership check, spec 4.2: refuse rather than prompt) rather than
+    // classified `actuating` -- the branch under test still executes inside cu-tools.ts either way,
+    // since it runs BEFORE runAction is ever called.
+
+    test("browser_navigate with no url in the input omits the field entirely, and is refused (never prompts) rather than actuating", async () => {
+      const { deps: d, spy, approvalKinds } = deps();
+      const sessionId = await openLiveSession(d);
+      const tools = buildTools(sessionId, d);
+      const out = (await tools["browser_navigate"]?.execute?.({ context: {} })) as string;
+      expect(approvalKinds).toEqual([]);
+      expect(spy.navigates).toBe(0);
+      expect(out).toContain("refused_out_of_envelope");
+    });
+
+    test("browser_click with no selector in the input omits the field entirely -- the lane receives the empty-string fallback, not the omitted value", async () => {
+      const { deps: d, spy, approvalKinds } = deps();
+      const sessionId = await openLiveSession(d);
+      const tools = buildTools(sessionId, d);
+      await tools["browser_click"]?.execute?.({});
+      expect(approvalKinds).toEqual(["click"]);
+      expect(spy.clicks).toBe(1);
+      expect(spy.clickSelectors).toEqual([""]);
+    });
+
+    test("browser_type with neither selector nor text in the input omits BOTH fields -- the lane receives empty-string fallbacks for both, not the omitted values", async () => {
+      const { deps: d, spy, approvalKinds } = deps();
+      const sessionId = await openLiveSession(d);
+      const tools = buildTools(sessionId, d);
+      await tools["browser_type"]?.execute?.({});
+      expect(approvalKinds).toEqual(["type"]);
+      expect(spy.types).toBe(1);
+      expect(spy.typeCalls).toEqual([{ selector: "", text: "" }]);
+    });
+
+    test("modelDescription -- the untrusted-model-claim field -- IS forwarded into the per-action approval request when the model supplies it", async () => {
+      const { deps: d, approvals } = deps();
+      const sessionId = await openLiveSession(d);
+      const tools = buildTools(sessionId, d);
+      await tools["browser_click"]?.execute?.({
+        selector: "#submit",
+        modelDescription: "clicking the submit button",
+      });
+      // `approvals` also holds the earlier ENVELOPE-open approval (no `kind` field) from
+      // `openLiveSession` -- pick the per-ACTION one by its `kind` field, not by array position.
+      const actionApproval = approvals.find(
+        (a): a is { kind: string; modelDescription?: string | null } =>
+          typeof a === "object" && a !== null && "kind" in a,
+      );
+      expect(actionApproval?.kind).toBe("click");
+      expect(actionApproval?.modelDescription).toBe("clicking the submit button");
+    });
+
+    test("modelDescription is recorded on a read (observing, never-prompts) action too, via the durable cu_action row -- proving it is captured on EVERY tool, not only ones that prompt", async () => {
+      const { deps: d, db } = deps();
+      const sessionId = await openLiveSession(d);
+      const tools = buildTools(sessionId, d);
+      await tools["browser_read"]?.execute?.({ modelDescription: "reading the current page" });
+      const row = db
+        .query("SELECT model_description FROM cu_action WHERE session_id = ? AND kind = 'read'")
+        .get(sessionId) as { model_description: string | null } | null;
+      expect(row?.model_description).toBe("reading the current page");
     });
   });
 });
