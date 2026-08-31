@@ -562,14 +562,24 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
     expect(src).toMatch(/writeToolCallLog\(/);
   });
 
-  test("cu-tools.ts's four textual browser tools all route through the shared runTextualAction wrap+log site", async () => {
-    // Per-tool, not per-file: a per-file check (above) cannot catch ONE tool silently skipping
-    // the shared wrap+log helper while its siblings still pass. Mirrors the agent.ts baseTools
-    // check's reasoning for the same class of gap.
+  test("cu-tools.ts's four textual browser tools each independently route through the shared runTextualAction wrap+log site", async () => {
+    // Per-tool, not per-file, AND bounded to each tool's OWN block (fix round 2). A per-file
+    // check (above) cannot catch ONE tool silently skipping the shared wrap+log helper while its
+    // siblings still pass -- that motivated a per-tool check in round 1, but that check used a
+    // non-greedy pattern that does not stop at the end of a tool's own block: it is satisfied by
+    // ANY later tool's call site in source order, so mutating any tool but the LAST one
+    // (browser_read) to bypass runTextualAction still passed. The fix here slices each tool's
+    // block to end at the NEXT tool's own id declaration (or end of file), so the search can
+    // never reach past a sibling tool's boundary.
     const src = stripComments(await read("packages/gateway/src/computer-use/cu-tools.ts"));
-    for (const tool of ["browser_navigate", "browser_click", "browser_type", "browser_read"]) {
-      const re = new RegExp(`id:\\s*"${tool}"[\\s\\S]*?runTextualAction\\(`);
-      expect(src).toMatch(re);
+    const tools = ["browser_navigate", "browser_click", "browser_type", "browser_read"];
+    for (const tool of tools) {
+      const marker = `id: "${tool}"`;
+      const start = src.indexOf(marker);
+      expect(start).toBeGreaterThanOrEqual(0);
+      const nextIdx = src.indexOf('id: "', start + marker.length);
+      const block = nextIdx === -1 ? src.slice(start) : src.slice(start, nextIdx);
+      expect(block).toContain("runTextualAction(");
     }
   });
 
