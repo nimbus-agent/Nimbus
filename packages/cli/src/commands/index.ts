@@ -5,6 +5,7 @@ export { runBench } from "./bench.ts";
 export { runCatchupCli } from "./catchup.ts";
 export { runChatops } from "./chatops.ts";
 export { runClip } from "./clip.ts";
+export { runComputer } from "./computer.ts";
 export { runConfig } from "./config.ts";
 export { runConflictsCli } from "./conflicts.ts";
 export { runConnector } from "./connector.ts";

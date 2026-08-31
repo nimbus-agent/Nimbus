@@ -9,6 +9,7 @@ import {
   runCatchupCli,
   runChatops,
   runClip,
+  runComputer,
   runConfig,
   runConflictsCli,
   runConnector,
@@ -148,6 +149,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   egress: runEgress,
   exec: runExec,
   clip: runClip,
+  computer: runComputer,
 };
 
 const HELP_ALIASES = new Set(["help", "--help", "-h"]);

@@ -6,6 +6,7 @@ export const COMMAND_NAMES = [
   "catchup",
   "chatops",
   "clip",
+  "computer",
   "config",
   "conflicts",
   "connector",
