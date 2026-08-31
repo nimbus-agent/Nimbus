@@ -309,10 +309,10 @@ describe("pruneSnapshots", () => {
     expect(row?.dom_before).toBeNull();
   });
 
-  test("has zero callers in production today — this test is what proves it still behaves correctly", () => {
-    // Documented in the module header: `pruneSnapshots` is wired to a retention pass by a LATER
-    // task. Asserted here so a future refactor that silently breaks it fails immediately rather
-    // than waiting for that wiring to land.
+  test("is a no-op on an empty table (called with no rows to prune)", () => {
+    // Task 15 wired `pruneSnapshots` into `cu-snapshot-retention.ts`'s daily pass (see
+    // `computer-use/cu-snapshot-retention.test.ts` for the retention-cadence + wiring coverage).
+    // Kept here to pin the zero-row case at the store layer.
     const db = makeTestDb();
     insertSession(db, { id: "s1", lane: "browser", envelopeJson: "{}", openedAt: 1000 });
     expect(() => pruneSnapshots(db, 999_999_999)).not.toThrow();

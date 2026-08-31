@@ -28,6 +28,7 @@ import {
 import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
 import { PairingWindowController } from "../clips/pairing-window.ts";
 import { cuActionConsent, cuEnvelopeConsent } from "../computer-use/cu-consent-broker.ts";
+import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   type ConnectorsConfig,
@@ -3266,6 +3267,16 @@ export async function assemblePlatformServices(
             ),
     },
   };
+
+  // Snapshot retention (Task 15, spec § 8.4): the same daily-cadence sidecar shape as
+  // `startToolCallLogRetention` above, driven by `[computer_use] snapshot_retention_days`. NULLs
+  // `dom_before`/`dom_after` on `cu_action` rows past the window; the row itself and its
+  // `audit_log` decision are permanent. Deliberately NOT routed through `egress.prune` (I29) —
+  // `cu_action` is not the egress ledger and gets its own, unchained prune.
+  const cuSnapshotRetention = startCuSnapshotRetention(db, {
+    retentionDays: computerUseCfg.snapshotRetentionDays,
+  });
+  sidecarStops.push(() => cuSnapshotRetention.stop());
 
   const shareHttpSink = loadNimbusShareHttpSink(paths.configDir);
   ipcOpts.shareRpcCtx = {
