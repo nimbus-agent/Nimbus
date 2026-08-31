@@ -5,6 +5,8 @@ import { ModelRouterLanguageModel } from "@mastra/core/llm";
 import { createTool } from "@mastra/core/tools";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import type { CuGateDeps } from "../computer-use/cu-gate.ts";
+import { buildComputerUseTools } from "../computer-use/cu-tools.ts";
 import { Config } from "../config.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
 import { getConnectorHealth } from "../connectors/health.ts";
@@ -126,6 +128,16 @@ export type NimbusEngineAgentDeps = {
   searchServicePriority?: ReadonlyMap<string, number>;
   sessionMemoryStore?: SessionMemoryStore;
   auditDb?: Database;
+  /**
+   * The live computer-use browser session (if any) this agent may drive, plus everything
+   * `runAction` (Task 10's gate) needs to act on it. Omitted in every caller today: the browser
+   * driver does not exist yet (Task 9, re-planned against raw CDP), so no session can currently
+   * open and `buildComputerUseTools` is unreachable — undefined here reproduces exactly that,
+   * rather than a disabled tool that errors when called. When a caller DOES wire this, `sessionId`
+   * still gates per-call: it must name a session `runAction`'s own `deps.db`-backed session store
+   * currently has open, or every call refuses through the gate's own machinery.
+   */
+  computerUse?: { sessionId: string | undefined; gateDeps: CuGateDeps };
 };
 
 export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
@@ -507,6 +519,12 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
             deps.auditDb,
           ),
         }
+      : {}),
+    // Non-negotiable (spec § 3.3 step 7): `buildComputerUseTools` returns `{}` unless
+    // `deps.computerUse` names a live session, so outside an owner-approved envelope this spread
+    // contributes nothing — not a disabled tool that errors when called, no tool at all.
+    ...(deps.computerUse !== undefined
+      ? buildComputerUseTools(deps.computerUse.sessionId, deps.computerUse.gateDeps)
       : {}),
   };
 
