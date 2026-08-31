@@ -1185,6 +1185,84 @@ the local posture and never loosen it.
 
 ---
 
+## Computer-Use Sessions (browser lane)
+
+### `nimbus computer`
+
+Open a HITL-gated browser session and watch its action log, answering the two
+consent-prompt kinds inline. Invariant **I35**, static rule **D26**, schema
+**V57**.
+
+**Off by default, and empty even when on.** Add to `nimbus.toml`:
+
+```toml
+[computer_use]
+enabled                 = true       # DEFAULT false
+allowed_lanes           = ["browser"] # DEFAULT [] — a second, deliberate lock
+max_actions             = 50
+max_wall_clock_ms       = 300000
+snapshot_max_bytes      = 262144
+snapshot_retention_days = 7
+```
+
+`enabled = true` alone grants no lane — `allowed_lanes` must name one too, so
+turning the capability on does not silently turn every lane on with it. With
+either left at its default the gate refuses *before* prompting.
+
+```bash
+nimbus computer browser --origin https://github.com --script-origin https://api.github.com
+nimbus computer sessions
+nimbus computer close <session-id>
+```
+
+| Subcommand | Meaning |
+| --- | --- |
+| `browser --origin <o>...` | Open a browser-lane session. Repeatable `--origin` builds the navigate allowlist (at least one required); repeatable `--script-origin` builds the SEPARATE allowlist for script-initiated `fetch`/XHR/`WebSocket` requests (default empty). `--max-actions <n>` / `--timeout <seconds>` clamp the session's action and wall-clock budgets. Every origin is canonicalised client-side and REFUSED — never widened — if it carries a path, query, fragment, userinfo, or a trailing-dot hostname. |
+| `sessions` | List known sessions: id, lane, open/closed, actions used, close reason. |
+| `close <session-id>` | End a session early. |
+
+**`nimbus computer browser` is a passive listener, not a driver.** It opens the
+session, answers `computer.envelopeRequest` (the up-front session approval —
+lane, the **full** origin lists, the action budget, the wall-clock budget,
+never elided or summarised) and `computer.actionRequest` (one per
+`actuating` action — a clearly labelled **gateway-observed fact** alongside
+the model's own **untrusted claim** about its intent), and then watches the
+session's action count until it closes. It does not drive any action itself:
+`computer.act` has no production caller anywhere in this build (see below).
+
+**Today, every session ends in `ERR_CU_NO_BROWSER` — there is no local fix.**
+The browser driver does not exist yet: `playwright-core` fails a
+`bun build --compile` gate and is being re-planned against raw CDP over a
+WebSocket, so `cu-gate.ts` refuses every session before consent. No browser
+install or configuration change makes this succeed — the gate, classifier,
+envelope, taint latch, IPC surface and audit trail are fully wired and
+tested, over a path nothing can currently traverse.
+
+**Exit codes.**
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The session closed cleanly — no close reason, or an owner-initiated `close`. |
+| `110` | The owner denied the session envelope. |
+| `112` | Terminated: action budget exhausted. |
+| `113` | Terminated: wall-clock budget exhausted. |
+| `127` | Refused — bad arguments, disabled by config/org policy, an unconfined sandbox, or (today, almost always) `ERR_CU_NO_BROWSER`. Shared with `nimbus exec`'s `refused` code: same meaning, different command, deliberately. |
+
+**No pixels ever reach disk.** A screenshot capture is BLAKE3-digested and
+discarded in the same expression; only the digest is recorded. No image
+file is written on any lane, at any point.
+
+**Org lockoff.** A signed `nimbus.policy.toml` can disable it fleet-wide:
+
+```toml
+[policy.capabilities.ai_v2]
+computer_use = false
+```
+
+Only `false` carries meaning, matching `nimbus exec`'s lockoff.
+
+---
+
 ## Interactive Sessions
 
 ### `nimbus tui`
