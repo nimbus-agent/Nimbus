@@ -2168,11 +2168,17 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // narrower than its name: its appender (`egress/chatops-egress.ts`'s `buildLedgeredChatPosts`)
     // decorates the single `post` closure that every chat consumer shares, so one row is appended
     // per outbound post regardless of which consumer sent it.
-    // `browser` is the SEVENTH non-`none` class, `per-run`, and — like `chatops` — NOT narrower
-    // than its name: every request the driven browser makes passes through one decorated
-    // `BrowserContext`. Its appender (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`)
-    // is a deliberately separate, immediately-following unit of work in the same computer-use
-    // slice — not an unwired seam raised carelessly ahead of its own landing.
+    // `browser` stays `none`, DELIBERATELY, even though its appender is written and tested
+    // (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`, a decorator over the driven
+    // `BrowserContext`). It has NO production caller: the computer-use browser driver that would
+    // construct a `BrowserContext` is deferred (re-planned against raw CDP after `playwright-core`
+    // failed a `bun build --compile` gate — invariant I35). Raising this entry ahead of that
+    // landing would be precisely the defect this vector exists to prevent — the same rule every
+    // other class here follows, applied to this one instead of an exception to it. (An earlier
+    // version of this test DID raise it early, on the reasoning that the appender's own commit
+    // would follow immediately; it did not, because the driver task was re-planned mid-slice. The
+    // fix restores `browser` to `none` here; raising it again is conditioned on a real caller,
+    // landed in the same commit, exactly like `peer`/`session` below.)
     // `peer`/`session` stay `none` until THEIR appenders land — raising an
     // entry without a landed appender behind it is a review moment, not a test to re-bank. (An
     // earlier version of this comment pointed to an `EgressCompleteness.tier` #1057 note in
@@ -2181,15 +2187,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // is gone; the coverage vector is the only claim" — so the pointer was stale, not fictional, and
     // there was nothing left in that file to settle or re-defer.)
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual([
-      "browser",
-      "chatops",
-      "http",
-      "mcp",
-      "model",
-      "sync",
-      "task",
-    ]);
+    expect([...claimed].sort()).toEqual(["chatops", "http", "mcp", "model", "sync", "task"]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {
@@ -2724,11 +2722,30 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
 
   test("the classifier takes no model-supplied field", async () => {
     // I3 transplanted: the gate reads a property the gateway derived, never one the caller supplied.
+    //
+    // Sliced to the MATCHING closing brace via depth-counting, not the first `}` anywhere after
+    // the opening one: a naive `indexOf("}", …)` truncates at an inline object type's own closing
+    // brace (e.g. a hypothetical `readonly bounds: { w: number };` field), ending the slice before
+    // a banned field that follows it -- proven by inserting exactly such a field ahead of a banned
+    // one and observing the naive version go green. This is "the guard" the docs call out by name
+    // (a TS interface cannot be reflected at runtime), so its own blind spot matters more than most.
     const src = await Bun.file("packages/gateway/src/computer-use/cu-classify.ts").text();
-    const iface = src.slice(
-      src.indexOf("interface BrowserActionInput"),
-      src.indexOf("}", src.indexOf("interface BrowserActionInput")),
-    );
+    const start = src.indexOf("interface BrowserActionInput");
+    const openBrace = src.indexOf("{", start);
+    let depth = 0;
+    let end = -1;
+    for (let i = openBrace; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    expect(end).toBeGreaterThan(-1);
+    const iface = src.slice(start, end);
     for (const banned of ["description", "intent", "rationale", "summary", "label"]) {
       expect(iface).not.toContain(`${banned}:`);
     }
@@ -2747,11 +2764,19 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // screenshot method at all right now, and it passes no options (hence no `path`). Once the
     // real driver lands at `cu-lanes/browser.ts`, this picks it up automatically (that is what a
     // real `page.screenshot({ path: ... })` call would land in) and must be re-verified there.
+    //
+    // Comments are stripped BEFORE searching: `cu-actuate.ts`'s own doc comment quotes
+    // `lane.screenshot(); return null;` as an example of a fixed defect, and a bare
+    // `indexOf("screenshot(")` over the RAW source finds that comment's occurrence first -- ending
+    // the 400-byte window before it ever reaches the real call a few lines later. Proven: mutating
+    // the real call to `lane.screenshot({ path: "/tmp/leak.png" })` left the unstripped version of
+    // this test green. Stripping removes the comment's occurrence entirely, so the only
+    // `screenshot(` left to find is the real one.
     const laneFile = "packages/gateway/src/computer-use/cu-lanes/browser.ts";
     const target = (await Bun.file(laneFile).exists())
       ? laneFile
       : "packages/gateway/src/computer-use/cu-actuate.ts";
-    const src = await Bun.file(target).text();
+    const src = stripComments(await Bun.file(target).text());
     const shotAt = src.indexOf("screenshot(");
     expect(shotAt).toBeGreaterThan(-1);
     const window = src.slice(shotAt, shotAt + 400);

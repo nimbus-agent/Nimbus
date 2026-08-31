@@ -42,7 +42,7 @@ export type CoverageClass = (typeof COVERAGE_CLASSES)[number];
 export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 
 /**
- * What THIS binary is built to observe. SEVEN classes are non-`none`: `task` (the executor's
+ * What THIS binary is built to observe. SIX classes are non-`none`: `task` (the executor's
  * gated-action append, `engine/executor.ts`); `mcp` and `http` — the two external transports an
  * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
  * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run OR a
@@ -50,12 +50,15 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * see the `sync` paragraph below); `model` (any generate OR embed on a NON-LOCAL route, appended
  * by three cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
  * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, and `egress/embedding-egress.ts`'s
- * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers); `chatops`
- * (every outbound Slack/Teams post, appended by ONE decorator over the shared `post` closure — see
- * the `chatops` paragraph below); and `browser` (every outbound request the computer-use browser
- * lane makes, appended by ONE decorator over the driven `BrowserContext` — see the `browser`
- * paragraph below). Later phases raise `peer`, `session`; raising an entry without landing its
- * appender is the exact defect this vector exists to prevent.
+ * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers); and
+ * `chatops` (every outbound Slack/Teams post, appended by ONE decorator over the shared `post`
+ * closure — see the `chatops` paragraph below). `browser`, `peer` and `session` stay `none`:
+ * `browser`'s appender (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`) is written and
+ * tested but has NO production caller yet — the computer-use browser driver that would construct
+ * it is deferred (re-planned against raw CDP, see invariant I35) — so raising this entry ahead of
+ * that landing would be exactly the defect this vector exists to prevent, the same one this file
+ * warns against for every other class. Raising `browser` back to `per-run`, and `peer`/`session`
+ * from `none`, happens in the SAME commit as each one's production caller.
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
@@ -133,25 +136,30 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * covered nor disclosed, which is why `nimbus prove` could report a zero over a window in which a
  * brief synthesized from the private index was posted to Slack.
  *
- * `browser` is `per-run` and covers every request the computer-use browser lane makes. The appender
- * is `egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`, a DECORATOR over the Playwright
- * `BrowserContext` rather than a call-site append — the same shape as `wrapLedgeredProvider`, and
- * for the same reason: a call-site append covers the callers that exist today, a wrapped instance
- * covers the ones written later without their cooperation.
- *
- * `per-run` rather than `per-call` is the honest label, matching `sync`. ONE row is appended per
- * (navigation, distinct destination origin) pair, so a single row can stand for many upstream calls
- * to that origin. Per-request would be thousands of rows for one page load; one row per navigation
- * would understate where data went, since a page pulls from origins the owner never named. The
- * pair shape is bounded at tens and lets `nimbus prove` NAME every host the browser contacted.
- *
- * A request REFUSED by the § 3.5.1 policy appends a `blocked` row, exactly as a denied executor
- * gate does. A cluster of those naming an unapproved origin is the clearest signal in the feature
- * that something was steering the page toward exfiltration, and it is retained even though nothing
- * left the machine.
+ * `browser` is `"none"` TODAY, DELIBERATELY, though its appender exists and is tested. It is
+ * WRITTEN to be `per-run`: `egress/browser-egress.ts`'s `wrapLedgeredBrowserContext` is a DECORATOR
+ * over the Playwright `BrowserContext` rather than a call-site append — the same shape as
+ * `wrapLedgeredProvider`, and for the same reason: a call-site append covers the callers that exist
+ * today, a wrapped instance covers the ones written later without their cooperation. But nothing
+ * CONSTRUCTS a `BrowserContext` in production yet — the computer-use browser driver is deferred
+ * (re-planned against raw CDP after `playwright-core` failed a `bun build --compile` gate; see
+ * invariant I35) — so `wrapLedgeredBrowserContext` has no production caller and this class must
+ * stay `"none"` until one lands, per this file's own rule for every other class. `per-run` (once
+ * raised) would be the honest label, matching `sync`: ONE row per (navigation, distinct destination
+ * origin) pair, so a single row can stand for many upstream calls to that origin. Per-request would
+ * be thousands of rows for one page load; one row per navigation would understate where data went,
+ * since a page pulls from origins the owner never named. The pair shape is bounded at tens and lets
+ * `nimbus prove` NAME every host the browser contacted. A request REFUSED by the § 3.5.1 policy
+ * would append a `blocked` row, exactly as a denied executor gate does — a cluster of those naming
+ * an unapproved origin would be the clearest signal that something was steering the page toward
+ * exfiltration, retained even though nothing left the machine. None of this is live until the
+ * driver lands and this entry is raised in the SAME commit as its production caller.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
-  browser: "per-run",
+  // "none", not "per-run": `wrapLedgeredBrowserContext` (above) has no production caller yet.
+  // Raise this to "per-run" in the SAME commit that wires it to a real BrowserContext — never
+  // ahead of that landing (see the `browser` paragraph above and invariant I35).
+  browser: "none",
   chatops: "per-call",
   task: "per-call",
   mcp: "per-call",

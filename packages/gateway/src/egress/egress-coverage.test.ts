@@ -34,7 +34,7 @@ const NONE: CoverageVector = {
  * `browser` heads the string because the array is key-sorted and `browser` < `chatops`.
  */
 const CANONICAL =
-  "browser=per-run;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call";
+  "browser=none;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call";
 
 /** The six-class string every binary before the `http` class wrote. See the blackout test below. */
 const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
@@ -56,9 +56,12 @@ describe("coverage vector", () => {
     // locally-run Mastra model, or a local embedder each append nothing by design, not as a gap.
     // Every other class stays `none` until its appender lands — raising an entry on the strength of
     // an unwired seam would be a claim with no code behind it, which is the exact defect this vector
-    // prevents.
+    // prevents. `browser` is the worked example: its appender (`egress/browser-egress.ts`'s
+    // `wrapLedgeredBrowserContext`) is written and tested, but has NO production caller yet (the
+    // computer-use browser driver that would construct a `BrowserContext` is deferred, invariant
+    // I35), so it stays `"none"` here too, not `"per-run"`, until that driver lands and calls it.
     expect(THIS_BINARY_COVERAGE).toEqual({
-      browser: "per-run",
+      browser: "none",
       chatops: "per-call",
       task: "per-call",
       mcp: "per-call",
@@ -168,7 +171,7 @@ describe("coverage vector", () => {
       peer: "per-call",
     };
     expect(weakestCoverage([rich, THIS_BINARY_COVERAGE])).toEqual({
-      browser: "per-run", // this binary's per-run is weaker than rich's per-call
+      browser: "none", // this binary's none is weaker than rich's per-call
       chatops: "per-call", // both per-call
       task: "per-call", // both per-call
       mcp: "per-call", // both per-call
@@ -200,7 +203,7 @@ describe("chatops coverage class", () => {
 
   test("serialize puts chatops right after browser and parse round-trips it", () => {
     const s = serializeCoverage(THIS_BINARY_COVERAGE);
-    expect(s.startsWith("browser=per-run;chatops=per-call;")).toBe(true);
+    expect(s.startsWith("browser=none;chatops=per-call;")).toBe(true);
     expect(parseCoverage(s)).toEqual(THIS_BINARY_COVERAGE);
   });
 
@@ -214,9 +217,13 @@ describe("chatops coverage class", () => {
 });
 
 describe("browser coverage class", () => {
-  test("browser is a coverage class at per-run", () => {
+  test("browser is a coverage class, currently at none — its appender has no production caller yet", () => {
+    // Written and tested (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`), but nothing
+    // constructs a `BrowserContext` in production: the computer-use browser driver is deferred
+    // (invariant I35). Raising this to "per-run" ahead of a real caller would be exactly the
+    // defect this vector's own preamble warns against for every other class.
     expect(COVERAGE_CLASSES).toContain("browser");
-    expect(THIS_BINARY_COVERAGE.browser).toBe("per-run");
+    expect(THIS_BINARY_COVERAGE.browser).toBe("none");
   });
 
   test("browser sorts FIRST — membership order IS the wire format", () => {
@@ -228,7 +235,7 @@ describe("browser coverage class", () => {
   });
 
   test("serializeCoverage leads with browser", () => {
-    expect(serializeCoverage(THIS_BINARY_COVERAGE).startsWith("browser=per-run;")).toBe(true);
+    expect(serializeCoverage(THIS_BINARY_COVERAGE).startsWith("browser=none;")).toBe(true);
   });
 
   test("ALL_NONE_COVERAGE carries browser too", () => {
