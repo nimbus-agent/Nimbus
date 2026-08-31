@@ -948,6 +948,15 @@ const D26_ACTUATE_DEFINITION_FILE = "packages/gateway/src/computer-use/cu-actuat
 const D26_ACTUATE_RE = /\bperformActuation\s*\(/;
 const D26_ACTUATE_DECLARATION_RE = /\bfunction\s+performActuation\s*\(/;
 
+// Review finding: a call-text scan alone is defeated by an ALIASED import --
+// `import { performActuation as invoke }` followed by `invoke(...)` contains no `performActuation(`
+// call-shaped text anywhere, so the scan above stays silent while a second, unauthorized path to
+// the host exists. Closed at the IMPORT, not the call: no file other than the gate may import
+// `performActuation` under ANY local name -- if the symbol can never enter scope outside cu-gate.ts,
+// there is no alias left to call it through. `[^}]*` deliberately allows other named imports on the
+// same line/braces; this only cares whether `performActuation` appears as one of the specifiers.
+const D26_ACTUATE_IMPORT_RE = /\bimport\s*\{[^}]*\bperformActuation\b[^}]*\}\s*from/;
+
 export function checkActuationConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -957,12 +966,14 @@ export function checkActuationConfinement(files: readonly FileEntry[]): Violatio
     const original = f.contents.split("\n");
     for (let i = 0; i < stripped.length; i++) {
       const line = stripped[i] ?? "";
-      if (!D26_ACTUATE_RE.test(line)) continue;
+      const isImport = D26_ACTUATE_IMPORT_RE.test(line);
+      const isCall = D26_ACTUATE_RE.test(line);
+      if (!isImport && !isCall) continue;
       if (f.relPath === D26_ACTUATE_DEFINITION_FILE && D26_ACTUATE_DECLARATION_RE.test(line)) {
-        continue; // the declaration itself, not a call
+        continue; // the declaration itself, not a call or an import
       }
       out.push({
-        rule: "D26-actuation-callsite",
+        rule: isImport ? "D26-actuation-import" : "D26-actuation-callsite",
         file: f.relPath,
         line: i + 1,
         snippet: (original[i] ?? "").trim(),

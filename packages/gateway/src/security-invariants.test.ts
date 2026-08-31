@@ -2708,6 +2708,25 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     });
   });
 
+  test("performActuation is never IMPORTED outside cu-gate.ts, under any alias", async () => {
+    // Second review finding on the same test: a call-text scan (however precisely counted) is
+    // defeated by an ALIASED import — `import { performActuation as invoke }` followed by
+    // `invoke(lane, req)` contains no `performActuation(` call-shaped text anywhere, so the test
+    // above would stay green while a second, unauthorized path to the host exists. Closed at the
+    // IMPORT, not the call: no file other than the gate may import the symbol under any local
+    // name — if it can never enter scope elsewhere, there is no alias left to call it through.
+    // Same fix mirrored onto the static audit's `checkActuationConfinement`.
+    const files = await readDirFiles("packages/gateway/src");
+    const importers = files
+      .filter((f) => f.rel !== "computer-use/cu-gate.ts")
+      .filter((f) =>
+        /\bimport\s*\{[^}]*\bperformActuation\b[^}]*\}\s*from/.test(stripComments(f.contents)),
+      )
+      .map((f) => `packages/gateway/src/${f.rel}`)
+      .sort();
+    expect(importers).toEqual([]);
+  });
+
   test("no browser-driver import exists outside cu-lanes/", async () => {
     // `computer-use/cu-lanes/` (the browser driver's deferred home, see plan Task 9) does not
     // exist yet -- its library failed a compile gate and is being re-planned against raw CDP -- so

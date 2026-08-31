@@ -1549,6 +1549,25 @@ describe("D26 — computer-use actuation confinement", () => {
     ).toEqual([]);
   });
 
+  test("D26(a) flags an ALIASED import used to bypass the call-text scan", () => {
+    // Review finding: `import { performActuation as invoke }` followed by `invoke(lane, req)`
+    // contains no `performActuation(` call-shaped text anywhere -- a call-text-only scan stays
+    // silent while a second, unauthorized path to the host exists. Closed at the import: the
+    // symbol may not even ENTER SCOPE outside the gate, under any local name.
+    const v = checkActuationConfinement([
+      file(
+        "packages/gateway/src/agents/rogue.ts",
+        [
+          'import { performActuation as invoke } from "../computer-use/cu-actuate.ts";',
+          "await invoke(lane, req);",
+        ].join("\n"),
+      ),
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.rule).toBe("D26-actuation-import");
+    expect(v[0]?.snippet).toContain("performActuation as invoke");
+  });
+
   test("D26(a) still flags a direct INVOCATION inside cu-actuate.ts itself, not just its declaration", () => {
     // Review finding: the earlier shape allow-listed the WHOLE `cu-actuate.ts` file, so a second,
     // illegitimate direct call added anywhere in that file (below the real declaration) went
