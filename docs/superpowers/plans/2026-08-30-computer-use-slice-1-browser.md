@@ -1762,6 +1762,45 @@ git commit -m "feat(egress): ledger every browser-lane request before it is made
 > All five are REQUIRED (non-optional) on the interface: an optional field would let a producer omit
 > it and silently take the permissive branch.
 >
+> **MUST CLOSE IN THE SAME COMMIT AS THE DRIVER.** Collected from the build's deferred list and the
+> final whole-branch review. None is reachable while nothing can actuate; each becomes live the
+> moment a driver does.
+>
+> 1. **`browserLanePolicy` is a placeholder never passed to a real spawn** (`cu-gate.ts`). The
+>    pre-consent `canConfine` assertion is currently a statement about an object nothing launches
+>    with. The asserted policy must become the spawned one, or the assertion is about the wrong
+>    object. Also carried in `SECURITY-INVARIANTS.md`'s I35 re-verify list.
+> 2. **The `ObservedNode` producer has never run against a real DOM.** The `closest()`-based
+>    `isSubmitControl`, `hrefScheme`, `hrefOrigin` and `inForm` derivations are the classifier's
+>    entire fail-closed posture and are typechecked only.
+> 3. **`CuGateDeps.openLane` is reachable from the tool/RPC layer.** The whole deps object is handed
+>    to `cu-tools.ts` and to `engine/agent.ts`; any future file there could call `deps.openLane(...)`,
+>    get a live `BrowserLane` and call `lane.click()` — no envelope, no classification, no consent, no
+>    audit row. **D26(a) sees nothing** (no `performActuation(` call) and **D26(b) sees nothing** (no
+>    driver import). Split a `CuRunDeps` without `openLane` for that layer.
+> 4. **D26(b) guards the wrong library.** Its regex matches `playwright`/`playwright-core`; the driver
+>    is raw CDP over a WebSocket. A file opening its own CDP socket passes silently — disclosed at
+>    `SECURITY-INVARIANTS.md:872`, but it means neither D26 rule prevents "a new file opens a socket
+>    and clicks". Widen or replace it.
+> 5. **No boot-time reconciliation of orphaned `cu_session` rows.** `computer.sessionStatus` reads the
+>    durable table; the gate reads the in-memory `liveSessions` map. After a restart they disagree
+>    permanently — `nimbus computer sessions` shows the session open forever, `sessionClose` returns
+>    `not_found`, and the CLI's watch loop polls forever. Pair with (6).
+> 6. **No SIGINT/SIGTERM on the CLI watch loop**, so Ctrl-C leaves the session open server-side. Same
+>    bug as (5) from the other direction.
+> 7. **TOCTOU between `closeSession` and an in-flight `runAction`.** `runAction` never re-checks
+>    `session.isOpen()` after an `await`, so a close arriving mid-action still actuates on the closed
+>    lane. Relatedly there is no per-session serialisation, so two concurrent `computer.act` calls
+>    interleave `dom_before`/actuate/`dom_after` on one lane.
+> 8. **`browser-egress.ts` casts `req.resourceType() as CuResourceType` unguarded**, while the
+> analogous IPC boundary uses a real `isCuActionKind` guard. Safe today (`decideRequest` gates any
+> unrecognised type) but the type claims an exhaustiveness that does not hold.
+> 9. **`terminated_target_lost` is declared and handled but never assigned** — the driver owns
+> producing it.
+> 10. **The two consent brokers are routed by probing `"seq" in input`** — a structural property probe
+> standing in for a tagged union. Sound today; a future `seq` on the envelope input would silently
+> misroute an approval with no compile error and no covering test.
+>
 > **A THIRD forward constraint, from Task 8's review.** `wrapLedgeredBrowserContext` REPLACES the
 > routed handler: the `handler` argument passed to the wrapped `route()` is discarded (`_handler`),
 > because the decorator's own gate-then-continue/abort logic is the whole handler. Task 9's driver
