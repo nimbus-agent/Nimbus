@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788113227472,
+  "lastUpdate": 1788200178515,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c6ebd1dc885d1c358ee2920c0b8755f562ba7b2d",
-          "message": "chore(main): release 0.11.1 (#674)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.11.1](https://github.com/nimbus-agent/Nimbus/compare/v0.11.0...v0.11.1)\n(2026-06-17)\n\n\n### Bug Fixes\n\n* **ci:** gitleaks allowlist synthetic TestFlight PEM fixture\n([#670](https://github.com/nimbus-agent/Nimbus/issues/670))\n([3da4609](https://github.com/nimbus-agent/Nimbus/commit/3da460991b487b68fad2ea1febc9c32a148db807))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Fixed TestFlight certificate handling in the continuous integration\npipeline.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-17T07:14:31Z",
-          "tree_id": "471527c9497c13d77e37a1a34e5633c030debad5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c6ebd1dc885d1c358ee2920c0b8755f562ba7b2d"
-        },
-        "date": 1781681218745,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 302.8520562500038,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 305.03910519999374,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 250.1168375999987,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "461cebd634a96762b49270ba2dbb4b1d31d8aa9a",
+          "message": "feat(computer-use): I35 gate + D26 confinement for local computer-use actuation (browser lane, driver not yet wired) (#1415)\n\n## Summary\n\nShips **invariant I35** + static rule **D26** and a new `computer-use/`\nsubsystem: the local-first, HITL-gated envelope that will confine every\nfuture computer-use actuation (browser, terminal, screen). This is the\ngate, the classifier, the consent round-trip, the audit trail, the IPC\nsurface, and the CLI surface — **not** a working browser-driving\ncapability yet.\n\nAn actuation reaches the host only through `cu-gate.ts`'s\n`openSession()`/`runAction()`, inside a live session envelope the local\nowner approved up front:\n- refuses **before** consent when disabled by `[computer_use] enabled` /\norg policy (I22), or when the lane isn't in `allowed_lanes`\n- asserts `SandboxRunner.canConfine(policy)` — never the\npolicy-independent `degradedReason()`/`isFullyActive()` probes (I33's\nidentical reasoning)\n- refuses, never prompts, an out-of-envelope `navigate`\n- derives the HITL class **structurally** from the gateway-observed\ntarget (`cu-classify.ts`), never the model's own description (I3\ntransplanted)\n- requires single-use owner approval for every `actuating` verdict\nbefore `performActuation` runs\n- appends one `computer.action` audit row on every outcome, fail-closed\n- screenshot bytes are BLAKE3-digested and discarded in the same\nexpression that captures them — never written to disk\n\nNew IPC namespace `computer.*` (whole-namespace LAN-forbidden per I5,\nabsent from the Tauri allowlist per I7) and CLI surface `nimbus computer\nbrowser|sessions|close`. Schema V57 (`cu_session`/`cu_action`). Static\nD26 confines `performActuation` to the gate (mirrors D23) and confines\nany `playwright`-family browser-driver import to\n`computer-use/cu-lanes/`, in both static and dynamic form (mirrors\nD22(d)).\n\n## What did NOT ship (by design, fully disclosed)\n\nThe browser **driver does not exist**. `playwright-core@1.62.1` fails\n`bun build --compile` (an eager, unconditional\n`require(\"chromium-bidi/...\")` the bundler can't satisfy), so it's\nre-planned against raw CDP over a WebSocket. Consequently:\n- `platform/assemble.ts` wires `resolveBrowserPath: () => null`;\n`cu-gate.ts` refuses every session before consent with\n`ERR_CU_NO_BROWSER` — though with shipped defaults (`enabled=false`,\n`allowed_lanes=[]`) a real user hits `ERR_CU_DISABLED` and\n`ERR_CU_LANE_NOT_ALLOWED` first\n- `nimbus computer browser` is a **passive listener**, not a driver —\n`computer.act` has no production caller\n- the `browser` egress coverage class stays `\"none\"`, not `per-run`,\nuntil a driver constructs a real `BrowserContext` through\n`wrapLedgeredBrowserContext`\n- `terminal`/`screen` lanes are named in config for forward\ncompatibility only and ship no gate-side implementation at all (deferred\nto slices 2/3)\n\nFull delivery + scope-bound writeup: `docs/CHANGELOG.md` (\"2026-08-30 —\nThe local computer-use loop's gate shipped; nothing can drive it yet\").\nFull invariant statement, anti-patterns, and re-verify checklist:\n`docs/SECURITY-INVARIANTS.md` § I35.\n\n## Review history (in-branch, all fixed and re-verified)\n\nThis branch went through several fix rounds against its own review\nfindings, each red-proved before and after:\n- I35 gate hardening rounds 1–4 (guaranteed audit rows on every path,\nlive policy re-check, default-deny classification,\nteardown-runs-even-on-audit-failure)\n- I35/D26 fix rounds 1–3: an orphaned egress-appender claim corrected to\nmatch reality (`browser` coverage stays `none`); a\nscreenshot-no-disk-write test that couldn't fail, rewritten to a\nwhole-file scan over `stripStringLiterals(stripComments(src))`; and the\n`BrowserActionInput` model-field scan rewritten three times (naive\n`indexOf` → raw-source brace-depth → comment-stripped brace-depth →\nfinally an **allowlist** of the five permitted fields over\nboth-strippers-composed source), since each prior version had a\ndifferent quoting-construct blind spot\n- a whole-branch final review closing 7 remaining doc/test honesty gaps\n(stale counts, an unenforced \"taint latch\" oversold as an invariant, an\noverclaimed \"only reachable error\" claim, a stale coverage-label\nfixture)\n\n## Verification\n\n- `bun test packages/gateway/src/` — 12835 pass, 0 fail\n- `bun test packages/cli/src/commands/` — 1965 pass, 0 fail\n- `bun run typecheck`, `bun run audit:structure`, `bun run\npreflight:fast` — all green (32/32 gates)\n- Pre-push hook (`preflight:fast`) ran clean on this push\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added HITL-gated browser computer-use commands for opening, listing,\nand closing sessions.\n- Added bounded browser actions for navigation, clicking, typing,\nreading, and screenshot digests.\n- Added secure origin, sandbox, budget, audit, and fail-closed policy\ncontrols.\n- Added browser egress tracking, session/action history, and\nconfigurable retention.\n\n- **Documentation**\n- Updated security, architecture, CLI, schema, roadmap, and changelog\ndocumentation through invariant I35 and schema V57.\n  - Documented current browser-driver limitations and refusal behavior.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-31T18:05:06Z",
+          "tree_id": "ba0834bf82f850d6f45dfd7da2dfe9290d136ff8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/461cebd634a96762b49270ba2dbb4b1d31d8aa9a"
+        },
+        "date": 1788200174769,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 312.14123145000156,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 312.33126704999233,
             "unit": "ms"
           }
         ]
