@@ -148,6 +148,33 @@ describe("wrapLedgeredBrowserContext", () => {
     expect(cap.continued).toBe(0);
   });
 
+  test("the caller-supplied handler is invoked on an ALLOWED request, never discarded", async () => {
+    // Review finding: `route: async (pattern, _handler) => {...}` used to accept then silently
+    // drop the handler entirely — a future browser-driver caller's routing logic would vanish
+    // with no error. The wrapper still decides continue/abort itself; the handler must still run.
+    const h = harness();
+    let handlerCalls = 0;
+    await h.wrapped.route("**/*", async () => {
+      handlerCalls += 1;
+    });
+    const cap: Captured = { continued: 0, aborted: 0 };
+    await h.fire(fakeRoute("https://example.com/a", "document", cap));
+    expect(handlerCalls).toBe(1);
+    expect(cap.continued).toBe(1); // the wrapper's own continue() still fires
+  });
+
+  test("the caller-supplied handler is NEVER invoked on a BLOCKED request — the block is structural", async () => {
+    const h = harness();
+    let handlerCalls = 0;
+    await h.wrapped.route("**/*", async () => {
+      handlerCalls += 1;
+    });
+    const cap: Captured = { continued: 0, aborted: 0 };
+    await h.fire(fakeRoute("https://evil.com/collect", "fetch", cap));
+    expect(handlerCalls).toBe(0);
+    expect(cap.aborted).toBe(1);
+  });
+
   test("never stores a full URL — only the origin", async () => {
     const h = harness();
     await h.wrapped.route("**/*", async () => {});

@@ -79,7 +79,8 @@ PRIVACY & AUDIT
   nimbus exec --code <src> | --file <path>   Run code in the sandbox, behind an approval prompt
                               (off by default; enable with [code_execution] enabled = true)
   nimbus computer browser --origin <o> [--script-origin <o>]   HITL-gated browser session
-                              (off by default; enable with [computer_use] enabled = true)
+                              (off by default; enable with [computer_use] enabled = true —
+                               browser driver not shipped yet, sessions refuse)
   nimbus computer sessions | close <id>   List / close computer-use sessions
   nimbus security scan        Local security scan (secrets, vulnerable deps, risky IaC)
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion

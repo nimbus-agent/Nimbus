@@ -56,7 +56,7 @@ export function wrapLedgeredBrowserContext(
   const seenOrigins = new Set<string>();
 
   return {
-    route: async (pattern, _handler) => {
+    route: async (pattern, handler) => {
       await ctx.route(pattern, async (route) => {
         const req = route.request();
         const url = req.url();
@@ -92,8 +92,21 @@ export function wrapLedgeredBrowserContext(
           }
         }
 
-        if (verdict.allow) await route.continue();
-        else await route.abort();
+        // The ALLOW/BLOCK decision stays this wrapper's alone — never delegated to the caller's
+        // handler, since that is the property the whole class rests on. But `LedgerableContext`
+        // requires a handler, and this used to accept then silently discard it (`_handler`),
+        // which would drop a future browser-driver caller's routing logic without warning. Now:
+        // a BLOCKED request is aborted unconditionally, without ever reaching the caller's
+        // handler (the block is structural, never optional); an ALLOWED request invokes the
+        // caller's handler — after the ledger row is durably appended — THEN this wrapper still
+        // calls `continue()` itself, so a handler is free to observe/act on the request without
+        // being able to override the block decision by omission (a no-op handler still continues).
+        if (verdict.allow) {
+          await handler(route);
+          await route.continue();
+        } else {
+          await route.abort();
+        }
       });
     },
   };

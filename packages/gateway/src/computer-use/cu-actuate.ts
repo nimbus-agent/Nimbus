@@ -48,7 +48,14 @@ export async function performActuation(
       return bytesToHex(blake3(bytes));
     }
     case "download":
-      return null;
+      // No lane implements a download yet (`BrowserLane` declares no download method — Task 9's
+      // driver is deferred entirely). Returning `null` here did no work but still let `cu-gate.ts`
+      // record `outcome: "actuated"` / `hitl_status: "approved"`: an owner-approved "download"
+      // action would have been recorded as a SUCCESSFUL actuation that actually downloaded
+      // nothing. Fail closed instead — the throw is caught by `cu-gate.ts`'s existing
+      // `performActuation` try/catch and correctly recorded as `failed_after_approval`, which is
+      // the honest outcome: the owner said yes, and nothing capable of doing it existed.
+      throw new Error("ERR_CU_UNSUPPORTED_ACTION: download is not implemented");
     default: {
       // Exhaustiveness (ruling D / I29's ClientKind precedent): an action kind this function was
       // never told to handle is a COMPILE ERROR here, not a silent fall-through.

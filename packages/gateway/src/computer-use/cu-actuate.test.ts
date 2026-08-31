@@ -88,10 +88,15 @@ describe("performActuation", () => {
     expect(result).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  test("download performs no lane call and returns null", async () => {
+  test("download fails closed instead of recording a phantom actuation", async () => {
+    // CodeRabbit finding: `BrowserLane` declares no download method, so a `return null` here did
+    // no work at all yet still let `cu-gate.ts` record `outcome: "actuated"` / `approved` — an
+    // audit row claiming a download succeeded when nothing downloaded anything. This must throw,
+    // not return, so the gate's own catch records `failed_after_approval` instead.
     const calls: Calls = { click: [], type: [], navigate: [] };
-    const result = await performActuation(laneStub(calls), { kind: "download" });
-    expect(result).toBeNull();
+    await expect(performActuation(laneStub(calls), { kind: "download" })).rejects.toThrow(
+      "ERR_CU_UNSUPPORTED_ACTION",
+    );
     expect(calls.click).toEqual([]);
     expect(calls.type).toEqual([]);
     expect(calls.navigate).toEqual([]);

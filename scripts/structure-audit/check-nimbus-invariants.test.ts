@@ -1549,6 +1549,32 @@ describe("D26 — computer-use actuation confinement", () => {
     ).toEqual([]);
   });
 
+  test("D26(a) still flags a direct INVOCATION inside cu-actuate.ts itself, not just its declaration", () => {
+    // Review finding: the earlier shape allow-listed the WHOLE `cu-actuate.ts` file, so a second,
+    // illegitimate direct call added anywhere in that file (below the real declaration) went
+    // undetected. Only the declaration line is exempt now — a call-shaped line elsewhere in the
+    // same file must still be flagged.
+    const v = checkActuationConfinement([
+      file(
+        "packages/gateway/src/computer-use/cu-actuate.ts",
+        [
+          "export async function performActuation(",
+          "  lane,",
+          "  req,",
+          ") {",
+          "  return null;",
+          "}",
+          "",
+          "// a second, illegitimate direct call bypassing the gate entirely",
+          "await performActuation(lane, req);",
+        ].join("\n"),
+      ),
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.rule).toBe("D26-actuation-callsite");
+    expect(v[0]?.snippet).toContain("await performActuation(lane, req);");
+  });
+
   test("D26(b) flags a driver import outside cu-lanes/", () => {
     // (a) alone does NOT carry this: a new file could construct its own BrowserContext and call
     // page.click() directly, bypassing the gate entirely. Same gap D22(d) closes for emitters.

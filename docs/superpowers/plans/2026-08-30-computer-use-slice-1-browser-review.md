@@ -6,6 +6,13 @@ This document collects feedback, suggestions, and open questions on the [Compute
 
 ### 1. Zero-Config Browser Path Resolution
 
+> **SUPERSEDED.** Task 9 was re-planned against raw CDP over a WebSocket after `playwright-core`
+> failed a `bun build --compile` gate (see that task's own `DEFERRED AND RE-PLANNED` note in the
+> linked plan). `resolveChromiumPath()` still exists — it locates the Chromium *binary* to spawn,
+> which is unaffected by the driver-protocol change — but the fallback paths suggested below assume
+> a Playwright-managed launch and should be read as historical context for the original question,
+> not as a live recommendation for the shipped raw-CDP driver.
+
 * **Context:** In **Task 9**, `resolveChromiumPath` reads `process.env["NIMBUS_CHROMIUM_PATH"]` and otherwise returns `null`.
 * **Question:** If the user has Chrome/Chromium installed in a standard location but has not set the env var, will the lane refuse to open by default? Since zero-config onboarding is a project goal, requiring manual env var configuration is a friction point.
 * **Suggestion:** We should specify common system fallbacks for each OS (e.g. standard program files directory on Windows, `/Applications` on macOS, and `/usr/bin/google-chrome` or `/usr/bin/chromium` on Linux) inside `resolveChromiumPath()` so the system works out-of-the-box for standard installations.
@@ -31,6 +38,11 @@ This document collects feedback, suggestions, and open questions on the [Compute
 ## Suggested Improvements
 
 ### 1. Define Common OS Fallback Executable Paths
+
+> **SUPERSEDED** — see the note on the matching Open Question above. This lookup list is a
+> reasonable executable-path fallback in general, but it was written when this task assumed a
+> Playwright-managed launch; the shipped raw-CDP driver spawns the same binary, so the paths below
+> remain plausible LOCATIONS but are not verified against the actual (deferred) driver code.
 
 Add the following lookup list in `resolveChromiumPath()`:
 

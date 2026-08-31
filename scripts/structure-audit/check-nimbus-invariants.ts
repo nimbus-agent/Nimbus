@@ -937,28 +937,36 @@ export function checkRunConfinedConfinement(files: readonly FileEntry[]): Violat
 // the ledger append and the owner-HITL approval first) plus its own definition file. A second
 // caller would be a second path from a model proposal to the host, bypassing every one of those.
 // Mirrors D23's runConfined confinement. Test files are exempt.
-const D26_ACTUATE_ALLOWED = [
-  "packages/gateway/src/computer-use/cu-gate.ts",
-  "packages/gateway/src/computer-use/cu-actuate.ts",
-];
+// The gate is the one legitimate CALLER. `cu-actuate.ts` is the definition file, not a caller
+// exemption: a wholesale file allow-list (the earlier shape) let ANY occurrence of
+// `performActuation(` inside `cu-actuate.ts` through, including a second, illegitimate direct
+// invocation added below the real declaration — undetected, because the whole file was skipped.
+// Only the DECLARATION line is exempt there now; any call-shaped occurrence elsewhere in that
+// file (or anywhere outside `cu-gate.ts`) is a violation, matching D23's tighter shape.
+const D26_ACTUATE_GATE_FILE = "packages/gateway/src/computer-use/cu-gate.ts";
+const D26_ACTUATE_DEFINITION_FILE = "packages/gateway/src/computer-use/cu-actuate.ts";
 const D26_ACTUATE_RE = /\bperformActuation\s*\(/;
+const D26_ACTUATE_DECLARATION_RE = /\bfunction\s+performActuation\s*\(/;
 
 export function checkActuationConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
-    if (D26_ACTUATE_ALLOWED.includes(f.relPath)) continue;
+    if (f.relPath === D26_ACTUATE_GATE_FILE) continue;
     const stripped = stripComments(f.contents).split("\n");
     const original = f.contents.split("\n");
     for (let i = 0; i < stripped.length; i++) {
-      if (D26_ACTUATE_RE.test(stripped[i] ?? "")) {
-        out.push({
-          rule: "D26-actuation-callsite",
-          file: f.relPath,
-          line: i + 1,
-          snippet: (original[i] ?? "").trim(),
-        });
+      const line = stripped[i] ?? "";
+      if (!D26_ACTUATE_RE.test(line)) continue;
+      if (f.relPath === D26_ACTUATE_DEFINITION_FILE && D26_ACTUATE_DECLARATION_RE.test(line)) {
+        continue; // the declaration itself, not a call
       }
+      out.push({
+        rule: "D26-actuation-callsite",
+        file: f.relPath,
+        line: i + 1,
+        snippet: (original[i] ?? "").trim(),
+      });
     }
   }
   return out;

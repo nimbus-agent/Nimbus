@@ -2743,7 +2743,7 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // code and whose braces must stay balanced) before the depth counter ever runs. This is "the
     // guard" the docs call out by name (a TS interface cannot be reflected at runtime), so its own
     // blind spots matter more than most -- do not narrow this composition back to one stripper.
-    const rawSrc = await Bun.file("packages/gateway/src/computer-use/cu-classify.ts").text();
+    const rawSrc = await read("packages/gateway/src/computer-use/cu-classify.ts");
     const src = stripStringLiterals(stripComments(rawSrc));
     const start = src.indexOf("interface BrowserActionInput");
     const openBrace = src.indexOf("{", start);
@@ -2785,7 +2785,7 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
   });
 
   test("no computer.* method is exposed to the Tauri renderer (I7)", async () => {
-    const rs = await Bun.file("packages/ui/src-tauri/src/gateway_bridge.rs").text();
+    const rs = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     expect(rs).not.toContain("computer.");
   });
 
@@ -2814,10 +2814,14 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // (or by one hiding inside a string literal) — this repo has been bitten by that exact class of
     // false-negative three times over in the sibling classifier-field test below, which is why both
     // strippers are composed here too rather than a bespoke one-off check.
-    const laneFile = "packages/gateway/src/computer-use/cu-lanes/browser.ts";
+    // Absolute (REPO_ROOT-anchored), not a bare relative string: CI's coverage job `cd`s into
+    // `packages/gateway` before running `bun test`, so a relative `Bun.file("packages/...")` call
+    // resolves against the WRONG cwd there (ENOENT) even though it resolves fine from repo root —
+    // exactly the failure this file's own `read()` helper exists to avoid everywhere else.
+    const laneFile = resolve(REPO_ROOT, "packages/gateway/src/computer-use/cu-lanes/browser.ts");
     const target = (await Bun.file(laneFile).exists())
       ? laneFile
-      : "packages/gateway/src/computer-use/cu-actuate.ts";
+      : resolve(REPO_ROOT, "packages/gateway/src/computer-use/cu-actuate.ts");
     const rawSrc = await Bun.file(target).text();
     const src = stripStringLiterals(stripComments(rawSrc));
     // Sanity guard: the scan target must actually mention `screenshot(` at all, or this test would

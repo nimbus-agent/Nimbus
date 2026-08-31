@@ -1230,13 +1230,15 @@ the model's own **untrusted claim** about its intent), and then watches the
 session's action count until it closes. It does not drive any action itself:
 `computer.act` has no production caller anywhere in this build (see below).
 
-**Today, every session ends in `ERR_CU_NO_BROWSER` — there is no local fix.**
-The browser driver does not exist yet: `playwright-core` fails a
-`bun build --compile` gate and is being re-planned against raw CDP over a
-WebSocket, so `cu-gate.ts` refuses every session before consent. No browser
-install or configuration change makes this succeed — the gate, classifier,
-envelope, taint latch, IPC surface and audit trail are fully wired and
-tested, over a path nothing can currently traverse.
+**`ERR_CU_NO_BROWSER` is the furthest a FULLY-CONFIGURED session can get today — there is no local
+fix.** The browser driver does not exist yet: `playwright-core` fails a `bun build --compile` gate
+and is being re-planned against raw CDP over a WebSocket, so `cu-gate.ts` refuses every session
+before consent once it reaches that point. No browser install or configuration change makes this
+succeed — the gate, classifier, envelope, taint latch, IPC surface and audit trail are fully wired
+and tested, over a path nothing can currently traverse. It is not, however, the ONLY refusal a real
+user can reach: with the shipped defaults (`enabled = false`, `allowed_lanes = []`) a session
+refuses with `ERR_CU_DISABLED` first, then `ERR_CU_LANE_NOT_ALLOWED`, then
+`ERR_CU_SANDBOX_DEGRADED` — before `ERR_CU_NO_BROWSER` is ever reached.
 
 **Exit codes.**
 

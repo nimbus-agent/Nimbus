@@ -576,8 +576,10 @@ the hand-maintained mirror that exists because the CLI cannot import the coverag
 
 ## 7. Screenshots and disk
 
-**Screenshots never touch disk.** Pixels are captured into memory, handed to the model, and dropped
-when the action completes. Nothing writes an image file anywhere, at any point, on any lane.
+**Screenshots never touch disk.** Pixels are captured into memory only long enough to compute their
+BLAKE3 digest, then dropped — never handed to the model (see § 5: no vision-capable model is wired
+into the agent, so there is nothing on this path for the no-image boundary to protect yet, but the
+boundary holds regardless). Nothing writes an image file anywhere, at any point, on any lane.
 
 This follows the lesson I33 paid for. Slice 1 moved from a scratch file to an inline body precisely
 because the inline form "removes the scratch file entirely, so nothing can leak on a denial or be
@@ -644,9 +646,12 @@ Action types: `computer.session` (open/close) and `computer.action`.
 I33 the real outcomes do not map one-to-one and `outcome` in the payload distinguishes them:
 `refused_before_consent`, `denied_by_owner`, `actuated`, `failed_after_approval`,
 `refused_out_of_envelope`, `terminated_budget`, `terminated_wall_clock`, `terminated_target_lost`.
-**`not_required` is deliberately never used on a `computer.action` row** — on this action type it
-would read as "this actuated without needing approval", which is the most dangerous thing an auditor
-could wrongly conclude.
+**`not_required` is correct for an `observing` verdict** — no prompt was ever shown, so
+`not_required` accurately says HITL was not required — **and forbidden only as the PAIR with
+`actuating`**: recording `not_required` alongside an `actuated` outcome would read as "this
+actuated without needing approval", which is the most dangerous thing an auditor could wrongly
+conclude. The two verdicts get different `hitl_status` values precisely because they mean different
+things; collapsing that distinction, in either direction, is the anti-pattern.
 
 `refused_out_of_envelope` is worth its own tag: it is the signal that something was steering the
 agent somewhere it was not allowed to go, and a cluster of them is the highest-value alert this

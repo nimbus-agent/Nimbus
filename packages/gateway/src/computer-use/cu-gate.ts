@@ -866,13 +866,26 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
   const { session, lane, openDeps } = live;
   const modelDescription = req.modelDescription ?? null;
 
-  // 0. (fix round 1, I-3.1) Re-check the local kill-switch and org policy on EVERY action, using
-  // THIS call's deps — a tightening org policy (I22) or the local config flipping to disabled
-  // must stop a LIVE session, not merely refuse a NEW one; checking only at open time let a
-  // session already running coast to its full budget/wall-clock ceiling regardless. No `seq` is
-  // consumed: this is decided before `consumeAction`, same as every other pre-budget refusal.
-  if (!deps.config.enabled || deps.enforced.capabilitiesDisabled.has(CAPABILITY)) {
-    const reason = !deps.config.enabled ? "disabled by local config" : "disabled by org policy";
+  // 0. (fix round 1, I-3.1; lane re-check added per review finding) Re-check the local
+  // kill-switch, org policy, AND the lane allow-list on EVERY action, using THIS call's deps — a
+  // tightening org policy (I22), the local config flipping to disabled, OR the owner removing
+  // this session's lane from `allowed_lanes` must stop a LIVE session, not merely refuse a NEW
+  // one; checking only `enabled`/`capabilitiesDisabled` here (and lane membership only in
+  // `openSession`) let a live session coast to its full budget/wall-clock ceiling even after the
+  // owner revoked its lane — `openSession` refusing a NEW session for the same configuration
+  // while the live-session path stayed silent about it. No `seq` is consumed: this is decided
+  // before `consumeAction`, same as every other pre-budget refusal.
+  const laneStillAllowed = deps.config.allowedLanes.includes(session.envelope.lane);
+  if (
+    !deps.config.enabled ||
+    deps.enforced.capabilitiesDisabled.has(CAPABILITY) ||
+    !laneStillAllowed
+  ) {
+    const reason = !deps.config.enabled
+      ? "disabled by local config"
+      : deps.enforced.capabilitiesDisabled.has(CAPABILITY)
+        ? "disabled by org policy"
+        : `lane no longer allowed: ${session.envelope.lane}`;
     session.close("terminated_policy", openDeps.now());
     await finalizeSession({
       deps: openDeps,

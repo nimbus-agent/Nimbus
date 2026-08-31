@@ -1348,6 +1348,32 @@ describe("LocalIndex schema V49 — connector depth default", () => {
     expect(depthOf(db, "svc-metadata")).toBe("metadata_only");
     db.close();
   });
+
+  test("V57 (via the migration RUNNER, not direct SQL) creates cu_session/cu_action and reaches user_version=57", () => {
+    // `computer-use-v57.test.ts` exercises `COMPUTER_USE_V57_SQL` directly, which proves the DDL is
+    // valid SQL but not that `runIndexedSchemaMigrations` actually applies it on the real 56→57
+    // transition (registration in `INDEXED_SCHEMA_STEPS`, the transaction wrapper, and the
+    // `user_version` bump are all a SEPARATE code path from running the SQL by hand).
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 56);
+    expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
+      56,
+    );
+
+    runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
+
+    expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
+      57,
+    );
+    const tables = db
+      .query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'cu_%' ORDER BY name`,
+      )
+      .all()
+      .map((r) => r.name);
+    expect(tables).toEqual(["cu_action", "cu_session"]);
+    db.close();
+  });
 });
 
 // ---------------------------------------------------------------------------
