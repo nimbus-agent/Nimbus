@@ -4,10 +4,12 @@ import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connecto
 import { CO_OWNED_ENTITY_TYPES } from "../../packages/gateway/src/graph/relationship-graph.ts";
 import {
   assertScanIsMeaningful,
+  checkActuationConfinement,
   checkAgentEmitterImportConfinement,
   checkChatopsUnwrappedPost,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
+  checkDriverImportConfinement,
   checkEgressChokepointConfinement,
   checkEmbeddingAppenderConfinement,
   checkEmbeddingConstructorConfinement,
@@ -1521,5 +1523,57 @@ describe("D17-chatops-unwrapped-post — buildConnectorPost may only appear as a
       },
     ]);
     expect(v).toEqual([]);
+  });
+});
+
+describe("D26 — computer-use actuation confinement", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("D26(a) flags performActuation called outside the gate", () => {
+    const v = checkActuationConfinement([
+      file("packages/gateway/src/agents/rogue.ts", "await performActuation(lane, req);"),
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.rule).toBe("D26-actuation-callsite");
+  });
+
+  test("D26(a) allows the gate and the definition file", () => {
+    expect(
+      checkActuationConfinement([
+        file("packages/gateway/src/computer-use/cu-gate.ts", "await performActuation(lane, req);"),
+        file(
+          "packages/gateway/src/computer-use/cu-actuate.ts",
+          "export async function performActuation(",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("D26(b) flags a driver import outside cu-lanes/", () => {
+    // (a) alone does NOT carry this: a new file could construct its own BrowserContext and call
+    // page.click() directly, bypassing the gate entirely. Same gap D22(d) closes for emitters.
+    const v = checkDriverImportConfinement([
+      file("packages/gateway/src/agents/rogue.ts", `import { chromium } from "playwright-core";`),
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.rule).toBe("D26-driver-import");
+  });
+
+  test("D26(b) catches the DYNAMIC import form too", () => {
+    const v = checkDriverImportConfinement([
+      file("packages/gateway/src/agents/rogue.ts", `const p = await import("playwright-core");`),
+    ]);
+    expect(v.length).toBe(1);
+  });
+
+  test("D26(b) allows the lane driver", () => {
+    expect(
+      checkDriverImportConfinement([
+        file(
+          "packages/gateway/src/computer-use/cu-lanes/browser.ts",
+          `import { chromium } from "playwright-core";`,
+        ),
+      ]),
+    ).toEqual([]);
   });
 });

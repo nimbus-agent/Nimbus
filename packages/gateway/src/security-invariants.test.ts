@@ -2689,3 +2689,72 @@ describe("I32 — clip source metadata is whitelist-constructed, so a page canno
     expect(src).toMatch(/const publishedAt = epochMs\(o\["publishedAt"\]\)/);
   });
 });
+
+describe("I35 — computer-use actuation only inside an approved envelope", () => {
+  test("performActuation is called only from cu-gate.ts (and defined in cu-actuate.ts)", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const callers = files
+      .filter((f) => /\bperformActuation\s*\(/.test(stripComments(f.contents)))
+      .map((f) => `packages/gateway/src/${f.rel}`)
+      .sort();
+    expect(callers).toEqual([
+      "packages/gateway/src/computer-use/cu-actuate.ts",
+      "packages/gateway/src/computer-use/cu-gate.ts",
+    ]);
+  });
+
+  test("no browser-driver import exists outside cu-lanes/", async () => {
+    // `computer-use/cu-lanes/` (the browser driver's deferred home, see plan Task 9) does not
+    // exist yet -- its library failed a compile gate and is being re-planned against raw CDP -- so
+    // today's honest claim is narrower than "the driver is imported only under cu-lanes/": no
+    // file ANYWHERE imports a playwright driver at all. Filtering to offenders OUTSIDE cu-lanes/,
+    // rather than asserting a fixed non-empty allow-list, keeps this assertion true both now (zero
+    // importers) and once the driver lands (one importer, correctly confined) -- it need not be
+    // rewritten the day `cu-lanes/browser.ts` is created, only re-read to confirm it still holds.
+    const files = await readDirFiles("packages/gateway/src");
+    const offenders = files
+      .filter((f) => !f.rel.startsWith("computer-use/cu-lanes/"))
+      .filter((f) =>
+        /(?:from\s*|import\s*\(\s*)["']playwright(?:-core)?["']/.test(stripComments(f.contents)),
+      )
+      .map((f) => `packages/gateway/src/${f.rel}`)
+      .sort();
+    expect(offenders).toEqual([]);
+  });
+
+  test("the classifier takes no model-supplied field", async () => {
+    // I3 transplanted: the gate reads a property the gateway derived, never one the caller supplied.
+    const src = await Bun.file("packages/gateway/src/computer-use/cu-classify.ts").text();
+    const iface = src.slice(
+      src.indexOf("interface BrowserActionInput"),
+      src.indexOf("}", src.indexOf("interface BrowserActionInput")),
+    );
+    for (const banned of ["description", "intent", "rationale", "summary", "label"]) {
+      expect(iface).not.toContain(`${banned}:`);
+    }
+  });
+
+  test("no computer.* method is exposed to the Tauri renderer (I7)", async () => {
+    const rs = await Bun.file("packages/ui/src-tauri/src/gateway_bridge.rs").text();
+    expect(rs).not.toContain("computer.");
+  });
+
+  test("the browser lane never writes a screenshot to disk", async () => {
+    // Spec § 7. Playwright persists a screenshot only when given a `path` option; its absence is
+    // the enforcement, so this scan is the thing that keeps it absent. `cu-lanes/browser.ts` (the
+    // deferred driver, see plan Task 9) does not exist yet, so today's honest scan target is
+    // `cu-actuate.ts`'s `screenshot` case -- the only place in the shipped surface that calls a
+    // screenshot method at all right now, and it passes no options (hence no `path`). Once the
+    // real driver lands at `cu-lanes/browser.ts`, this picks it up automatically (that is what a
+    // real `page.screenshot({ path: ... })` call would land in) and must be re-verified there.
+    const laneFile = "packages/gateway/src/computer-use/cu-lanes/browser.ts";
+    const target = (await Bun.file(laneFile).exists())
+      ? laneFile
+      : "packages/gateway/src/computer-use/cu-actuate.ts";
+    const src = await Bun.file(target).text();
+    const shotAt = src.indexOf("screenshot(");
+    expect(shotAt).toBeGreaterThan(-1);
+    const window = src.slice(shotAt, shotAt + 400);
+    expect(window).not.toContain("path:");
+  });
+});
