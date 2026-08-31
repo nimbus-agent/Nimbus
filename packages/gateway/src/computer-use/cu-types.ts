@@ -93,7 +93,7 @@ export type CuBudgetVerdict =
  * which strengthens the static rule confining driver imports to that directory (D26(b)) instead
  * of relying on the gate's import of the driver module being type-only).
  *
- * Task 9, when re-planned against raw CDP, IMPLEMENTS this interface rather than declaring it.
+ * `cu-lanes/browser.ts`'s raw-CDP driver IMPLEMENTS this interface rather than declaring it.
  */
 export interface BrowserLane {
   observe(selector: string): Promise<ObservedNode | null>;
@@ -104,7 +104,56 @@ export interface BrowserLane {
   readText(): Promise<string>;
   domSnapshot(): Promise<string>;
   screenshot(): Promise<Uint8Array>;
+  /**
+   * Is the driven target still the one this session opened? `false` once the browser process has
+   * exited, the CDP transport has closed, or the attached page target is gone.
+   *
+   * This is what makes `CuOutcome`'s `terminated_target_lost` an OUTCOME THE GATE CAN ACTUALLY
+   * ASSIGN rather than a declared-and-handled string nothing ever produces. The gate consults it
+   * before it spends a budget slot and again after every `await` inside an action (a click that
+   * navigates away is the single most common way a CDP execution context dies mid-action), so a
+   * dead lane terminates the session instead of surfacing as a generic
+   * `failed_after_approval` whose message happens to mention a socket.
+   */
+  isAlive(): boolean;
   close(): Promise<void>;
+}
+
+/**
+ * The EXACT launch parameters the browser lane spawns with — the object the gate asserts over
+ * BEFORE consent and then hands, unchanged, to `openLane`.
+ *
+ * It replaces `cu-gate.ts`'s former `browserLanePolicy()`, a `SandboxPolicy` that was asserted
+ * against `SandboxRunner.canConfine` and then never used to launch anything. That was, by its own
+ * in-file disclosure, a statement about the wrong object; worse, the placeholder it asserted
+ * carried `permissions.network: []`, which `linux.ts`'s `decideNetworkMode` reads as `no-net` →
+ * `--unshare-net`, so had it ever reached a real spawn the browser would have had no network at
+ * all — and the gateway could not have reached its CDP endpoint either.
+ *
+ * Routing the browser through `SandboxRunner` was the design's intent (spec § 3.5) and is NOT what
+ * ships, for a reason recorded here rather than discovered later: none of the three PAL runners can
+ * carry a CDP control channel. A loopback debugging port needs `network-bind`, which macOS's
+ * `(deny default)` SBPL profile denies (it emits only `(remote …)` filters); an fd pipe needs
+ * descriptors 3/4 forwarded, which the Windows AppContainer helper does not do; and both Linux and
+ * Windows additionally require `nimbus-sandbox-helper` for any network-bearing policy, a binary CI
+ * does not install. Making it work would mean widening the PAL's profile for EVERY sandboxed
+ * connector, or passing Chromium `--no-sandbox` — disabling the renderer sandbox of the one
+ * process in this codebase that renders attacker-controlled content. Both are worse than the lane
+ * being confined by Chromium's own sandbox, a Nimbus-owned profile directory, and the § 3.5.1 CDP
+ * request policy. See invariant I35's scope bound.
+ *
+ * `argv` is spawned VERBATIM — the driver appends nothing — which is what makes the pre-consent
+ * assertion (`assertBrowserLaunchPolicy`) a statement about the process that actually starts.
+ */
+export interface CuBrowserLaunchPolicy {
+  /**
+   * The ONLY directory Chromium may treat as a profile: `--user-data-dir`. This is what enforces
+   * "no shared cookies, no shared history, no access to the user's real browser profile" (spec
+   * § 3.5). Absolute, and asserted to be so before consent.
+   */
+  readonly profileDir: string;
+  /** Every flag, in order, minus the executable itself. Spawned verbatim. */
+  readonly argv: readonly string[];
 }
 
 /**
@@ -112,7 +161,8 @@ export interface BrowserLane {
  * implementation) to launch a browser lane AFTER the owner has approved the envelope.
  */
 export interface OpenBrowserLaneOptions {
-  readonly profileDir: string;
+  /** The same object `assertBrowserLaunchPolicy` cleared before the owner was prompted. */
+  readonly launch: CuBrowserLaunchPolicy;
   readonly executablePath: string;
   readonly db: Database;
   readonly sessionId: string;

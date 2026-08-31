@@ -55,6 +55,11 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
   { file: "packages/gateway/src/vault/darwin.ts", gate: "Vault", why: "Keychain backend" },
   { file: "packages/gateway/src/vault/linux.ts", gate: "Vault", why: "libsecret backend" },
   {
+    file: "packages/gateway/src/computer-use/cu-lanes/chromium-path.ts",
+    gate: "none",
+    why: "resolveChromiumPath() reads process.platform to pick a candidate list — where a Chromium-family browser is installed differs per OS, and Windows additionally needs the per-user %LOCALAPPDATA% install (the default without admin rights). No coverage-threshold gate names computer-use paths today, and the platform branch is deliberately confined to that one production binding: `chromiumCandidates(platform, env)` is PURE over its arguments, so `chromium-path.test.ts` exercises every platform's list — and both sides of every %PROGRAMFILES%/%LOCALAPPDATA% fallback — on every runner, rather than only the branch the host happens to take",
+  },
+  {
     file: "packages/gateway/src/exec/exec-runtimes.ts",
     gate: "Sandbox",
     why: "ExecRuntime.requiredReadPaths: macOS alone needs the runtime HOME granted; Windows must NOT get it (~/.bun carries thousands of cache entries and the AppContainer helper writes one ACE per path, so granting it hangs every spawn)",

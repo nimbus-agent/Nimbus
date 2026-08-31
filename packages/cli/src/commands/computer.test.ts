@@ -346,6 +346,16 @@ describe("handleActionBroadcast", () => {
   });
 });
 
+/**
+ * The slice of the IPC client the interrupt tests build inline. Structural, and deliberately NOT
+ * imported from `computer.ts` — these tests exercise the command through its injected deps, so a
+ * shape wide enough to satisfy `runWithClient` is exactly the contract under test.
+ */
+interface FakeClient {
+  onNotification(method: string, handler: (params: unknown) => unknown): void;
+  call(method: string, params?: unknown): Promise<unknown>;
+}
+
 describe("runComputer orchestration — browser subcommand", () => {
   function deps(over: Partial<Parameters<typeof runComputer>[1]> = {}) {
     const out: string[] = [];
@@ -353,6 +363,12 @@ describe("runComputer orchestration — browser subcommand", () => {
     const codes: number[] = [];
     const calls: Array<{ method: string; params: unknown }> = [];
     const notifs = new Map<string, (params: unknown) => unknown>();
+    const signal: { handlers: Array<() => void>; fire: () => void } = {
+      handlers: [],
+      fire: () => {
+        for (const h of [...signal.handlers]) h();
+      },
+    };
     const client = {
       onNotification: (m: string, h: (p: unknown) => unknown) => {
         notifs.set(m, h);
@@ -390,9 +406,25 @@ describe("runComputer orchestration — browser subcommand", () => {
       sink: { out: (s: string) => out.push(s), err: (s: string) => err.push(s) },
       setExitCode: (c: number) => codes.push(c),
       sleep: async () => {},
+      // Captured, never attached to the real process: a listener left on `process` after a test
+      // would change how the TEST RUNNER itself responds to Ctrl-C. `signal.fire()` raises it.
+      onSignal: (handler: () => void) => {
+        signal.handlers.push(handler);
+        return () => {
+          signal.handlers = signal.handlers.filter((h) => h !== handler);
+        };
+      },
       ...over,
     };
-    return { out, err, codes, calls, notifs, d: base as never };
+    return {
+      out,
+      err,
+      codes,
+      calls,
+      notifs,
+      signal,
+      d: base as never,
+    };
   }
 
   test("sends computer.sessionOpen with the resolved origin list", async () => {
@@ -562,6 +594,156 @@ describe("runComputer orchestration — browser subcommand", () => {
     });
     await runComputer(["browser", "--origin", "https://example.com"], h.d);
     expect(h.codes).toEqual([CU_EXIT_CODES.refused]);
+  });
+
+  test("Ctrl-C asks the GATEWAY to close the session, and exits 130", async () => {
+    // Before this, an interrupt exited THIS process and left the gateway holding a live headless
+    // browser inside an approved envelope with nothing watching it — until its wall-clock ceiling
+    // expired (five minutes on the shipped defaults). The session belongs to the gateway, not to
+    // this process, so the fix is to ask the gateway to close it rather than to exit harder.
+    let polls = 0;
+    const seen: string[] = [];
+    const h = deps({
+      runWithClient: async <T>(fn: (c: FakeClient) => Promise<T>) =>
+        fn({
+          onNotification: () => {},
+          call: async (method: string) => {
+            seen.push(method);
+            if (method === "computer.sessionOpen") {
+              return { status: "open", sessionId: "sess-1" };
+            }
+            if (method === "computer.sessionStatus") {
+              polls += 1;
+              // Open on the first poll (so the watch loop is genuinely running when the signal
+              // arrives), closed on the next — as it would be once the gateway honours the close.
+              return {
+                sessions: [
+                  {
+                    sessionId: "sess-1",
+                    lane: "browser",
+                    openedAt: 0,
+                    closedAt: polls > 1 ? 1 : null,
+                    closeReason: polls > 1 ? "owner" : null,
+                    taintedAt: null,
+                    actionsUsed: 0,
+                    open: polls <= 1,
+                  },
+                ],
+              };
+            }
+            return { status: "closed" };
+          },
+        }),
+      // Fire the interrupt from inside the poll loop's own pause, which is where a real Ctrl-C
+      // lands: the loop is idle between polls for all but a few microseconds of its life.
+      sleep: async () => {
+        h.signal.fire();
+      },
+    });
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(seen.filter((m) => m === "computer.sessionClose")).toHaveLength(1);
+    // A clean close driven by our own interrupt still exits 130: the SESSION ended tidily, but the
+    // COMMAND was interrupted, and that is what a caller is asking about.
+    expect(h.codes).toEqual([CU_EXIT_CODES.interrupted]);
+    expect(h.err.join("")).toContain("closing the computer-use session");
+  });
+
+  test("a SECOND interrupt stops waiting and names the recovery command", async () => {
+    // If the first close is not landing, blocking the user's terminal on it is the wrong trade —
+    // but exiting silently would leave them with a session they cannot find. The message carries
+    // the id and the exact command.
+    const seen: string[] = [];
+    const h = deps({
+      runWithClient: async <T>(fn: (c: FakeClient) => Promise<T>) =>
+        fn({
+          onNotification: () => {},
+          call: async (method: string) => {
+            seen.push(method);
+            if (method === "computer.sessionOpen") {
+              return { status: "open", sessionId: "sess-1" };
+            }
+            if (method === "computer.sessionStatus") {
+              // NEVER closes — a gateway that is not honouring the close.
+              return {
+                sessions: [
+                  {
+                    sessionId: "sess-1",
+                    lane: "browser",
+                    openedAt: 0,
+                    closedAt: null,
+                    closeReason: null,
+                    taintedAt: null,
+                    actionsUsed: 0,
+                    open: true,
+                  },
+                ],
+              };
+            }
+            return { status: "closed" };
+          },
+        }),
+      sleep: async () => {
+        h.signal.fire();
+      },
+    });
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.interrupted]);
+    expect(h.err.join("")).toContain("nimbus computer close sess-1");
+    // Exactly one close attempt: the second interrupt gives up rather than retrying forever.
+    expect(seen.filter((m) => m === "computer.sessionClose")).toHaveLength(1);
+  });
+
+  test("a failing sessionClose does not raise out of the signal handler", async () => {
+    // Nothing can await a signal handler, so a rejected close must be swallowed there; the watch
+    // loop reports what actually happened to the session.
+    let polls = 0;
+    const h = deps({
+      runWithClient: async <T>(fn: (c: FakeClient) => Promise<T>) =>
+        fn({
+          onNotification: () => {},
+          call: async (method: string) => {
+            if (method === "computer.sessionOpen") {
+              return { status: "open", sessionId: "sess-1" };
+            }
+            if (method === "computer.sessionClose") throw new Error("gateway went away");
+            polls += 1;
+            return {
+              sessions: [
+                {
+                  sessionId: "sess-1",
+                  lane: "browser",
+                  openedAt: 0,
+                  closedAt: polls > 1 ? 1 : null,
+                  closeReason: polls > 1 ? "owner" : null,
+                  taintedAt: null,
+                  actionsUsed: 0,
+                  open: polls <= 1,
+                },
+              ],
+            };
+          },
+        }),
+      sleep: async () => {
+        h.signal.fire();
+      },
+    });
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.interrupted]);
+  });
+
+  test("the signal handler is UNREGISTERED once the command finishes", async () => {
+    // A listener left attached would outlive the command and change how the process responds to a
+    // later Ctrl-C — in the CLI's case, to one aimed at whatever runs next.
+    const h = deps();
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.signal.handlers).toEqual([]);
+  });
+
+  test("an uninterrupted session keeps its own exit code", async () => {
+    // The interrupt path must not change the ordinary one: a clean close is still 0.
+    const h = deps();
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.codes).toEqual([0]);
   });
 });
 

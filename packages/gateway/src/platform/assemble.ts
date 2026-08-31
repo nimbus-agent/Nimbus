@@ -31,7 +31,14 @@ import {
 } from "../chatops/chatops-tool-runner-e2e-sink.ts";
 import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
 import { PairingWindowController } from "../clips/pairing-window.ts";
+import { reconcileOrphanedSessions } from "../computer-use/cu-boot-reconcile.ts";
 import { cuActionConsent, cuEnvelopeConsent } from "../computer-use/cu-consent-broker.ts";
+import { openBrowserLane } from "../computer-use/cu-lanes/browser.ts";
+import {
+  assertBrowserLaunchPolicy,
+  buildChromiumLaunchPolicy,
+} from "../computer-use/cu-lanes/browser-launch.ts";
+import { resolveChromiumPath } from "../computer-use/cu-lanes/chromium-path.ts";
 import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
@@ -63,6 +70,7 @@ import {
   loadNimbusTribalFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
   type NimbusChatopsToml,
+  type NimbusComputerUseToml,
   type NimbusLlmLocalRoute,
   type NimbusLlmRemoteVendor,
   type NimbusLlmToml,
@@ -3292,43 +3300,86 @@ export async function assemblePlatformServices(
   // `policyGate.enforced()` rather than snapshotted, so a policy installed after boot tightens the
   // next session rather than the next restart.
   //
-  // `resolveBrowserPath`/`openLane` are `CuGateDeps` seams the browser driver owns. That driver
-  // does NOT exist yet — its library failed a compile gate and is being re-planned against raw
-  // CDP — so these are wired honestly rather than stubbed to look functional: resolving no browser
-  // makes the gate refuse BEFORE consent with `ERR_CU_NO_BROWSER` (fail-closed), and `openLane`
-  // is consequently unreachable in production until the driver task lands.
+  // `resolveBrowserPath`/`buildLaunchPolicy`/`assertLaunchable`/`openLane` are the four `CuGateDeps`
+  // seams the browser driver owns, and THIS IS THE ONLY FILE THAT SUPPLIES THEM (static rule
+  // D26(c) confines `openBrowserLane` to this file plus its own definition, the same shape D22(f)
+  // uses for `wrapLedgeredEmbedder`). Injecting them rather than importing the driver into
+  // `cu-gate.ts` is what keeps the gate testable with no browser installed and clear of the
+  // D26(b) driver-capability confinement.
+  //
+  // `[computer_use] browser_profile_dir` defaults to the EMPTY string, meaning "use
+  // `<configDir>/computer-use/profile`" (spec § 9). That default is resolved HERE, at the one layer
+  // that knows `configDir`, and never inside the gate: `assertBrowserLaunchPolicy` refuses an empty
+  // or relative profile directory outright, because Chromium with no `--user-data-dir` runs against
+  // the OWNER'S REAL PROFILE — their cookies, sessions and history. An unresolved default must fail
+  // the launch assertion, not fall back to something plausible.
   const computerUseCfg = loadNimbusComputerUseFromConfigDir(paths.configDir);
+  const cuBrowserProfileDir =
+    computerUseCfg.browserProfileDir === ""
+      ? join(paths.configDir, "computer-use", "profile")
+      : computerUseCfg.browserProfileDir;
+  const cuConfig: NimbusComputerUseToml = {
+    ...computerUseCfg,
+    browserProfileDir: cuBrowserProfileDir,
+  };
+
+  // Reconcile `cu_session` rows orphaned by a previous gateway process, BEFORE any session of this
+  // one can be opened (see `cu-boot-reconcile.ts`): the durable table survives a restart and the
+  // gate's in-memory `liveSessions` map does not, so without this they disagree permanently — a
+  // session shows open forever, `sessionClose` answers `not_found`, and the CLI's watch loop never
+  // exits. Best-effort, matching `appendBootMarkerOrWarn`: a bookkeeping failure must not abort
+  // gateway startup, and staying silent about it is what would make it a bug rather than an event.
+  try {
+    const reconciled = reconcileOrphanedSessions(db, { now: () => Date.now() });
+    if (reconciled.reconciled > 0) {
+      syncLogger.info(
+        { sessions: reconciled.reconciled },
+        "computer-use: closed sessions orphaned by a previous gateway process",
+      );
+    }
+  } catch (e) {
+    syncLogger.warn(
+      { err: e instanceof Error ? e.message : String(e) },
+      "computer-use: could not reconcile orphaned sessions; `nimbus computer sessions` may show a stale open session",
+    );
+  }
+
   ipcOpts.computerRpcCtx = {
     envelopeConsent: cuEnvelopeConsent,
     actionConsent: cuActionConsent,
     gateDeps: {
-      config: computerUseCfg,
+      config: cuConfig,
       get enforced() {
         return policyGate.enforced();
       },
-      runner: sandboxRunner,
       db,
       now: () => Date.now(),
       newId: () => randomUUID(),
-      resolveBrowserPath: () => null,
-      openLane: () => {
-        throw new Error(
-          "computer-use browser lane not implemented — owned by the re-planned CDP driver task",
-        );
+      resolveBrowserPath: resolveChromiumPath,
+      buildLaunchPolicy: buildChromiumLaunchPolicy,
+      assertLaunchable: assertBrowserLaunchPolicy,
+      openLane: (opts) => openBrowserLane(opts),
+      // `CuGateDeps.requestApproval` takes the UNION of the two approval-input shapes; routed on
+      // the `promptKind` DISCRIMINANT. This used to probe `"seq" in input` — a structural property
+      // standing in for a tagged union, sound only because `seq` happened to exist on one shape and
+      // not the other. Adding a `seq` to the envelope input would have silently routed every
+      // session-open prompt to the ACTION broker, whose renderer draws a different prompt entirely:
+      // the owner would be asked to approve "a browser action" while the origin lists and budgets
+      // they were actually granting went unshown. `switch` on a literal makes a third prompt kind a
+      // compile error here instead.
+      requestApproval: (input) => {
+        const ttlMs = (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000;
+        switch (input.promptKind) {
+          case "envelope":
+            return cuEnvelopeConsent.request(input, ttlMs);
+          case "action":
+            return cuActionConsent.request(input, ttlMs);
+          default: {
+            const exhaustive: never = input;
+            throw new Error(`unrecognised computer-use approval kind: ${String(exhaustive)}`);
+          }
+        }
       },
-      // `CuGateDeps.requestApproval` takes the UNION of the two approval-input shapes (Task 10's
-      // own signature); routed to the matching broker by the one field that tells them apart —
-      // `seq`, present only on a per-ACTION approval, never on an envelope-open approval.
-      requestApproval: (input) =>
-        "seq" in input
-          ? cuActionConsent.request(
-              input,
-              (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000,
-            )
-          : cuEnvelopeConsent.request(
-              input,
-              (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000,
-            ),
     },
   };
 

@@ -1621,4 +1621,97 @@ describe("D26 — computer-use actuation confinement", () => {
       ]),
     ).toEqual([]);
   });
+
+  test("D26(b) covers automation libraries beyond the ONE this repo tried and rejected", () => {
+    // The rule matched `playwright`/`playwright-core` only. Narrowing a guard to the single library
+    // someone happened to evaluate means it has to be re-widened the day anyone adds another.
+    for (const lib of [
+      "puppeteer",
+      "puppeteer-core",
+      "chrome-remote-interface",
+      "chrome-launcher",
+    ]) {
+      const v = checkDriverImportConfinement([
+        file("packages/gateway/src/agents/rogue.ts", `import x from "${lib}";`),
+      ]);
+      expect(v.length).toBe(1);
+      expect(v[0]?.rule).toBe("D26-driver-import");
+    }
+  });
+
+  test("D26(b) catches a RAW CDP client, which the library-only check missed entirely", () => {
+    // The gap this closes, and it was a real one: the shipped driver is raw CDP over a WebSocket
+    // with no dependency at all, so a file opening its own socket and clicking passed the old rule
+    // SILENTLY -- disclosed in SECURITY-INVARIANTS.md rather than enforced. A CDP client cannot do
+    // anything without NAMING a protocol method, whatever transport it reaches the browser over.
+    for (const call of [
+      `ws.send(JSON.stringify({ id: 1, method: "Input.dispatchMouseEvent" }));`,
+      `await send("Page.navigate", { url });`,
+      `conn.send('Runtime.evaluate', { expression });`,
+      `const r = await cdp.send(\`Fetch.continueRequest\`, {});`,
+    ]) {
+      const v = checkDriverImportConfinement([file("packages/gateway/src/agents/rogue.ts", call)]);
+      expect(v.length).toBe(1);
+      expect(v[0]?.rule).toBe("D26-driver-import");
+    }
+  });
+
+  test("D26(b) does NOT flag ordinary dotted strings that merely look protocol-shaped", () => {
+    // Measured, not assumed: this pattern has zero matches across packages/gateway/src,
+    // packages/cli/src and scripts/ outside cu-lanes/. These are the near misses.
+    expect(
+      checkDriverImportConfinement([
+        file(
+          "packages/gateway/src/ipc/x.ts",
+          [
+            `const m = "computer.sessionOpen";`,
+            `const n = "agents.negotiate";`,
+            `const o = "browser.request";`,
+            `const q = "Page";`,
+            `log.info("DOM.");`,
+          ].join("\n"),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("D26(b) exempts the lane directory for the CDP form too", () => {
+    expect(
+      checkDriverImportConfinement([
+        file(
+          "packages/gateway/src/computer-use/cu-lanes/cdp-session.ts",
+          `conn.send("Target.attachToTarget", { targetId, flatten: true });`,
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("D26(c) flags openBrowserLane named outside its definition and the wiring site", () => {
+    // The capability arrives as a FUNCTION VALUE, not as protocol text, so neither (a) nor (b) can
+    // see it: any file that can import the lane constructor gets a live BrowserLane and can click
+    // with no envelope, classification, consent or audit row.
+    const v = checkDriverImportConfinement([
+      file(
+        "packages/gateway/src/agents/rogue.ts",
+        `import { openBrowserLane } from "../computer-use/cu-lanes/browser.ts";`,
+      ),
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.rule).toBe("D26-lane-constructor");
+  });
+
+  test("D26(c) allows the definition file and the single production wiring site", () => {
+    expect(
+      checkDriverImportConfinement([
+        file(
+          "packages/gateway/src/computer-use/cu-lanes/browser.ts",
+          `export async function openBrowserLane(opts) {}`,
+        ),
+        file(
+          "packages/gateway/src/platform/assemble.ts",
+          `import { openBrowserLane } from "../computer-use/cu-lanes/browser.ts";`,
+        ),
+      ]),
+    ).toEqual([]);
+  });
 });

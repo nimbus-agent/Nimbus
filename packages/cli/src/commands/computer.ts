@@ -18,14 +18,22 @@ import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
  * something this file can ever observe directly; only the envelope-level denial is reachable here.
  *
  * `terminatedBudget`/`terminatedWallClock` are reachable via `computer.sessionStatus.closeReason`
- * while this command WATCHES an open session that something else (today: nothing, since the
- * browser driver is deferred; going forward: an agent driving `runAction` in-process) is actuating.
+ * while this command WATCHES an open session that something else is actuating — that something
+ * being `cu-tools.ts`'s model-callable browser tools, which drive `runAction` in-process inside
+ * the gateway, never over this RPC.
  */
 export const CU_EXIT_CODES = {
   deniedByOwner: 110,
   terminatedBudget: 112,
   terminatedWallClock: 113,
   refused: 127,
+  /**
+   * `128 + SIGINT(2)`, the POSIX convention a shell reports for a Ctrl-C'd child. Deliberately the
+   * conventional number rather than another value in this file's 11x block: a wrapper script asking
+   * "was this interrupted?" already knows to test for 130, and inventing a Nimbus-specific code for
+   * a signal every other program reports the same way would be a gratuitous difference.
+   */
+  interrupted: 130,
 } as const;
 
 /**
@@ -345,22 +353,28 @@ export interface OutcomeSink {
 /**
  * Actionable, honest messages per `refused` code.
  *
- * `ERR_CU_NO_BROWSER` is the furthest a FULLY-CONFIGURED user (capability enabled, lane allowed,
- * sandbox confining) can get today, not the only refusal a real user can reach — with the shipped
- * defaults (`enabled = false`, `allowed_lanes = []`) a real user hits `ERR_CU_DISABLED` first, then
- * `ERR_CU_LANE_NOT_ALLOWED`, then `ERR_CU_SANDBOX_DEGRADED`, before this one is even reached. Once
- * reached: the browser driver is deferred (re-planned against raw CDP after `playwright-core`
- * failed a `bun build --compile` gate — invariant I35), so `platform/assemble.ts` wires
- * `resolveBrowserPath: () => null` and the gate refuses every session before consent. There is no
- * local fix for that — no Chromium install, no config change — so the message says so plainly
- * rather than suggesting a remedy that does not
- * exist. Every other code here has an actual remedy, and says what it is.
+ * Every code here has a real remedy and names it. That is worth stating because it was NOT true
+ * before the raw-CDP driver landed: `ERR_CU_NO_BROWSER` used to be unfixable — the driver did not
+ * exist, so no browser install or config change could make a session succeed, and this map said so
+ * rather than suggesting a remedy that was not available. It now means what it says.
+ *
+ * The ORDER a real user meets these matters more than any single message: with the shipped defaults
+ * (`enabled = false`, `allowed_lanes = []`) they hit `ERR_CU_DISABLED` first, then
+ * `ERR_CU_LANE_NOT_ALLOWED`, then — only past both — a launch-policy or browser-presence refusal.
+ *
+ * `ERR_CU_SANDBOX_DEGRADED` was REMOVED rather than left in place: the browser lane no longer
+ * asserts `SandboxRunner.canConfine` (it does not spawn through the PAL — see invariant I35), so
+ * the gate cannot emit that code, and a message for an unreachable code is documentation drift.
+ * A later lane that does spawn through the PAL should add it back with its own wording.
  */
 const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
   ERR_CU_NO_BROWSER:
-    "nimbus: computer-use has no browser driver in this build. The browser lane is not yet " +
-    "implemented (its driver is deferred, pending a raw-CDP rewrite) — there is no local fix for " +
-    "this: no browser install or configuration change will make this succeed yet.",
+    "nimbus: no Chrome, Chromium or Edge was found. Install a Chromium-family browser, or set " +
+    "NIMBUS_CHROMIUM_PATH to an absolute path to one (it must exist; a relative path is refused).",
+  ERR_CU_UNSAFE_LAUNCH:
+    "nimbus: refusing to launch an under-confined browser. Most often [computer_use] " +
+    "browser_profile_dir is empty or relative — it must be an absolute path, because Chromium " +
+    "with no --user-data-dir runs against your real browser profile.",
   ERR_CU_DISABLED:
     "nimbus: computer-use is disabled. Set [computer_use] enabled = true in nimbus.toml to use " +
     "this command.",
@@ -368,9 +382,6 @@ const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
   ERR_CU_LANE_NOT_ALLOWED:
     'nimbus: the browser lane is not allowed. Add "browser" to [computer_use] allowed_lanes in ' +
     "nimbus.toml.",
-  ERR_CU_SANDBOX_DEGRADED:
-    "nimbus: refusing to open an unconfined session — this machine's sandbox cannot confine the " +
-    "browser lane's policy right now.",
   ERR_CU_BAD_ORIGIN:
     "nimbus: the gateway rejected an origin this command believed it had already normalised — " +
     "please report this as a bug.",
@@ -400,6 +411,15 @@ export interface RunComputerDeps {
   readonly setExitCode: (code: number) => void;
   /** Paces the session-status poll loop that watches an open session for its close. */
   readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * Register an interrupt handler; returns an unregister function.
+   *
+   * Injected rather than calling `process.on` inline for the usual reason — a test cannot raise a
+   * real SIGINT portably (Windows has no `kill -INT` to a specific process from `bun test`) — and
+   * for one specific to this file: leaving a real listener attached after a test would change how
+   * the TEST RUNNER responds to Ctrl-C.
+   */
+  readonly onSignal: (handler: () => void) => () => void;
 }
 
 const defaultDeps: RunComputerDeps = {
@@ -419,6 +439,14 @@ const defaultDeps: RunComputerDeps = {
     process.exitCode = c;
   },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  onSignal: (handler) => {
+    process.on("SIGINT", handler);
+    process.on("SIGTERM", handler);
+    return () => {
+      process.off("SIGINT", handler);
+      process.off("SIGTERM", handler);
+    };
+  },
 };
 
 interface OpenSessionResultShape {
@@ -443,13 +471,13 @@ const SESSION_POLL_MS = 2000;
  * Watch an already-open session until it closes, printing the action count as it changes and the
  * final close reason — "the action log" the brief asks this command to stream.
  *
- * This is a PASSIVE LISTENER, not a driver. `computer.act` has no production caller from this
- * command: whatever actuates a session is a different, not-yet-built surface (per I35's own scope
- * bound, no actuation can reach a host at all yet — `buildComputerUseTools` in `cu-tools.ts`
- * already anticipates driving `runAction` in-process from inside the gateway, never over this
- * RPC). This command's only job is to keep both consent-broker handlers registered and show a
- * human what happened, per spec § 9: "opens a session and streams the action log; the owner
- * answers prompts inline" — a listen-and-approve terminal, not a command shell.
+ * This is a PASSIVE LISTENER, not a driver, and that is the design rather than a gap.
+ * `computer.act` has no production caller from THIS command: what actuates a session is
+ * `cu-tools.ts`'s `buildComputerUseTools`, driving `runAction` in-process from inside the gateway
+ * and only while a session is live — never over this RPC. This command's only job is to keep both
+ * consent-broker handlers registered, close the session cleanly on an interrupt, and show a human
+ * what happened, per spec § 9: "opens a session and streams the action log; the owner answers
+ * prompts inline" — a listen-and-approve terminal, not a command shell.
  *
  * An earlier version of this file let the LOCAL OPERATOR type actions here directly. That was
  * removed: it never populated `modelDescription`, so every actuating prompt an operator drove
@@ -464,9 +492,11 @@ async function watchSessionUntilClosed(
   c: ComputerClient,
   sessionId: string,
   deps: RunComputerDeps,
+  shouldAbort: () => boolean = () => false,
 ): Promise<number> {
   let lastActionsUsed = -1;
   for (;;) {
+    if (shouldAbort()) return CU_EXIT_CODES.interrupted;
     const { sessions } = (await c.call("computer.sessionStatus", { sessionId })) as {
       sessions: ComputerSessionStatusEntry[];
     };
@@ -543,8 +573,46 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
         return;
       }
 
-      deps.sink.out(`Session opened: ${openResult.sessionId}\n`);
-      exitCode = await watchSessionUntilClosed(c, openResult.sessionId, deps);
+      const sessionId = openResult.sessionId;
+      deps.sink.out(`Session opened: ${sessionId}\n`);
+
+      // Ctrl-C used to leave the session OPEN SERVER-SIDE: this process exited, and the gateway
+      // kept a live headless browser inside an approved envelope with nothing left watching it —
+      // until its wall-clock ceiling expired, which for the default `[computer_use]` bounds is five
+      // minutes of an unobserved browser holding whatever the page had loaded. Worse, the owner had
+      // no signal that it was still there: `nimbus computer sessions` would show it open and the
+      // only way to end it was to know the id and run `nimbus computer close`.
+      //
+      // The session belongs to the GATEWAY, not to this process, so the fix is to ask the gateway
+      // to close it, not to exit harder. A second interrupt stops waiting — if the first close is
+      // not landing, blocking the user's terminal on it is the wrong trade, and the message names
+      // the recovery command rather than leaving them to find it.
+      let interrupted = false;
+      let forced = false;
+      const unregisterSignals = deps.onSignal(() => {
+        if (interrupted) {
+          forced = true;
+          deps.sink.err(
+            `nimbus: giving up on a clean close — the session may still be open. Run: nimbus computer close ${sessionId}\n`,
+          );
+          return;
+        }
+        interrupted = true;
+        deps.sink.err("\nnimbus: interrupted — closing the computer-use session...\n");
+        void Promise.resolve(c.call("computer.sessionClose", { sessionId })).catch(() => {
+          // The watch loop reports what actually happened to the session; a failed close attempt
+          // must not raise here, where nothing can await it.
+        });
+      });
+
+      try {
+        exitCode = await watchSessionUntilClosed(c, sessionId, deps, () => forced);
+      } finally {
+        unregisterSignals();
+      }
+      // A clean close driven by our own interrupt still exits 130: the session ended tidily, but
+      // the COMMAND was interrupted, and that is what a caller is asking about.
+      if (interrupted) exitCode = CU_EXIT_CODES.interrupted;
     });
     deps.setExitCode(exitCode);
   } catch (e) {

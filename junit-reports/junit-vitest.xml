@@ -1,7 +1,2792 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<testsuites name="vitest tests" tests="1" failures="0" errors="0" time="0.0181785">
-    <testsuite name="src/shell.vitest.tsx" timestamp="2026-04-18T18:27:50.137Z" hostname="AsafGolombek" tests="1" failures="0" errors="0" skipped="0" time="0.0181785">
-        <testcase classname="src/shell.vitest.tsx" name="UI shell &gt; renders placeholder copy" time="0.0165413">
+<testsuites name="vitest tests" tests="518" failures="0" errors="0" time="58.0935213">
+    <testsuite name="test/layouts/RootLayout.profile-switched.test.tsx" timestamp="2026-08-31T19:47:40.840Z" hostname="AsafGolombek" tests="1" failures="0" errors="0" skipped="0" time="0.0804561">
+        <testcase classname="test/layouts/RootLayout.profile-switched.test.tsx" name="RootLayout — profile.switched → restartApp() &gt; calls restartApp() when profile://switched fires" time="0.0755432">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/layouts/RootLayout.test.tsx" timestamp="2026-08-31T19:47:40.843Z" hostname="AsafGolombek" tests="7" failures="0" errors="0" skipped="0" time="0.3947348">
+        <testcase classname="test/layouts/RootLayout.test.tsx" name="RootLayout &gt; does not render the offline banner when connected" time="0.0918125">
+        </testcase>
+        <testcase classname="test/layouts/RootLayout.test.tsx" name="RootLayout &gt; renders the offline banner when disconnected" time="0.073487">
+        </testcase>
+        <testcase classname="test/layouts/RootLayout.test.tsx" name="RootLayout &gt; enqueues a consent request when consent://request fires" time="0.0553453">
+        </testcase>
+        <testcase classname="test/layouts/RootLayout.test.tsx" name="RootLayout &gt; enqueues a consent request without details when the field is absent" time="0.0453718">
+        </testcase>
+        <testcase classname="test/layouts/RootLayout.test.tsx" name="RootLayout &gt; resolves a pending request when consent://resolved fires" time="0.0491334">
+        </testcase>
+        <testcase classname="test/layouts/RootLayout.test.tsx" name="RootLayout &gt; navigates and highlights a connector when tray://open-connector fires" time="0.0315257">
+        </testcase>
+        <testcase classname="test/layouts/RootLayout.test.tsx" name="RootLayout &gt; recovers pending requests from get_pending_hitl on mount" time="0.0431899">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/providers/GatewayConnectionProvider.test.tsx" timestamp="2026-08-31T19:47:40.846Z" hostname="AsafGolombek" tests="6" failures="0" errors="0" skipped="0" time="0.5961549">
+        <testcase classname="test/providers/GatewayConnectionProvider.test.tsx" name="GatewayConnectionProvider &gt; mirrors connection state into the store" time="0.068692">
+        </testcase>
+        <testcase classname="test/providers/GatewayConnectionProvider.test.tsx" name="GatewayConnectionProvider &gt; routes to / when meta is non-null (&apos;has items&apos;)" time="0.1410967">
+        </testcase>
+        <testcase classname="test/providers/GatewayConnectionProvider.test.tsx" name="GatewayConnectionProvider &gt; routes to / when meta is non-null (&apos;zero items but meta non-null&apos;)" time="0.1384121">
+        </testcase>
+        <testcase classname="test/providers/GatewayConnectionProvider.test.tsx" name="GatewayConnectionProvider &gt; routes to /onboarding/welcome on first connected when no data and no meta" time="0.1098176">
+        </testcase>
+        <testcase classname="test/providers/GatewayConnectionProvider.test.tsx" name="GatewayConnectionProvider &gt; fires runFirstConnect only once when &apos;connected&apos; arrives twice" time="0.1234194">
+        </testcase>
+        <testcase classname="test/providers/GatewayConnectionProvider.test.tsx" name="GatewayConnectionProvider &gt; exhausts MAX_ATTEMPTS without throwing when all IPC calls fail" time="0.0077852">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/ipc/client-ws5c-plan4.test.ts" timestamp="2026-08-31T19:47:40.846Z" hostname="AsafGolombek" tests="12" failures="0" errors="0" skipped="0" time="0.0201314">
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; auditGetSummary forwards to audit.getSummary and returns the object verbatim" time="0.006649">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; auditGetSummary throws if Gateway returns non-object" time="0.0026231">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; auditVerify defaults `full` to false and forwards" time="0.0008774">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; auditVerify(true) forwards `full: true`" time="0.0003619">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; auditExport returns the array verbatim" time="0.0004795">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; auditExport throws if Gateway returns non-array" time="0.0004465">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; updaterGetStatus returns the object verbatim" time="0.0014882">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; updaterCheckNow returns the object verbatim" time="0.0011797">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; updaterApplyUpdate returns the jobId object" time="0.0008948">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; updaterRollback returns { ok: true }" time="0.0005882">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; updaterRollback throws if Gateway returns non-object" time="0.0005077">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan4.test.ts" name="WS5-C Plan 4 IPC wrappers &gt; diagGetVersion returns the object verbatim" time="0.0005206">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/ipc/client-ws5c-plan5.test.ts" timestamp="2026-08-31T19:47:40.848Z" hostname="AsafGolombek" tests="15" failures="0" errors="0" skipped="0" time="0.0183664">
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 4 — missing error branches &gt; auditList throws if Gateway returns non-array" time="0.0056098">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 4 — missing error branches &gt; diagGetVersion throws if Gateway returns non-object" time="0.0008955">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataGetExportPreflight returns the preflight result on valid shape" time="0.0024649">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataGetExportPreflight throws on shape mismatch (non-object)" time="0.0005986">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataGetExportPreflight throws when required fields are missing" time="0.0005711">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataGetDeletePreflight returns the preflight result on valid shape" time="0.0006641">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataGetDeletePreflight throws on shape mismatch" time="0.0003537">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataExport returns the export result on valid shape" time="0.0006476">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataExport throws on shape mismatch" time="0.0003768">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataImport with passphrase sends correct params and returns result" time="0.0005955">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataImport with recoverySeed sends correct params" time="0.0004113">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataImport throws on shape mismatch" time="0.0004286">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataDelete returns the delete result on valid shape" time="0.0006853">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataDelete throws on shape mismatch (non-object preflight)" time="0.0003912">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c-plan5.test.ts" name="WS5-C Plan 5 — data panel IPC wrappers &gt; dataDelete throws when top-level shape is wrong" time="0.00039">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/ipc/client-ws5c.test.ts" timestamp="2026-08-31T19:47:40.849Z" hostname="AsafGolombek" tests="18" failures="0" errors="0" skipped="0" time="0.0186863">
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Profile wrappers &gt; profileList calls rpc_call with method=profile.list, params={}" time="0.0055519">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Profile wrappers &gt; profileCreate passes { name } as params" time="0.0005478">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Profile wrappers &gt; profileSwitch passes { name } as params" time="0.0004269">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Profile wrappers &gt; profileDelete passes { name } as params" time="0.0005315">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Telemetry wrappers &gt; telemetryGetStatus returns disabled shape unchanged" time="0.0005738">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Telemetry wrappers &gt; telemetryGetStatus returns enabled + preview payload intact" time="0.000487">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Telemetry wrappers &gt; telemetrySetEnabled passes { enabled: boolean }" time="0.0005246">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Connector setConfig wrapper &gt; passes a full patch with service + all optional fields" time="0.0006311">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — Connector setConfig wrapper &gt; allows partial patches (enabled only)" time="0.0003689">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmListModels rejects non-object responses" time="0.0020511">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmListModels returns the parsed envelope" time="0.000639">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmGetStatus returns the availability map" time="0.0005551">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmGetRouterStatus returns the decisions map" time="0.0004939">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmPullModel passes provider + modelName and returns pullId" time="0.0004365">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmCancelPull passes pullId and returns cancelled boolean" time="0.0003155">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmLoadModel passes provider + modelName" time="0.0002881">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmUnloadModel passes provider + modelName" time="0.0003484">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5c.test.ts" name="NimbusIpcClient — LLM wrappers &gt; llmSetDefault passes taskType + provider + modelName" time="0.0004848">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/ipc/client-ws5d.test.ts" timestamp="2026-08-31T19:47:40.850Z" hostname="AsafGolombek" tests="19" failures="0" errors="0" skipped="0" time="0.0203772">
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — watcher IPC wrappers &gt; watcherList calls watcher.list and returns result" time="0.0057941">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — watcher IPC wrappers &gt; watcherList throws when response is not an object" time="0.0025242">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — watcher IPC wrappers &gt; watcherCreate calls watcher.create with correct params" time="0.000778">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — watcher IPC wrappers &gt; watcherDelete calls watcher.delete with id" time="0.0005884">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — watcher IPC wrappers &gt; watcherPause calls watcher.pause with id" time="0.0004584">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — watcher IPC wrappers &gt; watcherResume calls watcher.resume with id" time="0.0005169">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — extension IPC wrappers &gt; extensionList calls extension.list and returns result" time="0.0005352">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — extension IPC wrappers &gt; extensionList throws when response is not an object" time="0.0004465">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — extension IPC wrappers &gt; extensionInstall calls extension.install with sourcePath" time="0.0005437">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — extension IPC wrappers &gt; extensionEnable calls extension.enable with id" time="0.0004607">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — extension IPC wrappers &gt; extensionDisable calls extension.disable with id" time="0.0003939">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — extension IPC wrappers &gt; extensionRemove calls extension.remove with id" time="0.0004647">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — workflow IPC wrappers &gt; workflowList calls workflow.list and returns result" time="0.0005158">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — workflow IPC wrappers &gt; workflowList throws when response is not an object" time="0.0004745">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — workflow IPC wrappers &gt; workflowSave calls workflow.save with name, description, stepsJson" time="0.000494">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — workflow IPC wrappers &gt; workflowSave sends null description when omitted" time="0.0003463">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — workflow IPC wrappers &gt; workflowDelete calls workflow.delete with name" time="0.0004839">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — workflow IPC wrappers &gt; workflowRun calls workflow.run with name and dryRun=false" time="0.0006209">
+        </testcase>
+        <testcase classname="test/ipc/client-ws5d.test.ts" name="WS5-D — workflow IPC wrappers &gt; workflowRun calls workflow.run with dryRun=true" time="0.0003477">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/ipc/client.test.ts" timestamp="2026-08-31T19:47:40.852Z" hostname="AsafGolombek" tests="8" failures="0" errors="0" skipped="0" time="0.0143726">
+        <testcase classname="test/ipc/client.test.ts" name="NimbusIpcClient &gt; serialises method + params and resolves with the Gateway result" time="0.0062088">
+        </testcase>
+        <testcase classname="test/ipc/client.test.ts" name="NimbusIpcClient &gt; throws MethodNotAllowedError when bridge rejects an unlisted method" time="0.0021138">
+        </testcase>
+        <testcase classname="test/ipc/client.test.ts" name="NimbusIpcClient &gt; throws GatewayOfflineError when bridge reports disconnected" time="0.0005565">
+        </testcase>
+        <testcase classname="test/ipc/client.test.ts" name="NimbusIpcClient &gt; propagates JSON-RPC errors as JsonRpcError" time="0.000492">
+        </testcase>
+        <testcase classname="test/ipc/client.test.ts" name="NimbusIpcClient &gt; handles Error object (uses .message property)" time="0.000367">
+        </testcase>
+        <testcase classname="test/ipc/client.test.ts" name="NimbusIpcClient &gt; handles plain non-string non-Error value by JSON.stringify-ing it" time="0.0005571">
+        </testcase>
+        <testcase classname="test/ipc/client.test.ts" name="NimbusIpcClient &gt; handles non-JSON-RPC JSON object (no code/message) as generic Error" time="0.0004554">
+        </testcase>
+        <testcase classname="test/ipc/client.test.ts" name="NimbusIpcClient &gt; dispatches notifications to subscribers" time="0.0006279">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/ipc/parse-error-redaction.test.ts" timestamp="2026-08-31T19:47:40.852Z" hostname="AsafGolombek" tests="19" failures="0" errors="0" skipped="0" time="0.0160587">
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;passphrase=&lt;value&gt;&apos; in raw error strings" time="0.0055176">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;&quot;passphrase&quot;:&quot;...&quot;&apos; in JSON-RPC error payloads" time="0.0008861">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;recoverySeed=&lt;value&gt;&apos; in raw error strings" time="0.0004416">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;&quot;recoverySeed&quot;:&quot;...&quot;&apos; in JSON-RPC error payloads" time="0.0003411">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;mnemonic=&lt;value&gt;&apos; in raw error strings" time="0.0003573">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;&quot;mnemonic&quot;:&quot;...&quot;&apos; in JSON-RPC error payloads" time="0.0003342">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;privateKey=&lt;value&gt;&apos; in raw error strings" time="0.0003811">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;&quot;privateKey&quot;:&quot;...&quot;&apos; in JSON-RPC error payloads" time="0.0002708">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;encryptedVaultManifest=&lt;value&gt;&apos; in raw error strings" time="0.0003303">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — credential redaction &gt; redacts &apos;&quot;encryptedVaultManifest&quot;:&quot;...&quot;&apos; in JSON-RPC error payloads" time="0.0002476">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for apiToken" time="0.0005907">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for clientSecret" time="0.0003552">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for pat" time="0.0002548">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for accessToken" time="0.0002471">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for refreshToken" time="0.0002709">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for bot_token" time="0.0002579">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for api_key" time="0.0004194">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for app_password" time="0.0003335">
+        </testcase>
+        <testcase classname="test/ipc/parse-error-redaction.test.ts" name="parseError — S2-F6 connector-secret coverage (sensitive-key pattern) &gt; redacts JSON form for Authorization" time="0.0002463">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/Dashboard.test.tsx" timestamp="2026-08-31T19:47:40.854Z" hostname="AsafGolombek" tests="1" failures="0" errors="0" skipped="0" time="0.1365858">
+        <testcase classname="test/pages/Dashboard.test.tsx" name="Dashboard &gt; renders PageHeader + three panels" time="0.1319683">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/Marketplace.test.tsx" timestamp="2026-08-31T19:47:40.854Z" hostname="AsafGolombek" tests="10" failures="0" errors="0" skipped="0" time="1.1216455">
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; renders extension IDs and versions" time="0.1427089">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; enabled checkbox reflects the extension state" time="0.0915026">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; toggling an enabled extension calls extensionDisable" time="0.289498">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; toggling a disabled extension calls extensionEnable" time="0.1214883">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; calls extensionRemove after confirm" time="0.1442881">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; opens directory dialog and calls extensionInstall with the selected path" time="0.1260804">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; does not call extensionInstall when dialog returns null" time="0.1118447">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; shows error state when extension.list fails" time="0.033186">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; sandbox badge displays &apos;Process isolation&apos; for every extension" time="0.0415998">
+        </testcase>
+        <testcase classname="test/pages/Marketplace.test.tsx" name="Marketplace page &gt; &apos;Install from directory&apos; button is disabled when offline" time="0.0134963">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/OnboardingConnect.test.tsx" timestamp="2026-08-31T19:47:40.855Z" hostname="AsafGolombek" tests="7" failures="0" errors="0" skipped="0" time="0.7879881">
+        <testcase classname="test/pages/OnboardingConnect.test.tsx" name="Onboarding → Connect &gt; renders the 6 connector cards" time="0.1108673">
+        </testcase>
+        <testcase classname="test/pages/OnboardingConnect.test.tsx" name="Onboarding → Connect &gt; clicking a card toggles its selection in the store" time="0.0563318">
+        </testcase>
+        <testcase classname="test/pages/OnboardingConnect.test.tsx" name="Onboarding → Connect &gt; Authenticate dispatches connector.startAuth for each selected" time="0.2421333">
+        </testcase>
+        <testcase classname="test/pages/OnboardingConnect.test.tsx" name="Onboarding → Connect &gt; shows Authenticating… immediately after clicking Authenticate" time="0.0929004">
+        </testcase>
+        <testcase classname="test/pages/OnboardingConnect.test.tsx" name="Onboarding → Connect &gt; shows Failed — retry when connector.startAuth throws" time="0.1097546">
+        </testcase>
+        <testcase classname="test/pages/OnboardingConnect.test.tsx" name="Onboarding → Connect &gt; navigates to /onboarding/syncing when a connector becomes connected" time="0.0904271">
+        </testcase>
+        <testcase classname="test/pages/OnboardingConnect.test.tsx" name="Onboarding → Connect &gt; does not treat a non-string healthState as authenticated" time="0.0785839">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/OnboardingSyncing.test.tsx" timestamp="2026-08-31T19:47:40.856Z" hostname="AsafGolombek" tests="2" failures="0" errors="0" skipped="0" time="0.2984975">
+        <testcase classname="test/pages/OnboardingSyncing.test.tsx" name="Onboarding → Syncing &gt; polls diag.snapshot and renders counters" time="0.1411115">
+        </testcase>
+        <testcase classname="test/pages/OnboardingSyncing.test.tsx" name="Onboarding → Syncing &gt; Open Dashboard writes onboarding_completed and navigates" time="0.1499468">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/OnboardingWelcome.test.tsx" timestamp="2026-08-31T19:47:40.856Z" hostname="AsafGolombek" tests="2" failures="0" errors="0" skipped="0" time="0.3126643">
+        <testcase classname="test/pages/OnboardingWelcome.test.tsx" name="Onboarding → Welcome &gt; renders the welcome copy and continue button" time="0.2376904">
+        </testcase>
+        <testcase classname="test/pages/OnboardingWelcome.test.tsx" name="Onboarding → Welcome &gt; Skip writes onboarding_completed meta and navigates home" time="0.070478">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/QuickQuery.test.tsx" timestamp="2026-08-31T19:47:40.856Z" hostname="AsafGolombek" tests="6" failures="0" errors="0" skipped="0" time="0.3142049">
+        <testcase classname="test/pages/QuickQuery.test.tsx" name="QuickQuery &gt; submits a prompt and renders streamed tokens" time="0.1455245">
+        </testcase>
+        <testcase classname="test/pages/QuickQuery.test.tsx" name="QuickQuery &gt; closes the window 2s after streamDone" time="0.0487253">
+        </testcase>
+        <testcase classname="test/pages/QuickQuery.test.tsx" name="QuickQuery &gt; closes immediately on Escape" time="0.0120972">
+        </testcase>
+        <testcase classname="test/pages/QuickQuery.test.tsx" name="QuickQuery &gt; does not call IPC when prompt is empty or whitespace" time="0.0432889">
+        </testcase>
+        <testcase classname="test/pages/QuickQuery.test.tsx" name="QuickQuery &gt; shows local model label from meta when streamDone has no model field" time="0.0272852">
+        </testcase>
+        <testcase classname="test/pages/QuickQuery.test.tsx" name="QuickQuery &gt; shows remote model label from meta when not local" time="0.0298152">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/Settings.test.tsx" timestamp="2026-08-31T19:47:40.857Z" hostname="AsafGolombek" tests="1" failures="0" errors="0" skipped="0" time="0.0828036">
+        <testcase classname="test/pages/Settings.test.tsx" name="Settings layout &gt; renders SettingsSidebar and the nested Outlet content" time="0.0804011">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/Watchers.condition-types.drift.test.ts" timestamp="2026-08-31T19:47:40.857Z" hostname="AsafGolombek" tests="1" failures="0" errors="0" skipped="0" time="0.0051637">
+        <testcase classname="test/pages/Watchers.condition-types.drift.test.ts" name="Watchers condition-type drift guard &gt; Watchers.tsx CONDITION_TYPES has exactly the gateway&apos;s WATCHER_CONDITION_KINDS conditionTypes" time="0.0026782">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/Watchers.test.tsx" timestamp="2026-08-31T19:47:40.857Z" hostname="AsafGolombek" tests="27" failures="0" errors="0" skipped="0" time="10.2421686">
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; renders watcher names from the list" time="0.1151894">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; enabled checkbox reflects the watcher state" time="0.0831169">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; toggling a checked watcher calls watcherPause" time="0.2508134">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; toggling an unchecked watcher calls watcherResume" time="0.0942715">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; shows the last-fired timestamp when present" time="0.0325289">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; shows &apos;Never fired&apos; when last_fired_at is null" time="0.0288233">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; shows error state when watcher.list fails" time="0.021543">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; &apos;New watcher&apos; button is disabled when offline" time="0.0227671">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — list &gt; calls watcherDelete after confirm dialog" time="0.125511">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — condition type &gt; offers exactly the condition types the gateway engine can evaluate" time="0.129558">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — condition type &gt; does not offer the condition types watcher.create rejects with -32602" time="0.1180241">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — condition type &gt; sends alert_fired verbatim as conditionType, so watcher.create accepts it" time="0.9290137">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — condition type &gt; sends incident_opened verbatim as conditionType, so watcher.create accepts it" time="1.0747184">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — condition type &gt; sends deploy_failed verbatim as conditionType, so watcher.create accepts it" time="1.0086211">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — condition type &gt; defaults conditionJson to a filter object the engine actually evaluates" time="0.7200922">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — condition type &gt; omits graphPredicateJson when the graph predicate is not enabled" time="0.6561059">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — graph condition builder &gt; the graph builder is hidden until the graph predicate is enabled" time="0.1931222">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — graph condition builder &gt; graph predicate shows relation dropdown with candidate relations" time="0.2141815">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — graph condition builder &gt; shows target type and target ID inputs" time="0.194332">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — graph condition builder &gt; the condition JSON textarea stays available alongside a graph predicate" time="0.1701855">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — graph condition builder &gt; validation fires after debounce and shows match count" time="0.778407">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — graph condition builder &gt; validation shows error message on failure" time="0.7171421">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — graph condition builder &gt; watcherCreate carries graphPredicateJson alongside a real condition type" time="1.5829983">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — graph condition builder &gt; Create button is disabled when graph fields are incomplete" time="0.6041569">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — history drawer &gt; clicking History on a watcher row fetches and renders the last N fires" time="0.0862803">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — history drawer &gt; History drawer shows an empty state when no events have fired" time="0.0934278">
+        </testcase>
+        <testcase classname="test/pages/Watchers.test.tsx" name="Watchers page — history drawer &gt; clicking History again collapses the drawer" time="0.190663">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/Workflows.test.tsx" timestamp="2026-08-31T19:47:40.860Z" hostname="AsafGolombek" tests="20" failures="0" errors="0" skipped="0" time="4.5197119">
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — list &gt; renders workflow names and descriptions" time="0.1523031">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — list &gt; calls workflowRun with dryRun=false by default" time="0.342562">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — list &gt; calls workflowRun with dryRun=true when toggle is on" time="0.2563613">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — list &gt; calls workflowDelete after confirm and refetches" time="0.1071237">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — list &gt; shows error state when workflow.list fails" time="0.0298847">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — list &gt; &apos;New workflow&apos; button is disabled when offline" time="0.0132055">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — step-list editor &gt; new dialog starts with one empty step" time="0.1562562">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — step-list editor &gt; &apos;Add step&apos; appends a second step row" time="0.2372892">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — step-list editor &gt; &apos;Remove step&apos; on the only step resets to one empty step" time="0.2335607">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — step-list editor &gt; &apos;Remove step&apos; on second of two steps leaves one" time="0.2909064">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — step-list editor &gt; workflowSave called with serialized steps JSON on submit" time="0.8589283">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — step-list editor &gt; workflowSave omits description key when description is empty" time="0.5144026">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — step-list editor &gt; edit dialog pre-populates steps from the existing workflow" time="0.1648205">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — step-list editor &gt; two steps are serialized into a two-element array" time="0.8215978">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — run-history drawer &gt; expanding a workflow row fetches and renders the last N runs" time="0.050753">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — run-history drawer &gt; run history row shows a &apos;View audit entry&apos; link with the runId" time="0.0517628">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — run-history drawer &gt; run history drawer shows an empty state when no runs exist" time="0.047218">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — run with params dialog &gt; Run with params... opens a dialog and forwards paramsOverride to workflow.run" time="0.0556709">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — run with params dialog &gt; Run with params... rejects invalid JSON with an inline error" time="0.0680716">
+        </testcase>
+        <testcase classname="test/pages/Workflows.test.tsx" name="Workflows page — run with params dialog &gt; Run with params... rejects a top-level array as invalid (must be an object)" time="0.0615376">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/connectors.test.ts" timestamp="2026-08-31T19:47:40.863Z" hostname="AsafGolombek" tests="2" failures="0" errors="0" skipped="0" time="0.0046789">
+        <testcase classname="test/store/connectors.test.ts" name="connectors slice (Plan 2 stub — persists list only) &gt; initial list is empty" time="0.0019531">
+        </testcase>
+        <testcase classname="test/store/connectors.test.ts" name="connectors slice (Plan 2 stub — persists list only) &gt; setConnectorsList replaces the list" time="0.0009109">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/dashboard.test.ts" timestamp="2026-08-31T19:47:40.863Z" hostname="AsafGolombek" tests="5" failures="0" errors="0" skipped="0" time="0.0101102">
+        <testcase classname="test/store/dashboard.test.ts" name="dashboard slice &gt; starts empty" time="0.0040945">
+        </testcase>
+        <testcase classname="test/store/dashboard.test.ts" name="dashboard slice &gt; setConnectors replaces the list" time="0.0013763">
+        </testcase>
+        <testcase classname="test/store/dashboard.test.ts" name="dashboard slice &gt; patchConnector updates by name" time="0.0007649">
+        </testcase>
+        <testcase classname="test/store/dashboard.test.ts" name="dashboard slice &gt; patchConnector on unknown name is a no-op" time="0.0003061">
+        </testcase>
+        <testcase classname="test/store/dashboard.test.ts" name="dashboard slice &gt; requestHighlight/clearHighlight round-trip" time="0.0003345">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/hitl.test.ts" timestamp="2026-08-31T19:47:40.863Z" hostname="AsafGolombek" tests="4" failures="0" errors="0" skipped="0" time="0.0068994">
+        <testcase classname="test/store/hitl.test.ts" name="hitl slice &gt; enqueues a request" time="0.0036989">
+        </testcase>
+        <testcase classname="test/store/hitl.test.ts" name="hitl slice &gt; dedupes by requestId" time="0.0003718">
+        </testcase>
+        <testcase classname="test/store/hitl.test.ts" name="hitl slice &gt; resolve removes by id" time="0.0003777">
+        </testcase>
+        <testcase classname="test/store/hitl.test.ts" name="hitl slice &gt; resolve for unknown id is a no-op" time="0.0002079">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/model.test.ts" timestamp="2026-08-31T19:47:40.864Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.008733">
+        <testcase classname="test/store/model.test.ts" name="model slice (Plan 2 stub — persists installed list + activePullId) &gt; initial state is empty list + null pullId" time="0.0037641">
+        </testcase>
+        <testcase classname="test/store/model.test.ts" name="model slice (Plan 2 stub — persists installed list + activePullId) &gt; setInstalledModels + setActivePullId update correctly" time="0.0016703">
+        </testcase>
+        <testcase classname="test/store/model.test.ts" name="model slice (Plan 2 stub — persists installed list + activePullId) &gt; setActivePullId(null) clears the active pull" time="0.0002054">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/onboarding.test.ts" timestamp="2026-08-31T19:47:40.864Z" hostname="AsafGolombek" tests="6" failures="0" errors="0" skipped="0" time="0.0141876">
+        <testcase classname="test/store/onboarding.test.ts" name="onboarding slice &gt; toggles selection on/off" time="0.0045483">
+        </testcase>
+        <testcase classname="test/store/onboarding.test.ts" name="onboarding slice &gt; records per-service auth status" time="0.0007087">
+        </testcase>
+        <testcase classname="test/store/onboarding.test.ts" name="onboarding slice &gt; reset clears both selection and status" time="0.0012375">
+        </testcase>
+        <testcase classname="test/store/onboarding.test.ts" name="connection slice &gt; setConnectionState(&apos;connecting&apos;) increments reconnectAttempts" time="0.0006809">
+        </testcase>
+        <testcase classname="test/store/onboarding.test.ts" name="connection slice &gt; setConnectionState(&apos;connected&apos;) resets reconnectAttempts to 0 and sets lastConnectedAt" time="0.0008928">
+        </testcase>
+        <testcase classname="test/store/onboarding.test.ts" name="connection slice &gt; setConnectionState with other state preserves reconnectAttempts" time="0.0023785">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/partialize.test.ts" timestamp="2026-08-31T19:47:40.864Z" hostname="AsafGolombek" tests="17" failures="0" errors="0" skipped="0" time="0.0096447">
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize &gt; output contains ONLY the whitelisted slice-root fields" time="0.0027789">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize &gt; forbidden keys at the top level never survive partialize" time="0.0007535">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize &gt; forbidden keys nested INSIDE a whitelisted value are stripped recursively" time="0.0003442">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize &gt; recursion handles cycles without throwing" time="0.0006768">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize &gt; FORBIDDEN_PERSIST_KEYS lists the five spec-mandated keys" time="0.0001645">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — Data slice (Plan 5) &gt; does not persist any data-slice fields" time="0.0006167">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — Data slice (Plan 5) &gt; still has WHITELISTED_PERSIST_KEYS at exactly 5 entries" time="0.0003249">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips apiToken nested inside a whitelisted slice value" time="0.0001756">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips clientSecret nested inside a whitelisted slice value" time="0.0001094">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips pat nested inside a whitelisted slice value" time="0.000091">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips accessToken nested inside a whitelisted slice value" time="0.0001231">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips refreshToken nested inside a whitelisted slice value" time="0.0001254">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips bot_token nested inside a whitelisted slice value" time="0.000077">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips api_key nested inside a whitelisted slice value" time="0.0000867">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips app_password nested inside a whitelisted slice value" time="0.0001226">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips Authorization nested inside a whitelisted slice value" time="0.0001051">
+        </testcase>
+        <testcase classname="test/store/partialize.test.ts" name="persistPartialize — S2-F6 connector-secret deep scrub &gt; strips multiple sensitive keys in the same connector entry" time="0.0002562">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/profile.test.ts" timestamp="2026-08-31T19:47:40.865Z" hostname="AsafGolombek" tests="4" failures="0" errors="0" skipped="0" time="0.0094676">
+        <testcase classname="test/store/profile.test.ts" name="profile slice &gt; initial state: active=null, profiles=[], lastFetchAt=null" time="0.0040802">
+        </testcase>
+        <testcase classname="test/store/profile.test.ts" name="profile slice &gt; setProfileList replaces list + active + stamps lastFetchAt" time="0.0012041">
+        </testcase>
+        <testcase classname="test/store/profile.test.ts" name="profile slice &gt; setActiveProfileOptimistic updates active without altering the list" time="0.000441">
+        </testcase>
+        <testcase classname="test/store/profile.test.ts" name="profile slice &gt; setProfileActionInFlight toggles the flag" time="0.0002796">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/quickQuery.test.ts" timestamp="2026-08-31T19:47:40.866Z" hostname="AsafGolombek" tests="6" failures="0" errors="0" skipped="0" time="0.0121146">
+        <testcase classname="test/store/quickQuery.test.ts" name="quickQuery slice &gt; startStream sets streamId and clears tokens/modelLabel/doneAt" time="0.0058123">
+        </testcase>
+        <testcase classname="test/store/quickQuery.test.ts" name="quickQuery slice &gt; appendToken with matching streamId appends the token" time="0.0007639">
+        </testcase>
+        <testcase classname="test/store/quickQuery.test.ts" name="quickQuery slice &gt; appendToken with mismatching streamId is a no-op" time="0.000485">
+        </testcase>
+        <testcase classname="test/store/quickQuery.test.ts" name="quickQuery slice &gt; markDone with matching streamId sets modelLabel and doneAt" time="0.0007378">
+        </testcase>
+        <testcase classname="test/store/quickQuery.test.ts" name="quickQuery slice &gt; markDone with mismatching streamId is a no-op" time="0.0003751">
+        </testcase>
+        <testcase classname="test/store/quickQuery.test.ts" name="quickQuery slice &gt; reset clears all state" time="0.0004476">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/settings.test.ts" timestamp="2026-08-31T19:47:40.866Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.0077136">
+        <testcase classname="test/store/settings.test.ts" name="settings slice &gt; initial activePanel is null" time="0.0033959">
+        </testcase>
+        <testcase classname="test/store/settings.test.ts" name="settings slice &gt; setActivePanel stores the panel key" time="0.0007124">
+        </testcase>
+        <testcase classname="test/store/settings.test.ts" name="settings slice &gt; setActivePanel(null) clears the active panel" time="0.0002377">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/store-persist.test.ts" timestamp="2026-08-31T19:47:40.866Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.0109301">
+        <testcase classname="test/store/store-persist.test.ts" name="useNimbusStore — persist middleware integration &gt; writes only whitelisted keys to localStorage after a mutation" time="0.0054012">
+        </testcase>
+        <testcase classname="test/store/store-persist.test.ts" name="useNimbusStore — persist middleware integration &gt; forbidden keys never appear in localStorage" time="0.0009903">
+        </testcase>
+        <testcase classname="test/store/store-persist.test.ts" name="useNimbusStore — persist middleware integration &gt; ephemeral slice fields (connectionState, pending, status) are NOT persisted" time="0.0011056">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/telemetry.test.ts" timestamp="2026-08-31T19:47:40.867Z" hostname="AsafGolombek" tests="4" failures="0" errors="0" skipped="0" time="0.0096829">
+        <testcase classname="test/store/telemetry.test.ts" name="telemetry slice &gt; initial status is null" time="0.0042466">
+        </testcase>
+        <testcase classname="test/store/telemetry.test.ts" name="telemetry slice &gt; setTelemetryStatus stores a disabled payload" time="0.0007072">
+        </testcase>
+        <testcase classname="test/store/telemetry.test.ts" name="telemetry slice &gt; setTelemetryStatus stores an enabled payload with preview fields" time="0.0003599">
+        </testcase>
+        <testcase classname="test/store/telemetry.test.ts" name="telemetry slice &gt; setTelemetryActionInFlight toggles correctly" time="0.000215">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/tray.extended.test.ts" timestamp="2026-08-31T19:47:40.867Z" hostname="AsafGolombek" tests="5" failures="0" errors="0" skipped="0" time="0.0098359">
+        <testcase classname="test/store/tray.extended.test.ts" name="tray slice WS5-B extensions &gt; aggregateHealth=red when any connector is unauthenticated" time="0.0035783">
+        </testcase>
+        <testcase classname="test/store/tray.extended.test.ts" name="tray slice WS5-B extensions &gt; aggregateHealth=amber when any connector is degraded and none is red" time="0.000704">
+        </testcase>
+        <testcase classname="test/store/tray.extended.test.ts" name="tray slice WS5-B extensions &gt; aggregateHealth=normal when all healthy" time="0.0003606">
+        </testcase>
+        <testcase classname="test/store/tray.extended.test.ts" name="tray slice WS5-B extensions &gt; setPendingHitl updates badge count and floors at 0" time="0.0003521">
+        </testcase>
+        <testcase classname="test/store/tray.extended.test.ts" name="tray slice WS5-B extensions &gt; setConnectorsMenu replaces the menu" time="0.0013825">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/hooks/useConfirm.test.tsx" timestamp="2026-08-31T19:47:40.867Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="1.1926997">
+        <testcase classname="test/hooks/useConfirm.test.tsx" name="useConfirm &gt; resolves true when user types the exact expected text and clicks Delete" time="0.6276379">
+        </testcase>
+        <testcase classname="test/hooks/useConfirm.test.tsx" name="useConfirm &gt; Delete button stays disabled until typed text matches expectedText exactly" time="0.3905074">
+        </testcase>
+        <testcase classname="test/hooks/useConfirm.test.tsx" name="useConfirm &gt; resolves false when user clicks Cancel" time="0.1689613">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/hooks/useIpcQuery.test.ts" timestamp="2026-08-31T19:47:40.868Z" hostname="AsafGolombek" tests="5" failures="0" errors="0" skipped="0" time="0.0716766">
+        <testcase classname="test/hooks/useIpcQuery.test.ts" name="useIpcQuery &gt; calls the method once on mount" time="0.0363702">
+        </testcase>
+        <testcase classname="test/hooks/useIpcQuery.test.ts" name="useIpcQuery &gt; re-calls at interval" time="0.0055275">
+        </testcase>
+        <testcase classname="test/hooks/useIpcQuery.test.ts" name="useIpcQuery &gt; pauses while tab hidden" time="0.0057413">
+            <system-err>
+An update to TestComponent inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/hooks/useIpcQuery.test.ts" name="useIpcQuery &gt; exposes error on rejection" time="0.0127629">
+        </testcase>
+        <testcase classname="test/hooks/useIpcQuery.test.ts" name="useIpcQuery &gt; refetch() fires an immediate call" time="0.0058668">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/hooks/useIpcSubscription.test.ts" timestamp="2026-08-31T19:47:40.868Z" hostname="AsafGolombek" tests="2" failures="0" errors="0" skipped="0" time="0.0288847">
+        <testcase classname="test/hooks/useIpcSubscription.test.ts" name="useIpcSubscription &gt; attaches a listener for the event" time="0.0210746">
+        </testcase>
+        <testcase classname="test/hooks/useIpcSubscription.test.ts" name="useIpcSubscription &gt; invokes the handler when the event fires" time="0.0027295">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/lib/restart.test.ts" timestamp="2026-08-31T19:47:40.869Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.010451">
+        <testcase classname="test/lib/restart.test.ts" name="restartApp &gt; calls tauri invoke plugin:app|restart on success" time="0.0045411">
+        </testcase>
+        <testcase classname="test/lib/restart.test.ts" name="restartApp &gt; falls back to location.reload() when invoke throws and location is defined" time="0.0010035">
+        </testcase>
+        <testcase classname="test/lib/restart.test.ts" name="restartApp &gt; does not throw when invoke throws and location is undefined" time="0.0015507">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/GatewayOfflineBanner.test.tsx" timestamp="2026-08-31T19:47:40.869Z" hostname="AsafGolombek" tests="4" failures="0" errors="0" skipped="0" time="0.2994067">
+        <testcase classname="test/components/GatewayOfflineBanner.test.tsx" name="GatewayOfflineBanner &gt; renders the offline message and a Start Gateway button" time="0.1937078">
+        </testcase>
+        <testcase classname="test/components/GatewayOfflineBanner.test.tsx" name="GatewayOfflineBanner &gt; invokes shell_start_gateway when the button is clicked" time="0.0297472">
+            <system-err>
+An update to GatewayOfflineBanner inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/GatewayOfflineBanner.test.tsx" name="GatewayOfflineBanner &gt; shows the error message when invoke throws an Error" time="0.0404851">
+        </testcase>
+        <testcase classname="test/components/GatewayOfflineBanner.test.tsx" name="GatewayOfflineBanner &gt; shows a stringified error when invoke throws a non-Error value" time="0.0305773">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/HotkeyFailedBanner.test.tsx" timestamp="2026-08-31T19:47:40.869Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.2310487">
+        <testcase classname="test/components/HotkeyFailedBanner.test.tsx" name="HotkeyFailedBanner &gt; renders nothing until the tray emits hotkey-failed" time="0.0132235">
+        </testcase>
+        <testcase classname="test/components/HotkeyFailedBanner.test.tsx" name="HotkeyFailedBanner &gt; renders the conflict message when the event fires" time="0.0806163">
+            <system-err>
+An update to HotkeyFailedBanner inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/HotkeyFailedBanner.test.tsx" name="HotkeyFailedBanner &gt; Dismiss hides the banner" time="0.1339755">
+            <system-err>
+An update to HotkeyFailedBanner inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/PendingUpdates.test.tsx" timestamp="2026-08-31T19:47:40.870Z" hostname="AsafGolombek" tests="7" failures="0" errors="0" skipped="0" time="0.7153371">
+        <testcase classname="test/components/PendingUpdates.test.tsx" name="PendingUpdates &gt; renders nothing when offline" time="0.033906">
+        </testcase>
+        <testcase classname="test/components/PendingUpdates.test.tsx" name="PendingUpdates &gt; renders nothing when cache is empty" time="0.0465985">
+            <system-err>
+An update to PendingUpdates inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PendingUpdates inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PendingUpdates inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/PendingUpdates.test.tsx" name="PendingUpdates &gt; renders one row per cache entry with version pair + badges" time="0.0935477">
+        </testcase>
+        <testcase classname="test/components/PendingUpdates.test.tsx" name="PendingUpdates &gt; fires extension.update on click when verified" time="0.3399248">
+        </testcase>
+        <testcase classname="test/components/PendingUpdates.test.tsx" name="PendingUpdates &gt; disables Update + renders needs_sync badge when verification needs sync" time="0.0459376">
+        </testcase>
+        <testcase classname="test/components/PendingUpdates.test.tsx" name="PendingUpdates &gt; disables Update + renders signature_failed badge" time="0.0305725">
+        </testcase>
+        <testcase classname="test/components/PendingUpdates.test.tsx" name="PendingUpdates &gt; does not fire extension.update for an unverified row even if clicked programmatically" time="0.1189137">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/AuditPanel.test.tsx" timestamp="2026-08-31T19:47:40.870Z" hostname="AsafGolombek" tests="14" failures="0" errors="0" skipped="0" time="1.3809388">
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel &gt; renders summary and one row per fetched entry" time="0.2413923">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel &gt; filters by service via the chip" time="0.1339126">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to Oe inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel &gt; Verify chain success surfaces a green toast" time="0.2338148">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel &gt; Verify chain broken surfaces a red toast with the broken id" time="0.1090152">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel &gt; Export with .json path writes flattened display rows as JSON" time="0.0959303">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel &gt; Export with .csv path writes the 6-column CSV" time="0.0921517">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel &gt; Export cancelled (save returns null) writes nothing" time="0.1251771">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel &gt; disconnected state disables write buttons" time="0.0481864">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel runId deep-link &gt; filters rows by runId extracted from actionJson when ?runId=&lt;id&gt; is present" time="0.0495835">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel runId deep-link &gt; highlights the matched row with aria-current" time="0.0614578">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel runId deep-link &gt; shows the full list when no runId is provided" time="0.0484113">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel runId deep-link &gt; shows a pruning-semantics banner when runId matches no entries" time="0.0405273">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel runId deep-link &gt; does not show the pruning banner when runId is absent" time="0.0496536">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/AuditPanel.test.tsx" name="AuditPanel runId deep-link &gt; does not highlight rows when no runId is in the URL" time="0.0459591">
+            <system-err>
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to AuditPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/ConnectorsPanel.test.tsx" timestamp="2026-08-31T19:47:40.872Z" hostname="AsafGolombek" tests="10" failures="0" errors="0" skipped="0" time="1.2734447">
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; fetches listStatus on mount and renders one row per connector with the current fields" time="0.1919554">
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; editing the interval debounces by 500 ms then calls setConfig in ms" time="0.214721">
+            <system-err>
+An update to ConnectorsPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; below-60-second interval shows inline error and never calls setConfig" time="0.101895">
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; changing the depth select fires setConfig with the new depth" time="0.2213828">
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; toggling the enabled checkbox fires setConfig with the flipped value" time="0.1778464">
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; disables write controls when connectionState=disconnected (renders cached rows)" time="0.0443254">
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; clears a pending debounce when interval becomes invalid after a valid entry" time="0.0548007">
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; Retry button triggers a refetch when the initial fetch fails" time="0.148357">
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel &gt; rings the row whose service matches ?highlight=&lt;name&gt;" time="0.0421771">
+        </testcase>
+        <testcase classname="test/pages/settings/ConnectorsPanel.test.tsx" name="ConnectorsPanel — connector.configChanged reconcile &gt; patches the matching row when a configChanged notification arrives" time="0.0699217">
+            <system-err>
+An update to ConnectorsPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/DataPanel.test.tsx" timestamp="2026-08-31T19:47:40.873Z" hostname="AsafGolombek" tests="12" failures="0" errors="0" skipped="0" time="0.8350274">
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; renders the three cards" time="0.0801378">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; displays &apos;Never&apos; when lastExportAt is null" time="0.0214798">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; disables all three buttons when connectionState === &apos;disconnected&apos;" time="0.1559058">
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; disables siblings while one flow is running" time="0.0292775">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; disables siblings when importFlow is running" time="0.0224268">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; opens ExportWizard when Export backup button is clicked" time="0.1408845">
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; shows PanelError when preflight fetch fails" time="0.1019787">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; shows stale chip on export card when offline and preflight cached" time="0.0228206">
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; displays KB size when estimatedSizeBytes is in KB range" time="0.0798425">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; displays MB size when estimatedSizeBytes is in MB range" time="0.0927694">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; displays GB size when estimatedSizeBytes is in GB range" time="0.0711105">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/DataPanel.test.tsx" name="DataPanel &gt; calls markDisconnected when connection drops during a running flow" time="0.0107258">
+            <system-err>
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to DataPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/ModelPanel.test.tsx" timestamp="2026-08-31T19:47:40.875Z" hostname="AsafGolombek" tests="14" failures="0" errors="0" skipped="0" time="1.5861985">
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; fetches listModels and getRouterStatus on mount and renders both" time="0.1213988">
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; Load button calls llmLoadModel with the row&apos;s provider + modelName" time="0.3508116">
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; Unload button calls llmUnloadModel when the row is loaded" time="0.1499052">
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; Set-default picker calls llmSetDefault with taskType, provider, modelName" time="0.1281802">
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; opens PullDialog when &apos;Pull new model…&apos; is clicked" time="0.1882189">
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; llm.modelLoaded notification patches the row&apos;s loaded indicator" time="0.0765364">
+            <system-err>
+An update to ModelPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; surfaces pull progress from a persisted activePullId (re-attach on reload)" time="0.0400592">
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; llm.modelUnloaded notification patches the row&apos;s loaded state to false" time="0.0855474">
+            <system-err>
+An update to ModelPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; llm.pullProgress notification updates the active pull banner" time="0.0505176">
+            <system-err>
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ModelPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; llm.pullCompleted clears the active pull and re-fetches models" time="0.0610593">
+            <system-err>
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ModelPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; llm.pullFailed clears the active pull without re-fetching models" time="0.0470094">
+            <system-err>
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ModelPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; handles subscribe() rejection gracefully without crashing" time="0.0372621">
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; PullDialog closes when Close button is clicked" time="0.2252211">
+        </testcase>
+        <testcase classname="test/pages/settings/ModelPanel.test.tsx" name="ModelPanel &gt; disables write controls when connectionState=disconnected" time="0.0190207">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/ProfilesPanel.test.tsx" timestamp="2026-08-31T19:47:40.877Z" hostname="AsafGolombek" tests="7" failures="0" errors="0" skipped="0" time="1.8989111">
+        <testcase classname="test/pages/settings/ProfilesPanel.test.tsx" name="ProfilesPanel &gt; fetches and renders profiles on mount" time="0.0918494">
+        </testcase>
+        <testcase classname="test/pages/settings/ProfilesPanel.test.tsx" name="ProfilesPanel &gt; create flow calls profileCreate then refetches the list" time="0.8162397">
+        </testcase>
+        <testcase classname="test/pages/settings/ProfilesPanel.test.tsx" name="ProfilesPanel &gt; switch flow calls profileSwitch with the chosen name" time="0.143286">
+        </testcase>
+        <testcase classname="test/pages/settings/ProfilesPanel.test.tsx" name="ProfilesPanel &gt; switch flow shows the restart notice after a successful switch" time="0.1562863">
+        </testcase>
+        <testcase classname="test/pages/settings/ProfilesPanel.test.tsx" name="ProfilesPanel &gt; switch flow refetches so the active marker moves to the newly-active row" time="0.1421853">
+        </testcase>
+        <testcase classname="test/pages/settings/ProfilesPanel.test.tsx" name="ProfilesPanel &gt; delete requires typed-name confirmation" time="0.4693765">
+        </testcase>
+        <testcase classname="test/pages/settings/ProfilesPanel.test.tsx" name="ProfilesPanel &gt; disables all write controls when connectionState is disconnected" time="0.0739825">
+            <system-err>
+An update to ProfilesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/TelemetryPanel.test.tsx" timestamp="2026-08-31T19:47:40.878Z" hostname="AsafGolombek" tests="5" failures="0" errors="0" skipped="0" time="0.6190551">
+        <testcase classname="test/pages/settings/TelemetryPanel.test.tsx" name="TelemetryPanel &gt; renders disabled state when getStatus returns enabled=false" time="0.1742876">
+        </testcase>
+        <testcase classname="test/pages/settings/TelemetryPanel.test.tsx" name="TelemetryPanel &gt; renders counter cards when enabled" time="0.0499044">
+        </testcase>
+        <testcase classname="test/pages/settings/TelemetryPanel.test.tsx" name="TelemetryPanel &gt; toggling fires telemetrySetEnabled(false) and refetches" time="0.1680067">
+        </testcase>
+        <testcase classname="test/pages/settings/TelemetryPanel.test.tsx" name="TelemetryPanel &gt; expander shows the raw JSON payload when opened" time="0.1417002">
+        </testcase>
+        <testcase classname="test/pages/settings/TelemetryPanel.test.tsx" name="TelemetryPanel &gt; toggle is disabled when connectionState is disconnected" time="0.0797962">
+            <system-err>
+An update to TelemetryPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/UpdatesPanel.test.tsx" timestamp="2026-08-31T19:47:40.878Z" hostname="AsafGolombek" tests="12" failures="0" errors="0" skipped="0" time="0.9706446">
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; renders current version once status loads" time="0.1193743">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; Check now success with no update keeps state idle" time="0.3002774">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; Check now success with update flips to `available` and surfaces Apply button + notes" time="0.0657059">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; Apply runs updater_apply_started + updaterApplyUpdate and flips to applying" time="0.0526328">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; Rollback button surfaces only when prior state is rolled_back/failed and runs updater.rollback" time="0.0718907">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; Disconnected state disables Check now" time="0.0478144">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; Check now error shows fetch error and resets state to idle" time="0.0990672">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; Apply error shows fetch error and transitions to failed" time="0.0689188">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; Rollback error shows fetch error and transitions to failed" time="0.0512886">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; shows signature_invalid failure message when uiState is rolled_back" time="0.0320583">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; shows hash_mismatch failure message when uiState is failed" time="0.0298468">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/pages/settings/UpdatesPanel.test.tsx" name="UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome) &gt; shows generic rolled-back message for unknown failure reason" time="0.0261831">
+            <system-err>
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdatesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/slices/audit.test.ts" timestamp="2026-08-31T19:47:40.880Z" hostname="AsafGolombek" tests="6" failures="0" errors="0" skipped="0" time="0.0114032">
+        <testcase classname="test/store/slices/audit.test.ts" name="audit slice &gt; seeds with the default filter and null summary" time="0.0040271">
+        </testcase>
+        <testcase classname="test/store/slices/audit.test.ts" name="audit slice &gt; setAuditFilter merges patches without dropping unspecified fields" time="0.0005748">
+        </testcase>
+        <testcase classname="test/store/slices/audit.test.ts" name="audit slice &gt; resetAuditFilter restores defaults" time="0.0003407">
+        </testcase>
+        <testcase classname="test/store/slices/audit.test.ts" name="audit slice &gt; setAuditSummary swaps the snapshot reference" time="0.0002294">
+        </testcase>
+        <testcase classname="test/store/slices/audit.test.ts" name="audit slice &gt; setAuditActionInFlight toggles the boolean" time="0.0002645">
+        </testcase>
+        <testcase classname="test/store/slices/audit.test.ts" name="AuditSlice — persist whitelist unchanged &gt; auditFilter, auditSummary, auditActionInFlight are NOT persisted" time="0.0023629">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/slices/connectors-plan3.test.ts" timestamp="2026-08-31T19:47:40.880Z" hostname="AsafGolombek" tests="7" failures="0" errors="0" skipped="0" time="0.0146334">
+        <testcase classname="test/store/slices/connectors-plan3.test.ts" name="ConnectorsSlice — Plan 3 additions &gt; setConnectorInFlight flips the per-service flag" time="0.0052894">
+        </testcase>
+        <testcase classname="test/store/slices/connectors-plan3.test.ts" name="ConnectorsSlice — Plan 3 additions &gt; setConnectorInFlight does not leak across services" time="0.0014156">
+        </testcase>
+        <testcase classname="test/store/slices/connectors-plan3.test.ts" name="ConnectorsSlice — Plan 3 additions &gt; setHighlightService stores and clears the highlight target" time="0.0006224">
+        </testcase>
+        <testcase classname="test/store/slices/connectors-plan3.test.ts" name="ConnectorsSlice — Plan 3 additions &gt; patchConnectorRow upserts an intervalMs change on a matching row" time="0.0005813">
+        </testcase>
+        <testcase classname="test/store/slices/connectors-plan3.test.ts" name="ConnectorsSlice — Plan 3 additions &gt; patchConnectorRow is a no-op for unknown services (empty list)" time="0.0003582">
+        </testcase>
+        <testcase classname="test/store/slices/connectors-plan3.test.ts" name="ConnectorsSlice — Plan 3 additions &gt; patchConnectorRow leaves non-matching rows in a populated list untouched" time="0.0003897">
+        </testcase>
+        <testcase classname="test/store/slices/connectors-plan3.test.ts" name="ConnectorsSlice — persist whitelist unchanged &gt; perServiceInFlight and highlightService are NOT persisted" time="0.0004191">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/slices/data-slice.test.ts" timestamp="2026-08-31T19:47:40.881Z" hostname="AsafGolombek" tests="12" failures="0" errors="0" skipped="0" time="0.0067206">
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — initial state &gt; starts with all three flows idle and no preflight cache" time="0.0019823">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — flow transitions &gt; setExportFlow patches a subset of the running state" time="0.0006942">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — flow transitions &gt; setExportProgress upserts the progress field without dropping status" time="0.0006282">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — flow transitions &gt; setImportFlow + setImportProgress behave symmetrically" time="0.0002133">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — flow transitions &gt; setDeleteFlow tracks service across transitions" time="0.0001864">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — preflight cache &gt; setLastExportPreflight stores and clears" time="0.000151">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — markDisconnected &gt; transitions a running export flow to error with kind=gateway_disconnected" time="0.0001882">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — markDisconnected &gt; transitions a running import flow to error with kind=gateway_disconnected" time="0.00012">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — markDisconnected &gt; leaves idle flows untouched" time="0.0001082">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — markDisconnected &gt; preserves service label on deleteFlow when transitioning" time="0.000123">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — markDisconnected &gt; is a no-op when nothing is running" time="0.000084">
+        </testcase>
+        <testcase classname="test/store/slices/data-slice.test.ts" name="data slice — resetDataTransients &gt; wipes all three flows and the preflight cache" time="0.0001482">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/slices/model-plan3.test.ts" timestamp="2026-08-31T19:47:40.882Z" hostname="AsafGolombek" tests="5" failures="0" errors="0" skipped="0" time="0.0113593">
+        <testcase classname="test/store/slices/model-plan3.test.ts" name="ModelSlice — Plan 3 additions &gt; setRouterStatus stores the decisions map" time="0.0048503">
+        </testcase>
+        <testcase classname="test/store/slices/model-plan3.test.ts" name="ModelSlice — Plan 3 additions &gt; upsertPullProgress + clearPullProgress round-trip one pullId" time="0.0008455">
+        </testcase>
+        <testcase classname="test/store/slices/model-plan3.test.ts" name="ModelSlice — Plan 3 additions &gt; setPullStalled is idempotent" time="0.0004579">
+        </testcase>
+        <testcase classname="test/store/slices/model-plan3.test.ts" name="ModelSlice — Plan 3 additions &gt; patchLoaded writes per-composite-key flags" time="0.0010591">
+        </testcase>
+        <testcase classname="test/store/slices/model-plan3.test.ts" name="ModelSlice — persist whitelist unchanged &gt; routerStatus, pullProgress, pullStalled, loadedKeys are NOT persisted" time="0.0005684">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/store/slices/updater.test.ts" timestamp="2026-08-31T19:47:40.882Z" hostname="AsafGolombek" tests="4" failures="0" errors="0" skipped="0" time="0.0122599">
+        <testcase classname="test/store/slices/updater.test.ts" name="updater slice &gt; seeds idle with all transient fields null" time="0.0034407">
+        </testcase>
+        <testcase classname="test/store/slices/updater.test.ts" name="updater slice &gt; setters write each field independently" time="0.0012391">
+        </testcase>
+        <testcase classname="test/store/slices/updater.test.ts" name="updater slice &gt; resetUpdaterTransients zeroes everything except updaterStatus" time="0.0006049">
+        </testcase>
+        <testcase classname="test/store/slices/updater.test.ts" name="UpdaterSlice — persist whitelist unchanged &gt; updaterStatus, updaterUiState, updaterCheck, updaterDownload, updaterRestarting, updaterFailure are NOT persisted" time="0.0018196">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/chrome/PageHeader.test.tsx" timestamp="2026-08-31T19:47:40.882Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.1145863">
+        <testcase classname="test/components/chrome/PageHeader.test.tsx" name="PageHeader &gt; renders the title and profile name" time="0.1014976">
+        </testcase>
+        <testcase classname="test/components/chrome/PageHeader.test.tsx" name="PageHeader &gt; shows &apos;all healthy&apos; when aggregate is normal" time="0.006235">
+        </testcase>
+        <testcase classname="test/components/chrome/PageHeader.test.tsx" name="PageHeader &gt; falls back to &apos;default&apos; profile when prop is absent" time="0.0030127">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/chrome/ProfileHealthPill.test.tsx" timestamp="2026-08-31T19:47:40.882Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.0301663">
+        <testcase classname="test/components/chrome/ProfileHealthPill.test.tsx" name="ProfileHealthPill &gt; shows &apos;all healthy&apos; for normal health" time="0.0223057">
+        </testcase>
+        <testcase classname="test/components/chrome/ProfileHealthPill.test.tsx" name="ProfileHealthPill &gt; shows &apos;degraded&apos; for amber health" time="0.0028854">
+        </testcase>
+        <testcase classname="test/components/chrome/ProfileHealthPill.test.tsx" name="ProfileHealthPill &gt; shows &apos;unavailable&apos; for red health" time="0.0019613">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/chrome/Sidebar.test.tsx" timestamp="2026-08-31T19:47:40.883Z" hostname="AsafGolombek" tests="2" failures="0" errors="0" skipped="0" time="0.1562876">
+        <testcase classname="test/components/chrome/Sidebar.test.tsx" name="Sidebar &gt; renders all six top-level nav entries" time="0.138315">
+        </testcase>
+        <testcase classname="test/components/chrome/Sidebar.test.tsx" name="Sidebar &gt; shows the pending-HITL badge when count &gt; 0" time="0.0130804">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/hitl/HitlPopupPage.test.tsx" timestamp="2026-08-31T19:47:40.883Z" hostname="AsafGolombek" tests="8" failures="0" errors="0" skipped="0" time="0.3354154">
+        <testcase classname="test/components/hitl/HitlPopupPage.test.tsx" name="HitlPopupPage &gt; renders &apos;No pending requests&apos; when queue is empty" time="0.0266563">
+        </testcase>
+        <testcase classname="test/components/hitl/HitlPopupPage.test.tsx" name="HitlPopupPage &gt; invokes close_hitl_popup after 500 ms when pending queue is empty" time="0.0148327">
+        </testcase>
+        <testcase classname="test/components/hitl/HitlPopupPage.test.tsx" name="HitlPopupPage &gt; renders the head-of-queue prompt" time="0.1084928">
+        </testcase>
+        <testcase classname="test/components/hitl/HitlPopupPage.test.tsx" name="HitlPopupPage &gt; Approve dispatches consentRespond(id, true)" time="0.0271101">
+        </testcase>
+        <testcase classname="test/components/hitl/HitlPopupPage.test.tsx" name="HitlPopupPage &gt; Reject dispatches consentRespond(id, false)" time="0.0453362">
+        </testcase>
+        <testcase classname="test/components/hitl/HitlPopupPage.test.tsx" name="HitlPopupPage &gt; shows +N more pending when queue length &gt; 1" time="0.0078573">
+        </testcase>
+        <testcase classname="test/components/hitl/HitlPopupPage.test.tsx" name="HitlPopupPage &gt; does NOT autoFocus Approve for destructive actions" time="0.0115827">
+        </testcase>
+        <testcase classname="test/components/hitl/HitlPopupPage.test.tsx" name="HitlPopupPage &gt; keeps popup open and shows inline error on consentRespond failure" time="0.0883769">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/hitl/StructuredPreview.test.tsx" timestamp="2026-08-31T19:47:40.884Z" hostname="AsafGolombek" tests="15" failures="0" errors="0" skipped="0" time="0.2085305">
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; renders scalar key/value rows" time="0.0302254">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; hides rows with null / undefined values" time="0.0042107">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; never renders raw HTML in values" time="0.0041239">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; joins arrays of scalars with commas" time="0.0029729">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; renders nested object one level deep" time="0.0040534">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; returns null for an undefined details prop" time="0.0011897">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; renders an array of objects as a bulleted nested list" time="0.0038373">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; renders deeply nested objects as JSON fallback beyond one level" time="0.0028685">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview &gt; truncates long strings with a Show full toggle" time="0.1090413">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview — auto-update action types (T2 PR 3) &gt; renders version pair + channel + publisher for extension.autoUpdate" time="0.0127577">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview — auto-update action types (T2 PR 3) &gt; renders &apos;Roll back extension&apos; for extension.downgrade direction" time="0.0060999">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview — auto-update action types (T2 PR 3) &gt; renders the changelog inside a &lt;pre&gt; block (no HTML execution)" time="0.0058562">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview — auto-update action types (T2 PR 3) &gt; renders permission diff when network adds a host" time="0.0123977">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview — auto-update action types (T2 PR 3) &gt; omits permission diff when no axis widened" time="0.002471">
+        </testcase>
+        <testcase classname="test/components/hitl/StructuredPreview.test.tsx" name="StructuredPreview — auto-update action types (T2 PR 3) &gt; falls through to generic renderer when action is unknown" time="0.0028243">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/PanelComingSoon.test.tsx" timestamp="2026-08-31T19:47:40.884Z" hostname="AsafGolombek" tests="1" failures="0" errors="0" skipped="0" time="0.0787235">
+        <testcase classname="test/components/settings/PanelComingSoon.test.tsx" name="PanelComingSoon &gt; renders the provided title as a h2 and a &apos;coming soon&apos; message" time="0.0763133">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/PanelError.test.tsx" timestamp="2026-08-31T19:47:40.885Z" hostname="AsafGolombek" tests="1" failures="0" errors="0" skipped="0" time="0.1212864">
+        <testcase classname="test/components/settings/PanelError.test.tsx" name="PanelError &gt; renders message and fires onRetry when the button is clicked" time="0.1188095">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/PanelHeader.test.tsx" timestamp="2026-08-31T19:47:40.885Z" hostname="AsafGolombek" tests="2" failures="0" errors="0" skipped="0" time="0.0820253">
+        <testcase classname="test/components/settings/PanelHeader.test.tsx" name="PanelHeader &gt; renders title (h2) + description" time="0.0763008">
+        </testcase>
+        <testcase classname="test/components/settings/PanelHeader.test.tsx" name="PanelHeader &gt; renders the optional live-status pill when provided" time="0.003166">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/SettingsSidebar.test.tsx" timestamp="2026-08-31T19:47:40.885Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.218">
+        <testcase classname="test/components/settings/SettingsSidebar.test.tsx" name="SettingsSidebar &gt; renders all 7 WS5-C panel entries" time="0.1800105">
+        </testcase>
+        <testcase classname="test/components/settings/SettingsSidebar.test.tsx" name="SettingsSidebar &gt; every entry links to its sub-route" time="0.0270144">
+        </testcase>
+        <testcase classname="test/components/settings/SettingsSidebar.test.tsx" name="SettingsSidebar &gt; has aria-label &apos;Settings&apos; so screen readers pick up the nav" time="0.006581">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/StaleChip.test.tsx" timestamp="2026-08-31T19:47:40.885Z" hostname="AsafGolombek" tests="2" failures="0" errors="0" skipped="0" time="0.0245098">
+        <testcase classname="test/components/settings/StaleChip.test.tsx" name="StaleChip &gt; renders offline-since text when provided" time="0.0197958">
+        </testcase>
+        <testcase classname="test/components/settings/StaleChip.test.tsx" name="StaleChip &gt; renders generic stale text when no timestamp is provided" time="0.0020144">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" timestamp="2026-08-31T19:47:40.886Z" hostname="AsafGolombek" tests="10" failures="0" errors="0" skipped="0" time="0.199497">
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; updater.downloadProgress transitions uiState to downloading" time="0.0275752">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; updater.downloadProgress does not re-set uiState when already downloading" time="0.0083871">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; updater.restarting sets restarting payload and uiState" time="0.0106141">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; updater.rolledBack sets failure and uiState to rolled_back" time="0.0031418">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; updater.verifyFailed sets failure and uiState to failed" time="0.0035403">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; updater.updateAvailable fetches check and transitions to available" time="0.0226906">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; restart-started transitions uiState to reconnecting" time="0.0067641">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; restart-complete: version matches → success" time="0.0327836">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; restart-complete: version mismatch → rolled_back" time="0.0489124">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.notifications.test.tsx" name="UpdaterRestartChrome — notification handlers &gt; restart-complete: diag throws → failed" time="0.0297802">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/updater/UpdaterRestartChrome.test.tsx" timestamp="2026-08-31T19:47:40.886Z" hostname="AsafGolombek" tests="4" failures="0" errors="0" skipped="0" time="0.1083995">
+        <testcase classname="test/components/updater/UpdaterRestartChrome.test.tsx" name="UpdaterRestartChrome &gt; renders nothing when uiState is idle" time="0.0381076">
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.test.tsx" name="UpdaterRestartChrome &gt; renders the overlay when uiState transitions to restarting" time="0.0268432">
+            <system-err>
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.test.tsx" name="UpdaterRestartChrome &gt; renders the overlay when uiState is reconnecting" time="0.0087701">
+            <system-err>
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/updater/UpdaterRestartChrome.test.tsx" name="UpdaterRestartChrome &gt; flips to failed with reconnect_timeout after 2 minutes in reconnecting" time="0.0297678">
+            <system-err>
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to UpdaterRestartChrome inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/dashboard/AuditFeed.test.tsx" timestamp="2026-08-31T19:47:40.887Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.0869498">
+        <testcase classname="test/components/dashboard/AuditFeed.test.tsx" name="AuditFeed &gt; renders recent entries using the Gateway wire shape" time="0.0707732">
+        </testcase>
+        <testcase classname="test/components/dashboard/AuditFeed.test.tsx" name="AuditFeed &gt; shows empty state when no entries" time="0.0048315">
+        </testcase>
+        <testcase classname="test/components/dashboard/AuditFeed.test.tsx" name="AuditFeed &gt; handles malformed actionJson gracefully (no subject rendered)" time="0.0062442">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/dashboard/ConnectorGrid.test.tsx" timestamp="2026-08-31T19:47:40.887Z" hostname="AsafGolombek" tests="4" failures="0" errors="0" skipped="0" time="0.0768541">
+        <testcase classname="test/components/dashboard/ConnectorGrid.test.tsx" name="ConnectorGrid &gt; renders one tile per connector" time="0.0442661">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorGrid.test.tsx" name="ConnectorGrid &gt; shows empty state when no connectors" time="0.0122619">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorGrid.test.tsx" name="ConnectorGrid &gt; onHealth: patches connector health without degradationReason" time="0.0108319">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorGrid.test.tsx" name="ConnectorGrid &gt; onHealth: includes degradationReason when present in payload" time="0.0049394">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/dashboard/ConnectorTile.test.tsx" timestamp="2026-08-31T19:47:40.887Z" hostname="AsafGolombek" tests="8" failures="0" errors="0" skipped="0" time="0.0861843">
+        <testcase classname="test/components/dashboard/ConnectorTile.test.tsx" name="ConnectorTile &gt; shows the connector name and last-sync relative time" time="0.0431836">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorTile.test.tsx" name="ConnectorTile &gt; renders degradation reason for degraded state" time="0.0070187">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorTile.test.tsx" name="ConnectorTile &gt; shows &apos;not synced yet&apos; when lastSyncAt is missing" time="0.0064304">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorTile.test.tsx" name="ConnectorTile &gt; applies a highlight ring when highlighted=true" time="0.0070894">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorTile.test.tsx" name="ConnectorTile &gt; dot colour for &apos;error&apos; health maps to CSS var containing color-error" time="0.0045991">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorTile.test.tsx" name="ConnectorTile &gt; dot colour for &apos;unauthenticated&apos; health maps to CSS var containing color-error" time="0.0042935">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorTile.test.tsx" name="ConnectorTile &gt; dot colour for &apos;paused&apos; health maps to CSS var containing color-fg-muted" time="0.0038347">
+        </testcase>
+        <testcase classname="test/components/dashboard/ConnectorTile.test.tsx" name="ConnectorTile &gt; falls back to the raw name for unknown connector identifiers" time="0.00492">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/dashboard/format.test.ts" timestamp="2026-08-31T19:47:40.888Z" hostname="AsafGolombek" tests="5" failures="0" errors="0" skipped="0" time="0.01053">
+        <testcase classname="test/components/dashboard/format.test.ts" name="format &gt; formats counts with thousand separators" time="0.0050973">
+        </testcase>
+        <testcase classname="test/components/dashboard/format.test.ts" name="format &gt; formats percent with zero decimals for integers" time="0.0005865">
+        </testcase>
+        <testcase classname="test/components/dashboard/format.test.ts" name="format &gt; formats ms with unit" time="0.0005592">
+        </testcase>
+        <testcase classname="test/components/dashboard/format.test.ts" name="format &gt; formats bytes to human units" time="0.0004447">
+        </testcase>
+        <testcase classname="test/components/dashboard/format.test.ts" name="format &gt; formats relative time" time="0.0005691">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/dashboard/IndexMetricsStrip.test.tsx" timestamp="2026-08-31T19:47:40.889Z" hostname="AsafGolombek" tests="2" failures="0" errors="0" skipped="0" time="0.0507788">
+        <testcase classname="test/components/dashboard/IndexMetricsStrip.test.tsx" name="IndexMetricsStrip &gt; renders 4 metric tiles with values" time="0.0371299">
+        </testcase>
+        <testcase classname="test/components/dashboard/IndexMetricsStrip.test.tsx" name="IndexMetricsStrip &gt; renders em-dashes when no data and error is present" time="0.0085906">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/audit/audit-row-utils.test.ts" timestamp="2026-08-31T19:47:40.889Z" hostname="AsafGolombek" tests="16" failures="0" errors="0" skipped="0" time="0.0108865">
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="splitActionType &gt; splits on the first dot" time="0.0032924">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="splitActionType &gt; returns the full string for both halves when there is no dot" time="0.0004964">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="splitActionType &gt; preserves dotted suffixes" time="0.0002051">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="extractActor &gt; returns an empty string for empty/{} payloads" time="0.0005062">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="extractActor &gt; returns the `actor` field when present and a string" time="0.000225">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="extractActor &gt; returns an empty string when JSON parse fails" time="0.0002133">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="extractActor &gt; returns an empty string when actor is non-string" time="0.0001619">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="toDisplayRow &gt; materialises every field including ISO timestamp" time="0.0003797">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="csvEscape &gt; returns empty for empty" time="0.0001781">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="csvEscape &gt; does not quote plain text" time="0.0001593">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="csvEscape &gt; quotes when comma present" time="0.0001339">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="csvEscape &gt; quotes and doubles interior quote" time="0.0001086">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="csvEscape &gt; quotes on CR/LF" time="0.0001052">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="rowsToCsv &gt; emits header even for empty input" time="0.0002294">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="rowsToCsv &gt; emits header + one row for one input" time="0.0002999">
+        </testcase>
+        <testcase classname="test/pages/settings/audit/audit-row-utils.test.ts" name="rowsToCsv &gt; escapes commas inside fields" time="0.0004022">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/pages/settings/connectors/interval-parts.test.ts" timestamp="2026-08-31T19:47:40.890Z" hostname="AsafGolombek" tests="5" failures="0" errors="0" skipped="0" time="0.0053274">
+        <testcase classname="test/pages/settings/connectors/interval-parts.test.ts" name="interval-parts &gt; MIN_INTERVAL_MS is 60_000" time="0.0016232">
+        </testcase>
+        <testcase classname="test/pages/settings/connectors/interval-parts.test.ts" name="interval-parts &gt; fromMs(120000) → 2 min" time="0.0006475">
+        </testcase>
+        <testcase classname="test/pages/settings/connectors/interval-parts.test.ts" name="interval-parts &gt; fromMs(3_600_000) → 1 hr" time="0.0001371">
+        </testcase>
+        <testcase classname="test/pages/settings/connectors/interval-parts.test.ts" name="interval-parts &gt; fromMs(90_000) → 90 sec (non-minute multiple)" time="0.0001079">
+        </testcase>
+        <testcase classname="test/pages/settings/connectors/interval-parts.test.ts" name="interval-parts &gt; toMs round-trips" time="0.0001531">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/audit/AuditFilterChips.test.tsx" timestamp="2026-08-31T19:47:40.890Z" hostname="AsafGolombek" tests="10" failures="0" errors="0" skipped="0" time="0.2971668">
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; renders service options including &apos;all&apos; and each available service" time="0.1675115">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; calls onChange with selected service" time="0.0302036">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; calls onChange with selected outcome" time="0.0129678">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; calls onChange with sinceMs when a valid date is entered" time="0.0171017">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; calls onChange with sinceMs=null when since date is cleared" time="0.0077044">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; calls onChange with untilMs=null when until date is cleared" time="0.008149">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; calls onChange with untilMs when a valid until date is entered" time="0.0086928">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; calls onReset when Reset button is clicked" time="0.0158948">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; renders controls as disabled when disabled prop is true" time="0.0165864">
+        </testcase>
+        <testcase classname="test/components/settings/audit/AuditFilterChips.test.tsx" name="AuditFilterChips &gt; shows formatted date in Since input when sinceMs is set" time="0.0068182">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/data/DeleteServiceDialog.test.tsx" timestamp="2026-08-31T19:47:40.891Z" hostname="AsafGolombek" tests="5" failures="0" errors="0" skipped="0" time="2.268723">
+        <testcase classname="test/components/settings/data/DeleteServiceDialog.test.tsx" name="DeleteServiceDialog — dropdown population &gt; shows all services from connectorsList in dropdown" time="0.1911729">
+        </testcase>
+        <testcase classname="test/components/settings/data/DeleteServiceDialog.test.tsx" name="DeleteServiceDialog — preflight + typed confirmation &gt; renders preflight counts after loading" time="0.1878934">
+        </testcase>
+        <testcase classname="test/components/settings/data/DeleteServiceDialog.test.tsx" name="DeleteServiceDialog — preflight + typed confirmation &gt; typed confirmation is case-sensitive and rejects trailing space" time="1.0311313">
+        </testcase>
+        <testcase classname="test/components/settings/data/DeleteServiceDialog.test.tsx" name="DeleteServiceDialog — preflight + typed confirmation &gt; calls dataDelete with explicit dryRun: false" time="0.4602554">
+        </testcase>
+        <testcase classname="test/components/settings/data/DeleteServiceDialog.test.tsx" name="DeleteServiceDialog — preflight + typed confirmation &gt; renders success copy with itemsToDelete count from preflight" time="0.3926312">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/data/ExportWizard.test.tsx" timestamp="2026-08-31T19:47:40.893Z" hostname="AsafGolombek" tests="10" failures="0" errors="0" skipped="0" time="11.2958873">
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — passphrase gate &gt; blocks Next when zxcvbn score &lt; 3" time="1.3149465">
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — passphrase gate &gt; allows Next when zxcvbn score &gt;= 3 and passphrase === confirm and length &gt;= 12" time="1.5733916">
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — destination + overwrite &gt; save dialog is called with a YYYY-MM-DD default filename" time="1.4376374">
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — destination + overwrite &gt; shows overwrite sub-step when exists() returns true" time="1.3387009">
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — progress bar &gt; renders the indeterminate bar when totalBytes is undefined" time="1.3091866">
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — progress bar &gt; renders the determinate bar when totalBytes is present" time="1.3239633">
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — seed branching &gt; first-time: shows mnemonic + &apos;Nimbus cannot recover&apos; warning + gated checkbox" time="1.4087671">
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — seed branching &gt; re-export: shows reminder card without mnemonic" time="1.3291076">
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — clipboard countdown and unmount scrubs &gt; countdown fires writeText(&apos;&apos;) after 30 s" time="0.1277683">
+            <system-err>
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ExportWizard inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/settings/data/ExportWizard.test.tsx" name="ExportWizard — clipboard countdown and unmount scrubs &gt; unmounting during active countdown clears clipboard immediately" time="0.1264658">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/data/ImportWizard.test.tsx" timestamp="2026-08-31T19:47:40.894Z" hostname="AsafGolombek" tests="7" failures="0" errors="0" skipped="0" time="9.8844726">
+        <testcase classname="test/components/settings/data/ImportWizard.test.tsx" name="ImportWizard — happy path + reload &gt; shows oauthEntriesFlagged copy when &gt; 0 and triggers reload after 3 s" time="0.5846637">
+        </testcase>
+        <testcase classname="test/components/settings/data/ImportWizard.test.tsx" name="ImportWizard — error paths &gt; -32010 archive_newer → terminal dialog with &apos;Update Nimbus&apos; copy + Go-to-Updates deep link" time="1.1577391">
+        </testcase>
+        <testcase classname="test/components/settings/data/ImportWizard.test.tsx" name="ImportWizard — error paths &gt; -32010 archive_older_unsupported → no Go-to-Updates button" time="1.0155712">
+        </testcase>
+        <testcase classname="test/components/settings/data/ImportWizard.test.tsx" name="ImportWizard — error paths &gt; -32002 decryption_failed shows retryable inline error" time="0.9361835">
+        </testcase>
+        <testcase classname="test/components/settings/data/ImportWizard.test.tsx" name="ImportWizard — typed confirmation gate &gt; blocks Replace when the phrase is wrong, enables when exact" time="0.9862446">
+        </testcase>
+        <testcase classname="test/components/settings/data/ImportWizard.test.tsx" name="ImportWizard — recovery seed auth method &gt; accepts a 12-word recovery seed and submits import" time="2.5911628">
+        </testcase>
+        <testcase classname="test/components/settings/data/ImportWizard.test.tsx" name="ImportWizard — recovery seed auth method &gt; -32002 with recoverySeed shows seed-specific error copy" time="2.6076825">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/model/PullDialog.test.tsx" timestamp="2026-08-31T19:47:40.894Z" hostname="AsafGolombek" tests="7" failures="0" errors="0" skipped="0" time="1.9845233">
+        <testcase classname="test/components/settings/model/PullDialog.test.tsx" name="PullDialog &gt; hides the llama.cpp radio when availability reports it unavailable" time="0.123006">
+        </testcase>
+        <testcase classname="test/components/settings/model/PullDialog.test.tsx" name="PullDialog &gt; shows both providers when both are available" time="0.0870117">
+        </testcase>
+        <testcase classname="test/components/settings/model/PullDialog.test.tsx" name="PullDialog &gt; submitting calls llmPullModel, then pullProgress notifications update the bar" time="0.7105738">
+            <system-err>
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/settings/model/PullDialog.test.tsx" name="PullDialog &gt; cancel during an active pull calls llmCancelPull with the pullId" time="0.5208155">
+        </testcase>
+        <testcase classname="test/components/settings/model/PullDialog.test.tsx" name="PullDialog &gt; 15 s without a pullProgress chunk flips the row to amber &apos;Connecting…&apos;" time="0.1064504">
+            <system-err>
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/settings/model/PullDialog.test.tsx" name="PullDialog &gt; re-attach with a persisted activePullId arms the stall timer without waiting for a chunk" time="0.027641">
+            <system-err>
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+        <testcase classname="test/components/settings/model/PullDialog.test.tsx" name="PullDialog &gt; llm.pullFailed clears the pullId and shows an error toast-style message" time="0.4030727">
+            <system-err>
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PullDialog inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="test/components/settings/model/RouterStatus.test.tsx" timestamp="2026-08-31T19:47:40.895Z" hostname="AsafGolombek" tests="3" failures="0" errors="0" skipped="0" time="0.0729379">
+        <testcase classname="test/components/settings/model/RouterStatus.test.tsx" name="RouterStatus &gt; renders one badge per task type present in `decisions`" time="0.0607998">
+        </testcase>
+        <testcase classname="test/components/settings/model/RouterStatus.test.tsx" name="RouterStatus &gt; renders a &apos;none&apos; pill for a task type with undefined decision" time="0.0053928">
+        </testcase>
+        <testcase classname="test/components/settings/model/RouterStatus.test.tsx" name="RouterStatus &gt; renders an empty state when `decisions` is empty" time="0.0021843">
         </testcase>
     </testsuite>
 </testsuites>

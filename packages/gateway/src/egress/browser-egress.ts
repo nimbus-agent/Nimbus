@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { type CuResourceType, decideRequest, originOf } from "../computer-use/cu-request-policy.ts";
+import { decideRequest, originOf, toCuResourceType } from "../computer-use/cu-request-policy.ts";
 import type { CuBrowserTarget } from "../computer-use/cu-types.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 
@@ -60,7 +60,20 @@ export function wrapLedgeredBrowserContext(
       await ctx.route(pattern, async (route) => {
         const req = route.request();
         const url = req.url();
-        const resourceType = req.resourceType() as CuResourceType;
+        // A REAL guard, not the `as CuResourceType` cast this replaced — matching the convention
+        // the IPC boundary already uses for `isCuActionKind`. The cast claimed an exhaustiveness
+        // that did not hold, and the raw-CDP driver made that live rather than theoretical: CDP
+        // reports PascalCase (`"Document"`, `"XHR"`), the union is Playwright-shaped lowercase, so
+        // under the cast EVERY live type missed both policy sets — including the page's own
+        // document, which `decideRequest` would then have blocked.
+        //
+        // An unrecognised value resolves to `"other"`, which `decideRequest` places in the GATED
+        // union branch (fail-closed: a type this policy has never heard of is not evidence that it
+        // is harmless). The RAW protocol string, not the substituted word, goes into
+        // `payload_summary`, so an operator reading a blocked row sees what actually happened
+        // rather than this module's fallback.
+        const rawResourceType = req.resourceType();
+        const resourceType = toCuResourceType(rawResourceType) ?? "other";
         const verdict = decideRequest({ resourceType, url, target: deps.target });
         const destination = originOf(url) ?? "unparseable";
 
@@ -76,7 +89,7 @@ export function wrapLedgeredBrowserContext(
               sourceId: deps.sessionId,
               destination,
               method: "browser.request",
-              payloadSummary: `${resourceType}: ${verdict.reason}`,
+              payloadSummary: `${rawResourceType}: ${verdict.reason}`,
               // "not_required", matching every other decorator-style appender in this file's
               // family (model/embedding/chatops/sync egress) — none of these route through the
               // I2 HITL frozen set per call, and the per-request origin decision here is made by

@@ -5,7 +5,7 @@ import { ModelRouterLanguageModel } from "@mastra/core/llm";
 import { createTool } from "@mastra/core/tools";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
-import type { CuGateDeps } from "../computer-use/cu-gate.ts";
+import type { CuRunDeps } from "../computer-use/cu-gate.ts";
 import { buildComputerUseTools } from "../computer-use/cu-tools.ts";
 import { Config } from "../config.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
@@ -131,13 +131,13 @@ export type NimbusEngineAgentDeps = {
   /**
    * The live computer-use browser session (if any) this agent may drive, plus everything
    * `runAction` (Task 10's gate) needs to act on it. Omitted in every caller today: the browser
-   * driver does not exist yet (Task 9, re-planned against raw CDP), so no session can currently
+   * lane is DEFAULT OFF and opt-in per lane, so on a stock install no session can
    * open and `buildComputerUseTools` is unreachable — undefined here reproduces exactly that,
    * rather than a disabled tool that errors when called. When a caller DOES wire this, `sessionId`
    * still gates per-call: it must name a session `runAction`'s own `deps.db`-backed session store
    * currently has open, or every call refuses through the gate's own machinery.
    */
-  computerUse?: { sessionId: string | undefined; gateDeps: CuGateDeps };
+  computerUse?: { sessionId: string | undefined; gateDeps: CuRunDeps };
 };
 
 export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {

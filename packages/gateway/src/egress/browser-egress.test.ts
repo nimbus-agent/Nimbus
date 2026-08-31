@@ -175,6 +175,53 @@ describe("wrapLedgeredBrowserContext", () => {
     expect(cap.aborted).toBe(1);
   });
 
+  test("a PascalCase CDP resource type is GUARDED into the policy's vocabulary, not cast", () => {
+    // The live defect the guard closed. `Fetch.requestPaused` reports `"Document"`; the union is
+    // `playwright-core`-shaped lowercase. Under the `as CuResourceType` cast this replaced, every
+    // real CDP type missed BOTH `PASSIVE` and `SCRIPT_INITIATED`, so the page's own document fell
+    // to the gated branch and the lane could not render the origin its owner had just approved.
+    return (async () => {
+      const h = harness();
+      await h.wrapped.route("**/*", async () => {});
+      const cap: Captured = { continued: 0, aborted: 0 };
+      await h.fire(fakeRoute("https://example.com/", "Document", cap));
+      expect(cap.continued).toBe(1);
+      expect(cap.aborted).toBe(0);
+      const row = h.db
+        .query<{ result_status: string }, []>(`SELECT result_status FROM egress_ledger`)
+        .get();
+      expect(row?.result_status).toBe("authorized");
+    })();
+  });
+
+  test("an UNRECOGNISED resource type fails closed into the gated branch", async () => {
+    // `Ping` (navigator.sendBeacon / <a ping>) is deliberately unmapped: it is a fire-and-forget
+    // outbound POST, i.e. exactly the convenient exfiltration channel section 3.5.1 exists to
+    // close. Folding it into a PASSIVE member "because it is a subresource" would reopen it.
+    const h = harness();
+    await h.wrapped.route("**/*", async () => {});
+    const cap: Captured = { continued: 0, aborted: 0 };
+    await h.fire(fakeRoute("https://evil.example/beacon", "Ping", cap));
+    expect(cap.aborted).toBe(1);
+    expect(cap.continued).toBe(0);
+  });
+
+  test("the RAW protocol string is what reaches payload_summary, not the substituted word", () => {
+    // An operator reading a blocked row must see what the protocol actually said. Recording the
+    // fallback (`other`) would hide which type was refused.
+    return (async () => {
+      const h = harness();
+      await h.wrapped.route("**/*", async () => {});
+      const cap: Captured = { continued: 0, aborted: 0 };
+      await h.fire(fakeRoute("https://evil.example/beacon", "Ping", cap));
+      const row = h.db
+        .query<{ payload_summary: string }, []>(`SELECT payload_summary FROM egress_ledger`)
+        .get();
+      expect(row?.payload_summary.startsWith("Ping:")).toBe(true);
+      expect(row?.payload_summary.startsWith("other:")).toBe(false);
+    })();
+  });
+
   test("never stores a full URL — only the origin", async () => {
     const h = harness();
     await h.wrapped.route("**/*", async () => {});

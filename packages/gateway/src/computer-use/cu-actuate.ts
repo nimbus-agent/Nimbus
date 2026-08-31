@@ -48,8 +48,9 @@ export async function performActuation(
       return bytesToHex(blake3(bytes));
     }
     case "download":
-      // No lane implements a download yet (`BrowserLane` declares no download method — Task 9's
-      // driver is deferred entirely). Returning `null` here did no work but still let `cu-gate.ts`
+      // No lane implements a download (`BrowserLane` declares no download method, and the driver
+      // denies downloads at the BROWSER level via `Browser.setDownloadBehavior`, so there is
+      // nothing for one to hook into). Returning `null` here did no work but still let `cu-gate.ts`
       // record `outcome: "actuated"` / `hitl_status: "approved"`: an owner-approved "download"
       // action would have been recorded as a SUCCESSFUL actuation that actually downloaded
       // nothing. Fail closed instead — the throw is caught by `cu-gate.ts`'s existing
