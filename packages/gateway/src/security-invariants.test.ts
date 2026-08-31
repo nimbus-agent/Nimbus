@@ -2761,9 +2761,27 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     }
     expect(end).toBeGreaterThan(-1);
     const iface = src.slice(start, end);
-    for (const banned of ["description", "intent", "rationale", "summary", "label"]) {
-      expect(iface).not.toContain(`${banned}:`);
-    }
+    // ALLOWLIST, not a denylist: red-proved that a denylist is the wrong shape for this guard.
+    // `not.toContain("intent:")` (an earlier version of this check) is defeated by
+    // `readonly modelIntent?: string;`, which contains `Intent:` — capital I, never matched by a
+    // lowercase, colon-anchored substring search — and a denylist can only ever enumerate the
+    // field NAMES someone already thought to ban, never the ones nobody has invented yet. This
+    // repo's own rule is to write a guard as what CANNOT pass: parse the field names the interface
+    // actually declares and assert the set is EXACTLY the five permitted ones. Any new field —
+    // whatever it is called, whatever it is cased — fails until someone consciously widens the
+    // allowlist below, which is the point: adding a model-controllable field is a decision, not an
+    // accident this scan lets slide.
+    //
+    // Field names are read off `^\s*readonly (\w+)\??:` lines within the brace-depth-bounded
+    // interface body — the same slice the old denylist scanned — so a JSDoc block that merely
+    // MENTIONS a field name inside prose (e.g. "the closing brace `}`" or a `{@link foo}`) cannot
+    // masquerade as a declared field: `stripComments` has already removed comment text from `src`
+    // before this slice was taken, and the regex additionally requires the `readonly NAME?:`
+    // shape a JSDoc construct never produces.
+    const fields = [...iface.matchAll(/^\s*readonly (\w+)\??:/gm)]
+      .map((m) => m[1] as string)
+      .sort();
+    expect(fields).toEqual(["currentOrigin", "kind", "node", "submitsForm", "targetOrigin"].sort());
   });
 
   test("no computer.* method is exposed to the Tauri renderer (I7)", async () => {
@@ -2772,29 +2790,48 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
   });
 
   test("the browser lane never writes a screenshot to disk", async () => {
-    // Spec § 7. Playwright persists a screenshot only when given a `path` option; its absence is
-    // the enforcement, so this scan is the thing that keeps it absent. `cu-lanes/browser.ts` (the
-    // deferred driver, see plan Task 9) does not exist yet, so today's honest scan target is
-    // `cu-actuate.ts`'s `screenshot` case -- the only place in the shipped surface that calls a
-    // screenshot method at all right now, and it passes no options (hence no `path`). Once the
-    // real driver lands at `cu-lanes/browser.ts`, this picks it up automatically (that is what a
-    // real `page.screenshot({ path: ... })` call would land in) and must be re-verified there.
+    // Spec § 7. The property this test is NAMED for is that captured screenshot bytes never reach
+    // a persisting API anywhere in the file — not merely that one particular `screenshot(` call
+    // site lacks a `path:` option. An earlier version of this test scanned only a 400-byte window
+    // after the first `indexOf("screenshot(")` hit and asserted the window lacked `path:`; that
+    // is redundant with the type system today (`BrowserLane.screenshot()` takes no parameters, so
+    // a `path:` option there is already a compile error) and blind to the real hazard, red-proved
+    // by inserting `await Bun.write("/tmp/leak.png", bytes);` right after the captured bytes and
+    // returning their digest as before — the old test stayed green because the write sat past the
+    // 400-byte window and the returned bytes were never the thing being scanned.
     //
-    // Comments are stripped BEFORE searching: `cu-actuate.ts`'s own doc comment quotes
-    // `lane.screenshot(); return null;` as an example of a fixed defect, and a bare
-    // `indexOf("screenshot(")` over the RAW source finds that comment's occurrence first -- ending
-    // the 400-byte window before it ever reaches the real call a few lines later. Proven: mutating
-    // the real call to `lane.screenshot({ path: "/tmp/leak.png" })` left the unstripped version of
-    // this test green. Stripping removes the comment's occurrence entirely, so the only
-    // `screenshot(` left to find is the real one.
+    // This version scans the WHOLE file for every persisting API this repo uses to write bytes to
+    // disk — `Bun.write`, `writeFile`/`writeFileSync`, `createWriteStream`, and any `fs.`-prefixed
+    // write call — rather than a slice following one call site. `cu-lanes/browser.ts` (the
+    // deferred driver, see plan Task 9) does not exist yet, so today's honest scan target is
+    // `cu-actuate.ts`, the only file in the shipped surface that touches screenshot bytes at all.
+    // Once the real driver lands at `cu-lanes/browser.ts`, this picks it up automatically and must
+    // be re-verified there.
+    //
+    // `stripStringLiterals(stripComments(src))` is applied before scanning: `cu-actuate.ts`'s own
+    // doc comment quotes `lane.screenshot(); return null;` as an example of a fixed defect, and a
+    // raw-source scan for a persisting-API name could be defeated by exactly that kind of comment
+    // (or by one hiding inside a string literal) — this repo has been bitten by that exact class of
+    // false-negative three times over in the sibling classifier-field test below, which is why both
+    // strippers are composed here too rather than a bespoke one-off check.
     const laneFile = "packages/gateway/src/computer-use/cu-lanes/browser.ts";
     const target = (await Bun.file(laneFile).exists())
       ? laneFile
       : "packages/gateway/src/computer-use/cu-actuate.ts";
-    const src = stripComments(await Bun.file(target).text());
-    const shotAt = src.indexOf("screenshot(");
-    expect(shotAt).toBeGreaterThan(-1);
-    const window = src.slice(shotAt, shotAt + 400);
-    expect(window).not.toContain("path:");
+    const rawSrc = await Bun.file(target).text();
+    const src = stripStringLiterals(stripComments(rawSrc));
+    // Sanity guard: the scan target must actually mention `screenshot(` at all, or this test would
+    // vacuously pass against a file that no longer captures screenshot bytes.
+    expect(src).toContain("screenshot(");
+    const persistingApis = [
+      /\bBun\.write\s*\(/,
+      /\bwriteFileSync\s*\(/,
+      /\bwriteFile\s*\(/,
+      /\bcreateWriteStream\s*\(/,
+      /\bfs\.\w*[Ww]rite\w*\s*\(/,
+    ];
+    for (const pattern of persistingApis) {
+      expect(src).not.toMatch(pattern);
+    }
   });
 });

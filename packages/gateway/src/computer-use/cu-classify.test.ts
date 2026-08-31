@@ -85,14 +85,17 @@ describe("classifyBrowserAction — observing", () => {
 
 describe("classifyBrowserAction — the model cannot influence the verdict", () => {
   // I35 / spec § 4.3: this is I3 transplanted. The classifier reads the OBSERVED node and nothing
-  // else. The load-bearing test: a submit button the model calls "just a link" still actuates.
-  test("BrowserActionInput has no field a model controls", () => {
-    const keys = Object.keys(input()).sort();
-    expect(keys).toEqual(["currentOrigin", "kind", "node", "targetOrigin"]);
-    expect(keys).not.toContain("description");
-    expect(keys).not.toContain("intent");
-  });
-
+  // else.
+  //
+  // A "BrowserActionInput has no field a model controls" test used to live here, asserting
+  // `Object.keys(input())` against a fixed array. That was near-tautological: `input()` is this
+  // FILE's own fixture factory, not the production `BrowserActionInput` interface, so the
+  // assertion could only ever detect a change to the fixture, never a new field added to the real
+  // interface (and it doesn't even set `submitsForm`, so it was already asserting the fixture's
+  // shape, not the interface's). The real guard — an ALLOWLIST scan of the interface declaration
+  // itself, red-proved against a new field under three different disguises — lives in
+  // `security-invariants.test.ts`'s "the classifier takes no model-supplied field" (I35 describe
+  // block); deleted here rather than left standing beside it under a near-identical name.
   test("a submit control classifies actuating regardless of any description passed alongside", () => {
     const i = { ...input({ node: node({ tagName: "BUTTON", isSubmitControl: true }) }) };
     // Even if a caller smuggles a description onto the object, it changes nothing.

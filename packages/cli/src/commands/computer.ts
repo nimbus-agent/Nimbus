@@ -345,11 +345,15 @@ export interface OutcomeSink {
 /**
  * Actionable, honest messages per `refused` code.
  *
- * `ERR_CU_NO_BROWSER` is the ONLY outcome a real user can reach today: the browser driver is
- * deferred (re-planned against raw CDP after `playwright-core` failed a `bun build --compile`
- * gate — invariant I35), so `platform/assemble.ts` wires `resolveBrowserPath: () => null` and the
- * gate refuses every session before consent. There is no local fix for that — no Chromium install,
- * no config change — so the message says so plainly rather than suggesting a remedy that does not
+ * `ERR_CU_NO_BROWSER` is the furthest a FULLY-CONFIGURED user (capability enabled, lane allowed,
+ * sandbox confining) can get today, not the only refusal a real user can reach — with the shipped
+ * defaults (`enabled = false`, `allowed_lanes = []`) a real user hits `ERR_CU_DISABLED` first, then
+ * `ERR_CU_LANE_NOT_ALLOWED`, then `ERR_CU_SANDBOX_DEGRADED`, before this one is even reached. Once
+ * reached: the browser driver is deferred (re-planned against raw CDP after `playwright-core`
+ * failed a `bun build --compile` gate — invariant I35), so `platform/assemble.ts` wires
+ * `resolveBrowserPath: () => null` and the gate refuses every session before consent. There is no
+ * local fix for that — no Chromium install, no config change — so the message says so plainly
+ * rather than suggesting a remedy that does not
  * exist. Every other code here has an actual remedy, and says what it is.
  */
 const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {

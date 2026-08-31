@@ -19,8 +19,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   the HITL class STRUCTURALLY from the gateway-observed target (`cu-classify.ts`), never the
   model's own `modelDescription` field (I3 transplanted); obtain single-use owner approval for
   every `actuating` verdict; append one `computer.action` audit row before every actuation,
-  fail-closed. Once the taint latch is set (the first untrusted observation) the envelope can only
-  narrow — origins never grow, budgets never rise, no actuation is ever auto-satisfied. Screenshot
+  fail-closed. The envelope's immutability is enforced at construction: `CuSession` deep-freezes
+  the approved envelope and both origin arrays when the session opens, so origins can never grow
+  and budgets can never rise — that holds from the first action, independent of any latch. The
+  taint latch (`tainted_at`) is a durable forensic record of the moment untrusted content first
+  enters a session, not an enforcement mechanism: nothing in production reads it today. Screenshot
   bytes are BLAKE3-digested and discarded in the same expression that captures them; no pixel is
   ever written to disk, on any lane, at any point. New IPC namespace `computer.*`
   (`sessionOpen`/`act`/`sessionStatus`/`sessionClose`/`approvalRespond`), whole-namespace
@@ -40,7 +43,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   (its public layout does not match the internal path Playwright's build vendors). It is re-planned
   against raw CDP over a WebSocket. Consequently `platform/assemble.ts` wires
   `resolveBrowserPath: () => null`, and `cu-gate.ts` refuses **every** session before consent with
-  `ERR_CU_NO_BROWSER` — the only outcome a real user can reach today, over a gate, classifier,
+  `ERR_CU_NO_BROWSER` — the furthest a **fully-configured** user can get today, not the only
+  refusal a real user can reach: with the shipped defaults (`enabled = false`, `allowed_lanes =
+  []`) a real user hits `ERR_CU_DISABLED` first, then `ERR_CU_LANE_NOT_ALLOWED`, then
+  `ERR_CU_SANDBOX_DEGRADED`, before `ERR_CU_NO_BROWSER` is even reached — over a gate, classifier,
   request policy, envelope, taint latch, IPC surface, agent-tool wiring, invariant and static rule
   that are all wired and tested. `nimbus computer browser` is consequently a PASSIVE LISTENER, not
   a driver: it opens a session and answers its two consent-prompt kinds, but `computer.act` has no
@@ -54,7 +60,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   expression, the model receives only an outcome and a digest, and no vision-capable model is
   wired into the agent — so there is currently nothing on this path for an envelope to protect;
   the taint latch is nonetheless built to taint by KIND rather than by content, in advance of a
-  channel that does not exist yet.
+  channel that does not exist yet. **Adding `browser` to `COVERAGE_CLASSES` invalidates every boot
+  marker written by a binary built before this landed** — `parseCoverage` requires every known
+  class to be present in a marker string, so an older binary's marker is missing the new key and a
+  window spanning the upgrade reads `indeterminate` rather than a clean count. Fail-safe, not a
+  soundness bug, but user-visible: it is called out here rather than left for a bug report.
 
 - **2026-08-29 — A `nimbus prove` zero over a ChatOps window now means the bot said nothing — before this, it meant nothing about ChatOps at all.** Every outbound Slack/Teams post — operational replies (I23), HITL approval cards, tribal repeat-question suggestions, and (once a caller exists) agent briefs posted into chat — now appends one `egress_ledger` row before it leaves the machine. This is a NEW `chatops` egress class, not a widened existing one: until today `COVERAGE_CLASSES` did not contain `chatops` at all, so a chat post left no trace and no disclaimer either — `nimbus prove` could report a clean `0` for a window in which a brief synthesized from the private index had actually been posted to Slack's servers. That is a stronger failure than the `mcp`/`http` classes' documented narrowness: those two always said, in the same commit that added them, exactly what they did not cover; chat egress was simply absent from the record.
 

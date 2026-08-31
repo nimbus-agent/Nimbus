@@ -138,10 +138,11 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  *
  * `browser` is `"none"` TODAY, DELIBERATELY, though its appender exists and is tested. It is
  * WRITTEN to be `per-run`: `egress/browser-egress.ts`'s `wrapLedgeredBrowserContext` is a DECORATOR
- * over the Playwright `BrowserContext` rather than a call-site append — the same shape as
+ * over the driver-neutral `LedgerableContext` shape (structurally typed, not a `playwright`
+ * import — see `browser-egress.ts`) rather than a call-site append — the same shape as
  * `wrapLedgeredProvider`, and for the same reason: a call-site append covers the callers that exist
  * today, a wrapped instance covers the ones written later without their cooperation. But nothing
- * CONSTRUCTS a `BrowserContext` in production yet — the computer-use browser driver is deferred
+ * CONSTRUCTS a browser context in production yet — the computer-use browser driver is deferred
  * (re-planned against raw CDP after `playwright-core` failed a `bun build --compile` gate; see
  * invariant I35) — so `wrapLedgeredBrowserContext` has no production caller and this class must
  * stay `"none"` until one lands, per this file's own rule for every other class. `per-run` (once

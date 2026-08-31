@@ -1702,8 +1702,12 @@ const streamReq: JSONRPCRequest = {
 // WebDriver-BiDi transport that bun's bundler resolves eagerly), so it is re-planned against raw
 // CDP over a WebSocket. `platform/assemble.ts` consequently wires `resolveBrowserPath: () => null`,
 // so `computer.sessionOpen` refuses EVERY session before consent with `ERR_CU_NO_BROWSER` — the
-// only outcome a real user can reach today. The methods above, their gate, classifier, envelope,
-// taint latch and audit trail are all wired and tested; none of it can currently reach a host.
+// furthest a FULLY-CONFIGURED user (capability enabled, lane allowed, sandbox confining) can get
+// today, not the only refusal a real user can reach: with the shipped defaults (`enabled = false`,
+// `allowed_lanes = []`) a real user hits `ERR_CU_DISABLED` first, then `ERR_CU_LANE_NOT_ALLOWED`,
+// then `ERR_CU_SANDBOX_DEGRADED`, before `ERR_CU_NO_BROWSER` is even reached. The methods above,
+// their gate, classifier, envelope, taint latch and audit trail are all wired and tested; none of
+// it can currently reach a host.
 // `nimbus computer browser` (CLI) is consequently a PASSIVE LISTENER only — it opens a session and
 // answers its two prompt kinds, but drives no action itself; `computer.act` has no production
 // caller anywhere yet. The browser lane's own egress class (`egress/browser-egress.ts`'s

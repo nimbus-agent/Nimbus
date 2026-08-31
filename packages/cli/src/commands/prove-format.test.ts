@@ -1,20 +1,29 @@
 // packages/cli/src/commands/prove-format.test.ts
 import { describe, expect, test } from "bun:test";
-import { formatProveResult } from "./prove.ts";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { COVERAGE_CLASS_LABELS, formatProveResult } from "./prove.ts";
 
 /**
- * The REAL production vector: the gateway's six-class `THIS_BINARY_COVERAGE`
- * (`gateway/src/egress/egress-coverage.ts`), with `task` and `mcp` observed per-call.
+ * The REAL production vector: the gateway's nine-class `THIS_BINARY_COVERAGE`
+ * (`gateway/src/egress/egress-coverage.ts`), with `task`/`mcp`/`http`/`chatops` observed per-call.
  *
  * Hand-maintained mirror — `ProveCompleteness.coverage` is `Record<string, string>` because the
- * CLI may not import gateway source, so `tsc` cannot catch this going stale. It DID go stale once:
- * it modelled five classes after `mcp` shipped, and the assertions below kept passing against a
- * scope line no shipped gateway could produce, which is how a missing `COVERAGE_CLASS_LABELS`
- * entry reached production. Change this whenever `COVERAGE_CLASSES` changes.
+ * CLI may not import gateway source, so `tsc` cannot catch this going stale. It has gone stale
+ * TWICE now: first when it modelled five classes after `mcp` shipped (kept passing against a scope
+ * line no shipped gateway could produce, which is how a missing `COVERAGE_CLASS_LABELS` entry
+ * reached production), and again when `http`/`chatops`/`browser` shipped and this fixture stayed at
+ * six/seven classes. The drift test below (`COVERAGE_CLASS_LABELS mirrors...`) source-scans the
+ * gateway file for every class this fixture and `COVERAGE_CLASS_LABELS` must cover, so a THIRD
+ * staleness fails loudly instead of shipping quietly. Change this whenever `COVERAGE_CLASSES`
+ * changes.
  */
 const COVERED = {
   coverage: {
+    browser: "none",
+    chatops: "per-call",
     mcp: "per-call",
+    http: "per-call",
     task: "per-call",
     session: "none",
     sync: "none",
@@ -28,14 +37,15 @@ const COVERED = {
 /**
  * The scope clause a real gateway produces today, spelled out literally.
  *
- * `observed` is sorted by CLASS KEY before mapping to display names, so `mcp` (< `task`) leads even
- * though its label starts with "agents.*". The `mcp` label is deliberately narrow: that class
- * covers only `agents.*` briefs served to a client that declared `kind: "mcp"`, NOT everything an
- * MCP client can call on the socket. A class with no `COVERAGE_CLASS_LABELS` entry falls back to
- * its raw key, which reads as a far broader claim than the appender makes — see the comment on
- * that map in prove.ts.
+ * `observed` is sorted by CLASS KEY before mapping to display names, so the order is
+ * `chatops` < `http` < `mcp` < `task`. The `mcp`/`http` labels are deliberately narrow: those
+ * classes cover only `agents.*` briefs served to a client of the matching kind, NOT everything a
+ * caller of that kind can do. A class with no `COVERAGE_CLASS_LABELS` entry falls back to its raw
+ * key, which reads as a far broader claim than the appender makes — see the comment on that map
+ * in prove.ts.
  */
-const REAL_SCOPE = "agents.* briefs served to MCP clients, gated connector actions";
+const REAL_SCOPE =
+  "Slack/Teams posts, agents.* briefs served over the local HTTP API, agents.* briefs served to MCP clients, gated connector actions";
 
 describe("formatProveResult", () => {
   test("a zero window never prints a bare 0 — it names what was observed", () => {
@@ -47,12 +57,12 @@ describe("formatProveResult", () => {
     });
     // Assert the whole first line, not just that a "0" appears somewhere: the defect being fixed
     // is a count printed WITHOUT its scope, so the scope must be on the same line as the number.
-    // Pinned to the REAL six-class gateway output — every observed class is named with a label,
+    // Pinned to the REAL nine-class gateway output — every observed class is named with a label,
     // never a raw key.
     expect(out.split("\n")[0]).toBe(
       `outbound egress events during this query, in the covered classes: 0 (scope: ${REAL_SCOPE})`,
     );
-    expect(out).toContain("not observed: model, peer, session, sync");
+    expect(out).toContain("not observed: browser, model, peer, session, sync");
     // No observed class fell through to its raw key. `mcp` alone in the scope clause would read as
     // "everything this MCP client does"; the label exists to stop exactly that.
     expect(out).not.toContain("scope: mcp");
@@ -196,5 +206,42 @@ describe("formatProveResult", () => {
     // The bare fallback never fires: a lone "model" (unlabelled) would appear as its own
     // comma-delimited scope-clause token.
     expect(out).not.toMatch(/scope:.*(?:^|, )model(?:,|\))/);
+  });
+});
+
+/**
+ * The derived agreement check this module's own header names as an open item: since the CLI
+ * cannot import gateway source, this cannot be a `tsc` check — it is a SOURCE SCAN over the
+ * gateway file's text, mirroring how `llm-shape-parity.test.ts` mirrors a cross-package type by
+ * scanning field names out of source text rather than importing it.
+ *
+ * This closes the drift `COVERED`/`REAL_SCOPE` above cannot: those are exact-string fixtures that
+ * only go stale when someone remembers to update them by hand (the module doc above records that
+ * they already went stale twice). This test instead re-derives the full class list from
+ * `COVERAGE_CLASSES` every run and fails the moment `COVERAGE_CLASS_LABELS` (prove.ts) is missing
+ * an entry for one of them — which is exactly the shape of defect that let a missing label reach
+ * production before (see the module doc comment above).
+ */
+describe("COVERAGE_CLASS_LABELS mirrors gateway COVERAGE_CLASSES", () => {
+  test("every gateway coverage class has a CLI label", async () => {
+    const repo = resolve(import.meta.dir, "../../../..");
+    const gw = await readFile(
+      resolve(repo, "packages/gateway/src/egress/egress-coverage.ts"),
+      "utf8",
+    );
+
+    const at = gw.indexOf("export const COVERAGE_CLASSES = [");
+    expect(at).toBeGreaterThan(-1);
+    const end = gw.indexOf("] as const;", at);
+    expect(end).toBeGreaterThan(at);
+    const body = gw.slice(at, end);
+    const classes = [...body.matchAll(/"([a-z]+)"/g)].map((m) => m[1] as string);
+
+    // Guard against the scan silently matching nothing: a structural test that reads no classes
+    // would vacuously pass against any CLI label map.
+    expect(classes.length).toBeGreaterThan(5);
+    for (const cls of classes) {
+      expect(Object.hasOwn(COVERAGE_CLASS_LABELS, cls)).toBe(true);
+    }
   });
 });
