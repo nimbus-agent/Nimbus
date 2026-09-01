@@ -17,10 +17,20 @@ export class CuShellError extends Error {
   }
 }
 
+/**
+ * How a shell's presence is probed. Injectable for the reason `chromium-path.ts` splits
+ * `chromiumCandidates(platform, env)` out as a PURE function: the interesting branch here is
+ * "present / absent", and on any given runner exactly one arm is reachable — `/bin/sh` always
+ * exists on POSIX and never on Windows. Left un-injected, half of this file's branches could only
+ * ever be covered by the OTHER platform's CI leg, which is precisely the blind spot
+ * `audit:coverage-gate-pal` exists to flag.
+ */
+export type PathExists = (path: string) => boolean;
+
 export interface CuShell {
   readonly id: string;
   /** Absolute path to the shell, or null when it is not present on this machine. */
-  detect(): string | null;
+  detect(exists?: PathExists): string | null;
   /** Every flag, in order, minus the executable. Spawned VERBATIM by `openTerminalLane`. */
   argv(): readonly string[];
   /**
@@ -51,7 +61,7 @@ const POSIX_QUIET_ENV: Readonly<Record<string, string>> = {
 
 const SH_SHELL: CuShell = {
   id: "sh",
-  detect: () => (existsSync("/bin/sh") ? "/bin/sh" : null),
+  detect: (exists = existsSync) => (exists("/bin/sh") ? "/bin/sh" : null),
   // `-s` = read commands from standard input. Deliberately NOT `-i`: an interactive shell would
   // enable job control and history, which is exactly what this lane refuses to offer.
   argv: () => ["-s"],
@@ -60,9 +70,9 @@ const SH_SHELL: CuShell = {
 
 const CMD_SHELL: CuShell = {
   id: "cmd",
-  detect: () => {
+  detect: (exists = existsSync) => {
     const p = join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "cmd.exe");
-    return existsSync(p) ? p : null;
+    return exists(p) ? p : null;
   },
   /**
    * `/Q` disables command echo. `/D` is the load-bearing one: it suppresses execution of the
@@ -99,8 +109,8 @@ export function resolveShellById(id: string): CuShell {
  * Fail BEFORE consent when a registered shell is not installed. The owner must never be asked to
  * approve a session that could not have started. Mirrors `exec-runtimes.ts`'s `requireInstalled`.
  */
-export function requireShellInstalled(shell: CuShell): string {
-  const bin = shell.detect();
+export function requireShellInstalled(shell: CuShell, exists?: PathExists): string {
+  const bin = shell.detect(exists);
   if (bin === null) {
     throw new CuShellError(
       "ERR_CU_SHELL_NOT_INSTALLED",

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { isAbsolute } from "node:path";
 import {
   type CuShell,
   CuShellError,
   DEFAULT_SHELL_ID,
+  type PathExists,
   requireShellInstalled,
   resolveShellById,
 } from "./terminal-shells.ts";
@@ -134,5 +136,44 @@ describe("shell registry — the platform-independent half", () => {
     const results = [resolveShellById("sh").detect(), resolveShellById("cmd").detect()];
     expect(results.some((r) => r === null)).toBe(true);
     expect(results.some((r) => r !== null)).toBe(true);
+  });
+});
+
+describe("detect() — both arms, on every platform", () => {
+  // With `existsSync` hardcoded, exactly ONE arm of each probe is reachable per runner: `/bin/sh`
+  // always exists on POSIX and never on Windows. Injecting the probe is how `chromium-path.ts`
+  // solves the same problem, and it is what lets these assertions run on all three legs rather than
+  // leaving half of them to the OTHER platform's CI job.
+  const present: PathExists = () => true;
+  const absent: PathExists = () => false;
+
+  test.each(["sh", "cmd"])("%s resolves a path when the probe says present", (id) => {
+    const p = resolveShellById(id).detect(present);
+    expect(p).not.toBeNull();
+    // Absolute either way — a bare name would be resolved through PATH at spawn time.
+    expect(isAbsolute(p as string)).toBe(true);
+  });
+
+  test.each(["sh", "cmd"])("%s resolves null when the probe says absent", (id) => {
+    expect(resolveShellById(id).detect(absent)).toBeNull();
+  });
+
+  test("requireShellInstalled throws for a registered shell the probe cannot find", () => {
+    expect(() => requireShellInstalled(resolveShellById("sh"), absent)).toThrow(CuShellError);
+  });
+
+  test("requireShellInstalled returns the path when the probe finds it", () => {
+    expect(requireShellInstalled(resolveShellById("sh"), present)).toBe("/bin/sh");
+  });
+
+  test("cmd's path is built from SystemRoot when it is set, on any platform", () => {
+    const prior = process.env["SystemRoot"];
+    process.env["SystemRoot"] = "D:CustomWindows";
+    try {
+      expect(resolveShellById("cmd").detect(present)).toContain("CustomWindows");
+    } finally {
+      if (prior === undefined) delete process.env["SystemRoot"];
+      else process.env["SystemRoot"] = prior;
+    }
   });
 });
