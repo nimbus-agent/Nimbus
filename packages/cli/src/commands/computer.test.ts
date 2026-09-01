@@ -1039,3 +1039,202 @@ describe("nimbus computer terminal", () => {
     });
   });
 });
+describe("runComputer orchestration — terminal subcommand", () => {
+  function deps(over: Partial<Parameters<typeof runComputer>[1]> = {}, openReply?: unknown) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const codes: number[] = [];
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const notifs = new Map<string, (params: unknown) => unknown>();
+    const signal: { handlers: Array<() => void>; fire: () => void } = {
+      handlers: [],
+      fire: () => {
+        for (const h of [...signal.handlers]) h();
+      },
+    };
+    const client = {
+      onNotification: (m: string, h: (p: unknown) => unknown) => {
+        notifs.set(m, h);
+      },
+      call: async (method: string, params: unknown) => {
+        calls.push({ method, params });
+        if (method === "computer.sessionOpen") {
+          return openReply ?? { status: "open", sessionId: "sess-t" };
+        }
+        if (method === "computer.sessionStatus") {
+          // Already closed on the FIRST poll, so tests that do not care about the watch loop
+          // resolve immediately without needing `sleep` to be called.
+          return {
+            sessions: [
+              {
+                sessionId: "sess-t",
+                lane: "terminal",
+                openedAt: 0,
+                closedAt: 1,
+                closeReason: "owner",
+                taintedAt: null,
+                actionsUsed: 2,
+                open: false,
+              },
+            ],
+          };
+        }
+        return { matched: true };
+      },
+    };
+    const base = {
+      runWithClient: async <T>(fn: (c: typeof client) => Promise<T>) => fn(client),
+      ask: async () => true,
+      sink: { out: (s: string) => out.push(s), err: (s: string) => err.push(s) },
+      setExitCode: (c: number) => codes.push(c),
+      sleep: async () => {},
+      onSignal: (handler: () => void) => {
+        signal.handlers.push(handler);
+        return () => {
+          signal.handlers = signal.handlers.filter((h) => h !== handler);
+        };
+      },
+      ...over,
+    };
+    return { out, err, codes, calls, notifs, signal, d: base as never };
+  }
+
+  test("sends computer.sessionOpen with an ABSOLUTE cwd and the terminal lane", async () => {
+    const h = deps();
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    const open = h.calls.find((c) => c.method === "computer.sessionOpen");
+    if (open === undefined) throw new Error("expected a computer.sessionOpen call");
+    const params = open.params as { lane: string; cwd: string };
+    expect(params.lane).toBe("terminal");
+    // Resolved CLIENT-side: the gateway's working directory is not the caller's, and the gateway
+    // refuses a relative path rather than resolving it against something the caller never saw.
+    expect(isAbsolute(params.cwd)).toBe(true);
+  });
+
+  test("carries --shell and the bounds through to the gateway", async () => {
+    const h = deps();
+    await runComputer(
+      ["terminal", "--cwd", ".", "--shell", "sh", "--max-actions", "3", "--timeout", "10"],
+      h.d,
+    );
+    const open = h.calls.find((c) => c.method === "computer.sessionOpen");
+    expect(open?.params).toMatchObject({
+      lane: "terminal",
+      shellId: "sh",
+      maxActions: 3,
+      maxWallClockMs: 10_000,
+    });
+  });
+
+  test("omits shellId entirely when --shell is not given", async () => {
+    // Omitted, not sent as undefined or an empty string: the GATE picks the platform default, and
+    // an empty id would be a caller-chosen value the registry would have to interpret.
+    const h = deps();
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    const open = h.calls.find((c) => c.method === "computer.sessionOpen");
+    expect(Object.keys(open?.params as object)).not.toContain("shellId");
+  });
+
+  test("registers BOTH consent handlers before opening the session", async () => {
+    // A broadcast can share a socket chunk with the RPC response, so a handler registered after
+    // the call can miss the prompt it exists to answer.
+    const h = deps();
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    expect([...h.notifs.keys()].sort()).toEqual([
+      "computer.actionRequest",
+      "computer.envelopeRequest",
+    ]);
+  });
+
+  test("a bad argument refuses without opening anything", async () => {
+    const h = deps();
+    await runComputer(["terminal"], h.d);
+    expect(h.calls).toEqual([]);
+    expect(h.codes).toEqual([CU_EXIT_CODES.refused]);
+    expect(h.err.join("")).toMatch(/--cwd is required/);
+  });
+
+  test("an owner denial exits deniedByOwner", async () => {
+    const h = deps({}, { status: "denied" });
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.deniedByOwner]);
+  });
+
+  test("a refusal prints the ACTIONABLE message for its code, not the bare code", async () => {
+    const h = deps({}, { status: "refused", code: "ERR_CU_SANDBOX_DEGRADED" });
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.refused]);
+    // Restored with this lane, having been deleted when the browser lane dropped its placeholder
+    // assertion — and it must name the real remedy per platform, not just the code.
+    expect(h.err.join("")).toMatch(/bubblewrap|nimbus-sandbox-helper/);
+  });
+
+  test("an unknown shell id gets its own message, distinct from a missing shell", async () => {
+    const h = deps({}, { status: "refused", code: "ERR_CU_UNKNOWN_SHELL" });
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    expect(h.err.join("")).toMatch(/--shell named an id/);
+  });
+
+  test("an unrecognised reply shape refuses rather than proceeding", async () => {
+    const h = deps({}, { status: "who-knows" });
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.refused]);
+  });
+
+  test("watches until the session closes and exits on its close reason", async () => {
+    const h = deps();
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    expect(h.out.join("")).toContain("Session opened: sess-t");
+    // `owner` is a CLEAN shutdown, not a failure.
+    expect(h.codes).toEqual([0]);
+  });
+
+  test("Ctrl-C closes the session on the GATEWAY and exits 130", async () => {
+    // The session belongs to the gateway, so the fix for an interrupt is to ask it to close —
+    // not to exit harder and leave a shell running inside an approved envelope.
+    const h = deps({
+      runWithClient: (async (fn: (c: unknown) => Promise<unknown>) => {
+        const inner = {
+          onNotification: () => {},
+          call: async (method: string, params: unknown) => {
+            h.calls.push({ method, params });
+            if (method === "computer.sessionOpen") return { status: "open", sessionId: "sess-t" };
+            if (method === "computer.sessionStatus") {
+              h.signal.fire(); // interrupt arrives while the watch loop is polling
+              return {
+                sessions: [
+                  {
+                    sessionId: "sess-t",
+                    lane: "terminal",
+                    openedAt: 0,
+                    closedAt: 1,
+                    closeReason: "owner",
+                    taintedAt: null,
+                    actionsUsed: 0,
+                    open: false,
+                  },
+                ],
+              };
+            }
+            return { matched: true };
+          },
+        };
+        return fn(inner);
+      }) as never,
+    });
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    expect(h.calls.some((c) => c.method === "computer.sessionClose")).toBe(true);
+    expect(h.codes).toEqual([CU_EXIT_CODES.interrupted]);
+  });
+
+  test("a transport failure refuses rather than throwing out of the command", async () => {
+    const h = deps({
+      runWithClient: (async () => {
+        throw new Error("gateway not running");
+      }) as never,
+    });
+    await runComputer(["terminal", "--cwd", "."], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.refused]);
+    expect(h.err.join("")).toContain("gateway not running");
+  });
+});

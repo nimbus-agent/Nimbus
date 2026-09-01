@@ -200,3 +200,93 @@ describe("openTerminalLane", () => {
     expect(seen?.launch.policy).toBe(LAUNCH.policy);
   });
 });
+describe("openTerminalLane — the paths a happy-path test never reaches", () => {
+  test("a spawn error marks the lane dead, like an exit does", async () => {
+    // `child.once("error")` fires instead of "close" when the spawn itself fails (ENOENT on the
+    // shell path, a refused sandbox spawn). Without this arm the lane would report itself alive
+    // forever and the gate would keep spending budget slots on a process that never started.
+    const child = fakeChild();
+    const lane = await open(child);
+    expect(lane.isAlive()).toBe(true);
+    child.emit("error", new Error("spawn failed"));
+    expect(lane.isAlive()).toBe(false);
+  });
+
+  test("a string chunk is encoded rather than dropped", async () => {
+    // `stdio` gives Buffers, but a stream configured with an encoding yields strings. Handling
+    // only Uint8Array would silently lose that output instead of returning it.
+    const child = fakeChild();
+    const lane = await open(child);
+    const p = lane.write("echo hi");
+    setTimeout(() => child.stdout.emit("data", "plain-string-output"), 5);
+    expect((await p).output).toContain("plain-string-output");
+  });
+
+  test("carried output is capped, so an idle lane cannot grow without bound", async () => {
+    // Between writes there is no collector, so output accumulates in `carried`. Uncapped, a shell
+    // printing continuously while nobody is driving it would grow the buffer until the process
+    // died — the cap is what bounds memory held on the gateway's behalf.
+    const child = fakeChild();
+    const lane = await open(child);
+    // Settle one write so the lane is idle, then flood it.
+    const first = lane.write("start");
+    setTimeout(() => child.stdout.write("go\n"), 5);
+    await first;
+    child.stdout.write("y".repeat(TERMINAL_OUTPUT_MAX_BYTES * 2));
+    const second = lane.write("next");
+    setTimeout(() => child.stdout.write("done\n"), 5);
+    const r = await second;
+    expect(Buffer.byteLength(r.output, "utf8")).toBeLessThanOrEqual(TERMINAL_OUTPUT_MAX_BYTES);
+  });
+
+  test("truncation never manufactures a replacement character at the cut", async () => {
+    // Cutting mid-sequence and decoding yields a U+FFFD we invented, which re-encodes to 3 bytes
+    // and can push a capped buffer back OVER its own cap. Same defect `exec-run.ts` fixed.
+    const child = fakeChild();
+    const lane = await open(child);
+    const p = lane.write("emoji");
+    setTimeout(() => {
+      // Multi-byte characters straddling the cap boundary.
+      child.stdout.write("\u{1F600}".repeat(TERMINAL_OUTPUT_MAX_BYTES));
+    }, 5);
+    const r = await p;
+    expect(r.truncated).toBe(true);
+    expect(Buffer.byteLength(r.output, "utf8")).toBeLessThanOrEqual(TERMINAL_OUTPUT_MAX_BYTES);
+    expect(r.output).not.toContain("�");
+  });
+
+  test("close() on an already-exited lane returns immediately without killing anything", async () => {
+    const child = fakeChild();
+    const lane = await open(child);
+    child.emit("close", 0);
+    child.killed = false;
+    await lane.close();
+    // Nothing to kill: the early return is what keeps `close` idempotent and cheap.
+    expect(child.killed).toBe(false);
+  });
+
+  test("close() kills a live lane and survives a stdin that is already broken", async () => {
+    const child = fakeChild();
+    child.stdin.end = () => {
+      throw new Error("EPIPE");
+    };
+    const lane = await open(child);
+    // The `end()` throw must not prevent the kill — the kill is what actually matters.
+    await lane.close();
+    expect(child.killed).toBe(true);
+    expect(lane.isAlive()).toBe(false);
+  });
+
+  test("close() gives up waiting rather than hanging on a shell that never exits", async () => {
+    // A shell ignoring SIGTERM must not wedge the gateway's shutdown path. Bounded wait, then on.
+    const child = fakeChild();
+    child.kill = () => {
+      child.killed = true;
+      return true; // deliberately emits no "close"
+    };
+    const lane = await open(child);
+    await lane.close();
+    expect(child.killed).toBe(true);
+    expect(lane.isAlive()).toBe(false);
+  }, 15_000);
+});

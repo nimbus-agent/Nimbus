@@ -65,6 +65,20 @@ export const TERMINAL_OUTPUT_MAX_BYTES = 65_536;
 export const CARRIED_OUTPUT_NOTICE =
   "[nimbus: output below arrived after the previous command's collection window closed]";
 
+/**
+ * Bytes the notice above occupies once encoded, plus its newline.
+ *
+ * RESERVED from the idle buffer's own budget rather than added on top of it. Filling `carried` to
+ * the full cap and THEN prepending the notice produced a result larger than
+ * `TERMINAL_OUTPUT_MAX_BYTES` — the cap is supposed to bound what ONE result can hold, and a
+ * disclosure that breaks the bound it is attached to is the wrong kind of honest.
+ */
+const CARRIED_NOTICE_BYTES = Buffer.byteLength(
+  `${CARRIED_OUTPUT_NOTICE}
+`,
+  "utf8",
+);
+
 /** Injected so this file is testable with no shell installed and no sandbox helper present. */
 export interface TerminalLaneRuntime {
   spawnShell(args: {
@@ -145,7 +159,9 @@ export async function openTerminalLane(
   let inFlight = false;
 
   const absorbIdle = (chunk: Uint8Array): void => {
-    const room = TERMINAL_OUTPUT_MAX_BYTES - carriedBytes;
+    // Reserve the notice's own bytes: whatever is carried here is delivered WITH that disclosure
+    // in front of it, and the cap bounds the pair, not just the payload.
+    const room = TERMINAL_OUTPUT_MAX_BYTES - CARRIED_NOTICE_BYTES - carriedBytes;
     if (room <= 0) return;
     const slice = chunk.byteLength > room ? chunk.subarray(0, room) : chunk;
     carriedBytes += slice.byteLength;

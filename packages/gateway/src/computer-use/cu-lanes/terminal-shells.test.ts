@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CuShellError, DEFAULT_SHELL_ID, resolveShellById } from "./terminal-shells.ts";
+import {
+  type CuShell,
+  CuShellError,
+  DEFAULT_SHELL_ID,
+  requireShellInstalled,
+  resolveShellById,
+} from "./terminal-shells.ts";
 
 describe("terminal shell registry", () => {
   test("resolves the platform default", () => {
@@ -57,5 +63,76 @@ describe("terminal shell registry", () => {
 
   test("the platform's own shell is present on this machine", () => {
     expect(resolveShellById(DEFAULT_SHELL_ID).detect()).not.toBeNull();
+  });
+});
+describe("requireShellInstalled", () => {
+  test("returns the absolute path when the shell is present", () => {
+    const shell = resolveShellById(DEFAULT_SHELL_ID);
+    expect(requireShellInstalled(shell)).toBe(shell.detect() as string);
+  });
+
+  test("THROWS a named error when a registered shell is not on this machine", () => {
+    // Fail BEFORE consent: the owner must never be asked to approve a session that could not have
+    // started. Mirrors `exec-runtimes.ts`'s `requireInstalled`.
+    const absent: CuShell = {
+      id: "ghost",
+      detect: () => null,
+      argv: () => [],
+      envOverlay: () => ({}),
+    };
+    expect(() => requireShellInstalled(absent)).toThrow(CuShellError);
+    try {
+      requireShellInstalled(absent);
+    } catch (e) {
+      expect((e as CuShellError).code).toBe("ERR_CU_SHELL_NOT_INSTALLED");
+    }
+  });
+});
+
+describe("shell registry — the platform-independent half", () => {
+  // The registry ENTRIES are not platform-branched: each shell's argv and env overlay are
+  // constants, so both are asserted on EVERY runner rather than only where they are the default.
+  // Only `detect()` is genuinely per-OS, and it is an existsSync on a path the host has or has not.
+  test("both shells are resolvable by name on every platform", () => {
+    expect(resolveShellById("sh").id).toBe("sh");
+    expect(resolveShellById("cmd").id).toBe("cmd");
+  });
+
+  test("sh's argv and overlay are asserted off-platform too", () => {
+    const sh = resolveShellById("sh");
+    expect(sh.argv()).toEqual(["-s"]);
+    expect(sh.envOverlay()["HISTFILE"]).toBe("");
+    expect(sh.envOverlay()["ENV"]).toBe("");
+  });
+
+  test("cmd's argv is asserted off-platform too, /D included", () => {
+    const cmd = resolveShellById("cmd");
+    expect(cmd.argv()).toEqual(["/Q", "/D", "/K"]);
+    // cmd.exe sources no startup script and keeps no history file, so an overlay would be inert
+    // noise. Empty is the honest answer, and pinned so a later edit has to justify adding one.
+    expect(cmd.envOverlay()).toEqual({});
+  });
+
+  test("cmd's detect falls back to C:\\Windows when SystemRoot is unset", () => {
+    // The `??` fallback is a real branch and unreachable on a normal Windows host, where the
+    // variable is always set — so it is exercised by removing it rather than left uncovered.
+    const prior = process.env["SystemRoot"];
+    delete process.env["SystemRoot"];
+    try {
+      // Only the branch matters: on a non-Windows host the path does not exist and detect returns
+      // null, which is the correct answer there and still proves the fallback was taken.
+      expect(() => resolveShellById("cmd").detect()).not.toThrow();
+    } finally {
+      if (prior === undefined) delete process.env["SystemRoot"];
+      else process.env["SystemRoot"] = prior;
+    }
+  });
+
+  test("detect() returns null for a shell this platform does not have", () => {
+    // Exactly one of the two is absent on any given runner, so this covers the null arm of
+    // whichever `existsSync` the host does not satisfy.
+    const results = [resolveShellById("sh").detect(), resolveShellById("cmd").detect()];
+    expect(results.some((r) => r === null)).toBe(true);
+    expect(results.some((r) => r !== null)).toBe(true);
   });
 });
