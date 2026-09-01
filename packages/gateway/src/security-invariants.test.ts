@@ -3023,9 +3023,17 @@ describe("I36 — a browser-reachable file question never reaches the federation
     expect(sent).toBe(0);
   });
 
-  test("the bound is on the SHAPE, not on the agents: a local path still fans out", async () => {
-    // If this ever starts failing, the guard has been widened past its invariant and
-    // terminal callers have silently lost federation.
+  test("the bound is on the SHAPE: a local path with namespaces is ACCEPTED", async () => {
+    // What this proves, exactly: the refusal is scoped to the forge shape, so a terminal
+    // caller naming a path on their own disk may still ask for federation.
+    //
+    // It does NOT prove the namespaces stay active downstream, and it deliberately does
+    // not try. Measured rather than assumed: dispatching this with a `sendOverWire` spy
+    // records ZERO wire calls, because fan-out additionally needs a KnownNamespaceStore,
+    // a self identity and an index that this context does not build. Asserting "one wire
+    // call" here would fail against correct code. That property belongs to `ghost`'s own
+    // federation tests, where the fixture exists; the invariant this block guards is the
+    // shape distinction, and that is what is asserted.
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const out = await dispatchAgentsRpc(
