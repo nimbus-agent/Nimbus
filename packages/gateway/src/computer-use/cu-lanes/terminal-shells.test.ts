@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isAbsolute } from "node:path";
+import { posix, win32 } from "node:path";
 import {
   type CuShell,
   CuShellError,
@@ -147,11 +147,18 @@ describe("detect() — both arms, on every platform", () => {
   const present: PathExists = () => true;
   const absent: PathExists = () => false;
 
-  test.each(["sh", "cmd"])("%s resolves a path when the probe says present", (id) => {
+  test.each([
+    ["sh", posix.isAbsolute],
+    ["cmd", win32.isAbsolute],
+  ] as const)("%s resolves an absolute path when the probe says present", (id, isAbs) => {
     const p = resolveShellById(id).detect(present);
     expect(p).not.toBeNull();
-    // Absolute either way — a bare name would be resolved through PATH at spawn time.
-    expect(isAbsolute(p as string)).toBe(true);
+    // Absolute IN ITS OWN PLATFORM'S TERMS, checked with that platform's `isAbsolute`. The
+    // ambient one is the wrong predicate here: `join("C:\Windows", ...)` on POSIX yields
+    // `C:\Windows/System32/cmd.exe`, which `posix.isAbsolute` correctly calls relative — so
+    // asserting with the host's own rules failed this case on Linux while passing on Windows,
+    // which is the shape of cross-platform bug a Windows-only run never sees.
+    expect(isAbs(p as string)).toBe(true);
   });
 
   test.each(["sh", "cmd"])("%s resolves null when the probe says absent", (id) => {
