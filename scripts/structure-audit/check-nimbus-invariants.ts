@@ -1008,8 +1008,8 @@ const D26_DRIVER_LIB_RE =
 const D26_CDP_METHOD_RE =
   /["'`](?:Page|DOM|DOMDebugger|Runtime|Input|Target|Fetch|Network|Browser|Emulation|Security|Storage|Overlay|Accessibility)\.[A-Za-z][A-Za-z0-9]*["'`]/;
 
-// D26(c) (I35): `openBrowserLane` — the LANE CONSTRUCTOR — may be named only by its own definition
-// file and by the single wiring site that injects it into `CuGateDeps.openLane`.
+// D26(c) (I35): a LANE CONSTRUCTOR — `openBrowserLane`, `openTerminalLane` — may be named only by
+// its own definition file and by the single wiring site that injects it into `CuGateDeps.lanes`.
 //
 // (b) confines the driver capability to `cu-lanes/`, but a wiring layer has to reach into that
 // directory once to hand the constructor to the gate, and that one legitimate import is enough for
@@ -1022,28 +1022,51 @@ const D26_CDP_METHOD_RE =
 // the counterpart of the `CuRunDeps` split in `cu-gate.ts` — that split removes the constructor
 // from the deps object the model-facing tool layer holds; this rule removes it from every module
 // that could import it directly. Test files are exempt.
-const D26_LANE_CONSTRUCTOR = "openBrowserLane";
-const D26_LANE_CONSTRUCTOR_ALLOWED: readonly string[] = [
-  "packages/gateway/src/computer-use/cu-lanes/browser.ts", // the definition
-  "packages/gateway/src/platform/assemble.ts", // the sole production wiring site
+/**
+ * KNOWN LIMIT of (b), stated rather than papered over: its two patterns — an automation-library
+ * import and a CDP `Domain.method` literal — have NO TERMINAL ANALOGUE. The terminal lane's
+ * capability is "spawn a process and write to its stdin", and `SandboxRunner.spawn` is used
+ * legitimately by every connector and by `exec/`, so any regex over it would be noise or theatre.
+ * What confines the terminal lane is (a), the rule below, and CAPABILITY REMOVAL (`CuRunDeps`
+ * carries no lane constructor, so the model-facing tool layer cannot name one) — the same posture
+ * D26 already records: capability removal is the primary defense, the static rules are the
+ * backstop, and the runtime tests stay authoritative.
+ */
+const D26_LANE_CONSTRUCTORS: readonly { name: string; allowed: readonly string[] }[] = [
+  {
+    name: "openBrowserLane",
+    allowed: [
+      "packages/gateway/src/computer-use/cu-lanes/browser.ts", // the definition
+      "packages/gateway/src/platform/assemble.ts", // the sole production wiring site
+    ],
+  },
+  {
+    name: "openTerminalLane",
+    allowed: [
+      "packages/gateway/src/computer-use/cu-lanes/terminal.ts", // the definition
+      "packages/gateway/src/platform/assemble.ts", // the sole production wiring site
+    ],
+  },
 ];
 
 function checkLaneConstructorConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
-  const re = new RegExp(`\\b${D26_LANE_CONSTRUCTOR}\\b`);
-  for (const f of files) {
-    if (f.relPath.endsWith(".test.ts")) continue;
-    if (D26_LANE_CONSTRUCTOR_ALLOWED.includes(f.relPath)) continue;
-    const stripped = stripComments(f.contents).split("\n");
-    const original = f.contents.split("\n");
-    for (let i = 0; i < stripped.length; i++) {
-      if (re.test(stripped[i] ?? "")) {
-        out.push({
-          rule: "D26-lane-constructor",
-          file: f.relPath,
-          line: i + 1,
-          snippet: (original[i] ?? "").trim(),
-        });
+  for (const { name, allowed } of D26_LANE_CONSTRUCTORS) {
+    const re = new RegExp(`\\b${name}\\b`);
+    for (const f of files) {
+      if (f.relPath.endsWith(".test.ts")) continue;
+      if (allowed.includes(f.relPath)) continue;
+      const stripped = stripComments(f.contents).split("\n");
+      const original = f.contents.split("\n");
+      for (let i = 0; i < stripped.length; i++) {
+        if (re.test(stripped[i] ?? "")) {
+          out.push({
+            rule: "D26-lane-constructor",
+            file: f.relPath,
+            line: i + 1,
+            snippet: (original[i] ?? "").trim(),
+          });
+        }
       }
     }
   }
@@ -1827,7 +1850,7 @@ async function run(): Promise<void> {
     for (const e of driverImportViolations) {
       console.error(
         e.rule === "D26-lane-constructor"
-          ? `::error file=${e.file},line=${e.line}::D26(c) openBrowserLane named outside cu-lanes/browser.ts and platform/assemble.ts — a live BrowserLane obtained here can be clicked with no envelope, classification, consent or audit row (I35): ${e.snippet}`
+          ? `::error file=${e.file},line=${e.line}::D26(c) a computer-use lane constructor (openBrowserLane/openTerminalLane) is named outside its own definition file and platform/assemble.ts — a live lane obtained here can be driven with no envelope, classification, consent or audit row (I35): ${e.snippet}`
           : `::error file=${e.file},line=${e.line}::D26(b) browser-driving capability (automation library import, or a CDP Domain.method literal) outside computer-use/cu-lanes/ — a second path to the host that never passes the I35 gate: ${e.snippet}`,
       );
     }

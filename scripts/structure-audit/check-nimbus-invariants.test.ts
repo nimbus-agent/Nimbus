@@ -1714,4 +1714,49 @@ describe("D26 — computer-use actuation confinement", () => {
       ]),
     ).toEqual([]);
   });
+
+  test("D26(c) flags openTerminalLane named outside its definition and the wiring site", () => {
+    // Same reasoning as the browser constructor, and the reason (c) had to be generalised rather
+    // than left browser-only: a file that can import `openTerminalLane` gets a live shell and can
+    // write to its stdin with no buffer, no consent and no audit row — while (a) sees no
+    // `performActuation(` and (b) has no pattern for it at all, because the terminal lane's
+    // capability is a plain child process rather than a named protocol.
+    const v = checkDriverImportConfinement([
+      file(
+        "packages/gateway/src/agents/rogue.ts",
+        `import { openTerminalLane } from "../computer-use/cu-lanes/terminal.ts";`,
+      ),
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.rule).toBe("D26-lane-constructor");
+  });
+
+  test("D26(c) allows the terminal definition file and the same single wiring site", () => {
+    expect(
+      checkDriverImportConfinement([
+        file(
+          "packages/gateway/src/computer-use/cu-lanes/terminal.ts",
+          `export async function openTerminalLane(opts) {}`,
+        ),
+        file(
+          "packages/gateway/src/platform/assemble.ts",
+          `import { openTerminalLane } from "../computer-use/cu-lanes/terminal.ts";`,
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("D26(c) does NOT let one lane's allow-list cover the other", () => {
+    // The allow-lists are per-constructor: `cu-lanes/browser.ts` is not a licence to name the
+    // TERMINAL constructor, and vice versa. A single shared allow-list would have made every file
+    // under `cu-lanes/` able to reach every other lane's driver.
+    const v = checkDriverImportConfinement([
+      file(
+        "packages/gateway/src/computer-use/cu-lanes/browser.ts",
+        `import { openTerminalLane } from "./terminal.ts";`,
+      ),
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.rule).toBe("D26-lane-constructor");
+  });
 });

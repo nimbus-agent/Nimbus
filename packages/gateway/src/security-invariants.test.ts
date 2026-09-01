@@ -2757,25 +2757,32 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     expect(offenders).toEqual([]);
   });
 
-  test("D26(c): openBrowserLane is named ONLY by its definition and the one wiring site", async () => {
-    // Confining the driver capability to `cu-lanes/` is not enough on its own: a wiring layer has
-    // to reach into that directory once to hand the constructor to the gate, and that one
-    // legitimate import is enough for a second, illegitimate one to hide beside it. Any file that
-    // can import `openBrowserLane` gets a live `BrowserLane` and can call `lane.click()` on it --
-    // no envelope, no classification, no consent, no audit row -- while D26(a) sees no
-    // `performActuation(` and D26(b) sees no protocol text, because the capability arrived as a
-    // function VALUE. Same shape as D22(f) for `wrapLedgeredEmbedder`.
-    const files = await readDirFiles("packages/gateway/src");
-    const namers = files
-      .filter((f) => !f.rel.endsWith(".test.ts"))
-      .filter((f) => /\bopenBrowserLane\b/.test(stripComments(f.contents)))
-      .map((f) => `packages/gateway/src/${f.rel}`)
-      .sort();
-    expect(namers).toEqual([
-      "packages/gateway/src/computer-use/cu-lanes/browser.ts",
-      "packages/gateway/src/platform/assemble.ts",
-    ]);
-  });
+  test.each([
+    ["openBrowserLane", "packages/gateway/src/computer-use/cu-lanes/browser.ts"],
+    ["openTerminalLane", "packages/gateway/src/computer-use/cu-lanes/terminal.ts"],
+  ])(
+    "D26(c): %s is named ONLY by its definition and the one wiring site",
+    async (symbol, definition) => {
+      // Confining the driver capability to `cu-lanes/` is not enough on its own: a wiring layer has
+      // to reach into that directory once per lane to hand the constructor to the gate, and that one
+      // legitimate import is enough for a second, illegitimate one to hide beside it. Any file that
+      // can import a lane constructor gets a live lane and can drive it — `lane.click()`, or
+      // `lane.write()` on the terminal — with no envelope, no classification, no consent, no audit
+      // row, while D26(a) sees no `performActuation(` and D26(b) sees no protocol text, because the
+      // capability arrived as a function VALUE. Same shape as D22(f) for `wrapLedgeredEmbedder`.
+      //
+      // GENERALISED over both constructors rather than left browser-only: the static rule covers
+      // both, and a runtime test that knew about only one would leave the newer constructor
+      // asserted by the backstop alone — with the authoritative half silent about it.
+      const files = await readDirFiles("packages/gateway/src");
+      const namers = files
+        .filter((f) => !f.rel.endsWith(".test.ts"))
+        .filter((f) => new RegExp(String.raw`\b${symbol}\b`).test(stripComments(f.contents)))
+        .map((f) => `packages/gateway/src/${f.rel}`)
+        .sort();
+      expect(namers).toEqual([definition, "packages/gateway/src/platform/assemble.ts"].sort());
+    },
+  );
 
   test("the MODEL-FACING tool layer cannot construct a lane (CuRunDeps has no openLane)", async () => {
     // The whole `CuGateDeps` used to be handed to `cu-tools.ts` and, through it, to
