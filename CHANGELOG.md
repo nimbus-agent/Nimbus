@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.4.0](https://github.com/nimbus-agent/Nimbus/compare/v7.3.0...v7.4.0) (2026-08-31)
+
+
+### Features
+
+* **computer-use:** I35 gate + D26 confinement for local computer-use actuation (browser lane, driver not yet wired) ([#1415](https://github.com/nimbus-agent/Nimbus/issues/1415)) ([461cebd](https://github.com/nimbus-agent/Nimbus/commit/461cebd634a96762b49270ba2dbb4b1d31d8aa9a))
+
 ## [7.3.0](https://github.com/nimbus-agent/Nimbus/compare/v7.2.1...v7.3.0) (2026-08-30)
 
 
