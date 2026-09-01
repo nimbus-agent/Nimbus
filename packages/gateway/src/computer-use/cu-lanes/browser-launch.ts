@@ -74,6 +74,22 @@ export function buildChromiumLaunchPolicy(opts: {
       "--disable-default-apps",
       "--disable-sync",
       "--metrics-recording-only",
+      // Chrome's OWN outbound chatter, trimmed. Observed on the macOS CI leg via harden-runner:
+      // even with the four flags above, a freshly-launched Chrome resolved and connected to
+      // `www.google.com` and `accounts.google.com` before any page had loaded. That traffic is
+      // NOT intercepted by this lane's request policy — `Fetch.enable` is scoped to the PAGE
+      // target, while these requests come from the browser process itself — so it is neither
+      // gated nor ledgered (see the `browser` class's own scope note in `egress-coverage.ts`).
+      // These three cut the part that can be cut WITHOUT weakening a security feature:
+      // `--no-pings` suppresses hyperlink-auditing pings (an exfiltration channel in its own
+      // right, so this is security-positive), `--disable-breakpad` stops crash-report upload, and
+      // `--disable-domain-reliability` stops Google's reliability beacons. Deliberately NOT added:
+      // `--disable-client-side-phishing-detection`, which would trade a real safety feature for a
+      // quieter network, and anything spelled `--disable-features=…`, which this file's own
+      // FORBIDDEN_LAUNCH_FLAGS refuses because it is the vehicle for turning off site isolation.
+      "--no-pings",
+      "--disable-breakpad",
+      "--disable-domain-reliability",
       "--no-service-autorun",
       "--password-store=basic",
       "--use-mock-keychain",

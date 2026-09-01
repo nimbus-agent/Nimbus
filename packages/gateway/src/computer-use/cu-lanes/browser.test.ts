@@ -2,6 +2,9 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { BrowserLane } from "../cu-types.ts";
@@ -111,6 +114,11 @@ function fakeChild(wsUrl: string | null): ChildProcess & { killed: () => boolean
     stderr,
     kill: () => {
       killedFlag = true;
+      // EMIT `exit`, because `close()` now AWAITS the process actually going away — a fake that
+      // only records the signal would make every `close()` sit out the SIGTERM+SIGKILL grace
+      // periods (7s each) and turn this suite into a timeout farm. Emitting also keeps the fake
+      // honest about what it is standing in for: a real browser that has exited.
+      queueMicrotask(() => child.emit("exit", 0));
       return true;
     },
     killed: () => killedFlag,
@@ -310,12 +318,14 @@ describe("openBrowserLane — launch and attach", () => {
   });
 
   test("a failure DURING attach still kills the browser it already started", async () => {
-    const child = fakeChild(null);
     const fake = startFakeBrowser();
     servers.push(fake);
     fake.failWith("Target.createTarget", "no can do");
+    // Assert on the STARTED child directly. This used to graft a second fake's `kill` onto it,
+    // which recorded the call on the wrong object — harmless while `close()` merely sent a signal,
+    // but now that it AWAITS the exit, the started child never emitted one and the teardown sat
+    // out both grace periods.
     const started = fakeChild(fake.url);
-    Object.assign(started, { kill: child.kill });
     await expect(
       openBrowserLane(
         {
@@ -333,7 +343,7 @@ describe("openBrowserLane — launch and attach", () => {
         },
       ),
     ).rejects.toThrow(/no can do/);
-    expect(child.killed()).toBe(true);
+    expect(started.killed()).toBe(true);
   });
 
   test("a target with no id, and a session with no id, both fail rather than proceeding", async () => {
@@ -763,7 +773,16 @@ describe("openBrowserLane — malformed protocol payloads fail safe", () => {
     servers.push(fake);
     const child = new EventEmitter() as unknown as ChildProcess;
     const stderr = new EventEmitter();
-    Object.assign(child, { stderr, kill: () => true });
+    Object.assign(child, {
+      stderr,
+      // Emits `exit`, for the same reason `fakeChild` does: `close()` AWAITS the process going
+      // away, so a fake that only records the signal sits out both grace periods (7s) and times
+      // the afterEach hook out.
+      kill: () => {
+        queueMicrotask(() => child.emit("exit", 0));
+        return true;
+      },
+    });
     queueMicrotask(() => stderr.emit("data", `DevTools listening on ${fake.url}\n`));
     const lane = await openBrowserLane(
       {
@@ -904,11 +923,26 @@ const chromium = resolveChromiumPath();
 const withChrome = chromium === null ? describe.skip : describe;
 
 withChrome("openBrowserLane — against a REAL Chromium (I35 re-verify item 1)", () => {
-  const profileDir = `${process.env["TEMP"] ?? process.env["TMPDIR"] ?? "/tmp"}/nimbus-cu-e2e`;
-
+  /**
+   * A FRESH profile directory per lane, via `mkdtemp`.
+   *
+   * These tests shared one fixed directory until the macOS CI leg failed on it: Chromium holds a
+   * `SingletonLock` on a profile for the life of the process, and each test opens its own lane, so
+   * test N+1 raced test N's dying browser for the lock and died at launch with
+   * `Failed to create …/SingletonLock: File exists (17)`. Windows won that race every time, so a
+   * green local run said nothing — the cross-platform legs are what caught it.
+   *
+   * The driver fix (`close()` now AWAITS the process exiting) removes the race in PRODUCTION,
+   * where one profile is shared deliberately so a login survives across sessions. These tests do
+   * not need that sharing at all — they exercise the DRIVER — so a per-lane directory removes the
+   * coupling rather than relying on shutdown timing, and a lock left behind by a killed browser
+   * cannot leak into the next test.
+   */
   async function realLane(): Promise<BrowserLane> {
     const lane = await openBrowserLane({
-      launch: buildChromiumLaunchPolicy({ profileDir }),
+      launch: buildChromiumLaunchPolicy({
+        profileDir: mkdtempSync(join(tmpdir(), "nimbus-cu-e2e-")),
+      }),
       executablePath: chromium as string,
       db: makeDb(),
       sessionId: "real-1",

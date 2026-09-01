@@ -154,6 +154,21 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * cluster of those naming an unapproved origin is the clearest signal that something is steering
  * the page toward exfiltration, retained even though nothing left the machine.
  *
+ *
+ * READ THE CLASS'S SCOPE NARROWLY, as `mcp`/`http` must be read: it covers requests made by the
+ * lane's PAGE TARGET, which is where `Fetch.enable` is scoped. It does NOT cover Chrome's own
+ * BROWSER-PROCESS traffic — variations, Safe Browsing, component and reliability beacons — which
+ * originates outside any page target and therefore reaches neither `decideRequest` nor this
+ * ledger. That is not a hypothesis: the macOS CI leg's harden-runner log recorded a
+ * freshly-launched Chrome resolving and connecting to `www.google.com` and `accounts.google.com`
+ * before any page had loaded, with `--disable-background-networking`, `--disable-component-update`,
+ * `--disable-sync` and `--metrics-recording-only` all already set. `browser-launch.ts` adds
+ * `--no-pings`, `--disable-breakpad` and `--disable-domain-reliability` to cut what can be cut
+ * without disabling a safety feature, but the residue is real and is NOT ledgered. So a `browser`
+ * count of zero means the lane's page made no request — never that the browser process made none.
+ * Closing this would need browser-level interception (a proxy, or `Target.setAutoAttach` over the
+ * browser target) and is not attempted here; stating it is what keeps the count honest.
+ *
  * READ THE BOUND, which is § 3.5.1's and not this class's: `script` and `image` subresources are
  * allowed from ANY origin (blocking either breaks the real web), so a `<script src>` or `<img src>`
  * whose URL carries a payload is a working exfiltration channel. It appends an `authorized` row

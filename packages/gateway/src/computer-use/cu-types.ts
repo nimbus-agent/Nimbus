@@ -22,7 +22,10 @@ export interface ObservedNode {
   readonly type: string | null;
   /** True when the node sits inside a <form> that contains an <input type="password">. */
   readonly inFormWithPassword: boolean;
-  /** True when the node sits inside any <form>, password or not (I7: keypress submission). */
+  /**
+   * True when the node sits inside any <form>, password or not — the keypress-submission rule
+   * (`submitsForm` in `cu-classify.ts`; the `I7` there is a review-finding id, not invariant I7).
+   */
   readonly inForm: boolean;
   /**
    * True when the node IS a submit control, OR IS A DESCENDANT of one (the producer resolves this

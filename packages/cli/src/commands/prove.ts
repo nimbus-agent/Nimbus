@@ -48,10 +48,15 @@ export const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   // often. Read a zero as "no browser lane made a request" -- on a stock install that is because
   // `[computer_use]` is off and no lane exists, which is the same claim, not a weaker one.
   //
-  // The bound is section 3.5.1's, not the appender's: `script` and `image` subresources load from
-  // ANY origin (blocking either breaks the real web), so a beacon built into a page's markup still
-  // leaves -- it just leaves with a row naming its origin, which is the whole mitigation.
-  browser: "origins contacted by the computer-use browser lane",
+  // TWO bounds, both narrower than the label alone would suggest. (1) Section 3.5.1's: `script`
+  // and `image` subresources load from ANY origin (blocking either breaks the real web), so a
+  // beacon built into a page's markup still leaves -- it just leaves with a row naming its origin,
+  // which is the whole mitigation. (2) The class covers the lane's PAGE traffic, where CDP `Fetch`
+  // interception is scoped; Chrome's OWN browser-process chatter (variations, Safe Browsing,
+  // reliability beacons) originates outside any page target and is neither gated nor rowed --
+  // observed on a CI runner, with the quieting flags already set. Hence "the page" in the label:
+  // a zero here means the lane's page contacted nobody, not that the browser process did.
+  browser: "origins the computer-use browser lane's page contacted",
   // Unlike `mcp` and `http`, this class is NOT narrower than its name: it covers EVERY outbound
   // post the gateway makes to Slack/Teams — operational replies, HITL approval cards, tribal
   // suggestions and agent briefs — because the appender decorates the single post closure they all

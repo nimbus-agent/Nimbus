@@ -67,6 +67,11 @@ const DEVTOOLS_LINE = /^DevTools listening on (ws:\/\/\S+)\s*$/m;
 /** `readText` ceiling. The value crosses into a model prompt; an unbounded page must not. */
 const READ_TEXT_MAX_CHARS = 100_000;
 
+/** How long `close()` waits for a SIGTERMed browser to exit before escalating to SIGKILL. */
+const BROWSER_SIGTERM_GRACE_MS = 5_000;
+/** How long it then waits for the SIGKILL to land before returning anyway. */
+const BROWSER_SIGKILL_GRACE_MS = 2_000;
+
 /**
  * Trailing window of Chromium's stderr kept while scanning for the DevTools banner.
  *
@@ -203,12 +208,61 @@ export async function openBrowserLane(
     childExited = true;
   });
 
-  const killBrowser = (): void => {
+  /**
+   * Wait for the browser process to ACTUALLY exit, bounded.
+   *
+   * `close()` used to return the moment `child.kill()` had been *called*, which made it mean "a
+   * signal was sent", not "the browser is gone". That is not a distinction without a difference:
+   * `[computer_use] browser_profile_dir` is ONE directory shared by every session, and Chromium
+   * holds a `SingletonLock` on it for as long as the process lives. So closing a session and
+   * immediately opening another raced the dying process for the lock, and the new session died at
+   * launch with `Failed to create …/SingletonLock: File exists (17)` — reported to the owner as
+   * `ERR_CU_LAUNCH_FAILED`, with nothing in the message connecting it to the session they had just
+   * closed.
+   *
+   * Found by the macOS CI leg, not locally: Windows happened to win the race every time, so a
+   * green Windows run said nothing about it. That is the whole reason the cross-platform legs run
+   * the same suite.
+   *
+   * Bounded and best-effort on purpose — `close()` is called from `bestEffortCloseLane` on every
+   * terminal path, including ones that are already unwinding from a different failure, so it must
+   * not hang or throw. If the browser has not gone after SIGTERM it is SIGKILLed; if it still has
+   * not gone, `close()` returns anyway rather than blocking the gate forever.
+   */
+  const waitForChildExit = (timeoutMs: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      if (childExited) {
+        resolve();
+        return;
+      }
+      const done = (): void => {
+        clearTimeout(timer);
+        child.off("exit", done);
+        resolve();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      child.once("exit", done);
+    });
+
+  const killBrowser = (signal?: NodeJS.Signals): void => {
     try {
-      child.kill();
+      child.kill(signal);
     } catch {
       // Already gone. Nothing to recover, and this runs on paths that are already unwinding.
     }
+  };
+
+  /**
+   * Signal, wait, escalate, wait — then give up rather than hang. Mirrors `exec-run.ts`'s own
+   * SIGTERM-then-SIGKILL shape. The waits are what make `close()` mean "the profile lock is
+   * released", which is the property a subsequent session depends on.
+   */
+  const shutDownBrowser = async (): Promise<void> => {
+    killBrowser();
+    await waitForChildExit(BROWSER_SIGTERM_GRACE_MS);
+    if (childExited) return;
+    killBrowser("SIGKILL");
+    await waitForChildExit(BROWSER_SIGKILL_GRACE_MS);
   };
 
   try {
@@ -480,7 +534,9 @@ export async function openBrowserLane(
 
       close: async () => {
         activeConn.close();
-        killBrowser();
+        // AWAITED: `close()` resolving must mean the browser is gone and its profile
+        // `SingletonLock` released, not merely that a signal was sent. See `waitForChildExit`.
+        await shutDownBrowser();
       },
     };
 
@@ -491,7 +547,11 @@ export async function openBrowserLane(
     // a live CDP endpoint and a lock on the profile directory — making every LATER session fail
     // with an error about the profile rather than about this failure.
     conn?.close();
-    killBrowser();
+    // AWAITED here too: a failed launch must release the profile `SingletonLock` before this
+    // rejects, or the very next `openSession` — which an owner is likely to attempt immediately,
+    // having just been told the browser failed to start — races the dying process and fails the
+    // same way, with an error naming a lock rather than the original cause.
+    await shutDownBrowser();
     throw e;
   }
 }
