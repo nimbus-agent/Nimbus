@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788283527883,
+  "lastUpdate": 1788286266549,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "429eae5b30c1825f13a01c1138a9baa666d1102c",
-          "message": "docs(roadmap): re-sequence Phase 7+ into a three-track spine overlay (#677)\n\n## What\n\nRe-sequences everything from **Phase 7 onward** in `docs/roadmap.md` for\n**time-to-value × differentiation (moat)** — via a new **\"Phase 7+\nSequencing Spine\"** overlay, not a renumber (the doc cross-links phase\nnumbers everywhere). Also injects four new ideas.\n\nThis is a **docs-only** change. No code, schema, invariants, or\nconnectors touched.\n\n## Why\n\nRead against the time-to-value + moat lenses, the existing 27-phase list\nhad three structural problems:\n- The deepest-moat work (Verifiable Negatives / Unexfiltratable Agent /\nProvable Governance — things a cloud relay *structurally cannot* do) sat\nat Phases 22–26, behind ~14 phases of connector breadth, even though\nseveral of their primitives are cheap.\n- The biggest 2026-model lever (computer-use / code-exec / runtime\ntool-gen — Phase 14) sat mid-list.\n- One linear list conflated near-term product with a long-range research\nmanifesto.\n\n## The three tracks\n\n- **Track 1 — Near-Term Spine (S1→S5):** harvest cheap moat primitives\nearly (egress ledger + `nimbus prove` → S1), pull the 2026-model levers\nforward (→ S2), demote API-fakeable connector breadth (Phase 8/9, Phase\n7 W1–3) to S5.\n- **Track 2 — Scale & Surface:** productization/distribution;\nDesktop/Mobile flagged independent-slot.\n- **Track 3 — Research Horizon:** the M-number manifesto (21–27) stays\nin full, but its cheap primitives are harvested into the spine (egress\nledger → S1, overnight local sub-agent fleet → S2).\n\n## Four new ideas\n\negress-ledger-as-S1-primitive · overnight local sub-agent fleets\n(zero-marginal local compute) · BYO-frontier-model routing with local\nfallback · **Nimbus as a local MCP server** (the private index as an\nendpoint Claude Code / Cursor connect *to*).\n\n## Review incorporated\n\nA design review (committed alongside) was addressed in full:\n- **MCP server** defaults to **stdio** (no network port); HTTP/SSE\nvariant must honor I6 bind + I5 `LanServer` checks + I10 pairing-token\nauth + I13 write-gate.\n- **Egress-ledger attribution corrected** — it's a **Phase 8**\ndeliverable (`prove` is the P7 W6 surface), not P22; pulling them\ntogether to S1 also resolves a pre-existing P7-reads-P8 ordering oddity.\n- **Phase 7 Wave 4** (previously unplaced) split across S1/S4/S5/Track\n2.\n\n## Notes\n\n- All 96 docs files lint clean (`markdownlint-cli2`).\n- Overlay preserves every existing \"composes-with\" cross-reference\n(numbers + prose unchanged).\n- Rationale of record:\n`docs/superpowers/specs/2026-06-17-roadmap-phase7-plus-resequence-design.md`.\n- Minor unrelated tidy: a stale `_perf.yml` line citation fixed in the\nPhase-2 Bencher spec.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated the product roadmap with a three-track Phase 7+ sequencing\nspine, preserving existing phase numbers while redefining build order.\n* Added design specifications and implementation guidance for Phase 7+\nre-sequencing, including new roadmap initiatives and clarified placement\nacross key phases.\n* Refreshed performance testbed documentation for the ingest test step\nconfiguration/line-range references.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T15:30:48+03:00",
-          "tree_id": "0b955d529cbe34404b8a0f71e0316f112040f311",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/429eae5b30c1825f13a01c1138a9baa666d1102c"
-        },
-        "date": 1781700168075,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 297.60171259999623,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 299.19493250001176,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 317.9862319000007,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b5fabb2d176f67b8286b8cdf237231ce565d9f49",
+          "message": "feat(agents): why, expert and ownership answer about an indexed item (#1421)\n\nThe browser client recognises nine products across six surface kinds. It\ncan run\nan agent against **two** of them.\n\nThat is a supply problem on this side, not a client defect: reading the\nparam\nguards in `agents-rpc.ts` against what a browser page can hand over,\n**no agent\ntakes the URL of an indexed item that is not a pull request.** A Jira\nissue and a\nPagerDuty incident are first-class indexed items with graph entities,\nand none of\nthe fourteen built-in agents will accept one as a subject.\n\nThis adds a third input arm, `itemUrl`, to `why`, `expert` and\n`ownership`.\n\n**Requires `@nimbus-dev/sdk` 1.31.0** (nimbus-sdk#260, #261), which\npublishes\n`WhyItemSubject`, `WhyBrief.itemSubject` and `ExpertBrief.query.itemUrl`\n— all\nadditive. The dependency bump is the first commit here.\n\n## The arm does not generalise for free\n\nAn earlier draft assumed each agent could \"run the body that already\nexists\nagainst that entity\". It cannot, and this is the largest thing the PR\ngets right:\n\n`ticketRowsForPr` (`why.ts`) joins `pe.type = 'pr'` on `from_id`. Handed\nan\n**issue** entity it returns zero rows — not because the issue has no\ncontext, but\nbecause the query walks the edge in the wrong direction from the wrong\nentity\ntype. Shipped naively, `why` would have returned a **well-formed, empty\nbrief for\nevery issue in the index**.\n\n`prResolvingItem` walks `resolves` **inward** — the inverse traversal —\nto the PR\nthat closed the item, and populates the lane input with it. The four\nitem-applicable lanes then answer unchanged, because \"the change that\nclosed this\nissue\" is exactly what a `why` question about an issue is asking.\n`subAuthorship`\nand `subDownstream` stay silent (`arm !== \"ref\"`), the same suppression\nthe\n`prUrl` arm already gets and for the same stated reason: neither\nquestion ever had\na file subject, so a gap would report something missing that was never\nasked for.\n\n`LaneInput.arm` was already `\"ref\" | \"change\"`, passed explicitly rather\nthan\ninferred, with a comment explaining why. The item arm is a third member\nof that\nunion — which is why this is a smaller change to `why.ts` than the lane\ntable\nsuggests.\n\n## Deliberately not a Confluence page\n\nA page indexes as `type: \"page\"`, which appears in **neither**\n`ITEM_LINKED_ENTITY_TYPES` nor `GRAPH_SYNC_BY_TYPE` — so\n`syncGraphFromIndexedItem`\nreturns early twice and a page has **no `graph_entity` at all**. Every\nlane here\nanswers from graph edges.\n\nSo `resolveItemArm` treats \"resolved, but no entity\" as a **miss**.\nNaming an item\nthe lanes then say nothing about reads as \"no context exists\" rather\nthan \"this\nkind of item carries none\". A test seeds a real Confluence page, asserts\nit *is*\nindexed, and pins the miss — so the bound is a decision on record rather\nthan an\nomission someone later \"fixes\".\n\n`ci_run` has the same gap. `build` was never an item-lane surface, so\nnothing\nchanges for it.\n\n## Per agent\n\n- **`why`** — third arm, `itemSubject` threaded exactly as\n`changeSubject` is\n  (absent vs null preserved under `exactOptionalPropertyTypes`).\n- **`expert`** — had **no entity path at all**: five sub-agents, each a\n`LIKE '%' || ? || '%'` scan over one string. Two new edge-backed\nsub-agents\n(`person --opened--> item`, and the resolving PR's author). The arms do\n**not**\nboth run: mixing an edge-backed answer with a lexical one in one ranked\nlist\nwould let a title coincidence outrank someone the graph actually links\nto the\nitem. A test seeds a decoy issue with a near-identical title and a\ndifferent\n  author, and pins that the decoy's author does not appear.\n- **`ownership`** — no new target kind. The item maps to its service via\n`item --belongs_to--> repo --belongs_to--> service` and is answered by\nthe **same\nservice lane** a `{ service }` request takes, so item- and\nservice-scoped answers\ncannot drift apart. `serviceForItemEntity` type-scopes every endpoint\nfor the\nreason `serviceForRoot`'s doc already gives: `belongs_to` is shared, and\nan\n  unscoped walk would surface a channel as a service.\n\n## Every guard's exclusion is now a count\n\n`why`'s `hasRef === hasPrUrl` expresses \"exactly one\" only while there\nare exactly\ntwo arms. At three it silently means \"an odd number\" — `{ref, prUrl,\nitemUrl}`\ntogether would have been **accepted**, and the handler would have\nanswered the ref\narm while ignoring two other questions the caller asked. Counting says\nwhat it\nmeans at any arity, and that three-arm case is now a test. `ownership`'s\npairwise\n`path && service` had the same defect and gets the same fix.\n\n`requireUrlArm` extracts the `prUrl` arm's three checks — string, length\nbound,\nuserinfo rejection — so every URL arm inherits them rather than growing\ncopies to\nkeep in step.\n\n## Testing\n\n`bun test packages/gateway/src/agents/ packages/gateway/src/ipc/`:\n**2603 pass, 0\nfail.** `typecheck`, `lint` and `lint:markdown` clean.\n\nNew coverage: the item arm per entity type (findings **or** gaps, never\nneither);\nthe Confluence-page miss; the file/line lanes silent rather than gapped;\nan issue\nnever listed as its own ticket; `expert` answering from edges rather\nthan a title\nmatch; `ownership` mapping to its service and degrading when it reaches\nnone; and\n`why`'s arm count at every arity.\n\n## Not in this PR\n\n`resolveFileByRemote` and the forge-file arm are PR 2; `connections` and\n`currency` are PR 3. See\n`docs/superpowers/plans/2026-08-31-agents-for-items-and-files.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01UsjPfu2BxDVUC7W8Wz8unL\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added support for Jira issues, Linear issues, and PagerDuty incidents\nin “Why” queries through item URLs.\n* Added item-based expert searches for authors and pull requests that\nresolved an item.\n* Added item-based ownership lookups, mapping indexed items to their\nowning services.\n* Added validation, resolution, gap reporting, and query details for\nitem-based requests.\n\n* **Documentation**\n* Added design specifications, implementation plans, review notes, and\nchangelog coverage for item-based agents.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-01T17:58:35Z",
+          "tree_id": "4e349f3047a91caad6e22e48af8252b55dc8b8ea",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b5fabb2d176f67b8286b8cdf237231ce565d9f49"
+        },
+        "date": 1788286263905,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 330.6265102999947,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 321.7001805,
             "unit": "ms"
           }
         ]
