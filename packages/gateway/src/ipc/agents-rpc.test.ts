@@ -1403,6 +1403,43 @@ describe("the forge-file arm", () => {
   // only when `namespaces` is supplied, and the browser supplies none — so the forge arm
   // must not manufacture any. A loopback-only client turning two local reads into network
   // calls is the failure this pins.
+  // The absence case below proves the arm invents no namespaces. This proves it REFUSES
+  // supplied ones — the actual hole, since a holder of an `agents`-scoped token could
+  // otherwise turn a browser-reachable file question into peer network calls.
+  test("the forge arm refuses supplied namespaces rather than fanning out", async () => {
+    const db = freshDb();
+    seedCheckout(db);
+    let sent = 0;
+    const ctx = {
+      ...makeCtx(db),
+      sendOverWire: () => {
+        sent += 1;
+        return Promise.resolve(null);
+      },
+    } as unknown as Parameters<typeof dispatchAgentsRpc>[2];
+
+    for (const method of ["agents.ghost", "agents.conflicts"]) {
+      for (const extra of [{ namespaces: ["peer-1"] }, { namespace: "peer-1" }]) {
+        await expect(dispatchAgentsRpc(method, { ...COORD, ...extra }, ctx)).rejects.toThrow(
+          /locally only/,
+        );
+      }
+    }
+    expect(sent).toBe(0);
+  });
+
+  test("the local { file } shape still accepts namespaces", async () => {
+    // The refusal is scoped to the forge shape. A terminal caller naming a local path
+    // may still ask for federation, exactly as before.
+    const db = freshDb();
+    const out = await dispatchAgentsRpc(
+      "agents.ghost",
+      { file: "src/foo.ts", namespaces: ["peer-1"] },
+      makeCtx(db),
+    );
+    expect(out.kind).toBe("hit");
+  });
+
   test("the forge arm adds no namespaces of its own", async () => {
     const db = freshDb();
     seedCheckout(db);

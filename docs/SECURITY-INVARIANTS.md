@@ -1,6 +1,6 @@
 # Nimbus Security Invariants
 
-**Current ceiling:** invariants I1–I35 (static rules D10–D26; I31, I32 and I34 have no static rule — see their own sections for why). Note: I28 is reserved for the MCP-server owner-sink and is unimplemented — no wiring, no section below, no enforcement test. The I27→I29 gap is documented intent, reconciled if and when that work lands.
+**Current ceiling:** invariants I1–I36 (static rules D10–D26; I31, I32, I34 and I36 have no static rule — see their own sections for why). Note: I28 is reserved for the MCP-server owner-sink and is unimplemented — no wiring, no section below, no enforcement test. The I27→I29 gap is documented intent, reconciled if and when that work lands.
 
 Canonical list of structural defenses Nimbus relies on. Each invariant names the defense, points to the production wiring that makes it active (not just defined), and lists the anti-pattern that would regress it. The B1 internal audit (Phase 4, 2026-04-25) found that several of these defenses *existed* in the codebase but had **zero production callers** — the most common root cause of High-severity findings. This file exists so that gap is impossible to re-introduce silently.
 
@@ -888,6 +888,25 @@ The spec designed the browser to spawn under the three-OS `SandboxRunner` with n
 **Enforcement test.** `packages/gateway/src/security-invariants.test.ts`, `describe("I35 — computer-use actuation only inside an approved envelope")`: `performActuation` is called only from `cu-gate.ts` (counted per file, not merely per file-set) and never imported elsewhere under any alias; no browser-driving capability — library import or CDP method literal — exists outside `cu-lanes/`; `openBrowserLane` is named only by its definition and `platform/assemble.ts`; `CuRunDeps` declares none of the four driver seams and neither `cu-tools.ts` nor `engine/agent.ts` mentions `CuGateDeps`; the launch policy asserted before consent is the SAME binding passed to `openLane`, and `browserLanePolicy`/`canConfine` are gone from the gate; `wrapLedgeredBrowserContext` has exactly one production caller and `THIS_BINARY_COVERAGE.browser` is `"per-run"`; the egress appender guards its resource type rather than casting it; `cu-classify.ts`'s `BrowserActionInput` interface declares EXACTLY five fields and none of them is model-supplied (I3 transplanted — a TypeScript interface cannot be reflected at runtime, so this source scan **is** the guard, and it is written as an allow-list because a denylist can only ban the names someone already thought of); no `computer.*` method appears in the Tauri renderer allowlist (I7); and the browser lane's screenshot handling reaches no persisting API anywhere in the file — scanning `cu-lanes/browser.ts` now that it exists.
 
 **How to comply.** Add a browser action kind only through `cu-actuate.ts`'s exhaustive `switch` (a new `req.kind` the `never` check does not know about is a compile error, not a silent fall-through) and only after `cu-classify.ts` has a rule for it. Add a lane driver only under `computer-use/cu-lanes/`, wired from `platform/assemble.ts` alone. Never add a flag to the launch policy without checking it against `FORBIDDEN_LAUNCH_FLAGS`, and never build a second launch policy at spawn time — the object the gate asserted is the object that must spawn. If a `type` implementation ever synthesises key events, the classifier's `submitsForm` rule becomes live and must be wired to a real producer. If a vision-capable model is ever given screenshot bytes, re-read I11's note in `cu-tools.ts` first: `wrapToolOutput` is a TEXTUAL envelope and no version of it can defend an image channel, which is why tainting happens by KIND rather than by inspecting what a capture returned.
+
+---
+
+## I36 — a browser-reachable file question never reaches the federation
+
+**Statement.** `requireFileParam` in `packages/gateway/src/ipc/agents-rpc.ts` REFUSES a request that carries `namespace`/`namespaces` alongside a forge coordinate (`{ service, repo, refAndPath }`), so `agents.ghost` and `agents.conflicts` answer locally only on that shape. Those two agents fan out to federation peers whenever their `namespaces` list is non-empty, and the forge shape exists for the browser client — reachable over HTTP under the `agents` token scope. Without this, any holder of that token could turn a question about one source file into outbound peer network calls, from a client whose entire premise is that it talks to `127.0.0.1` and nothing else.
+
+**Refused, not silently emptied.** Dropping the namespaces and answering locally would tell a caller who asked for a federated answer that they had received one. The local `{ file }` shape is a terminal caller naming a path on their own disk, is unaffected, and still fans out when asked — the bound is on the SHAPE a browser can produce, not on the agents.
+
+**Distinct from I17,** which governs answering an INBOUND `federation.query`. This is the outbound direction: who may cause this gateway to ask its peers anything.
+
+**Wired at:**
+
+- `packages/gateway/src/ipc/agents-rpc.ts` `requireFileParam` — the single guard both `handleGhost` and `handleConflicts` call. The forge branch throws `-32602` before `resolveFileByRemote` runs.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I36` describe block.
+
+**Anti-pattern:** reading `namespaces` once for both shapes and passing the value through, which is exactly how this shipped before the guard existed; or adding a third agent that takes a forge coordinate without routing it through `requireFileParam`.
+
+**How to comply:** a new agent that accepts a forge coordinate takes it through `requireFileParam`. If a future caller genuinely needs federated fan-out over a forge coordinate, that is a new decision with its own gate — not a relaxation of this one.
 
 ---
 

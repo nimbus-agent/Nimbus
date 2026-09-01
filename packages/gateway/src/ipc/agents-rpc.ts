@@ -291,11 +291,26 @@ function requireFileParam(db: Database, params: unknown): { file: string; namesp
     namespaces?: unknown;
   };
 
-  // `namespaces` is read from the ORIGINAL params on both shapes, so the forge arm cannot
-  // silently acquire federation fan-out that the local arm would have had to ask for.
   const namespaces = parseNamespaces(p);
 
   if (p.refAndPath !== undefined || p.repo !== undefined || p.service !== undefined) {
+    // The forge shape is LOCAL-ONLY, and refuses rather than ignores.
+    //
+    // `ghost` and `conflicts` fan out to federation peers whenever `namespaces` is
+    // non-empty. This shape exists for the browser — a client reachable over HTTP under
+    // the `agents` scope — so admitting namespaces would let any holder of that token
+    // turn a question about one file into peer network calls. Reading them from the
+    // original params and passing them through, as this did, was exactly that hole.
+    //
+    // REFUSED, not silently emptied: a caller who asked for fan-out and received a local
+    // answer would believe they had searched the federation. The local `{ file }` shape
+    // is unaffected and still fans out when asked.
+    if (namespaces.length > 0) {
+      throw new AgentsRpcError(
+        -32602,
+        "namespaces are not accepted with a forge coordinate — that shape answers locally only",
+      );
+    }
     if (p.file !== undefined) {
       throw new AgentsRpcError(
         -32602,
