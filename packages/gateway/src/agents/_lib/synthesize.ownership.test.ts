@@ -10,7 +10,7 @@ const BRIEF: OwnershipBrief = {
   generatedAt: 1_800_000_000_000,
   latencyMs: 4,
   gaps: [],
-  query: { path: "src/a.ts", service: null },
+  query: { path: "src/a.ts", service: null, itemUrl: null },
   target: {
     kind: "source_file",
     displayPath: "src/a.ts",

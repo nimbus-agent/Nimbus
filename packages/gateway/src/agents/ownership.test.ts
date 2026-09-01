@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 import { DEFAULT_NIMBUS_OWNERSHIP_TOML } from "../config/nimbus-toml.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { runOwnershipPass } from "../ownership/ownership-pass.ts";
@@ -194,4 +195,62 @@ test("the agent source is read-only — no executor, no HITL, no graph writes", 
   expect(src).not.toContain("HITL_REQUIRED");
   expect(src).not.toContain("upsertGraphRelation");
   expect(src).not.toContain("dbRun");
+});
+
+/**
+ * The `itemUrl` arm. It introduces no new target KIND: the item is mapped to the service
+ * it rolls up to (`item --belongs_to--> repo --belongs_to--> service`) and answered by the
+ * same service lane a `{ service }` request takes — which is what stops an item-scoped
+ * answer from ever disagreeing with a service-scoped one.
+ */
+async function seedIssueInBoundService(): Promise<string> {
+  await seedAndRunWithBoundService();
+  const url = "https://github.com/acme/api/issues/7";
+  upsertIndexedItem(d, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/api#7",
+    title: "Checkout times out",
+    bodyPreview: "",
+    url,
+    modifiedAt: NOW,
+    syncedAt: NOW,
+    // `repoPathFromMetadata` reads `repo`, and syncIssueGraph builds the repo entity's
+    // external id as `<service>:<repo>` — the same id the ownership pass bound above.
+    metadata: { repo: "acme/api" },
+  });
+  return url;
+}
+
+test("an item resolves to its owning service, and the brief records what was asked", async () => {
+  const url = await seedIssueInBoundService();
+  const brief = await runOwnership({ itemUrl: url }, ctx(), alwaysExists);
+
+  expect(brief.target?.kind).toBe("service");
+  expect(brief.query.itemUrl).toBe(url);
+  expect(brief.query.path).toBeNull();
+  // `service` records the id the item MAPPED to, so a reader can see which service
+  // answered without re-deriving the two hops themselves.
+  expect(brief.query.service).toBe("checkout");
+});
+
+test("an item that reaches no service degrades to the coverage summary, not a wrong answer", async () => {
+  await seedAndRunWithBoundService();
+  const url = "https://github.com/acme/unbound/issues/1";
+  upsertIndexedItem(d, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/unbound#1",
+    title: "Orphaned",
+    bodyPreview: "",
+    url,
+    modifiedAt: NOW,
+    syncedAt: NOW,
+    metadata: { repo: "acme/unbound" },
+  });
+
+  const brief = await runOwnership({ itemUrl: url }, ctx(), alwaysExists);
+  expect(brief.query.itemUrl).toBe(url);
+  expect(brief.query.service).toBeNull();
+  expect(brief.target).toBeNull();
 });

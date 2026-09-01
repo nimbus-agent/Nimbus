@@ -144,6 +144,32 @@ export function serviceForRoot(db: Database, repoRoot: string): string | null {
   return row === null ? null : row.id;
 }
 
+/**
+ * The service an indexed item rolls up to: `item --belongs_to--> repo --belongs_to--> service`.
+ *
+ * The sibling of `serviceForRoot` above, entered from an item rather than a filesystem
+ * root — and type-scoped on every endpoint for the same reason its doc gives: `belongs_to`
+ * is not ours alone, so an unscoped walk would surface a channel as a service.
+ *
+ * The first hop is the edge `syncIssueGraph` writes; the second is the ownership pass's.
+ * Both must already exist — this reads the graph, it binds nothing.
+ */
+export function serviceForItemEntity(db: Database, itemEntityId: string): string | null {
+  const row = db
+    .query(
+      `SELECT s.label AS id
+         FROM graph_relation ib
+         JOIN graph_entity rp   ON rp.id = ib.to_id   AND rp.type = 'repo'
+         JOIN graph_relation bt ON bt.from_id = rp.id AND bt.type = 'belongs_to'
+         JOIN graph_entity s    ON s.id = bt.to_id    AND s.type = 'service'
+        WHERE ib.from_id = ? AND ib.type = 'belongs_to'
+        ORDER BY s.label ASC
+        LIMIT 1`,
+    )
+    .get(itemEntityId) as { id: string } | null;
+  return row === null ? null : row.id;
+}
+
 /** Every service the last pass bound, sorted for a stable brief. */
 export function listBoundServices(db: Database): string[] {
   const rows = db

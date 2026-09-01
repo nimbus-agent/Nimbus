@@ -742,14 +742,21 @@ function requireOwnershipParams(params: unknown): OwnershipInput {
   if (typeof params !== "object" || Array.isArray(params)) {
     throw new AgentsRpcError(-32602, "agents.ownership requires an object payload");
   }
-  const p = params as { path?: unknown; service?: unknown };
-  if (p.path !== undefined && p.service !== undefined) {
+  const p = params as { path?: unknown; service?: unknown; itemUrl?: unknown };
+  // A count, not a pairwise check: with three scopes the old `path && service` form would
+  // have let `{ path, itemUrl }` through, and lane 1 would silently answer only one of them.
+  const scopes = [p.path, p.service, p.itemUrl].filter((v) => v !== undefined).length;
+  if (scopes > 1) {
     throw new AgentsRpcError(
       -32602,
-      "path and service are mutually exclusive — pass one, or neither for a coverage summary",
+      "path, service and itemUrl are mutually exclusive — pass one, or none for a coverage summary",
     );
   }
-  const out: { path?: string; service?: string } = {};
+  const out: { path?: string; service?: string; itemUrl?: string } = {};
+  if (p.itemUrl !== undefined) {
+    // The same guards `why`'s URL arms get — this value comes off a browser address bar too.
+    out.itemUrl = requireUrlArm(p.itemUrl, "itemUrl");
+  }
   if (p.path !== undefined) {
     if (typeof p.path !== "string") {
       throw new AgentsRpcError(-32602, "path must be a string");

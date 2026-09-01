@@ -372,7 +372,7 @@ const OWNERSHIP_FIXTURE: OwnershipBrief = {
   generatedAt: 0,
   latencyMs: 0,
   gaps: [],
-  query: { path: null, service: null },
+  query: { path: null, service: null, itemUrl: null },
   target: null,
   parentDirectory: null,
   service: null,

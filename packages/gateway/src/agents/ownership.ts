@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
+import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import {
   findDirectoryEntity,
   findFileEntity,
@@ -11,6 +12,7 @@ import {
   type OwnershipEntity,
   ownersOf,
   readOwnershipCoverage,
+  serviceForItemEntity,
   serviceForRoot,
 } from "../ownership/ownership-store.ts";
 import { resolveOwnershipPath } from "../ownership/ownership-target.ts";
@@ -182,6 +184,24 @@ function buildGaps(args: {
   return gaps;
 }
 
+/**
+ * An item URL to the service it rolls up to, or null.
+ *
+ * Null covers three different situations, and the gap notes tell them apart: the URL
+ * resolves to nothing, it resolves to an item with no graph entity, or the item has an
+ * entity that reaches no service. Only the last is an ownership question.
+ */
+function serviceForItemUrl(db: Database, itemUrl: string): string | null {
+  const resolved = resolveItemByUrl(db, itemUrl);
+  if (!resolved.found) return null;
+  const item = resolved.item;
+  const entity = db
+    .query("SELECT id FROM graph_entity WHERE external_id = ? AND type = ? LIMIT 1")
+    .get(item.id, item.type) as { id?: string } | null;
+  if (entity?.id === undefined) return null;
+  return serviceForItemEntity(db, entity.id);
+}
+
 export async function runOwnership(
   input: OwnershipInput,
   ctx: OwnershipContext,
@@ -190,7 +210,14 @@ export async function runOwnership(
   const start = performance.now();
   const now = Date.now();
   const requestedPath = input.path ?? null;
-  const requestedService = input.service ?? null;
+  const requestedItemUrl = input.itemUrl ?? null;
+
+  // The item arm resolves to a SERVICE and then takes the service lane unchanged: no new
+  // target kind, no second ranking path. An item-scoped answer and a service-scoped one
+  // are the same answer, and routing them through one lane is what stops them drifting.
+  const itemService =
+    requestedItemUrl === null ? null : serviceForItemUrl(ctx.db, requestedItemUrl);
+  const requestedService = input.service ?? itemService;
 
   const resolved =
     requestedPath === null ? null : resolveOwnershipPath(ctx.roots, requestedPath, exists);
@@ -279,7 +306,7 @@ export async function runOwnership(
       unresolvedOwners,
       serviceRequested: requestedService,
     }),
-    query: { path: requestedPath, service: requestedService },
+    query: { path: requestedPath, service: requestedService, itemUrl: requestedItemUrl },
     target,
     parentDirectory,
     service: svc?.id === null || svc?.id === undefined ? null : { id: svc.id },
