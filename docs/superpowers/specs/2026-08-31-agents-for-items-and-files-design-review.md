@@ -6,8 +6,8 @@
 **Target Spec:** [`2026-08-31-agents-for-items-and-files-design.md`](./2026-08-31-agents-for-items-and-files-design.md)  
 **Related Specs:**  
 
-- Web Clipper: [`nimbus-web-clipper` / `2026-08-31-lanes-for-every-recognised-page-design.md`](../../../nimbus-web-clipper/.claude/worktrees/lanes-everywhere/docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md)  
-- SDK: [`nimbus-sdk` / `2026-08-31-connections-and-currency-briefs-design.md`](../../../nimbus-sdk/.claude/worktrees/connections-currency-briefs/docs/superpowers/specs/2026-08-31-connections-and-currency-briefs-design.md)
+- Web Clipper: `nimbus-web-clipper` → `docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md` (a sibling repo; deliberately not a link, since no path resolves from inside this checkout)  
+- SDK: `nimbus-sdk` → `docs/superpowers/specs/2026-08-31-connections-and-currency-briefs-design.md` (same)
 
 ---
 
