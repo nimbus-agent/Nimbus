@@ -959,6 +959,79 @@ describe("runWhy — the itemUrl arm", () => {
     expect(lanes.has("downstream")).toBe(false);
   });
 
+  // The defect this arm exists to avoid. `ticketRowsForPr` joins `pe.type = 'pr'` on
+  // `from_id`, so handed an issue entity it returns zero rows — without the inverse
+  // traversal the item arm would ship a well-formed EMPTY brief for every issue.
+  test("finds the PR that resolved the issue, walking `resolves` inward", async () => {
+    const db = freshDb();
+    seedIssue(db);
+    const t = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/web#482",
+      title: "Cache the checkout lookup",
+      bodyPreview: "closes PLAT-9",
+      url: "https://github.com/acme/web/pull/482",
+      modifiedAt: t,
+      syncedAt: t,
+      metadata: { number: 482, repo: "acme/web" },
+    });
+
+    const issueEntity = db
+      .query("SELECT id FROM graph_entity WHERE type = 'issue' AND external_id = ?")
+      .get("jira:PLAT-9") as { id: string } | null;
+    const prEntity = db
+      .query("SELECT id FROM graph_entity WHERE type = 'pr' AND external_id = ?")
+      .get("github:acme/web#482") as { id: string } | null;
+    expect(issueEntity).not.toBeNull();
+    expect(prEntity).not.toBeNull();
+    upsertGraphRelation(db, prEntity?.id ?? "", issueEntity?.id ?? "", "resolves", t);
+
+    const brief = await runWhy(
+      { itemUrl: ISSUE_URL },
+      { db, roots: [], notify: () => {}, sessionId: "why-item-6" },
+    );
+
+    const prFindings = brief.findings.filter((f) => f.lane === "pull_request");
+    expect(prFindings.length).toBeGreaterThan(0);
+    expect(JSON.stringify(prFindings)).toContain("482");
+  });
+
+  test("an issue is never listed as its own ticket", async () => {
+    const db = freshDb();
+    seedIssue(db);
+    const t = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/web#482",
+      title: "Cache the checkout lookup",
+      bodyPreview: "closes PLAT-9",
+      url: "https://github.com/acme/web/pull/482",
+      modifiedAt: t,
+      syncedAt: t,
+      metadata: { number: 482, repo: "acme/web" },
+    });
+    const issueEntity = db
+      .query("SELECT id FROM graph_entity WHERE type = 'issue' AND external_id = ?")
+      .get("jira:PLAT-9") as { id: string } | null;
+    const prEntity = db
+      .query("SELECT id FROM graph_entity WHERE type = 'pr' AND external_id = ?")
+      .get("github:acme/web#482") as { id: string } | null;
+    upsertGraphRelation(db, prEntity?.id ?? "", issueEntity?.id ?? "", "resolves", t);
+
+    const brief = await runWhy(
+      { itemUrl: ISSUE_URL },
+      { db, roots: [], notify: () => {}, sessionId: "why-item-7" },
+    );
+
+    // The PR was found by walking `resolves` FROM this issue, so the issue is always in
+    // its own ticket list. Reporting it back would be circular.
+    const ticketFindings = brief.findings.filter((f) => f.lane === "ticket");
+    expect(ticketFindings.some((f) => f.entityId === issueEntity?.id)).toBe(false);
+  });
+
   test("the ref and prUrl arms leave itemSubject absent", async () => {
     const db = freshDb();
     const refBrief = await runWhy({ ref: refAt(12) }, ctxFor(db));

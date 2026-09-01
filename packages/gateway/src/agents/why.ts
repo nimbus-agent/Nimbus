@@ -141,6 +141,43 @@ function resolvePrArm(db: Database, prUrl: string): WhyLaneResolution {
  * would name an item the lanes then answer nothing about, which reads to a caller as
  * "no context exists" rather than "this kind of item carries none".
  */
+/**
+ * The PR that `resolves` this item, or null.
+ *
+ * The INVERSE of `ticketRowsForPr`'s traversal: that one walks `resolves` outward from a
+ * `pr` entity to find the issues a change closed, this one walks inward from the issue to
+ * find the change that closed it. The direction is the whole difference between the two
+ * arms, and it is why the item arm could not simply reuse the PR arm's queries.
+ */
+function prResolvingItem(db: Database, itemEntityId: string): PrForSha | null {
+  const row = db
+    .query(
+      `SELECT pe.id AS entity_id, i.title AS title, i.url AS url, i.modified_at AS modified_at,
+              json_extract(i.metadata, '$.number') AS number
+         FROM graph_relation r
+         JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'pr'
+         JOIN item i ON i.id = pe.external_id
+        WHERE r.to_id = ? AND r.type = 'resolves'
+        ORDER BY i.modified_at DESC, pe.id ASC
+        LIMIT 1`,
+    )
+    .get(itemEntityId) as {
+    entity_id: string;
+    title: string;
+    url: string | null;
+    modified_at: number;
+    number: number | null;
+  } | null;
+  if (row === null) return null;
+  return {
+    entityId: row.entity_id,
+    number: row.number,
+    title: row.title,
+    url: row.url,
+    modifiedAt: row.modified_at,
+  };
+}
+
 function resolveItemArm(db: Database, itemUrl: string): WhyLaneResolution {
   const miss: WhyLaneResolution = {
     subject: null,
@@ -173,9 +210,12 @@ function resolveItemArm(db: Database, itemUrl: string): WhyLaneResolution {
   return {
     subject: null,
     blame: null,
-    // The item arm has no PR of its own. `subPullRequest` may find one, and the lanes
-    // that need it read it from that result rather than from here.
-    pr: null,
+    // The PR that resolved this item, if one did — the inverse of the traversal the
+    // prUrl arm makes. Populating `pr` here rather than teaching four lanes about items
+    // is what keeps this arm small: `subPullRequest`, `subTicket`, `subDiscussion` and
+    // `subDriver` already answer from `lane.pr`, and "the change that closed this issue"
+    // is exactly what a `why` question about an issue is asking for.
+    pr: prResolvingItem(db, entity.id),
     changeSubject: undefined,
     itemSubject: {
       itemId: item.id,
@@ -642,7 +682,11 @@ async function subTicket(db: Database, lane: LaneInput): Promise<SubAgentResult>
   const pr = lane.pr;
   if (pr === null) return {};
 
-  const rows = ticketRowsForPr(db, pr.entityId);
+  // On the item arm the PR was found BY walking `resolves` from this very item, so the
+  // item is always in its own ticket list. Listing an issue as a ticket referenced by
+  // the change that closed it is circular, not informative — drop it and report what
+  // else that PR touched.
+  const rows = ticketRowsForPr(db, pr.entityId).filter((r) => r.entityId !== lane.itemEntityId);
   if (rows.length === 0) {
     const gap = detectMissingRelationToEntityType(
       db,
@@ -685,6 +729,16 @@ async function subDiscussion(db: Database, lane: LaneInput): Promise<SubAgentRes
     const ticket = ticketRowsForPr(db, pr.entityId).at(0);
     if (ticket !== undefined) targetIds.push(ticket.entityId);
   }
+
+  // The item itself, on the item arm. Added directly rather than via the PR, because a
+  // discussion can mention an issue that no change ever closed — precisely the case where
+  // this lane has something to say and no PR to reach it through.
+  //
+  // It may duplicate the ticket pushed just above, and that is harmless: `targetIds` is
+  // spliced into an `IN (...)`, which is set membership, so a repeated id matches the same
+  // rows once. (It is NOT de-duplicated first — do not add a `DISTINCT` here believing it
+  // is compensating for that.)
+  if (lane.itemEntityId !== null) targetIds.push(lane.itemEntityId);
 
   let rows: Array<{
     id: string;
