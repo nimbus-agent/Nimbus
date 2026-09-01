@@ -1046,3 +1046,33 @@ describe("runWhy — the itemUrl arm", () => {
     expect("itemSubject" in prBrief).toBe(false);
   });
 });
+
+/**
+ * The regression fence for the defect this arm was designed around: a lane pinned to the
+ * PR-shaped traversal answers nothing on an item and reports nothing either, so the brief
+ * comes back well-formed and empty. Findings OR gaps — never neither.
+ */
+describe.each(["issue", "incident"] as const)("the item arm on %s", (itemType) => {
+  test("produces findings or gaps, never a well-formed empty brief", async () => {
+    const db = freshDb();
+    const t = Date.now();
+    const url = `https://example.test/${itemType}/1`;
+    upsertIndexedItem(db, {
+      service: itemType === "issue" ? "jira" : "pagerduty",
+      type: itemType,
+      externalId: `${itemType}-1`,
+      title: `A ${itemType}`,
+      bodyPreview: "",
+      url,
+      modifiedAt: t,
+      syncedAt: t,
+      metadata: {},
+    });
+
+    const brief = await runWhy(
+      { itemUrl: url },
+      { db, roots: [], notify: () => {}, sessionId: `why-matrix-${itemType}` },
+    );
+    expect(brief.findings.length + brief.gaps.length).toBeGreaterThan(0);
+  });
+});

@@ -8,6 +8,30 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-01 — `why`, `expert` and `ownership` answer about an indexed item, not just a PR.**
+  A third input arm, `itemUrl`, on all three — so the browser client can ask about a Jira or
+  Linear issue and a PagerDuty incident, not only a pull request. Requires `@nimbus-dev/sdk`
+  **1.31.0**, which publishes `WhyItemSubject`, `WhyBrief.itemSubject` and
+  `ExpertBrief.query.itemUrl` (all additive). **Deliberately not a Confluence page:** a page
+  indexes as `type: "page"`, which appears in neither `ITEM_LINKED_ENTITY_TYPES` nor
+  `GRAPH_SYNC_BY_TYPE`, so it has no `graph_entity` at all — and every lane here answers from
+  graph edges. `resolveItemArm` treats "resolved, but no entity" as a miss rather than naming an
+  item the lanes then say nothing about, and a test pins that bound. The arm is not a rewiring
+  of an existing path: `ticketRowsForPr` joins `pe.type = 'pr'` on `from_id`, so handed an issue
+  it returns zero rows, and `why` would otherwise have shipped a well-formed EMPTY brief for
+  every issue in the index. `prResolvingItem` walks `resolves` INWARD to the change that closed
+  the item and populates the lane input with it, so the four item-applicable lanes answer
+  unchanged; `subAuthorship` and `subDownstream` stay silent, as they already do on the `prUrl`
+  arm, because neither question ever had a file subject. `expert` gains two edge-backed
+  sub-agents (`person --opened--> item`, and the resolving PR's author) and does **not** run its
+  five `LIKE` lanes on this arm — mixing an edge-backed answer with a lexical one in one ranked
+  list would let a title coincidence outrank someone the graph actually links to the item.
+  `ownership` introduces no new target kind: the item is mapped to its service by
+  `item --belongs_to--> repo --belongs_to--> service` and answered by the same service lane a
+  `{ service }` request takes, so the two cannot disagree. Every guard's mutual exclusion is now
+  a **count** rather than a pairwise check — `why`'s `hasRef === hasPrUrl` expressed "exactly
+  one" only while there were two arms, and silently means "an odd number" at three.
+
 - **2026-08-31 — The computer-use browser lane can now actually drive a browser, and the `browser` egress class went live with it.** The driver deferred on 2026-08-30 landed as **raw CDP over a WebSocket** (`computer-use/cu-lanes/`), with **no dependency at all** — Bun has a native `WebSocket`, and `playwright-core`, which fails a `bun build --compile` gate, is not reintroduced in any form. `platform/assemble.ts` now supplies the four `CuGateDeps` driver seams instead of `resolveBrowserPath: () => null`, so `ERR_CU_NO_BROWSER` is no longer the terminus of every session on a machine that has Chrome, Chromium or Edge installed. The nine items the plan required to close **in the same commit as the driver** are closed here; each is below with what it actually prevents rather than a checkbox.
 
   **Two defects the fixtures could never have caught, found the first time the observer ran against a real DOM.** (1) CDP reports `Fetch.requestPaused.resourceType` in **PascalCase** (`"Document"`, `"XHR"`, `"Image"`), while `CuResourceType` was written in `playwright-core`'s lowercase vocabulary — so the unguarded `req.resourceType() as CuResourceType` cast made **every** live type miss both `PASSIVE` and `SCRIPT_INITIATED`. Fail-closed, and a browser lane that could not render the origin its owner had just approved, because the page's own `Document` was gated too. Closed with a real guard (`cu-request-policy.ts`'s `toCuResourceType`, returning `null` — never a guess — for anything unrecognised, with the caller substituting `"other"`, which `decideRequest` places in the GATED branch). `Ping` (`navigator.sendBeacon` / `<a ping>`), `Preflight`, `Prefetch`, `Manifest`, `SignedExchange`, `CSPViolationReport`, `FedCM` and `TextTrack` are DELIBERATELY unmapped so they gate: `Ping` is a fire-and-forget outbound POST, i.e. exactly the channel § 3.5.1 exists to close, and folding it into a `PASSIVE` member "because it is a subresource" would reopen it. The RAW protocol string, not the substituted word, is what reaches `payload_summary`. (2) `new URL("javascript:…").origin` is the **string** `"null"` — the WHATWG opaque-origin serialization — which compares EQUAL to a `data:` page's own `location.origin`, so two opaque origins would have read as same-origin. Collapsed to JS `null` at the producer (`browser-observe.ts`'s `normalizeObservedOrigin`), which makes every downstream `!== null` guard fall to its actuating branch. Both are pinned by tests that run against a REAL Chrome when one is installed (`skipIf` otherwise), alongside the `closest()`-based `isSubmitControl` the contract was rewritten for — a `<span>` inside `<button type=submit>` reports `true`, verified live.
@@ -31,7 +55,6 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   **One browser-lane session at a time, disclosed rather than discovered.** `[computer_use] browser_profile_dir` is one directory shared by every session (spec § 9, so a login survives across them), and Chromium holds a singleton lock on it — so a second CONCURRENT session fails at launch (verified against a real Chrome: exit code 21, empty stderr) and is recorded `failed_after_approval` / `ERR_CU_LAUNCH_FAILED`. Fail-closed and honestly recorded, but post-consent: the owner approves an envelope that then cannot start. Left this way deliberately rather than closed with a concurrency check in `openSession`, which would make the colliding-id teardown path (`evictExistingSession`) unreachable and is a product decision about session concurrency, not a driver detail. The driver names the likely cause when stderr is empty, so nobody is left holding a bare exit code.
 
   **Bound worth recording for whoever writes the next lane:** `type` is focus + select + `Input.insertText`, which synthesises **no key event** and therefore cannot press Enter — that is what keeps the classifier's `submitsForm` rule unreachable in the shipped surface, verified against a live page whose submit handler never fires. A `dispatchKeyEvent`-based implementation would make it live and would need a real producer wired to it. `isSubmitControl` resolves `closest("button, input[type=submit], input[type=image], form")` with a `FORM`-specific guard: the `form` in that selector catches the node BEING a form, and taking it literally would classify a click on any `<div>` or `<label>` inside any form as actuating — fail-closed, but so noisy it trains the owner to approve reflexively, which is the fatigue failure the design exists to avoid. **I11's screenshot bound remains anticipated, not live:** captures are still hashed and discarded, no vision-capable model is wired in, and the taint latch still taints by KIND rather than by content, in advance of a channel that does not exist yet.
-
 - **2026-08-30 — The local computer-use loop's gate shipped; nothing can drive it yet.** New
   invariant **I35** + static rule **D26**, schema **V57** (`cu_session` / `cu_action`), new
   subsystem `packages/gateway/src/computer-use/`, deliberately parallel to `exec/` in shape and

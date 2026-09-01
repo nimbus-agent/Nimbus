@@ -7,7 +7,7 @@
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.30.0",
         "@nimbus-dev/client": "^0.17.3",
-        "@nimbus-dev/sdk": "^1.19.0",
+        "@nimbus-dev/sdk": "^1.31.0",
         "astro": "^7.2.4",
         "zod": "^4.4.3",
       },
@@ -90,7 +90,7 @@
         "@mastra/core": "^1.61.0",
         "@mastra/mcp": "^1.17.1",
         "@nimbus-dev/connectors": "^0.2.0",
-        "@nimbus-dev/sdk": "^1.19.0",
+        "@nimbus-dev/sdk": "^1.31.0",
         "@noble/hashes": "^2.3.0",
         "@scure/bip39": "^2.3.0",
         "@xenova/transformers": "^2.17.0",
@@ -660,7 +660,7 @@
 
     "@nimbus-dev/connectors": ["@nimbus-dev/connectors@0.2.0", "", { "dependencies": { "@modelcontextprotocol/sdk": "1.30.0", "@nimbus-dev/sdk": "^1.20.0", "@types/nodemailer": "^7.0.4", "zod": "^4.4.2" }, "optionalDependencies": { "hyparquet": "^1.29.1", "imapflow": "^1.7.2", "nodemailer": "^9.0.5", "tsdav": "^2.3.1" }, "bin": { "nimbus-connector": "standalone/src/bin.ts" } }, "sha512-ZYKXcG1FTxobyB4qB4I1/lpNIcubJoYsBG9zeKnkxuEBVvSjlesP/6M0ZRs4wP71JtbEUghi8GglEcqOmcaSPA=="],
 
-    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.19.0", "", {}, "sha512-2ZnsrXslj5NseuiB6fcf09HAULBlDDF77Zdu8hH/QRKAqLsuhgCUq9fFbxjWqvNaRFH+LSrT+55DGBnXBgLRKw=="],
+    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.31.0", "", {}, "sha512-bu70LyslZxWZHE50VLEA+jHtCKuobLwBTRdelMFYbR19mxTINs4EuwFuiASkHwo2uKitPiVLLUiY0+eaw3oRKg=="],
 
     "@nimbus/cli": ["@nimbus/cli@workspace:packages/cli"],
 
@@ -2868,11 +2868,7 @@
 
     "@nimbus-dev/connectors/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.21.0", "", {}, "sha512-6mvR4NZNes/xSnR8lvnsO6n4QJXixuHxqUP0jBWRRZxEW/OoTgSLNzJewm75c5SrIf7AK4jcIBmgqtk3xMnZ4g=="],
 
-    "@nimbus/cli/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.21.0", "", {}, "sha512-6mvR4NZNes/xSnR8lvnsO6n4QJXixuHxqUP0jBWRRZxEW/OoTgSLNzJewm75c5SrIf7AK4jcIBmgqtk3xMnZ4g=="],
-
     "@nimbus/docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
-
-    "@nimbus/gateway/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.21.0", "", {}, "sha512-6mvR4NZNes/xSnR8lvnsO6n4QJXixuHxqUP0jBWRRZxEW/OoTgSLNzJewm75c5SrIf7AK4jcIBmgqtk3xMnZ4g=="],
 
     "@rolldown/binding-wasm32-wasi/@emnapi/core": ["@emnapi/core@1.11.1", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.2", "tslib": "^2.4.0" } }, "sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ=="],
 
