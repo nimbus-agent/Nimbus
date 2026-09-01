@@ -1,7 +1,7 @@
 # Agents That Answer About an Item, and About a File You Are Reading
 
 **Date:** 2026-08-31
-**Status:** design — not started
+**Status:** PR 1 implemented (Nimbus#1421, `itemUrl` on `why`/`expert`/`ownership`); PRs 2 and 3 not started
 **Slot:** Track 2 → Client surfaces, the browser row (`nimbus-web-clipper`)
 **Roadmap:** [`docs/roadmap.md` § Track 2 → Client surfaces](../../roadmap.md#client-surfaces)
 **Delivers as:** three PRs, in order — see §5
@@ -306,8 +306,11 @@ gateway's own `_lib/ownership-types.ts` — only `GapNote` is imported from `@ni
 is gateway-owned and changing it is a single-repo edit.
 
 **Subject.** `why` adds a third optional subject field, `itemSubject`, carrying a new
-`WhyItemSubject` (F2). `subject` and `changeSubject` are null on this arm, exactly as `subject` is
-null on the `prUrl` arm today. No existing field changes shape.
+`WhyItemSubject` (F2). On this arm `subject` is **null** and `changeSubject` is **omitted** — not
+null. The two are different on the wire and the brief spreads them conditionally
+(`...(changeSubject === undefined ? {} : { changeSubject })`) precisely to keep them so under
+`exactOptionalPropertyTypes`: a consumer must be able to tell "asked, and unresolvable" from
+"never asked". No existing field changes shape.
 
 **Gaps, not empties.** A URL that resolves to nothing returns the agent's existing gap vocabulary
 with a note naming the URL. The browser must distinguish "no answer" from "not indexed", and it can

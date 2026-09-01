@@ -1048,3 +1048,14 @@ describe("runExpert — the itemUrl arm", () => {
 
 // Placeholder afterEach — no global state is mutated in these tests.
 afterEach(() => {});
+
+test("runExpert refuses a request with no arm rather than searching for the empty string", async () => {
+  // `LIKE '%' || '' || '%'` matches every indexed title and body preview, so a defaulted
+  // empty topic would answer "who are the most active people in your whole index" to a
+  // question nobody asked — confidently, and with no gap to warn anyone.
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  expect(runExpert({}, { db, notify: () => {}, sessionId: "expert-noarm" })).rejects.toThrow(
+    /exactly one/,
+  );
+});

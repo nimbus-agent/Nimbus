@@ -254,3 +254,54 @@ test("an item that reaches no service degrades to the coverage summary, not a wr
   expect(brief.query.service).toBeNull();
   expect(brief.target).toBeNull();
 });
+
+test("each item-resolution failure names itself instead of collapsing to the coverage summary", async () => {
+  await seedAndRunWithBoundService();
+
+  // 1. never indexed
+  const unindexed = await runOwnership(
+    { itemUrl: "https://github.com/acme/api/issues/999" },
+    ctx(),
+    alwaysExists,
+  );
+  expect(unindexed.gaps.some((g) => g.detail.includes("does not resolve to an indexed item"))).toBe(
+    true,
+  );
+
+  // 2. indexed, but no graph entity — a Confluence page is the real case.
+  const pageUrl = "https://acme.atlassian.net/wiki/spaces/ENG/pages/1/Runbook";
+  upsertIndexedItem(d, {
+    service: "confluence",
+    type: "page",
+    externalId: "1",
+    title: "Runbook",
+    bodyPreview: "",
+    url: pageUrl,
+    modifiedAt: NOW,
+    syncedAt: NOW,
+    metadata: {},
+  });
+  const page = await runOwnership({ itemUrl: pageUrl }, ctx(), alwaysExists);
+  expect(page.gaps.some((g) => g.detail.includes("has no graph entity"))).toBe(true);
+
+  // 3. indexed with an entity, but its repo is bound to no service.
+  const unboundUrl = "https://github.com/acme/unbound/issues/1";
+  upsertIndexedItem(d, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/unbound#1",
+    title: "Orphaned",
+    bodyPreview: "",
+    url: unboundUrl,
+    modifiedAt: NOW,
+    syncedAt: NOW,
+    metadata: { repo: "acme/unbound" },
+  });
+  const unbound = await runOwnership({ itemUrl: unboundUrl }, ctx(), alwaysExists);
+  expect(unbound.gaps.some((g) => g.detail.includes("reaches no service"))).toBe(true);
+
+  // The three are genuinely distinguishable, which is the whole point.
+  const detail = (b: { gaps: Array<{ detail: string }> }) => b.gaps.map((g) => g.detail).join("|");
+  expect(detail(unindexed)).not.toBe(detail(page));
+  expect(detail(page)).not.toBe(detail(unbound));
+});

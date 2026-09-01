@@ -1295,3 +1295,44 @@ describe("I29 — externally-originated agent briefs are ledgered", () => {
     expect(rows.map((r) => r.method)).toEqual(["agents.whyPeek"]);
   });
 });
+
+/**
+ * Every URL-shaped agent param goes through `requireUrlArm`, which rejects userinfo.
+ *
+ * Pinned across ALL THREE call sites rather than once: the guard is shared today, and this
+ * is what fails if someone later inlines a fourth arm's validation instead of reusing it.
+ * A `user:pass@` URL forwarded downstream would land plaintext credentials in a brief's
+ * rendered query and in the egress ledger.
+ */
+describe("credentials never survive a URL param", () => {
+  const CREDENTIALED = "https://user:secret@acme.atlassian.net/browse/A-1";
+
+  test("why rejects userinfo on both URL arms", async () => {
+    const ctx = makeCtx(freshDb());
+    for (const params of [{ prUrl: CREDENTIALED }, { itemUrl: CREDENTIALED }]) {
+      await expect(dispatchAgentsRpc("agents.why", params, ctx)).rejects.toThrow(/userinfo/);
+    }
+  });
+
+  test("expert rejects userinfo on itemUrl", async () => {
+    const ctx = makeCtx(freshDb());
+    await expect(
+      dispatchAgentsRpc("agents.expert", { itemUrl: CREDENTIALED }, ctx),
+    ).rejects.toThrow(/userinfo/);
+  });
+
+  test("ownership rejects userinfo on itemUrl", async () => {
+    const ctx = makeCtx(freshDb());
+    await expect(
+      dispatchAgentsRpc("agents.ownership", { itemUrl: CREDENTIALED }, ctx),
+    ).rejects.toThrow(/userinfo/);
+  });
+
+  test("the secret never appears in the rejection message", async () => {
+    const ctx = makeCtx(freshDb());
+    const err = await dispatchAgentsRpc("agents.why", { itemUrl: CREDENTIALED }, ctx).catch(
+      (e: unknown) => e,
+    );
+    expect(String((err as Error).message)).not.toContain("secret");
+  });
+});

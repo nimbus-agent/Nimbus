@@ -170,8 +170,16 @@ function makeSubAgent(
 export async function runExpert(input: ExpertInput, ctx: ExpertContext): Promise<ExpertBrief> {
   const start = performance.now();
   const limit = Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
-  // `requireExpertParams` guarantees exactly one arm reaches here, so the fallback is
-  // unreachable over the wire and exists only for a direct in-process caller.
+  // Refused, NOT defaulted to "". Both fields are optional on the type, so an in-process
+  // caller — the CLI, a test — can reach here with neither, and an empty topic makes the
+  // five lexical lanes run `LIKE '%' || '' || '%'`, which matches every indexed title and
+  // body preview. The caller would get a confident ranked list of the most active people
+  // in the whole index in answer to a question they never asked, which is the exact
+  // failure mode this arm exists to remove. `requireExpertParams` already refuses it on
+  // the wire; the in-process path gets the same contract rather than a silent worst case.
+  if (input.topicOrFile === undefined && input.itemUrl === undefined) {
+    throw new Error("runExpert requires exactly one of { topicOrFile } or { itemUrl }");
+  }
   const topic = input.topicOrFile ?? "";
 
   const preflightGaps: GapNote[] = [];
@@ -309,10 +317,13 @@ async function subItemOpened(db: Database, itemUrl: string): Promise<SubAgentRes
     .all(target.entityId, target.itemId) as ExpertLaneRow[];
 
   if (rows.length === 0) {
+    // `person --opened--> issue`, so the TARGET type is the issue. This helper joins
+    // `e.id = r.to_id`; passing "person" asks whether anything points AT a person, which
+    // nothing ever does, so the gap would fire even with the edges present.
     const gap = detectMissingRelationToEntityType(
       db,
       "opened",
-      "person",
+      "issue",
       "Issues emit `opened` when the connector records an author — sync it.",
     );
     return gap !== null ? { gap } : {};
@@ -347,10 +358,11 @@ async function subItemResolvedBy(db: Database, itemUrl: string): Promise<SubAgen
     .all(target.entityId) as ExpertLaneRow[];
 
   if (rows.length === 0) {
+    // Same correction: `pr --resolves--> issue` targets the ISSUE, not the PR.
     const gap = detectMissingRelationToEntityType(
       db,
       "resolves",
-      "pr",
+      "issue",
       "A PR emits `resolves` when its body references the item key — reference it, and sync.",
     );
     return gap !== null ? { gap } : {};
