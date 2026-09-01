@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import {
   checkAgentEmitterImportConfinement,
@@ -14,6 +15,10 @@ import type { ExpertBrief } from "./agents/_lib/findings.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
 import { PairingWindowController } from "./clips/pairing-window.ts";
+import { classifyTerminalAction } from "./computer-use/cu-classify.ts";
+import { buildTerminalLaunchPolicy } from "./computer-use/cu-lanes/terminal-launch.ts";
+import { DEFAULT_SHELL_ID, resolveShellById } from "./computer-use/cu-lanes/terminal-shells.ts";
+import { TerminalLineBuffer } from "./computer-use/cu-terminal-buffer.ts";
 import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
 import { COVERAGE_CLASSES, THIS_BINARY_COVERAGE } from "./egress/egress-coverage.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "./egress/egress-ledger.ts";
@@ -2711,7 +2716,11 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     }
     expect(Object.fromEntries(matchesByFile)).toEqual({
       "packages/gateway/src/computer-use/cu-actuate.ts": 1, // the declaration, exactly once
-      "packages/gateway/src/computer-use/cu-gate.ts": 1, // the one legitimate call
+      // TWO legitimate calls, one per lane arm of `runActionExclusive` — pinned as a COUNT rather
+      // than as "the gate contains at least one", because that is what makes a THIRD call, added
+      // anywhere in this file, a failure a reader has to justify rather than a silent widening of
+      // the one function that turns a model proposal into a real interaction with the host.
+      "packages/gateway/src/computer-use/cu-gate.ts": 2,
     });
   });
 
@@ -2790,16 +2799,22 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // it: a layer that cannot NAME a lane constructor cannot construct one, and that holds for code
     // nobody has written yet.
     const gate = await read("packages/gateway/src/computer-use/cu-gate.ts");
-    const runDeps = gate.slice(
-      gate.indexOf("export interface CuRunDeps"),
-      gate.indexOf("export interface CuGateDeps"),
-    );
+    // Sliced to the END OF THE DECLARATION, not to the next named interface. It used to run to
+    // `export interface CuGateDeps`, which silently widened to cover everything declared in
+    // between — and the moment the per-lane seam groups landed there, the slice contained the very
+    // capability names it exists to assert are absent. A slice bounded by an unrelated landmark is
+    // a test that changes meaning when a neighbour moves.
+    const runDepsStart = gate.indexOf("export interface CuRunDeps");
+    expect(runDepsStart).toBeGreaterThanOrEqual(0);
+    const runDeps = gate.slice(runDepsStart, gate.indexOf("\n}", runDepsStart) + 2);
     expect(runDeps.length).toBeGreaterThan(0);
+    expect(runDeps).toContain("requestApproval"); // proves the slice really covers the interface
     for (const capability of [
       "openLane",
       "buildLaunchPolicy",
       "assertLaunchable",
       "resolveBrowserPath",
+      "lanes",
     ]) {
       expect(runDeps).not.toContain(capability);
     }
@@ -2818,17 +2833,138 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // `openLane`; the driver spawns its `argv` verbatim.
     const gate = stripComments(await read("packages/gateway/src/computer-use/cu-gate.ts"));
     expect(gate).not.toContain("browserLanePolicy");
+    // The gate never probes the runner itself. The TERMINAL lane's assertion IS `canConfine`, but
+    // it is reached through the injected `assertLaunchable` seam, which is what keeps this file
+    // free of both the PAL and `cu-lanes/`.
     expect(gate).not.toContain("canConfine");
-    expect(gate).toContain("const launch = deps.buildLaunchPolicy({ profileDir });");
-    expect(gate).toContain("deps.assertLaunchable(launch)");
-    // The same binding, not a rebuild: a `buildLaunchPolicy` call inside `openLane`'s argument
-    // would typecheck and silently reintroduce the drift this replaced.
-    expect(gate).toMatch(/openLane\(\{\s*launch,/);
 
-    const driver = stripComments(
+    // PER LANE, and asserted as the PROPERTY rather than as one lane's literal source line: each
+    // lane builds ONE launch policy, asserts THAT binding, and carries it to `openLane` on the
+    // `PreparedLane` it returns. Pinning a source string instead made this test fail the moment
+    // the seams were grouped per lane, even though the property it exists to protect was intact.
+    for (const lane of ["browser", "terminal"]) {
+      expect(gate).toContain(`deps.lanes.${lane}.buildLaunchPolicy(`);
+      expect(gate).toContain(`deps.lanes.${lane}.assertLaunchable(launch)`);
+    }
+    // The SAME binding, not a rebuild: both `openLane` calls take the prepared object. A
+    // `buildLaunchPolicy` call inside an `openLane` argument would typecheck and silently
+    // reintroduce the drift this replaced, so it must appear nowhere in that position.
+    expect((gate.match(/launch: prepared\.launch/g) ?? []).length).toBe(2);
+    expect(gate).not.toMatch(/openLane\([^)]*buildLaunchPolicy/);
+
+    // And each driver spawns what it was handed, verbatim.
+    const browserDriver = stripComments(
       await read("packages/gateway/src/computer-use/cu-lanes/browser.ts"),
     );
-    expect(driver).toContain("opts.launch.argv");
+    expect(browserDriver).toContain("opts.launch.argv");
+    const terminalDriver = stripComments(
+      await read("packages/gateway/src/computer-use/cu-lanes/terminal.ts"),
+    );
+    expect(terminalDriver).toContain("launch.shellPath");
+    expect(terminalDriver).toContain("launch.argv");
+    expect(terminalDriver).toContain("launch.policy");
+  });
+
+  test("I35 terminal: the classifier has no observing branch and cannot be told anything", async () => {
+    // TWO independent proofs, because either alone is a weaker claim than the invariant makes.
+    // By ARITY: the function takes the composed line and nothing else, so the model's own
+    // description cannot be passed to it, let alone consulted — I3 transplanted, and stronger here
+    // than on the browser lane, where the separation rests on which fields an input object carries.
+    expect(classifyTerminalAction.length).toBe(1);
+    // And by exhaustion over adversarial shapes, including ones a future edit might special-case.
+    for (const line of ["ls", "", "  ", "cat x # observing", "READ-ONLY", "y".repeat(9000)]) {
+      expect(classifyTerminalAction(line).cls).toBe("actuating");
+    }
+    // No branch in the source can return `observing` at all — read from disk rather than reasoned
+    // about, so a future edit that adds one fails here even if every input above still classifies
+    // `actuating` by luck of which cases were chosen.
+    const classify = stripComments(await read("packages/gateway/src/computer-use/cu-classify.ts"));
+    const fn = classify.slice(classify.indexOf("export function classifyTerminalAction"));
+    expect(fn.slice(0, fn.indexOf("\n}"))).not.toContain("observing");
+  });
+
+  test("I35 terminal: a control character is refused, not buffered, and leaves the buffer alone", () => {
+    const b = new TerminalLineBuffer();
+    b.append("safe-command");
+    for (const cp of [0x03, 0x04, 0x1b, 0x00, 0x7f]) {
+      expect(b.append(String.fromCodePoint(cp)).status).toBe("refused");
+    }
+    expect(b.pending()).toBe("safe-command");
+  });
+
+  test("I35 terminal: a bidirectional override is refused — the consent prompt cannot be made to lie", () => {
+    // Trojan Source (CVE-2021-42574). Harmless to the shell, dangerous to the HUMAN — and on this
+    // lane the owner's approval prompt is the ENTIRE boundary, so a character that changes what the
+    // line RENDERS as attacks the only defense there is.
+    const b = new TerminalLineBuffer();
+    for (const cp of [0x202e, 0x2066, 0x200b, 0x2028, 0xfeff]) {
+      expect(b.append(`echo ${String.fromCodePoint(cp)} hi`).status).toBe("refused");
+    }
+    // Ordinary right-to-left TEXT is untouched: those are letters, not overrides.
+    expect(b.append("echo مرحبا").status).toBe("buffered");
+  });
+
+  test("I35 terminal: permissions.network is empty by construction and a grant is REFUSED", () => {
+    const fixture = {
+      sessionId: "s1",
+      shell: resolveShellById(DEFAULT_SHELL_ID),
+      shellPath: join(tmpdir(), "fake-shell"),
+      cwd: join(tmpdir(), "cu-work"),
+    };
+    expect(buildTerminalLaunchPolicy(fixture).policy.permissions.network).toEqual([]);
+    // Refused, not dropped. Dropping would let a caller believe it had been granted something and
+    // would make spec § 6.2's "this lane adds no egress class" a convention instead of a property.
+    expect(() => buildTerminalLaunchPolicy({ ...fixture, network: ["evil.example"] })).toThrow();
+  });
+
+  test("I35 terminal: the lane adds NO egress coverage class", async () => {
+    // Spec § 6.2's zero-row claim is STRUCTURAL — the sandbox makes the request impossible — not an
+    // appender that happened not to fire. A future network grant must land its appender first, and
+    // a class appearing here without one would be the disclosed-gap defect this repo has recorded
+    // twice already.
+    expect(COVERAGE_CLASSES as readonly string[]).not.toContain("terminal");
+    expect(COVERAGE_CLASSES as readonly string[]).not.toContain("shell");
+    // And nothing in the terminal lane appends to the ledger at all.
+    for (const rel of [
+      "computer-use/cu-lanes/terminal.ts",
+      "computer-use/cu-lanes/terminal-launch.ts",
+      "computer-use/cu-lanes/terminal-shells.ts",
+      "computer-use/cu-terminal-buffer.ts",
+    ]) {
+      const src = stripComments(await read(`packages/gateway/src/${rel}`));
+      expect(src).not.toContain("appendEgressEntry");
+      expect(src).not.toContain("egress_ledger");
+    }
+  });
+
+  test("I35 terminal: the gate reads the approved line ONCE and writes it verbatim", async () => {
+    // The bytes the owner approved are the bytes that execute. Re-deriving the line from the buffer
+    // at write time would be the TOCTOU that defeats the whole gate, since the human IS the
+    // boundary on this lane — the same rule I33 states for reading an execution's script once.
+    const gate = stripComments(await read("packages/gateway/src/computer-use/cu-gate.ts"));
+    expect(gate).toContain("const line = appended.line;");
+    expect(gate).toContain('performActuation(handle, { kind: "terminal_write", text: line })');
+    // Nothing re-reads the buffer between the approval and the write.
+    const afterConsent = gate.slice(gate.indexOf("const line = appended.line;"));
+    expect(afterConsent.slice(0, afterConsent.indexOf("performActuation"))).not.toContain(
+      "buffer.append",
+    );
+  });
+
+  test("I35 terminal: the driver appends nothing to what it is told to write", async () => {
+    // No sentinel, no prelude, no echo. This is why command completion is detected by output
+    // quiescence rather than by anything the driver writes.
+    const driver = stripComments(
+      await read("packages/gateway/src/computer-use/cu-lanes/terminal.ts"),
+    );
+    const writes = driver.match(/child\.stdin\?\.write\([^\n]*/g) ?? [];
+    expect(writes).toHaveLength(1);
+    // Matched as a REGEX rather than as a literal `"${bytes}"`, which reads as a mistaken template
+    // string (and biome flags it as one).
+    expect(writes[0]).toMatch(/\$\{bytes\}/);
+    // One newline, and nothing else concatenated onto it.
+    expect(writes[0]).not.toContain("echo");
+    expect(writes[0]).not.toMatch(/\+/);
   });
 
   test("the browser egress class has a PRODUCTION caller, and its coverage says so", async () => {
