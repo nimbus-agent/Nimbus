@@ -3,13 +3,15 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_NIMBUS_COMPUTER_USE_TOML } from "../config/nimbus-toml.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
+  type CuBrowserSeams,
   type CuGateDeps,
+  type CuTerminalSeams,
   closeSession,
   isCuActionKind,
   openSession,
   runAction,
 } from "./cu-gate.ts";
-import type { BrowserLane, ObservedNode } from "./cu-types.ts";
+import type { BrowserLane, ObservedNode, TerminalLane } from "./cu-types.ts";
 
 interface Spy {
   approvals: number;
@@ -113,32 +115,110 @@ function makeTestDb(): Database {
   return db;
 }
 
+/**
+ * Overrides accepted by {@link deps}.
+ *
+ * The BROWSER seams are accepted FLAT (`assertLaunchable`, `openLane`, …) even though
+ * `CuGateDeps` nests them under `lanes.browser`, and that is deliberate rather than lazy: every
+ * one of this file's ~10 override sites predates the second lane and overrides exactly one seam.
+ * Spreading them here keeps those sites reading as "this test differs in one thing", which is what
+ * makes a fixture legible; requiring each to spell out a full nested `lanes` object would bury the
+ * one differing line in boilerplate and would make the diff for adding a lane touch every test that
+ * has nothing to do with it.
+ */
+type DepsOverride = Partial<Omit<CuGateDeps, "lanes">> &
+  Partial<CuBrowserSeams> & { readonly lanes?: Partial<CuGateDeps["lanes"]> };
+
+/**
+ * A terminal lane that records what actually reached the shell.
+ *
+ * `writes` is the assertion surface for the whole lane: the buffering rules are only real if a
+ * sequence of writes with no submit leaves this array EMPTY, and asserting a call count is what
+ * catches a buffering path that silently became a write path.
+ */
+interface TerminalStub extends TerminalLane {
+  writes: string[];
+}
+
+function terminalLaneStub(
+  spy: Spy,
+  opts: { alive?: () => boolean; throwOnWrite?: boolean } = {},
+): TerminalStub {
+  const writes: string[] = [];
+  return {
+    writes,
+    write: async (bytes: string) => {
+      spy.actuations += 1;
+      if (opts.throwOnWrite === true) throw new Error("shell write failed");
+      writes.push(bytes);
+      return { output: `out:${bytes}`, settled: "quiet" as const, truncated: false };
+    },
+    isAlive: opts.alive ?? (() => true),
+    close: async () => {
+      spy.closes += 1;
+    },
+  };
+}
+
 function deps(
-  over: Partial<CuGateDeps> = {},
+  over: DepsOverride = {},
   spy: Spy = { approvals: 0, actuations: 0, closes: 0 },
   laneOpts: LaneStubOptions = {},
 ): { deps: CuGateDeps; db: Database; spy: Spy } {
   const db = makeTestDb();
-  const full: CuGateDeps = {
-    config: { ...DEFAULT_NIMBUS_COMPUTER_USE_TOML, enabled: true, allowedLanes: ["browser"] },
-    enforced: { capabilitiesDisabled: new Set<string>() },
+  const { buildLaunchPolicy, assertLaunchable, resolveBrowserPath, openLane, lanes, ...rest } =
+    over;
+  const browser: CuBrowserSeams = {
     buildLaunchPolicy: ({ profileDir }) => ({
       profileDir: profileDir === "" ? "/fake/profile" : profileDir,
       argv: ["--headless=new", "--remote-debugging-port=0", "--user-data-dir=/fake/profile"],
     }),
     assertLaunchable: () => null,
-    requestApproval: async () => {
-      spy.approvals += 1;
-      return true;
-    },
     // Injected seams, so these tests run with no browser installed — and so `cu-gate.ts` never
     // imports the driver, which is what keeps it clear of D26(b).
     resolveBrowserPath: () => "/fake/chrome",
     openLane: async () => laneStub(spy, laneOpts),
+    ...(buildLaunchPolicy === undefined ? {} : { buildLaunchPolicy }),
+    ...(assertLaunchable === undefined ? {} : { assertLaunchable }),
+    ...(resolveBrowserPath === undefined ? {} : { resolveBrowserPath }),
+    ...(openLane === undefined ? {} : { openLane }),
+    ...(lanes?.browser ?? {}),
+  };
+  const terminal: CuTerminalSeams = {
+    defaultShellId: "sh",
+    resolveShellPath: () => ({
+      status: "ok",
+      shellPath: "/fake/sh",
+      argv: ["-s"],
+      envOverlay: {},
+    }),
+    buildLaunchPolicy: ({ sessionId, shellId, shellPath, cwd }) => ({
+      shellId,
+      shellPath,
+      argv: ["-s"],
+      cwd,
+      envOverlay: {},
+      policy: {
+        id: `cu-terminal-${sessionId}`,
+        permissions: { network: [], filesystem: { read: [cwd], write: [cwd] } },
+      },
+    }),
+    assertLaunchable: () => null,
+    openLane: async () => terminalLaneStub(spy),
+    ...(lanes?.terminal ?? {}),
+  };
+  const full: CuGateDeps = {
+    config: { ...DEFAULT_NIMBUS_COMPUTER_USE_TOML, enabled: true, allowedLanes: ["browser"] },
+    enforced: { capabilitiesDisabled: new Set<string>() },
+    requestApproval: async () => {
+      spy.approvals += 1;
+      return true;
+    },
+    lanes: { browser, terminal },
     db,
     now: () => 1000,
     newId: () => "id-1",
-    ...over,
+    ...rest,
   };
   return { deps: full, db, spy };
 }
@@ -1271,5 +1351,282 @@ describe("runAction — concurrent actions on ONE lane are serialised", () => {
     db.run(auditDdl as string);
     const second = await runAction({ sessionId, kind: "read" }, d);
     expect(second.outcome).toBe("actuated");
+  });
+});
+describe("terminal lane — the gate", () => {
+  function terminalDeps(
+    over: {
+      approve?: boolean;
+      assertLaunchable?: () => string | null;
+      resolveShellPath?: CuTerminalSeams["resolveShellPath"];
+    } = {},
+  ) {
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const prompts: unknown[] = [];
+    const lane = terminalLaneStub(spy);
+    const { deps: d, db } = deps(
+      {
+        config: {
+          ...DEFAULT_NIMBUS_COMPUTER_USE_TOML,
+          enabled: true,
+          allowedLanes: ["browser", "terminal"],
+        },
+        requestApproval: async (input) => {
+          prompts.push(input);
+          spy.approvals += 1;
+          return over.approve ?? true;
+        },
+        lanes: {
+          terminal: {
+            defaultShellId: "sh",
+            resolveShellPath:
+              over.resolveShellPath ??
+              (() => ({ status: "ok", shellPath: "/fake/sh", argv: ["-s"], envOverlay: {} })),
+            buildLaunchPolicy: ({ sessionId, shellId, shellPath, cwd }) => ({
+              shellId,
+              shellPath,
+              argv: ["-s"],
+              cwd,
+              envOverlay: {},
+              policy: {
+                id: `cu-terminal-${sessionId}`,
+                permissions: { network: [], filesystem: { read: [cwd], write: [cwd] } },
+              },
+            }),
+            assertLaunchable: over.assertLaunchable ?? (() => null),
+            openLane: async () => lane,
+          },
+        },
+      },
+      spy,
+    );
+    return { deps: d, db, spy, lane, prompts };
+  }
+
+  async function openTerminal(d: CuGateDeps): Promise<string> {
+    const r = await openSession({ lane: "terminal", cwd: "/tmp/work" }, d);
+    if (r.status !== "open") throw new Error(`expected open, got ${JSON.stringify(r)}`);
+    return r.sessionId;
+  }
+
+  function actionPrompt(prompts: readonly unknown[]) {
+    return prompts.find(
+      (
+        p,
+      ): p is {
+        promptKind: "action";
+        observedTarget: string;
+        classification: string;
+        modelDescription: string | null;
+      } => (p as { promptKind?: string }).promptKind === "action",
+    );
+  }
+
+  test("a write with no submit reaches the shell ZERO times and prompts ZERO times", async () => {
+    const { deps: d, spy, lane } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    spy.approvals = 0; // the envelope prompt already happened; count only per-action prompts
+    for (const t of ["ls", " -l", " /tmp"]) {
+      const out = await runAction({ sessionId, kind: "terminal_write", text: t }, d);
+      expect(out.outcome).toBe("buffered");
+    }
+    // Call counts, not absence-of-error. This is what catches a buffering path that silently
+    // became a write path.
+    expect(lane.writes).toEqual([]);
+    expect(spy.approvals).toBe(0);
+  });
+
+  test("a buffered write returns the PENDING text so the caller can see what it composed", async () => {
+    const { deps: d } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    await runAction({ sessionId, kind: "terminal_write", text: "rm -rf" }, d);
+    const out = await runAction({ sessionId, kind: "terminal_write", text: " /tmp" }, d);
+    expect(out.result).toBe("rm -rf /tmp");
+  });
+
+  test("a submit promotes the WHOLE line, prompts once, and writes exactly it", async () => {
+    const { deps: d, spy, lane } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    spy.approvals = 0;
+    await runAction({ sessionId, kind: "terminal_write", text: "ls -l" }, d);
+    const out = await runAction({ sessionId, kind: "terminal_write", text: " /tmp\n" }, d);
+    expect(out.outcome).toBe("actuated");
+    expect(spy.approvals).toBe(1);
+    expect(lane.writes).toEqual(["ls -l /tmp"]);
+  });
+
+  test("the owner is prompted with the COMPLETE line, not the fragment just written", async () => {
+    const { deps: d, prompts } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    await runAction({ sessionId, kind: "terminal_write", text: "rm -rf" }, d);
+    await runAction({ sessionId, kind: "terminal_write", text: " /important\n" }, d);
+    const action = actionPrompt(prompts);
+    expect(action?.observedTarget).toBe("rm -rf /important");
+    expect(action?.classification).toBe("actuating");
+  });
+
+  test("a control character is REFUSED, never prompted, and writes nothing", async () => {
+    const { deps: d, spy, lane } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    spy.approvals = 0;
+    const out = await runAction(
+      { sessionId, kind: "terminal_write", text: String.fromCodePoint(0x03) },
+      d,
+    );
+    expect(out.outcome).toBe("refused_out_of_envelope");
+    expect(spy.approvals).toBe(0);
+    expect(lane.writes).toEqual([]);
+    // The reason travels back, so the caller can tell four distinct refusals apart.
+    expect(String(out.result)).toContain("refused");
+  });
+
+  test("a denied ACTION approval writes nothing", async () => {
+    const { deps: d, lane, prompts } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    // Deny only the per-action prompt, so the session is genuinely live when the write is refused.
+    const denying: CuGateDeps = {
+      ...d,
+      requestApproval: async (input) => {
+        prompts.push(input);
+        return input.promptKind !== "action";
+      },
+    };
+    const out = await runAction({ sessionId, kind: "terminal_write", text: "rm -rf /\n" }, denying);
+    expect(out.outcome).toBe("denied_by_owner");
+    expect(lane.writes).toEqual([]);
+  });
+
+  test("a browser kind on a terminal session is refused before a budget slot is spent", async () => {
+    const { deps: d, spy, lane, db } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    spy.approvals = 0;
+    const out = await runAction({ sessionId, kind: "click", selector: "#pay" }, d);
+    expect(out.outcome).toBe("refused_out_of_envelope");
+    expect(spy.approvals).toBe(0);
+    expect(lane.writes).toEqual([]);
+    const row = db.query("SELECT actions_used FROM cu_session WHERE id = ?").get(sessionId) as {
+      actions_used: number;
+    };
+    expect(row.actions_used).toBe(0);
+  });
+
+  test("refuses before consent when the runner cannot confine the policy", async () => {
+    const { deps: d, spy } = terminalDeps({ assertLaunchable: () => "bwrap not found" });
+    const r = await openSession({ lane: "terminal", cwd: "/tmp/w" }, d);
+    expect(r).toEqual({ status: "refused", code: "ERR_CU_SANDBOX_DEGRADED" });
+    // The owner was never asked to approve a session that could not have started.
+    expect(spy.approvals).toBe(0);
+  });
+
+  test("refuses before consent when the shell is not installed", async () => {
+    const { deps: d, spy } = terminalDeps({
+      resolveShellPath: () => ({ status: "not_installed" }),
+    });
+    const r = await openSession({ lane: "terminal", cwd: "/tmp/w" }, d);
+    expect(r).toEqual({ status: "refused", code: "ERR_CU_NO_SHELL" });
+    expect(spy.approvals).toBe(0);
+  });
+
+  test("an unknown shell id is a DIFFERENT refusal from a missing shell", async () => {
+    // Different remedies — fix the argument, versus install something — so collapsing them tells
+    // the user to do the wrong one.
+    const { deps: d } = terminalDeps({ resolveShellPath: () => ({ status: "unknown_shell" }) });
+    const r = await openSession({ lane: "terminal", cwd: "/tmp/w", shellId: "bahs" }, d);
+    expect(r).toEqual({ status: "refused", code: "ERR_CU_UNKNOWN_SHELL" });
+  });
+
+  test("a seam refusal keeps ITS code rather than flattening to ERR_CU_FAILED", async () => {
+    const { deps: d } = terminalDeps();
+    const withThrowingBuild: CuGateDeps = {
+      ...d,
+      lanes: {
+        ...d.lanes,
+        terminal: {
+          ...d.lanes.terminal,
+          buildLaunchPolicy: () => {
+            const e = new Error("relative cwd") as Error & { code: string };
+            e.code = "ERR_CU_TERMINAL_RELATIVE_CWD";
+            throw e;
+          },
+        },
+      },
+    };
+    const r = await openSession({ lane: "terminal", cwd: "/tmp/w" }, withThrowingBuild);
+    expect(r).toEqual({ status: "refused", code: "ERR_CU_TERMINAL_RELATIVE_CWD" });
+  });
+
+  test("the audit row records the approved line, and the output rides dom_after", async () => {
+    const { deps: d, db } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    await runAction({ sessionId, kind: "terminal_write", text: "ls\n" }, d);
+    const row = db
+      .query(
+        `SELECT kind, classification, observed_target, hitl_status, outcome, dom_before, dom_after
+         FROM cu_action WHERE session_id = ?`,
+      )
+      .get(sessionId) as Record<string, unknown>;
+    expect(row["kind"]).toBe("terminal_write");
+    expect(row["classification"]).toBe("actuating");
+    expect(row["observed_target"]).toBe("ls");
+    expect(row["hitl_status"]).toBe("approved");
+    expect(row["outcome"]).toBe("actuated");
+    // No "before" state exists on this lane; the replay body IS the command's output.
+    expect(row["dom_before"]).toBeNull();
+    expect(String(row["dom_after"])).toContain("out:ls");
+  });
+
+  test("a buffered action records not_required with a null classification, never approved", async () => {
+    const { deps: d, db } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    await runAction({ sessionId, kind: "terminal_write", text: "ls" }, d);
+    const rows = db
+      .query("SELECT action_json, hitl_status FROM audit_log WHERE action_type = 'computer.action'")
+      .all() as { action_json: string; hitl_status: string }[];
+    const last = rows[rows.length - 1];
+    expect(last?.hitl_status).toBe("not_required");
+    expect(JSON.parse(last?.action_json ?? "{}").classification).toBeNull();
+  });
+
+  test("no terminal action ever classifies observing", async () => {
+    const { deps: d, db } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    for (const t of ["a", "b", "c\n", String.fromCodePoint(0x03), "d\n"]) {
+      await runAction({ sessionId, kind: "terminal_write", text: t }, d);
+    }
+    const rows = db
+      .query("SELECT classification FROM cu_action WHERE session_id = ?")
+      .all(sessionId) as { classification: string }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.classification === "actuating")).toBe(true);
+  });
+
+  test("the model's description reaches the prompt but never the classification", async () => {
+    const { deps: d, prompts } = terminalDeps();
+    const sessionId = await openTerminal(d);
+    await runAction(
+      {
+        sessionId,
+        kind: "terminal_write",
+        text: "rm -rf /\n",
+        modelDescription: "just listing files, read-only",
+      },
+      d,
+    );
+    const action = actionPrompt(prompts);
+    expect(action?.classification).toBe("actuating");
+    expect(action?.observedTarget).toBe("rm -rf /");
+    expect(action?.modelDescription).toContain("read-only");
+  });
+
+  test("the envelope prompt shows the shell and directory, not origin lists", async () => {
+    const { deps: d, prompts } = terminalDeps();
+    await openTerminal(d);
+    const env = prompts.find(
+      (p): p is { promptKind: "envelope"; lane: string; shellId: string; cwd: string } =>
+        (p as { promptKind?: string }).promptKind === "envelope",
+    );
+    expect(env?.lane).toBe("terminal");
+    expect(env?.shellId).toBe("sh");
+    expect(env?.cwd).toBe("/tmp/work");
   });
 });

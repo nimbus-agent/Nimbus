@@ -129,13 +129,53 @@ function deps(opts: DepsOptions = {}): {
       if (input.promptKind === "action") approvalKinds.push(input.kind);
       return true;
     },
-    resolveBrowserPath: () => "/fake/chrome",
-    buildLaunchPolicy: ({ profileDir }) => ({
-      profileDir: profileDir === "" ? "/fake/profile" : profileDir,
-      argv: ["--user-data-dir=/fake/profile"],
-    }),
-    assertLaunchable: () => null,
-    openLane: async () => laneStub(opts.pageText ?? "page text", spy),
+    lanes: {
+      browser: {
+        resolveBrowserPath: () => "/fake/chrome",
+        buildLaunchPolicy: ({ profileDir }: { profileDir: string }) => ({
+          profileDir: profileDir === "" ? "/fake/profile" : profileDir,
+          argv: ["--user-data-dir=/fake/profile"],
+        }),
+        assertLaunchable: () => null,
+        openLane: async () => laneStub(opts.pageText ?? "page text", spy),
+      },
+      // The terminal seams are REQUIRED on `CuGateDeps` — a gate that could not drive a lane
+      // cannot be constructed — so every fixture supplies them even where no test opens one.
+      terminal: {
+        defaultShellId: "sh",
+        resolveShellPath: () => ({
+          status: "ok" as const,
+          shellPath: "/fake/sh",
+          argv: ["-s"],
+          envOverlay: {},
+        }),
+        buildLaunchPolicy: ({
+          sessionId,
+          shellId,
+          shellPath,
+          cwd,
+        }: {
+          sessionId: string;
+          shellId: string;
+          shellPath: string;
+          cwd: string;
+        }) => ({
+          shellId,
+          shellPath,
+          argv: ["-s"],
+          cwd,
+          envOverlay: {},
+          policy: {
+            id: `cu-terminal-${sessionId}`,
+            permissions: { network: [], filesystem: { read: [cwd], write: [cwd] } },
+          },
+        }),
+        assertLaunchable: () => null,
+        openLane: () => {
+          throw new Error("the terminal lane is not exercised by this fixture");
+        },
+      },
+    },
     db,
     now: () => 1000,
     newId: () => "id-1",

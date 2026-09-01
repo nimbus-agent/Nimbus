@@ -17,6 +17,18 @@ afterEach(() => {
   for (const b of brokers.splice(0)) b.clear();
 });
 
+/**
+ * Override BROWSER seams on an existing `gateDeps` without respelling the whole nested `lanes`
+ * object. The seams are nested on `CuGateDeps` (one group per lane); these fixtures each differ in
+ * one seam, and spreading by hand at every site would bury that one line.
+ */
+function withBrowserSeams(
+  gateDeps: CuGateDeps,
+  over: Partial<CuGateDeps["lanes"]["browser"]>,
+): CuGateDeps["lanes"] {
+  return { ...gateDeps.lanes, browser: { ...gateDeps.lanes.browser, ...over } };
+}
+
 function makeCtx(over: Partial<CuGateDeps> = {}): ComputerRpcCtx {
   const db = new Database(":memory:");
   runIndexedSchemaMigrations(db, 57);
@@ -29,14 +41,54 @@ function makeCtx(over: Partial<CuGateDeps> = {}): ComputerRpcCtx {
     gateDeps: {
       config: { ...DEFAULT_NIMBUS_COMPUTER_USE_TOML, enabled: true, allowedLanes: ["browser"] },
       enforced: { capabilitiesDisabled: new Set<string>() },
-      resolveBrowserPath: () => null,
-      buildLaunchPolicy: ({ profileDir }) => ({
-        profileDir: profileDir === "" ? "/fake/profile" : profileDir,
-        argv: ["--user-data-dir=/fake/profile"],
-      }),
-      assertLaunchable: () => null,
-      openLane: () => {
-        throw new Error("openLane should not be reached in these tests");
+      lanes: {
+        browser: {
+          resolveBrowserPath: () => null,
+          buildLaunchPolicy: ({ profileDir }: { profileDir: string }) => ({
+            profileDir: profileDir === "" ? "/fake/profile" : profileDir,
+            argv: ["--user-data-dir=/fake/profile"],
+          }),
+          assertLaunchable: () => null,
+          openLane: () => {
+            throw new Error("openLane should not be reached in these tests");
+          },
+        },
+        // The terminal seams are REQUIRED on `CuGateDeps` — a gate that could not drive a lane
+        // cannot be constructed — so every fixture supplies them even where no test opens one.
+        terminal: {
+          defaultShellId: "sh",
+          resolveShellPath: () => ({
+            status: "ok" as const,
+            shellPath: "/fake/sh",
+            argv: ["-s"],
+            envOverlay: {},
+          }),
+          buildLaunchPolicy: ({
+            sessionId,
+            shellId,
+            shellPath,
+            cwd,
+          }: {
+            sessionId: string;
+            shellId: string;
+            shellPath: string;
+            cwd: string;
+          }) => ({
+            shellId,
+            shellPath,
+            argv: ["-s"],
+            cwd,
+            envOverlay: {},
+            policy: {
+              id: `cu-terminal-${sessionId}`,
+              permissions: { network: [], filesystem: { read: [cwd], write: [cwd] } },
+            },
+          }),
+          assertLaunchable: () => null,
+          openLane: () => {
+            throw new Error("the terminal lane is not exercised by this fixture");
+          },
+        },
       },
       db,
       now: () => 1_700_000_000_000,
@@ -120,8 +172,10 @@ function makeLiveCtx(
     ...ctx,
     gateDeps: {
       ...ctx.gateDeps,
-      resolveBrowserPath: () => "/fake/chrome",
-      openLane: async () => makeWorkingLane(calls),
+      lanes: withBrowserSeams(ctx.gateDeps, {
+        resolveBrowserPath: () => "/fake/chrome",
+        openLane: async () => makeWorkingLane(calls),
+      }),
       requestApproval: async (input) => {
         approvals.push(input);
         return true;
@@ -177,7 +231,7 @@ describe("computer RPC", () => {
       ...ctx,
       gateDeps: {
         ...ctx.gateDeps,
-        resolveBrowserPath: () => "/fake/chrome",
+        lanes: withBrowserSeams(ctx.gateDeps, { resolveBrowserPath: () => "/fake/chrome" }),
         requestApproval: async (input) => {
           seenReq = input;
           return false;
@@ -249,7 +303,10 @@ describe("computer RPC", () => {
     });
     const runCtx: ComputerRpcCtx = {
       ...ctx,
-      gateDeps: { ...ctx.gateDeps, resolveBrowserPath: () => "/fake/chrome" },
+      gateDeps: {
+        ...ctx.gateDeps,
+        lanes: withBrowserSeams(ctx.gateDeps, { resolveBrowserPath: () => "/fake/chrome" }),
+      },
     };
     const run = dispatchComputerRpc(
       "computer.sessionOpen",
@@ -291,7 +348,10 @@ describe("computer RPC", () => {
     });
     const runCtx: ComputerRpcCtx = {
       ...ctx,
-      gateDeps: { ...ctx.gateDeps, resolveBrowserPath: () => "/fake/chrome" },
+      gateDeps: {
+        ...ctx.gateDeps,
+        lanes: withBrowserSeams(ctx.gateDeps, { resolveBrowserPath: () => "/fake/chrome" }),
+      },
     };
     const run = dispatchComputerRpc(
       "computer.sessionOpen",
@@ -314,7 +374,10 @@ describe("computer RPC", () => {
     });
     const runCtx: ComputerRpcCtx = {
       ...ctx,
-      gateDeps: { ...ctx.gateDeps, resolveBrowserPath: () => "/fake/chrome" },
+      gateDeps: {
+        ...ctx.gateDeps,
+        lanes: withBrowserSeams(ctx.gateDeps, { resolveBrowserPath: () => "/fake/chrome" }),
+      },
     };
     const run = dispatchComputerRpc(
       "computer.sessionOpen",

@@ -23,16 +23,40 @@ import type { CuActionClass, CuEnvelope } from "./cu-types.ts";
  */
 export type CuApprovalPromptKind = "envelope" | "action";
 
-export interface CuEnvelopeApprovalInput {
+export interface CuBrowserEnvelopeApprovalInput {
   readonly promptKind: "envelope";
+  readonly lane: "browser";
   readonly sessionId: string;
-  readonly lane: string;
   /** The FULL origin lists — never elided, never summarised as "3 origins". */
   readonly navigateOrigins: readonly string[];
   readonly scriptOrigins: readonly string[];
   readonly maxActions: number;
   readonly maxWallClockMs: number;
 }
+
+export interface CuTerminalEnvelopeApprovalInput {
+  readonly promptKind: "envelope";
+  readonly lane: "terminal";
+  readonly sessionId: string;
+  /** Shown VERBATIM. The owner is granting a shell in a directory; both must be on screen. */
+  readonly shellId: string;
+  readonly cwd: string;
+  readonly maxActions: number;
+  readonly maxWallClockMs: number;
+}
+
+/**
+ * A UNION on `lane`, not one shape with per-lane optional fields.
+ *
+ * The renderer must be unable to draw a browser prompt for a terminal grant: the fields differ
+ * completely (origin lists versus a shell and a directory), and an optional-field shape would
+ * compile while showing the owner a prompt describing a grant that is not the one being requested.
+ * The `promptKind` discriminant routes to the broker; this second discriminant routes to the
+ * RENDER, and both are literals so a third lane is a compile error rather than a silent fallback.
+ */
+export type CuEnvelopeApprovalInput =
+  | CuBrowserEnvelopeApprovalInput
+  | CuTerminalEnvelopeApprovalInput;
 
 export interface CuActionApprovalInput {
   readonly promptKind: "action";

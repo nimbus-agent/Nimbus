@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { NimbusComputerUseToml } from "../config/nimbus-toml.ts";
+import type { CuLane, NimbusComputerUseToml } from "../config/nimbus-toml.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { performActuation } from "./cu-actuate.ts";
@@ -9,15 +9,21 @@ import type { CuActionApprovalInput, CuEnvelopeApprovalInput } from "./cu-consen
 import { normalizeOrigin, originOf } from "./cu-request-policy.ts";
 import { CuSession, CuSessionError } from "./cu-session.ts";
 import { insertAction, insertSession, updateSessionState } from "./cu-store.ts";
+import { TerminalLineBuffer } from "./cu-terminal-buffer.ts";
 import type {
   BrowserLane,
   CuActionClass,
   CuBrowserLaunchPolicy,
+  CuBrowserTarget,
   CuEnvelope,
   CuLaneBase,
   CuLaneHandle,
   CuOutcome,
+  CuTerminalLaunchPolicy,
+  CuTerminalTarget,
   OpenBrowserLaneOptions,
+  OpenTerminalLaneOptions,
+  TerminalLane,
 } from "./cu-types.ts";
 
 export class CuGateError extends Error {
@@ -30,13 +36,27 @@ export class CuGateError extends Error {
   }
 }
 
-export interface OpenSessionRequest {
-  readonly lane: "browser";
-  readonly navigateOrigins: readonly string[];
-  readonly scriptOrigins: readonly string[];
+interface OpenSessionBounds {
   readonly maxActions?: number;
   readonly maxWallClockMs?: number;
 }
+
+export interface OpenBrowserSessionRequest extends OpenSessionBounds {
+  readonly lane: "browser";
+  readonly navigateOrigins: readonly string[];
+  readonly scriptOrigins: readonly string[];
+}
+
+export interface OpenTerminalSessionRequest extends OpenSessionBounds {
+  readonly lane: "terminal";
+  /** Absolute. The shell's working directory AND its only filesystem grant. */
+  readonly cwd: string;
+  /** A registry SHELL ID, never an argv. Omitted means the platform default. */
+  readonly shellId?: string;
+}
+
+/** Discriminated on `lane`, so a request carrying one lane's fields cannot name the other. */
+export type OpenSessionRequest = OpenBrowserSessionRequest | OpenTerminalSessionRequest;
 
 /**
  * Discriminated union (ruling B): the plan's own tests read both `out.sessionId` and `out.code`,
@@ -49,8 +69,44 @@ export type OpenSessionResult =
 
 export type CloseSessionResult = { readonly status: "closed" } | { readonly status: "not_found" };
 
-const ACTION_KINDS = ["click", "type", "navigate", "read", "screenshot", "download"] as const;
+const ACTION_KINDS = [
+  "click",
+  "type",
+  "navigate",
+  "read",
+  "screenshot",
+  "download",
+  "terminal_write",
+] as const;
 export type CuActionKind = (typeof ACTION_KINDS)[number];
+
+const BROWSER_KINDS: ReadonlySet<CuActionKind> = new Set<CuActionKind>([
+  "click",
+  "type",
+  "navigate",
+  "read",
+  "screenshot",
+  "download",
+]);
+const TERMINAL_KINDS: ReadonlySet<CuActionKind> = new Set<CuActionKind>(["terminal_write"]);
+
+/**
+ * TOTAL over `CuLane`, so a third lane is a COMPILE ERROR here rather than a silent gap — the same
+ * shape I29's `ClientKind` map uses.
+ *
+ * `screen` is listed with an EMPTY set because the lane exists in config and ships no actions:
+ * naming it and giving it nothing is honest, and omitting it would be a hole that reads as an
+ * oversight. Every kind proposed against it is refused out of envelope.
+ */
+const KINDS_BY_LANE: Readonly<Record<CuLane, ReadonlySet<CuActionKind>>> = {
+  browser: BROWSER_KINDS,
+  terminal: TERMINAL_KINDS,
+  screen: new Set<CuActionKind>(),
+};
+
+function kindBelongsToLane(kind: CuActionKind, lane: CuLane): boolean {
+  return KINDS_BY_LANE[lane].has(kind);
+}
 
 /**
  * Runtime guard over `CuActionKind` (fix round 1, M-14). `RunActionRequest.kind` is typed, but a
@@ -106,11 +162,8 @@ export interface CuRunDeps {
   readonly db: Database;
 }
 
-/**
- * Everything {@link openSession} needs. A SUPERSET of {@link CuRunDeps}: only the transport that
- * actually opens sessions (`ipc/computer-rpc.ts`) is given this, never the tool layer.
- */
-export interface CuGateDeps extends CuRunDeps {
+/** What a browser-lane session needs, injected rather than imported. */
+export interface CuBrowserSeams {
   /**
    * Injected seams (ruling C amendment / spec § 3.3 step 4 and the exec `requireInstalled`
    * analogue), rather than a direct import of the driver — this is what lets these tests run with
@@ -128,6 +181,59 @@ export interface CuGateDeps extends CuRunDeps {
   /** `null` when the policy is safe to launch, else the reason it is not. Checked BEFORE consent. */
   readonly assertLaunchable: (policy: CuBrowserLaunchPolicy) => string | null;
   readonly openLane: (opts: OpenBrowserLaneOptions) => Promise<BrowserLane>;
+}
+
+/** What a terminal-lane session needs. The same shape as {@link CuBrowserSeams}, per lane. */
+export interface CuTerminalSeams {
+  /**
+   * The shell id used when a request names none. INJECTED rather than imported: `DEFAULT_SHELL_ID`
+   * lives in `cu-lanes/terminal-shells.ts`, and `cu-gate.ts` imports NOTHING from `cu-lanes/` —
+   * that is what keeps the driver-capability confinement (D26(b)/(c)) resting on a structural fact
+   * rather than on the gate's import of the driver happening to be type-only.
+   */
+  readonly defaultShellId: string;
+  /**
+   * Resolve a registry SHELL ID to an absolute path plus its argv/env. The gate never sees an argv
+   * the caller composed.
+   *
+   * A THREE-WAY result rather than `... | null`: "not a registered id" and "registered but not
+   * installed" are different conditions with different remedies — fix the argument, versus install
+   * something — and a nullable return forces the gate to guess which one happened.
+   */
+  readonly resolveShellPath: (shellId: string) =>
+    | {
+        readonly status: "ok";
+        readonly shellPath: string;
+        readonly argv: readonly string[];
+        readonly envOverlay: Readonly<Record<string, string>>;
+      }
+    | { readonly status: "unknown_shell" }
+    | { readonly status: "not_installed" };
+  readonly buildLaunchPolicy: (opts: {
+    readonly sessionId: string;
+    readonly shellId: string;
+    readonly shellPath: string;
+    readonly cwd: string;
+  }) => CuTerminalLaunchPolicy;
+  /** `null` when the policy is safe to launch, else the reason it is not. Checked BEFORE consent. */
+  readonly assertLaunchable: (policy: CuTerminalLaunchPolicy) => string | null;
+  readonly openLane: (opts: OpenTerminalLaneOptions) => Promise<TerminalLane>;
+}
+
+/**
+ * Everything {@link openSession} needs. A SUPERSET of {@link CuRunDeps}: only the transport that
+ * actually opens sessions (`ipc/computer-rpc.ts`) is given this, never the tool layer.
+ */
+export interface CuGateDeps extends CuRunDeps {
+  /**
+   * BOTH lanes' seams, BOTH REQUIRED. Not `terminal?:` — an optional seam group means a gate that
+   * cannot confine a shell can still be constructed, and the failure then surfaces at the moment a
+   * session opens rather than at the moment the gate is wired. Requiring it makes "a gate that
+   * could not drive a lane cannot exist" a type-system fact, the same reasoning that made
+   * `LlmRegistryOptions.db` required under I29. The LANE ALLOW-LIST, not the presence of a seam, is
+   * what decides whether a lane may be used.
+   */
+  readonly lanes: { readonly browser: CuBrowserSeams; readonly terminal: CuTerminalSeams };
   readonly now: () => number;
   readonly newId: () => string;
 }
@@ -406,6 +512,153 @@ async function evictExistingSession(sessionId: string): Promise<void> {
 }
 
 /**
+ * Everything a lane needs prepared BEFORE the owner is prompted (spec § 3.3): the confinement
+ * assertion, the presence check, and the envelope target the prompt will display.
+ *
+ * Every refusal decidable WITHOUT the owner happens in here, so a disabled, unconfinable or
+ * uninstallable lane never advertises its own existence by prompting. The `launch` object is built
+ * ONCE and handed to `openLane` unchanged — that identity is what makes the assertion a statement
+ * about the process that actually starts, rather than about a rebuild of it.
+ */
+type PreparedLane =
+  | {
+      readonly lane: "browser";
+      readonly target: CuBrowserTarget;
+      readonly launch: CuBrowserLaunchPolicy;
+      readonly executablePath: string;
+    }
+  | {
+      readonly lane: "terminal";
+      readonly target: CuTerminalTarget;
+      readonly launch: CuTerminalLaunchPolicy;
+    };
+
+/**
+ * Read a `code` off an unknown throw, with a real guard rather than an `as` cast (non-negotiable 7
+ * — a value crossing a seam is `unknown` no matter who threw it).
+ *
+ * Used ONLY to preserve a seam's own refusal code across the `cu-gate.ts` / `cu-lanes/` boundary,
+ * where an `instanceof` check would need an import the gate deliberately does not have. Without it
+ * `openSession`'s outer catch flattens every seam refusal to `ERR_CU_FAILED`, discarding the actual
+ * reason at the one place it matters: the caller's message and the permanent audit row.
+ */
+function codeOf(e: unknown, fallback: string): string {
+  if (typeof e === "object" && e !== null && "code" in e) {
+    const c = (e as { code: unknown }).code;
+    if (typeof c === "string" && c !== "") return c;
+  }
+  return fallback;
+}
+
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+function prepareBrowser(req: OpenBrowserSessionRequest, deps: CuGateDeps): PreparedLane {
+  // Launch confinement — asserted over the EXACT object this session will spawn with.
+  //
+  // This replaced a `SandboxRunner.canConfine(browserLanePolicy(...))` check, and the swap is a
+  // correction rather than a relaxation: that policy was a PLACEHOLDER `canConfine` answered a
+  // question about, which no browser was ever spawned with. Routing the browser through
+  // `SandboxRunner` at all is not achievable with today's PAL — see the header on
+  // `CuBrowserLaunchPolicy` in `cu-types.ts`. The TERMINAL lane, by contrast, does spawn through
+  // the PAL and its assertion below is the real thing.
+  const profileDir = resolveProfileDir(deps.config);
+  const launch = deps.lanes.browser.buildLaunchPolicy({ profileDir });
+  const unsafeLaunch = deps.lanes.browser.assertLaunchable(launch);
+  if (unsafeLaunch !== null) {
+    throw new CuGateError(
+      "ERR_CU_UNSAFE_LAUNCH",
+      `refusing to launch under-confined: ${unsafeLaunch}`,
+    );
+  }
+
+  // NORMALISE ORIGINS BEFORE THE PROMPT, never after (ruling C.1). The owner must approve the
+  // exact strings that will be enforced; a path-bearing origin is refused rather than silently
+  // widened to the bare origin.
+  const navigateOrigins = normalizeOriginList(req.navigateOrigins);
+  const scriptOrigins = normalizeOriginList(req.scriptOrigins);
+
+  // BROWSER PRESENCE CHECK BEFORE CONSENT (ruling C.2) — the exec `requireInstalled` analogue.
+  const executablePath = deps.lanes.browser.resolveBrowserPath();
+  if (executablePath === null) {
+    throw new CuGateError("ERR_CU_NO_BROWSER", "no Chromium-family browser found");
+  }
+  return {
+    lane: "browser",
+    target: { navigateOrigins, scriptOrigins },
+    launch,
+    executablePath,
+  };
+}
+
+function prepareTerminal(
+  req: OpenTerminalSessionRequest,
+  sessionId: string,
+  deps: CuGateDeps,
+): PreparedLane {
+  const requested = (req.shellId ?? "").trim();
+  const shellId = requested === "" ? deps.lanes.terminal.defaultShellId : requested;
+
+  // Presence BEFORE consent — the exec `requireInstalled` analogue.
+  //
+  // TWO refusal codes, not one. "You named a shell that does not exist in the registry" and "the
+  // shell you named is not on this machine" have different remedies, and collapsing them tells the
+  // user to do the wrong one: a typo'd `--shell bahs` reported as "no usable shell was found"
+  // sends the reader off to check their PATH for a problem that was in their argv.
+  const resolved = deps.lanes.terminal.resolveShellPath(shellId);
+  if (resolved.status === "unknown_shell") {
+    throw new CuGateError("ERR_CU_UNKNOWN_SHELL", `not a registered shell id: ${shellId}`);
+  }
+  if (resolved.status === "not_installed") {
+    throw new CuGateError("ERR_CU_NO_SHELL", `shell "${shellId}" is registered but not present`);
+  }
+
+  // Built ONCE, asserted here, and handed to `openLane` below UNCHANGED — the driver spawns
+  // `shellPath` + `argv` verbatim.
+  //
+  // WRAPPED, because `openSession`'s outer catch reads `e.code` only from `CuGateError` and
+  // `CuSessionError`. `buildTerminalLaunchPolicy` throws `CuLaunchPolicyError` — a relative cwd, or
+  // a requested network grant — so without this the most security-relevant refusals this lane has
+  // would reach the caller and the AUDIT ROW as a generic failure. Re-thrown rather than fixed by
+  // widening the outer catch or subclassing: both would put a `cu-lanes/` import inside this file.
+  let launch: CuTerminalLaunchPolicy;
+  try {
+    launch = deps.lanes.terminal.buildLaunchPolicy({
+      sessionId,
+      shellId,
+      shellPath: resolved.shellPath,
+      cwd: req.cwd,
+    });
+  } catch (e) {
+    throw new CuGateError(codeOf(e, "ERR_CU_BAD_LAUNCH"), messageOf(e));
+  }
+
+  // The REAL confinement assertion, over the policy that will actually spawn. Unlike the browser
+  // lane, `canConfine` here answers the question the gate is actually asking.
+  const unsafe = deps.lanes.terminal.assertLaunchable(launch);
+  if (unsafe !== null) {
+    throw new CuGateError("ERR_CU_SANDBOX_DEGRADED", `refusing to launch unconfined: ${unsafe}`);
+  }
+  return { lane: "terminal", target: { shellId, cwd: launch.cwd }, launch };
+}
+
+function prepareLane(req: OpenSessionRequest, sessionId: string, deps: CuGateDeps): PreparedLane {
+  switch (req.lane) {
+    case "browser":
+      return prepareBrowser(req, deps);
+    case "terminal":
+      return prepareTerminal(req, sessionId, deps);
+    default: {
+      // Exhaustiveness: a lane added to `OpenSessionRequest` without a preparation is a COMPILE
+      // ERROR here, not a session that opens with nothing asserted about it.
+      const exhaustive: never = req;
+      throw new CuGateError("ERR_CU_LANE_NOT_ALLOWED", `unprepared lane: ${String(exhaustive)}`);
+    }
+  }
+}
+
+/**
  * Open a computer-use session (spec § 3.3 "session open"; invariant I35).
  *
  * The ORDER is load-bearing, matching I33's own "the order is the invariant" framing: every
@@ -436,46 +689,11 @@ export async function openSession(
     if (!deps.config.allowedLanes.includes(req.lane)) {
       throw new CuGateError("ERR_CU_LANE_NOT_ALLOWED", `lane not allowed: ${req.lane}`);
     }
-    // 4. Launch confinement — asserted over the EXACT object this session will spawn with, before
-    // consent, so a policy that would launch an under-confined browser never advertises itself by
-    // prompting.
-    //
-    // This replaced a `SandboxRunner.canConfine(browserLanePolicy(...))` check, and the swap is a
-    // correction rather than a relaxation. That policy was, by its own in-file disclosure, a
-    // PLACEHOLDER: `canConfine` answered a question about an object no browser was ever spawned
-    // with, so a pass proved nothing about what would actually launch. (It was worse than
-    // uninformative — it carried `permissions.network: []`, which `linux.ts`'s `decideNetworkMode`
-    // reads as `no-net` → `--unshare-net`, so had it ever reached a real spawn the browser would
-    // have had no network and the gateway no route to its CDP endpoint.) Routing the browser
-    // through `SandboxRunner` at all is not achievable with today's PAL — see the header on
-    // `CuBrowserLaunchPolicy` in `cu-types.ts` for the three platform reasons and what confines
-    // the lane instead.
-    //
-    // `launch` is built ONCE here, asserted here, and handed to `deps.openLane` below unchanged;
-    // the driver spawns its `argv` verbatim. That identity is what makes this a statement about
-    // the process that actually starts.
-    const profileDir = resolveProfileDir(deps.config);
-    const launch = deps.buildLaunchPolicy({ profileDir });
-    const unsafeLaunch = deps.assertLaunchable(launch);
-    if (unsafeLaunch !== null) {
-      throw new CuGateError(
-        "ERR_CU_UNSAFE_LAUNCH",
-        `refusing to launch under-confined: ${unsafeLaunch}`,
-      );
-    }
-
-    // (a) NORMALISE ORIGINS BEFORE THE PROMPT, never after (ruling C.1). The owner must approve
-    // the exact strings that will be enforced; a path-bearing origin is refused rather than
-    // silently widened to the bare origin.
-    const navigateOrigins = normalizeOriginList(req.navigateOrigins);
-    const scriptOrigins = normalizeOriginList(req.scriptOrigins);
-
-    // (b) BROWSER PRESENCE CHECK BEFORE CONSENT (ruling C.2) — the exec `requireInstalled`
-    // analogue. The owner must never be asked to approve a session that could not start.
-    const executablePath = deps.resolveBrowserPath();
-    if (executablePath === null) {
-      throw new CuGateError("ERR_CU_NO_BROWSER", "no Chromium-family browser found");
-    }
+    // 4. PER-LANE PREPARATION — everything decidable WITHOUT the owner: the launch policy and its
+    // confinement assertion, the presence check for whatever this lane needs installed, and the
+    // envelope target the prompt will display. All of it BEFORE consent, so a disabled,
+    // unconfinable or uninstallable lane never advertises its own existence by prompting.
+    const prepared = prepareLane(req, sessionId, deps);
 
     const maxActions =
       req.maxActions !== undefined
@@ -505,25 +723,47 @@ export async function openSession(
       );
     }
 
-    const envelope: CuEnvelope = {
-      sessionId,
-      lane: req.lane,
-      target: { navigateOrigins, scriptOrigins },
-      maxActions,
-      maxWallClockMs,
-      approvedAt: deps.now(),
-    };
+    const envelope: CuEnvelope =
+      prepared.lane === "browser"
+        ? {
+            sessionId,
+            lane: "browser",
+            target: prepared.target,
+            maxActions,
+            maxWallClockMs,
+            approvedAt: deps.now(),
+          }
+        : {
+            sessionId,
+            lane: "terminal",
+            target: prepared.target,
+            maxActions,
+            maxWallClockMs,
+            approvedAt: deps.now(),
+          };
 
     // (c) Owner approves the envelope — verbatim lane, target, full origin list, budgets.
-    const approved = await deps.requestApproval({
-      promptKind: "envelope",
-      sessionId,
-      lane: req.lane,
-      navigateOrigins,
-      scriptOrigins,
-      maxActions,
-      maxWallClockMs,
-    });
+    const approved = await deps.requestApproval(
+      prepared.lane === "browser"
+        ? {
+            promptKind: "envelope",
+            lane: "browser",
+            sessionId,
+            navigateOrigins: prepared.target.navigateOrigins,
+            scriptOrigins: prepared.target.scriptOrigins,
+            maxActions,
+            maxWallClockMs,
+          }
+        : {
+            promptKind: "envelope",
+            lane: "terminal",
+            sessionId,
+            shellId: prepared.target.shellId,
+            cwd: prepared.target.cwd,
+            maxActions,
+            maxWallClockMs,
+          },
+    );
     if (!approved) {
       appendSessionAudit(deps, sessionId, "rejected", {
         outcome: "denied_by_owner",
@@ -538,16 +778,31 @@ export async function openSession(
 
     // (d) LAUNCH AFTER CONSENT, fail-closed. Launching BEFORE would start a browser and create a
     // profile-directory lock for a session the owner may deny.
-    let lane: BrowserLane;
+    let lane: CuLaneHandle;
     try {
-      lane = await deps.openLane({
-        // The very object `assertLaunchable` cleared above, not a rebuild of it.
-        launch,
-        executablePath,
-        db: deps.db,
-        sessionId,
-        target: envelope.target,
-      });
+      lane =
+        prepared.lane === "browser"
+          ? {
+              kind: "browser",
+              browser: await deps.lanes.browser.openLane({
+                // The very object `assertLaunchable` cleared above, not a rebuild of it.
+                launch: prepared.launch,
+                executablePath: prepared.executablePath,
+                db: deps.db,
+                sessionId,
+                target: prepared.target,
+              }),
+            }
+          : {
+              kind: "terminal",
+              terminal: await deps.lanes.terminal.openLane({
+                launch: prepared.launch,
+                sessionId,
+              }),
+              // The buffer is created HERE, with the session, and dies with it. A buffer that
+              // outlived a session would carry one envelope's half-composed command into the next.
+              buffer: new TerminalLineBuffer(),
+            };
     } catch (e) {
       // The owner DID approve, so this is `approved`/`failed_after_approval` — never
       // `refused_before_consent`. A partially-constructed persistent context holds a LOCK on the
@@ -597,7 +852,7 @@ export async function openSession(
       await evictExistingSession(sessionId);
       liveSessions.set(sessionId, {
         session,
-        lane: { kind: "browser", browser: lane },
+        lane,
         openDeps: deps,
         queue: Promise.resolve(),
       });
@@ -617,7 +872,7 @@ export async function openSession(
         deps,
         sessionId,
         session,
-        lane,
+        lane: laneBase(lane),
         syncRow: rowInserted,
         evictMap: registeredInMap,
         // Deliberately a normal (throwing) append here too — if it ALSO fails (same root cause
@@ -721,6 +976,13 @@ async function buildBrowserActionInput(
         currentOrigin,
         targetOrigin: null,
       };
+    case "terminal_write":
+      // Unreachable in production: `runActionExclusive` routes a terminal session to its own arm
+      // before this is called, and `kindBelongsToLane` refuses a terminal kind on a browser session
+      // before a budget slot is even spent. Handled explicitly rather than left to the `never`
+      // below, because a bare exhaustiveness throw here would report "unrecognised action kind" for
+      // a kind that is perfectly well recognised — just not by this lane.
+      throw new Error("ERR_CU_LANE_KIND_MISMATCH: terminal_write is not a browser action");
     default: {
       // Exhaustiveness (ruling D): a Task 5+6 review flagged that an unrecognised kind fell
       // through to the click/type node path with no rule of its own. A kind this switch was never
@@ -997,6 +1259,40 @@ async function runActionExclusive(
         }),
     });
     return { outcome: "terminated_policy" };
+  }
+
+  // 0b. LANE/KIND AGREEMENT. A `click` on a terminal session, or a `terminal_write` on a browser
+  // one, is an action outside this envelope: the envelope named the lane, and the lane is what
+  // decides which kinds exist. REFUSED, never prompted (spec § 4.2), and never at the cost of a
+  // budget slot — decided HERE, before `consumeAction`, exactly like every other pre-budget
+  // refusal.
+  //
+  // Without it the request would reach `buildBrowserActionInput` holding a terminal handle and
+  // throw — safely, but recorded as a generic failure rather than as the refusal it is. And
+  // `refused_out_of_envelope` is the tag whose CLUSTER is the highest-value alert this feature
+  // emits: a model steered toward a lane it was not granted is exactly what it exists to surface.
+  if (!kindBelongsToLane(req.kind, session.envelope.lane)) {
+    await finalizeSession({
+      deps: openDeps,
+      sessionId: req.sessionId,
+      session,
+      // The session STAYS live: this one action was simply not for it.
+      lane: null,
+      syncRow: false,
+      evictMap: false,
+      writeAudit: () =>
+        writeActionAudit(openDeps, {
+          sessionId: req.sessionId,
+          seq: null,
+          kind: req.kind,
+          classification: null,
+          observedTarget: `${req.kind} is not an action of the ${session.envelope.lane} lane`,
+          modelDescription,
+          outcome: "refused_out_of_envelope",
+          snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
+        }),
+    });
+    return { outcome: "refused_out_of_envelope" };
   }
 
   // 1. Session live? Budget/wall-clock remaining? A refusal here TERMINATES the session rather

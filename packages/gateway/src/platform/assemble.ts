@@ -39,6 +39,16 @@ import {
   buildChromiumLaunchPolicy,
 } from "../computer-use/cu-lanes/browser-launch.ts";
 import { resolveChromiumPath } from "../computer-use/cu-lanes/chromium-path.ts";
+import { openTerminalLane } from "../computer-use/cu-lanes/terminal.ts";
+import {
+  assertTerminalLaunchable,
+  buildTerminalLaunchPolicy,
+} from "../computer-use/cu-lanes/terminal-launch.ts";
+import {
+  type CuShell,
+  DEFAULT_SHELL_ID,
+  resolveShellById,
+} from "../computer-use/cu-lanes/terminal-shells.ts";
 import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
@@ -3355,10 +3365,48 @@ export async function assemblePlatformServices(
       db,
       now: () => Date.now(),
       newId: () => randomUUID(),
-      resolveBrowserPath: resolveChromiumPath,
-      buildLaunchPolicy: buildChromiumLaunchPolicy,
-      assertLaunchable: assertBrowserLaunchPolicy,
-      openLane: (opts) => openBrowserLane(opts),
+      lanes: {
+        browser: {
+          resolveBrowserPath: resolveChromiumPath,
+          buildLaunchPolicy: buildChromiumLaunchPolicy,
+          assertLaunchable: assertBrowserLaunchPolicy,
+          openLane: (opts) => openBrowserLane(opts),
+        },
+        // THE ONLY PRODUCTION SITE that may name `openTerminalLane` (static rule D26(c)). Injecting
+        // it rather than importing the driver into `cu-gate.ts` is what keeps the gate testable with
+        // no shell present and clear of the driver-capability confinement.
+        terminal: {
+          defaultShellId: DEFAULT_SHELL_ID,
+          resolveShellPath: (shellId) => {
+            let shell: CuShell;
+            try {
+              shell = resolveShellById(shellId);
+            } catch {
+              // `CuShellError("ERR_CU_UNKNOWN_SHELL")`, converted to a STATUS rather than allowed
+              // to propagate: this seam's contract is to report what it found, and a throw crossing
+              // into the gate would be flattened to `ERR_CU_FAILED` by its outer catch.
+              return { status: "unknown_shell" };
+            }
+            const shellPath = shell.detect();
+            return shellPath === null
+              ? { status: "not_installed" }
+              : { status: "ok", shellPath, argv: shell.argv(), envOverlay: shell.envOverlay() };
+          },
+          buildLaunchPolicy: ({ sessionId, shellId, shellPath, cwd }) =>
+            buildTerminalLaunchPolicy({
+              sessionId,
+              shell: resolveShellById(shellId),
+              shellPath,
+              cwd,
+            }),
+          // Reuses the runner constructed at the top of this function rather than probing again:
+          // `createSandboxRunner` synchronously spawns the Windows helper with `--check-caps`
+          // (creating and deleting a throwaway AppContainer profile), and a second call pays that
+          // cost for an answer that cannot differ within one process.
+          assertLaunchable: assertTerminalLaunchable(sandboxRunner),
+          openLane: (opts) => openTerminalLane(opts),
+        },
+      },
       // `CuGateDeps.requestApproval` takes the UNION of the two approval-input shapes; routed on
       // the `promptKind` DISCRIMINANT. This used to probe `"seq" in input` — a structural property
       // standing in for a tagged union, sound only because `seq` happened to exist on one shape and
