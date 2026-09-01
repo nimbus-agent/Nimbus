@@ -1240,13 +1240,35 @@ describe("runAction — concurrent actions on ONE lane are serialised", () => {
     expect(spy.actuations).toBe(2);
   });
 
-  test("a FAILING action still releases the lane for the next one", async () => {
-    // A serialisation that leaked its slot on failure would wedge the session permanently — every
-    // subsequent action would wait on a promise that never resolves.
+  test("an action that THROWS still releases the lane for the next one", async () => {
+    // The outer `finally` in `runAction` is the property. Getting a test to depend on it took two
+    // tries, and the first two both passed against a deliberately broken gate:
+    //
+    //   1. A healthy lane whose first `click` succeeded — proved only the success path.
+    //   2. A lane whose `performActuation` threw — but `runActionExclusive` CATCHES that and
+    //      RETURNS `failed_after_approval`, so it still resolves normally and a success-only
+    //      release is still enough. Red-proved: moving `releaseLane()` out of the `finally` left
+    //      that version green.
+    //
+    // `runAction` only REJECTS when the audit append itself fails (I35 is fail-closed about losing
+    // a decision record), so that is what this drives: drop `audit_log`, run an action, and it
+    // throws out of `runActionExclusive` — past every `catch` inside it. If the release is not in a
+    // `finally`, the queue slot is never handed back and the NEXT action waits on a promise that
+    // never settles, so the second call below times out instead of returning.
     const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
-    const { deps: d } = deps({}, spy);
+    const { deps: d, db } = deps({}, spy);
     const sessionId = await openDefault(d);
-    await runAction({ sessionId, kind: "click", selector: "#a" }, d);
+
+    const auditDdl = db
+      .query<{ sql: string }, []>(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_log'",
+      )
+      .get()?.sql;
+    db.run("DROP TABLE audit_log");
+    await expect(runAction({ sessionId, kind: "read" }, d)).rejects.toThrow();
+
+    // Audit surface healthy again: the session is still live, and the slot must have been released.
+    db.run(auditDdl as string);
     const second = await runAction({ sessionId, kind: "read" }, d);
     expect(second.outcome).toBe("actuated");
   });

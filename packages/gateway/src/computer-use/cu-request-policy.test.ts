@@ -280,4 +280,29 @@ describe("toCuResourceType — the guard that replaced an `as CuResourceType` ca
     expect(toCuResourceType("   ")).toBeNull();
     expect(toCuResourceType("imag")).toBeNull();
   });
+
+  test("Object.prototype keys are null, not inherited members", () => {
+    // Found in review. The table was an object literal, so `["constructor"]` resolved to `Object`
+    // and `["toString"]` to a function — neither caught by `?? null`, so this guard returned a
+    // non-`CuResourceType` and the caller's `?? "other"` fallback was bypassed. It still failed
+    // closed downstream (`PASSIVE.has(<function>)` is false) and CDP, not a page, picks the string,
+    // so it was never exploitable — but a guard contracted to "return null, never a guess" must not
+    // have keys for which that is false. Backed by a `Map` now; these pin it.
+    for (const key of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+      expect(toCuResourceType(key)).toBeNull();
+    }
+  });
+
+  test("an Object.prototype key still reaches the GATED branch through the caller's fallback", () => {
+    // The property that actually matters: whatever the guard is handed, an unrecognised type is
+    // refused to an unapproved origin.
+    const resourceType = toCuResourceType("toString") ?? "other";
+    expect(
+      decideRequest({
+        resourceType,
+        url: "https://evil.com/x",
+        target: { navigateOrigins: ["https://ok.com"], scriptOrigins: [] },
+      }).allow,
+    ).toBe(false);
+  });
 });

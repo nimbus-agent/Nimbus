@@ -82,25 +82,36 @@ const PASSIVE: ReadonlySet<CuResourceType> = new Set<CuResourceType>([
  * so nothing is weakened by that collapse, and dropping the keys would silently break this
  * module's own established vocabulary and its tests.
  */
-const CDP_RESOURCE_TYPES: Readonly<Record<string, CuResourceType>> = {
-  document: "document",
-  sub_frame: "sub_frame",
-  subframe: "sub_frame",
-  stylesheet: "stylesheet",
-  image: "image",
-  media: "media",
-  font: "font",
-  script: "script",
-  xhr: "xhr",
-  fetch: "fetch",
-  eventsource: "eventsource",
-  websocket: "websocket",
-  other: "other",
-};
+const CDP_RESOURCE_TYPES: ReadonlyMap<string, CuResourceType> = new Map(
+  Object.entries({
+    document: "document",
+    sub_frame: "sub_frame",
+    subframe: "sub_frame",
+    stylesheet: "stylesheet",
+    image: "image",
+    media: "media",
+    font: "font",
+    script: "script",
+    xhr: "xhr",
+    fetch: "fetch",
+    eventsource: "eventsource",
+    websocket: "websocket",
+    other: "other",
+  } satisfies Record<string, CuResourceType>),
+);
 
 /**
  * Runtime guard over {@link CuResourceType}, mirroring the IPC boundary's own `isCuActionKind`
  * convention rather than the `as CuResourceType` cast it replaced.
+ *
+ * Backed by a `Map`, NOT an object literal, and that is load-bearing rather than stylistic: an
+ * object literal inherits `Object.prototype`, so `CDP_RESOURCE_TYPES["constructor"]` evaluated to
+ * `Object` and `["toString"]` to a function — values `?? null` does not catch, so this guard
+ * returned a non-`CuResourceType` instead of `null` and the caller's `?? "other"` fallback was
+ * bypassed. Downstream it still failed closed (`PASSIVE.has(<function>)` is false, so the request
+ * was gated), and CDP — not a page — chooses the string, so it was not reachable as an attack. But
+ * a guard whose whole contract is "returns null, never a guess" must not have keys for which that
+ * is untrue. Do not "simplify" this back to a record. Found in review.
  *
  * Returns `null` — never a guess — for a value this policy has never heard of. The caller must
  * fail closed on that `null` (substituting `"other"`, which `decideRequest` places in the GATED
@@ -108,7 +119,7 @@ const CDP_RESOURCE_TYPES: Readonly<Record<string, CuResourceType>> = {
  * sees what the protocol actually said rather than the word this module substituted for it.
  */
 export function toCuResourceType(raw: string): CuResourceType | null {
-  return CDP_RESOURCE_TYPES[raw.toLowerCase()] ?? null;
+  return CDP_RESOURCE_TYPES.get(raw.toLowerCase()) ?? null;
 }
 
 /**

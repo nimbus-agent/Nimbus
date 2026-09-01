@@ -55,24 +55,32 @@ export function reconcileOrphanedSessions(
   const closed: string[] = [];
   for (const row of orphans) {
     const at = opts.now();
-    // The row FIRST, then the audit append. If the append throws, the row is already closed, so a
-    // retry on the next boot finds nothing and cannot double-close it; the reverse order could
-    // leave an audit row claiming a closure that never landed.
-    updateSessionState(db, row.id, { closedAt: at, closeReason: ORPHANED_SESSION_REASON });
-    appendAuditEntry(db, {
-      actionType: "computer.session",
-      hitlStatus: "rejected",
-      actionJson: JSON.stringify({
-        outcome: ORPHANED_SESSION_REASON,
+    // ONE TRANSACTION per session: the closure and its audit row land together or neither does.
+    //
+    // This was row-first-then-append, on the reasoning that a retry could then not double-close.
+    // Review found the sharper consequence, and it is the worse one: if the append fails, the row
+    // is ALREADY closed, so `listOpenSessions` never returns it again and NO boot can ever write
+    // its terminal audit entry — a permanent hole in the record, silently. Failing the whole unit
+    // instead leaves the session open, which is the state a later boot can still act on. That is
+    // the fail-closed direction: a retryable gap beats an unrecoverable one, and an audit surface
+    // that quietly loses rows is worse than one that visibly has work left to do.
+    db.transaction(() => {
+      updateSessionState(db, row.id, { closedAt: at, closeReason: ORPHANED_SESSION_REASON });
+      appendAuditEntry(db, {
+        actionType: "computer.session",
+        hitlStatus: "rejected",
+        actionJson: JSON.stringify({
+          outcome: ORPHANED_SESSION_REASON,
+          sessionId: row.id,
+          lane: row.lane,
+          openedAt: row.openedAt,
+          reason:
+            "the gateway process that opened this session is gone; its browser died with it and no live session backs this row",
+        }),
+        timestamp: at,
         sessionId: row.id,
-        lane: row.lane,
-        openedAt: row.openedAt,
-        reason:
-          "the gateway process that opened this session is gone; its browser died with it and no live session backs this row",
-      }),
-      timestamp: at,
-      sessionId: row.id,
-    });
+      });
+    })();
     closed.push(row.id);
   }
   return { reconciled: closed.length, sessionIds: closed };

@@ -731,6 +731,50 @@ describe("runComputer orchestration — browser subcommand", () => {
     expect(h.codes).toEqual([CU_EXIT_CODES.interrupted]);
   });
 
+  test("a second interrupt exits even while the status request is still pending", async () => {
+    // The finding this closes: `forced` was a boolean read only at the top of the poll loop, so a
+    // second Ctrl-C arriving while `computer.sessionStatus` was in flight printed its recovery
+    // guidance and then WAITED for that request anyway. If the gateway is wedged — the very
+    // situation a second interrupt is for — the request never settles and the command hangs
+    // forever. The loop now RACES the request (and the sleep) against the abort.
+    const seen: string[] = [];
+    let statusSettled = false;
+    const h = deps({
+      runWithClient: async <T>(fn: (c: FakeClient) => Promise<T>) =>
+        fn({
+          onNotification: () => {},
+          call: async (method: string) => {
+            seen.push(method);
+            if (method === "computer.sessionOpen") {
+              return { status: "open", sessionId: "sess-1" };
+            }
+            if (method === "computer.sessionStatus") {
+              // NEVER settles — a wedged gateway, which is precisely when a second Ctrl-C matters.
+              return new Promise(() => {
+                statusSettled = false;
+              });
+            }
+            return { status: "closed" };
+          },
+        }),
+      // Both signals fire before the hung request can ever resolve.
+      onSignal: (handler: () => void) => {
+        queueMicrotask(() => {
+          handler();
+          handler();
+        });
+        return () => {};
+      },
+    });
+    await runComputer(["browser", "--origin", "https://example.com"], h.d);
+    expect(h.codes).toEqual([CU_EXIT_CODES.interrupted]);
+    expect(h.err.join("")).toContain("nimbus computer close sess-1");
+    expect(seen).toContain("computer.sessionClose");
+    // The command returned WITHOUT the status request ever completing — the whole point.
+    expect(seen).toContain("computer.sessionStatus");
+    expect(statusSettled).toBe(false);
+  });
+
   test("the signal handler is UNREGISTERED once the command finishes", async () => {
     // A listener left attached would outlive the command and change how the process responds to a
     // later Ctrl-C — in the CLI's case, to one aimed at whatever runs next.

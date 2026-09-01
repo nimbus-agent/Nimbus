@@ -115,15 +115,42 @@ describe("reconcileOrphanedSessions", () => {
     expect(payload["openedAt"]).toBe(77);
   });
 
-  test("closes the ROW before appending the audit entry, so a failed append cannot double-close", () => {
-    // The ordering claim, red-proved: with `audit_log` unavailable the reconciliation throws, but
-    // the row is already closed — so the NEXT boot finds nothing to reconcile rather than closing
-    // it a second time under a new timestamp.
+  test("a failed audit append ROLLS BACK the closure, leaving the session for a later boot", () => {
+    // The closure and its audit row are ONE transaction. This test used to assert the opposite —
+    // that the row stayed closed after a failed append — on the reasoning that a retry could then
+    // not double-close it. Review found the sharper consequence: a closed row is never returned by
+    // `listOpenSessions` again, so NO later boot could ever write its terminal audit entry, and the
+    // record lost it permanently and silently. A retryable gap beats an unrecoverable one.
     const db = makeDb();
     seed(db, "s1");
     db.run("DROP TABLE audit_log");
     expect(() => reconcileOrphanedSessions(db, { now: () => 5_000 })).toThrow();
-    expect(sessionRow(db, "s1")?.closed_at).toBe(5_000);
+    // STILL OPEN — the rollback is the property under test.
+    expect(sessionRow(db, "s1")?.closed_at).toBeNull();
+    expect(listOpenSessions(db).map((r) => r.id)).toEqual(["s1"]);
+    db.close();
+  });
+
+  test("a session left open by a failed append IS reconciled on the next boot", () => {
+    // The point of rolling back: the work is still there to do. Proven end-to-end rather than
+    // inferred from the rollback alone.
+    const db = makeDb();
+    seed(db, "s1");
+    const savedAudit = db
+      .query<{ sql: string }, []>(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_log'",
+      )
+      .get()?.sql;
+    db.run("DROP TABLE audit_log");
+    expect(() => reconcileOrphanedSessions(db, { now: () => 5_000 })).toThrow();
+    // The next boot, with the audit surface healthy again.
+    db.run(savedAudit as string);
+    const out = reconcileOrphanedSessions(db, { now: () => 9_000 });
+    expect(out.reconciled).toBe(1);
+    expect(sessionRow(db, "s1")).toEqual({
+      closed_at: 9_000,
+      close_reason: ORPHANED_SESSION_REASON,
+    });
     db.close();
   });
 });

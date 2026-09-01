@@ -468,6 +468,45 @@ interface ComputerSessionStatusEntry {
 const SESSION_POLL_MS = 2000;
 
 /**
+ * Sentinel resolved by {@link AbortSignalish.whenAborted}. A unique object rather than a boolean or
+ * `undefined`, so `Promise.race` can tell "the abort won" from a legitimate result of the same
+ * shape — a status call that resolved to `undefined` must not read as an interrupt.
+ */
+const ABORTED = Symbol("nimbus.computer.aborted");
+
+/**
+ * A minimal cancellation handle. Not `AbortController`: the watch loop races PROMISES (an RPC and a
+ * sleep), so what it needs is a promise that settles on abort, and a synchronous predicate for the
+ * top-of-loop check. Kept local and tiny so the loop stays readable.
+ */
+interface AbortSignalish {
+  aborted(): boolean;
+  whenAborted(): Promise<typeof ABORTED>;
+}
+
+const NEVER_ABORTS: AbortSignalish = {
+  aborted: () => false,
+  whenAborted: () => new Promise<typeof ABORTED>(() => {}),
+};
+
+/** An {@link AbortSignalish} plus the `abort()` that trips it. */
+function makeAbort(): AbortSignalish & { abort: () => void } {
+  let flag = false;
+  let trip: (() => void) | undefined;
+  const promise = new Promise<typeof ABORTED>((resolve) => {
+    trip = () => resolve(ABORTED);
+  });
+  return {
+    aborted: () => flag,
+    whenAborted: () => promise,
+    abort: () => {
+      flag = true;
+      trip?.();
+    },
+  };
+}
+
+/**
  * Watch an already-open session until it closes, printing the action count as it changes and the
  * final close reason — "the action log" the brief asks this command to stream.
  *
@@ -492,14 +531,22 @@ async function watchSessionUntilClosed(
   c: ComputerClient,
   sessionId: string,
   deps: RunComputerDeps,
-  shouldAbort: () => boolean = () => false,
+  abort: AbortSignalish = NEVER_ABORTS,
 ): Promise<number> {
   let lastActionsUsed = -1;
   for (;;) {
-    if (shouldAbort()) return CU_EXIT_CODES.interrupted;
-    const { sessions } = (await c.call("computer.sessionStatus", { sessionId })) as {
-      sessions: ComputerSessionStatusEntry[];
-    };
+    if (abort.aborted()) return CU_EXIT_CODES.interrupted;
+    // RACED against the abort, not merely checked before it. A flag consulted only at the top of
+    // the loop leaves the command sitting through whatever is already in flight: a second Ctrl-C
+    // arriving while this status request (or the sleep below) is pending printed its recovery
+    // guidance and then waited anyway — the exact opposite of what a second interrupt means. The
+    // gateway may be wedged, in which case the request never settles at all.
+    const status = await Promise.race([
+      c.call("computer.sessionStatus", { sessionId }),
+      abort.whenAborted(),
+    ]);
+    if (status === ABORTED) return CU_EXIT_CODES.interrupted;
+    const { sessions } = status as { sessions: ComputerSessionStatusEntry[] };
     const entry = sessions[0];
     if (entry === undefined) {
       deps.sink.err(`nimbus: session ${sessionId} is no longer known to the gateway\n`);
@@ -517,7 +564,11 @@ async function watchSessionUntilClosed(
       );
       return exitCodeForCloseReason(entry.closeReason);
     }
-    await deps.sleep(SESSION_POLL_MS);
+    // The sleep is raced too: most of this loop's life is spent here, so it is where a second
+    // interrupt is most likely to land.
+    if ((await Promise.race([deps.sleep(SESSION_POLL_MS), abort.whenAborted()])) === ABORTED) {
+      return CU_EXIT_CODES.interrupted;
+    }
   }
 }
 
@@ -588,10 +639,10 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
       // not landing, blocking the user's terminal on it is the wrong trade, and the message names
       // the recovery command rather than leaving them to find it.
       let interrupted = false;
-      let forced = false;
+      const forced = makeAbort();
       const unregisterSignals = deps.onSignal(() => {
         if (interrupted) {
-          forced = true;
+          forced.abort();
           deps.sink.err(
             `nimbus: giving up on a clean close — the session may still be open. Run: nimbus computer close ${sessionId}\n`,
           );
@@ -606,7 +657,7 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
       });
 
       try {
-        exitCode = await watchSessionUntilClosed(c, sessionId, deps, () => forced);
+        exitCode = await watchSessionUntilClosed(c, sessionId, deps, forced);
       } finally {
         unregisterSignals();
       }
