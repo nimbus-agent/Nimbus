@@ -4,6 +4,10 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import {
+  DEFAULT_SHELL_ID,
+  resolveShellById,
+} from "../../../src/computer-use/cu-lanes/terminal-shells.ts";
 import { extensionProcessEnv } from "../../../src/extensions/spawn-env.ts";
 import { createSandboxRunner } from "../../../src/platform/sandbox/sandbox-runner.ts";
 
@@ -54,23 +58,22 @@ function commandOnPath(name: string): string | null {
 const IS_CI = process.env["CI"] === "true";
 
 /**
- * The shell this lane launches, resolved the way `cu-lanes/terminal-shells.ts` will resolve it.
+ * The shell this lane launches, resolved through the REAL registry rather than re-derived here.
  *
- * `cmd /Q /D /K`: `/Q` silences echo, `/D` suppresses the `Command Processor\AutoRun` registry
- * value (which would otherwise run an owner- or attacker-configured command line inside the lane
- * before anything approved), `/K` keeps it reading. `sh -s` reads commands from standard input
- * and is deliberately NOT `-i`, which would enable job control and history.
+ * An earlier version hardcoded `/bin/sh` on POSIX — an independent copy of the same decision, and
+ * it was WRONG in a way no unit test could see: Linux's bwrap binds `/usr` but not `/bin`, so a
+ * shell resolved as `/bin/sh` exists on the host and then fails inside the container with
+ * `bwrap: execvp /bin/sh: No such file or directory`. Importing the registry means this test
+ * exercises the path that will actually be spawned, which is the only thing worth proving here —
+ * an independent copy can be wrong in exactly the direction the copy was written to check.
  */
-const SHELL =
-  process.platform === "win32"
-    ? {
-        cmd: join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "cmd.exe"),
-        args: ["/Q", "/D", "/K"],
-      }
-    : { cmd: "/bin/sh", args: ["-s"] };
+const SHELL = (() => {
+  const shell = resolveShellById(DEFAULT_SHELL_ID);
+  return { id: shell.id, cmd: shell.detect(), args: [...shell.argv()] };
+})();
 
 function missingPrerequisite(): string | null {
-  if (!existsSync(SHELL.cmd)) return `shell not found at ${SHELL.cmd}`;
+  if (SHELL.cmd === null) return `no ${SHELL.id} shell found on this machine`;
   if (commandOnPath("curl") === null)
     return "curl not found on PATH (needed for the loopback case)";
   if (process.platform === "win32") {
@@ -150,7 +153,7 @@ describe("computer-use terminal lane — a real confined shell", () => {
       // ambiguous between "the sandbox blocked it" and "the sandbox never applied".
       expect(runner.canConfine(policy)).toBeNull();
 
-      const child = runner.spawn(SHELL.cmd, SHELL.args, {
+      const child = runner.spawn(SHELL.cmd as string, SHELL.args, {
         policy,
         env: extensionProcessEnv({}),
         cwd,
@@ -184,7 +187,7 @@ describe("computer-use terminal lane — a real confined shell", () => {
         // curl misspelled, the shell never starting — and the test would keep passing after the
         // sandbox stopped blocking anything. This proves the command, the URL and the server all
         // work when nothing is confining them, so the sandboxed run below is the only variable.
-        const control = spawn(SHELL.cmd, SHELL.args, {
+        const control = spawn(SHELL.cmd as string, SHELL.args, {
           env: extensionProcessEnv({}),
           cwd: root,
           stdio: ["pipe", "pipe", "pipe"],
@@ -203,7 +206,7 @@ describe("computer-use terminal lane — a real confined shell", () => {
         const policy = policyFor("cu-terminal-net", cwd);
         expect(runner.canConfine(policy)).toBeNull();
 
-        const child = runner.spawn(SHELL.cmd, SHELL.args, {
+        const child = runner.spawn(SHELL.cmd as string, SHELL.args, {
           policy,
           env: extensionProcessEnv({}),
           cwd,

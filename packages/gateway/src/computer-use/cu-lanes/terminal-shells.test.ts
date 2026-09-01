@@ -169,8 +169,23 @@ describe("detect() — both arms, on every platform", () => {
     expect(() => requireShellInstalled(resolveShellById("sh"), absent)).toThrow(CuShellError);
   });
 
-  test("requireShellInstalled returns the path when the probe finds it", () => {
-    expect(requireShellInstalled(resolveShellById("sh"), present)).toBe("/bin/sh");
+  test("requireShellInstalled returns the FIRST candidate the probe finds", () => {
+    // `/usr/bin/sh` leads because the path must exist INSIDE the Linux sandbox, where bwrap binds
+    // `/usr` but not `/bin` — see SH_CANDIDATES.
+    expect(requireShellInstalled(resolveShellById("sh"), present)).toBe("/usr/bin/sh");
+  });
+
+  test("sh falls back to /bin/sh when the first candidate is absent", () => {
+    // macOS has no /usr/bin/sh at all, so the fallback is the arm that runs there.
+    const onlyBinSh: PathExists = (p) => p === "/bin/sh";
+    expect(resolveShellById("sh").detect(onlyBinSh)).toBe("/bin/sh");
+  });
+
+  test("sh prefers /usr/bin/sh even when BOTH exist — the sandbox-visible one wins", () => {
+    // The failure this pins is invisible to `existsSync`: on a usrmerge Linux both paths resolve on
+    // the HOST, and only the `/usr/bin` one still resolves inside the container.
+    const bothExist: PathExists = (p) => p === "/bin/sh" || p === "/usr/bin/sh";
+    expect(resolveShellById("sh").detect(bothExist)).toBe("/usr/bin/sh");
   });
 
   test("cmd's path is built from SystemRoot when it is set, on any platform", () => {

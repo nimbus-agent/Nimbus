@@ -28,9 +28,10 @@ export class CuLaunchPolicyError extends Error {
  * internet but the gateway's own IPC socket and 127.0.0.1 HTTP API.
  *
  * `cwd` is the ONLY filesystem grant. That is not a minimalism flourish, it is measured: every
- * platform already admits its own system binaries to a confined child (Linux bwrap binds the system
- * tree, macOS's SBPL profile grants /bin, /usr/bin, /usr/lib and /System, Windows AppContainer
- * carries default ALL APPLICATION PACKAGES access), and on Windows granting %SystemRoot%
+ * platform already admits ENOUGH of its own system tree for a shell to run — Linux bwrap binds
+ * /usr, /etc, /lib and /lib64 but NOT /bin, which is exactly why `SH_CANDIDATES` prefers
+ * /usr/bin/sh; macOS's SBPL profile grants /bin, /usr/bin, /usr/lib and /System; and Windows
+ * AppContainer carries default ALL APPLICATION PACKAGES access. And on Windows granting %SystemRoot%
  * additionally FAILS — the helper writes an ACE per granted path and `SetNamedSecurityInfoW` on it
  * returns 5. So a system-tree grant is unnecessary on two platforms and fatal on the third.
  */

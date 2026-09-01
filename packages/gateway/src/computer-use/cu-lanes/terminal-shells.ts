@@ -59,9 +59,28 @@ const POSIX_QUIET_ENV: Readonly<Record<string, string>> = {
   PROMPT_COMMAND: "",
 };
 
+/**
+ * Where a POSIX shell is looked for, IN ORDER — and the order is load-bearing for a reason that
+ * only a real sandbox reveals.
+ *
+ * `/usr/bin/sh` comes FIRST because the resolved path has to exist INSIDE the confinement, not
+ * merely on the host. Linux's bwrap binds `/usr`, `/etc`, `/lib` and `/lib64` into the container
+ * and does NOT bind `/bin`; on a usrmerge distribution `/bin` is a symlink to `/usr/bin` that the
+ * container never recreates, so a shell resolved as `/bin/sh` exists for `existsSync` on the host
+ * and then fails inside with `bwrap: execvp /bin/sh: No such file or directory`. Probing the host
+ * is the only thing `detect()` can do; ordering the candidates is how that probe's answer is made
+ * true on the other side of the boundary.
+ *
+ * `/bin/sh` stays as the fallback because macOS has no `/usr/bin/sh` at all, and its SBPL profile
+ * grants `/bin` explicitly. Same candidate-list shape as `chromium-path.ts`, for a similar reason:
+ * where an executable lives differs per platform, and the list is what keeps that knowledge in one
+ * auditable place instead of a `process.platform` branch.
+ */
+const SH_CANDIDATES = ["/usr/bin/sh", "/bin/sh"] as const;
+
 const SH_SHELL: CuShell = {
   id: "sh",
-  detect: (exists = existsSync) => (exists("/bin/sh") ? "/bin/sh" : null),
+  detect: (exists = existsSync) => SH_CANDIDATES.find((p) => exists(p)) ?? null,
   // `-s` = read commands from standard input. Deliberately NOT `-i`: an interactive shell would
   // enable job control and history, which is exactly what this lane refuses to offer.
   argv: () => ["-s"],
