@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
@@ -210,14 +211,32 @@ function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
-export interface EnvelopePromptInput {
+export interface BrowserEnvelopePromptInput {
+  readonly lane: "browser";
   readonly sessionId: string;
-  readonly lane: string;
   readonly navigateOrigins: readonly string[];
   readonly scriptOrigins: readonly string[];
   readonly maxActions: number;
   readonly maxWallClockMs: number;
 }
+
+export interface TerminalEnvelopePromptInput {
+  readonly lane: "terminal";
+  readonly sessionId: string;
+  readonly shellId: string;
+  readonly cwd: string;
+  readonly maxActions: number;
+  readonly maxWallClockMs: number;
+}
+
+/**
+ * A UNION on `lane`, not one shape with per-lane optional fields.
+ *
+ * The two lanes grant completely different things — origin lists versus a shell in a directory —
+ * and an optional-field shape would compile while rendering a prompt describing a grant that is not
+ * the one being requested. On this surface that is not a cosmetic bug: the prompt IS the boundary.
+ */
+export type EnvelopePromptInput = BrowserEnvelopePromptInput | TerminalEnvelopePromptInput;
 
 /**
  * Render the SESSION-ENVELOPE prompt (`computer.envelopeRequest`) — one of the two prompt kinds
@@ -231,14 +250,32 @@ export interface EnvelopePromptInput {
  * design depends on not happening. See {@link formatActionPrompt} for the other kind.
  */
 export function formatEnvelopePrompt(p: EnvelopePromptInput): string {
+  const bounds = [
+    `  max actions:    ${p.maxActions}`,
+    `  time limit:     ${p.maxWallClockMs} ms (${formatDuration(p.maxWallClockMs)})`,
+  ];
+  if (p.lane === "terminal") {
+    return [
+      "=== Open a computer-use session? ===",
+      `  session:        ${p.sessionId}`,
+      "  lane:           terminal",
+      `  shell:          ${p.shellId}`,
+      `  directory:      ${p.cwd}`,
+      // Stated because it bounds the blast radius and because a reader would otherwise
+      // assume the opposite: a shell that can reach the network is a different grant
+      // entirely, and the owner must know which one they are giving.
+      "  network:        NONE (including localhost)",
+      "  every command:  shown to you in full and approved individually before it runs",
+      ...bounds,
+    ].join("\n");
+  }
   return [
     "=== Open a computer-use session? ===",
     `  session:        ${p.sessionId}`,
-    `  lane:           ${p.lane}`,
+    "  lane:           browser",
     `  navigate to:    ${list(p.navigateOrigins)}`,
     `  scripts reach:  ${list(p.scriptOrigins)}`,
-    `  max actions:    ${p.maxActions}`,
-    `  time limit:     ${p.maxWallClockMs} ms (${formatDuration(p.maxWallClockMs)})`,
+    ...bounds,
   ].join("\n");
 }
 
@@ -270,7 +307,7 @@ export interface ActionPromptInput {
  */
 export function formatActionPrompt(p: ActionPromptInput): string {
   return [
-    "--- Approve this browser action? ---",
+    "--- Approve this computer-use action? ---",
     `  action:            ${p.kind}  (#${p.seq}, ${p.actionsUsed}/${p.maxActions} actions used)`,
     `  gateway observed:  ${p.observedTarget}  [${p.classification}: ${p.why}]`,
     `  model said (UNTRUSTED — a claim, not a fact): ${p.modelDescription ?? "(none)"}`,
@@ -281,7 +318,22 @@ const strs = (v: unknown): string[] =>
   Array.isArray(v) && v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
 
 /** What a `computer.envelopeRequest` broadcast carries. Every field is validated before use. */
-type EnvelopeBroadcast = Partial<EnvelopePromptInput> & { requestId?: string };
+/**
+ * What a `computer.envelopeRequest` broadcast carries, as WIRE shape rather than as the prompt
+ * type: `lane` is a bare `string` here because the value arrives from the socket and has not been
+ * narrowed yet, and every field is validated before the renderer sees it.
+ */
+type EnvelopeBroadcast = {
+  requestId?: string;
+  sessionId?: string;
+  lane?: string;
+  navigateOrigins?: unknown;
+  scriptOrigins?: unknown;
+  shellId?: string;
+  cwd?: string;
+  maxActions?: number;
+  maxWallClockMs?: number;
+};
 
 /**
  * Answer one `computer.envelopeRequest` broadcast.
@@ -299,17 +351,44 @@ export async function handleEnvelopeBroadcast(
 ): Promise<void> {
   const p = (params ?? {}) as EnvelopeBroadcast;
   if (typeof p.requestId !== "string" || p.requestId === "") return;
+  const sessionId = typeof p.sessionId === "string" ? p.sessionId : "unknown";
+  const maxActions = typeof p.maxActions === "number" ? p.maxActions : 0;
+  const maxWallClockMs = typeof p.maxWallClockMs === "number" ? p.maxWallClockMs : 0;
 
-  const answer = await ask(
-    formatEnvelopePrompt({
-      sessionId: typeof p.sessionId === "string" ? p.sessionId : "unknown",
-      lane: typeof p.lane === "string" ? p.lane : "unknown",
-      navigateOrigins: strs(p.navigateOrigins),
-      scriptOrigins: strs(p.scriptOrigins),
-      maxActions: typeof p.maxActions === "number" ? p.maxActions : 0,
-      maxWallClockMs: typeof p.maxWallClockMs === "number" ? p.maxWallClockMs : 0,
-    }),
-  );
+  // An UNRECOGNISED lane is DENIED without asking, and that is the important branch. Falling back
+  // to the browser render — the obvious alternative — would show the owner a prompt describing a
+  // grant that is not the one being requested: "navigate to: none", no shell, no directory, while
+  // the gateway holds something else entirely. Asking a human to approve a thing this command
+  // cannot describe is worse than refusing it, and a refusal is recoverable while a mistaken
+  // approval is not.
+  //
+  // It still RESPONDS rather than returning silently: leaving the gate to time out would deny by
+  // TTL after the owner had been shown nothing at all — the same outcome, reached slower and with
+  // no explanation on screen.
+  if (p.lane !== "browser" && p.lane !== "terminal") {
+    await respond(p.requestId, false);
+    return;
+  }
+
+  const prompt: EnvelopePromptInput =
+    p.lane === "terminal"
+      ? {
+          lane: "terminal",
+          sessionId,
+          shellId: typeof p.shellId === "string" ? p.shellId : "unknown",
+          cwd: typeof p.cwd === "string" ? p.cwd : "unknown",
+          maxActions,
+          maxWallClockMs,
+        }
+      : {
+          lane: "browser",
+          sessionId,
+          navigateOrigins: strs(p.navigateOrigins),
+          scriptOrigins: strs(p.scriptOrigins),
+          maxActions,
+          maxWallClockMs,
+        };
+  const answer = await ask(formatEnvelopePrompt(prompt));
   await respond(p.requestId, !isCancel(answer) && answer === true);
 }
 
@@ -388,6 +467,24 @@ const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
   ERR_CU_BAD_BOUNDS: "nimbus: the requested action count or time limit was invalid.",
   ERR_CU_LAUNCH_FAILED:
     "nimbus: the browser failed to launch after the owner approved the session.",
+  ERR_CU_NO_SHELL:
+    "nimbus: no usable shell was found for the terminal lane. On Windows that means cmd.exe was " +
+    "not found under %SystemRoot%System32; elsewhere, /bin/sh.",
+  ERR_CU_UNKNOWN_SHELL:
+    "nimbus: --shell named an id this build does not register. Supported ids: sh (POSIX), cmd " +
+    "(Windows). Omit --shell to use the platform default.",
+  // Restored with this lane. It was DELETED when the browser lane dropped its placeholder
+  // `canConfine` assertion, with a note saying a later lane that does spawn through the PAL should
+  // add it back with its own wording. This is that lane, and this is that wording.
+  ERR_CU_SANDBOX_DEGRADED:
+    "nimbus: refusing to open a terminal session that cannot be confined. On Linux install " +
+    "bubblewrap (bwrap); on Windows ensure nimbus-sandbox-helper.exe sits beside the nimbus " +
+    "binary. The terminal lane spawns a real shell and will not do so unsandboxed.",
+  ERR_CU_TERMINAL_NETWORK_UNSUPPORTED:
+    "nimbus: the terminal lane has no network access, by design — it cannot be granted.",
+  ERR_CU_TERMINAL_RELATIVE_CWD:
+    "nimbus: --cwd must be an absolute path (the gateway refuses to resolve a relative one " +
+    "against its own working directory, which is not yours).",
 };
 
 function describeRefusal(code: string): string {
@@ -672,6 +769,170 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
   }
 }
 
+export interface ParsedComputerTerminalArgs {
+  readonly cwd: string;
+  readonly shellId?: string;
+  readonly maxActions?: number;
+  readonly maxWallClockMs?: number;
+}
+
+const TERMINAL_USAGE =
+  "Usage: nimbus computer terminal --cwd <dir> [--shell <id>] [--max-actions <n>] [--timeout <seconds>]";
+
+/**
+ * Parse `nimbus computer terminal` argv.
+ *
+ * `--cwd` is REQUIRED and resolved CLIENT-side, for the reason `exec.ts` resolves its filesystem
+ * grant paths here: the gateway's working directory is not the caller's, so a relative value would
+ * be meaningless by the time it crossed IPC — and the gateway refuses a relative path outright
+ * rather than resolving it against something the caller never saw.
+ */
+export function parseComputerTerminalArgs(args: readonly string[]): ParsedComputerTerminalArgs {
+  let cwd: string | undefined;
+  let shellId: string | undefined;
+  let maxActions: number | undefined;
+  let maxWallClockMs: number | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    const next = (): string => {
+      const v = args[++i];
+      if (v === undefined) throw new Error(`${flag} requires a value\n${TERMINAL_USAGE}`);
+      return v;
+    };
+    switch (flag) {
+      case "--cwd":
+        cwd = resolve(next());
+        break;
+      case "--shell":
+        shellId = next();
+        break;
+      case "--max-actions": {
+        const n = Number.parseInt(next(), 10);
+        if (!Number.isFinite(n) || n <= 0) {
+          throw new Error(`--max-actions must be a positive integer\n${TERMINAL_USAGE}`);
+        }
+        maxActions = n;
+        break;
+      }
+      case "--timeout": {
+        const n = Number.parseInt(next(), 10);
+        if (!Number.isFinite(n) || n <= 0) {
+          throw new Error(`--timeout must be a positive integer (seconds)\n${TERMINAL_USAGE}`);
+        }
+        maxWallClockMs = n * 1000;
+        break;
+      }
+      default:
+        throw new Error(`Unknown flag: ${flag}\n${TERMINAL_USAGE}`);
+    }
+  }
+
+  if (cwd === undefined) throw new Error(`--cwd is required\n${TERMINAL_USAGE}`);
+  return {
+    cwd,
+    ...(shellId === undefined ? {} : { shellId }),
+    ...(maxActions === undefined ? {} : { maxActions }),
+    ...(maxWallClockMs === undefined ? {} : { maxWallClockMs }),
+  };
+}
+
+/**
+ * `nimbus computer terminal` — opens a sandboxed shell session and watches it.
+ *
+ * A PASSIVE LISTENER, exactly like `runComputerBrowser`, and for the same recorded reason: letting
+ * the local operator type commands here would render `model said (UNTRUSTED — a claim, not a fact):
+ * (none)` on every prompt, teaching the owner that the line is routinely empty and skippable —
+ * which destroys the vigilance the fact/claim split exists to build, on the one surface this whole
+ * design leans on a human reading carefully.
+ */
+async function runComputerTerminal(args: string[], deps: RunComputerDeps): Promise<void> {
+  let parsed: ParsedComputerTerminalArgs;
+  try {
+    parsed = parseComputerTerminalArgs(args);
+  } catch (e) {
+    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
+    deps.setExitCode(CU_EXIT_CODES.refused);
+    return;
+  }
+
+  try {
+    let exitCode = 0;
+    await deps.runWithClient(async (c) => {
+      // Registered BEFORE the call: a broadcast can share a socket chunk with the RPC response.
+      c.onNotification("computer.envelopeRequest", (params: unknown) =>
+        handleEnvelopeBroadcast(params, deps.ask, (requestId, approved) =>
+          c.call("computer.approvalRespond", { requestId, approved }),
+        ),
+      );
+      c.onNotification("computer.actionRequest", (params: unknown) =>
+        handleActionBroadcast(params, deps.ask, (requestId, approved) =>
+          c.call("computer.approvalRespond", { requestId, approved }),
+        ),
+      );
+
+      const openResult = (await c.call("computer.sessionOpen", {
+        lane: "terminal",
+        cwd: parsed.cwd,
+        ...(parsed.shellId === undefined ? {} : { shellId: parsed.shellId }),
+        ...(parsed.maxActions === undefined ? {} : { maxActions: parsed.maxActions }),
+        ...(parsed.maxWallClockMs === undefined ? {} : { maxWallClockMs: parsed.maxWallClockMs }),
+      })) as OpenSessionResultShape;
+
+      if (openResult.status === "denied") {
+        deps.sink.err("nimbus: session denied by owner\n");
+        exitCode = CU_EXIT_CODES.deniedByOwner;
+        return;
+      }
+      if (openResult.status === "refused") {
+        deps.sink.err(`${describeRefusal(openResult.code ?? "unknown")}\n`);
+        exitCode = CU_EXIT_CODES.refused;
+        return;
+      }
+      if (openResult.status !== "open" || openResult.sessionId === undefined) {
+        deps.sink.err(`nimbus: unrecognised computer.sessionOpen reply: ${openResult.status}\n`);
+        exitCode = CU_EXIT_CODES.refused;
+        return;
+      }
+
+      const sessionId = openResult.sessionId;
+      deps.sink.out(`Session opened: ${sessionId}\n`);
+
+      // Ctrl-C asks the GATEWAY to close the session rather than just exiting: the session belongs
+      // to the gateway, and a shell left running inside an approved envelope with nothing watching
+      // it is exactly what the browser lane's own interrupt handling exists to prevent.
+      let interrupted = false;
+      const forced = makeAbort();
+      const unregisterSignals = deps.onSignal(() => {
+        if (interrupted) {
+          forced.abort();
+          deps.sink.err(
+            `nimbus: giving up on a clean close — the session may still be open. Run: nimbus computer close ${sessionId}\n`,
+          );
+          return;
+        }
+        interrupted = true;
+        deps.sink.err("\nnimbus: interrupted — closing the computer-use session...\n");
+        void Promise.resolve(c.call("computer.sessionClose", { sessionId })).catch(() => {
+          // The watch loop reports what actually happened; a failed close must not raise here,
+          // where nothing can await it.
+        });
+      });
+
+      try {
+        exitCode = await watchSessionUntilClosed(c, sessionId, deps, forced);
+      } finally {
+        unregisterSignals();
+      }
+      if (interrupted) exitCode = CU_EXIT_CODES.interrupted;
+    });
+    deps.setExitCode(exitCode);
+  } catch (e) {
+    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
+    deps.setExitCode(CU_EXIT_CODES.refused);
+  }
+}
+
 async function runComputerSessions(deps: RunComputerDeps): Promise<void> {
   try {
     const { sessions } = (await deps.runWithClient((c) =>
@@ -708,7 +969,7 @@ async function runComputerClose(rest: string[], deps: RunComputerDeps): Promise<
   }
 }
 
-const COMPUTER_USAGE = "Usage: nimbus computer <browser|sessions|close> ...";
+const COMPUTER_USAGE = "Usage: nimbus computer <browser|terminal|sessions|close> ...";
 
 /**
  * `nimbus computer` — the terminal surface through which the LOCAL owner opens a computer-use
@@ -724,6 +985,9 @@ export async function runComputer(
   switch (sub) {
     case "browser":
       await runComputerBrowser(rest, deps);
+      return;
+    case "terminal":
+      await runComputerTerminal(rest, deps);
       return;
     case "sessions":
       await runComputerSessions(deps);
