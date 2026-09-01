@@ -60,6 +60,11 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     why: "resolveChromiumPath() reads process.platform to pick a candidate list — where a Chromium-family browser is installed differs per OS, and Windows additionally needs the per-user %LOCALAPPDATA% install (the default without admin rights). No coverage-threshold gate names computer-use paths today, and the platform branch is deliberately confined to that one production binding: `chromiumCandidates(platform, env)` is PURE over its arguments, so `chromium-path.test.ts` exercises every platform's list — and both sides of every %PROGRAMFILES%/%LOCALAPPDATA% fallback — on every runner, rather than only the branch the host happens to take",
   },
   {
+    file: "packages/gateway/src/computer-use/cu-lanes/terminal-shells.ts",
+    gate: "none",
+    why: "The terminal lane's SHELL REGISTRY reads process.platform twice, and both reads are irreducibly platform-specific: `DEFAULT_SHELL_ID` picks `cmd` on Windows and `sh` elsewhere, and `CMD_SHELL.detect()` resolves %SystemRoot%System32cmd.exe. No coverage-threshold gate names computer-use paths today (same as `chromium-path.ts` beside it). What limits the exposure is that the registry ENTRIES are not platform-branched — each shell's `argv()` and `envOverlay()` are constants, and `terminal-shells.test.ts` resolves BOTH ids by name on every runner, so `cmd`'s `/D` AutoRun suppression and `sh`'s history/rc-suppressing overlay are asserted on Linux and macOS too, not only where they happen to be the default. The genuinely per-OS half is `detect()`, which is an `existsSync` on a path the host either has or does not, and is covered end-to-end by `test/integration/computer-use/terminal-loopback.test.ts` on each OS leg",
+  },
+  {
     file: "packages/gateway/src/exec/exec-runtimes.ts",
     gate: "Sandbox",
     why: "ExecRuntime.requiredReadPaths: macOS alone needs the runtime HOME granted; Windows must NOT get it (~/.bun carries thousands of cache entries and the AppContainer helper writes one ACE per path, so granting it hangs every spawn)",
