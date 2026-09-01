@@ -1189,16 +1189,16 @@ the local posture and never loosen it.
 
 ### `nimbus computer`
 
-Open a HITL-gated browser session and watch its action log, answering the two
-consent-prompt kinds inline. Invariant **I35**, static rule **D26**, schema
-**V57**.
+Open a HITL-gated computer-use session — a sandboxed **browser** or a sandboxed
+**terminal** — and watch its action log, answering the two consent-prompt kinds
+inline. Invariant **I35**, static rule **D26**, schema **V57**.
 
 **Off by default, and empty even when on.** Add to `nimbus.toml`:
 
 ```toml
 [computer_use]
 enabled                 = true       # DEFAULT false
-allowed_lanes           = ["browser"] # DEFAULT [] — a second, deliberate lock
+allowed_lanes           = ["browser", "terminal"] # DEFAULT [] — a second, deliberate lock
 max_actions             = 50
 max_wall_clock_ms       = 300000
 snapshot_max_bytes      = 262144
@@ -1211,6 +1211,7 @@ either left at its default the gate refuses *before* prompting.
 
 ```bash
 nimbus computer browser --origin https://github.com --script-origin https://api.github.com
+nimbus computer terminal --cwd ./my-project
 nimbus computer sessions
 nimbus computer close <session-id>
 ```
@@ -1218,6 +1219,7 @@ nimbus computer close <session-id>
 | Subcommand | Meaning |
 | --- | --- |
 | `browser --origin <o>...` | Open a browser-lane session. Repeatable `--origin` builds the navigate allowlist (at least one required); repeatable `--script-origin` builds the SEPARATE allowlist for script-initiated `fetch`/XHR/`WebSocket` requests (default empty). `--max-actions <n>` / `--timeout <seconds>` clamp the session's action and wall-clock budgets. Every origin is canonicalised client-side and REFUSED — never widened — if it carries a path, query, fragment, userinfo, or a trailing-dot hostname. |
+| `terminal --cwd <dir>` | Open a terminal-lane session: a sandboxed shell in `<dir>`, which is resolved client-side and is the shell's ONLY filesystem grant. `--shell <id>` names a registry shell (`sh` on POSIX, `cmd` on Windows) — an id, never an argv; omit it for the platform default. `--max-actions <n>` / `--timeout <seconds>` clamp the budgets. |
 | `sessions` | List known sessions: id, lane, open/closed, actions used, close reason. |
 | `close <session-id>` | End a session early. |
 
@@ -1231,6 +1233,33 @@ session's action count until it closes. It does not drive any action itself,
 and that is by design rather than a gap: `computer.act` is driven from inside
 the gateway by the model-callable browser tools, which exist only while a
 session is live.
+
+**What the terminal lane does and does not do.** Every command is shown to you
+in full and approved individually before a single byte reaches the shell —
+bytes the model composes accumulate gateway-side until it submits a complete
+line. Control characters, escape sequences and invisible/bidirectional
+formatting characters are refused outright rather than buffered, so the line
+you approve renders as the bytes that will run.
+
+Two consequences worth knowing before you enable it:
+
+- **The shell has NO network access, including `localhost`.** `curl`, `git
+  fetch`, `npm install` and anything else that needs the network will fail.
+  That is the design, not a limitation to work around, and it is what lets the
+  lane add no egress class at all.
+- **It is line-oriented only.** `vi`, `less`, `top`, `fzf` and interactive
+  confirmation prompts do not work — the shell has no tty, so most of them
+  refuse to start on their own. This is the deliberate cost of approving whole
+  commands rather than keystrokes.
+
+And one bound stated plainly: approving a line proves you **saw** it, not that
+you understood it. A single approved command can still do arbitrary damage
+inside its working directory.
+
+If a terminal session refuses with `ERR_CU_SANDBOX_DEGRADED`, the sandbox could
+not confine it: on Linux install `bubblewrap` (`bwrap`); on Windows ensure
+`nimbus-sandbox-helper.exe` sits beside the `nimbus` binary. The lane spawns a
+real shell and will not do so unsandboxed.
 
 **Ctrl-C closes the session on the GATEWAY, and exits `130`.** The session
 belongs to the gateway, not to this process, so an interrupt asks the gateway

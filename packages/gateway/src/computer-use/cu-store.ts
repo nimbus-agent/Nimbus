@@ -128,6 +128,14 @@ function truncateSnapshot(s: string | null, maxBytes: number): Truncated {
  * of the two original sizes rather than losing the smaller one silently — a documented bound of
  * the schema as shipped by Task 2, not something this task can widen (a column addition is a
  * migration).
+ *
+ * LANE NOTE: on the TERMINAL lane `dom_before` is always NULL and `dom_after` carries the command's
+ * OUTPUT. The replay body of a terminal action IS its output, so it wants exactly what this
+ * function already provides — the `snapshotMaxBytes` cap, the `dom_truncated`/`dom_original_bytes`
+ * flags, and the 7-day retention prune, which is the right posture for text that routinely carries
+ * secrets. The columns are named `dom_*` because V57 predates the second lane; renaming them is a
+ * migration under an append-only, forward-only schema and is not worth one. Recorded here so a
+ * reader cannot conclude the terminal lane snapshots a DOM.
  */
 export function insertAction(
   db: Database,

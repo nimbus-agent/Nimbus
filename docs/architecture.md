@@ -1654,9 +1654,10 @@ const streamReq: JSONRPCRequest = {
 //   This is the surface to consult before adding any future agent to the HTTP list: "writes
 //   nothing" is NOT sufficient grounds for exposure.
 
-// --- Computer-use loop (Spine S2, browser lane; invariant I35 / static D26, V57) ---------------
+// --- Computer-use loop (Spine S2, browser + terminal lanes; invariant I35 / static D26, V57) ----
 // New subsystem `computer-use/` (`cu-gate.ts`/`cu-session.ts`/`cu-classify.ts`/`cu-actuate.ts`/
-// `cu-consent-broker.ts`/`cu-request-policy.ts`/`cu-store.ts`/`cu-tools.ts`/`cu-types.ts`),
+// `cu-consent-broker.ts`/`cu-request-policy.ts`/`cu-store.ts`/`cu-tools.ts`/`cu-types.ts`/
+// `cu-terminal-buffer.ts`),
 // deliberately parallel to `exec/` in shape and naming: `cu-gate.ts`'s `openSession()`/`runAction()`
 // is the I35 chokepoint, exactly as `exec-gate.ts`'s `runExecution()` is I33's. A computer-use
 // action is NOT a connector call (no `mcpToolId`, no `connectors.dispatch`), which is why it has
@@ -1684,6 +1685,22 @@ const streamReq: JSONRPCRequest = {
 //   before `performActuation` runs. Hitting `maxActions`/`maxWallClockMs` TERMINATES the session
 //   rather than prompting to extend — prompting to extend is how an unbounded sequence launders
 //   itself through a bounded one.
+// TWO LANES ship actuation, and their PARAMETER SHAPES DIFFER: `computer.sessionOpen` takes a
+//   discriminated union on `lane`. A browser request carries `navigateOrigins`/`scriptOrigins`; a
+//   TERMINAL request carries an absolute `cwd` (required, never defaulted — defaulting would grant
+//   the GATEWAY's working directory, which is not the caller's) and an optional registry `shellId`
+//   (never an argv). `screen` is a `KNOWN_CU_LANES` member with no implementation and is rejected at
+//   the transport. The terminal lane's own clause — no byte reaches the shell before the owner
+//   approved the COMPLETE line — lives in `cu-terminal-buffer.ts`, deliberately OUTSIDE `cu-lanes/`
+//   so `cu-gate.ts` can import it without acquiring a driver capability; see `SECURITY-INVARIANTS.md`
+//   § I35 for the buffering rules, the Trojan Source refusals, and why this lane DOES spawn through
+//   `SandboxRunner` while the browser lane cannot.
+// V57 COLUMN REUSE, worth knowing before reading a `cu_action` row: on the TERMINAL lane
+//   `dom_before` is always NULL and `dom_after` carries the command's OUTPUT. The replay body of a
+//   terminal action IS its output, so it wants exactly what that column already provides — the
+//   `snapshot_max_bytes` cap, the truncation flags, and the retention prune. The `dom_*` names
+//   predate the second lane; renaming them is a migration under an append-only, forward-only schema
+//   and is not worth one. A terminal row does NOT mean a DOM was snapshotted.
 // computer.sessionStatus — a plain read of the durable `cu_session` row(s) (V57); no consent gate
 //   applies (it mutates nothing). Backs `nimbus computer sessions` and the CLI's session-watch poll.
 // computer.sessionClose — the owner (or a budget/wall-clock/target-loss condition) ends a session.
