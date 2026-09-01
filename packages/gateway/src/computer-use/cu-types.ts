@@ -192,3 +192,63 @@ export interface CuTerminalLaunchPolicy {
   /** Handed to `SandboxRunner.spawn` verbatim. `permissions.network` is `[]` by construction. */
   readonly policy: SandboxPolicy;
 }
+
+/**
+ * What EVERY lane offers the gate, independent of what it drives.
+ *
+ * `finalizeSession`, `bestEffortCloseLane` and the gate's post-`await` liveness re-checks are
+ * written against this and this alone, which is why adding a second lane did not have to touch any
+ * of them.
+ */
+export interface CuLaneBase {
+  /**
+   * Is the driven target still the one this session opened? `false` once the child process has
+   * exited or its transport has closed.
+   *
+   * This is what makes `CuOutcome`'s `terminated_target_lost` an OUTCOME THE GATE CAN ACTUALLY
+   * ASSIGN rather than a declared-and-handled string nothing ever produces.
+   */
+  isAlive(): boolean;
+  close(): Promise<void>;
+}
+
+export interface TerminalWriteResult {
+  readonly output: string;
+  /**
+   * WHICH bound ended collection. Disclosed rather than inferred — a reader must be able to tell
+   * "the command finished" from "we stopped waiting", and those are genuinely different facts.
+   *
+   * `no_output` is the one that earns its place: it says nothing arrived within
+   * `TERMINAL_FIRST_BYTE_MS`, which is what a silent command (`mkdir`) and a slow-starting one
+   * (`python x.py`) both look like from here. Reporting it as `quiet` would assert the command
+   * finished, which is exactly the claim this driver cannot make.
+   */
+  readonly settled: "quiet" | "no_output" | "settle_cap" | "output_cap" | "exited";
+  readonly truncated: boolean;
+}
+
+/**
+ * The terminal lane's contract with the gate. `cu-lanes/terminal.ts` IMPLEMENTS this rather than
+ * declaring it, so `cu-gate.ts` imports NOTHING from `cu-lanes/` (D26(b)/(c)) — the same shape
+ * `BrowserLane` above uses.
+ */
+export interface TerminalLane extends CuLaneBase {
+  /**
+   * Write `bytes` plus ONE newline, and nothing else.
+   *
+   * The caller has already obtained the owner's approval for exactly these bytes. This method
+   * appends no sentinel, no prelude and no echo — which is why command completion is detected by
+   * output quiescence rather than by anything written here (invariant I35's terminal clause).
+   */
+  write(bytes: string): Promise<TerminalWriteResult>;
+}
+
+/**
+ * What `cu-gate.ts` passes to the injected `CuGateDeps.lanes.terminal.openLane` seam to launch a
+ * terminal lane AFTER the owner has approved the envelope.
+ */
+export interface OpenTerminalLaneOptions {
+  /** The same object `assertTerminalLaunchable` cleared before the owner was prompted. */
+  readonly launch: CuTerminalLaunchPolicy;
+  readonly sessionId: string;
+}
