@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.5.0](https://github.com/nimbus-agent/Nimbus/compare/v7.4.0...v7.5.0) (2026-09-01)
+
+
+### Features
+
+* **agents:** why, expert and ownership answer about an indexed item ([#1421](https://github.com/nimbus-agent/Nimbus/issues/1421)) ([b5fabb2](https://github.com/nimbus-agent/Nimbus/commit/b5fabb2d176f67b8286b8cdf237231ce565d9f49))
+* **computer-use:** raw-CDP browser lane driver; the browser egress class goes live ([#1418](https://github.com/nimbus-agent/Nimbus/issues/1418)) ([0c52e96](https://github.com/nimbus-agent/Nimbus/commit/0c52e9661282299c9927f0689c6a49bbeb0c56f6))
+
 ## [7.4.0](https://github.com/nimbus-agent/Nimbus/compare/v7.3.0...v7.4.0) (2026-08-31)
 
 
