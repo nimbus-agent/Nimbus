@@ -115,7 +115,13 @@ function ownerCountsMetadata(ranked: ReturnType<typeof rankOwners>): {
   };
 }
 
-function fileExternalId(root: string, path: string): string {
+/**
+ * The `source_file` external id. EXPORTED because `resolveFileByRemote` must build the
+ * same string to look one up, and a second formatter is a second thing to keep in step —
+ * `syncCodeSymbolGraph` already builds this byte-identically and the convergence is
+ * deliberate (see `collectFileScopeForRoot`).
+ */
+export function fileExternalId(root: string, path: string): string {
   return `file:${root}:${path}`;
 }
 function dirExternalId(root: string, path: string): string {
