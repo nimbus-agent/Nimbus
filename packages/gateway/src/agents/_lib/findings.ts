@@ -36,6 +36,7 @@ export type {
   WhyBrief,
   WhyChangeSubject,
   WhyFinding,
+  WhyItemSubject,
   WhyLane,
   WhyPeek,
   WhySubject,

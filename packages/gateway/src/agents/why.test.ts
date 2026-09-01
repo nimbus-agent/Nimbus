@@ -854,3 +854,122 @@ describe("runWhy — the prUrl arm", () => {
     ).toBe(false);
   });
 });
+
+describe("runWhy — the itemUrl arm", () => {
+  const ISSUE_URL = "https://acme.atlassian.net/browse/PLAT-9";
+
+  /** A Jira issue. `upsertIndexedItem` writes the graph entity for `type: "issue"` itself. */
+  function seedIssue(db: Database): void {
+    const t = Date.now();
+    upsertIndexedItem(db, {
+      service: "jira",
+      type: "issue",
+      externalId: "PLAT-9",
+      title: "Checkout times out",
+      bodyPreview: "",
+      url: ISSUE_URL,
+      modifiedAt: t,
+      syncedAt: t,
+      metadata: { number: 9 },
+    });
+  }
+
+  test("names the item, and leaves the other two subjects alone", async () => {
+    const db = freshDb();
+    seedIssue(db);
+
+    const brief = await runWhy(
+      { itemUrl: ISSUE_URL },
+      { db, roots: [], notify: () => {}, sessionId: "why-item-1" },
+    );
+
+    expect(brief.itemSubject?.title).toBe("Checkout times out");
+    expect(brief.itemSubject?.service).toBe("jira");
+    expect(brief.itemSubject?.type).toBe("issue");
+    expect(brief.itemSubject?.number).toBe(9);
+    expect(brief.itemSubject?.entityId).toBeTruthy();
+    expect(brief.subject).toBeNull();
+    expect("changeSubject" in brief).toBe(false);
+    expect(brief.query).toEqual({ ref: ISSUE_URL, line: null });
+  });
+
+  test("a miss returns a null itemSubject, not a failure", async () => {
+    const db = freshDb();
+    const brief = await runWhy(
+      { itemUrl: "https://acme.atlassian.net/browse/NOPE-1" },
+      { db, roots: [], notify: () => {}, sessionId: "why-item-2" },
+    );
+    expect(brief.kind).toBe("why");
+    expect(brief.itemSubject).toBeNull();
+    expect(brief.subject).toBeNull();
+  });
+
+  // The bound this arm is scoped by. A Confluence page is `type: "page"`, which appears in
+  // neither ITEM_LINKED_ENTITY_TYPES nor GRAPH_SYNC_BY_TYPE, so `syncGraphFromIndexedItem`
+  // writes no entity for it — and every lane here answers from graph edges. Recorded as a
+  // test so the exclusion reads as a decision rather than an omission someone later "fixes".
+  test("an indexed page resolves by URL but has no graph entity, so it is a miss", async () => {
+    const db = freshDb();
+    const t = Date.now();
+    const pageUrl = "https://acme.atlassian.net/wiki/spaces/ENG/pages/1/Runbook";
+    upsertIndexedItem(db, {
+      service: "confluence",
+      type: "page",
+      externalId: "1",
+      title: "Checkout runbook",
+      bodyPreview: "",
+      url: pageUrl,
+      modifiedAt: t,
+      syncedAt: t,
+      metadata: {},
+    });
+
+    // It really is indexed — the miss below is about the graph, not the index.
+    expect(
+      db.query("SELECT COUNT(*) AS n FROM item WHERE type = 'page'").get() as { n: number },
+    ).toEqual({ n: 1 });
+
+    const brief = await runWhy(
+      { itemUrl: pageUrl },
+      { db, roots: [], notify: () => {}, sessionId: "why-item-3" },
+    );
+    expect(brief.itemSubject).toBeNull();
+    expect(brief.findings).toEqual([]);
+  });
+
+  test("the file/line lanes are silent on an item, not gapped", async () => {
+    const db = freshDb();
+    seedIssue(db);
+
+    const brief = await runWhy(
+      { itemUrl: ISSUE_URL },
+      { db, roots: [], notify: () => {}, sessionId: "why-item-4" },
+    );
+
+    // Same suppression the prUrl arm gets, and for the same reason: neither question
+    // ever had a file subject, so reporting one as missing would invent a gap.
+    expect(
+      brief.gaps.some(
+        (g) =>
+          g.detail === "Cannot anchor authorship: no resolvable file/line subject for this ref.",
+      ),
+    ).toBe(false);
+    const lanes = new Set(brief.findings.map((f) => f.lane));
+    expect(lanes.has("authorship")).toBe(false);
+    expect(lanes.has("downstream")).toBe(false);
+  });
+
+  test("the ref and prUrl arms leave itemSubject absent", async () => {
+    const db = freshDb();
+    const refBrief = await runWhy({ ref: refAt(12) }, ctxFor(db));
+    // Absent, not present-and-undefined — the same distinction the changeSubject
+    // spread preserves, under `exactOptionalPropertyTypes`.
+    expect("itemSubject" in refBrief).toBe(false);
+
+    const prBrief = await runWhy(
+      { prUrl: "https://github.com/acme/web/pull/482" },
+      { db, roots: [], notify: () => {}, sessionId: "why-item-5" },
+    );
+    expect("itemSubject" in prBrief).toBe(false);
+  });
+});
