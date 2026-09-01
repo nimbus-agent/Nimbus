@@ -36,6 +36,7 @@ import { recordAgentBriefEgress } from "../egress/agent-brief-egress.ts";
 import { egressSourceTypeForClientKind } from "../egress/egress-bearing-kinds.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
@@ -268,19 +269,73 @@ function parseNamespaces(p: { namespace?: unknown; namespaces?: unknown }): stri
   return out;
 }
 
-function requireFileParam(params: unknown): { file: string; namespaces: string[] } {
+/**
+ * A file subject, from either shape a caller can name one in.
+ *
+ * `{ file }` is a LOCAL path and stays exactly as it was — the terminal surface knows the
+ * reader's filesystem. `{ service, repo, refAndPath }` is a FORGE coordinate, which is all
+ * a browser has, and is resolved against the reader's checkout by
+ * `resolveFileByRemote` before any agent sees it. The five agents therefore keep taking a
+ * local path and are unchanged.
+ */
+function requireFileParam(db: Database, params: unknown): { file: string; namespaces: string[] } {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "requires { file: string }");
+    throw new AgentsRpcError(-32602, "requires { file: string } or { service, repo, refAndPath }");
   }
-  const p = params as { file?: unknown; namespace?: unknown; namespaces?: unknown };
+  const p = params as {
+    file?: unknown;
+    service?: unknown;
+    repo?: unknown;
+    refAndPath?: unknown;
+    namespace?: unknown;
+    namespaces?: unknown;
+  };
+
+  // `namespaces` is read from the ORIGINAL params on both shapes, so the forge arm cannot
+  // silently acquire federation fan-out that the local arm would have had to ask for.
+  const namespaces = parseNamespaces(p);
+
+  if (p.refAndPath !== undefined || p.repo !== undefined || p.service !== undefined) {
+    if (p.file !== undefined) {
+      throw new AgentsRpcError(
+        -32602,
+        "{ file } and { service, repo, refAndPath } are mutually exclusive — pass one",
+      );
+    }
+    const service = requireForgeField(p.service, "service");
+    const repo = requireForgeField(p.repo, "repo");
+    const refAndPath = requireForgeField(p.refAndPath, "refAndPath");
+    const resolved = resolveFileByRemote(db, { service, repo, refAndPath });
+    if (!resolved.ok) {
+      // The typed reason reaches the caller in the message, because the client renders a
+      // different sentence for each: "no local checkout of this repo" is permanent and
+      // unactionable from the page, "that path is not indexed" is neither.
+      throw new AgentsRpcError(-32602, `${resolved.reason}: \`${repo}\` — no file to answer about`);
+    }
+    return { file: resolved.path, namespaces };
+  }
+
   if (typeof p.file !== "string") {
-    throw new AgentsRpcError(-32602, "requires { file: string }");
+    throw new AgentsRpcError(-32602, "requires { file: string } or { service, repo, refAndPath }");
   }
   const trimmed = p.file.trim();
   if (trimmed.length < MIN_FILE_LEN || trimmed.length > MAX_FILE_LEN) {
     throw new AgentsRpcError(-32602, `file must be ${MIN_FILE_LEN}..${MAX_FILE_LEN} chars`);
   }
-  return { file: trimmed, namespaces: parseNamespaces(p) };
+  return { file: trimmed, namespaces };
+}
+
+/** One forge-coordinate field: a non-empty string within the same bounds a path gets. */
+function requireForgeField(value: unknown, name: string): string {
+  if (typeof value !== "string") {
+    throw new AgentsRpcError(-32602, `${name} must be a string`);
+  }
+  // Measured AFTER trim, on the normalised value — never on the caller's raw string.
+  const trimmed = value.trim();
+  if (trimmed.length < MIN_FILE_LEN || trimmed.length > MAX_FILE_LEN) {
+    throw new AgentsRpcError(-32602, `${name} must be ${MIN_FILE_LEN}..${MAX_FILE_LEN} chars`);
+  }
+  return trimmed;
 }
 
 function requireHuddleParams(params: unknown): { sinceMs?: number; namespaces: string[] } {
@@ -362,12 +417,12 @@ async function handleCatchup(params: unknown, ctx: AgentsRpcContext): Promise<un
 }
 
 async function handleGhost(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
-  const input = requireFileParam(params);
+  const input = requireFileParam(ctx.db, params);
   return await emitGhostBrief(input, federatedAgentBase(ctx, newSessionId("ghost")));
 }
 
 async function handleConflicts(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
-  const input = requireFileParam(params);
+  const input = requireFileParam(ctx.db, params);
   return await emitConflictsBrief(input, federatedAgentBase(ctx, newSessionId("conflicts")));
 }
 
