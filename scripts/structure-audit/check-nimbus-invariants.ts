@@ -983,12 +983,72 @@ export function checkActuationConfinement(files: readonly FileEntry[]): Violatio
   return out;
 }
 
-// D26(b) (I35): the browser DRIVER may be imported only under `computer-use/cu-lanes/`. Confining
-// the primitive alone does not carry the invariant — a new file could construct its own
-// BrowserContext and call page.click() directly, reaching the host without passing the gate. Both
-// the static and the dynamic import forms are checked, matching D22(d).
+// D26(b) (I35): the browser-driving CAPABILITY may live only under `computer-use/cu-lanes/`.
+// Confining the actuation primitive alone does not carry the invariant — a new file could open its
+// own channel to a browser and dispatch clicks directly, reaching the host without passing the
+// gate's envelope check, classifier, consent round-trip or audit append.
+//
+// TWO patterns, because the library check ALONE was the wrong guard for the driver that shipped.
+// It matched `playwright`/`playwright-core` only, and the real driver is raw CDP over a WebSocket
+// with no dependency at all — a file opening its own CDP socket passed this rule silently, which
+// was disclosed in `SECURITY-INVARIANTS.md` and is now closed:
+//
+//   1. `D26_DRIVER_LIB_RE` — importing a browser-automation library, static or dynamic form
+//      (matching D22(d)). Kept and widened past the one library this repo tried and rejected: the
+//      rule should not have to be re-widened the day someone adds `puppeteer`.
+//   2. `D26_CDP_METHOD_RE` — naming a CDP `Domain.method` string literal (`"Page.navigate"`,
+//      `"Input.dispatchMouseEvent"`, `"Runtime.evaluate"`, …). This is the one that actually
+//      catches "a new file opens a raw socket and clicks", because a CDP client cannot do anything
+//      WITHOUT naming a protocol method, whatever transport it reaches the browser over. Verified
+//      to have ZERO matches across `packages/gateway/src`, `packages/cli/src` and `scripts/`
+//      outside `cu-lanes/`, so the false-positive rate is not merely low, it is measured.
 const D26_DRIVER_DIR = "packages/gateway/src/computer-use/cu-lanes/";
-const D26_DRIVER_RE = /(?:from\s*|import\s*\(\s*)["']playwright(?:-core)?["']/;
+const D26_DRIVER_LIB_RE =
+  /(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'](?:playwright(?:-core)?|puppeteer(?:-core)?|chrome-remote-interface|selenium-webdriver|chrome-launcher)["']/;
+const D26_CDP_METHOD_RE =
+  /["'`](?:Page|DOM|DOMDebugger|Runtime|Input|Target|Fetch|Network|Browser|Emulation|Security|Storage|Overlay|Accessibility)\.[A-Za-z][A-Za-z0-9]*["'`]/;
+
+// D26(c) (I35): `openBrowserLane` — the LANE CONSTRUCTOR — may be named only by its own definition
+// file and by the single wiring site that injects it into `CuGateDeps.openLane`.
+//
+// (b) confines the driver capability to `cu-lanes/`, but a wiring layer has to reach into that
+// directory once to hand the constructor to the gate, and that one legitimate import is enough for
+// a second, illegitimate one to hide beside it: any file importing `openBrowserLane` gets a live
+// `BrowserLane` and can call `lane.click()` on it, with no envelope, no classification, no consent
+// and no audit row — while (a) sees no `performActuation(` and (b) sees no driver capability,
+// because the capability arrived as a function value rather than as protocol text.
+//
+// Exactly the shape D22(f) uses for `wrapLedgeredEmbedder` and its three construction sites, and
+// the counterpart of the `CuRunDeps` split in `cu-gate.ts` — that split removes the constructor
+// from the deps object the model-facing tool layer holds; this rule removes it from every module
+// that could import it directly. Test files are exempt.
+const D26_LANE_CONSTRUCTOR = "openBrowserLane";
+const D26_LANE_CONSTRUCTOR_ALLOWED: readonly string[] = [
+  "packages/gateway/src/computer-use/cu-lanes/browser.ts", // the definition
+  "packages/gateway/src/platform/assemble.ts", // the sole production wiring site
+];
+
+function checkLaneConstructorConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const re = new RegExp(`\\b${D26_LANE_CONSTRUCTOR}\\b`);
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (D26_LANE_CONSTRUCTOR_ALLOWED.includes(f.relPath)) continue;
+    const stripped = stripComments(f.contents).split("\n");
+    const original = f.contents.split("\n");
+    for (let i = 0; i < stripped.length; i++) {
+      if (re.test(stripped[i] ?? "")) {
+        out.push({
+          rule: "D26-lane-constructor",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (original[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
 
 export function checkDriverImportConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -998,7 +1058,8 @@ export function checkDriverImportConfinement(files: readonly FileEntry[]): Viola
     const stripped = stripComments(f.contents).split("\n");
     const original = f.contents.split("\n");
     for (let i = 0; i < stripped.length; i++) {
-      if (D26_DRIVER_RE.test(stripped[i] ?? "")) {
+      const line = stripped[i] ?? "";
+      if (D26_DRIVER_LIB_RE.test(line) || D26_CDP_METHOD_RE.test(line)) {
         out.push({
           rule: "D26-driver-import",
           file: f.relPath,
@@ -1008,6 +1069,7 @@ export function checkDriverImportConfinement(files: readonly FileEntry[]): Viola
       }
     }
   }
+  out.push(...checkLaneConstructorConfinement(files));
   return out;
 }
 
@@ -1555,7 +1617,7 @@ export const RULE_ANCHORS: readonly string[] = [
   // D26(a) (I35) — anchored on the actuation primitive's own home, a file the rule SCANS (it is
   // on the allow-list, so it is read and then permitted) rather than on cu-gate.ts, the other
   // allowed caller. Same shape as the D23 anchor above. D26(b) has no anchor: its confined
-  // directory, `computer-use/cu-lanes/`, does not exist yet (the browser driver is deferred), so
+  // directory, `computer-use/cu-lanes/`, now holds the raw-CDP driver, so
   // there is no allowed file on disk to point at — see the rule's own comment.
   "packages/gateway/src/computer-use/cu-actuate.ts",
 ];
@@ -1764,7 +1826,9 @@ async function run(): Promise<void> {
     const driverImportViolations = checkDriverImportConfinement(files);
     for (const e of driverImportViolations) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D26 browser driver imported outside computer-use/cu-lanes/ — a second path to the host that never passes the I35 gate: ${e.snippet}`,
+        e.rule === "D26-lane-constructor"
+          ? `::error file=${e.file},line=${e.line}::D26(c) openBrowserLane named outside cu-lanes/browser.ts and platform/assemble.ts — a live BrowserLane obtained here can be clicked with no envelope, classification, consent or audit row (I35): ${e.snippet}`
+          : `::error file=${e.file},line=${e.line}::D26(b) browser-driving capability (automation library import, or a CDP Domain.method literal) outside computer-use/cu-lanes/ — a second path to the host that never passes the I35 gate: ${e.snippet}`,
       );
     }
     if (driverImportViolations.length > 0) exit = 1;

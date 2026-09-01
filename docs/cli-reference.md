@@ -1227,18 +1227,30 @@ lane, the **full** origin lists, the action budget, the wall-clock budget,
 never elided or summarised) and `computer.actionRequest` (one per
 `actuating` action — a clearly labelled **gateway-observed fact** alongside
 the model's own **untrusted claim** about its intent), and then watches the
-session's action count until it closes. It does not drive any action itself:
-`computer.act` has no production caller anywhere in this build (see below).
+session's action count until it closes. It does not drive any action itself,
+and that is by design rather than a gap: `computer.act` is driven from inside
+the gateway by the model-callable browser tools, which exist only while a
+session is live.
 
-**`ERR_CU_NO_BROWSER` is the furthest a FULLY-CONFIGURED session can get today — there is no local
-fix.** The browser driver does not exist yet: `playwright-core` fails a `bun build --compile` gate
-and is being re-planned against raw CDP over a WebSocket, so `cu-gate.ts` refuses every session
-before consent once it reaches that point. No browser install or configuration change makes this
-succeed — the gate, classifier, envelope, taint latch, IPC surface and audit trail are fully wired
-and tested, over a path nothing can currently traverse. It is not, however, the ONLY refusal a real
-user can reach: with the shipped defaults (`enabled = false`, `allowed_lanes = []`) a session
-refuses with `ERR_CU_DISABLED` first, then `ERR_CU_LANE_NOT_ALLOWED`, then
-`ERR_CU_SANDBOX_DEGRADED` — before `ERR_CU_NO_BROWSER` is ever reached.
+**Ctrl-C closes the session on the GATEWAY, and exits `130`.** The session
+belongs to the gateway, not to this process, so an interrupt asks the gateway
+to close it rather than merely exiting — otherwise a live headless browser
+would sit inside an approved envelope, unwatched, until its wall-clock ceiling
+expired. A second Ctrl-C stops waiting and prints the recovery command
+(`nimbus computer close <id>`) rather than blocking your terminal on a close
+that is not landing.
+
+**Refusals you can actually hit, in the order you hit them.** With the shipped
+defaults (`enabled = false`, `allowed_lanes = []`) a session refuses with
+`ERR_CU_DISABLED` first, then `ERR_CU_LANE_NOT_ALLOWED`. Past those,
+`ERR_CU_UNSAFE_LAUNCH` means the launch policy for this session would have been
+under-confined (for example a `browser_profile_dir` that is empty or relative —
+Chromium with no `--user-data-dir` would run against your real browser profile),
+and `ERR_CU_NO_BROWSER` means no Chrome, Chromium or Edge was found: install one,
+or point `NIMBUS_CHROMIUM_PATH` at an absolute path to a non-standard install.
+Unlike before 2026-08-31, `ERR_CU_NO_BROWSER` now has a local fix — the raw-CDP
+driver shipped, so a machine with a Chromium-family browser can open a real
+session.
 
 **Exit codes.**
 
@@ -1248,7 +1260,8 @@ refuses with `ERR_CU_DISABLED` first, then `ERR_CU_LANE_NOT_ALLOWED`, then
 | `110` | The owner denied the session envelope. |
 | `112` | Terminated: action budget exhausted. |
 | `113` | Terminated: wall-clock budget exhausted. |
-| `127` | Refused — bad arguments, disabled by config/org policy, an unconfined sandbox, or (today, almost always) `ERR_CU_NO_BROWSER`. Shared with `nimbus exec`'s `refused` code: same meaning, different command, deliberately. |
+| `127` | Refused — bad arguments, disabled by config/org policy, an under-confined launch policy, or no Chromium-family browser found. Shared with `nimbus exec`'s `refused` code: same meaning, different command, deliberately. |
+| `130` | Interrupted (Ctrl-C). `128 + SIGINT`, the POSIX convention — the session was asked to close cleanly on the gateway. |
 
 **No pixels ever reach disk.** A screenshot capture is BLAKE3-digested and
 discarded in the same expression; only the digest is recorded. No image

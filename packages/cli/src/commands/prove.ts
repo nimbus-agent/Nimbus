@@ -37,15 +37,26 @@ type ProveResult = {
  * are forbidden), so this map is a hand-maintained mirror and drifts silently if you forget.
  */
 export const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
-  // Latent -- always "none" on this binary. The appender EXISTS and is tested
-  // (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`, a decorator over the driven
-  // `BrowserContext`, one row per (origin, verdict) on a network request), but nothing constructs a
-  // `BrowserContext` in production: the computer-use browser driver is deferred (re-planned against
-  // raw CDP after `playwright-core` failed a `bun build --compile` gate; see invariant I35). Named
-  // here anyway, same as `peer`/`session` below, so this class never prints as a bare identifier
-  // once it stops being latent -- and so raising it back to "per-run" is never the FIRST place this
-  // trap could resurface (a class going non-none with no label here already reached production once).
-  browser: "outbound requests made by the computer-use browser lane",
+  // LIVE as of the raw-CDP browser driver landing -- no longer latent. The appender
+  // (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`) decorates the CDP-backed context
+  // that `computer-use/cu-lanes/browser.ts` constructs, appending one row per (destination origin,
+  // verdict) BEFORE the request is allowed to proceed.
+  //
+  // "requests" plural against "per-run" granularity is deliberate and is why the label says
+  // "origins contacted" rather than a count of calls: one row stands for every request to that
+  // origin under that verdict, so this class NAMES where the browser went and does not measure how
+  // often. Read a zero as "no browser lane made a request" -- on a stock install that is because
+  // `[computer_use]` is off and no lane exists, which is the same claim, not a weaker one.
+  //
+  // TWO bounds, both narrower than the label alone would suggest. (1) Section 3.5.1's: `script`
+  // and `image` subresources load from ANY origin (blocking either breaks the real web), so a
+  // beacon built into a page's markup still leaves -- it just leaves with a row naming its origin,
+  // which is the whole mitigation. (2) The class covers the lane's PAGE traffic, where CDP `Fetch`
+  // interception is scoped; Chrome's OWN browser-process chatter (variations, Safe Browsing,
+  // reliability beacons) originates outside any page target and is neither gated nor rowed --
+  // observed on a CI runner, with the quieting flags already set. Hence "the page" in the label:
+  // a zero here means the lane's page contacted nobody, not that the browser process did.
+  browser: "origins the computer-use browser lane's page contacted",
   // Unlike `mcp` and `http`, this class is NOT narrower than its name: it covers EVERY outbound
   // post the gateway makes to Slack/Teams — operational replies, HITL approval cards, tribal
   // suggestions and agent briefs — because the appender decorates the single post closure they all

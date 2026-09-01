@@ -34,7 +34,7 @@ const NONE: CoverageVector = {
  * `browser` heads the string because the array is key-sorted and `browser` < `chatops`.
  */
 const CANONICAL =
-  "browser=none;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call";
+  "browser=per-run;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call";
 
 /** The six-class string every binary before the `http` class wrote. See the blackout test below. */
 const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
@@ -56,12 +56,13 @@ describe("coverage vector", () => {
     // locally-run Mastra model, or a local embedder each append nothing by design, not as a gap.
     // Every other class stays `none` until its appender lands — raising an entry on the strength of
     // an unwired seam would be a claim with no code behind it, which is the exact defect this vector
-    // prevents. `browser` is the worked example: its appender (`egress/browser-egress.ts`'s
-    // `wrapLedgeredBrowserContext`) is written and tested, but has NO production caller yet (the
-    // computer-use browser driver that would construct a `BrowserContext` is deferred, invariant
-    // I35), so it stays `"none"` here too, not `"per-run"`, until that driver lands and calls it.
+    // prevents. `browser` is the worked example OF THAT RULE BEING FOLLOWED, in both directions: it
+    // was raised early once, on the reasoning that its driver's commit would follow immediately, and
+    // was restored to `"none"` when that driver was re-planned mid-slice. It is `"per-run"` now
+    // because `egress/browser-egress.ts`'s `wrapLedgeredBrowserContext` finally has a production
+    // caller — `computer-use/cu-lanes/browser.ts`'s `openBrowserLane` — landed in the same commit.
     expect(THIS_BINARY_COVERAGE).toEqual({
-      browser: "none",
+      browser: "per-run",
       chatops: "per-call",
       task: "per-call",
       mcp: "per-call",
@@ -171,7 +172,7 @@ describe("coverage vector", () => {
       peer: "per-call",
     };
     expect(weakestCoverage([rich, THIS_BINARY_COVERAGE])).toEqual({
-      browser: "none", // this binary's none is weaker than rich's per-call
+      browser: "per-run", // this binary's per-run is weaker than rich's per-call
       chatops: "per-call", // both per-call
       task: "per-call", // both per-call
       mcp: "per-call", // both per-call
@@ -203,7 +204,7 @@ describe("chatops coverage class", () => {
 
   test("serialize puts chatops right after browser and parse round-trips it", () => {
     const s = serializeCoverage(THIS_BINARY_COVERAGE);
-    expect(s.startsWith("browser=none;chatops=per-call;")).toBe(true);
+    expect(s.startsWith("browser=per-run;chatops=per-call;")).toBe(true);
     expect(parseCoverage(s)).toEqual(THIS_BINARY_COVERAGE);
   });
 
@@ -217,13 +218,16 @@ describe("chatops coverage class", () => {
 });
 
 describe("browser coverage class", () => {
-  test("browser is a coverage class, currently at none — its appender has no production caller yet", () => {
-    // Written and tested (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`), but nothing
-    // constructs a `BrowserContext` in production: the computer-use browser driver is deferred
-    // (invariant I35). Raising this to "per-run" ahead of a real caller would be exactly the
-    // defect this vector's own preamble warns against for every other class.
+  test("browser is a coverage class at per-run — raised WITH its production caller, not ahead of it", () => {
+    // `egress/browser-egress.ts`'s `wrapLedgeredBrowserContext` gained its production caller —
+    // `computer-use/cu-lanes/browser.ts`'s `openBrowserLane` — in the same commit this entry rose
+    // from "none". That ordering is the rule this vector's own preamble states for every class, and
+    // this entry has already broken it once: it was raised early on the reasoning that the driver's
+    // commit would follow immediately, and was restored to "none" when the driver was re-planned
+    // mid-slice. `per-run`, not `per-call`: one row per (destination origin, verdict) pair, so a row
+    // NAMES a host contacted rather than counting requests to it.
     expect(COVERAGE_CLASSES).toContain("browser");
-    expect(THIS_BINARY_COVERAGE.browser).toBe("none");
+    expect(THIS_BINARY_COVERAGE.browser).toBe("per-run");
   });
 
   test("browser sorts FIRST — membership order IS the wire format", () => {
@@ -235,7 +239,7 @@ describe("browser coverage class", () => {
   });
 
   test("serializeCoverage leads with browser", () => {
-    expect(serializeCoverage(THIS_BINARY_COVERAGE).startsWith("browser=none;")).toBe(true);
+    expect(serializeCoverage(THIS_BINARY_COVERAGE).startsWith("browser=per-run;")).toBe(true);
   });
 
   test("ALL_NONE_COVERAGE carries browser too", () => {

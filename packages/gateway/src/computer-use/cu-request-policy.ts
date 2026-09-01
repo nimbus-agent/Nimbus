@@ -56,6 +56,73 @@ const PASSIVE: ReadonlySet<CuResourceType> = new Set<CuResourceType>([
 ]);
 
 /**
+ * CDP `Network.ResourceType` → {@link CuResourceType}, keyed LOWERCASED so both spellings this
+ * codebase sees resolve through one table.
+ *
+ * This mapping is not cosmetic, and its absence was a live defect rather than a latent one. The
+ * raw-CDP driver's `Fetch.requestPaused` reports `resourceType` in the protocol's **PascalCase**
+ * vocabulary (`"Document"`, `"XHR"`, `"Image"`, `"Other"` — verified against a real Chrome, not
+ * inferred from the protocol docs), while this module's union was written in `playwright-core`'s
+ * lowercase/snake vocabulary, which is what the driver was originally planned against. An
+ * unguarded `as CuResourceType` cast across that boundary made EVERY live type miss both `PASSIVE`
+ * and `SCRIPT_INITIATED`, so every stylesheet, image, script and font fell to the gated branch —
+ * and so did the page's own `Document`. Fail-closed, and a browser lane that could not render the
+ * origin its owner had just approved.
+ *
+ * DELIBERATELY UNMAPPED, so they return `null` and the caller gates them: `Ping`
+ * (`navigator.sendBeacon` / `<a ping>`), `Preflight`, `Prefetch`, `Manifest`, `SignedExchange`,
+ * `CSPViolationReport`, `FedCM`, `TextTrack`. `Ping` is the one that matters — it is a
+ * fire-and-forget outbound POST, i.e. exactly the convenient exfiltration channel § 3.5.1 exists
+ * to close, and folding it into a `PASSIVE` member "because it is a subresource" would reopen it.
+ * `TextTrack` IS passive in Playwright's model, and gating it costs subtitles on a `<track>`
+ * element; that is the accepted price of an allow-list over a deny-list.
+ *
+ * `sub_frame`/`subframe` are kept even though CDP emits neither — a sub-frame document arrives as
+ * plain `Document` — because `decideRequest` treats `sub_frame` exactly as strictly as `document`,
+ * so nothing is weakened by that collapse, and dropping the keys would silently break this
+ * module's own established vocabulary and its tests.
+ */
+const CDP_RESOURCE_TYPES: ReadonlyMap<string, CuResourceType> = new Map(
+  Object.entries({
+    document: "document",
+    sub_frame: "sub_frame",
+    subframe: "sub_frame",
+    stylesheet: "stylesheet",
+    image: "image",
+    media: "media",
+    font: "font",
+    script: "script",
+    xhr: "xhr",
+    fetch: "fetch",
+    eventsource: "eventsource",
+    websocket: "websocket",
+    other: "other",
+  } satisfies Record<string, CuResourceType>),
+);
+
+/**
+ * Runtime guard over {@link CuResourceType}, mirroring the IPC boundary's own `isCuActionKind`
+ * convention rather than the `as CuResourceType` cast it replaced.
+ *
+ * Backed by a `Map`, NOT an object literal, and that is load-bearing rather than stylistic: an
+ * object literal inherits `Object.prototype`, so `CDP_RESOURCE_TYPES["constructor"]` evaluated to
+ * `Object` and `["toString"]` to a function — values `?? null` does not catch, so this guard
+ * returned a non-`CuResourceType` instead of `null` and the caller's `?? "other"` fallback was
+ * bypassed. Downstream it still failed closed (`PASSIVE.has(<function>)` is false, so the request
+ * was gated), and CDP — not a page — chooses the string, so it was not reachable as an attack. But
+ * a guard whose whole contract is "returns null, never a guess" must not have keys for which that
+ * is untrue. Do not "simplify" this back to a record. Found in review.
+ *
+ * Returns `null` — never a guess — for a value this policy has never heard of. The caller must
+ * fail closed on that `null` (substituting `"other"`, which `decideRequest` places in the GATED
+ * union branch) and must keep the RAW string for the ledger, so an operator reading a blocked row
+ * sees what the protocol actually said rather than the word this module substituted for it.
+ */
+export function toCuResourceType(raw: string): CuResourceType | null {
+  return CDP_RESOURCE_TYPES.get(raw.toLowerCase()) ?? null;
+}
+
+/**
  * Scheme + host + port. Returns JS `null` only when the input does not parse as a URL at all — the
  * caller fails closed on that `null`.
  *

@@ -64,6 +64,28 @@ export function updateSessionState(
   dbRun(db, `UPDATE cu_session SET ${sets.join(", ")} WHERE id = ?`, params);
 }
 
+export interface OpenSessionRow {
+  readonly id: string;
+  readonly lane: string;
+  readonly openedAt: number;
+}
+
+/**
+ * Every `cu_session` row still recorded as open (`closed_at IS NULL`).
+ *
+ * Read at boot by `cu-boot-reconcile.ts`. A row is durable and the gate's `liveSessions` map is
+ * not, so after a restart every previously-open row is by definition an orphan: the browser it
+ * named died with the gateway that spawned it.
+ */
+export function listOpenSessions(db: Database): OpenSessionRow[] {
+  return db
+    .query<{ id: string; lane: string; opened_at: number }, []>(
+      `SELECT id, lane, opened_at FROM cu_session WHERE closed_at IS NULL ORDER BY opened_at ASC`,
+    )
+    .all()
+    .map((r) => ({ id: r.id, lane: r.lane, openedAt: r.opened_at }));
+}
+
 export interface InsertActionInput {
   readonly id: string;
   readonly sessionId: string;

@@ -40,6 +40,7 @@ function laneStub(calls: Calls): BrowserLane {
     readText: async () => "the page text",
     domSnapshot: async () => "<html></html>",
     screenshot: async () => new Uint8Array([9, 9, 9]),
+    isAlive: () => true,
     close: async () => {},
   };
 }

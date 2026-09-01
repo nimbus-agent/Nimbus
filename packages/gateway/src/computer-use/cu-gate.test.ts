@@ -29,6 +29,12 @@ interface LaneStubOptions {
   throwOnDomSnapshotAfter?: boolean;
   /** `click`/`type`/`navigate`/`screenshot` all throw instead of actuating (C-1: the actuation stage). */
   throwOnPerformActuation?: boolean;
+  /** Drives `lane.isAlive()`. Defaults to "always alive". */
+  alive?: () => boolean;
+  /** Awaited inside `observe()`, so a test can interleave a close (or a second action) mid-flight. */
+  observeGate?: () => Promise<void>;
+  /** Called on entry to, and exit from, every actuation — records interleaving. */
+  trace?: (event: string) => void;
 }
 
 /**
@@ -57,12 +63,16 @@ function laneStub(spy: Spy, opts: LaneStubOptions = {}): BrowserLane {
   return {
     observe: async () => {
       if (opts.throwOnObserve) throw new Error("driver: observe() failed");
+      if (opts.observeGate !== undefined) await opts.observeGate();
       return node;
     },
     currentOrigin: () => "https://example.com",
     click: async () => {
+      opts.trace?.("click:start");
       if (opts.throwOnPerformActuation) throw new Error("driver: click() failed");
+      await Bun.sleep(1);
       spy.actuations += 1;
+      opts.trace?.("click:end");
     },
     type: async () => {
       if (opts.throwOnPerformActuation) throw new Error("driver: type() failed");
@@ -78,6 +88,7 @@ function laneStub(spy: Spy, opts: LaneStubOptions = {}): BrowserLane {
       if (opts.throwOnDomSnapshot) {
         throw new Error("driver: domSnapshot() failed");
       }
+      opts.trace?.(domSnapshotCalls % 2 === 1 ? "dom_before" : "dom_after");
       if (opts.throwOnDomSnapshotAfter && domSnapshotCalls === 2) {
         throw new Error(
           "driver: execution context was destroyed, most likely because of a navigation",
@@ -89,6 +100,7 @@ function laneStub(spy: Spy, opts: LaneStubOptions = {}): BrowserLane {
       if (opts.throwOnPerformActuation) throw new Error("driver: screenshot() failed");
       return new Uint8Array([1, 2, 3]);
     },
+    isAlive: () => opts.alive?.() ?? true,
     close: async () => {
       spy.closes += 1;
     },
@@ -110,7 +122,11 @@ function deps(
   const full: CuGateDeps = {
     config: { ...DEFAULT_NIMBUS_COMPUTER_USE_TOML, enabled: true, allowedLanes: ["browser"] },
     enforced: { capabilitiesDisabled: new Set<string>() },
-    runner: { canConfine: () => null },
+    buildLaunchPolicy: ({ profileDir }) => ({
+      profileDir: profileDir === "" ? "/fake/profile" : profileDir,
+      argv: ["--headless=new", "--remote-debugging-port=0", "--user-data-dir=/fake/profile"],
+    }),
+    assertLaunchable: () => null,
     requestApproval: async () => {
       spy.approvals += 1;
       return true;
@@ -166,13 +182,37 @@ describe("openSession — refusals before consent", () => {
     expect(spy.approvals).toBe(0);
   });
 
-  test("a degraded sandbox refuses and NEVER prompts", async () => {
+  test("an unsafe launch policy refuses and NEVER prompts", async () => {
     const { deps: d, spy } = deps({
-      runner: { canConfine: () => "bubblewrap missing" },
+      assertLaunchable: () => "launch argv carries --no-sandbox",
     });
     const out = await openSession({ lane: "browser", navigateOrigins: [], scriptOrigins: [] }, d);
-    expect(out.status === "refused" && out.code).toBe("ERR_CU_SANDBOX_DEGRADED");
+    expect(out.status === "refused" && out.code).toBe("ERR_CU_UNSAFE_LAUNCH");
     expect(spy.approvals).toBe(0);
+  });
+
+  test("the policy asserted before consent is the SAME OBJECT handed to openLane", async () => {
+    // Invariant I35's re-verify item 2. The pre-consent assertion is only worth anything if the
+    // object it cleared is the object that launches; a rebuilt-but-equal policy would let the two
+    // drift the moment either construction site changed.
+    const seen: { asserted: unknown; launched: unknown } = { asserted: null, launched: null };
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d } = deps(
+      {
+        assertLaunchable: (p) => {
+          seen.asserted = p;
+          return null;
+        },
+        openLane: async (opts) => {
+          seen.launched = opts.launch;
+          return laneStub(spy);
+        },
+      },
+      spy,
+    );
+    await openDefault(d);
+    expect(seen.asserted).not.toBeNull();
+    expect(seen.launched).toBe(seen.asserted as never);
   });
 
   test("an owner denial opens nothing", async () => {
@@ -1055,5 +1095,181 @@ describe("fix round 3: the restructure — booleans over stage-inference, one te
       )
       .get("id-round4-item4");
     expect(row?.closed_at).not.toBeNull();
+  });
+});
+
+describe("runAction — the lane is re-checked after every await (TOCTOU)", () => {
+  test("a close arriving while an action AWAITS approval actuates nothing", async () => {
+    // The gap this closes: `runAction` used to check liveness ONCE, then await an approval prompt
+    // a human answers — an unbounded window — and actuate on whatever came back. A
+    // `computer.sessionClose` landing in that window closed and EVICTED the session, and the
+    // actuation still went through against the lane it had just torn down.
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    let sessionId = "";
+    let d: CuGateDeps;
+    const built = deps(
+      {
+        requestApproval: async (input) => {
+          spy.approvals += 1;
+          // Only the per-ACTION prompt closes the session; the envelope prompt must still open it.
+          if (input.promptKind === "action") await closeSession(sessionId, d);
+          return true;
+        },
+      },
+      spy,
+    );
+    d = built.deps;
+    sessionId = await openDefault(d);
+    const out = await runAction({ sessionId, kind: "click", selector: "#go" }, d);
+    expect(out.outcome).toBe("terminated_target_lost");
+    expect(spy.actuations).toBe(0);
+  });
+
+  test("a lane that DIES before actuation terminates the session, and actuates nothing", async () => {
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    let alive = true;
+    const { deps: d } = deps({ openLane: async () => laneStub(spy, { alive: () => alive }) }, spy);
+    const sessionId = await openDefault(d);
+    // Dies while the owner is looking at the prompt.
+    const d2: CuGateDeps = {
+      ...d,
+      requestApproval: async () => {
+        alive = false;
+        return true;
+      },
+    };
+    const out = await runAction({ sessionId, kind: "click", selector: "#go" }, d2);
+    expect(out.outcome).toBe("terminated_target_lost");
+    expect(spy.actuations).toBe(0);
+    // TERMINATED, not merely refused: the session is evicted, so a follow-up finds no session at
+    // all rather than re-discovering the same corpse and spending another budget slot on it.
+    await expect(runAction({ sessionId, kind: "read" }, d)).rejects.toThrow(/no live session/);
+  });
+
+  test("terminated_target_lost is RECORDED, with its own termination reason", async () => {
+    // Item 10: the outcome was declared and handled but nothing ever assigned it.
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    let alive = true;
+    const { deps: d, db } = deps(
+      { openLane: async () => laneStub(spy, { alive: () => alive }) },
+      spy,
+    );
+    const sessionId = await openDefault(d);
+    const d2: CuGateDeps = {
+      ...d,
+      requestApproval: async () => {
+        alive = false;
+        return true;
+      },
+    };
+    await runAction({ sessionId, kind: "click", selector: "#go" }, d2);
+    const row = db
+      .query<{ action_json: string; hitl_status: string }, []>(
+        `SELECT action_json, hitl_status FROM audit_log WHERE action_type = 'computer.action' ORDER BY id DESC LIMIT 1`,
+      )
+      .get();
+    const payload = JSON.parse(row?.action_json as string) as Record<string, unknown>;
+    expect(payload["outcome"]).toBe("terminated_target_lost");
+    expect(String(payload["terminationReason"])).toContain("browser target");
+    expect(row?.hitl_status).toBe("rejected");
+    // And the durable session row is closed too, not just the map entry.
+    const sess = db
+      .query<{ closed_at: number | null; close_reason: string | null }, [string]>(
+        `SELECT closed_at, close_reason FROM cu_session WHERE id = ?`,
+      )
+      .get(sessionId);
+    expect(sess?.close_reason).toBe("terminated_target_lost");
+    expect(sess?.closed_at).not.toBeNull();
+  });
+
+  test("a lane that dies DURING actuation still records failed_after_approval", async () => {
+    // The owner approved and an actuation WAS attempted, so the record must say so — downgrading it
+    // to a `terminated_*` outcome would resolve `hitl_status` to `rejected` and understate what
+    // happened. The SESSION still terminates; the outcome and the teardown are separate questions.
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    let alive = true;
+    const { deps: d } = deps(
+      {
+        openLane: async () =>
+          laneStub(spy, {
+            alive: () => alive,
+            // The lane dies AS the actuation runs, not before it: `throwOnPerformActuation` makes
+            // `click()` throw, and flipping `alive` inside `trace` puts the death strictly after
+            // the pre-actuation re-check that would otherwise claim it first.
+            trace: (event) => {
+              if (event === "click:start") alive = false;
+            },
+            throwOnPerformActuation: true,
+          }),
+      },
+      spy,
+    );
+    const sessionId = await openDefault(d);
+    const out = await runAction({ sessionId, kind: "click", selector: "#go" }, d);
+    expect(out.outcome).toBe("failed_after_approval");
+  });
+});
+
+describe("runAction — concurrent actions on ONE lane are serialised", () => {
+  test("two concurrent actions never interleave dom_before / actuate / dom_after", async () => {
+    // The damage is not a race on the budget counter (`consumeAction` was always atomic) — it is
+    // that each action captures a DOM snapshot either side of its actuation, so an interleaved pair
+    // records action A's `dom_after` from a page action B had already changed. Every `cu_action`
+    // replay body on that session then describes a state that never existed.
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const trace: string[] = [];
+    const { deps: d } = deps(
+      { openLane: async () => laneStub(spy, { trace: (e) => trace.push(e) }) },
+      spy,
+    );
+    const sessionId = await openDefault(d);
+    await Promise.all([
+      runAction({ sessionId, kind: "click", selector: "#a" }, d),
+      runAction({ sessionId, kind: "click", selector: "#b" }, d),
+    ]);
+    expect(trace).toEqual([
+      "dom_before",
+      "click:start",
+      "click:end",
+      "dom_after",
+      "dom_before",
+      "click:start",
+      "click:end",
+      "dom_after",
+    ]);
+    expect(spy.actuations).toBe(2);
+  });
+
+  test("an action that THROWS still releases the lane for the next one", async () => {
+    // The outer `finally` in `runAction` is the property. Getting a test to depend on it took two
+    // tries, and the first two both passed against a deliberately broken gate:
+    //
+    //   1. A healthy lane whose first `click` succeeded — proved only the success path.
+    //   2. A lane whose `performActuation` threw — but `runActionExclusive` CATCHES that and
+    //      RETURNS `failed_after_approval`, so it still resolves normally and a success-only
+    //      release is still enough. Red-proved: moving `releaseLane()` out of the `finally` left
+    //      that version green.
+    //
+    // `runAction` only REJECTS when the audit append itself fails (I35 is fail-closed about losing
+    // a decision record), so that is what this drives: drop `audit_log`, run an action, and it
+    // throws out of `runActionExclusive` — past every `catch` inside it. If the release is not in a
+    // `finally`, the queue slot is never handed back and the NEXT action waits on a promise that
+    // never settles, so the second call below times out instead of returning.
+    const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
+    const { deps: d, db } = deps({}, spy);
+    const sessionId = await openDefault(d);
+
+    const auditDdl = db
+      .query<{ sql: string }, []>(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_log'",
+      )
+      .get()?.sql;
+    db.run("DROP TABLE audit_log");
+    await expect(runAction({ sessionId, kind: "read" }, d)).rejects.toThrow();
+
+    // Audit surface healthy again: the session is still live, and the slot must have been released.
+    db.run(auditDdl as string);
+    const second = await runAction({ sessionId, kind: "read" }, d);
+    expect(second.outcome).toBe("actuated");
   });
 });

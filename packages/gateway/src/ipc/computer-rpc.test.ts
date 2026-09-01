@@ -8,7 +8,6 @@ import type { CuGateDeps } from "../computer-use/cu-gate.ts";
 import type { BrowserLane, ObservedNode } from "../computer-use/cu-types.ts";
 import { DEFAULT_NIMBUS_COMPUTER_USE_TOML } from "../config/nimbus-toml.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { type ComputerRpcCtx, dispatchComputerRpc } from "./computer-rpc.ts";
 
 const brokers: Array<CuEnvelopeConsentBroker | CuActionConsentBroker> = [];
@@ -17,10 +16,6 @@ const brokers: Array<CuEnvelopeConsentBroker | CuActionConsentBroker> = [];
 afterEach(() => {
   for (const b of brokers.splice(0)) b.clear();
 });
-
-const inertRunner: Pick<SandboxRunner, "canConfine"> = {
-  canConfine: () => null,
-};
 
 function makeCtx(over: Partial<CuGateDeps> = {}): ComputerRpcCtx {
   const db = new Database(":memory:");
@@ -34,8 +29,12 @@ function makeCtx(over: Partial<CuGateDeps> = {}): ComputerRpcCtx {
     gateDeps: {
       config: { ...DEFAULT_NIMBUS_COMPUTER_USE_TOML, enabled: true, allowedLanes: ["browser"] },
       enforced: { capabilitiesDisabled: new Set<string>() },
-      runner: inertRunner,
       resolveBrowserPath: () => null,
+      buildLaunchPolicy: ({ profileDir }) => ({
+        profileDir: profileDir === "" ? "/fake/profile" : profileDir,
+        argv: ["--user-data-dir=/fake/profile"],
+      }),
+      assertLaunchable: () => null,
       openLane: () => {
         throw new Error("openLane should not be reached in these tests");
       },
@@ -43,7 +42,7 @@ function makeCtx(over: Partial<CuGateDeps> = {}): ComputerRpcCtx {
       now: () => 1_700_000_000_000,
       newId: () => "s1",
       requestApproval: (input) =>
-        "seq" in input
+        input.promptKind === "action"
           ? actionConsent.request(input, 5_000)
           : envelopeConsent.request(input, 5_000),
       ...over,
@@ -98,6 +97,7 @@ function makeWorkingLane(calls: LaneCalls): BrowserLane {
     },
     domSnapshot: async () => "<html></html>",
     screenshot: async () => new Uint8Array([1, 2, 3]),
+    isAlive: () => true,
     close: async () => {},
   };
 }

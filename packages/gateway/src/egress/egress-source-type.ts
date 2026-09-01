@@ -88,13 +88,14 @@
  * request; it did not, and this path never reaches `connectors.dispatch`. `chatops` is a different
  * destination class entirely.
  *
- * Like `chatops` and unlike `mcp`/`http`, this class is DESIGNED to be NOT narrower than its name:
- * once a driver exists, every request the driven browser makes is meant to pass through the one
- * decorated `BrowserContext`. That is not live today -- there is no driven browser; the computer-use
- * browser driver is deferred (invariant I35), and `wrapLedgeredBrowserContext` has no production
- * caller, which is why `COVERAGE_CLASSES`' `browser` entry stays `"none"` in `egress-coverage.ts`.
- * This paragraph describes the property this SOURCE TYPE is designed to preserve once the driver
- * lands, not a claim about what the binary observes right now.
+ * Like `chatops` and unlike `mcp`/`http`, this class is NOT narrower than its name: every request
+ * the driven browser makes passes through the one decorated context, because
+ * `cu-lanes/browser.ts`'s `openBrowserLane` enables `Fetch` interception THROUGH
+ * `wrapLedgeredBrowserContext` rather than beside it. LIVE as of the raw-CDP driver (2026-08-31):
+ * `COVERAGE_CLASSES`' `browser` entry is `"per-run"` in `egress-coverage.ts`, raised in the same
+ * commit as that caller. The bound that survives is section 3.5.1's, not this class's: `script` and
+ * `image` subresources load from any origin, so a URL-carried beacon is ROWED BY ORIGIN rather than
+ * prevented -- a count of N is a list of hosts contacted, never a count of requests.
  */
 export const EGRESS_SOURCE_TYPES = [
   "task", // gated connector action

@@ -4,6 +4,7 @@ import {
   decideRequest,
   normalizeOrigin,
   originOf,
+  toCuResourceType,
 } from "./cu-request-policy.ts";
 import type { CuBrowserTarget } from "./cu-types.ts";
 
@@ -205,5 +206,103 @@ describe("decideRequest — fail-closed", () => {
     const result = decide("other", "https://evil.com/x");
     expect(result.allow).toBe(false);
     expect(result.reason).toContain("evil.com");
+  });
+});
+
+describe("toCuResourceType — the guard that replaced an `as CuResourceType` cast", () => {
+  test("maps CDP's PascalCase onto this module's vocabulary", () => {
+    // The live defect this closed, verified against a real Chrome: `Fetch.requestPaused` reports
+    // `"Document"`, `"XHR"`, `"Image"`, `"Other"`. Under the old cast every one of them missed BOTH
+    // policy sets, so the page's own document fell to the gated branch and the lane rendered
+    // nothing at the approved origin.
+    expect(toCuResourceType("Document")).toBe("document");
+    expect(toCuResourceType("XHR")).toBe("xhr");
+    expect(toCuResourceType("Image")).toBe("image");
+    expect(toCuResourceType("Stylesheet")).toBe("stylesheet");
+    expect(toCuResourceType("Script")).toBe("script");
+    expect(toCuResourceType("Font")).toBe("font");
+    expect(toCuResourceType("Media")).toBe("media");
+    expect(toCuResourceType("Fetch")).toBe("fetch");
+    expect(toCuResourceType("EventSource")).toBe("eventsource");
+    expect(toCuResourceType("WebSocket")).toBe("websocket");
+    expect(toCuResourceType("Other")).toBe("other");
+  });
+
+  test("still accepts the lowercase spelling this module was written in", () => {
+    for (const t of ["document", "sub_frame", "xhr", "fetch", "image", "script"] as const) {
+      expect(toCuResourceType(t)).toBe(t);
+    }
+  });
+
+  test("a CDP SubFrame collapses onto sub_frame, which is gated exactly as strictly", () => {
+    // CDP never emits either spelling — a sub-frame document arrives as plain `Document` — but
+    // `decideRequest` treats `sub_frame` identically to `document`, so nothing is weakened.
+    expect(toCuResourceType("SubFrame")).toBe("sub_frame");
+    expect(
+      decideRequest({
+        resourceType: "sub_frame",
+        url: "https://evil.com/x",
+        target: { navigateOrigins: ["https://ok.com"], scriptOrigins: [] },
+      }).allow,
+    ).toBe(false);
+  });
+
+  test.each([
+    ["Ping"],
+    ["Preflight"],
+    ["Prefetch"],
+    ["Manifest"],
+    ["SignedExchange"],
+    ["CSPViolationReport"],
+    ["FedCM"],
+    ["TextTrack"],
+    ["SomethingChromeAddsIn2027"],
+  ])("%s is DELIBERATELY unmapped, so the caller gates it", (raw) => {
+    expect(toCuResourceType(raw as string)).toBeNull();
+  });
+
+  test("an unmapped type, substituted with `other`, is REFUSED to an unapproved origin", () => {
+    // `Ping` is the one that matters: `navigator.sendBeacon` / `<a ping>` is a fire-and-forget
+    // outbound POST — exactly the convenient exfiltration channel section 3.5.1 exists to close.
+    // Folding it into a PASSIVE member "because it is a subresource" would reopen it.
+    const resourceType = toCuResourceType("Ping") ?? "other";
+    expect(
+      decideRequest({
+        resourceType,
+        url: "https://evil.com/beacon",
+        target: { navigateOrigins: ["https://ok.com"], scriptOrigins: [] },
+      }).allow,
+    ).toBe(false);
+  });
+
+  test("the guard NEVER guesses — an empty or nonsense value is null, not a fallback", () => {
+    expect(toCuResourceType("")).toBeNull();
+    expect(toCuResourceType("   ")).toBeNull();
+    expect(toCuResourceType("imag")).toBeNull();
+  });
+
+  test("Object.prototype keys are null, not inherited members", () => {
+    // Found in review. The table was an object literal, so `["constructor"]` resolved to `Object`
+    // and `["toString"]` to a function — neither caught by `?? null`, so this guard returned a
+    // non-`CuResourceType` and the caller's `?? "other"` fallback was bypassed. It still failed
+    // closed downstream (`PASSIVE.has(<function>)` is false) and CDP, not a page, picks the string,
+    // so it was never exploitable — but a guard contracted to "return null, never a guess" must not
+    // have keys for which that is false. Backed by a `Map` now; these pin it.
+    for (const key of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+      expect(toCuResourceType(key)).toBeNull();
+    }
+  });
+
+  test("an Object.prototype key still reaches the GATED branch through the caller's fallback", () => {
+    // The property that actually matters: whatever the guard is handed, an unrecognised type is
+    // refused to an unapproved origin.
+    const resourceType = toCuResourceType("toString") ?? "other";
+    expect(
+      decideRequest({
+        resourceType,
+        url: "https://evil.com/x",
+        target: { navigateOrigins: ["https://ok.com"], scriptOrigins: [] },
+      }).allow,
+    ).toBe(false);
   });
 });

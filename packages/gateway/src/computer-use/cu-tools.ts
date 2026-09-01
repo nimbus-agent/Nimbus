@@ -2,7 +2,7 @@ import { createTool } from "@mastra/core/tools";
 import { asRecord, stringField } from "../connectors/unknown-record.ts";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
 import { wrapToolOutput } from "../engine/tool-output-envelope.ts";
-import { type CuGateDeps, type RunActionOutput, runAction } from "./cu-gate.ts";
+import { type CuRunDeps, type RunActionOutput, runAction } from "./cu-gate.ts";
 
 /**
  * I11 on this path, and the part of it that does NOT work.
@@ -43,7 +43,7 @@ async function runTextualAction(
   toolId: string,
   cuSessionId: string,
   input: unknown,
-  deps: CuGateDeps,
+  deps: CuRunDeps,
   run: () => Promise<RunActionOutput>,
 ): Promise<string> {
   const calledAt = Date.now();
@@ -92,7 +92,7 @@ async function runTextualAction(
  */
 export function buildComputerUseTools(
   sessionId: string | undefined,
-  deps: CuGateDeps,
+  deps: CuRunDeps,
 ): Record<string, ReturnType<typeof createTool>> {
   if (sessionId === undefined) return {};
 

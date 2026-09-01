@@ -90,6 +90,7 @@ function laneStub(pageText: string, spy: LaneSpy): BrowserLane {
       spy.screenshots += 1;
       return SCREENSHOT_BYTES;
     },
+    isAlive: () => true,
     close: async () => {},
   };
 }
@@ -123,13 +124,17 @@ function deps(opts: DepsOptions = {}): {
   const full: CuGateDeps = {
     config: { ...DEFAULT_NIMBUS_COMPUTER_USE_TOML, enabled: true, allowedLanes: ["browser"] },
     enforced: { capabilitiesDisabled: new Set<string>() },
-    runner: { canConfine: () => null },
     requestApproval: async (input) => {
       approvals.push(input);
-      if ("kind" in input) approvalKinds.push(input.kind);
+      if (input.promptKind === "action") approvalKinds.push(input.kind);
       return true;
     },
     resolveBrowserPath: () => "/fake/chrome",
+    buildLaunchPolicy: ({ profileDir }) => ({
+      profileDir: profileDir === "" ? "/fake/profile" : profileDir,
+      argv: ["--user-data-dir=/fake/profile"],
+    }),
+    assertLaunchable: () => null,
     openLane: async () => laneStub(opts.pageText ?? "page text", spy),
     db,
     now: () => 1000,

@@ -2168,17 +2168,15 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // narrower than its name: its appender (`egress/chatops-egress.ts`'s `buildLedgeredChatPosts`)
     // decorates the single `post` closure that every chat consumer shares, so one row is appended
     // per outbound post regardless of which consumer sent it.
-    // `browser` stays `none`, DELIBERATELY, even though its appender is written and tested
-    // (`egress/browser-egress.ts`'s `wrapLedgeredBrowserContext`, a decorator over the driven
-    // `BrowserContext`). It has NO production caller: the computer-use browser driver that would
-    // construct a `BrowserContext` is deferred (re-planned against raw CDP after `playwright-core`
-    // failed a `bun build --compile` gate — invariant I35). Raising this entry ahead of that
-    // landing would be precisely the defect this vector exists to prevent — the same rule every
-    // other class here follows, applied to this one instead of an exception to it. (An earlier
-    // version of this test DID raise it early, on the reasoning that the appender's own commit
-    // would follow immediately; it did not, because the driver task was re-planned mid-slice. The
-    // fix restores `browser` to `none` here; raising it again is conditioned on a real caller,
-    // landed in the same commit, exactly like `peer`/`session` below.)
+    // `browser` is the SEVENTH non-`none` class, `per-run`, RAISED in the same commit as its
+    // production caller — `computer-use/cu-lanes/browser.ts`'s `openBrowserLane`, which wraps the
+    // CDP-backed context it constructs and enables `Fetch` interception THROUGH the wrapper, so
+    // every request is decided and ledgered before it is allowed to proceed. `per-run` rather than
+    // `per-call`: one row per (destination origin, verdict) pair, so a row can stand for many
+    // requests to that origin. This entry was raised ONCE before, early and wrongly — on the
+    // reasoning that the appender's own commit would follow immediately, which it did not, because
+    // the driver task was re-planned mid-slice — and was restored to `none` until a caller existed.
+    // That caller now exists and is pinned by the D26(c) test in the I35 block below.
     // `peer`/`session` stay `none` until THEIR appenders land — raising an
     // entry without a landed appender behind it is a review moment, not a test to re-bank. (An
     // earlier version of this comment pointed to an `EgressCompleteness.tier` #1057 note in
@@ -2187,7 +2185,15 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // is gone; the coverage vector is the only claim" — so the pointer was stale, not fictional, and
     // there was nothing left in that file to settle or re-defer.)
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual(["chatops", "http", "mcp", "model", "sync", "task"]);
+    expect([...claimed].sort()).toEqual([
+      "browser",
+      "chatops",
+      "http",
+      "mcp",
+      "model",
+      "sync",
+      "task",
+    ]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {
@@ -2727,23 +2733,120 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     expect(importers).toEqual([]);
   });
 
-  test("no browser-driver import exists outside cu-lanes/", async () => {
-    // `computer-use/cu-lanes/` (the browser driver's deferred home, see plan Task 9) does not
-    // exist yet -- its library failed a compile gate and is being re-planned against raw CDP -- so
-    // today's honest claim is narrower than "the driver is imported only under cu-lanes/": no
-    // file ANYWHERE imports a playwright driver at all. Filtering to offenders OUTSIDE cu-lanes/,
-    // rather than asserting a fixed non-empty allow-list, keeps this assertion true both now (zero
-    // importers) and once the driver lands (one importer, correctly confined) -- it need not be
-    // rewritten the day `cu-lanes/browser.ts` is created, only re-read to confirm it still holds.
+  test("no browser-DRIVING CAPABILITY exists outside cu-lanes/", async () => {
+    // D26(b), WIDENED when the real driver landed. The old assertion scanned for a `playwright`
+    // import only -- and the shipped driver is raw CDP over a WebSocket with no dependency at all,
+    // so a file opening its own socket and clicking would have passed it silently. A CDP client
+    // cannot do anything without NAMING a protocol method, whatever transport it uses, so the
+    // method literal is what actually carries the confinement.
     const files = await readDirFiles("packages/gateway/src");
+    const libRe =
+      /(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'](?:playwright(?:-core)?|puppeteer(?:-core)?|chrome-remote-interface|selenium-webdriver|chrome-launcher)["']/;
+    const cdpRe =
+      /["'`](?:Page|DOM|DOMDebugger|Runtime|Input|Target|Fetch|Network|Browser|Emulation|Security|Storage|Overlay|Accessibility)\.[A-Za-z][A-Za-z0-9]*["'`]/;
     const offenders = files
       .filter((f) => !f.rel.startsWith("computer-use/cu-lanes/"))
-      .filter((f) =>
-        /(?:from\s*|import\s*\(\s*)["']playwright(?:-core)?["']/.test(stripComments(f.contents)),
-      )
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => {
+        const src = stripComments(f.contents);
+        return libRe.test(src) || cdpRe.test(src);
+      })
       .map((f) => `packages/gateway/src/${f.rel}`)
       .sort();
     expect(offenders).toEqual([]);
+  });
+
+  test("D26(c): openBrowserLane is named ONLY by its definition and the one wiring site", async () => {
+    // Confining the driver capability to `cu-lanes/` is not enough on its own: a wiring layer has
+    // to reach into that directory once to hand the constructor to the gate, and that one
+    // legitimate import is enough for a second, illegitimate one to hide beside it. Any file that
+    // can import `openBrowserLane` gets a live `BrowserLane` and can call `lane.click()` on it --
+    // no envelope, no classification, no consent, no audit row -- while D26(a) sees no
+    // `performActuation(` and D26(b) sees no protocol text, because the capability arrived as a
+    // function VALUE. Same shape as D22(f) for `wrapLedgeredEmbedder`.
+    const files = await readDirFiles("packages/gateway/src");
+    const namers = files
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => /\bopenBrowserLane\b/.test(stripComments(f.contents)))
+      .map((f) => `packages/gateway/src/${f.rel}`)
+      .sort();
+    expect(namers).toEqual([
+      "packages/gateway/src/computer-use/cu-lanes/browser.ts",
+      "packages/gateway/src/platform/assemble.ts",
+    ]);
+  });
+
+  test("the MODEL-FACING tool layer cannot construct a lane (CuRunDeps has no openLane)", async () => {
+    // The whole `CuGateDeps` used to be handed to `cu-tools.ts` and, through it, to
+    // `engine/agent.ts`. Removing the capability is the fix rather than a third static rule over
+    // it: a layer that cannot NAME a lane constructor cannot construct one, and that holds for code
+    // nobody has written yet.
+    const gate = await read("packages/gateway/src/computer-use/cu-gate.ts");
+    const runDeps = gate.slice(
+      gate.indexOf("export interface CuRunDeps"),
+      gate.indexOf("export interface CuGateDeps"),
+    );
+    expect(runDeps.length).toBeGreaterThan(0);
+    for (const capability of [
+      "openLane",
+      "buildLaunchPolicy",
+      "assertLaunchable",
+      "resolveBrowserPath",
+    ]) {
+      expect(runDeps).not.toContain(capability);
+    }
+    // And the tool layer takes the narrowed shape, not the full one.
+    const tools = await read("packages/gateway/src/computer-use/cu-tools.ts");
+    expect(tools).toContain("CuRunDeps");
+    expect(stripComments(tools)).not.toContain("CuGateDeps");
+    const agent = await read("packages/gateway/src/engine/agent.ts");
+    expect(stripComments(agent)).not.toContain("CuGateDeps");
+  });
+
+  test("the pre-consent launch assertion is over the policy that ACTUALLY launches", async () => {
+    // I35 re-verify item 2. `browserLanePolicy` was a `SandboxPolicy` asserted against
+    // `canConfine` and then never used to launch anything -- a statement about the wrong object.
+    // The gate now builds ONE launch policy, asserts it, and passes the SAME binding to
+    // `openLane`; the driver spawns its `argv` verbatim.
+    const gate = stripComments(await read("packages/gateway/src/computer-use/cu-gate.ts"));
+    expect(gate).not.toContain("browserLanePolicy");
+    expect(gate).not.toContain("canConfine");
+    expect(gate).toContain("const launch = deps.buildLaunchPolicy({ profileDir });");
+    expect(gate).toContain("deps.assertLaunchable(launch)");
+    // The same binding, not a rebuild: a `buildLaunchPolicy` call inside `openLane`'s argument
+    // would typecheck and silently reintroduce the drift this replaced.
+    expect(gate).toMatch(/openLane\(\{\s*launch,/);
+
+    const driver = stripComments(
+      await read("packages/gateway/src/computer-use/cu-lanes/browser.ts"),
+    );
+    expect(driver).toContain("opts.launch.argv");
+  });
+
+  test("the browser egress class has a PRODUCTION caller, and its coverage says so", async () => {
+    // `THIS_BINARY_COVERAGE.browser` may only be non-"none" in the same commit as the appender's
+    // production caller -- `egress-coverage.ts`'s own rule, and the defect that vector exists to
+    // prevent.
+    const files = await readDirFiles("packages/gateway/src");
+    const callers = files
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => /\bwrapLedgeredBrowserContext\b/.test(stripComments(f.contents)))
+      .map((f) => `packages/gateway/src/${f.rel}`)
+      .sort();
+    expect(callers).toEqual([
+      "packages/gateway/src/computer-use/cu-lanes/browser.ts",
+      "packages/gateway/src/egress/browser-egress.ts",
+    ]);
+    expect(THIS_BINARY_COVERAGE.browser).toBe("per-run");
+  });
+
+  test("the browser egress appender GUARDS the resource type rather than casting it", async () => {
+    // The cast claimed an exhaustiveness that did not hold, and the raw-CDP driver made it live:
+    // CDP reports PascalCase, the union is lowercase, so under the cast every live type -- the
+    // page's own document included -- fell to the gated branch.
+    const src = stripComments(await read("packages/gateway/src/egress/browser-egress.ts"));
+    expect(src).not.toContain("as CuResourceType");
+    expect(src).toContain('toCuResourceType(rawResourceType) ?? "other"');
   });
 
   test("the classifier takes no model-supplied field", async () => {
@@ -2850,9 +2953,14 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
       : resolve(REPO_ROOT, "packages/gateway/src/computer-use/cu-actuate.ts");
     const rawSrc = await Bun.file(target).text();
     const src = stripStringLiterals(stripComments(rawSrc));
-    // Sanity guard: the scan target must actually mention `screenshot(` at all, or this test would
-    // vacuously pass against a file that no longer captures screenshot bytes.
-    expect(src).toContain("screenshot(");
+    // Sanity guard: the scan target must actually HANDLE screenshot bytes, or this test would
+    // vacuously pass against a file that no longer captures any. Widened from `screenshot(` when
+    // the real driver became the target: it declares `screenshot: async () => {` (a method on the
+    // returned `BrowserLane`, not a call), and `stripStringLiterals` blanks the
+    // `"Page.captureScreenshot"` literal, so the old call-shaped guard matched nothing there and
+    // the test failed for the right reason on the right file.
+    expect(src).toContain("screenshot");
+    expect(src).toContain("Uint8Array");
     const persistingApis = [
       /\bBun\.write\s*\(/,
       /\bwriteFileSync\s*\(/,

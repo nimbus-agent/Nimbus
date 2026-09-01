@@ -1,8 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { NimbusComputerUseToml } from "../config/nimbus-toml.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
-import type { SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
-import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { performActuation } from "./cu-actuate.ts";
 import type { BrowserActionInput } from "./cu-classify.ts";
@@ -14,6 +12,7 @@ import { insertAction, insertSession, updateSessionState } from "./cu-store.ts";
 import type {
   BrowserLane,
   CuActionClass,
+  CuBrowserLaunchPolicy,
   CuEnvelope,
   CuOutcome,
   OpenBrowserLaneOptions,
@@ -80,21 +79,53 @@ export interface RunActionOutput {
   readonly result?: string | null;
 }
 
-export interface CuGateDeps {
+/**
+ * What DRIVING an already-open session needs — and deliberately NOT what OPENING one needs.
+ *
+ * This split exists because the full `CuGateDeps` is handed to the model-facing tool layer
+ * (`cu-tools.ts`) and, through it, to `engine/agent.ts`. That object carried `openLane`, so any
+ * file in that layer — including one written later — could call `deps.openLane(...)`, receive a
+ * live `BrowserLane` and call `lane.click()` on it: no envelope, no classification, no consent, no
+ * audit row. **Neither D26 rule would have seen it**: there is no `performActuation(` call to catch
+ * (D26(a)) and no driver import to catch (D26(b)), because the capability arrived as a function
+ * value on a deps object rather than as an import.
+ *
+ * Removing the capability is the fix, not a third static rule over it. A layer that cannot name a
+ * lane constructor cannot construct a lane, and that holds for code nobody has written yet — the
+ * same reasoning D22(d) applies to the agent emitters, and the same reasoning I33's scope bound
+ * relies on for `exec`.
+ */
+export interface CuRunDeps {
   readonly config: NimbusComputerUseToml;
   readonly enforced: Pick<EnforcedPolicy, "capabilitiesDisabled">;
-  readonly runner: Pick<SandboxRunner, "canConfine">;
   readonly requestApproval: (
     input: CuEnvelopeApprovalInput | CuActionApprovalInput,
   ) => Promise<boolean>;
+  readonly db: Database;
+}
+
+/**
+ * Everything {@link openSession} needs. A SUPERSET of {@link CuRunDeps}: only the transport that
+ * actually opens sessions (`ipc/computer-rpc.ts`) is given this, never the tool layer.
+ */
+export interface CuGateDeps extends CuRunDeps {
   /**
    * Injected seams (ruling C amendment / spec § 3.3 step 4 and the exec `requireInstalled`
    * analogue), rather than a direct import of the driver — this is what lets these tests run with
    * no browser installed, and what keeps this file clear of the D26(b) driver-import confinement.
    */
   readonly resolveBrowserPath: () => string | null;
+  /**
+   * Build the EXACT launch parameters for this session, and assert them. Two seams rather than one
+   * because the gate must hold the built object between the two calls: it asserts the object, then
+   * hands the SAME object to `openLane`, which spawns its `argv` verbatim. That identity is the
+   * whole point (see {@link CuBrowserLaunchPolicy}) — it is what replaced a `canConfine` assertion
+   * over a `SandboxPolicy` that nothing ever launched with.
+   */
+  readonly buildLaunchPolicy: (opts: { readonly profileDir: string }) => CuBrowserLaunchPolicy;
+  /** `null` when the policy is safe to launch, else the reason it is not. Checked BEFORE consent. */
+  readonly assertLaunchable: (policy: CuBrowserLaunchPolicy) => string | null;
   readonly openLane: (opts: OpenBrowserLaneOptions) => Promise<BrowserLane>;
-  readonly db: Database;
   readonly now: () => number;
   readonly newId: () => string;
 }
@@ -102,48 +133,18 @@ export interface CuGateDeps {
 const CAPABILITY = "computer_use";
 
 /**
- * A representative `SandboxPolicy` for the PRE-LAUNCH confinement check ONLY (spec § 3.3 step 4:
- * `SandboxRunner.canConfine(policy)`, asked BEFORE consent so the owner is never asked to approve
- * a session the sandbox could not confine anyway).
- *
- * `permissions.network` is a HOST LIST consulted by the PAL runners (fix round 1, I-5) — NOT a
- * wildcard mode. An empty list is the correct value here: per spec § 3.5.1 the origin-level
- * restriction that keeps the browser's network grant from meaning "any destination" is enforced
- * by `decideRequest` at the CDP layer, not by OS-level per-host filtering, so this lane does not
- * want `linux.ts`'s "per-host" network mode at all — which additionally requires
- * `nimbus-sandbox-helper`, a binary CI does not install, so a non-empty (and in particular a
- * literal `"*"` hostname, which is not a wildcard to any of the three PAL runners) list made
- * `canConfine` refuse on Linux unconditionally. `decideNetworkMode` in `linux.ts` returns
- * `"no-net"` only for an EMPTY set, so this is also the closest available approximation of "grant
- * network, but restrict it at the CDP layer" that today's per-host permission model can express.
- *
- * KNOWN LIMIT, disclosed rather than glossed over: this object is a PLACEHOLDER. It is asserted
- * against `canConfine` before consent, but it is never the object an actual browser spawns with —
- * Task 9's re-planned CDP driver builds its own policy at spawn time. That is a real gap: the
- * pre-consent assertion and the eventual spawn are not provably the same policy yet. Task 9 must
- * either construct its real launch policy here (so this function becomes the single source) or
- * otherwise guarantee the two agree — until then, a `canConfine` pass is a statement about this
- * placeholder, not a proof about what actually launches.
- */
-function browserLanePolicy(sessionId: string, profileDir: string): SandboxPolicy {
-  return {
-    id: `computer-use-browser-${sessionId}`,
-    permissions: {
-      network: [],
-      filesystem: { read: [], write: profileDir === "" ? [] : [profileDir] },
-    },
-  };
-}
-
-/**
  * Resolve the browser lane's profile directory from config.
  *
  * `browserProfileDir === ""` is the config default meaning "use `<configDir>/computer-use/profile`"
- * (spec § 9). Resolving THAT default needs `configDir`, which is not part of `CuGateDeps` — the
- * wiring layer that constructs this config (which already has `configDir`) is expected to have
- * filled the default in before `CuGateDeps` is built, exactly as it already must for every other
- * `[computer_use]` value. Left as an empty string here rather than guessed at, since inventing a
- * different fallback location would contradict the spec's stated default.
+ * (spec § 9). Resolving THAT default needs `configDir`, which is not part of `CuGateDeps` — so
+ * `platform/assemble.ts`, the wiring layer that already holds `configDir`, fills it in before
+ * `CuGateDeps` is built, exactly as it must for every other `[computer_use]` value.
+ *
+ * An empty string is passed through rather than guessed at, and that is now load-bearing rather
+ * than merely tidy: `assertBrowserLaunchPolicy` REFUSES an empty or relative profile directory
+ * before consent, because Chromium with no `--user-data-dir` runs against the owner's real browser
+ * profile. So a wiring layer that forgets to resolve the default gets a refused session with a
+ * message naming the reason, not a browser quietly opened on the owner's own cookies.
  */
 function resolveProfileDir(config: NimbusComputerUseToml): string {
   return config.browserProfileDir;
@@ -230,6 +231,24 @@ interface LiveSession {
    * snapshot — and `requestApproval`, which is a live broker channel, not session state.
    */
   readonly openDeps: CuGateDeps;
+  /**
+   * Serialises `runAction` calls against ONE lane (the second half of the TOCTOU fix).
+   *
+   * Two concurrent `computer.act` calls on the same session used to interleave freely, and the
+   * damage is not a race on a counter: each action captures `dom_before`, actuates, then captures
+   * `dom_after`, so an interleaved pair records action A's `dom_after` from a page action B had
+   * already changed. Every `cu_action` replay body on that session is then a description of a
+   * state that never existed, which is worse than a missing one — the audit surface exists to be
+   * believed. `CuSession.consumeAction` was already atomic, so budget accounting was never the
+   * problem; the observation window around the actuation was.
+   *
+   * A promise chain rather than a lock object: the queue is a plain "await whatever ran last",
+   * which cannot deadlock and needs no release path beyond the `finally` that resolves it.
+   * `closeSession` deliberately does NOT queue behind it — an owner closing a session must not
+   * wait on an action that is itself blocked on an approval prompt the owner is no longer going to
+   * answer. That asymmetry is exactly what the in-action `isOpen()`/`isAlive()` re-checks are for.
+   */
+  queue: Promise<void>;
 }
 
 /**
@@ -399,14 +418,31 @@ export async function openSession(
     if (!deps.config.allowedLanes.includes(req.lane)) {
       throw new CuGateError("ERR_CU_LANE_NOT_ALLOWED", `lane not allowed: ${req.lane}`);
     }
-    // 4. Sandbox confinement — `canConfine(policy)`, NEVER `degradedReason()` (wrong on Windows)
-    // or `isFullyActive()` (wrong on Linux); see exec-gate.ts's identical reasoning.
+    // 4. Launch confinement — asserted over the EXACT object this session will spawn with, before
+    // consent, so a policy that would launch an under-confined browser never advertises itself by
+    // prompting.
+    //
+    // This replaced a `SandboxRunner.canConfine(browserLanePolicy(...))` check, and the swap is a
+    // correction rather than a relaxation. That policy was, by its own in-file disclosure, a
+    // PLACEHOLDER: `canConfine` answered a question about an object no browser was ever spawned
+    // with, so a pass proved nothing about what would actually launch. (It was worse than
+    // uninformative — it carried `permissions.network: []`, which `linux.ts`'s `decideNetworkMode`
+    // reads as `no-net` → `--unshare-net`, so had it ever reached a real spawn the browser would
+    // have had no network and the gateway no route to its CDP endpoint.) Routing the browser
+    // through `SandboxRunner` at all is not achievable with today's PAL — see the header on
+    // `CuBrowserLaunchPolicy` in `cu-types.ts` for the three platform reasons and what confines
+    // the lane instead.
+    //
+    // `launch` is built ONCE here, asserted here, and handed to `deps.openLane` below unchanged;
+    // the driver spawns its `argv` verbatim. That identity is what makes this a statement about
+    // the process that actually starts.
     const profileDir = resolveProfileDir(deps.config);
-    const cannotConfine = deps.runner.canConfine(browserLanePolicy(sessionId, profileDir));
-    if (cannotConfine !== null) {
+    const launch = deps.buildLaunchPolicy({ profileDir });
+    const unsafeLaunch = deps.assertLaunchable(launch);
+    if (unsafeLaunch !== null) {
       throw new CuGateError(
-        "ERR_CU_SANDBOX_DEGRADED",
-        `refusing to open unconfined: ${cannotConfine}`,
+        "ERR_CU_UNSAFE_LAUNCH",
+        `refusing to launch under-confined: ${unsafeLaunch}`,
       );
     }
 
@@ -462,6 +498,7 @@ export async function openSession(
 
     // (c) Owner approves the envelope — verbatim lane, target, full origin list, budgets.
     const approved = await deps.requestApproval({
+      promptKind: "envelope",
       sessionId,
       lane: req.lane,
       navigateOrigins,
@@ -486,7 +523,8 @@ export async function openSession(
     let lane: BrowserLane;
     try {
       lane = await deps.openLane({
-        profileDir,
+        // The very object `assertLaunchable` cleared above, not a rebuild of it.
+        launch,
         executablePath,
         db: deps.db,
         sessionId,
@@ -539,7 +577,12 @@ export async function openSession(
       });
       rowInserted = true;
       await evictExistingSession(sessionId);
-      liveSessions.set(sessionId, { session, lane, openDeps: deps });
+      liveSessions.set(sessionId, {
+        session,
+        lane,
+        openDeps: deps,
+        queue: Promise.resolve(),
+      });
       registeredInMap = true;
       // Deliberately a normal (throwing) append, not `safeAppendSessionAudit`: a failure
       // recording the "opened" decision is treated as a REGISTRATION failure (routed to this
@@ -610,7 +653,7 @@ export async function openSession(
  */
 export async function closeSession(
   sessionId: string,
-  _deps: CuGateDeps,
+  _deps: CuRunDeps,
 ): Promise<CloseSessionResult> {
   const live = liveSessions.get(sessionId);
   if (live === undefined) {
@@ -858,11 +901,32 @@ function isCuOutcomeString(v: string): boolean {
  * calls next. The one thing read from THIS call's `deps` is the live policy re-check and the
  * consent broker, both of which must reflect the CURRENT world, not a frozen one.
  */
-export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promise<RunActionOutput> {
+export async function runAction(req: RunActionRequest, deps: CuRunDeps): Promise<RunActionOutput> {
   const live = liveSessions.get(req.sessionId);
   if (live === undefined) {
     throw new CuGateError("ERR_CU_NO_SESSION", `no live session: ${req.sessionId}`);
   }
+  // Claim this lane before doing anything else (see `LiveSession.queue`). The slot is published
+  // SYNCHRONOUSLY — `live.queue` is replaced before the first `await` — so a second concurrent
+  // call entering this function cannot observe the old queue and run alongside us.
+  const predecessor = live.queue;
+  let releaseLane: () => void = () => {};
+  live.queue = new Promise<void>((resolve) => {
+    releaseLane = resolve;
+  });
+  try {
+    await predecessor;
+    return await runActionExclusive(req, deps, live);
+  } finally {
+    releaseLane();
+  }
+}
+
+async function runActionExclusive(
+  req: RunActionRequest,
+  deps: CuRunDeps,
+  live: LiveSession,
+): Promise<RunActionOutput> {
   const { session, lane, openDeps } = live;
   const modelDescription = req.modelDescription ?? null;
 
@@ -991,6 +1055,25 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
   let stage = "envelope_check";
   let consentGranted = false;
   let actuationAttempted = false;
+  /**
+   * Set when the thing this action was going to act on stopped existing part-way through — the
+   * owner closed the session from another connection, or the browser died. Independent of
+   * `outcome` on purpose: a lane that dies BEFORE any actuation records
+   * `terminated_target_lost`, while one that dies mid-`performActuation` still records
+   * `failed_after_approval` (the owner did approve and an actuation WAS attempted, and
+   * `hitlStatusForOutcome` would downgrade a `terminated_*` outcome to `rejected`, understating
+   * what happened). Either way the SESSION must terminate, which is what this flag drives in the
+   * `finally` — the outcome recorded and the teardown owed are two different questions.
+   */
+  let laneLost = false;
+
+  /**
+   * Re-check liveness after an `await`. The TOCTOU this closes: every check above happens once, and
+   * an action then awaits an observation, an approval prompt (unbounded — a human is answering it)
+   * and a DOM snapshot before it actuates. A `closeSession` arriving in any of those windows used
+   * to leave the actuation to proceed against a lane that had already been closed and evicted.
+   */
+  const stillLive = (): boolean => session.isOpen() && lane.isAlive();
 
   try {
     // 2. Target inside the envelope? Refused, never prompted (spec § 4.2). Only `navigate` names
@@ -1014,6 +1097,13 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
     // transplanted; § 4.3).
     stage = "observe";
     const input = await buildBrowserActionInput(lane, req);
+    if (!stillLive()) {
+      laneLost = true;
+      outcome = "terminated_target_lost";
+      observedTarget = `${req.kind}: target was lost while observing it`;
+      stage = "done";
+      return { outcome };
+    }
     const { cls, why } = classifyBrowserAction(input);
     classification = cls;
     observedTarget = describeObservedTarget(req.kind, input);
@@ -1023,6 +1113,7 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
     if (cls === "actuating") {
       stage = "consent";
       const approved = await deps.requestApproval({
+        promptKind: "action",
         sessionId: req.sessionId,
         seq,
         kind: req.kind,
@@ -1039,6 +1130,16 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
         return { outcome };
       }
       consentGranted = true;
+      // The longest window in this function by far: an approval prompt waits on a human. An
+      // approval that arrives for a session the owner has since closed — or for a browser that
+      // died while they were reading it — must not actuate. Recorded as `terminated_target_lost`
+      // rather than `failed_after_approval`, because nothing was attempted.
+      if (!stillLive()) {
+        laneLost = true;
+        outcome = "terminated_target_lost";
+        stage = "done";
+        return { outcome };
+      }
     }
 
     // 5. (Egress row / marker before actuation.) Handled transparently by the browser lane's own
@@ -1053,6 +1154,15 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
     stage = "dom_before";
     domBefore = await lane.domSnapshot();
     session.taint(openDeps.now());
+
+    // The LAST check before the host is touched, and the one that matters most: everything above
+    // is reversible bookkeeping, and everything below is not.
+    if (!stillLive()) {
+      laneLost = true;
+      outcome = "terminated_target_lost";
+      stage = "done";
+      return { outcome };
+    }
 
     stage = "performActuation";
     actuationAttempted = true;
@@ -1070,7 +1180,11 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
     } catch (e) {
       // The actuation was ATTEMPTED with consent obtained (if it needed any) — this is genuinely
       // `failed_after_approval`, whatever `hitlStatus` that resolves to for this classification.
+      // A click that navigates away destroys its own CDP execution context, which is the single
+      // most common failure here and is NOT target loss; a browser that actually died is, and the
+      // session must not stay live for a lane nothing can drive any more.
       outcome = "failed_after_approval";
+      laneLost = !lane.isAlive();
       return { outcome, result: e instanceof Error ? e.message : String(e) };
     }
 
@@ -1103,13 +1217,21 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
       consentGranted || actuationAttempted ? "failed_after_approval" : "refused_before_consent";
     return { outcome, result: e instanceof Error ? e.message : String(e) };
   } finally {
+    // A lost lane TERMINATES the session, exactly as a budget or wall-clock ceiling does: the
+    // browser it was driving is gone (or the owner closed it), so leaving the entry live would let
+    // every subsequent action re-discover the same corpse, each one spending a budget slot to do
+    // it. `session.close` is idempotent, so closing here after `closeSession` already did is a
+    // no-op that preserves the ORIGINAL reason and timestamp.
+    if (laneLost) session.close("terminated_target_lost", openDeps.now());
     await finalizeSession({
       deps: openDeps,
       sessionId: req.sessionId,
       session,
-      lane: null, // the session STAYS live for further actions; only a termination closes it
+      // Normally the session STAYS live for further actions and only a termination closes it —
+      // hence `null`. When the lane is lost there is a lane to tear down and an entry to evict.
+      lane: laneLost ? lane : null,
       syncRow: true,
-      evictMap: false,
+      evictMap: laneLost,
       writeAudit: () =>
         writeActionAudit(openDeps, {
           sessionId: req.sessionId,
@@ -1124,6 +1246,9 @@ export async function runAction(req: RunActionRequest, deps: CuGateDeps): Promis
           screenshotDigest,
           snapshotMaxBytes: openDeps.config.snapshotMaxBytes,
           stage,
+          ...(laneLost
+            ? { terminationReason: "the browser target this session was driving is gone" }
+            : {}),
         }),
     });
   }

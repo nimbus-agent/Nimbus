@@ -8,6 +8,14 @@ import type { CuActionClass, ObservedNode } from "./cu-types.ts";
  */
 export type { ObservedNode };
 
+/**
+ * NOTE ON THE `C<n>`/`I<n>` IDS IN THIS FILE'S COMMENTS. They are REVIEW-FINDING identifiers from
+ * the Task 5+6 fix round (`C` = critical, `I` = important), NOT security invariants — the `I7`
+ * below is "important finding 7", and has nothing to do with invariant I7 (the Tauri
+ * `ALLOWED_METHODS` boundary). A reviewer read them the other way, which is a fair reading in a
+ * security-adjacent file where `I<n>` otherwise always means an invariant; the security invariant
+ * governing everything here is I35. Prefer naming the rule over citing a finding id in new text.
+ */
 export interface BrowserActionInput {
   readonly kind: "click" | "type" | "navigate" | "read" | "screenshot" | "download";
   readonly node: ObservedNode | null;
