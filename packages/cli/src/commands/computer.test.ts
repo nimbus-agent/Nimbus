@@ -738,7 +738,6 @@ describe("runComputer orchestration — browser subcommand", () => {
     // situation a second interrupt is for — the request never settles and the command hangs
     // forever. The loop now RACES the request (and the sleep) against the abort.
     const seen: string[] = [];
-    let statusSettled = false;
     const h = deps({
       runWithClient: async <T>(fn: (c: FakeClient) => Promise<T>) =>
         fn({
@@ -750,9 +749,7 @@ describe("runComputer orchestration — browser subcommand", () => {
             }
             if (method === "computer.sessionStatus") {
               // NEVER settles — a wedged gateway, which is precisely when a second Ctrl-C matters.
-              return new Promise(() => {
-                statusSettled = false;
-              });
+              return new Promise(() => {});
             }
             return { status: "closed" };
           },
@@ -770,9 +767,19 @@ describe("runComputer orchestration — browser subcommand", () => {
     expect(h.codes).toEqual([CU_EXIT_CODES.interrupted]);
     expect(h.err.join("")).toContain("nimbus computer close sess-1");
     expect(seen).toContain("computer.sessionClose");
-    // The command returned WITHOUT the status request ever completing — the whole point.
+    // The status request WAS issued, so the loop really was mid-request when the second signal
+    // landed — otherwise this test would prove nothing about racing an in-flight call.
     expect(seen).toContain("computer.sessionStatus");
-    expect(statusSettled).toBe(false);
+    // THE PROPERTY IS THAT THIS TEST COMPLETES AT ALL. The status promise above never settles, so
+    // an implementation that awaits it — the one this test exists to catch — hangs here and fails
+    // on bun's timeout rather than on an assertion.
+    //
+    // Stated rather than dressed up in a flag, because the flag version was WRONG and shipped:
+    // `let statusSettled = false` set from inside the promise executor runs synchronously at
+    // construction, assigns the value it already has, and is never touched again — so
+    // `expect(statusSettled).toBe(false)` passed for every implementation including a hanging one.
+    // That is the second cannot-fail assertion written in this file; caught in review both times.
+    // If an assertion here cannot distinguish the broken build from the fixed one, do not write it.
   });
 
   test("the signal handler is UNREGISTERED once the command finishes", async () => {
