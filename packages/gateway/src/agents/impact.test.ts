@@ -634,3 +634,66 @@ describe("runImpact", () => {
     expect(evt?.method === "impact.briefReady" || evt?.method === "impact.briefError").toBe(true);
   });
 });
+
+/**
+ * `symbol` entities are labelled `"<name> — <file>"` by `syncCodeSymbolGraph`
+ * (`graph/graph-populator.ts`), never as a bare path. So a caller passing a FILE path
+ * could never match the exact-symbol arm, always fell through to the `LIKE` arm, and got
+ * back whichever symbol in that file had the shortest label — a confident answer about
+ * `x — src/foo.ts` when the question was about the file.
+ *
+ * The fixtures above seed `label: 'src/x.ts'`, a bare path no populator writes, which is
+ * why the exact arm looked healthy in tests while being dead in production. These use the
+ * real label shape.
+ */
+describe("resolving a file path", () => {
+  function seedRealisticFile(db: Database): void {
+    // Two symbols in the same file. `x` sorts shortest, so the LIKE arm would pick it.
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
+        "('graph:symbol:x', 'symbol', 'sym:x', 'x — src/foo.ts', 'filesystem', '{}')",
+    );
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
+        "('graph:symbol:parse', 'symbol', 'sym:parse', 'parseEverything — src/foo.ts', 'filesystem', '{}')",
+    );
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
+        "('graph:file:foo', 'source_file', 'file:/repo:src/foo.ts', 'src/foo.ts', 'filesystem', '{}')",
+    );
+  }
+
+  test("a file path resolves to the file, not to a symbol defined inside it", async () => {
+    const db = freshDb();
+    seedRealisticFile(db);
+    const brief = await runImpact(
+      { fileOrPrUrl: "src/foo.ts" },
+      { db, sessionId: "impact-file-1", notify: () => {} },
+    );
+    expect(brief.startEntityId).toBe("graph:file:foo");
+  });
+
+  test("a genuine symbol name still resolves to the symbol", async () => {
+    const db = freshDb();
+    seedRealisticFile(db);
+    const brief = await runImpact(
+      { fileOrPrUrl: "parseEverything" },
+      { db, sessionId: "impact-file-2", notify: () => {} },
+    );
+    expect(brief.startEntityId).toBe("graph:symbol:parse");
+  });
+
+  test("a file with no source_file entity still falls back to the symbol match", async () => {
+    // The LIKE arm is not removed — it is only demoted below an exact file match.
+    const db = freshDb();
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
+        "('graph:symbol:only', 'symbol', 'sym:only', 'only — src/bar.ts', 'filesystem', '{}')",
+    );
+    const brief = await runImpact(
+      { fileOrPrUrl: "src/bar.ts" },
+      { db, sessionId: "impact-file-3", notify: () => {} },
+    );
+    expect(brief.startEntityId).toBe("graph:symbol:only");
+  });
+});

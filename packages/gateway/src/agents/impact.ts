@@ -138,6 +138,22 @@ function resolveStartEntity(db: Database, fileOrPrUrl: string): ResolvedStart | 
     };
   }
 
+  // A FILE, before any symbol lookup. `syncCodeSymbolGraph` labels `symbol` entities
+  // `"<name> — <file>"`, so no symbol's label is ever a bare path: the exact-symbol arm
+  // below cannot match file input at all, and the `LIKE` arm answers it with whichever
+  // symbol inside that file has the shortest label — a confident answer about
+  // `x — src/foo.ts` to a question about `src/foo.ts`.
+  //
+  // `source_file` entities carry the path itself as their label (same populator), so the
+  // right node was always there and nothing looked for it. Both symbol arms below are
+  // unchanged for genuine symbol-name input; they are only demoted beneath this one.
+  const file = db
+    .query("SELECT id FROM graph_entity WHERE type = 'source_file' AND label = ? LIMIT 1")
+    .get(fileOrPrUrl) as { id?: string } | null;
+  if (file?.id !== undefined) {
+    return { entityId: file.id, entityType: "source_file", repoIds: [] };
+  }
+
   const exactSym = db
     .query("SELECT id FROM graph_entity WHERE type = 'symbol' AND label = ? LIMIT 1")
     .get(fileOrPrUrl) as { id?: string } | null;
