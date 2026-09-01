@@ -7,6 +7,7 @@ import { createTool } from "@mastra/core/tools";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import type { CuRunDeps } from "../computer-use/cu-gate.ts";
 import { buildComputerUseTools } from "../computer-use/cu-tools.ts";
+import type { CuLane } from "../config/nimbus-toml.ts";
 import { Config } from "../config.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
 import { getConnectorHealth } from "../connectors/health.ts";
@@ -137,7 +138,16 @@ export type NimbusEngineAgentDeps = {
    * still gates per-call: it must name a session `runAction`'s own `deps.db`-backed session store
    * currently has open, or every call refuses through the gate's own machinery.
    */
-  computerUse?: { sessionId: string | undefined; gateDeps: CuRunDeps };
+  computerUse?: {
+    /**
+     * The LANE travels with the id because the tool set is lane-specific: a terminal session must
+     * not put `browser_click` in front of the model, and a browser session must not offer
+     * `terminal_write`. The gate refuses a mismatched kind anyway, but a tool the model can see is
+     * a tool it will try, and every attempt is noise in an audit log a human has to read.
+     */
+    session: { sessionId: string; lane: CuLane } | undefined;
+    gateDeps: CuRunDeps;
+  };
 };
 
 export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
@@ -524,7 +534,7 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
     // `deps.computerUse` names a live session, so outside an owner-approved envelope this spread
     // contributes nothing — not a disabled tool that errors when called, no tool at all.
     ...(deps.computerUse !== undefined
-      ? buildComputerUseTools(deps.computerUse.sessionId, deps.computerUse.gateDeps)
+      ? buildComputerUseTools(deps.computerUse.session, deps.computerUse.gateDeps)
       : {}),
   };
 
