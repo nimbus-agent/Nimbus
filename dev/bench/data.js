@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788287428128,
+  "lastUpdate": 1788294870696,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "97573bdc2423d8687a974ccc08ad4d5f26da15df",
-          "message": "feat(share): Phase 6 Slice 8b — recipe (--as-recipe declarative DAG, V42 params) (#679)\n\n## Phase 6 Slice 8b — Recipe\n\nSecond wave of Share & Virality (after 8a foundation, PR #661). Adds\n`nimbus share <session> --as-recipe`: a **deterministic, LLM-free\ndeclarative tool-call DAG** reconstructed from a session's logged tool\ncalls, redacted + signed through the **existing I27 share-gate** — no\nnew invariant, no new emit path.\n\nSpec:\n`docs/superpowers/specs/2026-06-15-slice8-share-virality-design.md` §7\n(amended — see below). Plan:\n`docs/superpowers/plans/2026-06-17-slice8b-recipe.md`.\n\n### What's in it\n- **Migration V42** — `tool_call_log.params_json` (nullable, no\nbackfill). Tool-call input params are now durably logged,\n**secret-redacted at write** via `redactAuditPayload` (the audit_log\nprecedent), with a **valid-JSON guarantee** (a `{truncated:true}`\nsentinel on overflow — never a broken string).\n- **`share/recipe.ts`** — `buildRecipeFromSession(db, sessionId, now)`:\nordered steps (`called_at ASC`) + an **advisory `dependsOn`\nvalue-matcher** (identifier-shaped leaf values in B's params appearing\nin A's result envelope; trivial scalars create no edge). `dependsOn` is\nnever load-bearing.\n- **`share/recipe-yaml.ts`** — deterministic YAML serializer (`js-yaml`,\na declared gateway dep). `verify-share` now accepts **YAML or JSON**,\nre-canonicalizing the body so verification is format-independent (no\nbypass; the dependency-light `verifyShareBytes` primitive stays\nJSON-only).\n- **Gate** — `createShare` gains a `kind:\"recipe\"` branch: redacts the\nrecipe **at the gate**, sets `body.recipe`, omits `turns`/`toolCalls`.\n**I27 fully preserved** (same `share.publish` HITL approval + audit +\nVault-signing); `collectSession` is skipped on the recipe path.\n\n### Invariants / schema\n- **No new invariant.** I27 / static D21 unchanged — recipe is just\nanother `body.kind` through the existing chokepoint.\n`security-invariants` 83/83; structure-audit exit 0.\n- **Spec amendment:** 8b now owns **V42**; 8d's `share_inbox` shifts\n**V42 → V43** (updated across spec §9/§10/§13, CHANGELOG,\narchitecture.md).\n\n### Verification (full local CI-parity before first push)\n- tsc (all packages) · biome · structure-audit (I27/D21) ·\nsecurity-invariants 83/83 · markdownlint · js-licenses · cross-platform\n· doc-refs (603 refs) · lychee · CI duplication gate **3.15% < 5%**.\n- **Coverage-floor: ok** via Docker-Linux-authoritative lcov (pristine\n`{}` baseline; new `share/recipe*.ts` + V42 sql all clear ≥80%\nline+branch).\n- Tests: share unit + integration + **e2e recipe round-trip** (real\ngateway subprocess: create `--as-recipe` → owner HITL approve → verify),\nall green.\n- Built subagent-driven (fresh implementer + two-stage review per task)\n+ a final whole-branch review on Opus (READY TO MERGE; the one Important\nfinding — a >4KB param-truncation invalid-JSON bug — was fixed in\n`af12b915`).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n## New Features\n* Added recipe-based sharing: `nimbus share <session> --as-recipe` now\ngenerates deterministic YAML recipe files with secret-redacted tool-call\nparameters.\n* Share payload improvements for recipe kind: recipe shares omit\ntranscript fields and persist recipe-specific content end-to-end.\n* Updated output behavior: file-based share emission supports\n`.yaml`/`.yml` for recipe shares.\n\n## Bug Fixes\n* Improved tool-call logging persistence: tool-call input params are now\nstored/restored via migration V42 with safe truncation handling.\n\n## Documentation\n* Updated schema/architecture and changelog entries for Phase 6 Slice 8b\nand migration V42.\n\n## Tests\n* Added unit and e2e coverage for recipe round-trips and YAML\nverification.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T14:10:14Z",
-          "tree_id": "1b35b97d4def2882c248fb24aa18b54fccce56b9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/97573bdc2423d8687a974ccc08ad4d5f26da15df"
-        },
-        "date": 1781706221635,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 286.8438506999988,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 286.917365600005,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 342.1284232000056,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4770bdffbcff9b7962f209e890d3b96f324dbb9b",
+          "message": "feat(agents): resolve a forge file coordinate to the reader's checkout (#1424)\n\nPR 2 of\n`docs/superpowers/plans/2026-08-31-agents-for-items-and-files.md`. Adds\nno new agent and changes no brief — it makes the five file-shaped agents\nreachable from a browser, and fixes one bug that stands on its own.\n\n## The `impact` bug, shipped first and alone\n\n`resolveStartEntity` looked for a `symbol` whose label **equals** the\ninput, then\none whose label **contains** it. But `syncCodeSymbolGraph` labels\nsymbols\n`\"<name> — <file>\"` — so no symbol's label is ever a bare path. The\nexact arm\ncould never match file input, and the `LIKE` arm answered it with\nwhichever\nsymbol in that file had the **shortest label**.\n\n`nimbus impact src/foo.ts` reported on `x — src/foo.ts`. Confidently,\nwith no gap\nto say the subject had been substituted.\n\n`source_file` entities carry the path itself as their label, written by\nthe same\npopulator. The right node was always there; nothing looked for it.\n\n**The existing fixtures hid it**: they seed `label: 'src/x.ts'`, a bare\npath no\npopulator writes, so the exact arm looked healthy in tests while being\ndead in\nproduction. The new tests use the real label shape, and one pins that a\nfile with\nno `source_file` entity still falls back to the symbol match — the\n`LIKE` arm is\ndemoted, not removed.\n\n## Why a browser cannot name a file\n\n`source_file` external ids are `file:<repoRoot>:<path>`, and `ownership`\nrefuses a\npath \"outside every configured root\". A browser knows\n`github.com/acme/web/blob/main/src/foo.ts` and nothing about the\nreader's\nfilesystem — so it cannot name a file the agents accept, and must not\nguess.\n\nThe bridge already existed and nothing exposed it: `bindRootRemote`\nwrites\n`workspace --tracks_remote--> repo`. `resolveFileByRemote` walks it\nbackwards.\n\n## The input is deliberately unsplit\n\n`refAndPath` is everything after `/blob/`, ref and path still joined.\n**Branch\nnames contain slashes**, so `feat/auth-v2/src/foo.ts` is ambiguous\nwithout the\nrepository's branch list — which a browser could only learn from a forge\nAPI call\nit must never make. This side holds the file list, so it tries the\nsplits,\nshortest ref first.\n\nFour ways to be quietly wrong, each with a test:\n\n- a branch with slashes, a dotted tag, a bare sha\n- **remote casing** — `parseRemoteUrl` lower-cases the host but returns\n`ownerName` verbatim, so a checkout cloned from `github.com/ACME/Web`\nstores a\ndifferently-cased id than the address bar produces. Compared\ncase-insensitively\nrather than by rewriting stored ids, which would need a migration for a\nproblem\n  a comparison solves.\n- **a Windows root meeting a POSIX request**\n- **two worktrees on one remote** — the common case with git worktrees,\nnot the\nedge case. The answer must be the checkout that *has* the file, and must\nnot\n  change between two consecutive calls.\n\n`fileExternalId` is imported from its writer rather than re-derived:\nthat string\nis already built byte-identically in two places on purpose, and a third\ncopy\nwould be a third thing to keep in step.\n\n## Misses are typed, not prose\n\n`remote_not_tracked` (no local checkout at all — permanent, unactionable\nfrom the\npage) and `file_not_indexed` (checkout exists, path is not in it) are\ndifferent\nsentences with different remediations. The reason reaches the caller so\na client\nbranches on a value, not on wording that a later improvement would\nbreak.\n\n## Federation stays off\n\n`namespaces` is read from the original params on both shapes, so the\nforge arm\ncannot silently acquire fan-out the local arm would have had to ask for.\nA test\ndispatches both `ghost` and `conflicts` through the forge arm and\nasserts nothing\ngoes over the wire — a loopback-only browser client turning two local\nreads into\npeer network calls is worth a test rather than a comment.\n\n## Testing\n\n`bun test packages/gateway/src/{agents,ipc,index}/`: **3177 pass, 0\nfail.**\n`typecheck` and `lint` clean.\n\n## Not in this PR\n\n`connections` and `currency` are PR 3.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01UsjPfu2BxDVUC7W8Wz8unL\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- File-based agents now accept Forge repository coordinates, including\nservice, repository, branch, tag, commit, and file path.\n- Forge file references resolve to indexed files across tracked\nworkspaces.\n- Impact analysis prioritizes exact file-path matches before symbol\nmatches.\n\n- **Bug Fixes**\n- Added clearer errors for untracked repositories and files that are not\nindexed.\n- Improved path, branch, tag, remote-casing, and checkout selection\nbehavior.\n  - Prevented ambiguous mixed local and Forge inputs.\n- Rejected federation namespaces on Forge-coordinate agent requests\nwhile preserving local-file behavior.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-01T23:22:57+03:00",
+          "tree_id": "ebfd1cdb289c0d85cfebd954432e4453a802e1d8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4770bdffbcff9b7962f209e890d3b96f324dbb9b"
+        },
+        "date": 1788294868139,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 251.8449899999996,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 247.36465834999908,
             "unit": "ms"
           }
         ]
