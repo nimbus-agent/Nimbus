@@ -80,22 +80,45 @@ const MAX_IMPACT_DEPTH = 5;
 const MAX_SERVICE_LEN = 64;
 
 const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
-function requireExpertParams(params: unknown): { topicOrFile: string; limit?: number } {
+function requireExpertParams(params: unknown): {
+  topicOrFile?: string;
+  itemUrl?: string;
+  limit?: number;
+} {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.expert requires { topicOrFile: string }");
-  }
-  const p = params as { topicOrFile?: unknown; limit?: unknown };
-  if (typeof p.topicOrFile !== "string") {
-    throw new AgentsRpcError(-32602, "topicOrFile must be a string");
-  }
-  const trimmed = p.topicOrFile.trim();
-  if (trimmed.length < MIN_TOPIC_LEN || trimmed.length > MAX_TOPIC_LEN) {
     throw new AgentsRpcError(
       -32602,
-      `topicOrFile must be ${MIN_TOPIC_LEN}..${MAX_TOPIC_LEN} chars after trim`,
+      "agents.expert requires exactly one of { topicOrFile } or { itemUrl }",
     );
   }
-  const out: { topicOrFile: string; limit?: number } = { topicOrFile: trimmed };
+  const p = params as { topicOrFile?: unknown; itemUrl?: unknown; limit?: unknown };
+  // Counted, not an equality: the same shape `agents.why` uses, and for the same reason —
+  // it keeps meaning "exactly one" if a third arm is ever added.
+  const supplied = [p.topicOrFile, p.itemUrl].filter((v) => v !== undefined).length;
+  if (supplied !== 1) {
+    throw new AgentsRpcError(
+      -32602,
+      "agents.expert requires exactly one of { topicOrFile } or { itemUrl }",
+    );
+  }
+
+  const out: { topicOrFile?: string; itemUrl?: string; limit?: number } = {};
+  if (p.itemUrl !== undefined) {
+    // The same guards `why`'s URL arms get: both values come off a browser address bar.
+    out.itemUrl = requireUrlArm(p.itemUrl, "itemUrl");
+  } else {
+    if (typeof p.topicOrFile !== "string") {
+      throw new AgentsRpcError(-32602, "topicOrFile must be a string");
+    }
+    const trimmed = p.topicOrFile.trim();
+    if (trimmed.length < MIN_TOPIC_LEN || trimmed.length > MAX_TOPIC_LEN) {
+      throw new AgentsRpcError(
+        -32602,
+        `topicOrFile must be ${MIN_TOPIC_LEN}..${MAX_TOPIC_LEN} chars after trim`,
+      );
+    }
+    out.topicOrFile = trimmed;
+  }
   if (p.limit !== undefined) {
     if (
       typeof p.limit !== "number" ||

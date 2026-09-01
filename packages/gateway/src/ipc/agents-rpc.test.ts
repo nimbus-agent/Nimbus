@@ -128,8 +128,26 @@ describe("dispatchAgentsRpc", () => {
       dispatchAgentsRpc("agents.expert", ["not", "an", "object"], makeCtx(freshDb())),
     ).rejects.toMatchObject({
       rpcCode: -32602,
-      message: expect.stringContaining("requires { topicOrFile: string }"),
+      // The message now names both arms — `expert` grew an `itemUrl` arm, and a message
+      // that mentioned only `topicOrFile` would send a caller to the wrong one.
+      message: expect.stringContaining("exactly one of { topicOrFile } or { itemUrl }"),
     });
+  });
+
+  test("agents.expert requires exactly one arm", async () => {
+    const ctx = makeCtx(freshDb());
+    for (const params of [
+      {},
+      { topicOrFile: "x", itemUrl: "https://acme.atlassian.net/browse/A-1" },
+    ]) {
+      await expect(dispatchAgentsRpc("agents.expert", params, ctx)).rejects.toThrow(/exactly one/);
+    }
+    for (const params of [
+      { topicOrFile: "x" },
+      { itemUrl: "https://acme.atlassian.net/browse/A-1" },
+    ]) {
+      expect((await dispatchAgentsRpc("agents.expert", params, ctx)).kind).toBe("hit");
+    }
   });
 
   test("agents.expert eventually emits expert.briefReady", async () => {
