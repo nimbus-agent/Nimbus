@@ -361,6 +361,55 @@ describe("TerminalLineBuffer", () => {
     expect(b.append("\n").status).toBe("refused");
     expect(b.append("   \n").status).toBe("refused");
   });
+
+  // The gap that let the ONE mutating refusal path survive review: no test covered a refusal on
+  // the SUBMIT branch, only on the control-character branch. "A refusal changes nothing" has to be
+  // asserted on every branch that can refuse, or it is a comment rather than a property.
+  test("an empty submit leaves the buffer untouched, like every other refusal", () => {
+    const b = new TerminalLineBuffer();
+    b.append("   ");
+    expect(b.append("\n").status).toBe("refused");
+    expect(b.pending()).toBe("   ");
+    // And the pending whitespace is still usable, so a refusal never strands the caller.
+    expect(b.append("ls\n")).toEqual({ status: "submit", line: "   ls" });
+  });
+
+  // Trojan Source (CVE-2021-42574). On this lane the owner's approval prompt is the ENTIRE
+  // boundary, so a character that changes how the line RENDERS attacks the only defense there is.
+  // These are harmless to the shell, which is precisely why a control-character-only rule missed
+  // them.
+  test.each([
+    [0x202e, "right-to-left override"],
+    [0x202d, "left-to-right override"],
+    [0x2066, "left-to-right isolate"],
+    [0x2069, "pop directional isolate"],
+    [0x200b, "zero-width space"],
+    [0x200d, "zero-width joiner"],
+    [0x200e, "left-to-right mark"],
+    [0xfeff, "byte order mark"],
+    [0x2028, "line separator"],
+    [0x2029, "paragraph separator"],
+  ])("refuses U+%s (%s), which the shell would ignore and the owner would misread", (cp) => {
+    const b = new TerminalLineBuffer();
+    b.append("echo safe");
+    const r = b.append(String.fromCodePoint(cp));
+    expect(r.status).toBe("refused");
+    expect(b.pending()).toBe("echo safe");
+  });
+
+  test("a right-to-left override cannot reach the shell inside an approved line", () => {
+    // The concrete attack: a line that displays as one command and runs as another.
+    const b = new TerminalLineBuffer();
+    const r = b.append(`echo hi ${String.fromCodePoint(0x202e)} fr- mr\n`);
+    expect(r.status).toBe("refused");
+  });
+
+  test("ordinary right-to-left TEXT is still allowed — only the format controls are refused", () => {
+    // Refusing Arabic or Hebrew letters would be a bug, not a defense: they are strong-RTL
+    // characters, not overrides, and they cannot reorder anything around them.
+    const b = new TerminalLineBuffer();
+    expect(b.append("echo مرحبا").status).toBe("buffered");
+  });
 });
 ```
 
@@ -420,13 +469,66 @@ export type TerminalAppendResult =
 const SUBMIT_RE = /[\r\n]/;
 
 /**
- * Any C0 control character, DEL, or a C1 control — MINUS tab, `\r` and `\n`, which are handled
- * above. Written as what CANNOT pass rather than as an allow-list of printable ranges: an
- * allow-list over Unicode is a rule whose gaps are invisible, and this repo has recorded that
- * failure mode before.
+ * What cannot pass, as an explicit range table rather than a character-class regex.
+ *
+ * A DENY-SET, not an allow-list of printable ranges: an allow-list over Unicode is a rule whose
+ * gaps are invisible, and this repo has recorded that failure mode before. A TABLE rather than a
+ * regex literal because the ranges here are not obvious on sight — a reader has to be able to
+ * audit which code points are refused and why, and a bare character-class
+ * regex literal makes that a decoding exercise. It also lets each range carry its own refusal reason.
+ *
+ * TWO CLASSES, refused for OPPOSITE reasons.
+ *
+ * The FIRST class is refused because DELIVERING it is the danger: Ctrl-C signals, Ctrl-D closes
+ * the stream, and ESC begins a sequence that drives a terminal rather than a shell.
+ *
+ * The SECOND class is refused because it is harmless to the SHELL and dangerous to the HUMAN.
+ * This is the Trojan Source class (CVE-2021-42574), and on this lane the owner's approval prompt
+ * is the ENTIRE boundary. A right-to-left override makes the rendered line say something other
+ * than the bytes that will run. A zero-width space between `rm` and `-rf` is visually identical
+ * to an ordinary one. U+2028 and U+2029 render as a line break in many terminals, so ONE command
+ * displays as two — and neither is a submit character, so without this they would be buffered as
+ * ordinary text and written to the shell inside an approved line.
+ *
+ * Refused rather than escaped-for-display, because a prompt that renders an override as an escape
+ * sequence is a prompt the owner has to decode, and decoding is not what a consent gate should ask
+ * of a human under time pressure. COST, stated plainly: an emoji ZWJ sequence and a Persian ZWNJ
+ * cannot appear in a command line. That is a real loss and the right trade — a shell command
+ * needing a zero-width joiner is vanishingly rare, and the alternative is a consent prompt that
+ * can lie.
+ *
+ * REMAINING BOUND, recorded rather than glossed: this closes the FORMATTING channel, not the
+ * VISUAL one. Homoglyphs — Cyrillic U+0430 for Latin `a`, and hundreds of others — render
+ * identically and are matched by no range table. `observed_target` proves what the classifier
+ * read, never that the string means to the human what it means to the shell (spec 13 bound 6).
  */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters IS the rule
-const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
+const REFUSED_RANGES: readonly (readonly [number, number, string])[] = [
+  // Class 1 — control characters. Tab (0x09), LF (0x0a) and CR (0x0d) are deliberately absent:
+  // tab is ordinary text, and LF/CR are the submit characters, handled above.
+  [0x00, 0x08, "a control character"],
+  [0x0b, 0x0c, "a vertical tab or form feed"],
+  [0x0e, 0x1f, "a control character or escape sequence"],
+  [0x7f, 0x9f, "a DEL or C1 control character"],
+  // Class 2 — invisible and directional formatting.
+  [0x200b, 0x200f, "an invisible or directional formatting character"],
+  [0x2028, 0x202e, "a line separator or bidirectional override"],
+  [0x2066, 0x206f, "a bidirectional isolate or deprecated formatting character"],
+  [0xfeff, 0xfeff, "a byte order mark"],
+];
+
+/** The reason `text` cannot be buffered, or `null` when every character in it may pass. */
+function refusedCharacterIn(text: string): string | null {
+  // Iterating the string yields whole code points, so an astral character is examined once rather
+  // than as two surrogate halves — neither of which would be in any range above, but a future
+  // range that overlapped the surrogate block would silently misjudge them.
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    for (const [lo, hi, why] of REFUSED_RANGES) {
+      if (cp >= lo && cp <= hi) return why;
+    }
+  }
+  return null;
+}
 
 export class TerminalLineBuffer {
   #pending = "";
@@ -442,12 +544,12 @@ export class TerminalLineBuffer {
    * `ipc/computer-rpc.ts` applies to a half-parsed origin list.
    */
   append(text: string): TerminalAppendResult {
-    if (CONTROL_RE.test(text)) {
+    const refused = refusedCharacterIn(text);
+    if (refused !== null) {
       return {
         status: "refused",
         code: "ERR_CU_TERMINAL_CONTROL_CHAR",
-        reason:
-          "control characters and escape sequences are refused, not buffered — this lane is line-oriented only",
+        reason: `${refused} is refused, not buffered — this lane is line-oriented only, and its consent prompt must render exactly what will run`,
       };
     }
 
@@ -481,7 +583,12 @@ export class TerminalLineBuffer {
     if (line.trim() === "") {
       // Nothing composed. Writing a bare newline to the shell would spend a budget slot and an
       // owner approval on a no-op, and teaches the owner that approving a blank prompt is normal.
-      this.#pending = "";
+      //
+      // The buffer is NOT cleared here. An earlier draft cleared it, which made this the ONE
+      // refusal path in the file that mutated state — and "a refusal changes nothing" is a blanket
+      // property the whole class rests on, worth more than the tidiness of dropping stray
+      // whitespace. A single exception makes the property unassertable as a blanket test, which is
+      // exactly how an exception survives into code nobody re-reads.
       return {
         status: "refused",
         code: "ERR_CU_TERMINAL_EMPTY_LINE",
@@ -511,7 +618,15 @@ Expected: PASS (all cases).
 
 - [ ] **Step 5: Red-prove the two load-bearing tests**
 
-Temporarily change `CONTROL_RE` to `/(?!)/` (matches nothing) and re-run: the seven control-character cases and "a refused write leaves the buffer exactly as it was" MUST go red. Then restore it. Do the same for the multi-line rule by deleting the `rest !== ""` block. A test that passes against a deliberately broken build is not a test — two on slice 1's branch did exactly that before this step caught them.
+Three breaks, three reds, restore after each:
+
+| Break | Must go red |
+|---|---|
+| `refusedCharacterIn` returns `null` unconditionally | the seven control-character cases, the ten Trojan Source cases, "a refused write leaves the buffer exactly as it was" |
+| delete the Class 2 rows from `REFUSED_RANGES` | the ten Trojan Source cases ONLY — the control-character cases must stay green, proving the two classes are independently covered |
+| delete the `rest !== ""` block | "only the FIRST line of a multi-line write submits" |
+
+A test that passes against a deliberately broken build is not a test — two on slice 1's branch did exactly that before this step caught them. The middle row matters most: it is what proves the Trojan Source cases are not passing for the incidental reason that some other rule already refused them.
 
 - [ ] **Step 6: Commit**
 
@@ -1059,7 +1174,8 @@ git commit -m "feat(computer-use): terminal shell registry and launch policy wit
 - Consumes: `CuTerminalLaunchPolicy` (Task 4), `extensionProcessEnv` from `../../extensions/spawn-env.ts`, `SandboxRunner`.
 - Produces:
   - `TERMINAL_QUIET_MS = 300`, `TERMINAL_SETTLE_MS = 15_000`, `TERMINAL_OUTPUT_MAX_BYTES = 65_536`
-  - `interface TerminalWriteResult { output: string; settled: "quiet" | "settle_cap" | "output_cap" | "exited"; truncated: boolean }`
+  - `interface TerminalWriteResult { output: string; settled: "quiet" | "no_output" | "settle_cap" | "output_cap" | "exited"; truncated: boolean }`
+  - `TERMINAL_FIRST_BYTE_MS = 1_000`, `CARRIED_OUTPUT_NOTICE`
   - `interface TerminalLane { write(bytes: string): Promise<TerminalWriteResult>; isAlive(): boolean; close(): Promise<void> }` (declared in `cu-types.ts` by Task 6; declare it here for now and re-point the import in Task 6)
   - `interface TerminalLaneRuntime { spawnShell(...): ChildProcess; now(): number }` — the injected seam that makes this testable with no shell
   - `openTerminalLane(opts: OpenTerminalLaneOptions, runtime?: TerminalLaneRuntime): Promise<TerminalLane>`
@@ -1072,7 +1188,7 @@ Create `packages/gateway/src/computer-use/cu-lanes/terminal.test.ts`:
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { openTerminalLane, TERMINAL_OUTPUT_MAX_BYTES } from "./terminal.ts";
+import { CARRIED_OUTPUT_NOTICE, openTerminalLane, TERMINAL_OUTPUT_MAX_BYTES } from "./terminal.ts";
 
 /** A fake child process: two readable streams plus a recording stdin. */
 function fakeChild() {
@@ -1166,20 +1282,58 @@ describe("openTerminalLane", () => {
     expect(Buffer.byteLength(r.output, "utf8")).toBeLessThanOrEqual(TERMINAL_OUTPUT_MAX_BYTES);
   });
 
-  test("output still arriving is carried onto the NEXT write's result", async () => {
+  test("output still arriving is carried onto the NEXT write's result, LABELLED", async () => {
     const child = fakeChild();
     const lane = await open(child);
     const first = lane.write("slow");
     setTimeout(() => child.stdout.write("part-one\n"), 5);
     await first;
-    // Arrives after the first write settled: it must not be lost.
+    // Arrives after the first write settled: it must not be lost, and must not be mistaken for
+    // the next command's own output.
     child.stdout.write("late-output\n");
     const second = lane.write("next");
     setTimeout(() => child.stdout.write("part-two\n"), 5);
     const r = await second;
     expect(r.output).toContain("late-output");
     expect(r.output).toContain("part-two");
+    expect(r.output).toContain(CARRIED_OUTPUT_NOTICE);
+    // The notice must precede the carried bytes, or it labels the wrong half.
+    expect(r.output.indexOf(CARRIED_OUTPUT_NOTICE)).toBeLessThan(r.output.indexOf("late-output"));
   });
+
+  // The misattribution bug this driver was redesigned around: a command slower to its first byte
+  // than the inter-chunk window used to resolve EMPTY while still running.
+  test("waits the FIRST-BYTE window, not the inter-chunk window, for slow-starting output", async () => {
+    const child = fakeChild();
+    const lane = await open(child);
+    const p = lane.write("python slow.py");
+    // Later than TERMINAL_QUIET_MS (300), well inside TERMINAL_FIRST_BYTE_MS (1000).
+    setTimeout(() => child.stdout.write("finally\n"), 500);
+    const r = await p;
+    expect(r.output).toContain("finally");
+    expect(r.settled).toBe("quiet");
+  });
+
+  test("a genuinely silent command reports no_output rather than claiming it finished", async () => {
+    const child = fakeChild();
+    const lane = await open(child);
+    const r = await lane.write("mkdir x");
+    expect(r.output).toBe("");
+    // NOT "quiet": nothing arrived, so "the command finished" is a claim this driver cannot make.
+    expect(r.settled).toBe("no_output");
+  }, 10_000);
+
+  test("a second concurrent write is refused rather than corrupting both collections", async () => {
+    const child = fakeChild();
+    const lane = await open(child);
+    const first = lane.write("one");
+    await expect(lane.write("two")).rejects.toThrow(/ERR_CU_CONCURRENT_WRITE/);
+    setTimeout(() => child.stdout.write("done\n"), 5);
+    await first;
+    // And the lane is usable again once the first write settles.
+    setTimeout(() => child.stdout.write("ok\n"), 5);
+    expect((await lane.write("three")).output).toContain("ok");
+  }, 10_000);
 
   test("isAlive flips false when the shell exits, and close is idempotent", async () => {
     const child = fakeChild();
@@ -1247,18 +1401,54 @@ import type { CuTerminalLaunchPolicy, OpenTerminalLaneOptions, TerminalLane } fr
  * rather than dropped.
  */
 
-/** Silence after the last byte that counts as "the command finished". */
+/**
+ * How long to wait for the FIRST byte before concluding a command produced no output.
+ *
+ * A SEPARATE, longer window than the inter-chunk one below, and the separation is a correctness
+ * fix rather than tuning. With a single 300 ms timer armed at write time, any command slower to
+ * its first byte than 300 ms — a Python or Node start, a `find`, a cold disk read, and routinely
+ * process startup on Windows under AppContainer — resolved with `output: ""` and `settled: "quiet"`
+ * while still running. Its real output then landed in `carried` and was prepended to the NEXT
+ * command's result. Nothing was lost, but everything was MISATTRIBUTED: the model was told command
+ * 1 printed nothing, then shown command 1's output labelled as command 2's, and the audit row's
+ * replay body recorded the same lie.
+ *
+ * The two windows cannot be one value. Collapsing them upward makes every silent command
+ * (`mkdir`, `mv`, `export`) cost a full second before it returns; collapsing them downward
+ * reintroduces the misattribution. So: wait up to a second for anything at all, then 300 ms of
+ * silence once output has started.
+ */
+export const TERMINAL_FIRST_BYTE_MS = 1_000;
+/** Silence AFTER the first byte that counts as "the command finished". */
 export const TERMINAL_QUIET_MS = 300;
 /** Hard ceiling on one command's collection window, whatever the stream is doing. */
 export const TERMINAL_SETTLE_MS = 15_000;
+/**
+ * Prefixed to output that arrived after a previous command's window closed (see `carried`).
+ *
+ * LABELLED, never silently prepended. `TERMINAL_FIRST_BYTE_MS` narrows the misattribution window;
+ * it cannot close it, because no timeout can distinguish "finished silently" from "still thinking".
+ * Carrying the bytes forward is what stops them being LOST; saying where they came from is what
+ * stops them being WRONG — and the same string lands on the `cu_action` replay body, so a human
+ * reading the row later sees the same caveat the model did.
+ */
+export const CARRIED_OUTPUT_NOTICE =
+  "[nimbus: output below arrived after the previous command's collection window closed]";
 /** Byte ceiling on one result. Shared across stdout and stderr — a child chooses which to flood. */
 export const TERMINAL_OUTPUT_MAX_BYTES = 65_536;
 
 export interface TerminalWriteResult {
   readonly output: string;
-  /** WHICH bound ended collection. Disclosed rather than inferred — a reader must be able to tell
-   * "the command finished" from "we stopped waiting". */
-  readonly settled: "quiet" | "settle_cap" | "output_cap" | "exited";
+  /**
+   * WHICH bound ended collection. Disclosed rather than inferred — a reader must be able to tell
+   * "the command finished" from "we stopped waiting", and those are genuinely different facts.
+   *
+   * `no_output` is the one that earns its place: it says nothing arrived within
+   * `TERMINAL_FIRST_BYTE_MS`, which is what a silent command (`mkdir`) and a slow-starting one
+   * (`python x.py`) both look like from here. Reporting it as `quiet` would assert the command
+   * finished, which is exactly the claim this driver cannot make.
+   */
+  readonly settled: "quiet" | "no_output" | "settle_cap" | "output_cap" | "exited";
   readonly truncated: boolean;
 }
 
@@ -1346,6 +1536,8 @@ export async function openTerminalLane(
   let carried: Uint8Array[] = [];
   let carriedBytes = 0;
   let collector: ((chunk: Uint8Array) => void) | null = null;
+  /** Guards against two writes collecting at once — see the check at the top of `write`. */
+  let inFlight = false;
 
   const absorbIdle = (chunk: Uint8Array): void => {
     const room = TERMINAL_OUTPUT_MAX_BYTES - carriedBytes;
@@ -1370,15 +1562,34 @@ export async function openTerminalLane(
       if (exited) {
         throw new Error("ERR_CU_TERMINAL_DEAD: the shell is not alive");
       }
+      // Concurrent entry would overwrite `collector`, so two in-flight writes would collect into
+      // each other's buffers and one promise would never settle. `cu-gate.ts` already serialises
+      // `runAction` per session, so this is unreachable through the gate — which is exactly why it
+      // belongs here: a driver whose correctness depends on its caller's discipline is a contract
+      // no test of either side can check, and this lane's only caller today is not its only caller
+      // forever.
+      if (inFlight) {
+        throw new Error("ERR_CU_CONCURRENT_WRITE: a write is already collecting on this lane");
+      }
+      inFlight = true;
+
       return await new Promise<TerminalWriteResult>((resolve) => {
-        const chunks: Uint8Array[] = [...carried];
-        let total = carriedBytes;
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        if (carried.length > 0) {
+          // Labelled, not silently prepended — see CARRIED_OUTPUT_NOTICE.
+          const notice = new TextEncoder().encode(`${CARRIED_OUTPUT_NOTICE}\n`);
+          chunks.push(notice, ...carried);
+          total = notice.byteLength + carriedBytes;
+        }
         carried = [];
         carriedBytes = 0;
 
         let settled: TerminalWriteResult["settled"] = "quiet";
         let truncated = total >= TERMINAL_OUTPUT_MAX_BYTES;
         let done = false;
+        /** Has anything arrived since the write? Chooses which silence window applies. */
+        let sawOutput = false;
         // NB: do NOT unref these timers — an awaited promise settling from an unref'd timer makes
         // `bun test` spin forever on Windows. Both are cleared on finish.
         let quiet: ReturnType<typeof setTimeout> | undefined;
@@ -1391,6 +1602,7 @@ export async function openTerminalLane(
           if (done) return;
           done = true;
           collector = null;
+          inFlight = false;
           if (quiet !== undefined) clearTimeout(quiet);
           clearTimeout(settleCap);
           child.off("close", onClose);
@@ -1408,15 +1620,23 @@ export async function openTerminalLane(
         }
         child.once("close", onClose);
 
+        /**
+         * Arm the silence timer with the window that applies RIGHT NOW: the long first-byte window
+         * until something has arrived, the short inter-chunk window afterwards. `settled` records
+         * which one expired, so a caller can tell "produced nothing within a second" from
+         * "finished".
+         */
         function armQuiet(): void {
           if (quiet !== undefined) clearTimeout(quiet);
+          const window = sawOutput ? TERMINAL_QUIET_MS : TERMINAL_FIRST_BYTE_MS;
           quiet = setTimeout(() => {
-            settled = "quiet";
+            settled = sawOutput ? "quiet" : "no_output";
             finish();
-          }, TERMINAL_QUIET_MS);
+          }, window);
         }
 
         collector = (chunk: Uint8Array): void => {
+          sawOutput = true;
           const room = TERMINAL_OUTPUT_MAX_BYTES - total;
           if (room <= 0) {
             truncated = true;
@@ -1624,7 +1844,7 @@ export interface CuLaneBase {
 
 export interface TerminalWriteResult {
   readonly output: string;
-  readonly settled: "quiet" | "settle_cap" | "output_cap" | "exited";
+  readonly settled: "quiet" | "no_output" | "settle_cap" | "output_cap" | "exited";
   readonly truncated: boolean;
 }
 
@@ -1702,6 +1922,11 @@ export async function performActuation(
     // The result crosses back as TEXT and is wrapped by `cu-tools.ts` (I11) before any model sees
     // it. The `settled` disclosure travels WITH the output rather than beside it, so a reader
     // cannot mistake "we stopped waiting" for "the command finished".
+    // `quiet` is the ONLY silent case: the command produced output and then stopped, which is what
+    // "it finished" looks like from here. Every other ending is disclosed, INCLUDING `no_output` —
+    // a command that printed nothing within the first-byte window may have finished silently or
+    // may still be running, and saying "it produced no output" without saying which would assert
+    // the one thing this driver cannot know.
     return r.settled === "quiet"
       ? r.output
       : `${r.output}\n[nimbus: output collection ended by ${r.settled}${r.truncated ? ", truncated" : ""}]`;
@@ -1934,11 +2159,18 @@ export interface CuTerminalSeams {
    * with no shell installed.
    */
   readonly defaultShellId: string;
-  /** Resolve a registry SHELL ID to an absolute path plus its argv/env, or null when it is not
-   * installed. The gate never sees an argv the caller composed. */
-  readonly resolveShellPath: (
-    shellId: string,
-  ) => { readonly shellPath: string; readonly argv: readonly string[]; readonly envOverlay: Readonly<Record<string, string>> } | null;
+  /**
+   * Resolve a registry SHELL ID to an absolute path plus its argv/env. The gate never sees an argv
+   * the caller composed.
+   *
+   * A THREE-WAY result rather than `... | null`: "not a registered id" and "registered but not
+   * installed" are different conditions with different remedies, and a nullable return forces the
+   * gate to guess which one happened.
+   */
+  readonly resolveShellPath: (shellId: string) =>
+    | { readonly status: "ok"; readonly shellPath: string; readonly argv: readonly string[]; readonly envOverlay: Readonly<Record<string, string>> }
+    | { readonly status: "unknown_shell" }
+    | { readonly status: "not_installed" };
   readonly buildLaunchPolicy: (opts: {
     readonly sessionId: string;
     readonly shellId: string;
@@ -1979,23 +2211,66 @@ type PreparedLane =
   | { readonly lane: "browser"; readonly target: CuBrowserTarget; readonly launch: CuBrowserLaunchPolicy; readonly executablePath: string }
   | { readonly lane: "terminal"; readonly target: CuTerminalTarget; readonly launch: CuTerminalLaunchPolicy };
 
+/**
+ * Read a `code` off an unknown throw, with a real guard rather than an `as` cast (non-negotiable 7
+ * — a value crossing a seam is `unknown` no matter who threw it). Used ONLY to preserve a seam's
+ * own refusal code across the `cu-gate.ts` / `cu-lanes/` boundary, where an `instanceof` check
+ * would need an import the gate deliberately does not have.
+ */
+function codeOf(e: unknown, fallback: string): string {
+  if (typeof e === "object" && e !== null && "code" in e) {
+    const c = (e as { code: unknown }).code;
+    if (typeof c === "string" && c !== "") return c;
+  }
+  return fallback;
+}
+
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 function prepareTerminal(req: OpenTerminalSessionRequest, sessionId: string, deps: CuGateDeps): PreparedLane {
   const requested = (req.shellId ?? "").trim();
   const shellId = requested === "" ? deps.lanes.terminal.defaultShellId : requested;
   // Presence BEFORE consent — the exec `requireInstalled` analogue.
+  //
+  // TWO refusal codes, not one. "You named a shell that does not exist in the registry" and "the
+  // shell you named is not on this machine" have different remedies — fix the argument, versus
+  // install something — and collapsing them tells the user to do the wrong one. An earlier draft
+  // returned `null` for both, which mapped a typo'd `--shell bahs` onto "no usable shell was
+  // found", sending the reader off to check their PATH for a problem that was in their argv.
   const resolved = deps.lanes.terminal.resolveShellPath(shellId);
-  if (resolved === null) {
-    throw new CuGateError("ERR_CU_NO_SHELL", `shell not available: ${shellId}`);
+  if (resolved.status === "unknown_shell") {
+    throw new CuGateError("ERR_CU_UNKNOWN_SHELL", `not a registered shell id: ${shellId}`);
+  }
+  if (resolved.status === "not_installed") {
+    throw new CuGateError("ERR_CU_NO_SHELL", `shell "${shellId}" is registered but not present`);
   }
   // Built ONCE, asserted here, and handed to `openLane` below UNCHANGED — the driver spawns
   // `shellPath` + `argv` verbatim. That identity is what makes the assertion a statement about the
   // process that actually starts.
-  const launch = deps.lanes.terminal.buildLaunchPolicy({
-    sessionId,
-    shellId,
-    shellPath: resolved.shellPath,
-    cwd: req.cwd,
-  });
+  //
+  // WRAPPED, because `openSession`'s outer catch reads `e.code` only from `CuGateError` and
+  // `CuSessionError` and assigns `ERR_CU_FAILED` to anything else. `buildTerminalLaunchPolicy`
+  // throws `CuLaunchPolicyError` — a relative cwd, or a requested network grant — so without this
+  // the most security-relevant refusals this lane has would reach the caller and the AUDIT ROW as
+  // a generic failure, with the actual reason discarded at the one place it matters.
+  //
+  // Re-thrown rather than fixed by widening the outer catch or by having `CuLaunchPolicyError`
+  // extend `CuGateError`: both would put a `cu-lanes/` import inside `cu-gate.ts`, and the gate
+  // importing NOTHING from `cu-lanes/` is what keeps the driver-capability confinement (D26(b)/(c))
+  // resting on a structural fact rather than on the import happening to be type-only.
+  let launch: CuTerminalLaunchPolicy;
+  try {
+    launch = deps.lanes.terminal.buildLaunchPolicy({
+      sessionId,
+      shellId,
+      shellPath: resolved.shellPath,
+      cwd: req.cwd,
+    });
+  } catch (e) {
+    throw new CuGateError(codeOf(e, "ERR_CU_BAD_LAUNCH"), messageOf(e));
+  }
   // The REAL confinement assertion, over the policy that will actually spawn. Unlike the browser
   // lane (which cannot route through the PAL at all), `canConfine` here answers the question the
   // gate is actually asking.
@@ -2126,7 +2401,14 @@ Then, inside the existing `try` after `seq` is granted, replace steps 2/3/6 with
         outcome = "refused_out_of_envelope";
         observedTarget = `terminal_write refused: ${appended.reason}`;
         stage = "done";
-        return { outcome };
+        // The REASON travels back to the caller, not just the outcome. Without it the model sees a
+        // bare `refused_out_of_envelope` for four distinct conditions (a control character, a bidi
+        // override, an over-long line, a second command after the submit) and can only retry
+        // blindly — which spends the owner's budget on attempts nobody can learn from. This is also
+        // why the reason does NOT get a CLI `REFUSAL_MESSAGES` entry: `nimbus computer` is a
+        // passive watcher and never calls `computer.act`, so an entry there would map a code that
+        // surface can never receive.
+        return { outcome, result: appended.reason };
       }
       if (appended.status === "buffered") {
         // NOTHING reached the shell and NOTHING was classified. A real, recorded outcome rather
@@ -2136,7 +2418,13 @@ Then, inside the existing `try` after `seq` is granted, replace steps 2/3/6 with
         outcome = "buffered";
         observedTarget = `terminal buffer now holds ${appended.pending.length} characters`;
         stage = "done";
-        return { outcome, result: null };
+        // The PENDING TEXT goes back to the caller. It is the caller's own bytes — nothing from the
+        // host, nothing untrusted — and without it a model composing across several calls cannot
+        // see what it has actually built, so it cannot tell `"rm -rf"` + `"ls\n"` (which submits
+        // `rm -rfls`) from a fresh start. Recording only a character COUNT on the audit row while
+        // returning the text is deliberate: the row is for a human reconstructing what happened,
+        // and the full pending text is already on the row of the submit that follows.
+        return { outcome, result: appended.pending };
       }
 
       // 3. CLASSIFY — from the COMPLETE line the gateway assembled, never from the model's
@@ -2575,18 +2863,19 @@ Restructure the existing `gateDeps` block's four flat browser seams into `lanes`
         terminal: {
           defaultShellId: DEFAULT_SHELL_ID,
           resolveShellPath: (shellId) => {
+            let shell: CuShell;
             try {
-              const shell = resolveShellById(shellId);
-              const shellPath = shell.detect();
-              return shellPath === null
-                ? null
-                : { shellPath, argv: shell.argv(), envOverlay: shell.envOverlay() };
+              shell = resolveShellById(shellId);
             } catch {
-              // An unknown id is "not available", which is what the gate's `ERR_CU_NO_SHELL`
-              // refusal already says. Throwing a second error shape here would give the same
-              // condition two codes.
-              return null;
+              // `CuShellError("ERR_CU_UNKNOWN_SHELL")`, converted to a status rather than allowed
+              // to propagate: this seam's contract is to REPORT what it found, and a throw crossing
+              // into the gate would be caught by the outer catch and flattened to `ERR_CU_FAILED`.
+              return { status: "unknown_shell" };
             }
+            const shellPath = shell.detect();
+            return shellPath === null
+              ? { status: "not_installed" }
+              : { status: "ok", shellPath, argv: shell.argv(), envOverlay: shell.envOverlay() };
           },
           buildLaunchPolicy: ({ sessionId, shellId, shellPath, cwd }) =>
             buildTerminalLaunchPolicy({ sessionId, shell: resolveShellById(shellId), shellPath, cwd }),
@@ -2743,6 +3032,89 @@ export function formatEnvelopePrompt(p: EnvelopePromptInput): string {
 ```
 
 `formatActionPrompt`'s heading becomes lane-neutral — `"--- Approve this computer-use action? ---"` — and its `gateway observed` / `model said` lines are UNCHANGED. That split is the whole design; do not touch it.
+
+**`handleEnvelopeBroadcast` must be updated in the same step, and it is not a mechanical edit.** It currently builds ONE flat object and hands it to `formatEnvelopePrompt`; once that parameter is a union, an object carrying `lane: "terminal"` alongside `navigateOrigins` will not compile, and `shellId`/`cwd` would never be read. It has to branch — and the third case matters most:
+
+```ts
+export async function handleEnvelopeBroadcast(
+  params: unknown,
+  ask: (message: string) => Promise<unknown>,
+  respond: (requestId: string, approved: boolean) => Promise<unknown>,
+): Promise<void> {
+  const p = (params ?? {}) as EnvelopeBroadcast;
+  if (typeof p.requestId !== "string" || p.requestId === "") return;
+  const sessionId = typeof p.sessionId === "string" ? p.sessionId : "unknown";
+  const maxActions = typeof p.maxActions === "number" ? p.maxActions : 0;
+  const maxWallClockMs = typeof p.maxWallClockMs === "number" ? p.maxWallClockMs : 0;
+
+  // An UNRECOGNISED lane is DENIED without asking, and that is the important branch. The obvious
+  // alternative — fall back to the browser render — would show the owner a prompt describing a
+  // grant that is not the one being requested: "navigate to: none", no shell, no directory, while
+  // the gateway is holding something else entirely. Asking a human to approve a thing this command
+  // cannot describe is worse than refusing it, and a refusal is recoverable (the caller retries
+  // against a client that understands the lane) while a mistaken approval is not.
+  //
+  // It still RESPONDS rather than returning silently: leaving the gate to time out would deny by
+  // TTL after the owner had been shown nothing at all, which is the same outcome reached slower
+  // and with no explanation on screen.
+  if (p.lane !== "browser" && p.lane !== "terminal") {
+    deps.sink.err(
+      `nimbus: refusing a session for an unrecognised lane (${String(p.lane)}) — this client cannot describe what would be granted. Upgrade nimbus, or open the session from a client that supports this lane.\n`,
+    );
+    await respond(p.requestId, false);
+    return;
+  }
+
+  const prompt: EnvelopePromptInput =
+    p.lane === "terminal"
+      ? {
+          lane: "terminal",
+          sessionId,
+          shellId: typeof p.shellId === "string" ? p.shellId : "unknown",
+          cwd: typeof p.cwd === "string" ? p.cwd : "unknown",
+          maxActions,
+          maxWallClockMs,
+        }
+      : {
+          lane: "browser",
+          sessionId,
+          navigateOrigins: strs(p.navigateOrigins),
+          scriptOrigins: strs(p.scriptOrigins),
+          maxActions,
+          maxWallClockMs,
+        };
+  const answer = await ask(formatEnvelopePrompt(prompt));
+  await respond(p.requestId, !isCancel(answer) && answer === true);
+}
+```
+
+`EnvelopeBroadcast` widens to `Partial<EnvelopePromptInput> & { requestId?: string; lane?: string; shellId?: string; cwd?: string }` — every field still validated before use, so a malformed broadcast renders a safe prompt (or the refusal above) and always reaches `respond`.
+
+Add a test for that third branch, because it is the one no happy path exercises:
+
+```ts
+test("an unrecognised lane is denied without prompting the owner", async () => {
+  let asked = 0;
+  const responses: [string, boolean][] = [];
+  await handleEnvelopeBroadcast(
+    { requestId: "r1", lane: "screen", sessionId: "s1" },
+    async () => {
+      asked += 1;
+      return true;
+    },
+    async (id, approved) => void responses.push([id, approved]),
+  );
+  // Never shown to the human, and never left to time out.
+  expect(asked).toBe(0);
+  expect(responses).toEqual([["r1", false]]);
+});
+```
+
+Finally, update the subcommand usage string — `runComputer`'s default branch prints it, so a user who typos the subcommand is told the terminal lane does not exist:
+
+```ts
+const COMPUTER_USAGE = "Usage: nimbus computer <browser|terminal|sessions|close> ...";
+```
 
 Add the parser and subcommand:
 
@@ -2941,19 +3313,49 @@ function checkLaneConstructorConfinement(files: readonly FileEntry[]): Violation
 }
 ```
 
-- [ ] **Step 4: Run the audit and the test**
+- [ ] **Step 4: Update the CI diagnostic message**
+
+The rule now covers two constructors, but the `::error` line the audit prints still names only one — `"D26(c) openBrowserLane named outside cu-lanes/browser.ts and platform/assemble.ts"`. A `openTerminalLane` violation would be reported with a message pointing at the wrong file and the wrong symbol, which is worse than a generic one: the reader goes and checks the browser lane, finds nothing, and concludes the audit is broken. In `runAllChecks`'s `driverImportViolations` loop:
+
+```ts
+        e.rule === "D26-lane-constructor"
+          ? `::error file=${e.file},line=${e.line}::D26(c) a computer-use lane constructor (openBrowserLane/openTerminalLane) is named outside its own definition file and platform/assemble.ts — a live lane obtained here can be driven with no envelope, classification, consent or audit row (I35): ${e.snippet}`
+          : `::error file=${e.file},line=${e.line}::D26(b) browser-driving capability (automation library import, or a CDP Domain.method literal) outside computer-use/cu-lanes/ — a second path to the host that never passes the I35 gate: ${e.snippet}`,
+```
+
+- [ ] **Step 5: Extend the EXISTING D26(c) runtime test**
+
+`security-invariants.test.ts` has `test("D26(c): openBrowserLane is named ONLY by its definition and the one wiring site")`, which scans `packages/gateway/src` and asserts an exact two-file list. It does not know `openTerminalLane` exists, so the new constructor would be confined by the static audit and unasserted by the runtime test that is meant to be authoritative. Generalise it over both:
+
+```ts
+  test.each([
+    ["openBrowserLane", "packages/gateway/src/computer-use/cu-lanes/browser.ts"],
+    ["openTerminalLane", "packages/gateway/src/computer-use/cu-lanes/terminal.ts"],
+  ])("D26(c): %s is named ONLY by its definition and the one wiring site", async (symbol, definition) => {
+    const files = await readDirFiles("packages/gateway/src");
+    const namers = files
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => new RegExp(`\\b${symbol}\\b`).test(stripComments(f.contents)))
+      .map((f) => `packages/gateway/src/${f.rel}`)
+      .sort();
+    expect(namers).toEqual([definition, "packages/gateway/src/platform/assemble.ts"].sort());
+  });
+```
+
+- [ ] **Step 6: Run the audit and the tests**
 
 ```bash
 bun test scripts/structure-audit/check-nimbus-invariants.test.ts
+bun test packages/gateway/src/security-invariants.test.ts
 bun run audit:nimbus-invariants
 ```
 
 Expected: PASS, zero violations. If `audit:nimbus-invariants` flags `assemble.ts` or `terminal.ts`, the allow-list paths do not match the real ones — fix the paths, never the rule.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add scripts/structure-audit/check-nimbus-invariants.ts scripts/structure-audit/check-nimbus-invariants.test.ts
+git add scripts/structure-audit/check-nimbus-invariants.ts scripts/structure-audit/check-nimbus-invariants.test.ts packages/gateway/src/security-invariants.test.ts
 git commit -m "chore(audit): D26(c) confines both lane constructors"
 ```
 
@@ -3106,7 +3508,11 @@ Four edits, no new invariant number:
 3. **The `SandboxRunner` deviation, in the other direction.** State that unlike the browser lane, the terminal lane DOES spawn through `SandboxRunner` and its pre-consent `canConfine(policy)` assertion is real — the object asserted is the policy `openTerminalLane` spawns with. Record why the browser's PAL objection does not apply (no control channel; the only channel is stdio) and that this makes `ERR_CU_SANDBOX_DEGRADED` reachable again. Record the transport deviation from spec § 3.5: a pipe-backed shell rather than a PTY, because a native PTY module would not survive `bun build --compile` and because the absence of a tty enforces the line-oriented bound at the OS level rather than through the classifier.
 4. **The egress bound.** `permissions.network` is `[]` by construction and a requested grant is REJECTED, so the terminal lane adds no egress class and its zero-row claim is structural — proven per platform by `test/integration/computer-use/terminal-loopback.test.ts`, because the property holds via three unrelated mechanisms. Relaxing it without landing an appender first is a named anti-pattern.
 
-   Also extend the **anti-patterns** list with: *classifying a terminal action from anything but the composed line; writing any byte to the shell that the owner did not see; buffering a control character; approving a fragment rather than the complete line.*
+   Also extend the **anti-patterns** list with: *classifying a terminal action from anything but the composed line; writing any byte to the shell that the owner did not see; buffering a control character, a bidirectional override or a zero-width character; approving a fragment rather than the complete line; and clearing the buffer on a refusal.*
+
+   Add the **Trojan Source** paragraph as part of the terminal clause: the buffer refuses bidirectional overrides and isolates, zero-width characters, the line/paragraph separators and the BOM, because on this lane the consent prompt is the entire boundary and those characters change what the line RENDERS as without changing what it RUNS as (CVE-2021-42574). State the residual bound in the same breath — **homoglyphs are not covered and cannot be**, so `observed_target` proves what the classifier read, never that the string means the same thing to the human as to the shell. That is spec § 13 bound 6, which was written for the browser lane's DOM and applies verbatim here.
+
+   Add the **output-attribution bound**: a command's completion is inferred from output quiescence, so a command that prints nothing within the first-byte window is reported `no_output` rather than as finished, and output arriving after a window closes is carried onto the next action's result behind an explicit notice. No timeout can distinguish "finished silently" from "still running"; the design discloses which it saw rather than guessing.
 
    And update the D26 entry: **three rules**, with (c) now covering BOTH lane constructors, plus the recorded limit that (b) has no terminal analogue.
 
@@ -3117,6 +3523,8 @@ In the I35 bullet, change the scope-bound sentence to name both shipping lanes, 
 - [ ] **Step 3: `docs/roadmap.md`**
 
 Update the S2 § Active row and the Phase 14 rows: the terminal lane ships; state plainly what did NOT ship (the screen lane; any network in the terminal lane; TUI support). The roadmap records deferral reasons — say *why* the screen lane is last (spec § 14: it is the honesty-costly lane, placed where it can be dropped without unpicking anything).
+
+Record **PowerShell as a deliberate deferral**, not an oversight. The shell registry ships `sh` and `cmd`; `pwsh`/`powershell.exe` is a larger job than adding a row, and the reasons are worth writing down because the next person will assume it was forgotten: a profile chain (`$PROFILE` has four locations) that must be suppressed the way `ENV`/`BASH_ENV` and `cmd /D` are, PSReadLine emitting ANSI and rewriting the input line, and object-formatted output whose column widths depend on host width — all of which interact badly with a lane that has no tty and reads plain bytes. It is additive when it lands: one registry entry plus its own env overlay, no gate change.
 
 - [ ] **Step 4: `docs/CHANGELOG.md`**
 
@@ -3235,3 +3643,29 @@ Then **wait for `PR quality — required gates` to report green** before merging
 | § 16 docs to update on landing | 14 |
 
 **Not covered, deliberately:** the screen lane, the `opaque` marker and `prove` indeterminacy (§ 6.3), the Wayland decision (§ 13 bound 4), `nimbus audit replay` and `nimbus computer prune` (§ 9 — neither exists yet; both are lane-independent and belong with slice 3 or their own change). Any network on the terminal lane, which § 6.2 forbids without an appender.
+
+---
+
+## Review disposition (2026-09-01)
+
+Against [`2026-09-01-computer-use-slice-2-terminal-review.md`](./2026-09-01-computer-use-slice-2-terminal-review.md). Every finding was checked against the real code before being accepted; ten adopted, one rejected with reasons, and two defects the review did not find were fixed while in the same code.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 2.1 | `CuLaunchPolicyError` flattened to `ERR_CU_FAILED` by `openSession`'s outer catch | **Fixed — none of the three proposed mechanisms.** All three (widen the catch, subclass `CuGateError`, duck-type `.code` at the catch) put a `cu-lanes/` import or an untyped cast inside `cu-gate.ts`. `prepareTerminal` re-throws as `CuGateError` instead, preserving the code through a guarded `codeOf` helper, so the gate still imports nothing from `cu-lanes/` — the fact D26(b)/(c) rest on. |
+| 2.2 | `handleEnvelopeBroadcast` not updated for the `EnvelopePromptInput` union | **Fixed, and hardened.** The review's branch defaults an unrecognised lane to the browser render, which would show the owner a prompt describing a grant that is not the one being requested. An unrecognised lane is now DENIED without prompting, and still responds rather than letting the gate time out. |
+| 2.3 | `this.#pending = ""` on the empty-submit refusal contradicts "a refusal changes nothing" | **Fixed.** The line is gone. The real defect was the missing TEST — no case covered a refusal on the submit branch, only on the control-character branch, which is how the one mutating path survived. |
+| 2.4 | D26(c) CI diagnostic names only `openBrowserLane` | **Fixed** (Task 12 Step 4). A wrong message is worse than a generic one: it sends the reader to the wrong file. |
+| 2.5 | The runtime D26(c) test does not know `openTerminalLane` exists | **Fixed** (Task 12 Step 5). Generalised over both constructors — the runtime test is the authoritative half of the pair, so leaving it browser-only would have left the new constructor confined by the static audit alone. |
+| 2.6 | `COMPUTER_USAGE` omits `terminal` | **Fixed** (Task 11 Step 3). |
+| 3.1 / 3.2 | Trojan Source: bidi overrides, zero-width and separator characters defeat the consent prompt | **Fixed, with the mechanism changed.** The strongest finding in the review — on this lane the prompt IS the boundary, so a character that changes rendering attacks the only defense. Implemented as an explicit `REFUSED_RANGES` table rather than the proposed regex: the ranges are not auditable on sight in a character class, and a table carries a per-range reason for the refusal message. The residual bound (homoglyphs) is now documented in I35 rather than left implied by the fix. |
+| 4.1 | Quiescence hazard: a slow-starting command resolves empty and its output is misattributed to the next one | **Fixed, and extended.** `TERMINAL_FIRST_BYTE_MS` (1 s) for the first byte, `TERMINAL_QUIET_MS` (300 ms) thereafter, as proposed. Extended twice: a new `no_output` `settled` value, because reporting a silent command as `quiet` asserts it finished — the one thing this driver cannot know; and carried-forward output now travels behind `CARRIED_OUTPUT_NOTICE`, since the longer window narrows misattribution and cannot close it. |
+| 4.2 | No concurrency guard inside `TerminalLane.write` | **Fixed.** The gate does serialise, which is exactly why the guard belongs in the driver: a driver whose correctness depends on its caller's discipline is a contract no test of either side can check, and today's only caller is not the only caller forever. |
+| 5.2 | `ERR_CU_UNKNOWN_SHELL` collapsed into `ERR_CU_NO_SHELL` | **Fixed.** The seam returns a three-way status. "Fix your argument" and "install something" are different remedies, and a typo'd `--shell bahs` was sending the user to check their PATH. |
+| 5.1 | Add `REFUSAL_MESSAGES` entries for the buffer refusal codes | **REJECTED.** Those codes cannot reach that map. `REFUSAL_MESSAGES` renders `openSession` refusal codes; buffer refusals come back from `computer.act` as an `outcome`, and `nimbus computer` is a passive watcher that never calls `computer.act`. The entries would be messages for codes the surface can never receive — the exact drift the browser lane recorded when it DELETED `ERR_CU_SANDBOX_DEGRADED` as unreachable. The underlying need is real and is met where it belongs: `runAction` now returns the refusal REASON as its `result`, so the model can distinguish four conditions it previously saw as one bare `refused_out_of_envelope`. |
+| Q3 | Is PowerShell's deferral documented? | **Now yes** (Task 14 Step 3), with the reasons — the four-location `$PROFILE` chain, PSReadLine's ANSI and line rewriting, and width-dependent object formatting — so the next reader does not assume it was forgotten. |
+
+**Two defects the review did not find, fixed in the same code:**
+
+- **A buffered write returned nothing to the model.** A model composing across several calls could not see what it had built, so it could not tell `"rm -rf"` + `"ls\n"` (which submits `rm -rfls`) from a fresh start. `buffered` now returns the pending text — the caller's own bytes, nothing from the host.
+- **A refused write returned no reason** (the other half of 5.1's real problem), so four distinct refusals were indistinguishable and the only available response was a blind retry that spends the owner's budget.
