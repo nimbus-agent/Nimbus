@@ -72,11 +72,16 @@ export function resolveFileByRemote(db: Database, input: ForgeFileCoordinate): R
   // for a problem a comparison solves.
   const workspaces = db
     .query(
+      // The `filesystem:` prefix is required in SQL rather than stripped conditionally
+      // below. A workspace whose id lacks it is malformed, and skipping it is stricter
+      // than half-interpreting it — it also keeps the prefix strip total, with no
+      // else-branch that correct data can never reach.
       `SELECT w.external_id AS external_id
          FROM graph_entity r
          JOIN graph_relation tr ON tr.to_id = r.id AND tr.type = 'tracks_remote'
          JOIN graph_entity w    ON w.id = tr.from_id AND w.type = 'workspace'
         WHERE r.type = 'repo' AND LOWER(r.external_id) = LOWER(?)
+          AND w.external_id LIKE 'filesystem:%'
         ORDER BY w.external_id ASC`,
     )
     .all(wantedRepo) as WorkspaceRow[];
@@ -96,16 +101,17 @@ export function resolveFileByRemote(db: Database, input: ForgeFileCoordinate): R
     candidatePaths.push(segments.slice(refLen).join("/"));
   }
 
-  // Every (root, candidate path) hit, so ties can be broken deliberately rather than by
-  // whichever row SQLite happened to return first.
-  const hits: Array<{ fileEntityId: string; repoRoot: string; path: string; updatedAt: number }> =
-    [];
+  // Tracked as ONE running best rather than an array that is then sorted. The array
+  // form needed two guards no correct input could reach — `hits.length === 0` and a
+  // second `best === undefined` after the sort — and an unreachable guard is a branch
+  // the coverage floor charges for forever. Here the single `best === null` check is
+  // genuinely both: null when nothing matched, non-null when something did.
+  type Hit = { fileEntityId: string; repoRoot: string; path: string; indexedAt: number };
+  let best: Hit | null = null;
 
   for (const ws of workspaces) {
-    // `filesystem:<root>` — the external id the ownership pass writes.
-    const repoRoot = ws.external_id.startsWith("filesystem:")
-      ? ws.external_id.slice("filesystem:".length)
-      : ws.external_id;
+    // The prefix is guaranteed by the query above, so this strip is total.
+    const repoRoot = ws.external_id.slice("filesystem:".length);
 
     for (const path of candidatePaths) {
       // The WRITER's own formatter, imported rather than re-derived: `ownership-pass.ts`
@@ -114,39 +120,38 @@ export function resolveFileByRemote(db: Database, input: ForgeFileCoordinate): R
       const externalId = fileExternalId(repoRoot, path);
       const row = db
         .query(
-          `SELECT e.id AS id, COALESCE(MAX(r.created_at), 0) AS created_at
+          `SELECT e.id AS id, COALESCE(MAX(r.created_at), 0) AS indexed_at
              FROM graph_entity e
              LEFT JOIN graph_relation r ON r.from_id = e.id
             WHERE e.type = 'source_file' AND e.external_id = ?
             GROUP BY e.id
             LIMIT 1`,
         )
-        .get(externalId) as { id?: string; created_at?: number } | null;
-      if (row?.id !== undefined) {
-        hits.push({
-          fileEntityId: row.id,
-          repoRoot,
-          path,
-          updatedAt: row.created_at ?? 0,
-        });
+        // `indexed_at` is COALESCEd in SQL, so it is a number on every row that comes
+        // back — no client-side `?? 0` that no test could ever exercise.
+        .get(externalId) as { id: string; indexed_at: number } | null;
+      if (row === null) continue;
+
+      const hit: Hit = {
+        fileEntityId: row.id,
+        repoRoot,
+        path,
+        indexedAt: row.indexed_at,
+      };
+      // Most recently touched wins — with a worktree per branch, that is the checkout
+      // the reader is actually working in. The entity id breaks the tie after it, so the
+      // same URL cannot answer differently on two consecutive calls.
+      if (
+        best === null ||
+        hit.indexedAt > best.indexedAt ||
+        (hit.indexedAt === best.indexedAt && hit.fileEntityId < best.fileEntityId)
+      ) {
+        best = hit;
       }
     }
   }
 
-  if (hits.length === 0) {
-    return { ok: false, reason: "file_not_indexed", repo: input.repo };
-  }
-
-  // Most recently touched wins — with a worktree per branch, that is the checkout the
-  // reader is actually working in. `fileEntityId` breaks the tie after it, so the same URL
-  // cannot answer differently on two consecutive calls.
-  hits.sort((a, b) =>
-    b.updatedAt !== a.updatedAt
-      ? b.updatedAt - a.updatedAt
-      : a.fileEntityId.localeCompare(b.fileEntityId),
-  );
-  const best = hits[0];
-  if (best === undefined) {
+  if (best === null) {
     return { ok: false, reason: "file_not_indexed", repo: input.repo };
   }
   return {

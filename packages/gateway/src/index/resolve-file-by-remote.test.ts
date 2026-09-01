@@ -182,3 +182,35 @@ describe("resolveFileByRemote", () => {
     ).toMatchObject({ ok: false, reason: "file_not_indexed" });
   });
 });
+
+describe("resolveFileByRemote — recency", () => {
+  // The two-worktree test above has both roots at created_at 0, so it exercises the
+  // tie-break only. This one makes them differ, so the "more recently indexed wins" arm
+  // is a tested decision rather than an assumption.
+  test("the more recently indexed checkout wins", () => {
+    const db = freshDb();
+    seedTrackedRepo(db, { remote: "github:acme/web", root: "/old", files: ["src/foo.ts"] });
+
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES ('ws:/new', 'workspace', 'filesystem:/new', '/new', 'filesystem', '{}')",
+    );
+    db.run(
+      "INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES ('ws:/new', 'repo:github:acme/web', 'tracks_remote', 0)",
+    );
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES ('file:/new:src/foo.ts', 'source_file', 'file:/new:src/foo.ts', 'src/foo.ts', 'filesystem', '{}')",
+    );
+    // A later relation on the NEW root's file — its own `indexed_at` becomes higher.
+    db.run(
+      "INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES ('file:/new:src/foo.ts', 'ws:/new', 'in_repo', 5000)",
+    );
+
+    const r = resolveFileByRemote(db, {
+      service: "github",
+      repo: "acme/web",
+      refAndPath: "main/src/foo.ts",
+    });
+    // `/old` sorts first alphabetically, so a tie-break-only implementation would pick it.
+    expect(r).toMatchObject({ ok: true, repoRoot: "/new" });
+  });
+});
