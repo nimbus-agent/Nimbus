@@ -19,7 +19,7 @@
     "@clack/prompts": "^1.7.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@nimbus-dev/client": "^0.17.3",
-    "@nimbus-dev/sdk": "^1.19.0",
+    "@nimbus-dev/sdk": "^1.30.0",
     "ink": "^7.1.1",
     "ink-text-input": "^6.0.0",
     "pino": "^10.3.1",
