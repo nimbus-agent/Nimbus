@@ -1055,7 +1055,10 @@ test("runExpert refuses a request with no arm rather than searching for the empt
   // question nobody asked — confidently, and with no gap to warn anyone.
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
-  expect(runExpert({}, { db, notify: () => {}, sessionId: "expert-noarm" })).rejects.toThrow(
+  // `await`, not a floating assertion: an un-awaited `.rejects` resolves after the test
+  // has already passed, so this would go green even if runExpert stopped throwing — the
+  // one failure mode a guard test must not have.
+  await expect(runExpert({}, { db, notify: () => {}, sessionId: "expert-noarm" })).rejects.toThrow(
     /exactly one/,
   );
 });
