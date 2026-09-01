@@ -11,10 +11,23 @@ import {
 } from "./terminal.ts";
 
 /** A fake child process: two readable streams plus a recording stdin. */
+/**
+ * `stdin` is an EventEmitter here because a real `ChildProcess.stdin` IS one — it is a separate
+ * `Writable` stream with its own `error` events. The first version of this fake was a plain object
+ * with just `write`/`end`, which meant the fake could not represent the very failure mode the lane
+ * has to survive: an EPIPE on stdin when the shell exits a moment early. A fake that cannot express
+ * a contract cannot catch a mismatch with it.
+ */
+interface FakeStdin extends EventEmitter {
+  written: string[];
+  write(s: string): boolean;
+  end(): void;
+}
+
 interface FakeChild extends EventEmitter {
   stdout: PassThrough;
   stderr: PassThrough;
-  stdin: { written: string[]; write(s: string): boolean; end(): void };
+  stdin: FakeStdin;
   kill(sig?: string): boolean;
   killed: boolean;
 }
@@ -24,14 +37,14 @@ function fakeChild(): FakeChild {
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   const written: string[] = [];
-  child.stdin = {
-    written,
-    write: (s: string) => {
-      written.push(s);
-      return true;
-    },
-    end: () => {},
+  const stdin = new EventEmitter() as FakeStdin;
+  stdin.written = written;
+  stdin.write = (s: string) => {
+    written.push(s);
+    return true;
   };
+  stdin.end = () => {};
+  child.stdin = stdin;
   child.killed = false;
   child.kill = () => {
     child.killed = true;
@@ -153,7 +166,7 @@ describe("openTerminalLane", () => {
     const child = fakeChild();
     const lane = await open(child);
     const first = lane.write("one");
-    expect(() => lane.write("two")).toThrow(/ERR_CU_CONCURRENT_WRITE/);
+    await expect(lane.write("two")).rejects.toThrow(/ERR_CU_CONCURRENT_WRITE/);
     setTimeout(() => child.stdout.write("done\n"), 5);
     await first;
     // And the lane is usable again once the first write settles.
@@ -176,7 +189,7 @@ describe("openTerminalLane", () => {
     const child = fakeChild();
     const lane = await open(child);
     child.emit("close", 0);
-    expect(() => lane.write("ls")).toThrow(/not alive/i);
+    await expect(lane.write("ls")).rejects.toThrow(/not alive/i);
   });
 
   test("a shell that exits mid-collection settles as exited, not as quiet", async () => {
@@ -289,4 +302,54 @@ describe("openTerminalLane — the paths a happy-path test never reaches", () =>
     expect(child.killed).toBe(true);
     expect(lane.isAlive()).toBe(false);
   }, 15_000);
+});
+
+describe("openTerminalLane — teardown and stdin failure", () => {
+  test("a stdin error marks the lane dead instead of crashing the process", async () => {
+    // `child.stdin` is a SEPARATE Writable. Without its own listener an EPIPE is an unhandled
+    // `error` event, which Node turns into an uncaught exception — the gateway would go down
+    // because a shell exited a millisecond early.
+    const child = fakeChild();
+    const lane = await open(child);
+    expect(lane.isAlive()).toBe(true);
+    child.stdin.emit("error", new Error("EPIPE"));
+    expect(lane.isAlive()).toBe(false);
+  });
+
+  test("close() ESCALATES to SIGKILL when SIGTERM is ignored", async () => {
+    // Without escalation the shell simply survives: `close()` returns, the gate evicts the session,
+    // and nothing can ever reach that child again — a confined shell still holding write access to
+    // `cwd` after the owner's approval window closed.
+    const child = fakeChild();
+    const signals: string[] = [];
+    child.kill = (sig?: string) => {
+      signals.push(sig ?? "SIGTERM");
+      if (sig === "SIGKILL") {
+        child.killed = true;
+        child.emit("close", 137);
+      }
+      return true;
+    };
+    const lane = await open(child);
+    await lane.close();
+    expect(signals).toContain("SIGTERM");
+    expect(signals).toContain("SIGKILL");
+    expect(lane.isAlive()).toBe(false);
+  }, 20_000);
+
+  test("close() does NOT escalate when the shell exits on SIGTERM", async () => {
+    // The escalation must be a fallback, not routine: SIGKILL denies the shell any chance to clean
+    // up, so it fires only when the polite signal was ignored.
+    const child = fakeChild();
+    const signals: string[] = [];
+    child.kill = (sig?: string) => {
+      signals.push(sig ?? "SIGTERM");
+      child.killed = true;
+      child.emit("close", 0);
+      return true;
+    };
+    const lane = await open(child);
+    await lane.close();
+    expect(signals).toEqual(["SIGTERM"]);
+  }, 20_000);
 });

@@ -108,3 +108,30 @@ describe("assertTerminalLaunchable", () => {
     );
   });
 });
+
+describe("buildTerminalLaunchPolicy — path traversal", () => {
+  test("REFUSES an absolute cwd containing a .. segment", () => {
+    // Absolute is not enough. `/home/me/project/../../etc` is absolute, and the grant would cover
+    // the RESOLVED directory while the consent prompt displayed the unresolved string — the owner
+    // approving one directory and the sandbox binding another.
+    expect(() => buildTerminalLaunchPolicy({ ...base, cwd: "/home/me/project/../../etc" })).toThrow(
+      CuLaunchPolicyError,
+    );
+  });
+
+  test("REFUSES a Windows-style traversal too", () => {
+    expect(() => buildTerminalLaunchPolicy({ ...base, cwd: "C:Usersme....Windows" })).toThrow(
+      CuLaunchPolicyError,
+    );
+  });
+
+  test("a directory whose NAME merely contains dots is fine", () => {
+    // The check is on path SEGMENTS, not on the substring: refusing `my..dir` would be a bug.
+    expect(() =>
+      buildTerminalLaunchPolicy({ ...base, cwd: join(tmpdir(), "my..dir") }),
+    ).not.toThrow();
+    expect(() =>
+      buildTerminalLaunchPolicy({ ...base, cwd: join(tmpdir(), "..hidden") }),
+    ).not.toThrow();
+  });
+});

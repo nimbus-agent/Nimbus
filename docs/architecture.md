@@ -1685,6 +1685,10 @@ const streamReq: JSONRPCRequest = {
 //   before `performActuation` runs. Hitting `maxActions`/`maxWallClockMs` TERMINATES the session
 //   rather than prompting to extend — prompting to extend is how an unbounded sequence launders
 //   itself through a bounded one.
+// LANE SUPPORT, stated once so a reader does not have to infer it: `browser` and `terminal` each
+//   have a gate arm AND a driver under `cu-lanes/`; `screen` has NEITHER — it is a
+//   `KNOWN_CU_LANES` member for forward config compatibility only, its `KINDS_BY_LANE` entry is
+//   an empty set, and `computer.sessionOpen` rejects it at the transport.
 // TWO LANES ship actuation, and their PARAMETER SHAPES DIFFER: `computer.sessionOpen` takes a
 //   discriminated union on `lane`. A browser request carries `navigateOrigins`/`scriptOrigins`; a
 //   TERMINAL request carries an absolute `cwd` (required, never defaulted — defaulting would grant

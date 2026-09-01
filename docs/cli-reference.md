@@ -1185,7 +1185,7 @@ the local posture and never loosen it.
 
 ---
 
-## Computer-Use Sessions (browser lane)
+## Computer-Use Sessions (browser and terminal lanes)
 
 ### `nimbus computer`
 

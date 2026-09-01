@@ -2876,11 +2876,23 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
       expect(classifyTerminalAction(line).cls).toBe("actuating");
     }
     // No branch in the source can return `observing` at all — read from disk rather than reasoned
-    // about, so a future edit that adds one fails here even if every input above still classifies
+    // No branch in the BODY can return `observing`. Read from disk rather than reasoned about, so
+    // a future edit that adds one fails here even if every input above still classifies
     // `actuating` by luck of which cases were chosen.
+    //
+    // The slice is anchored on the BODY OPENING, not on the first newline-brace after the
+    // declaration. `classifyTerminalAction` declares a multi-line inline return type, so that first
+    // newline-brace is the closing brace of the TYPE — slicing there ended the region before the
+    // body began, and the assertion passed no matter what the body contained. A guard that cannot
+    // fail is worse than no guard, because it is counted as one.
     const classify = stripComments(await read("packages/gateway/src/computer-use/cu-classify.ts"));
-    const fn = classify.slice(classify.indexOf("export function classifyTerminalAction"));
-    expect(fn.slice(0, fn.indexOf("\n}"))).not.toContain("observing");
+    const decl = classify.indexOf("export function classifyTerminalAction");
+    expect(decl).toBeGreaterThanOrEqual(0);
+    const bodyStart = classify.indexOf("} {", decl) + 3;
+    const body = classify.slice(bodyStart, classify.indexOf("\n}", bodyStart));
+    // POSITIVE CONTROL: prove the slice actually covers the body before asserting about it.
+    expect(body).toContain("actuating");
+    expect(body).not.toContain("observing");
   });
 
   test("I35 terminal: a control character is refused, not buffered, and leaves the buffer alone", () => {

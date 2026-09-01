@@ -58,6 +58,18 @@ export function buildTerminalLaunchPolicy(opts: {
       `the terminal lane's working directory must be an absolute path: ${opts.cwd}`,
     );
   }
+  // ABSOLUTE IS NOT ENOUGH: `/home/me/project/../../etc` is absolute, and the policy would grant
+  // read AND write on that literal string while the CONSENT PROMPT displayed it unresolved. The
+  // owner would be approving a directory whose real identity is one traversal away from what they
+  // read — and on Linux bwrap binds the resolved target, so the grant and the prompt would describe
+  // different directories. REFUSED rather than normalised, matching this file's posture everywhere
+  // else: silently rewriting a caller's path grants something they did not type.
+  if (opts.cwd.split("\\").join("/").split("/").includes("..")) {
+    throw new CuLaunchPolicyError(
+      "ERR_CU_TERMINAL_TRAVERSAL_CWD",
+      `the terminal lane's working directory must not contain a ".." segment: ${opts.cwd}`,
+    );
+  }
   if (!isAbsolute(opts.shellPath)) {
     // A bare name would be resolved through PATH at spawn time, putting the choice of interpreter
     // in the hands of whatever can write to a directory on it.

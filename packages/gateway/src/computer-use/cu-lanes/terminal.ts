@@ -53,6 +53,11 @@ export const TERMINAL_SETTLE_MS = 15_000;
 /** Byte ceiling on one result. Shared across stdout and stderr — a child chooses which to flood. */
 export const TERMINAL_OUTPUT_MAX_BYTES = 65_536;
 
+/** Grace period between SIGTERM and SIGKILL, matching `exec/exec-run.ts`'s escalation. */
+const KILL_ESCALATION_MS = 2_000;
+/** How long to wait for the post-SIGKILL `close` before giving up and returning anyway. */
+const KILL_SETTLE_MS = 500;
+
 /**
  * Prefixed to output that arrived after a previous command's window closed.
  *
@@ -144,6 +149,15 @@ export async function openTerminalLane(
     exited = true;
   });
   child.once("error", () => {
+    exited = true;
+  });
+  // `child.stdin` is a SEPARATE Writable, so `child.once("error")` does NOT catch its errors. An
+  // EPIPE — the shell exiting between the liveness check and the write — would otherwise be an
+  // unhandled `error` event, which Node turns into an uncaught exception and takes the gateway down
+  // with it. Marking the lane dead here is also the honest reading: a stdin that cannot be written
+  // to is a lane that can no longer be driven, and the gate terminates the session on its next
+  // action rather than spending budget slots on a corpse.
+  child.stdin?.on("error", () => {
     exited = true;
   });
 
@@ -296,8 +310,23 @@ export async function openTerminalLane(
       child.kill("SIGTERM");
       await new Promise<void>((resolve) => {
         if (exited) return resolve();
-        child.once("close", () => resolve());
-        setTimeout(() => resolve(), 2_000);
+        let escalation: ReturnType<typeof setTimeout> | undefined;
+        const settle = (): void => {
+          if (escalation !== undefined) clearTimeout(escalation);
+          resolve();
+        };
+        child.once("close", settle);
+        // ESCALATE, do not merely stop waiting. Without this a shell that ignores or delays SIGTERM
+        // simply SURVIVES: `close()` returns, `bestEffortCloseLane` moves on, the gate evicts the
+        // session from `liveSessions`, and no code path can ever reach that child again — leaving a
+        // confined shell with write access to `cwd` running after the session ended and after the
+        // owner's approval window closed. `SandboxPolicy.limits` does not bound it either; that
+        // field is documented as enforced by no runner. Same escalation `exec/exec-run.ts` performs,
+        // and for the same reason.
+        escalation = setTimeout(() => {
+          child.kill("SIGKILL");
+          setTimeout(settle, KILL_SETTLE_MS);
+        }, KILL_ESCALATION_MS);
       });
       exited = true;
     },
