@@ -144,3 +144,28 @@ export function classifyBrowserAction(input: BrowserActionInput): {
 
   return actuating("no rule proved this action inert");
 }
+
+/**
+ * Derive the terminal lane's HITL class (I35; spec § 4.3 and § 4.3.1).
+ *
+ * ALWAYS `actuating`, and that is the design rather than a placeholder. This lane gets no command
+ * allow-list: an allow-list over shell command TEXT is defeated by quoting, substitution, aliasing
+ * and encoding, and a defense that can be quoted around is worse than no defense because it is
+ * BELIEVED. Whole-line HITL is crude, structural, and un-quotable.
+ *
+ * The consequence recorded in spec § 4.3.1 is that the terminal lane has NO `observing` class at
+ * all — nothing on it is ever auto-satisfied. That property is enforced here by there being no
+ * branch that could return one, and by this function's ARITY: it takes the composed line and
+ * nothing else, so the model's own description of what it believes it is doing cannot be passed
+ * in, let alone consulted. I3 transplanted, and stronger here than on the browser lane, where the
+ * separation rests on which fields the input object happens to carry.
+ */
+export function classifyTerminalAction(line: string): {
+  readonly cls: CuActionClass;
+  readonly why: string;
+} {
+  return {
+    cls: "actuating",
+    why: `every complete command line on the terminal lane requires the owner's approval (${line.length} characters)`,
+  };
+}

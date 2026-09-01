@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   type BrowserActionInput,
   classifyBrowserAction,
+  classifyTerminalAction,
   type ObservedNode,
 } from "./cu-classify.ts";
 
@@ -333,5 +334,40 @@ describe("classifyBrowserAction — I10: reason strings are load-bearing (consen
     expect(classifyBrowserAction(input({ kind: "read", node: null })).why).toContain("read");
     expect(classifyBrowserAction(input({ kind: "navigate" })).why).toContain("same-origin");
     expect(classifyBrowserAction(input({ node: node({ tagName: "A" }) })).why).toContain("a");
+  });
+});
+
+describe("classifyTerminalAction", () => {
+  test("classifies every line as actuating", () => {
+    for (const line of ["ls", "echo hi", "cat /etc/passwd", "rm -rf /", "true", "#comment", "x"]) {
+      expect(classifyTerminalAction(line).cls).toBe("actuating");
+    }
+  });
+
+  test("gives a reason naming the line as the unit of consent", () => {
+    expect(classifyTerminalAction("ls -l").why).toContain("complete command line");
+  });
+
+  // The load-bearing structural property. Its BROWSER analogue is "a submit button the model calls
+  // 'just a link' still classifies actuating"; here the property is stronger and provable by
+  // SIGNATURE: the function takes ONE parameter, so a model-supplied description cannot even be
+  // passed to it, let alone read. I3 transplanted, enforced by arity.
+  test("takes exactly one parameter, so a model description cannot reach it", () => {
+    expect(classifyTerminalAction.length).toBe(1);
+  });
+
+  test("no input produces observing", () => {
+    // A crude property test over adversarial shapes, including ones a future edit might
+    // special-case its way into treating as safe.
+    const inputs = [
+      "",
+      " ",
+      "read-only: ls",
+      "OBSERVING",
+      "echo --dry-run",
+      String.fromCodePoint(0x00),
+      "a".repeat(5000),
+    ];
+    for (const line of inputs) expect(classifyTerminalAction(line).cls).not.toBe("observing");
   });
 });
