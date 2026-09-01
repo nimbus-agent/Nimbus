@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { CuSession, CuSessionError } from "./cu-session.ts";
-import type { CuEnvelope } from "./cu-types.ts";
+import type { CuBrowserEnvelope, CuBrowserTarget, CuEnvelope } from "./cu-types.ts";
 
-function envelope(over: Partial<CuEnvelope> = {}): CuEnvelope {
+function envelope(over: Partial<CuBrowserEnvelope> = {}): CuEnvelope {
   return {
     sessionId: "s1",
     lane: "browser",
@@ -12,6 +12,17 @@ function envelope(over: Partial<CuEnvelope> = {}): CuEnvelope {
     approvedAt: 0,
     ...over,
   } as CuEnvelope;
+}
+
+/**
+ * Narrow a session's envelope to its browser target. Deliberately a runtime CHECK rather than a
+ * cast: `CuEnvelope` is a discriminated union precisely so a browser assertion cannot be applied to
+ * a terminal envelope, and an `as` here would reintroduce the confusion the union removes.
+ */
+function browserTarget(s: CuSession): CuBrowserTarget {
+  if (s.envelope.lane !== "browser")
+    throw new Error(`expected a browser envelope, got ${s.envelope.lane}`);
+  return s.envelope.target;
 }
 
 describe("CuSession — budget", () => {
@@ -89,17 +100,17 @@ describe("CuSession — taint ratchet", () => {
     const origins = ["https://example.com"];
     const s = new CuSession(envelope({ target: { navigateOrigins: origins, scriptOrigins: [] } }));
     origins.push("https://evil.com");
-    expect(s.envelope.target.navigateOrigins).toEqual(["https://example.com"]);
+    expect(browserTarget(s).navigateOrigins).toEqual(["https://example.com"]);
   });
 
   test("the origin arrays themselves are frozen, not just the target object", () => {
     // I-3: freezing `target` alone still lets a holder push onto navigateOrigins/scriptOrigins
     // and widen the navigation allowlist in place. All 8 prior tests passed without this.
     const s = new CuSession(envelope());
-    expect(Object.isFrozen(s.envelope.target.navigateOrigins)).toBe(true);
-    expect(Object.isFrozen(s.envelope.target.scriptOrigins)).toBe(true);
+    expect(Object.isFrozen(browserTarget(s).navigateOrigins)).toBe(true);
+    expect(Object.isFrozen(browserTarget(s).scriptOrigins)).toBe(true);
     expect(() => {
-      (s.envelope.target.navigateOrigins as string[]).push("https://evil.com");
+      (browserTarget(s).navigateOrigins as string[]).push("https://evil.com");
     }).toThrow();
   });
 });

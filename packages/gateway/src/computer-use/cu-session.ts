@@ -66,14 +66,30 @@ export class CuSession {
       );
     }
 
-    // Copy the origin arrays before freezing: a caller that keeps a reference to the array it
-    // passed in must not be able to push onto it and widen a policy the owner already approved.
-    // Same reasoning as `exec-policy.ts`'s `requireAbsolute` copy.
-    const target = Object.freeze({
-      navigateOrigins: Object.freeze([...envelope.target.navigateOrigins]),
-      scriptOrigins: Object.freeze([...envelope.target.scriptOrigins]),
-    });
-    this.#envelope = Object.freeze({ ...envelope, target });
+    // Copy every array before freezing: a caller that keeps a reference to what it passed in must
+    // not be able to push onto it and widen a policy the owner already approved. Same reasoning as
+    // `exec-policy.ts`'s `requireAbsolute` copy.
+    //
+    // Per-lane, narrowed on the `lane` discriminant rather than spread generically: freezing an
+    // object is shallow, so a generic `Object.freeze({...envelope})` would leave a browser
+    // envelope's origin ARRAYS mutable, and the "may only narrow" property would rest on every
+    // caller's good behaviour instead of on the freeze.
+    this.#envelope =
+      envelope.lane === "browser"
+        ? Object.freeze({
+            ...envelope,
+            target: Object.freeze({
+              navigateOrigins: Object.freeze([...envelope.target.navigateOrigins]),
+              scriptOrigins: Object.freeze([...envelope.target.scriptOrigins]),
+            }),
+          })
+        : Object.freeze({
+            ...envelope,
+            // Two scalars: named explicitly rather than spread, so a field added to
+            // `CuTerminalTarget` later is a compile error here instead of silently riding along
+            // unfrozen.
+            target: Object.freeze({ shellId: envelope.target.shellId, cwd: envelope.target.cwd }),
+          });
   }
 
   get envelope(): CuEnvelope {

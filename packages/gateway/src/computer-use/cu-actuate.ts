@@ -1,9 +1,16 @@
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import type { BrowserLane } from "./cu-types.ts";
+import type { CuLaneHandle } from "./cu-types.ts";
 
 export interface ActuationRequest {
-  readonly kind: "click" | "type" | "navigate" | "read" | "screenshot" | "download";
+  readonly kind:
+    | "click"
+    | "type"
+    | "navigate"
+    | "read"
+    | "screenshot"
+    | "download"
+    | "terminal_write";
   readonly selector?: string;
   readonly text?: string;
   readonly url?: string;
@@ -20,21 +27,48 @@ export interface ActuationRequest {
  * around every call here. Mirrors D23's `runConfined` confinement exactly.
  */
 export async function performActuation(
-  lane: BrowserLane,
+  lane: CuLaneHandle,
   req: ActuationRequest,
 ): Promise<string | null> {
+  if (lane.kind === "terminal") {
+    if (req.kind !== "terminal_write") {
+      // Fail closed rather than fall through. A browser kind reaching a terminal handle means the
+      // gate's own lane/kind agreement check did not run — refusing here keeps a second, silent
+      // path from existing at all.
+      throw new Error(`ERR_CU_LANE_KIND_MISMATCH: ${req.kind} is not a terminal action`);
+    }
+    const r = await lane.terminal.write(req.text ?? "");
+    // The result crosses back as TEXT and is wrapped by `cu-tools.ts` (I11) before any model sees
+    // it. The `settled` disclosure travels WITH the output rather than beside it, so a reader
+    // cannot mistake "we stopped waiting" for "the command finished".
+    //
+    // `quiet` is the ONLY silent case: output arrived and then stopped, which is what "it finished"
+    // looks like from here. Every other ending is disclosed, INCLUDING `no_output` — a command that
+    // printed nothing within the first-byte window may have finished silently or may still be
+    // running, and saying "it produced no output" without saying which would assert the one thing
+    // this driver cannot know.
+    return r.settled === "quiet"
+      ? r.output
+      : `${r.output}\n[nimbus: output collection ended by ${r.settled}${r.truncated ? ", truncated" : ""}]`;
+  }
+
+  if (req.kind === "terminal_write") {
+    throw new Error("ERR_CU_LANE_KIND_MISMATCH: terminal_write is not a browser action");
+  }
+
+  const browser = lane.browser;
   switch (req.kind) {
     case "click":
-      await lane.click(req.selector ?? "");
+      await browser.click(req.selector ?? "");
       return null;
     case "type":
-      await lane.type(req.selector ?? "", req.text ?? "");
+      await browser.type(req.selector ?? "", req.text ?? "");
       return null;
     case "navigate":
-      await lane.navigate(req.url ?? "");
+      await browser.navigate(req.url ?? "");
       return null;
     case "read":
-      return await lane.readText();
+      return await browser.readText();
     case "screenshot": {
       // Digest ONLY, per spec § 7: screenshot PIXELS are never held any longer than this
       // expression and never written to disk. Only the BLAKE3 digest crosses back to the caller,
@@ -44,7 +78,7 @@ export async function performActuation(
       // would have left that column permanently NULL for every browser-lane screenshot. Fixed
       // here rather than reproduced, the same way earlier tasks' implementers fixed a verbatim
       // defect they found (see the plan ledger's R23).
-      const bytes = await lane.screenshot();
+      const bytes = await browser.screenshot();
       return bytesToHex(blake3(bytes));
     }
     case "download":

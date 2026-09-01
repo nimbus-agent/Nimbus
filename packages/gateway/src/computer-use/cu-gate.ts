@@ -4,7 +4,7 @@ import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { performActuation } from "./cu-actuate.ts";
 import type { BrowserActionInput } from "./cu-classify.ts";
-import { classifyBrowserAction } from "./cu-classify.ts";
+import { classifyBrowserAction, classifyTerminalAction } from "./cu-classify.ts";
 import type { CuActionApprovalInput, CuEnvelopeApprovalInput } from "./cu-consent-broker.ts";
 import { normalizeOrigin, originOf } from "./cu-request-policy.ts";
 import { CuSession, CuSessionError } from "./cu-session.ts";
@@ -14,6 +14,8 @@ import type {
   CuActionClass,
   CuBrowserLaunchPolicy,
   CuEnvelope,
+  CuLaneBase,
+  CuLaneHandle,
   CuOutcome,
   OpenBrowserLaneOptions,
 } from "./cu-types.ts";
@@ -206,7 +208,7 @@ function safeAppendSessionAudit(
  * its browser process running with nothing left that can ever close it. A failure closing an
  * already-broken lane must not mask the ORIGINAL error/outcome that triggered the teardown.
  */
-async function bestEffortCloseLane(lane: BrowserLane): Promise<void> {
+async function bestEffortCloseLane(lane: CuLaneBase): Promise<void> {
   try {
     await lane.close();
   } catch {
@@ -216,7 +218,12 @@ async function bestEffortCloseLane(lane: BrowserLane): Promise<void> {
 
 interface LiveSession {
   readonly session: CuSession;
-  readonly lane: BrowserLane;
+  /**
+   * The TAGGED lane handle (`CuLaneHandle`), not a bare driver. Every teardown path below takes the
+   * lane-independent `CuLaneBase` view via {@link laneBase}, which is why adding a second lane did
+   * not change `finalizeSession`, `bestEffortCloseLane` or `evictExistingSession` at all.
+   */
+  readonly lane: CuLaneHandle;
   /**
    * The FULL `CuGateDeps` this session was OPENED with (fix round 1, I-3.2). Every DB write this
    * gate makes for this session — `appendAuditEntry`, `insertAction`, `updateSessionState`, and
@@ -257,6 +264,17 @@ interface LiveSession {
  * closed. An entry is evicted on every terminal outcome (fix round 1, I-4) — a session id that
  * has already terminated must never be found here again.
  */
+/**
+ * The one lane-independent view the gate's teardown paths need.
+ *
+ * Deliberately NOT in `cu-types.ts`: that file carries a DECLARATION-ONLY header and is
+ * coverage-exempt by exact path precisely because it has no executable statement, so a function
+ * there would turn an accounting fact into a hole.
+ */
+function laneBase(handle: CuLaneHandle): CuLaneBase {
+  return handle.kind === "browser" ? handle.browser : handle.terminal;
+}
+
 const liveSessions = new Map<string, LiveSession>();
 
 function syncSessionRow(
@@ -327,7 +345,7 @@ async function finalizeSession(params: {
   readonly deps: Pick<CuGateDeps, "db" | "now">;
   readonly sessionId: string;
   readonly session: CuSession;
-  readonly lane: BrowserLane | null;
+  readonly lane: CuLaneBase | null;
   readonly syncRow: boolean;
   readonly evictMap: boolean;
   readonly writeAudit: () => void;
@@ -374,7 +392,7 @@ async function evictExistingSession(sessionId: string): Promise<void> {
     deps: openDeps,
     sessionId,
     session,
-    lane,
+    lane: laneBase(lane),
     syncRow: true,
     evictMap: true,
     writeAudit: () =>
@@ -579,7 +597,7 @@ export async function openSession(
       await evictExistingSession(sessionId);
       liveSessions.set(sessionId, {
         session,
-        lane,
+        lane: { kind: "browser", browser: lane },
         openDeps: deps,
         queue: Promise.resolve(),
       });
@@ -665,7 +683,7 @@ export async function closeSession(
     deps: openDeps,
     sessionId,
     session,
-    lane,
+    lane: laneBase(lane),
     syncRow: true,
     evictMap: true,
     writeAudit: () =>
@@ -806,6 +824,13 @@ function hitlStatusForOutcome(
           throw new Error(`unrecognised CuActionClass: ${String(exhaustive)}`);
         }
       }
+    case "buffered":
+      // Genuinely not required: NOTHING reached the host, so no approval was owed and claiming one
+      // would assert a fact that never happened — the same over-claiming defect `browser-egress.ts`
+      // was fixed for, pointed the other way. The DANGEROUS reading of `not_required` is only
+      // dangerous as the PAIR with `actuating`, which `buffered` (classification always null) can
+      // never be.
+      return "not_required";
     case "denied_by_owner":
     case "refused_before_consent":
     case "refused_out_of_envelope":
@@ -955,7 +980,7 @@ async function runActionExclusive(
       deps: openDeps,
       sessionId: req.sessionId,
       session,
-      lane,
+      lane: laneBase(lane),
       syncRow: true,
       evictMap: true,
       writeAudit: () =>
@@ -1007,7 +1032,7 @@ async function runActionExclusive(
       deps: openDeps,
       sessionId: req.sessionId,
       session,
-      lane,
+      lane: laneBase(lane),
       syncRow: true,
       evictMap: true,
       writeAudit: () =>
@@ -1073,14 +1098,130 @@ async function runActionExclusive(
    * and a DOM snapshot before it actuates. A `closeSession` arriving in any of those windows used
    * to leave the actuation to proceed against a lane that had already been closed and evicted.
    */
-  const stillLive = (): boolean => session.isOpen() && lane.isAlive();
+  const stillLive = (): boolean => session.isOpen() && laneBase(lane).isAlive();
+
+  /**
+   * The TERMINAL lane's action body (spec § 4.3.1). Same order as the browser arm — envelope check,
+   * classification, single-use consent, actuation — with the buffer standing in for the envelope
+   * check, because on this lane the buffer IS what decides whether anything may reach the host.
+   *
+   * A closure rather than a separate function so it shares the `finally`-guaranteed audit
+   * accumulators (`outcome`, `classification`, `observedTarget`, `domAfter`, `consentGranted`,
+   * `actuationAttempted`, `laneLost`) with the browser arm. Those accumulators, and the single
+   * `finally` that writes them, are the C-1 fix: every exit from this function owes exactly one
+   * audit row, and duplicating that machinery per lane is how a lane ends up owing none.
+   */
+  async function runTerminalAction(
+    handle: Extract<CuLaneHandle, { kind: "terminal" }>,
+  ): Promise<RunActionOutput> {
+    // 2. ENVELOPE + BUFFER. The buffer IS the envelope check on this lane: a control character, a
+    //    bidirectional override, an over-long line or a second command after the submit is refused,
+    //    never prompted, and leaves the buffer untouched.
+    stage = "buffer";
+    const appended = handle.buffer.append(req.text ?? "");
+    if (appended.status === "refused") {
+      outcome = "refused_out_of_envelope";
+      observedTarget = `terminal_write refused: ${appended.reason}`;
+      stage = "done";
+      // The REASON travels back to the caller, not just the outcome. Without it the model sees a
+      // bare `refused_out_of_envelope` for four distinct conditions and can only retry blindly —
+      // which spends the owner's budget on attempts nobody can learn from.
+      return { outcome, result: appended.reason };
+    }
+    if (appended.status === "buffered") {
+      // NOTHING reached the shell and NOTHING was classified. A real, recorded outcome rather than
+      // a silent no-op: an auditor can see how a command was composed before it was approved.
+      // `classification` stays null, so `hitlStatusForOutcome` writes `not_required` — accurate
+      // here, and forbidden only as the PAIR with `actuating`.
+      outcome = "buffered";
+      observedTarget = `terminal buffer now holds ${appended.pending.length} characters`;
+      stage = "done";
+      // The PENDING TEXT goes back to the caller. It is the caller's own bytes — nothing from the
+      // host, nothing untrusted — and without it a model composing across several calls cannot see
+      // what it has actually built, so it cannot tell a fresh start from an append onto a stale
+      // fragment (appending "ls" onto a pending "rm -rf" submits "rm -rfls").
+      // `rm -rfls`) from a fresh start.
+      return { outcome, result: appended.pending };
+    }
+
+    // 3. CLASSIFY — from the COMPLETE line the gateway assembled, never from the model's
+    //    description. Always `actuating` on this lane; there is no branch that returns otherwise.
+    const line = appended.line;
+    const { cls, why } = classifyTerminalAction(line);
+    classification = cls;
+    observedTarget = line; // the VERBATIM line, which is what the owner reads and approves
+
+    // 4. Single-use consent for the whole line.
+    stage = "consent";
+    const approved = await deps.requestApproval({
+      promptKind: "action",
+      sessionId: req.sessionId,
+      seq,
+      kind: req.kind,
+      observedTarget,
+      classification: cls,
+      why,
+      actionsUsed: session.actionsUsed,
+      maxActions: session.envelope.maxActions,
+      modelDescription,
+    });
+    if (!approved) {
+      outcome = "denied_by_owner";
+      stage = "done";
+      return { outcome };
+    }
+    consentGranted = true;
+    // The longest window in this function: a human is answering. An approval that arrives for a
+    // session the owner has since closed, or a shell that died while they read it, must not write.
+    if (!stillLive()) {
+      laneLost = true;
+      outcome = "terminated_target_lost";
+      stage = "done";
+      return { outcome };
+    }
+
+    // 6. TAINT before the write, not after. A command's output is untrusted content entering the
+    //    model's context, and it enters whether or not the write later fails.
+    session.taint(openDeps.now());
+    if (!stillLive()) {
+      laneLost = true;
+      outcome = "terminated_target_lost";
+      stage = "done";
+      return { outcome };
+    }
+
+    stage = "performActuation";
+    actuationAttempted = true;
+    let result: string | null;
+    try {
+      // The bytes the owner approved are the bytes written: `line` was read ONCE, above, and is
+      // NOT re-derived from the buffer here. Re-reading at write time would be the TOCTOU that
+      // defeats the whole gate, since the human IS the boundary on this lane.
+      result = await performActuation(handle, { kind: "terminal_write", text: line });
+    } catch (e) {
+      outcome = "failed_after_approval";
+      laneLost = !handle.terminal.isAlive();
+      return { outcome, result: e instanceof Error ? e.message : String(e) };
+    }
+    // The replay body of a terminal action IS its output — see `cu-store.ts` on the `dom_after`
+    // column name. `domBefore` stays null: there is no "before" state to snapshot on this lane.
+    domAfter = result;
+    outcome = "actuated";
+    stage = "done";
+    return { outcome, result };
+  }
 
   try {
+    if (lane.kind === "terminal") {
+      return await runTerminalAction(lane);
+    }
+    const browser = lane.browser;
+
     // 2. Target inside the envelope? Refused, never prompted (spec § 4.2). Only `navigate` names
     // a bare destination to check here — a cross-origin click is instead routed through the
     // classifier (I4) to per-action consent, since its target is a DOM element the human sees
     // described, not a bare string. Never classified (M-9): `classification` stays `null`.
-    if (req.kind === "navigate") {
+    if (req.kind === "navigate" && session.envelope.lane === "browser") {
       const targetOrigin = originOf(req.url ?? "");
       if (
         targetOrigin === null ||
@@ -1096,7 +1237,7 @@ async function runActionExclusive(
     // 3. Classify structurally from the OBSERVED target — never from the model's description (I3
     // transplanted; § 4.3).
     stage = "observe";
-    const input = await buildBrowserActionInput(lane, req);
+    const input = await buildBrowserActionInput(browser, req);
     if (!stillLive()) {
       laneLost = true;
       outcome = "terminated_target_lost";
@@ -1152,7 +1293,7 @@ async function runActionExclusive(
     // than only after a successful `performActuation`, means a capture that reads content and
     // then fails still latches the envelope's one-way narrowing.
     stage = "dom_before";
-    domBefore = await lane.domSnapshot();
+    domBefore = await browser.domSnapshot();
     session.taint(openDeps.now());
 
     // The LAST check before the host is touched, and the one that matters most: everything above
@@ -1184,12 +1325,12 @@ async function runActionExclusive(
       // most common failure here and is NOT target loss; a browser that actually died is, and the
       // session must not stay live for a lane nothing can drive any more.
       outcome = "failed_after_approval";
-      laneLost = !lane.isAlive();
+      laneLost = !browser.isAlive();
       return { outcome, result: e instanceof Error ? e.message : String(e) };
     }
 
     stage = "dom_after";
-    domAfter = await lane.domSnapshot();
+    domAfter = await browser.domSnapshot();
 
     // 7-8. Success: persist the final state, taint (already set above), return.
     outcome = "actuated";
@@ -1229,7 +1370,7 @@ async function runActionExclusive(
       session,
       // Normally the session STAYS live for further actions and only a termination closes it —
       // hence `null`. When the lane is lost there is a lane to tear down and an entry to evict.
-      lane: laneLost ? lane : null,
+      lane: laneLost ? laneBase(lane) : null,
       syncRow: true,
       evictMap: laneLost,
       writeAudit: () =>
