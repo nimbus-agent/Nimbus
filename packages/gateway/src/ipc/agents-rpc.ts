@@ -460,28 +460,46 @@ function prUrlHasCredentials(value: string): boolean {
   }
 }
 
+/**
+ * One URL-shaped arm's value, validated.
+ *
+ * Extracted so `prUrl` and `itemUrl` cannot drift apart: both come off a browser address
+ * bar, so both need the same length bound and the same userinfo rejection. A second copy
+ * of these three checks is a second thing to remember to update.
+ */
+function requireUrlArm(value: unknown, name: "prUrl" | "itemUrl"): string {
+  if (typeof value !== "string") {
+    throw new AgentsRpcError(-32602, `${name} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_PR_URL_LEN) {
+    throw new AgentsRpcError(-32602, `${name} must be 1..${MAX_PR_URL_LEN} chars after trim`);
+  }
+  if (prUrlHasCredentials(trimmed)) {
+    throw new AgentsRpcError(-32602, `${name} must not contain userinfo (user:pass@) credentials`);
+  }
+  return trimmed;
+}
+
+const WHY_ARMS_MESSAGE = "agents.why requires exactly one of { ref }, { prUrl } or { itemUrl }";
+
 function requireWhyParams(params: unknown): WhyInput {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.why requires { ref: string } or { prUrl: string }");
+    throw new AgentsRpcError(-32602, WHY_ARMS_MESSAGE);
   }
-  const p = params as { ref?: unknown; prUrl?: unknown };
-  const hasRef = p.ref !== undefined;
-  const hasPrUrl = p.prUrl !== undefined;
-  if (hasRef === hasPrUrl) {
-    throw new AgentsRpcError(-32602, "agents.why requires exactly one of { ref } or { prUrl }");
+  const p = params as { ref?: unknown; prUrl?: unknown; itemUrl?: unknown };
+  // A COUNT, not the `hasRef === hasPrUrl` equality this replaced: that trick reads
+  // "exactly one" only while there are exactly two arms, and silently starts meaning
+  // "an odd number" at three. Counting says what it means at any arity.
+  const supplied = [p.ref, p.prUrl, p.itemUrl].filter((v) => v !== undefined).length;
+  if (supplied !== 1) {
+    throw new AgentsRpcError(-32602, WHY_ARMS_MESSAGE);
   }
-  if (hasPrUrl) {
-    if (typeof p.prUrl !== "string") {
-      throw new AgentsRpcError(-32602, "prUrl must be a string");
-    }
-    const trimmed = p.prUrl.trim();
-    if (trimmed.length === 0 || trimmed.length > MAX_PR_URL_LEN) {
-      throw new AgentsRpcError(-32602, `prUrl must be 1..${MAX_PR_URL_LEN} chars after trim`);
-    }
-    if (prUrlHasCredentials(trimmed)) {
-      throw new AgentsRpcError(-32602, "prUrl must not contain userinfo (user:pass@) credentials");
-    }
-    return { prUrl: trimmed };
+  if (p.itemUrl !== undefined) {
+    return { itemUrl: requireUrlArm(p.itemUrl, "itemUrl") };
+  }
+  if (p.prUrl !== undefined) {
+    return { prUrl: requireUrlArm(p.prUrl, "prUrl") };
   }
   return requireWhyRefParams(params);
 }

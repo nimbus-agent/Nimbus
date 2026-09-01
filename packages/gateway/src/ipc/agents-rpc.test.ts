@@ -592,6 +592,57 @@ describe("dispatchAgentsRpc — ctx.runner threading proof for the remaining age
     });
   });
 
+  // The `hasRef === hasPrUrl` equality this replaced read "exactly one" only while there
+  // were exactly two arms — at three it silently means "an odd number", so all three
+  // supplied together would have been ACCEPTED. Tested as a count, at every arity.
+  test("agents.why requires exactly one of three arms", async () => {
+    const ctx = makeCtx(freshDb());
+    const rejects = [
+      {},
+      { ref: "x", prUrl: "https://github.com/a/b/pull/1" },
+      { ref: "x", itemUrl: "https://acme.atlassian.net/browse/A-1" },
+      { prUrl: "https://github.com/a/b/pull/1", itemUrl: "https://acme.atlassian.net/browse/A-1" },
+      // The three-arm case the old equality would have let through.
+      {
+        ref: "x",
+        prUrl: "https://github.com/a/b/pull/1",
+        itemUrl: "https://acme.atlassian.net/browse/A-1",
+      },
+    ];
+    for (const params of rejects) {
+      await expect(dispatchAgentsRpc("agents.why", params, ctx)).rejects.toThrow(/exactly one/);
+    }
+  });
+
+  test("agents.why accepts each single arm", async () => {
+    const ctx = makeCtx(freshDb());
+    for (const params of [
+      { ref: "x" },
+      { prUrl: "https://github.com/a/b/pull/1" },
+      { itemUrl: "https://acme.atlassian.net/browse/A-1" },
+    ]) {
+      const out = await dispatchAgentsRpc("agents.why", params, ctx);
+      expect(out.kind).toBe("hit");
+    }
+  });
+
+  test("itemUrl inherits the prUrl arm's guards", async () => {
+    const ctx = makeCtx(freshDb());
+    await expect(
+      dispatchAgentsRpc(
+        "agents.why",
+        { itemUrl: "https://u:p@acme.atlassian.net/browse/A-1" },
+        ctx,
+      ),
+    ).rejects.toThrow(/userinfo/);
+    await expect(dispatchAgentsRpc("agents.why", { itemUrl: "   " }, ctx)).rejects.toThrow(
+      /chars after trim/,
+    );
+    await expect(dispatchAgentsRpc("agents.why", { itemUrl: 7 }, ctx)).rejects.toThrow(
+      /itemUrl must be a string/,
+    );
+  });
+
   test("agents.why with runner set actually synthesizes", async () => {
     const ctx = makeCtx(freshDb(), { runner: okRunner() });
     const out = await dispatchAgentsRpc("agents.why", { ref: "x" }, ctx);
