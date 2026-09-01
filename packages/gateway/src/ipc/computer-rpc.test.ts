@@ -524,3 +524,59 @@ describe("computer RPC", () => {
     });
   });
 });
+
+describe("computer.sessionOpen — terminal lane", () => {
+  test("accepts a terminal request", async () => {
+    const r = await dispatchComputerRpc(
+      "computer.sessionOpen",
+      { lane: "terminal", cwd: "/tmp/w" },
+      makeCtx(),
+    );
+    // A HIT means the transport accepted and routed it. The fixture's `openLane` throws, so the
+    // gate answers `refused` — what this asserts is that the request cleared the lane guard at all,
+    // which it could not do before.
+    expect(r.kind).toBe("hit");
+  });
+
+  test("rejects a terminal request with no cwd — never defaults one", async () => {
+    // Defaulting would silently grant the GATEWAY's working directory, which is not the caller's
+    // and is not anything the owner chose.
+    await expect(
+      dispatchComputerRpc("computer.sessionOpen", { lane: "terminal" }, makeCtx()),
+    ).rejects.toThrow(/ERR_INVALID_PARAMS/);
+  });
+
+  test("rejects a relative cwd at the transport boundary", async () => {
+    await expect(
+      dispatchComputerRpc(
+        "computer.sessionOpen",
+        { lane: "terminal", cwd: "relative/dir" },
+        makeCtx(),
+      ),
+    ).rejects.toThrow(/absolute path/);
+  });
+
+  test("rejects the screen lane — a config name with no implementation", async () => {
+    await expect(
+      dispatchComputerRpc("computer.sessionOpen", { lane: "screen" }, makeCtx()),
+    ).rejects.toThrow(/ERR_INVALID_PARAMS/);
+  });
+
+  test("still rejects an unknown lane", async () => {
+    await expect(
+      dispatchComputerRpc("computer.sessionOpen", { lane: "quantum" }, makeCtx()),
+    ).rejects.toThrow(/ERR_INVALID_PARAMS/);
+  });
+
+  test("accepts terminal_write on computer.act", async () => {
+    // Reaches `runAction`, which refuses with ERR_CU_NO_SESSION — the point is that the KIND
+    // cleared the transport guard rather than being rejected as unrecognised.
+    await expect(
+      dispatchComputerRpc(
+        "computer.act",
+        { sessionId: "nope", kind: "terminal_write", text: "ls" },
+        makeCtx(),
+      ),
+    ).rejects.toThrow(/no live session/);
+  });
+});

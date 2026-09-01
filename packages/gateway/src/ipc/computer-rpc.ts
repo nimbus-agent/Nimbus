@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { isAbsolute } from "node:path";
 import type {
   CuActionConsentBroker,
   CuEnvelopeConsentBroker,
@@ -65,14 +66,28 @@ function stringArray(v: unknown): string[] {
 }
 
 /**
- * Slice 1 ships exactly one lane. Rejected at the transport boundary rather than let through to
- * `openSession`, whose `OpenSessionRequest.lane` field is typed `"browser"` at compile time only
- * -- a TS type is erased by the time an externally-supplied value reaches this module as `unknown`.
+ * Two lanes ship. `screen` is a `KNOWN_CU_LANES` member with no implementation, so it is rejected
+ * HERE rather than allowed through to a gate that would refuse it less clearly — and rejected at
+ * the TRANSPORT, because a TS type is erased by the time an externally-supplied value reaches this
+ * module as `unknown`.
  */
-function requireBrowserLane(params: unknown): "browser" {
+function requireShippedLane(params: unknown): "browser" | "terminal" {
   const v = asRecord(params)?.["lane"];
-  if (v !== "browser") {
-    throw new ComputerRpcError(-32602, 'ERR_INVALID_PARAMS: lane must be "browser"');
+  if (v !== "browser" && v !== "terminal") {
+    throw new ComputerRpcError(-32602, 'ERR_INVALID_PARAMS: lane must be "browser" or "terminal"');
+  }
+  return v;
+}
+
+/**
+ * Absolute-only, and REFUSED rather than resolved: the gateway's working directory is not the
+ * caller's, so resolving here would grant a real directory nobody named. Mirrors `exec-policy.ts`'s
+ * `requireAbsolute` and the CLI's own client-side resolution.
+ */
+function requireAbsolutePath(params: unknown, key: string): string {
+  const v = requireString(params, key);
+  if (!isAbsolute(v)) {
+    throw new ComputerRpcError(-32602, `ERR_INVALID_PARAMS: ${key} must be an absolute path`);
   }
   return v;
 }
@@ -144,17 +159,30 @@ const HANDLERS: RpcMethodHandlerMap<ComputerRpcCtx> = {
   // The I35 chokepoint's only transport. Everything crossing this boundary is `unknown` until
   // validated -- no casts on `params`.
   "computer.sessionOpen": (params, ctx) => {
-    const lane = requireBrowserLane(params);
+    const lane = requireShippedLane(params);
     const rec = asRecord(params) ?? {};
-    const req: OpenSessionRequest = {
-      lane,
-      navigateOrigins: stringArray(rec["navigateOrigins"]),
-      scriptOrigins: stringArray(rec["scriptOrigins"]),
+    const bounds = {
       ...(typeof rec["maxActions"] === "number" ? { maxActions: rec["maxActions"] } : {}),
       ...(typeof rec["maxWallClockMs"] === "number"
         ? { maxWallClockMs: rec["maxWallClockMs"] }
         : {}),
     };
+    const req: OpenSessionRequest =
+      lane === "browser"
+        ? {
+            lane,
+            navigateOrigins: stringArray(rec["navigateOrigins"]),
+            scriptOrigins: stringArray(rec["scriptOrigins"]),
+            ...bounds,
+          }
+        : {
+            lane,
+            // REQUIRED, never defaulted: defaulting would silently grant the gateway's own working
+            // directory, which is not the caller's and is not anything the owner chose.
+            cwd: requireAbsolutePath(params, "cwd"),
+            ...(typeof rec["shellId"] === "string" ? { shellId: rec["shellId"] } : {}),
+            ...bounds,
+          };
     return openSession(req, ctx.gateDeps);
   },
 
