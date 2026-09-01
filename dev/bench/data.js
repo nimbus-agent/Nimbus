@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788236006437,
+  "lastUpdate": 1788283527883,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8f346bacba57e80c052cf64dabd43803372a0f5c",
-          "message": "chore(main): release 0.11.2 (#676)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.11.2](https://github.com/nimbus-agent/Nimbus/compare/v0.11.1...v0.11.2)\n(2026-06-17)\n\n\n### Bug Fixes\n\n* **test:** remove real-resolver connector-spawns twin that reds the\ncombined run ([#675](https://github.com/nimbus-agent/Nimbus/issues/675))\n([fde6718](https://github.com/nimbus-agent/Nimbus/commit/fde67189a6bca3e2289f522eb981d1560d5de768))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Resolved an issue affecting the combined test execution that was\nimpacting test reliability.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-17T11:17:07+03:00",
-          "tree_id": "84bfda82b893a5f83ae36a904d981286d471f800",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8f346bacba57e80c052cf64dabd43803372a0f5c"
-        },
-        "date": 1781684919214,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 292.6883137500019,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 291.92522464999854,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 261.10362119999627,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c52e9661282299c9927f0689c6a49bbeb0c56f6",
+          "message": "feat(computer-use): raw-CDP browser lane driver; the browser egress class goes live (#1418)\n\nThe computer-use browser lane's gate shipped in #1415 with nothing able\nto drive it. This lands the\ndriver — **raw CDP over a WebSocket, no dependency at all** — and closes\nthe nine items the plan\nrequired to land *in the same commit as the driver*, because each\nbecomes live the moment something\ncan actuate.\n\n## Two defects the fixtures could never have found\n\nThe `ObservedNode` producer had only ever been typechecked and exercised\nagainst hand-built\nfixtures. Both of these surfaced the first time it ran against a real\nChrome:\n\n1. **CDP reports `resourceType` in PascalCase** (`\"Document\"`, `\"XHR\"`,\n`\"Image\"`) while\n`CuResourceType` was written in `playwright-core`'s lowercase\nvocabulary. The unguarded\n`req.resourceType() as CuResourceType` cast therefore made **every**\nlive type miss both\n`PASSIVE` and `SCRIPT_INITIATED` — fail-closed, and a lane that could\nnot render the origin its\nowner had just approved, because the page's own `Document` was gated\ntoo. Closed with a real\nguard (`toCuResourceType`, returning `null` — never a guess). `Ping`\n(`sendBeacon` / `<a ping>`),\n`Preflight`, `Prefetch`, `Manifest`, `SignedExchange`,\n`CSPViolationReport`, `FedCM` and\n`TextTrack` are deliberately unmapped so they gate. The RAW protocol\nstring, not the substituted\n   word, reaches `payload_summary`.\n2. **`new URL(\"javascript:…\").origin` is the string `\"null\"`** — the\nWHATWG opaque-origin\nserialization — which compares EQUAL to a `data:` page's own\n`location.origin`, so two opaque\norigins read as same-origin. Collapsed to JS `null` at the producer,\nwhich makes every\n   downstream `!== null` guard fall to its actuating branch.\n\n## The pre-consent sandbox assertion was proving the wrong thing\n\n`browserLanePolicy` was, by its own in-file disclosure, a placeholder: a\n`SandboxPolicy` asserted\nagainst `canConfine` and then never used to launch anything. It was\nworse than uninformative — it\ncarried `permissions.network: []`, which `linux.ts`'s\n`decideNetworkMode` reads as `no-net` →\n`--unshare-net`, so had it ever reached a real spawn the browser would\nhave had no network **and the\ngateway no route to its own CDP endpoint**. It is gone. The gate now\nbuilds one\n`CuBrowserLaunchPolicy`, asserts it before consent, and hands the **same\nbinding** to `openLane`,\nwhich spawns its `argv` verbatim — an identity a test pins by object\nreference, not by equality.\n\nThe assertion is load-bearing, not decorative: an empty or relative\n`profileDir` is refused, because\nChromium with no `--user-data-dir` runs against the **owner's real\nprofile**; a duplicate or\ndisagreeing `--user-data-dir` is refused (Chromium takes the first); a\nfixed debugging port is\nrefused (the CDP endpoint has no authentication of its own); and any\n`--no-sandbox`-class flag is\nrefused, matched by prefix so\n`--disable-features=IsolateOrigins,site-per-process` cannot ride in\nlooking like a tuning flag.\n\n## Deviation from the design spec, stated rather than discovered\n\n**The browser does not spawn through `SandboxRunner`.** Spec § 3.5\ndesigned it to. No PAL runner can\ncarry a CDP control channel: a loopback debugging port needs\n`network-bind`, which macOS's\n`(deny default)` SBPL profile denies (it emits only `(remote …)`\nfilters); the fd-pipe transport\nneeds descriptors 3/4 forwarded, which the Windows AppContainer helper\ndoes not do; and Linux and\nWindows both additionally require `nimbus-sandbox-helper` for any\nnetwork-bearing policy, which CI\ndoes not install. Making it work would mean widening the PAL profile for\n**every** sandboxed\nconnector, or passing Chromium `--no-sandbox` — disabling the renderer\nsandbox of the one process in\nthis codebase that renders attacker-controlled content.\n\nThe lane is confined instead by Chromium's own multi-process sandbox\n(kept intact, and the launch\nassertion is what keeps it intact), a Nimbus-owned `--user-data-dir`,\nthe § 3.5.1 CDP request\npolicy, and headless + `Browser.setDownloadBehavior: deny` — the last so\nthat \"nothing this lane\ndoes puts a file on disk\" does not rest on the gate refusing a\n`download` action kind, since a page\ncan start one on its own. Recorded in `SECURITY-INVARIANTS.md` § I35 and\nbeside the type itself.\n\n## The `browser` egress class is live\n\n`THIS_BINARY_COVERAGE.browser` rises `\"none\"` → `\"per-run\"` in this\ncommit, per\n`egress-coverage.ts`'s own rule — `wrapLedgeredBrowserContext` finally\nhas a production caller.\n`openBrowserLane` enables `Fetch` interception **through** the wrapper,\nso every request is decided\nand ledgered before it proceeds; an append failure fails that request\nclosed **and** tears the CDP\ntransport down, so no later request can proceed unrecorded either.\n`nimbus prove`'s\n`COVERAGE_CLASS_LABELS.browser` was re-worded for the live appender.\n\n§ 3.5.1's bound survives and is not closed by any of this: `script` and\n`image` subresources load\nfrom any origin, so a URL-carried beacon is **rowed by origin**, not\nprevented.\n\n## The nine same-commit closures\n\n| # | Was | Now |\n|---|---|---|\n| 1 | `CuGateDeps` (with `openLane`) handed to the model-facing tool\nlayer — a future file there could get a live lane and click with no\nenvelope, consent or audit row, invisible to **both** D26 rules |\n`CuRunDeps` split with no lane-construction seam; capability removed\nrather than a third rule added |\n| 2 | `browserLanePolicy` asserted, never launched | the asserted object\n*is* the launched object |\n| 3 | `ObservedNode` producer never run against a real DOM | verified\nlive; two defects found and fixed |\n| 4 | D26(b) matched `playwright` only — a raw CDP socket passed\nsilently | also rejects any CDP `Domain.method` literal outside\n`cu-lanes/`; new **D26(c)** confines `openBrowserLane` to its definition\n+ `assemble.ts` |\n| 5 | no boot reconciliation — durable `cu_session` and the in-memory\nmap disagreed *permanently* after a restart | `cu-boot-reconcile.ts`,\nbefore any session of the new process can open |\n| 6 | Ctrl-C left the session open server-side | asks the **gateway** to\nclose it, exits 130; a second interrupt names the recovery command |\n| 7 | no `isOpen()` re-check after an `await`; no per-session\nserialisation | re-checked after observation, consent and before\nactuation; a promise-chain `queue` serialises actions on one lane |\n| 8 | `resourceType` cast unguarded | real guard (above) |\n| 9 | `terminated_target_lost` declared, handled, never assigned |\nassigned by the liveness re-checks, with its own termination reason |\n\nPlus the eleventh item: the two consent brokers were routed by probing\n`\"seq\" in input`. A `seq`\nadded to the envelope input would have silently routed every\nsession-open prompt to the **action**\nbroker, whose renderer draws a different prompt entirely — the owner\nasked to approve \"a browser\naction\" while the origin lists and budgets they were actually granting\nwent unshown, with no compile\nerror and no covering test. Now a `promptKind` discriminant with an\nexhaustive `switch`.\n\n## Verification\n\nBeyond the unit suites: the driver's DOM tests run against a **real\nChrome** when one is installed\n(`skipIf` otherwise), and the whole stack — gate, classifier, consent,\ndriver, ledger — was driven\nend-to-end against a real browser and a local site during bring-up. A\n`<span>` inside\n`<button type=submit>` classified `actuating` and prompted; an\nout-of-envelope navigate was refused\nwithout prompting, consumed its seq, wrote a `rejected` audit row and no\nreplay row; the page's\nbeacon to an unapproved origin was blocked and ledgered; and\n`hitl_status` held its discipline\n(`approved` only for actuating, `not_required` for observing) with the\nforbidden\n`not_required` + `actuating` pair never appearing.\n\n## Bounds worth reading\n\n- **One browser-lane session at a time.** `browser_profile_dir` is one\nshared directory (spec § 9,\nso a login survives across sessions) and Chromium holds a singleton lock\non it, so a second\nconcurrent session fails at launch (verified: exit code 21, empty\nstderr) and is recorded\n`failed_after_approval`. Fail-closed and honestly recorded, but\n**post-consent**. Left this way\ndeliberately: closing it with a concurrency check in `openSession` would\nmake the colliding-id\nteardown path unreachable and is a product decision about session\nconcurrency, not a driver\n  detail. The driver names the likely cause when stderr is empty.\n- **`type` synthesises no key event** (`Input.insertText`), which is\nwhat keeps the classifier's\n`submitsForm` (I7) rule unreachable in the shipped surface — verified\nagainst a live page whose\nsubmit handler never fires. A `dispatchKeyEvent` implementation would\nmake it live.\n- **I11's screenshot bound is still anticipated, not live**: captures\nare hashed and discarded, no\nvision-capable model is wired in, and the taint latch still taints by\nkind rather than content.\n- `terminal` and `screen` remain unimplemented, and the capability is\n**default off with an empty\n  `allowed_lanes`** — `enabled = true` alone grants no lane.\n\nTriple rule: wiring, `docs/SECURITY-INVARIANTS.md` § I35 (rewritten),\nand the `I35` enforcement\nblock all land here, alongside `CLAUDE.md`/`GEMINI.md`,\n`docs/roadmap.md`, `docs/CHANGELOG.md`,\n`docs/architecture.md`, `docs/cli-reference.md` and\n`docs/schema-reference.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_014aLWRrY2HzcYfz24oDW8mt\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a live computer-use browser lane for supported Chromium-family\nbrowsers.\n* Browser sessions now support navigation, clicking, text entry, page\nobservation, and in-memory screenshots.\n  * Browser activity is tracked by contacted origin and policy verdict.\n* Added automatic cleanup of abandoned sessions after gateway restarts.\n\n* **Bug Fixes**\n* Improved safety checks for browser launches, downloads, network\nresources, and lost browser targets.\n* Ctrl-C now closes sessions gracefully and exits with code 130, with\nrecovery guidance for interrupted sessions.\n\n* **Documentation**\n* Updated browser usage, security, architecture, roadmap, schema, and\nchangelog documentation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-01T17:13:07Z",
+          "tree_id": "f608bf0b3f48e307e76b74118a98d58ec0fc8ae3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0c52e9661282299c9927f0689c6a49bbeb0c56f6"
+        },
+        "date": 1788283524407,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 315.31462500000305,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 317.9862319000007,
             "unit": "ms"
           }
         ]
