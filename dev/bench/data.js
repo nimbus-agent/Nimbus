@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788286266549,
+  "lastUpdate": 1788287428128,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "49132b5eec697615b08464cede135411db9f2eb9",
-          "message": "refactor(dedup): Stage B1 — MCP search-tool scaffolding → shared/ (44 connectors) (#678)\n\n## Stage B1 of the jscpd duplication-reduction program\n\nSecond stage after Stage A (#673). Extracts the cloned MCP connector\n**search-tool scaffolding** into two shared helpers and sweeps the\ncanonical-shape connectors to use them. **Pure dedup — zero behavior\nchange.**\n\n### What changed\n- **New** `packages/mcp-connectors/shared/mcp-search-tool.ts` (+ unit\ntest):\n- `searchToolInputSchema(maxLimit = 100)` — collapses the inline `{\nquery, limit }` zod schema; the cap is **parameterized** so each\nconnector's exact limit (100/200/500/50/1000/2000) is preserved.\n- `matchesResult(rows, filter, opts)` — collapses the `Array.isArray(X)\n? filter(X, …) : [] → jsonResult({ matches })` tail; a verbatim\nequivalent.\n- **44 connectors swept** across 6 batches (schema-collapse and/or\ntail-collapse per each connector's audited shape).\n- **4 connectors deliberately skipped (no force-fit):** `dbt`,\n`flagsmith`, `flux` (extra schema field **and** no `Array.isArray` guard\n→ neither helper applies) and `zoom` (custom `ZoomSearchOptions` filter\ntype, tsc-incompatible with the generic helper under\n`exactOptionalPropertyTypes`).\n\n### Design correction vs. the parent design\nTarget is **`mcp-connectors/shared/`**, not `@nimbus-dev/sdk`: the MCP\nstdio bootstrap is already deduped (`run-read-only-mcp-connector.ts`)\nand `shared/` is the established 19-file precedent for\nconnector-internal helpers (avoids a new SDK export + the coverage-floor\nratchet).\n\n### Measurement (strict `bunx jscpd packages`, min-lines 5 / threshold\n3)\n- **4.98% → 4.83%** (637 → 604 clones). The zotero search clique\ncollapsed: `zotero/server.ts` **21 → 0** clones; MCP `server.ts` family\ninvolvements **313 → 247**.\n- Modest %-move as the design predicted for the search sweep (small\nper-clone line count); the bigger Stage-B clusters (email twins,\nREST/Graph blocks) are deferred to later slices.\n- **CI lenient duplication gate NOT tightened** (final program stage):\ncurrently **3.16%** vs threshold 5% — green.\n\n### Verification (all green, run before first push)\n- Full `mcp-connectors` suite: **804 pass / 0 fail** — **no connector\ntest file edited** (only the new helper test added).\n- Full monorepo typecheck (`typecheck:no-docs`): clean. Per-connector\ntsc clean for all 44.\n- Biome (`packages scripts`): clean. Static invariant audit: clean.\n- Docs gates (markdownlint + lychee on spec/plan): clean.\n- Whole-branch review: **READY**, no Critical/Important findings.\n\nSpec:\n`docs/superpowers/specs/2026-06-17-jscpd-stage-b1-search-tool-scaffolding-design.md`\nPlan:\n`docs/superpowers/plans/2026-06-17-jscpd-stage-b1-search-tool-scaffolding.md`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Refactor**\n* Standardized MCP search tool input validation and match-result\nformatting across 40+ connectors using shared search utilities,\nimproving consistency while preserving existing search behavior and\nresponse shape.\n* **Tests**\n* Added a dedicated test suite for the shared search-tool helpers to\nverify input validation, filtering behavior, and normalized `{ matches:\n[...] }` output.\n* **Documentation**\n* Added implementation plan and design specification documents covering\nthe duplication-reduction approach and rollout/testing/verification\nsteps.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T16:02:54+03:00",
-          "tree_id": "1245e08f4dc2f03ce5fd0c620cd35954585db649",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/49132b5eec697615b08464cede135411db9f2eb9"
-        },
-        "date": 1781702164939,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 282.9595293999984,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 276.62135420000925,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 321.7001805,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "305344ea9b8c47c6c209447b70bb822b9fd9e720",
+          "message": "chore: release main (#1423)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.5.0</summary>\n\n##\n[7.5.0](https://github.com/nimbus-agent/Nimbus/compare/v7.4.0...v7.5.0)\n(2026-09-01)\n\n\n### Features\n\n* **agents:** why, expert and ownership answer about an indexed item\n([#1421](https://github.com/nimbus-agent/Nimbus/issues/1421))\n([b5fabb2](https://github.com/nimbus-agent/Nimbus/commit/b5fabb2d176f67b8286b8cdf237231ce565d9f49))\n* **computer-use:** raw-CDP browser lane driver; the browser egress\nclass goes live\n([#1418](https://github.com/nimbus-agent/Nimbus/issues/1418))\n([0c52e96](https://github.com/nimbus-agent/Nimbus/commit/0c52e9661282299c9927f0689c6a49bbeb0c56f6))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-01T18:17:51Z",
+          "tree_id": "7e5113fbe029e6c0c4ec1cbdba203de8e2d0969b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/305344ea9b8c47c6c209447b70bb822b9fd9e720"
+        },
+        "date": 1788287425442,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 337.438319349998,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 342.1284232000056,
             "unit": "ms"
           }
         ]
