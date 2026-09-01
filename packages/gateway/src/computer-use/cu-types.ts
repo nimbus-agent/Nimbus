@@ -8,6 +8,7 @@
  */
 import type { Database } from "bun:sqlite";
 import type { CuLane } from "../config/nimbus-toml.ts";
+import type { SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
 
 /**
  * What the GATEWAY observed about the target node, derived from the DOM via CDP.
@@ -170,4 +171,24 @@ export interface OpenBrowserLaneOptions {
   readonly db: Database;
   readonly sessionId: string;
   readonly target: CuBrowserTarget;
+}
+
+/**
+ * The EXACT launch parameters the TERMINAL lane spawns with — built once, asserted before consent,
+ * then handed UNCHANGED to `openTerminalLane`, which spawns `shellPath` + `argv` verbatim. That
+ * identity is what makes the pre-consent assertion a statement about the process that actually
+ * starts, and it is the same discipline `CuBrowserLaunchPolicy` describes for the browser.
+ *
+ * Unlike the browser, this lane DOES route through `SandboxRunner`, so its `policy` is asserted
+ * with `canConfine` and then used to spawn — the browser's PAL objection (no runner can carry a
+ * CDP control channel) does not apply to a lane whose only channel is stdio. See invariant I35.
+ */
+export interface CuTerminalLaunchPolicy {
+  readonly shellId: string;
+  readonly shellPath: string;
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly envOverlay: Readonly<Record<string, string>>;
+  /** Handed to `SandboxRunner.spawn` verbatim. `permissions.network` is `[]` by construction. */
+  readonly policy: SandboxPolicy;
 }
