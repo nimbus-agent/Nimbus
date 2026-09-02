@@ -530,6 +530,70 @@ function walkMediaFilesRecursive(
   }
 }
 
+/** Cap per root. A home directory full of photos is otherwise unbounded (spec § 12.4). */
+const MEDIA_MAX_FILES_PER_ROOT = 5_000;
+
+/**
+ * Indexes each media file under `root` as a BODYLESS item.
+ *
+ * The body arrives later as a separate derived `nimbus:*_understanding` item (spec § 4) — this row
+ * is the artifact's existence and location, and deliberately carries no transcript of its own.
+ *
+ * Writes through `ctx.upsertItem`, never a raw `Database`: `SyncContext` exposes no handles and
+ * static rule D24 enforces that, so a `ctx.db` here fails the structure audit.
+ */
+export function syncFilesystemMediaForRoot(
+  ctx: SyncContext,
+  root: string,
+  exclude: readonly string[],
+  maxFiles: number,
+  now: number,
+): { upserted: number; bytes: number } {
+  const files = collectMediaFiles(root, exclude, maxFiles);
+  let upserted = 0;
+
+  for (const file of files) {
+    let sizeBytes: number | null = null;
+    let modifiedAt = now;
+    try {
+      const st = statSync(file.path);
+      sizeBytes = st.size;
+      modifiedAt = Math.floor(st.mtimeMs);
+    } catch {
+      // Vanished between walk and stat — simply not indexed this run.
+      continue;
+    }
+    const dot = file.path.lastIndexOf(".");
+    const ext = dot >= 0 ? file.path.slice(dot) : "";
+    const name = file.path.split(/[\\/]/).pop() ?? file.path;
+
+    ctx.upsertItem({
+      service: SERVICE_ID,
+      type: file.modality === "av" ? "media_av" : "media_image",
+      externalId: file.path,
+      title: name.length > 512 ? name.slice(0, 512) : name,
+      bodyPreview: "",
+      url: null,
+      canonicalUrl: null,
+      modifiedAt,
+      authorId: null,
+      metadata: {
+        path: file.path,
+        sizeBytes,
+        mimeType: mimeTypeForMediaExtension(ext),
+        mediaKind: file.modality,
+      },
+      pinned: false,
+      syncedAt: now,
+    });
+    upserted += 1;
+  }
+
+  // `bytes` is 0 because no file is READ here — only `stat`ed. Counting file sizes would inflate
+  // the connector's reported transfer total with data that never moved.
+  return { upserted, bytes: 0 };
+}
+
 const BLAME_TIMEOUT_MS = 20_000;
 const MAX_BLAME_LINES = 5000;
 // Windows CreateProcess caps the command line at 32_767 chars; each "-L a,b" pair
@@ -724,6 +788,18 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
           const c = await syncFilesystemCodeSymbolsForRoot(ctx, root, rootCfg.exclude, rk, now);
           upserted += c.upserted;
           bytes += c.bytes;
+        }
+
+        if (rootCfg.mediaIndex) {
+          const m = syncFilesystemMediaForRoot(
+            ctx,
+            root,
+            rootCfg.exclude,
+            MEDIA_MAX_FILES_PER_ROOT,
+            now,
+          );
+          upserted += m.upserted;
+          bytes += m.bytes;
         }
       }
 
