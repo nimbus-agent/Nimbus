@@ -37,11 +37,12 @@ export interface MediaGateDeps {
   readonly capabilityDisabled: boolean;
   readonly sttFor: (modality: MediaModality) => LocalUnderstander | undefined;
   /**
-   * `touch` is optional so a test double can omit it, but production MUST pass the real
-   * `GpuArbiter.touch` — without it a multi-minute transcription is evicted mid-run and takes the
-   * arbiter's waiter queue with it.
+   * `touch` is REQUIRED, not optional: a production wiring that forgets it would compile and
+   * silently lose the heartbeat — exactly the multi-minute-eviction failure this file exists to
+   * prevent. Structural enforcement over prose; a caller with no real `GpuArbiter.touch` yet must
+   * pass an explicit no-op, never rely on a default this gate supplies.
    */
-  readonly gpu: { acquire(id: string): Promise<() => void>; touch?: () => void };
+  readonly gpu: { acquire(id: string): Promise<() => void>; touch: () => void };
   /**
    * Heartbeat period. Injectable ONLY so a test can observe ticks without sleeping ten seconds;
    * production leaves it unset and gets {@link GPU_HEARTBEAT_MS}.
@@ -100,7 +101,7 @@ export async function understandArtifact(
   //    which presents as a hanging suite rather than a failing one.
   const release = await deps.gpu.acquire(`multimodal:${candidate.modality}`);
   const heartbeat = setInterval(() => {
-    deps.gpu.touch?.();
+    deps.gpu.touch();
   }, deps.heartbeatMs ?? GPU_HEARTBEAT_MS);
   try {
     const text = await provider.understand(path);

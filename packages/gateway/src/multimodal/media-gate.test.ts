@@ -30,7 +30,7 @@ function deps(over: Partial<MediaGateDeps> = {}): MediaGateDeps {
     enabled: true,
     capabilityDisabled: false,
     sttFor: () => understander(),
-    gpu: { acquire: async () => () => undefined },
+    gpu: { acquire: async () => () => undefined, touch: () => undefined },
     ...over,
   };
 }
@@ -50,8 +50,16 @@ describe("understandArtifact — ordered refusals", () => {
   });
 
   test("refuses when disabled by org policy, before any model work", async () => {
-    const out = await understandArtifact(CANDIDATE, "/m/a.mp4", deps({ capabilityDisabled: true }));
+    let touched = false;
+    const out = await understandArtifact(CANDIDATE, "/m/a.mp4", {
+      ...deps({ capabilityDisabled: true }),
+      sttFor: () => {
+        touched = true;
+        return understander();
+      },
+    });
     expect(out).toEqual({ ok: false, reason: "no_local_model" });
+    expect(touched).toBe(false);
   });
 
   test("refuses an unresolvable modality rather than guessing", async () => {
@@ -116,6 +124,21 @@ describe("understandArtifact — ordered refusals", () => {
         acquire: async () => () => {
           released += 1;
         },
+        touch: () => undefined,
+      },
+    });
+    expect(released).toBe(1);
+  });
+
+  test("RELEASES the GPU lease on the success path", async () => {
+    let released = 0;
+    await understandArtifact(CANDIDATE, "/m/a.mp4", {
+      ...deps(),
+      gpu: {
+        acquire: async () => () => {
+          released += 1;
+        },
+        touch: () => undefined,
       },
     });
     expect(released).toBe(1);
@@ -130,6 +153,7 @@ describe("understandArtifact — ordered refusals", () => {
           acquired += 1;
           return () => undefined;
         },
+        touch: () => undefined,
       },
     };
     await understandArtifact(CANDIDATE, "/m/a.mp4", d);
@@ -137,18 +161,29 @@ describe("understandArtifact — ordered refusals", () => {
     expect(acquired).toBe(2);
   });
 
-  test("does NOT acquire the GPU when it refuses before the model call", async () => {
-    let acquired = 0;
-    await understandArtifact(CANDIDATE, "/m/a.mp4", {
-      ...deps({ enabled: false }),
-      gpu: {
-        acquire: async () => {
-          acquired += 1;
-          return () => undefined;
+  test("does NOT acquire the GPU on any refusal before the model call", async () => {
+    async function acquireCount(over: Partial<MediaGateDeps>): Promise<number> {
+      let acquired = 0;
+      await understandArtifact(CANDIDATE, "/m/a.mp4", {
+        ...deps(over),
+        gpu: {
+          acquire: async () => {
+            acquired += 1;
+            return () => undefined;
+          },
+          touch: () => undefined,
         },
-      },
-    });
-    expect(acquired).toBe(0);
+      });
+      return acquired;
+    }
+
+    expect(await acquireCount({ enabled: false })).toBe(0);
+    expect(await acquireCount({ capabilityDisabled: true })).toBe(0);
+    expect(await acquireCount({ sttFor: () => undefined })).toBe(0);
+    expect(await acquireCount({ sttFor: () => understander({ isLocal: false }) })).toBe(0);
+    expect(
+      await acquireCount({ sttFor: () => understander({ isAvailable: async () => false }) }),
+    ).toBe(0);
   });
 
   /**
