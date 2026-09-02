@@ -1307,6 +1307,71 @@ Only `false` carries meaning, matching `nimbus exec`'s lockoff.
 
 ---
 
+## Media Understanding
+
+### `nimbus media understand`
+
+Transcribe local audio and video already in the index, and store the transcript as a
+searchable derived item. **Local models only** — there is no remote transcription tier,
+so the pass refuses rather than reaching for the cloud when no local model is available.
+Schema **V58**.
+
+**Off by default, twice.** Both switches must be set:
+
+```toml
+[multimodal]
+enabled = true            # DEFAULT false
+
+[[filesystem.roots]]
+path        = "~/recordings"
+media_index = true        # DEFAULT false — per root
+```
+
+`media_index` is per-root and separate on purpose: enabling the capability should not
+silently start walking every configured root for large binaries.
+
+**Requires two external binaries on PATH:** `ffmpeg` (transcode) and `whisper-cli`.
+Override with `NIMBUS_FFMPEG_PATH` / `NIMBUS_WHISPER_PATH`.
+
+```bash
+nimbus media understand                        # up to 50 candidates
+nimbus media understand --limit 10             # bound the run
+nimbus media understand --service filesystem   # one service
+nimbus media understand --modality av          # audio/video only
+nimbus media understand --since 30             # modified within 30 days
+nimbus media understand --json                 # machine-readable summary
+```
+
+**Resumable.** Progress is a cursor in `media_pass_cursor`, advanced on skips as well as
+successes, so an interrupted run resumes past the artifact it stopped on rather than
+retrying it forever.
+
+**The summary reports skips by reason, not just a total:**
+
+```text
+Understood 42 of 108.
+Skipped:
+  over_byte_cap: 51
+  no_local_model: 15
+```
+
+A bare count would not tell you whether the other 66 were absent, too large, or refused.
+
+**What it does NOT do in this slice:** images (there is no vision model — image candidates
+are skipped), cloud-hosted media (local files only), and speaker diarization
+(`whisper-cli` cannot do it). Transcripts are embedded **locally** even when a remote
+embedder is configured, so the text extracted from a private recording is never sent to a
+remote embedding service.
+
+**Not reachable over LAN.** The whole `media` namespace is denied to paired peers,
+alongside `exec` and `computer` — the command reads local files and spawns subprocesses.
+
+**Known bound:** org policy does not yet gate this capability. `[policy.capabilities.ai_v2]`
+lists `multimodal_input`, but no policy accessor is wired to this path, so setting it has
+no effect today. The `[multimodal] enabled` switch above is the only real control.
+
+---
+
 ## Interactive Sessions
 
 ### `nimbus tui`
