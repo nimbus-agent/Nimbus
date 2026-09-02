@@ -136,7 +136,14 @@ function git(root: string, ...args: string[]): void {
 }
 
 function blameRootConfig(path: string) {
-  return { path, gitAware: true, codeIndex: false, dependencyGraph: false, exclude: [] };
+  return {
+    path,
+    gitAware: true,
+    codeIndex: false,
+    dependencyGraph: false,
+    mediaIndex: false,
+    exclude: [],
+  };
 }
 
 function countBlame(

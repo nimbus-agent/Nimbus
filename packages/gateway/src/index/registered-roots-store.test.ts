@@ -16,7 +16,15 @@ function fsRoot(
   path: string,
   extra: Partial<NimbusFilesystemRootToml> = {},
 ): NimbusFilesystemRootToml {
-  return { path, gitAware: true, codeIndex: false, dependencyGraph: false, exclude: [], ...extra };
+  return {
+    path,
+    gitAware: true,
+    codeIndex: false,
+    dependencyGraph: false,
+    mediaIndex: false,
+    exclude: [],
+    ...extra,
+  };
 }
 
 describe("addRegisteredRoot + loadRegisteredRoots", () => {

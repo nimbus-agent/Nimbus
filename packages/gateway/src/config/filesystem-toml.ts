@@ -9,6 +9,7 @@ export type NimbusFilesystemRootToml = {
   gitAware: boolean;
   codeIndex: boolean;
   dependencyGraph: boolean;
+  mediaIndex: boolean;
   exclude: string[];
 };
 
@@ -45,6 +46,7 @@ function defaultRoot(): NimbusFilesystemRootToml {
     gitAware: true,
     codeIndex: false,
     dependencyGraph: true,
+    mediaIndex: false,
     exclude: ["node_modules", ".git", "dist", "target", "build", ".next"],
   };
 }
@@ -79,6 +81,12 @@ function applyFilesystemRootKey(cur: NimbusFilesystemRootToml, key: string, valR
     case "code_index": {
       applyOptionalBool(valRaw, (b) => {
         cur.codeIndex = b;
+      });
+      break;
+    }
+    case "media_index": {
+      applyOptionalBool(valRaw, (b) => {
+        cur.mediaIndex = b;
       });
       break;
     }

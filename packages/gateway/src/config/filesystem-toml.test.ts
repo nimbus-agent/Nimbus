@@ -53,3 +53,17 @@ test("an escaped quote inside an exclude entry unescapes correctly", () => {
   expect(roots).toHaveLength(1);
   expect(roots[0]?.exclude).toEqual(['the "vendor" dir', ".git"]);
 });
+
+test("media_index defaults to false — media indexing is opt-in per root", () => {
+  const raw = ["[[filesystem.roots]]", 'path = "/tmp/x"'].join("\n");
+  const roots = parseNimbusTomlFilesystemRoots(raw);
+  expect(roots).toHaveLength(1);
+  expect(roots[0]?.mediaIndex).toBe(false);
+});
+
+test("media_index = true is parsed", () => {
+  const raw = ["[[filesystem.roots]]", 'path = "/tmp/x"', "media_index = true"].join("\n");
+  const roots = parseNimbusTomlFilesystemRoots(raw);
+  expect(roots).toHaveLength(1);
+  expect(roots[0]?.mediaIndex).toBe(true);
+});

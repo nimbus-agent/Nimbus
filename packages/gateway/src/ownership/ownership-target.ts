@@ -40,6 +40,7 @@ function asRootRecords(roots: readonly string[]): NimbusFilesystemRootToml[] {
     gitAware: true,
     codeIndex: false,
     dependencyGraph: false,
+    mediaIndex: false,
     exclude: [],
   }));
 }

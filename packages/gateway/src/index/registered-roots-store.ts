@@ -61,6 +61,7 @@ export function loadRegisteredRoots(configDir: string): NimbusFilesystemRootToml
     gitAware: true,
     codeIndex: false,
     dependencyGraph: false,
+    mediaIndex: false,
     exclude: [...DEFAULT_EXCLUDE],
   }));
 }

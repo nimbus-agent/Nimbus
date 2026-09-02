@@ -9,7 +9,14 @@ import { matchConfiguredRoot, parseRef, resolveWhySubject } from "./why-subject.
 
 const ROOT = path.resolve(path.join(path.sep, "work", "repo"));
 function root(p: string): NimbusFilesystemRootToml {
-  return { path: p, gitAware: true, codeIndex: true, dependencyGraph: true, exclude: [] };
+  return {
+    path: p,
+    gitAware: true,
+    codeIndex: true,
+    dependencyGraph: true,
+    mediaIndex: false,
+    exclude: [],
+  };
 }
 
 test("parseRef splits a trailing line suffix and keeps drive-letter paths whole", () => {
