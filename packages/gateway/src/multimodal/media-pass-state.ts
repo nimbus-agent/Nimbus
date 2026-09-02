@@ -4,9 +4,10 @@
  * SQLite-backed rather than in-memory so an interrupted pass resumes across a gateway restart —
  * the whole point of a budgeted pass over a large library.
  *
- * Bound parameters only (I9).
+ * Bound parameters only (I9). Writes go through `dbRun` (I14/D12) rather than `db.run` directly.
  */
 import type { Database } from "bun:sqlite";
+import { dbRun } from "../db/write.ts";
 
 export function readCursor(db: Database, passId: string): string | null {
   const row = db
@@ -22,7 +23,8 @@ export function writeCursor(
   passId: string,
   opts: { lastItemId: string; processedCount: number; nowMs: number },
 ): void {
-  db.run(
+  dbRun(
+    db,
     `INSERT INTO media_pass_cursor (pass_id, service, modality, last_item_id, processed_count, updated_at)
      VALUES (?, NULL, NULL, ?, ?, ?)
      ON CONFLICT(pass_id) DO UPDATE SET
@@ -34,5 +36,5 @@ export function writeCursor(
 }
 
 export function clearCursor(db: Database, passId: string): void {
-  db.run("DELETE FROM media_pass_cursor WHERE pass_id = ?", [passId]);
+  dbRun(db, "DELETE FROM media_pass_cursor WHERE pass_id = ?", [passId]);
 }

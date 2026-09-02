@@ -71,6 +71,7 @@ import {
   tryDispatchVoiceRpc,
 } from "./dispatchers.ts";
 import { RpcMethodError } from "./rpc-error.ts";
+import { rpcVaultOrMethodNotFound } from "./vault-dispatch.ts";
 
 // A stand-in remote model name. Was `LlmRouterConfig.remoteModel`, removed on 2026-08-28
 // along with `[llm] remote_model`; these tests only ever needed an arbitrary non-local id.
@@ -1110,6 +1111,37 @@ describe("tryDispatchPhase4Rpc", () => {
       "c1",
     )) as Record<string, unknown>;
     expect(Array.isArray(out["entries"])).toBe(true);
+  });
+  test("media.understand hit through chain (returns a MediaPassSummary, not a skip)", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const dataDir = mkdtempSync(join(tmpdir(), "disp-media-data-"));
+    const { ctx } = makeCtx({ localIndex, dataDir });
+    const out = await tryDispatchPhase4Rpc(ctx, "media.understand", {}, "c1");
+    // The regression this guards against: deleting the PHASE4_PLATFORM_DISPATCHERS entry makes
+    // this come back `phase4RpcSkipped` instead of a real MediaPassSummary — every other suite
+    // stays green, because nothing else drives `media.understand` through the real dispatch path.
+    expect(out).not.toBe(phase4RpcSkipped);
+    expect(out).toMatchObject({
+      understood: 0,
+      skipped: 0,
+      lastItemId: null,
+      skippedByReason: expect.any(Object),
+    });
+  });
+  test("an unregistered method through the same path still 404s (negative control)", async () => {
+    const { ctx } = makeCtx();
+    const phase4Out = await tryDispatchPhase4Rpc(ctx, "definitely.notAMethod", {}, "c1");
+    // Proves the chain can actually discriminate: `media.understand` above did NOT come back
+    // this way, so the positive assertion cannot be passing because everything comes back a hit.
+    expect(phase4Out).toBe(phase4RpcSkipped);
+    // The literal `-32601` the caller sees: `dispatchMethod` (server.ts) falls through to this
+    // exact function once phase4 has declined, so this is the real next stage of the same path,
+    // not a different one — see `rpcVaultOrMethodNotFound`'s own "unknown non-vault method ->
+    // -32601" test in vault-dispatch.test.ts for the same assertion on that function alone.
+    await expect(rpcVaultOrMethodNotFound(ctx, "definitely.notAMethod", {}, "c1")).rejects.toThrow(
+      /Method not found/,
+    );
   });
 });
 
