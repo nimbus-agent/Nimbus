@@ -3928,7 +3928,17 @@ In `docs/roadmap.md` § Active, mark the Multimodal I/O row as partially deliver
 
 - [ ] **Step 3: Update the mirrored status surfaces**
 
-In both `CLAUDE.md` and `GEMINI.md`, update the schema version to **V58** and the S2 row status. Both files must change together — they mirror each other by convention and a drift audit compares them.
+`bun run audit:status-drift` is **currently RED on this branch** and has been since Task 1 bumped the schema version. It names exactly THREE files, not two:
+
+```text
+CLAUDE.md: "schema V57" is stale — canonical schema is V58
+GEMINI.md: "schema V57" is stale — canonical schema is V58
+docs/architecture.md: "schema V57" is stale — canonical schema is V58
+```
+
+Update the schema version to **V58** in all three, plus the S2 row status in `CLAUDE.md` and `GEMINI.md` (those two mirror each other by convention and must change together). Re-run `bun run audit:status-drift` and confirm it passes — do not assume it is satisfied, because the gate derives its numbers from code and will name any surface you missed.
+
+Also fix a deferred finding from Task 2: `packages/gateway/src/embedding/routing.ts` cites **I37**, which does not exist anywhere in this repo — the spec reserves that number for PR 4. Reword the comment to describe the guarantee without the number. A comment citing a security invariant that does not exist is a false attestation, and this repo has been bitten by exactly that before.
 
 - [ ] **Step 4: Add a CHANGELOG entry**
 
