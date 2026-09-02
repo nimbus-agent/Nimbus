@@ -10,7 +10,7 @@
  * the column is never free-form text.
  */
 import type { Database } from "bun:sqlite";
-import { modalityForItem } from "./media-source-registry.ts";
+import { mediaItemTypesForModality, modalityForItem } from "./media-source-registry.ts";
 import { type MediaCandidate, type MediaModality, UNDERSTANDING_VERSION } from "./media-types.ts";
 
 export interface DiscoveryOptions {
@@ -31,15 +31,19 @@ interface CandidateRow {
   readonly metadata: string | null;
 }
 
-const MEDIA_TYPES = ["media_av", "media_image"] as const;
-
 export function findCandidates(db: Database, opts: DiscoveryOptions): MediaCandidate[] {
+  // Filtering modality in SQL, not just in the JS loop below: LIMIT is applied by SQLite, so a
+  // JS-only modality filter after the fetch would silently under-fill the page whenever
+  // other-modality rows sort first (fix round 1).
+  const mediaTypes = mediaItemTypesForModality(opts.modality);
+  if (mediaTypes.length === 0) return [];
+
   const wheres: string[] = [
-    `src.type IN (${MEDIA_TYPES.map(() => "?").join(", ")})`,
+    `src.type IN (${mediaTypes.map(() => "?").join(", ")})`,
     // No understanding row, OR one at an older version.
     `(u.id IS NULL OR COALESCE(json_extract(u.metadata, '$.understandingVersion'), -1) < ?)`,
   ];
-  const params: (string | number)[] = [...MEDIA_TYPES, UNDERSTANDING_VERSION];
+  const params: (string | number)[] = [...mediaTypes, UNDERSTANDING_VERSION];
 
   if (opts.service !== undefined) {
     wheres.push("src.service = ?");

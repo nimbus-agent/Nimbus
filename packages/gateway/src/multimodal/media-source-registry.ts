@@ -64,3 +64,20 @@ const ITEM_TYPE_MODALITY: ReadonlyMap<string, MediaModality> = new Map([
 export function modalityForItem(service: string, type: string): MediaModality | undefined {
   return ITEM_TYPE_MODALITY.get(`${service}:${type}`);
 }
+
+/**
+ * The `item.type` values that carry a given modality, derived from ITEM_TYPE_MODALITY so a new
+ * registry entry is picked up automatically. Undefined modality means every media type.
+ *
+ * Discovery needs this because its LIMIT is applied by SQLite: filtering modality in JS after the
+ * fetch silently under-fills the page and makes a resumable pass look finished when it is not.
+ */
+export function mediaItemTypesForModality(modality?: MediaModality): readonly string[] {
+  const out = new Set<string>();
+  for (const [key, m] of ITEM_TYPE_MODALITY) {
+    if (modality !== undefined && m !== modality) continue;
+    const type = key.slice(key.indexOf(":") + 1);
+    out.add(type);
+  }
+  return [...out];
+}

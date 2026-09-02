@@ -104,4 +104,14 @@ describe("findCandidates", () => {
     const rest = findCandidates(db, { limit: 10, afterItemId: first.itemId });
     expect(rest.some((c) => c.itemId === first.itemId)).toBe(false);
   });
+
+  test("modality filter does not under-fill the page when other-modality items sort first", () => {
+    // Images sort before the video by id, so a SQL LIMIT applied before a JS modality filter
+    // would consume the whole page on images and return nothing.
+    addMedia("/m/a.png", "media_image");
+    addMedia("/m/b.png", "media_image");
+    addMedia("/m/c.mp4", "media_av");
+    const found = findCandidates(db, { limit: 2, modality: "av" });
+    expect(found.map((c) => c.title)).toEqual(["c.mp4"]);
+  });
 });
