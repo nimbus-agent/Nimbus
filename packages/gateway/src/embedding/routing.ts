@@ -69,7 +69,16 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
  * so adding a key to both would silently re-enable remote egress for it.
  * `routing.test.ts` pins that disjointness.
  */
-export const LOCAL_ONLY_PROSE_TYPES: ReadonlySet<string> = new Set(["nimbus:web_clip"]);
+export const LOCAL_ONLY_PROSE_TYPES: ReadonlySet<string> = new Set([
+  "nimbus:web_clip",
+  // Multimodal understanding output (spec § 4). Derived captions and transcripts carry the FULL
+  // semantic content of a private photo or recording. Routing them to the remote embedder would
+  // keep the pixels on the machine while shipping everything extracted from them to OpenAI, with
+  // no grant, through a different door than the one I37 guards. Retrieval quality on long
+  // transcripts is the deliberate price, exactly as it already is for web clips.
+  "nimbus:image_understanding",
+  "nimbus:video_understanding",
+]);
 
 export function routingKey(service: string, type: string): string {
   return `${service}:${type}`;

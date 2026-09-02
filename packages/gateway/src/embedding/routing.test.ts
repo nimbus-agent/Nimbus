@@ -146,4 +146,11 @@ describe("routing — local-only prose types", () => {
       expect(isProseHeavy(service as string, type as string)).toBe(false);
     }
   });
+
+  test("understanding types are local-only, never prose-heavy", () => {
+    for (const key of ["nimbus:image_understanding", "nimbus:video_understanding"]) {
+      expect(LOCAL_ONLY_PROSE_TYPES.has(key)).toBe(true);
+      expect(PROSE_HEAVY_TYPES.has(key)).toBe(false);
+    }
+  });
 });
