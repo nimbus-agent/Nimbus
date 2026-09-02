@@ -1569,7 +1569,7 @@ git commit -m "feat(multimodal): ffmpeg resolution, WAV transcode, scratch-file 
 **Interfaces:**
 - Consumes: `transcodeToWav`, `withScratchFile` (Task 6); `WhisperSttProvider` from `../../voice/stt.ts`.
 - Produces:
-  - `interface LongFormStt { readonly isLocal: true; readonly model: string; isAvailable(): Promise<boolean>; transcribeFile(path: string): Promise<string>; }`
+  - `interface LongFormStt { readonly isLocal: true; readonly model: string; isAvailable(): Promise<boolean>; understand(path: string): Promise<string>; }`
   - `createLongFormStt(deps: LongFormSttDeps): LongFormStt`
   - `interface LongFormSttDeps { transcribe: (wavPath: string) => Promise<{ text: string }>; isAvailable: () => Promise<boolean>; ffmpegBin: string; scratchDir: string; model: string; spawn?: typeof Bun.spawn; }`
 
@@ -1607,7 +1607,7 @@ describe("createLongFormStt", () => {
 
   test("transcodes then transcribes, returning the text", async () => {
     const stt = createLongFormStt(deps());
-    expect(await stt.transcribeFile("/in/demo.mp4")).toBe("hello world");
+    expect(await stt.understand("/in/demo.mp4")).toBe("hello world");
   });
 
   test("passes the TRANSCODED wav to whisper, not the original", async () => {
@@ -1620,7 +1620,7 @@ describe("createLongFormStt", () => {
         },
       }),
     );
-    await stt.transcribeFile("/in/demo.mp4");
+    await stt.understand("/in/demo.mp4");
     expect(given.endsWith(".wav")).toBe(true);
     expect(given).not.toContain("demo.mp4");
   });
@@ -1635,7 +1635,7 @@ describe("createLongFormStt", () => {
         },
       }),
     );
-    await stt.transcribeFile("/in/demo.mp4");
+    await stt.understand("/in/demo.mp4");
     expect(existsSync(given)).toBe(false);
   });
 
@@ -1649,7 +1649,7 @@ describe("createLongFormStt", () => {
         },
       }),
     );
-    await expect(stt.transcribeFile("/in/demo.mp4")).rejects.toThrow("whisper blew up");
+    await expect(stt.understand("/in/demo.mp4")).rejects.toThrow("whisper blew up");
     expect(given).not.toBe("");
     expect(existsSync(given)).toBe(false);
   });
@@ -1699,7 +1699,7 @@ export interface LongFormStt {
   readonly isLocal: true;
   readonly model: string;
   isAvailable(): Promise<boolean>;
-  transcribeFile(path: string): Promise<string>;
+  understand(path: string): Promise<string>;
 }
 
 export function createLongFormStt(deps: LongFormSttDeps): LongFormStt {
@@ -1707,7 +1707,7 @@ export function createLongFormStt(deps: LongFormSttDeps): LongFormStt {
     isLocal: true,
     model: deps.model,
     isAvailable: deps.isAvailable,
-    async transcribeFile(path: string): Promise<string> {
+    async understand(path: string): Promise<string> {
       const wav = await transcodeToWav(path, {
         ffmpegBin: deps.ffmpegBin,
         scratchDir: deps.scratchDir,
@@ -3462,6 +3462,240 @@ Expected: PASS. `readme-cli` drift checks assert help output matches the documen
 ```bash
 git add packages/gateway/src/ipc/media-rpc.ts packages/gateway/src/ipc/media-rpc.test.ts packages/cli/src/commands/
 git commit -m "feat(multimodal): media.understand IPC and nimbus media understand CLI"
+```
+
+---
+
+## Task 12b: Register the dispatcher and construct the real deps
+
+**Files:**
+- Modify: `packages/gateway/src/ipc/server/dispatchers.ts` (import + a dispatch function, following the `index.rebody` block at ~:605-630)
+- Create: `packages/gateway/src/multimodal/build-media-pass-deps.ts`
+- Test: `packages/gateway/src/multimodal/build-media-pass-deps.test.ts`
+
+**Interfaces:**
+- Consumes: `runMediaPass`, `MediaPassDeps` (Task 11); `dispatchMediaRpc`, `MediaRpcDeps` (Task 12); `createLongFormStt` (Task 7); `resolveFfmpegBin` (Task 6).
+- Produces: `buildMediaPassDeps(input: BuildMediaPassDepsInput): Omit<MediaPassDeps, "limit" | "service" | "modality" | "sinceMs">`, and a reachable `media.understand` IPC method.
+
+**This task exists because without it the feature is unreachable.** Task 12 creates
+`ipc/media-rpc.ts`, but nothing adds it to `ipc/server/dispatchers.ts`, where every dispatcher is
+wired. And no task constructs the pass's real dependencies — the configured `[[filesystem.roots]]`,
+a `WhisperSttProvider`, the shared `GpuArbiter`, a scratch directory. As the plan stood,
+`nimbus media understand` would reach the gateway and get "method not found" while every unit test
+stayed green. This is the same dead-wiring defect the plan review caught in Task 4
+(`upsertMediaFiles` was never called), one layer up. Read `ipc/server/dispatchers.ts` around the
+`index.rebody` block before writing anything — that block is the shape to copy.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// packages/gateway/src/multimodal/build-media-pass-deps.test.ts
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { buildMediaPassDeps } from "./build-media-pass-deps.ts";
+
+function db(): Database {
+  const d = new Database(":memory:");
+  runIndexedSchemaMigrations(d, CURRENT_SCHEMA_VERSION);
+  return d;
+}
+
+describe("buildMediaPassDeps", () => {
+  test("passes the configured roots through", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: ["/a", "/b"],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.roots).toEqual(["/a", "/b"]);
+  });
+
+  test("supplies an AV understander and none for image — PR 1 has no VLM", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.gate.sttFor("av")).toBeDefined();
+    expect(deps.gate.sttFor("image")).toBeUndefined();
+  });
+
+  test("the AV understander declares itself LOCAL", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.gate.sttFor("av")?.isLocal).toBe(true);
+  });
+
+  test("propagates the disabled flags into the gate, so the gate refuses", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: false,
+      capabilityDisabled: true,
+      scratchDir: "/scratch",
+    });
+    expect(deps.gate.enabled).toBe(false);
+    expect(deps.gate.capabilityDisabled).toBe(true);
+  });
+
+  test("wires a REAL touch() — without it a long transcription is evicted mid-run", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(typeof deps.gate.gpu.touch).toBe("function");
+  });
+
+  test("passes the scratch directory through, so the start-of-pass sweep runs", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.scratchDir).toBe("/scratch");
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `bun test packages/gateway/src/multimodal/build-media-pass-deps.test.ts`
+Expected: FAIL — module not found.
+
+- [ ] **Step 3: Implement the builder**
+
+```ts
+// packages/gateway/src/multimodal/build-media-pass-deps.ts
+/**
+ * Constructs the production dependencies for the understanding pass.
+ *
+ * Separate from `media-pass.ts` so the pass stays a pure orchestrator over injected seams and can
+ * be tested without a whisper binary, an arbiter or a config. This is the one place that knows
+ * what the real implementations are.
+ *
+ * `sttFor("image")` returns undefined DELIBERATELY: PR 1 ships no VLM, so an image candidate is
+ * skipped as `unresolvable_modality` rather than mis-handed to the STT path. PR 2 adds that arm.
+ */
+import type { Database } from "bun:sqlite";
+import { GpuArbiter } from "../llm/gpu-arbiter.ts";
+import { WhisperSttProvider } from "../voice/stt.ts";
+import type { LocalUnderstander } from "./media-gate.ts";
+import type { MediaPassDeps } from "./media-pass.ts";
+import type { MediaModality } from "./media-types.ts";
+import { resolveFfmpegBin } from "./stt/ffmpeg-bin.ts";
+import { createLongFormStt } from "./stt/long-form-stt.ts";
+
+export interface BuildMediaPassDepsInput {
+  readonly db: Database;
+  readonly roots: readonly string[];
+  readonly enabled: boolean;
+  readonly capabilityDisabled: boolean;
+  readonly scratchDir: string;
+  readonly maxBytes?: number;
+  /** Shared with the LLM runtime when one exists, so media and generation contend on one lock. */
+  readonly gpu?: GpuArbiter;
+  readonly whisperBin?: string;
+  readonly ffmpegBin?: string;
+}
+
+/** 250 MB (spec § 5.3 `max_media_bytes`). */
+const DEFAULT_MAX_MEDIA_BYTES = 250 * 1024 * 1024;
+
+export type BuiltMediaPassDeps = Omit<
+  MediaPassDeps,
+  "limit" | "service" | "modality" | "sinceMs" | "afterItemId"
+>;
+
+export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPassDeps {
+  const whisper = new WhisperSttProvider(
+    input.whisperBin === undefined ? {} : { whisperBin: input.whisperBin },
+  );
+  const stt = createLongFormStt({
+    transcribe: (wavPath: string) => whisper.transcribe(wavPath),
+    isAvailable: () => whisper.isAvailable(),
+    ffmpegBin: resolveFfmpegBin(input.ffmpegBin),
+    scratchDir: input.scratchDir,
+    model: "whisper-cli",
+  });
+
+  const arbiter = input.gpu ?? new GpuArbiter();
+
+  return {
+    db: input.db,
+    roots: input.roots,
+    maxBytes: input.maxBytes ?? DEFAULT_MAX_MEDIA_BYTES,
+    nowMs: () => Date.now(),
+    passId: "default",
+    scratchDir: input.scratchDir,
+    gate: {
+      enabled: input.enabled,
+      capabilityDisabled: input.capabilityDisabled,
+      sttFor: (modality: MediaModality): LocalUnderstander | undefined =>
+        modality === "av" ? stt : undefined,
+      gpu: {
+        acquire: (id: string) => arbiter.acquire(id),
+        // Load-bearing: a multi-minute transcription without a heartbeat is evicted by the
+        // arbiter's idle timer, and `forceRelease()` wipes the waiter queue with it.
+        touch: () => arbiter.touch(),
+      },
+    },
+  };
+}
+```
+
+- [ ] **Step 4: Run it to verify it passes**
+
+Run: `bun test packages/gateway/src/multimodal/build-media-pass-deps.test.ts`
+Expected: PASS (6 tests).
+
+- [ ] **Step 5: Register the dispatcher**
+
+In `packages/gateway/src/ipc/server/dispatchers.ts`, follow the `index.rebody` block (~:605-630)
+exactly — read it first. Add the import beside the other RPC imports, then a dispatch function that
+returns the skip sentinel for any other method, throws `RpcMethodError(-32603, …)` when
+`ctx.options.localIndex` is undefined, and otherwise calls `dispatchMediaRpc`. Register it in the
+same chain the neighbouring dispatchers are registered in.
+
+The pass's config inputs come from the gateway config already available on `ctx.options`: the
+`[[filesystem.roots]]` paths, and `[multimodal] enabled` (**default false**). Read how a
+neighbouring dispatcher reaches config rather than inventing an accessor. `scratchDir` is a
+Nimbus-owned temp directory — reuse the gateway's existing temp/config-dir helper rather than
+calling `os.tmpdir()` directly, so the file lands somewhere the gateway owns.
+
+**`media.understand` is LAN-forbidden and must NOT be added to the Tauri `ALLOWED_METHODS`.** It
+reads local files and spawns subprocesses — the same posture as the whole `exec.*` namespace. If a
+LAN-method allow-list exists in this file's neighbourhood, confirm the method is absent from it.
+
+- [ ] **Step 6: Verify the method is reachable and correctly exposed**
+
+Run: `bun test packages/gateway/src/ipc/`
+Expected: PASS. Several suites assert method-count and exposure invariants; if one fails on a count,
+update the count only after confirming the new method belongs on that surface.
+
+Run: `bun test packages/gateway/src/security-invariants.test.ts`
+Expected: PASS — I7 (Tauri allowlist) must not have gained `media.understand`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add packages/gateway/src/multimodal/build-media-pass-deps.ts packages/gateway/src/multimodal/build-media-pass-deps.test.ts packages/gateway/src/ipc/server/dispatchers.ts
+git commit -m "feat(multimodal): wire media.understand into the IPC dispatcher chain"
 ```
 
 ---
