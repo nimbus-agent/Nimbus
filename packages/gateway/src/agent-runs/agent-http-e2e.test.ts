@@ -4,6 +4,7 @@
 // suites cover each piece; this proves the pieces are wired to each other.
 
 import { describe, expect, test } from "bun:test";
+import { GATEWAY_VERSION } from "../version.ts";
 import { startAgentTestServer } from "./agent-test-server.ts";
 
 const LEGACY_TOKEN = "legacy-bare-string-token-0123456789abcdef";
@@ -210,6 +211,30 @@ describe("agents over HTTP — end to end", () => {
       expect(agents).not.toContain("negotiate");
       expect(agents).toContain("expert");
       expect(agents).toHaveLength(11);
+    } finally {
+      s.stop();
+    }
+  });
+
+  test("GET /v1/agents publishes the gateway version alongside the names", async () => {
+    const s = await startAgentTestServer();
+    try {
+      const res = await fetch(`http://127.0.0.1:${String(s.port)}/v1/agents`, {
+        headers: { authorization: `Bearer ${s.token}` },
+      });
+      expect(res.status).toBe(200);
+      // A NAME does not imply an ARM, which is why this field exists. `why`, `expert` and
+      // `ownership` have been published for releases and their `itemUrl` arms have not, so a
+      // client gating on the arm cannot learn what it needs from the roster alone. It rides on
+      // THIS response rather than getting a route of its own because this is the request such a
+      // client already makes at the moment it needs the answer — so it learns both facts in one
+      // round trip, with no version to cache and go stale the next time the owner upgrades.
+      //
+      // The web clipper is the first consumer: it withholds the item-scoped lanes below a floor
+      // and fails closed when no version is reported, so an absent field here is not cosmetic —
+      // it keeps those lanes dark.
+      const { version } = (await res.json()) as { version: string };
+      expect(version).toBe(GATEWAY_VERSION);
     } finally {
       s.stop();
     }

@@ -8,6 +8,34 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-02 — `GET /v1/agents` publishes the gateway's version alongside the names, because a
+  NAME does not imply an ARM.** One additive field, and it unblocks a client feature that is
+  already shipped and currently dark. `why`, `expert` and `ownership` have been published for
+  releases; the `itemUrl` arms added to them the day before have not — so a client deciding
+  whether to offer an item-scoped lane cannot learn what it needs from the name list, and nothing
+  on the HTTP surface answered a version question: `GET /v1/health` returns
+  `{ status, gateway: "read_only_http" }` and `HTTP_ROUTES` carried no version route at all.
+
+  **It rides on the roster response rather than taking a route of its own, or going on
+  `/v1/health`.** That is the request such a client already makes at the moment it needs the
+  answer, so both facts arrive in one round trip; and it is bearer-authed under the `agents` scope
+  the caller already holds, where `/v1/health` is tokenless. The alternative — read a version at
+  pair time and cache it — goes stale the first time an owner upgrades their gateway without
+  re-pairing, and the symptom is a client's lanes staying dark forever with nothing on screen to
+  explain it.
+
+  **The consumer is `nimbus-web-clipper` PR #96**, whose `meetsFloor` fails **closed** on an
+  absent version: until this ships in a release, that client's three item lanes are withheld on
+  every gateway, its own developers included — a local build reports no version rather than
+  `0.0.0`, so its development-build allowance never fires either. That is why an additive field is
+  worth its own delivery entry.
+
+  **The better long-run shape is for this route to publish each agent's ARMS** rather than a
+  version, retiring the question instead of proxying it through a release number. Not done here:
+  the arms live inside each handler's param types, so deriving them honestly is real work, and
+  hand-listing them is exactly the drift `EXTERNAL_AGENT_NAMES` is derived to prevent. Recorded in
+  the design's § 4.5 addendum so the next reader does not have to rediscover the trade.
+
 - **2026-09-01 — The computer-use TERMINAL lane shipped: a sandboxed, line-oriented shell in which no byte reaches the child process before the owner has approved the whole command.** Slice 2 of 3 per the design's own sequencing (§ 14). It reuses the browser lane's chokepoint entirely — `cu-gate.ts`'s `openSession`/`runAction` stay the only path to the host, and the fix rounds recorded in `runActionExclusive`'s comments were inherited rather than re-derived. What generalised is the gate's browser-shaped parts: `CuEnvelope` and `OpenSessionRequest` became discriminated unions on `lane`, `LiveSession` holds a tagged `CuLaneHandle`, and `performActuation` stays the ONE actuation primitive with a per-lane switch. `nimbus computer terminal --cwd <dir> [--shell <id>]`. **DEFAULT OFF**, with `allowed_lanes` still empty by default — `enabled = true` alone grants nothing. **No new config keys, no migration: V57 is reused as-is.**
 
   **The security core is one sentence, and everything else serves it: no byte reaches the shell before the owner approved the COMPLETE line.** Model-supplied bytes accumulate in `computer-use/cu-terminal-buffer.ts` and nothing is written until a submit character arrives, the assembled line is shown in full, and the owner approves it. A per-keystroke write path violates that **even if every keystroke is individually classified** — the design's first shape, and a complete bypass rather than a rough edge, since inside vi or fzf a single character IS the destructive action and a model that never sent a newline would have driven the host with every action auto-satisfied. Four properties make it true rather than customary. Refusals are **wholesale** and leave the buffer untouched — asserted on every branch that can refuse, after an earlier draft cleared it on one of them, which made "a refusal changes nothing" unassertable as a single test. Control characters are **refused, not buffered**: a lane that cannot safely deliver `y` cannot safely deliver Ctrl-C, and buffering a control byte until a newline that never arrives is a silent hang rather than an honest refusal. The approved line is **read once** and not re-derived at write time — the TOCTOU that would defeat the gate, since here the human IS the boundary. And `classifyTerminalAction` returns `actuating` unconditionally and takes **exactly one parameter**, so the model's description cannot be passed to it: spec § 4.3.1's "the terminal lane has no `observing` class at all" is enforced by ARITY, not by convention. The lane gets no command allow-list, deliberately — an allow-list over shell text is defeated by quoting, substitution, aliasing and encoding, and a defense that can be quoted around is worse than none because it is believed.

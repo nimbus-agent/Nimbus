@@ -510,6 +510,33 @@ Both new agents are pure reads and join `HTTP_AGENT_NAMES` by the derivation in 
 edit. The count assertion moves 11 → 13 in the same PR, and the three existing exclusion tests are
 extended, not touched: a test asserting `preflight` stays 404 must keep passing verbatim.
 
+**Addendum (2026-09-02): `GET /v1/agents` also publishes `version`.** Found by the browser client
+after PR 1 landed, and it is a wire change this document owns rather than one the consumer may make
+for itself.
+
+A NAME does not imply an ARM. `why`, `expert` and `ownership` have been published for releases; the
+`itemUrl` arms this design adds to them have not. So a client deciding whether to offer an
+item-scoped lane cannot learn what it needs from the name list — it has to ask a version question,
+and nothing on the HTTP surface answered one: `GET /v1/health` returns
+`{ status, gateway: "read_only_http" }` and `HTTP_ROUTES` carried no version route at all.
+
+The field rides on the roster response rather than getting a route of its own, and rather than
+going on `/v1/health`. That is the request such a client already makes at the moment it needs the
+answer, so both facts arrive in one round trip; and it is bearer-authed under the `agents` scope the
+caller already holds, where `/v1/health` is tokenless. The alternative — reading a version at pair
+time and caching it — goes stale the first time an owner upgrades their gateway without re-pairing,
+and the symptom is lanes that stay dark forever with nothing on screen to explain it.
+
+The better long-run shape is for this route to publish each agent's *arms* rather than a version,
+which would retire the whole question instead of proxying it through a release number. That is not
+this change: the arms live inside each handler's param types, so deriving them honestly is real
+work, and hand-listing them is exactly the drift `EXTERNAL_AGENT_NAMES` is derived to prevent. This
+addendum does not block it.
+
+The consumer's half is `agents-capability.ts` in `nimbus-web-clipper` (shipped in its PR #96), whose
+`meetsFloor` fails **closed** on an absent version. Until this field ships in a release, that
+client's three item lanes are withheld on every gateway — so this is not a cosmetic addition.
+
 ---
 
 ## 5. Slices
