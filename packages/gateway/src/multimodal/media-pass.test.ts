@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { findCandidates } from "./media-discovery.ts";
 import type { MediaPassDeps } from "./media-pass.ts";
 import { runMediaPass } from "./media-pass.ts";
 
@@ -218,5 +219,94 @@ describe("runMediaPass", () => {
       )
       .get();
     expect(row?.body?.length).toBe(3_000);
+  });
+});
+
+describe("runMediaPass — discovery filters threaded through", () => {
+  test("passes deps.service through to discovery, excluding other services", async () => {
+    const p = addMediaFile("a.mp4");
+    upsertIndexedItem(db, {
+      service: "onedrive",
+      type: "media_av",
+      externalId: "cloud-1",
+      title: "cloud.mp4",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: { path: p, sizeBytes: 1, mediaKind: "av" },
+    });
+    // Only "filesystem" resolves a modality (the registry has no onedrive entry), so scoping to
+    // "filesystem" should understand exactly the one filesystem candidate.
+    const summary = await runMediaPass(deps({ service: "filesystem" }));
+    expect(summary.understood).toBe(1);
+  });
+
+  test("passes deps.modality through to discovery", async () => {
+    addMediaFile("a.mp4");
+    const summary = await runMediaPass(deps({ modality: "av" }));
+    expect(summary.understood).toBe(1);
+  });
+
+  test("an unmatched modality filter understands nothing", async () => {
+    addMediaFile("a.mp4");
+    const summary = await runMediaPass(deps({ modality: "image" }));
+    expect(summary.understood).toBe(0);
+    expect(summary.skipped).toBe(0);
+  });
+
+  test("passes deps.sinceMs through to discovery, excluding older items", async () => {
+    const p = join(root, "old.mp4");
+    writeFileSync(p, "x");
+    upsertIndexedItem(db, {
+      service: "filesystem",
+      type: "media_av",
+      externalId: p,
+      title: "old.mp4",
+      bodyPreview: "",
+      modifiedAt: 100,
+      syncedAt: 100,
+      metadata: { path: p, sizeBytes: 1, mediaKind: "av" },
+    });
+    const summary = await runMediaPass(deps({ sinceMs: 500 }));
+    expect(summary.understood).toBe(0);
+    expect(summary.skipped).toBe(0);
+  });
+
+  test("passes deps.afterItemId through to discovery, resuming past a cursor", async () => {
+    addMediaFile("a.mp4");
+    addMediaFile("b.mp4");
+    // Neither has been understood yet — find their ids and sort order WITHOUT running a pass,
+    // so the isolation is on the afterItemId filter, not on idempotency (an already-understood
+    // item is excluded from candidates regardless of afterItemId, which would make this test
+    // pass for the wrong reason).
+    const [first] = findCandidates(db, { limit: 1 });
+    if (first === undefined) throw new Error("expected a candidate");
+
+    const summary = await runMediaPass(deps({ afterItemId: first.itemId }));
+    // Exactly one candidate sorts after the cursor — proof the filter reached discovery, since
+    // without it both a.mp4 and b.mp4 (neither yet understood) would be eligible.
+    expect(summary.understood).toBe(1);
+  });
+});
+
+describe("runMediaPass — scratch sweep", () => {
+  test("sweeps stale scratch WAVs at the start of the pass when scratchDir is set", async () => {
+    const scratchDir = mkdtempSync(join(tmpdir(), "nimbus-scratch-"));
+    const stale = join(scratchDir, "nimbus-stt-old.wav");
+    writeFileSync(stale, "x");
+    // Backdate the file well past the sweep's default 1h max age.
+    const past = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(stale, past, past);
+
+    addMediaFile("a.mp4");
+    await runMediaPass(deps({ scratchDir, nowMs: () => Date.now() }));
+
+    expect(existsSync(stale)).toBe(false);
+  });
+
+  test("runs with no scratch sweep at all when scratchDir is omitted", async () => {
+    addMediaFile("a.mp4");
+    const summary = await runMediaPass(deps());
+    expect(summary.understood).toBe(1);
   });
 });

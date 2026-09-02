@@ -115,3 +115,108 @@ describe("findCandidates", () => {
     expect(found.map((c) => c.title)).toEqual(["c.mp4"]);
   });
 });
+
+describe("findCandidates — service filter", () => {
+  test("restricts to the requested service", () => {
+    addMedia("/m/a.mp4");
+    upsertIndexedItem(db, {
+      service: "onedrive",
+      type: "media_av",
+      externalId: "cloud-1",
+      title: "cloud.mp4",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: { path: "/cloud/cloud.mp4", sizeBytes: 10 },
+    });
+    // "onedrive:media_av" is not in the registry, so it never resolves a modality and would be
+    // filtered out downstream anyway — the point here is the SQL-level service predicate itself,
+    // exercised against the registered "filesystem" service.
+    const found = findCandidates(db, { limit: 10, service: "filesystem" });
+    expect(found.map((c) => c.title)).toEqual(["a.mp4"]);
+    expect(found.every((c) => c.service === "filesystem")).toBe(true);
+  });
+
+  test("with no service filter, candidates from every service are eligible", () => {
+    addMedia("/m/a.mp4");
+    const found = findCandidates(db, { limit: 10 });
+    expect(found).toHaveLength(1);
+  });
+});
+
+describe("findCandidates — metadata edge cases", () => {
+  test("treats a NULL metadata column as an empty object, not a crash", () => {
+    addMedia("/m/a.mp4");
+    db.run("UPDATE item SET metadata = NULL WHERE type = 'media_av'");
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.sourcePath).toBeNull();
+    expect(c.sourceBytes).toBeNull();
+  });
+
+  test("treats an empty-string metadata column as an empty object", () => {
+    addMedia("/m/a.mp4");
+    db.run("UPDATE item SET metadata = '' WHERE type = 'media_av'");
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.sourcePath).toBeNull();
+  });
+
+  test("falls back to an empty object when metadata is malformed JSON", () => {
+    addMedia("/m/a.mp4");
+    db.run("UPDATE item SET metadata = '{not json' WHERE type = 'media_av'");
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.sourcePath).toBeNull();
+  });
+
+  test("falls back to an empty object when metadata parses to a JSON array", () => {
+    addMedia("/m/a.mp4");
+    db.run("UPDATE item SET metadata = '[1,2,3]' WHERE type = 'media_av'");
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.sourcePath).toBeNull();
+  });
+
+  test("falls back to an empty object when metadata parses to a JSON primitive", () => {
+    addMedia("/m/a.mp4");
+    db.run("UPDATE item SET metadata = '5' WHERE type = 'media_av'");
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.sourcePath).toBeNull();
+  });
+
+  test("treats an empty-string path as absent, not as a value", () => {
+    addMedia("/m/a.mp4");
+    db.run("UPDATE item SET metadata = json_set(metadata, '$.path', '') WHERE type = 'media_av'");
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.sourcePath).toBeNull();
+  });
+
+  test("treats a missing sizeBytes key as null, not zero", () => {
+    upsertIndexedItem(db, {
+      service: "filesystem",
+      type: "media_av",
+      externalId: "/m/no-size.mp4",
+      title: "no-size.mp4",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: { path: "/m/no-size.mp4" },
+    });
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.sourceBytes).toBeNull();
+  });
+
+  test("treats a non-numeric sizeBytes as null", () => {
+    addMedia("/m/a.mp4");
+    db.run(
+      "UPDATE item SET metadata = json_set(metadata, '$.sizeBytes', 'huge') WHERE type = 'media_av'",
+    );
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.sourceBytes).toBeNull();
+  });
+});

@@ -77,4 +77,19 @@ describe("createLongFormStt", () => {
     const stt = createLongFormStt(deps({ isAvailable: async () => false }));
     expect(await stt.isAvailable()).toBe(false);
   });
+
+  test("falls back to the REAL Bun.spawn when no spawn override is injected", async () => {
+    // Omitting `spawn` is the other arm of `deps.spawn === undefined ? {} : { spawn }` —
+    // `transcodeToWav` then uses `opts.spawn ?? Bun.spawn` for real. The input path does not
+    // exist and the test environment cannot be assumed to have ffmpeg installed, so the only
+    // assertion that holds unconditionally is that the call fails rather than hangs.
+    const stt = createLongFormStt({
+      transcribe: async () => ({ text: "hello world" }),
+      isAvailable: async () => true,
+      ffmpegBin: "definitely-not-a-real-ffmpeg-binary",
+      scratchDir: mkdtempSync(join(tmpdir(), "nimbus-lfs-")),
+      model: "whisper-base",
+    });
+    await expect(stt.understand("/nonexistent/demo.mp4")).rejects.toBeDefined();
+  });
 });

@@ -1,9 +1,17 @@
 // packages/gateway/src/multimodal/build-media-pass-deps.test.ts
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { buildMediaPassDeps } from "./build-media-pass-deps.ts";
+import { GpuArbiter } from "../llm/gpu-arbiter.ts";
+import {
+  buildMediaPassDeps,
+  resolveMediaRoots,
+  resolveMultimodalEnabled,
+} from "./build-media-pass-deps.ts";
 
 function db(): Database {
   const d = new Database(":memory:");
@@ -78,5 +86,199 @@ describe("buildMediaPassDeps", () => {
       scratchDir: "/scratch",
     });
     expect(deps.scratchDir).toBe("/scratch");
+  });
+});
+
+describe("buildMediaPassDeps — optional overrides", () => {
+  test("defaults maxBytes to 250 MB when not supplied", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.maxBytes).toBe(250 * 1024 * 1024);
+  });
+
+  test("honors an explicit maxBytes override", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      maxBytes: 1024,
+    });
+    expect(deps.maxBytes).toBe(1024);
+  });
+
+  test("uses an injected GpuArbiter rather than constructing its own", async () => {
+    const shared = new GpuArbiter();
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      gpu: shared,
+    });
+    expect(deps.gate.gpu).toBeDefined();
+    // Acquiring through the deps-exposed handle reaches the SAME arbiter instance we injected —
+    // proven by observing the grant on `shared` directly rather than merely on the deps object.
+    const release = await deps.gate.gpu.acquire("probe");
+    expect(shared.currentProvider).toBe("probe");
+    release();
+    expect(shared.currentProvider).toBeNull();
+  });
+
+  test("passes an explicit whisperBin through to the STT provider construction", () => {
+    // No assertion on internal wiring is possible without a real whisper binary; this exercises
+    // the `input.whisperBin === undefined ? {} : {...}` branch so the defined-value arm is covered
+    // and confirms construction does not throw when a custom binary path is supplied.
+    expect(() =>
+      buildMediaPassDeps({
+        db: db(),
+        roots: [],
+        enabled: true,
+        capabilityDisabled: false,
+        scratchDir: "/scratch",
+        whisperBin: "/usr/local/bin/whisper-cli",
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("resolveMediaRoots", () => {
+  test("returns an empty array with no configDir — the test/embedded shape", () => {
+    expect(resolveMediaRoots(undefined)).toEqual([]);
+  });
+
+  test("returns an empty array when nimbus.toml is absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-media-roots-"));
+    try {
+      expect(resolveMediaRoots(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps only roots with media_index = true, mapped to their path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-media-roots-"));
+    try {
+      writeFileSync(
+        join(dir, "nimbus.toml"),
+        [
+          "[[filesystem.roots]]",
+          'path = "/media-yes"',
+          "media_index = true",
+          "",
+          "[[filesystem.roots]]",
+          'path = "/media-no"',
+          "media_index = false",
+        ].join("\n"),
+      );
+      const roots = resolveMediaRoots(dir);
+      expect(roots).toEqual([resolve("/media-yes")]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveMultimodalEnabled", () => {
+  test("reads false with no configDir — the test/embedded shape", () => {
+    expect(resolveMultimodalEnabled(undefined)).toBe(false);
+  });
+
+  test("reads false when nimbus.toml is absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      expect(resolveMultimodalEnabled(dir)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads false when [multimodal] section is absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), '[other]\nfoo = "bar"\n');
+      expect(resolveMultimodalEnabled(dir)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads false when [multimodal] is present but 'enabled' key is absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nother_key = true\n");
+      expect(resolveMultimodalEnabled(dir)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads true for a literal 'true'", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = true\n");
+      expect(resolveMultimodalEnabled(dir)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads false for an explicit 'false'", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = false\n");
+      expect(resolveMultimodalEnabled(dir)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("honors an inline comment after the value", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = true # turn on locally\n");
+      expect(resolveMultimodalEnabled(dir)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads false for a garbage (non-boolean) value", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = maybe\n");
+      expect(resolveMultimodalEnabled(dir)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ignores an 'enabled' key found OUTSIDE the [multimodal] section", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "[other]\nenabled = true\n\n[multimodal]\n");
+      expect(resolveMultimodalEnabled(dir)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads false when the file cannot be parsed as expected (readFileSync throws)", () => {
+    // Point configDir at a location where nimbus.toml is actually a directory, so
+    // existsSync() is true but readFileSync() throws — the catch-arm around parseMultimodalEnabled.
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
+    try {
+      mkdirSync(join(dir, "nimbus.toml"));
+      expect(resolveMultimodalEnabled(dir)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
