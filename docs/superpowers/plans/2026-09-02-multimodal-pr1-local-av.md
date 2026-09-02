@@ -62,11 +62,13 @@
 ## Task 1: V58 migration — `media_pass_cursor`
 
 **Files:**
+
 - Create: `packages/gateway/src/index/media-pass-v58-sql.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
 - Test: `packages/gateway/src/index/migrations/runner-v58.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `MEDIA_PASS_V58_SQL: string`, and `CURRENT_SCHEMA_VERSION === 58` (every later task's test helper migrates to it). Table `media_pass_cursor(pass_id TEXT PK, service TEXT, modality TEXT, last_item_id TEXT NOT NULL, processed_count INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`.
 
@@ -194,10 +196,12 @@ git commit -m "feat(index): V58 media_pass_cursor for the multimodal understandi
 ## Task 2: Embedding routing — derived types are local-only
 
 **Files:**
+
 - Modify: `packages/gateway/src/embedding/routing.ts`
 - Test: `packages/gateway/src/embedding/routing.test.ts:120-150` (extend)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: routing keys `nimbus:image_understanding` and `nimbus:video_understanding` present in `LOCAL_ONLY_PROSE_TYPES`.
 
@@ -257,11 +261,13 @@ git commit -m "feat(embedding): pin multimodal understanding types to local-only
 ## Task 3: Media source registry and shared types
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/media-types.ts`
 - Create: `packages/gateway/src/multimodal/media-source-registry.ts`
 - Test: `packages/gateway/src/multimodal/media-source-registry.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `type MediaModality = "image" | "av"`
@@ -480,10 +486,12 @@ git commit -m "feat(multimodal): media source registry and shared types"
 ## Task 4: Walk local media files
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/filesystem-v2-sync.ts` (add beside `walkCodeFilesRecursive`, ~line 387)
 - Test: `packages/gateway/src/connectors/filesystem-v2-media.test.ts`
 
 **Interfaces:**
+
 - Consumes: `MEDIA_EXTENSIONS`, `mediaExtensionModality` (Task 3).
 - Produces: `interface FoundMediaFile { path: string; modality: MediaModality; }`, `collectMediaFiles(root: string, exclude: readonly string[], maxFiles: number): FoundMediaFile[]`, `mimeTypeForMediaExtension(ext: string): string | null`.
 
@@ -697,10 +705,12 @@ git commit -m "feat(filesystem): walk local media files with the shared exclude 
 ## Task 4b: The `media_index` root toggle
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/filesystem-toml.ts:7-13` (type), `:42-49` (default), `:67+` (key switch)
 - Test: `packages/gateway/src/config/filesystem-toml.test.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `NimbusFilesystemRootToml.mediaIndex: boolean`, parsed from the TOML key `media_index`, **defaulting to `false`**.
 
@@ -776,10 +786,12 @@ git commit -m "feat(config): media_index per-root toggle, default off"
 ## Task 4c: Wire media indexing into the filesystem sync
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/filesystem-v2-sync.ts` (`createFilesystemV2Syncable.sync`, ~line 599-625)
 - Test: `packages/gateway/src/connectors/filesystem-v2-media.test.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: `collectMediaFiles`, `mimeTypeForMediaExtension` (Task 4); `mediaIndex` (Task 4b).
 - Produces: `syncFilesystemMediaForRoot(ctx, root, exclude, maxFiles, now): { upserted: number; bytes: number }`, writing `item` rows with `service = "filesystem"`, `type = "media_av"` / `"media_image"`, `externalId` = the absolute path, `metadata = { path, sizeBytes, mimeType, mediaKind }`.
 
@@ -969,10 +981,12 @@ git commit -m "feat(filesystem): index media files during sync behind the media_
 ## Task 5: Byte acquisition — path validation against live roots
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/media-bytes.ts`
 - Test: `packages/gateway/src/multimodal/media-bytes.test.ts`
 
 **Interfaces:**
+
 - Consumes: `MediaCandidate`, `SkipReason` (Task 3).
 - Produces: `resolveLocalMediaPath(candidate: MediaCandidate, roots: readonly string[], maxBytes: number): { ok: true; path: string } | { ok: false; reason: SkipReason }`
 
@@ -1178,10 +1192,12 @@ git commit -m "feat(multimodal): validate local media paths against live filesys
 ## Task 6: ffmpeg resolution and transcode to a scratch WAV
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/stt/ffmpeg-bin.ts`
 - Test: `packages/gateway/src/multimodal/stt/ffmpeg-bin.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `resolveFfmpegBin(configuredPath?: string, which?: (n: string) => string | null): string`
@@ -1563,10 +1579,12 @@ git commit -m "feat(multimodal): ffmpeg resolution, WAV transcode, scratch-file 
 ## Task 7: Long-form STT wrapper
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/stt/long-form-stt.ts`
 - Test: `packages/gateway/src/multimodal/stt/long-form-stt.test.ts`
 
 **Interfaces:**
+
 - Consumes: `transcodeToWav`, `withScratchFile` (Task 6); `WhisperSttProvider` from `../../voice/stt.ts`.
 - Produces:
   - `interface LongFormStt { readonly isLocal: true; readonly model: string; isAvailable(): Promise<boolean>; understand(path: string): Promise<string>; }`
@@ -1739,10 +1757,12 @@ git commit -m "feat(multimodal): long-form STT wrapper over WhisperSttProvider"
 ## Task 8: The gate — ordered refusals and the model call
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/media-gate.ts`
 - Test: `packages/gateway/src/multimodal/media-gate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `MediaCandidate`, `UnderstandOutcome`, `SkipReason` (Task 3); `LongFormStt` (Task 7).
 - Produces:
   - `type GateResult = { ok: true; outcome: UnderstandOutcome } | { ok: false; reason: SkipReason }`
@@ -2093,10 +2113,12 @@ git commit -m "feat(multimodal): media gate chokepoint with ordered fail-closed 
 ## Task 9: Derived understanding item
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/understanding-item.ts`
 - Test: `packages/gateway/src/multimodal/understanding-item.test.ts`
 
 **Interfaces:**
+
 - Consumes: `MediaCandidate`, `UnderstandOutcome`, `UNDERSTANDING_VERSION` (Task 3).
 - Produces:
   - `understandingExternalId(sourceItemId: string): string`
@@ -2327,10 +2349,12 @@ git commit -m "feat(multimodal): derived understanding item with stable id and p
 ## Task 10: Discovery
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/media-discovery.ts`
 - Test: `packages/gateway/src/multimodal/media-discovery.test.ts`
 
 **Interfaces:**
+
 - Consumes: `MediaCandidate`, `UNDERSTANDING_VERSION` (Task 3); `modalityForItem` (Task 3).
 - Produces: `findCandidates(db: Database, opts: DiscoveryOptions): MediaCandidate[]`, `interface DiscoveryOptions { service?: string; modality?: MediaModality; sinceMs?: number; limit: number; afterItemId?: string; }`
 
@@ -2587,12 +2611,14 @@ git commit -m "feat(multimodal): candidate discovery by understanding version"
 ## Task 11: Pass state and the orchestrating pass
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/media-pass-state.ts`
 - Create: `packages/gateway/src/multimodal/media-pass.ts`
 - Test: `packages/gateway/src/multimodal/media-pass-state.test.ts`
 - Test: `packages/gateway/src/multimodal/media-pass.test.ts`
 
 **Interfaces:**
+
 - Consumes: `findCandidates` (Task 10), `resolveLocalMediaPath` (Task 5), `understandArtifact` (Task 8), `writeUnderstanding` (Task 9).
 - Produces:
   - `readCursor(db, passId): string | null`, `writeCursor(db, passId, opts): void`, `clearCursor(db, passId): void`
@@ -3020,6 +3046,7 @@ git commit -m "feat(multimodal): resumable budgeted understanding pass with per-
 ## Task 12: IPC method and CLI command
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/media-rpc.ts`
 - Create: `packages/cli/src/commands/media-cmd.ts`
 - Modify: `packages/cli/src/commands/index.ts`
@@ -3028,6 +3055,7 @@ git commit -m "feat(multimodal): resumable budgeted understanding pass with per-
 - Test: `packages/cli/src/commands/media-cmd.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runMediaPass`, `MediaPassSummary` (Task 11).
 - Produces: IPC method `media.understand` with params `{ service?: string; modality?: "image" | "av"; sinceDays?: number; limit?: number }` returning `MediaPassSummary`.
 
@@ -3448,7 +3476,7 @@ In `packages/cli/src/commands/index.ts`, re-export `runMediaCmd` and add `media`
 
 In `packages/cli/src/commands/help.ts`, add beside the `nimbus index rebody` line:
 
-```
+```text
   nimbus media understand …  Transcribe/caption indexed local media (local models only)
 ```
 
@@ -3469,11 +3497,13 @@ git commit -m "feat(multimodal): media.understand IPC and nimbus media understan
 ## Task 12b: Register the dispatcher and construct the real deps
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts` (import + a dispatch function, following the `index.rebody` block at ~:605-630)
 - Create: `packages/gateway/src/multimodal/build-media-pass-deps.ts`
 - Test: `packages/gateway/src/multimodal/build-media-pass-deps.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runMediaPass`, `MediaPassDeps` (Task 11); `dispatchMediaRpc`, `MediaRpcDeps` (Task 12); `createLongFormStt` (Task 7); `resolveFfmpegBin` (Task 6).
 - Produces: `buildMediaPassDeps(input: BuildMediaPassDepsInput): Omit<MediaPassDeps, "limit" | "service" | "modality" | "sinceMs">`, and a reachable `media.understand` IPC method.
 
@@ -3703,9 +3733,11 @@ git commit -m "feat(multimodal): wire media.understand into the IPC dispatcher c
 ## Task 13: Zero-egress integration test with a positive control
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/multimodal/local-pass-zero-egress.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runMediaPass` (Task 11).
 - Produces: nothing consumed by later tasks.
 
@@ -3875,6 +3907,7 @@ git commit -m "test(multimodal): zero-egress claim with a positive control"
 ## Task 14: Documentation and full pre-flight
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/cli-reference.md`
 - Modify: `docs/roadmap.md` (S2 multimodal row)
@@ -3905,6 +3938,7 @@ Follow the existing dated-entry format in `docs/CHANGELOG.md`.
 
 Run: `bun run preflight`
 Expected: all gates green. Specifically confirm:
+
 - `audit:doc-refs` — every path cited in the new docs resolves.
 - `audit:status-drift` — the mirrored status surfaces agree.
 - `audit:cross-platform` — no Windows-separator path assertions (the tests here split on `/[\\/]/` deliberately).

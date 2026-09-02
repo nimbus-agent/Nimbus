@@ -29,26 +29,30 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
   2. `upsertMediaFiles` is signature-typed with `db: Database`, whereas `sync()` operates through `ctx: SyncContext` (`ctx.upsertItem(...)`), which does not expose the raw `db` handle (enforcing D24).
   3. Consequently, running `nimbus sync` in production will never index media files into the `item` table, causing `findCandidates` in `nimbus media understand` to return 0 candidates on real user databases.
 * **Fix:**
-  - In `filesystem-v2-sync.ts`, implement `syncFilesystemMediaForRoot(ctx: SyncContext, root: string, exclude: readonly string[], maxFiles: number, now: number)` using `ctx.upsertItem(...)`.
-  - Wire `syncFilesystemMediaForRoot` into `createFilesystemV2Syncable.sync()` under the root iteration loop.
+  * In `filesystem-v2-sync.ts`, implement `syncFilesystemMediaForRoot(ctx: SyncContext, root: string, exclude: readonly string[], maxFiles: number, now: number)` using `ctx.upsertItem(...)`.
+  * Wire `syncFilesystemMediaForRoot` into `createFilesystemV2Syncable.sync()` under the root iteration loop.
 
 ---
 
 ### 2.2 Relative Path Exclusions (`isExcluded`) Missing in `walkMediaFilesRecursive`
 
 * **Context:** In **Task 4 Step 3**, `walkMediaFilesRecursive` handles exclusions using:
+
   ```ts
   if (exclude.includes(entry.name)) {
     continue;
   }
   ```
+
 * **Issue:** The existing code file walk in `filesystem-v2-sync.ts` ([lines 407–414](file:///C:/gitrep/Nimbus/packages/gateway/src/connectors/filesystem-v2-sync.ts#L407-L414)) evaluates both entry names and relative paths using `isExcluded(rel, exclude)`:
+
   ```ts
   const rel = relative(root, full);
   if (isExcluded(rel, exclude)) {
     continue;
   }
   ```
+
   `exclude` in `nimbus.toml` frequently contains glob patterns and directory path prefixes (e.g. `dist/**`, `fixtures/*`, `target/`). The entry-name check alone misses these relative path patterns.
 * **Fix:** In `walkMediaFilesRecursive`, compute `rel = relative(root, full)` and invoke the existing `isExcluded(rel, exclude)` helper to ensure consistency between code and media indexing.
 
@@ -57,6 +61,7 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
 ### 2.3 `Bun.spawn` stderr Stream Typing vs Mock Discrepancy in `transcodeToWav`
 
 * **Context:** In **Task 6 Step 3** (`packages/gateway/src/multimodal/stt/ffmpeg-bin.ts` line 1111):
+
   ```ts
   const proc = spawn(cmd, { stdout: "pipe", stderr: "pipe" }) as unknown as {
     exited: Promise<number>;
@@ -68,10 +73,12 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
     throw new Error(`ffmpeg exited ${code} for ${input}: ${err.slice(0, 400)}`);
   }
   ```
+
 * **Issue:** In Bun's runtime, `proc.stderr` returned by `Bun.spawn` is a `ReadableStream<Uint8Array>`, not a `Response`.
-  - Wrapping `proc.stderr` in `new Response(proc.stderr)` works when `proc.stderr` is a `ReadableStream`, but in Task 6 Step 1's mock test ([line 1006](file:///C:/gitrep/Nimbus/docs/superpowers/plans/2026-09-02-multimodal-pr1-local-av.md#L1006)), the test mock supplies `stderr: new Response("boom")` (an actual `Response` instance).
-  - Passing a `Response` object into `new Response(proc.stderr as unknown as BodyInit)` causes runtime type confusion.
+  * Wrapping `proc.stderr` in `new Response(proc.stderr)` works when `proc.stderr` is a `ReadableStream`, but in Task 6 Step 1's mock test ([line 1006](file:///C:/gitrep/Nimbus/docs/superpowers/plans/2026-09-02-multimodal-pr1-local-av.md#L1006)), the test mock supplies `stderr: new Response("boom")` (an actual `Response` instance).
+  * Passing a `Response` object into `new Response(proc.stderr as unknown as BodyInit)` causes runtime type confusion.
 * **Fix:** Standardize the signature in `ffmpeg-bin.ts`:
+
   ```ts
   const proc = spawn(cmd, { stdout: "pipe", stderr: "pipe" });
   const code = await proc.exited;
@@ -80,6 +87,7 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
     throw new Error(`ffmpeg exited ${code} for ${input}: ${err.slice(0, 400)}`);
   }
   ```
+
   In test mocks, provide `stderr: new Response("boom").body` (a `ReadableStream`).
 
 ---
@@ -89,6 +97,7 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
 * **Context:** In **Task 12 Step 7**, `packages/cli/src/commands/media-cmd.ts` exports `parseMediaArgs` and `renderSummary`.
 * **Issue:** The file does not specify the IPC client integration runner that connects the CLI command to the Gateway.
 * **Fix:** Explicitly export the command handler in `media-cmd.ts`:
+
   ```ts
   export async function executeMedia(argv: readonly string[], ctx: CommandContext): Promise<void> {
     const parsed = parseMediaArgs(argv);
@@ -104,6 +113,7 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
 ### 3.1 `GpuArbiter` 30-Second Watchdog Eviction during Long Audio Transcriptions
 
 * **Context:** In **Task 8 Step 3** (`media-gate.ts`), `understandArtifact` acquires a `GpuArbiter` lease around `provider.understand(path)`:
+
   ```ts
   const release = await deps.gpu.acquire(`multimodal:${candidate.modality}`);
   try {
@@ -113,12 +123,15 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
     release();
   }
   ```
+
 * **Risk:** In [`packages/gateway/src/llm/gpu-arbiter.ts`](file:///C:/gitrep/Nimbus/packages/gateway/src/llm/gpu-arbiter.ts#L8-L32), `GpuArbiter` enforces a hardcoded default idle watchdog timeout of **30 seconds** (`timeoutMs = 30_000`):
+
   ```ts
   if (this.locked && Date.now() - this.lastActivityAt > this.timeoutMs) {
     this.forceRelease();
   }
   ```
+
   For a 10-to-30 minute audio recording transcribed on CPU via `whisper-cli`, transcription will take several minutes.
   If an interactive query (`nimbus ask`) arrives after 30 seconds, `GpuArbiter.acquire()` will observe that `lastActivityAt` is older than 30s, trigger `forceRelease()`, evict the multimodal lease, and clear the queue.
 * **Recommendation:**
@@ -146,8 +159,8 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
 ### 3.4 Missing `metadata.mimeType` in `upsertMediaFiles`
 
 * **Context:**
-  - In Task 4 Step 7 (`upsertMediaFiles`), metadata is populated with `{ path: file.path, sizeBytes, mediaKind: file.modality }`.
-  - In Task 10 Step 3 (`media-discovery.ts`), candidate construction attempts to read `sourceMime: stringOrNull(meta["mimeType"])`.
+  * In Task 4 Step 7 (`upsertMediaFiles`), metadata is populated with `{ path: file.path, sizeBytes, mediaKind: file.modality }`.
+  * In Task 10 Step 3 (`media-discovery.ts`), candidate construction attempts to read `sourceMime: stringOrNull(meta["mimeType"])`.
 * **Observation:** Because `upsertMediaFiles` does not set `mimeType`, `candidate.sourceMime` is always `null`, and derived `video_understanding` items will always record `metadata.sourceMime: null`.
 * **Fix:** In `upsertMediaFiles`, infer `mimeType` from file extension (e.g. `.mp4` -> `video/mp4`, `.mp3` -> `audio/mpeg`, `.wav` -> `audio/wav`) and write it into metadata.
 
@@ -163,10 +176,10 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
 
 ## 5. Implementation Checklist
 
-- [ ] Wire `syncFilesystemMediaForRoot` into `createFilesystemV2Syncable.sync()` in `filesystem-v2-sync.ts` (Task 4)
-- [ ] Add `isExcluded(rel, exclude)` to `walkMediaFilesRecursive` in `filesystem-v2-sync.ts` (Task 4)
-- [ ] Infer `mimeType` from extension in `upsertMediaFiles` (Task 4)
-- [ ] Fix `Bun.spawn` stderr stream handling in `transcodeToWav` and mock tests (Task 6)
-- [ ] Address `GpuArbiter` 30-second timeout handling during long STT transcription (Task 8)
-- [ ] Export full `executeMedia` command runner in `packages/cli/src/commands/media-cmd.ts` (Task 12)
-- [ ] Verify `CURRENT_SCHEMA_VERSION === 58` across all test migration helpers (Task 1)
+* [ ] Wire `syncFilesystemMediaForRoot` into `createFilesystemV2Syncable.sync()` in `filesystem-v2-sync.ts` (Task 4)
+* [ ] Add `isExcluded(rel, exclude)` to `walkMediaFilesRecursive` in `filesystem-v2-sync.ts` (Task 4)
+* [ ] Infer `mimeType` from extension in `upsertMediaFiles` (Task 4)
+* [ ] Fix `Bun.spawn` stderr stream handling in `transcodeToWav` and mock tests (Task 6)
+* [ ] Address `GpuArbiter` 30-second timeout handling during long STT transcription (Task 8)
+* [ ] Export full `executeMedia` command runner in `packages/cli/src/commands/media-cmd.ts` (Task 12)
+* [ ] Verify `CURRENT_SCHEMA_VERSION === 58` across all test migration helpers (Task 1)

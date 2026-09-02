@@ -71,7 +71,7 @@ click through, or a silent outbound send because "the user already opted into th
 
 ### 3.1 Placement
 
-```
+```text
 packages/gateway/src/multimodal/
   media-gate.ts            THE chokepoint: the only path from bytes to a model
   media-bytes.ts           byte acquisition (local read | cloud fetch); touches no model
@@ -374,7 +374,7 @@ declines in its summary (§ 8). Consent stays scarce enough to mean something.
 Granting one item at a time does not scale to an album, and a rule that is unusable gets worked
 around. So a selector form exists:
 
-```
+```text
 nimbus media allow-remote --service google_photos --since 2026-08-01 --limit 20
 ```
 
