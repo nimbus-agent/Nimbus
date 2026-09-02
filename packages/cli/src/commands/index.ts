@@ -30,6 +30,7 @@ export { runJanitorCli } from "./janitor.ts";
 export { runLan } from "./lan.ts";
 export { runLlm } from "./llm.ts";
 export { runMcpServer } from "./mcp-server.ts";
+export { runMediaCmd } from "./media-cmd.ts";
 export { runMetricsCli } from "./metrics.ts";
 export { runNegotiateCommand } from "./negotiate.ts";
 export { runOwnersCommand } from "./owners.ts";

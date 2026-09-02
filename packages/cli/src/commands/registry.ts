@@ -32,6 +32,7 @@ export const COMMAND_NAMES = [
   "lan",
   "llm",
   "mcp-server",
+  "media",
   "metrics",
   "negotiate",
   "owners",

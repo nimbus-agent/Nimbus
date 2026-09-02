@@ -63,6 +63,7 @@ CONNECTORS & INDEX
   nimbus watch …            List/pause/resume index watchers
   nimbus index reembed …    Selective re-embedding to a target model; --yes for non-dry runs
   nimbus index rebody …     Re-fetch indexed depth (real outbound traffic); --yes for non-dry runs
+  nimbus media understand …  Transcribe/caption indexed local media (local models only)
   nimbus session …          Session RAG memory (list, clear, recall — needs embeddings)
 
 METRICS & CI/CD
