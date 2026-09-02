@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788308232444,
+  "lastUpdate": 1788321077497,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e6cbfff9b4fdb173b3f650e8f1f98c494b985c43",
-          "message": "fix(sonar): clear last 2 S7735 negated-condition smells (#683)\n\n## What\n\nSonarCloud audit of `nimbus-agent_Nimbus` showed the project is in\nexcellent shape — gate green, 0 bugs / 0 vulnerabilities / 0 security\nhotspots, 93.8% coverage, 0.2% duplication, all A ratings. The **only**\nopen issues were 2 minor `typescript:S7735` (\"unexpected negated\ncondition\") code smells.\n\nThis flips both ternaries to put the positive branch first — **no\nbehavior change**:\n\n- `stripe-sync.ts` — `nextId` computation\n- `vercel-sync.ts` — `nextPageCursor` computation\n\nTakes the project to **0 open issues**.\n\n## Verification\n\n- `bunx biome check` on both files — clean\n- `bun test` stripe-sync + vercel-sync fake-server integration suites —\n15 pass / 0 fail\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n## Release Notes\n\n* **Refactor**\n* Internal optimization of pagination cursor computation in sync\nconnectors with no impact on user-facing functionality.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T17:53:22Z",
-          "tree_id": "22ee9e7561f68b5c5907fcfab46da7fb2c89e146",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e6cbfff9b4fdb173b3f650e8f1f98c494b985c43"
-        },
-        "date": 1781719730773,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.7816108999985,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.98770365000235,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 324.84362849998905,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "393e6ba41cc9f7e457382d0ebdeee2b0693e11be",
+          "message": "chore: release main (#1425)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.6.0</summary>\n\n##\n[7.6.0](https://github.com/nimbus-agent/Nimbus/compare/v7.5.0...v7.6.0)\n(2026-09-02)\n\n\n### Features\n\n* **agents:** resolve a forge file coordinate to the reader's checkout\n([#1424](https://github.com/nimbus-agent/Nimbus/issues/1424))\n([4770bdf](https://github.com/nimbus-agent/Nimbus/commit/4770bdffbcff9b7962f209e890d3b96f324dbb9b))\n* **computer-use:** the terminal lane — a confined shell where nothing\nruns before the owner approves the whole line\n([#1426](https://github.com/nimbus-agent/Nimbus/issues/1426))\n([9ad2be9](https://github.com/nimbus-agent/Nimbus/commit/9ad2be9c1d398c1eb1636115ae495e2869775d00))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-02T06:39:08+03:00",
+          "tree_id": "0b79df0f78aaef0e0127f55c6f0da6abc587a3ed",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/393e6ba41cc9f7e457382d0ebdeee2b0693e11be"
+        },
+        "date": 1788321074646,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 329.9330148499979,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 327.7653633499925,
             "unit": "ms"
           }
         ]
