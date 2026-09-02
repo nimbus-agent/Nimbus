@@ -35,6 +35,12 @@ const FORBIDDEN_OVER_LAN = new Set([
   // prompt — admitting it would let a paired peer approve actions on the owner's machine,
   // defeating the entire I35 gate. There are no read verbs here worth preserving.
   "computer",
+  // S2 multimodal I/O (PR 1) — the WHOLE namespace, matching exec/computer. `media.understand`
+  // reads local files (audio/video under `[[filesystem.roots]]`) and spawns ffmpeg/whisper
+  // subprocesses on the owner's machine; admitting it over the wire would let a paired peer
+  // trigger that local file access and process spawn on the owner's behalf. There are no read
+  // verbs here worth preserving.
+  "media",
   "audit", // exfiltration-class namespace
   "data", // exfiltration-class namespace
   "security", // exfiltration-class — credential locations must not leak to LAN peers

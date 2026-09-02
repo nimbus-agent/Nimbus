@@ -67,6 +67,15 @@ describe("checkLanMethodAllowed", () => {
     ).toThrow(LanError);
   });
 
+  test("rejects the media namespace regardless of grant-write (I5, S2 multimodal I/O)", () => {
+    expect(() =>
+      checkLanMethodAllowed("media.understand", { peerId: "p", writeAllowed: true }),
+    ).toThrow(LanError);
+    expect(() =>
+      checkLanMethodAllowed("media.understand", { peerId: "p", writeAllowed: false }),
+    ).toThrow(LanError);
+  });
+
   test("rejects connector.addMcp even with writeAllowed false (also forbidden, not just write-gated)", () => {
     expect(() =>
       checkLanMethodAllowed("connector.addMcp", { peerId: "p", writeAllowed: false }),

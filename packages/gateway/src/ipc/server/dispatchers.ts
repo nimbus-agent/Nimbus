@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import pino from "pino";
 import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-runner.ts";
 import {
@@ -15,6 +16,12 @@ import { appendPreflightAudit, defaultRunCommand } from "../../federation/prefli
 import { writeScimBearer } from "../../identity/identity-vault.ts";
 import { isOperatorValid } from "../../identity/verifier.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
+import {
+  buildMediaPassDeps,
+  resolveMediaRoots,
+  resolveMultimodalEnabled,
+} from "../../multimodal/build-media-pass-deps.ts";
+import { runMediaPass } from "../../multimodal/media-pass.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
@@ -41,6 +48,7 @@ import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-
 import { dispatchIndexRegraphRpc, IndexRegraphRpcError } from "../index-regraph-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
+import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
@@ -628,6 +636,46 @@ export async function tryDispatchIndexRebodyRpc(
     throw e;
   }
   return phase4RpcSkipped;
+}
+
+/**
+ * `media.understand` (S2 multimodal I/O, PR 1). LAN-FORBIDDEN (`lan-rpc.ts`'s
+ * `FORBIDDEN_OVER_LAN`) and absent from the Tauri allowlist — see `media-rpc.ts`'s own doc
+ * comment; it reads local files and spawns subprocesses, the `exec.*` posture.
+ *
+ * `roots` and `enabled` are re-read from `nimbus.toml` on every call (matching `ownershipRoots`
+ * in `ownership/ownership-target.ts`), so a `[[filesystem.roots]]` or `[multimodal]` edit applies
+ * without a gateway restart. `capabilityDisabled` is hardcoded `false`: the org-policy half of
+ * this capability (`multimodal_input`, `policy/types.ts` `AI_V2_CAPABILITIES`) has no
+ * IPC-reachable `EnforcedPolicy` accessor yet — `code_execution`/`computer_use` each got their
+ * own `gateDeps.enforced` getter wired at boot (`platform/assemble.ts`); this slice ships only
+ * the local `[multimodal] enabled` kill switch (default off).
+ */
+export async function tryDispatchMediaRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "media.understand") {
+    return phase4RpcSkipped;
+  }
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "media.understand requires LocalIndex");
+  }
+  if (ctx.options.dataDir === undefined) {
+    throw new RpcMethodError(-32603, "media.understand requires dataDir");
+  }
+  const deps = buildMediaPassDeps({
+    db: ctx.options.localIndex.getDatabase(),
+    roots: resolveMediaRoots(ctx.options.configDir),
+    enabled: resolveMultimodalEnabled(ctx.options.configDir),
+    capabilityDisabled: false,
+    scratchDir: join(ctx.options.dataDir, "multimodal-scratch"),
+  });
+  const out = await dispatchMediaRpc(method, params, {
+    runPass: (opts) => runMediaPass({ ...deps, ...opts }),
+  });
+  return out ?? phase4RpcSkipped;
 }
 
 export async function tryDispatchIndexDemoSymbolRpc(
@@ -1290,6 +1338,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchShareRpc,
   tryDispatchExecRpc,
   tryDispatchComputerRpc,
+  tryDispatchMediaRpc,
   tryDispatchEgressRpc,
   tryDispatchGlossaryRpc,
   tryDispatchDecisionsRpc,
