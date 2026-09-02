@@ -1360,7 +1360,7 @@ describe("LocalIndex schema V49 — connector depth default", () => {
       56,
     );
 
-    runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
+    runIndexedSchemaMigrations(db, 57);
 
     expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
       57,

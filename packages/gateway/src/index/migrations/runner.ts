@@ -42,6 +42,7 @@ import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
 import { LLM_CONTEXT_WINDOW_V16_ALTER_SQL, LLM_MODELS_V16_SQL } from "../llm-models-v16-sql.ts";
 import { LLM_TASK_DEFAULTS_V20_SQL } from "../llm-task-defaults-v20-sql.ts";
+import { MEDIA_PASS_V58_SQL } from "../media-pass-v58-sql.ts";
 import {
   OBSIDIAN_NOTES_V26_SCHEMA_SQL,
   OBSIDIAN_NOTES_V26_SEED_SQL,
@@ -559,6 +560,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     CONNECTOR_CONFIGURED_V56_SQL,
   ),
   simpleStep(56, 57, "computer-use session + action stream", COMPUTER_USE_V57_SQL),
+  simpleStep(57, 58, "multimodal understanding pass cursor", MEDIA_PASS_V58_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
