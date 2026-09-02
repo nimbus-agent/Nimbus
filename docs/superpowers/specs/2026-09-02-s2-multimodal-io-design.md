@@ -273,8 +273,16 @@ The resolution is to narrow the rule to what is true, per arm:
   to ffmpeg directly, which also keeps the file seekable (see below). Only the transcoded WAV is
   new.
 - **Cloud audio/video, and every transcode — one gateway-owned ephemeral scratch file**, created
-  mode 0600 under a Nimbus-owned directory, deleted in a `finally` including on the crash and
-  cancellation paths, never indexed, never in a user-visible location, and never reused as a cache.
+  mode 0600 under a Nimbus-owned directory, deleted in a `finally`, never indexed, never in a
+  user-visible location, and never reused as a cache.
+
+**The `finally` does not cover process death**, and saying it did would overstate the guarantee. A
+SIGINT, a crash, or — on Windows, where a SIGTERM is `TerminateProcess` — any termination at all
+kills the gateway without unwinding, leaving decoded audio of the user's recording on disk
+indefinitely. So the pass also **sweeps stale scratch files at start**, deleting only files it
+named and only those older than an hour, so a concurrent pass's file is never pulled out from under
+it. The rule is therefore "deleted promptly, and swept if a process died mid-write" — not "never
+persists", which the implementation cannot honour.
 
 **Why not the in-memory pipe.** Piping through `ffmpeg` on stdin and into `whisper-cli` on stdin
 would preserve the stronger rule, but it makes a cross-platform correctness property depend on an
@@ -446,9 +454,23 @@ never settle.
 
 A pass that held the lease across an entire video would therefore be a hang generator: hold for
 minutes, let an interactive `nimbus ask` arrive and evict it, and any other queued caller is
-stranded permanently. Leasing per model call means the lease is never held long enough for the idle
-timer to be reachable, so the queue-wipe path is never entered and `nimbus ask` interleaves between
-frames instead of evicting anything.
+stranded permanently.
+
+**Per-call leasing is necessary but NOT sufficient, and the first draft of this section wrongly
+said it was.** It claimed a per-call lease "is never held long enough for the idle timer to be
+reachable." That is true for image captioning, where a call is seconds and frames release between
+each other. It is false for audio and video, where **one call IS the whole file** — a thirty-minute
+recording is a single `transcribeFile` that runs for minutes, and there is no natural release point
+inside it to interleave at.
+
+So the lease is accompanied by a **heartbeat**: while a model call is in flight, the gate ticks
+`GpuArbiter.touch()` on an interval well inside the 30 s bound. That is not a workaround dressed as
+a design — `touch()` means "still working", which is precisely and honestly true while the
+subprocess runs. The idle timer exists to reclaim a lease from a holder that has *died*, and a
+heartbeat is exactly what distinguishes that case from a slow one.
+
+The interval must be cleared in a `finally`. A live interval outlives the call, and in `bun test`
+that presents as a suite that hangs rather than one that fails.
 
 ### 8.2 Scheduling
 
