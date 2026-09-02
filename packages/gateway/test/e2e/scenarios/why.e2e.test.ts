@@ -11,7 +11,14 @@ import { upsertBlameLines } from "../../../src/security/blame-store.ts";
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 const ROOT = path.resolve(path.join(path.sep, "work", "repo"));
 const roots: NimbusFilesystemRootToml[] = [
-  { path: ROOT, gitAware: true, codeIndex: true, dependencyGraph: true, exclude: [] },
+  {
+    path: ROOT,
+    gitAware: true,
+    codeIndex: true,
+    dependencyGraph: true,
+    mediaIndex: false,
+    exclude: [],
+  },
 ];
 const REF = `${path.join(ROOT, "src", "retry.ts")}:42`;
 

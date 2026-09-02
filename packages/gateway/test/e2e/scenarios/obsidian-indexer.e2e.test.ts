@@ -19,6 +19,7 @@ test("e2e: fixture vault produces queryable obsidian_note rows + daily-note flag
         gitAware: false,
         codeIndex: false,
         dependencyGraph: false,
+        mediaIndex: false,
         exclude: [],
       },
     ],

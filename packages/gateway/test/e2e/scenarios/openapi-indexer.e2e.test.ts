@@ -23,7 +23,14 @@ test("e2e: two specs in two services produce queryable api_endpoint rows", async
 
     const sync = createOpenapiIndexerSyncable({
       roots: [
-        { path: root, gitAware: false, codeIndex: false, dependencyGraph: false, exclude: [] },
+        {
+          path: root,
+          gitAware: false,
+          codeIndex: false,
+          dependencyGraph: false,
+          mediaIndex: false,
+          exclude: [],
+        },
       ],
       config: DEFAULT_OPENAPI_CONFIG,
     });

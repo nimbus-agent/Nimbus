@@ -70,7 +70,14 @@ describe("document-body-full — obsidian:obsidian_note", () => {
     const db = createMemoryIndexDb();
     const sync = createObsidianSyncable({
       roots: [
-        { path: root, gitAware: false, codeIndex: false, dependencyGraph: false, exclude: [] },
+        {
+          path: root,
+          gitAware: false,
+          codeIndex: false,
+          dependencyGraph: false,
+          mediaIndex: false,
+          exclude: [],
+        },
       ],
     });
     const r = await sync.sync(

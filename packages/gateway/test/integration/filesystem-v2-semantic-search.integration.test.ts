@@ -54,6 +54,7 @@ export function renewCredentials() { return {}; }
           gitAware: false,
           codeIndex: true,
           dependencyGraph: false,
+          mediaIndex: false,
           exclude: ["node_modules", ".git"],
         },
       ],
