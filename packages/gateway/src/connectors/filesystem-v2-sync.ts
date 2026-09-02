@@ -5,6 +5,8 @@ import { join, relative } from "node:path";
 
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
+import { MEDIA_EXTENSIONS, mediaExtensionModality } from "../multimodal/media-source-registry.ts";
+import type { MediaModality } from "../multimodal/media-types.ts";
 import { type BlameRow, parseBlamePorcelain } from "../security/blame-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -424,6 +426,108 @@ function listCodeFiles(root: string, exclude: readonly string[], maxFiles: numbe
   const found: string[] = [];
   walkCodeFilesRecursive(root, exclude, maxFiles, found, root, 0);
   return found;
+}
+
+export interface FoundMediaFile {
+  readonly path: string;
+  readonly modality: MediaModality;
+}
+
+/**
+ * `sourceMime` on a derived understanding item comes from here.
+ *
+ * Returns null rather than `application/octet-stream` for an unknown extension: a wrong MIME is
+ * worse than an absent one, because a reader cannot tell a guess from a fact.
+ */
+const MEDIA_MIME_TYPES: ReadonlyMap<string, string> = new Map([
+  [".mp4", "video/mp4"],
+  [".mov", "video/quicktime"],
+  [".m4v", "video/x-m4v"],
+  [".webm", "video/webm"],
+  [".mkv", "video/x-matroska"],
+  [".mp3", "audio/mpeg"],
+  [".m4a", "audio/mp4"],
+  [".wav", "audio/wav"],
+  [".flac", "audio/flac"],
+  [".ogg", "audio/ogg"],
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+  [".bmp", "image/bmp"],
+  [".tiff", "image/tiff"],
+]);
+
+export function mimeTypeForMediaExtension(ext: string): string | null {
+  return MEDIA_MIME_TYPES.get(ext.toLowerCase()) ?? null;
+}
+
+/**
+ * Media files under a root, capped and exclude-aware.
+ *
+ * Separate from the code walk because the two answer different questions: the code walk indexes
+ * SYMBOLS inside a file, this indexes the file ITSELF as an artifact whose body arrives later from
+ * the understanding pass. `maxFiles` is load-bearing — a root pointed at a photo library is
+ * otherwise unbounded (spec § 12.4).
+ *
+ * Exclusion applies BOTH checks the code walk applies, so the two stay one behaviour.
+ */
+export function collectMediaFiles(
+  root: string,
+  exclude: readonly string[],
+  maxFiles: number,
+): FoundMediaFile[] {
+  const found: FoundMediaFile[] = [];
+  walkMediaFilesRecursive(root, exclude, maxFiles, found, root, 0);
+  return found;
+}
+
+function walkMediaFilesRecursive(
+  root: string,
+  exclude: readonly string[],
+  maxFiles: number,
+  found: FoundMediaFile[],
+  dir: string,
+  depth: number,
+): void {
+  if (found.length >= maxFiles || depth > 10) {
+    return;
+  }
+  const entries = readDirectoryDirentsOrUndefined(dir);
+  if (entries === undefined) {
+    return;
+  }
+  for (const ent of entries) {
+    if (found.length >= maxFiles) {
+      return;
+    }
+    const name = String(ent.name);
+    if (exclude.includes(name)) {
+      continue;
+    }
+    const full = join(dir, name);
+    const rel = relative(root, full);
+    if (isExcluded(rel, exclude)) {
+      continue;
+    }
+    if (ent.isDirectory()) {
+      walkMediaFilesRecursive(root, exclude, maxFiles, found, full, depth + 1);
+      continue;
+    }
+    if (!ent.isFile()) {
+      continue;
+    }
+    const dot = name.lastIndexOf(".");
+    const ext = dot >= 0 ? name.slice(dot) : "";
+    if (!MEDIA_EXTENSIONS.has(ext.toLowerCase())) {
+      continue;
+    }
+    const modality = mediaExtensionModality(ext);
+    if (modality !== undefined) {
+      found.push({ path: full, modality });
+    }
+  }
 }
 
 const BLAME_TIMEOUT_MS = 20_000;
