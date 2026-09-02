@@ -1,7 +1,7 @@
 # S2 — Multimodal I/O (local-first media understanding)
 
 > **Status:** design, 2026-09-02. Not implemented. Reserves invariant **I37**, static rule **D27**
-> (plus a new **D22(g)** in I29's existing rule family), and schema **V58**.
+> (plus a new **D22(g)** in I29's existing rule family), and schemas **V58** + **V59**.
 >
 > **Slot:** [Spine S2 — Local Compute Fleet](../../roadmap.md#active). Detail source:
 > [Phase 14 § Core — Multimodal I/O](../../roadmap.md#phase-14--agent-evolution--ai-v2). It is the
@@ -80,7 +80,7 @@ packages/gateway/src/multimodal/
   media-pass-state.ts      cursor + resume
   understanding-item.ts    pure mapper: understanding -> derived item row
   media-consent-broker.ts  per-artifact remote grant prompt          (PR 4)
-  media-grant-store.ts     durable grants, V58                        (PR 4)
+  media-grant-store.ts     durable grants, V59                        (PR 4)
   media-source-registry.ts (service, type) -> modality; the SSoT
   vlm/vlm-types.ts         VlmProvider: isLocal + describeBytes
   vlm/ollama-vlm.ts        local VLM; isLocal DERIVED via base-url-locality.ts
@@ -133,11 +133,38 @@ Understanding lands as its own indexed item:
 | --- | --- |
 | `service` | `nimbus` |
 | `type` | `image_understanding` / `video_understanding` |
-| `externalId` | `<source_item_id>:understanding:v<understandingVersion>` |
+| `externalId` | `<source_item_id>:understanding` — **stable, no version in the id** (§ 4.1) |
+| `title` | `Caption — <source title>` / `Transcript — <source title>`, matching `zoom:transcript`'s existing house style |
+| `url` / `canonicalUrl` | inherited from the source item, so a citation navigates to the media itself |
 | `body` | caption + OCR text, or the transcript (declared-full, capped by `bodyCapForItemType`) |
-| `metadata` | `derivedFrom`, `model`, `modelDerived: true`, `understandingVersion`, `isLocal`, `sourceMime`, `sourceBytes` |
+| `metadata` | `derivedFrom` (source item id), `model`, `modelDerived: true`, `understandingVersion`, `isLocal`, `sourceMime`, `sourceBytes` |
 
-Both types join `PROSE_HEAVY_TYPES`.
+Both types join **`LOCAL_ONLY_PROSE_TYPES`**, not `PROSE_HEAVY_TYPES`. This was wrong in the first
+draft of this spec and the correction is the most important one in it.
+
+`routing.ts` answers two independent questions with two sets: *is this body paragraph-shaped* (it
+is, so it gets the 16 KiB store via `body-caps.ts`) and *should its embedding be computed
+remotely*. Putting the understanding types in `PROSE_HEAVY_TYPES` would answer YES to the second,
+and the embedding worker would then send **the full OCR text and captions to OpenAI** the moment
+`openai.api_key` is set. The raw pixels would never have left the machine — I37 fully satisfied —
+while the entire semantic content extracted from them left anyway, with no grant, by a completely
+different door. A private scanned document is materially just as exposed by its OCR text as by its
+image.
+
+Conflating those two questions is exactly what caused #1006, which is why `routing.ts` carries the
+warning that *"membership here is the whole enforcement"* and why `routing.test.ts` pins the two
+sets disjoint. `nimbus:web_clip` is already in the local-only set for the same class of reason —
+a public claim that clipped content stays on the machine. Understanding output has a stronger claim
+than that behind it, so it goes in the same set. Retrieval quality on long transcripts is the
+deliberate price, as it already is for web clips.
+
+**Rejected alternative: routing conditioned on `metadata.isLocal`.** It fails on both mechanism and
+meaning. Mechanically it replaces a static, testable set-membership check — the thing
+`routing.test.ts` can pin — with a per-item runtime decision, which is the shape #1006 was.
+Semantically it is worse: it would make a remote *understanding* grant silently authorize a remote
+*embedding* send, to a different vendor, for a different purpose. Consent to show one image to a
+VLM is not consent to ship its extracted text to OpenAI. The sets stay static and both types stay
+local-only unconditionally.
 
 **Why this and not a dedicated table.** `zoom:transcript` is already exactly this shape — a
 separate derived row with its own stable `externalId`, a declared-full body, and metadata pointing
@@ -152,9 +179,27 @@ connector reported, in a column nothing can distinguish — and the next sync wo
 `modelDerived: true` flag on a separate row is what lets a brief say "model-derived caption"
 instead of citing it as authoritative. That is I31's concern applied to storage.
 
-**Re-understanding** is an idempotent upsert. Bumping `understandingVersion` when a better model
-lands re-understands a library with no migration, and the old rows are replaced rather than
-accumulated because the id is derived from the version.
+### 4.1 Re-understanding: the version must NOT be in the id
+
+The first draft put `understandingVersion` in the `externalId` and claimed old rows would be
+"replaced rather than accumulated." That is backwards. `item` is keyed `UNIQUE(service,
+external_id)` and upserts `ON CONFLICT(id)`, so `…:understanding:v1` and `…:understanding:v2` are
+two *different* rows. Bumping the version would have accumulated a stale copy per artifact per
+version — duplicate FTS hits, duplicate context injected into every agent, and a search result set
+that silently degrades with each model upgrade.
+
+So the id is **stable** (`<source_item_id>:understanding`) and `understandingVersion` lives only in
+`metadata`. Re-understanding is then a genuine upsert: one row per artifact, forever, whose content
+and version advance in place. Discovery selects candidates by comparing
+`metadata.understandingVersion` against the current version rather than by testing for the row's
+existence.
+
+### 4.2 Orphan pruning
+
+A derived row outlives its source unless something deletes it — a local file removed from disk, or
+a cloud item that leaves the index, would otherwise leave a permanent understanding row citing an
+item that no longer exists. Deleting a source item deletes its derived understanding row. Because
+`derivedFrom` holds the source item id, this is a single indexed delete, not a scan.
 
 ---
 
@@ -183,11 +228,51 @@ request. Misses reuse that module's outcome union — `not_found` / `not_configu
 
 ### 5.3 Bounds
 
-- A per-artifact byte cap **refuses** rather than truncates. Half an image is not a smaller image;
-  this is I32's split (prose truncates, structured values drop) applied to media.
-- Bytes are held in memory and **never written to disk**, matching I35's screenshot rule. There is
-  no cache of fetched media, deliberately: a cache is a second copy of the thing the privacy
-  contract is about, with its own lifetime and its own deletion story.
+A per-artifact byte cap **refuses** rather than truncates. Half an image is not a smaller image;
+this is I32's split (prose truncates, structured values drop) applied to media. The caps are
+per-modality, because the distributions are nothing alike:
+
+| Config key | Default | Applies to |
+| --- | --- | --- |
+| `[multimodal] max_image_bytes` | 25 MB | images, and each extracted video frame |
+| `[multimodal] max_media_bytes` | 250 MB | audio and video artifacts |
+
+There is no cache of fetched media, deliberately: a cache is a second copy of the thing the privacy
+contract is about, with its own lifetime and its own deletion story.
+
+### 5.4 "Never written to disk" was not implementable — the narrowed rule
+
+The first draft asserted that bytes are *never* written to disk, borrowed wholesale from I35's
+screenshot rule. That assertion is false against this codebase's own STT interface, and shipping an
+unimplementable rule in a spec is how a defense ends up documented but inert.
+
+`WhisperSttProvider.transcribe(audioPath: string)` takes a **path**: it calls
+`Bun.file(audioPath).exists()` and spawns `whisper-cli -f <path>`. It has no byte-array entry point.
+Worse, `whisper-cli` wants 16 kHz 16-bit PCM WAV, so any compressed or containerised media needs an
+ffmpeg transcode first. The rule and the interface cannot both hold.
+
+The resolution is to narrow the rule to what is true, per arm:
+
+- **Images — the rule holds completely.** Bytes go to an Ollama-served VLM as base64 over HTTP.
+  Nothing is written, on either the local or the cloud arm.
+- **Local audio/video — no *new* bytes are written.** The already-validated path (§ 5.1) is passed
+  to ffmpeg directly, which also keeps the file seekable (see below). Only the transcoded WAV is
+  new.
+- **Cloud audio/video, and every transcode — one gateway-owned ephemeral scratch file**, created
+  mode 0600 under a Nimbus-owned directory, deleted in a `finally` including on the crash and
+  cancellation paths, never indexed, never in a user-visible location, and never reused as a cache.
+
+**Why not the in-memory pipe.** Piping through `ffmpeg` on stdin and into `whisper-cli` on stdin
+would preserve the stronger rule, but it makes a cross-platform correctness property depend on an
+unverified claim about a third-party binary's Windows build — and non-negotiable #5 means Windows
+is not the leg allowed to be the weak one. The scratch file works identically on all three
+platforms. If `whisper-cli` stdin support is later *verified* on all three, the pipe is a strict
+improvement and can replace the scratch file without touching the gate.
+
+**A side benefit worth naming:** a seekable file dissolves the MP4 `moov`-atom problem entirely.
+Many MP4s carry their index at the end, so a non-seekable pipe forces ffmpeg to buffer the whole
+file before it can decode anything — exactly the memory blow-up the in-memory design was meant to
+avoid. The scratch file is both simpler and less memory-hungry than the alternative it replaces.
 
 ---
 
@@ -201,7 +286,54 @@ of something they connected, exactly as `targeted-fetch.ts` fetches an item body
 
 ### 6.2 Outbound gets a durable, revocable, artifact-scoped grant
 
-Stored in V58, revocable, and surfaced by `nimbus media grants list|revoke`.
+Surfaced by `nimbus media grants list|revoke`. **Two migrations, not one**, because the pass is
+resumable from PR 1 while grants do not exist until PR 4, and schema is forward-only — creating a
+table three PRs before anything reads it is drift waiting to happen.
+
+**V59** (PR 4), `index/media-grant-v59-sql.ts`:
+
+```sql
+CREATE TABLE IF NOT EXISTS media_grant (
+  id            TEXT PRIMARY KEY,
+  item_id       TEXT NOT NULL,
+  modality      TEXT NOT NULL CHECK (modality IN ('image', 'av')),
+  model_vendor  TEXT NOT NULL,
+  granted_at    INTEGER NOT NULL,
+  revoked_at    INTEGER
+) WITHOUT ROWID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_grant_active
+  ON media_grant (item_id, modality, model_vendor)
+  WHERE revoked_at IS NULL;
+
+```
+
+**V58** (PR 1), `index/media-pass-v58-sql.ts`:
+
+```sql
+CREATE TABLE IF NOT EXISTS media_pass_cursor (
+  pass_id          TEXT PRIMARY KEY,
+  service          TEXT,
+  modality         TEXT,
+  last_item_id     TEXT NOT NULL,
+  processed_count  INTEGER NOT NULL DEFAULT 0,
+  updated_at       INTEGER NOT NULL
+) WITHOUT ROWID;
+```
+
+Two deliberate departures from the shape a reviewer proposed:
+
+- **There is no `'all'` vendor.** A wildcard grant is broader than anyone means when they approve
+  one, and it would silently extend to a vendor added after the grant was given. `model_vendor` is
+  always a concrete vendor; authorizing two means two grants.
+- **Uniqueness is a partial index on active rows, not a table constraint.** A plain
+  `UNIQUE(item_id, modality)` makes revocation terminal — the revoked row occupies the slot, so the
+  same artifact can never be granted again without mutating history. Scoping uniqueness to
+  `revoked_at IS NULL` keeps revocations as an append-only audit trail while still permitting
+  exactly one active grant per (item, modality, vendor).
+
+`media_pass_cursor` is SQLite-backed rather than in-memory, so an interrupted pass resumes across a
+gateway restart. That is the whole point of a budgeted pass over a large library.
 
 ### 6.3 The pass never prompts
 
@@ -215,6 +347,26 @@ So: **granting is a separate deliberate act** (`nimbus media allow-remote <item>
 reads existing grants and silently declines remote for everything not covered — reporting the
 declines in its summary (§ 8). Consent stays scarce enough to mean something.
 
+### 6.4 Batch granting, and why it does not reopen § 6.3
+
+Granting one item at a time does not scale to an album, and a rule that is unusable gets worked
+around. So a selector form exists:
+
+```
+nimbus media allow-remote --service google_photos --since 2026-08-01 --limit 20
+```
+
+It renders **one preview that enumerates the matching items** — titles, dates, sizes, count — and
+takes **one confirmation** that writes the grants in a single transaction. `--limit` is mandatory
+and capped, so an unbounded "grant everything" is not expressible.
+
+This is not the thing § 6.3 rules out, and the distinction is the same one the computer-use session
+envelope draws: a **budgeted, enumerated set approved once, up front, out of band** is a real
+decision, because the owner sees the whole extent of what they are authorizing at the moment they
+authorize it. Five hundred interruptions *during* a batch is not, because each one arrives with no
+view of the whole and with the work already in flight. The preview must enumerate rather than
+summarize — "20 items" is a count, not consent.
+
 ---
 
 ## 7. Egress accounting — no new coverage class
@@ -222,7 +374,15 @@ declines in its summary (§ 8). Consent stays scarce enough to mean something.
 | Direction | Class | Appender |
 | --- | --- | --- |
 | Inbound cloud byte-fetch | `sync` (already `per-run`, per-item via targeted fetch) | reuse `egress/sync-egress.ts` |
-| Outbound to a remote model | `model` (already `per-call`) | new `wrapLedgeredVlm`; ledgered STT wrapper |
+| Outbound to a remote **VLM** | `model` (already `per-call`) | new `wrapLedgeredVlm` |
+| Outbound STT | **does not exist** — STT is local-only in all four PRs (§ 9.1) | none, by construction |
+
+The first draft's table said "ledgered STT wrapper" while § 9.1 said STT needs no decorator. Those
+could not both be true. **Resolved: speech-to-text is pinned local across this entire slice.** There
+is no remote STT provider, no `SttProvider` routing, and no `wrapLedgeredStt` — a transcription
+therefore appends zero `model` rows the way `LOCAL_ONLY_SYNC_SERVICES` appends zero `sync` rows: by
+construction, not by check. Only the VLM has a remote arm, which correspondingly narrows I37 to
+images. Recorded as a bound in § 12.7.
 
 `payload_summary` records byte length, mime and modality — **never pixels, never transcript text**.
 `nimbus prove` needs no new vocabulary and no new scope label.
@@ -249,14 +409,34 @@ problem (a large recovery pass over an existing index that must survive interrup
 
 - **Discovery**: an item whose `(service, type)` is in `media-source-registry.ts` and which has no
   derived understanding item at the current `understandingVersion`.
-- **GPU contention**: each artifact acquires `GpuArbiter` (`llm/gpu-arbiter.ts`, already shipped)
-  around the model call — per artifact, not per pass, so a long pass does not starve interactive
-  `nimbus ask`.
+- **GPU contention**: `GpuArbiter` (`llm/gpu-arbiter.ts`, already shipped) is acquired and released
+  around **each individual model call** — per frame and per audio chunk, not per artifact and
+  certainly not per pass. § 8.1 explains why the granularity matters more than it looks.
+- **Frame sampling is capped.** A 30-minute video holds tens of thousands of frames; understanding
+  samples a small fixed maximum (default 8) of uniformly spaced keyframes. The cap is a config
+  value, and the brief discloses that a video was sampled rather than watched.
 - **Per-artifact failure never aborts the pass.** Each failure is recorded with a reason so a
   re-run retries exactly it.
 - **The summary discloses what it skipped and why** — "understood 42 of 108" broken out by reason
   (over byte cap, no local model, remote declined for want of a grant, unresolvable modality, fetch
   miss), never a bare success line. I31's honesty principle applied to a pass rather than a brief.
+
+### 8.1 Why the arbiter lease is per model call
+
+`GpuArbiter`'s `timeoutMs` (30 s) is **not** a background watchdog — it is an idle timer over
+`lastActivityAt`, reset by `touch()`, and it is only evaluated when some *other* caller reaches
+`acquire()`. So a long hold is not spontaneously killed. The hazard is worse and quieter than a
+timeout: when eviction does fire, `forceRelease()` executes `this.queue.length = 0`, **discarding
+every queued waiter** — and those waiters are unresolved promises, so they do not error, they simply
+never settle.
+
+A pass that held the lease across an entire video would therefore be a hang generator: hold for
+minutes, let an interactive `nimbus ask` arrive and evict it, and any other queued caller is
+stranded permanently. Leasing per model call means the lease is never held long enough for the idle
+timer to be reachable, so the queue-wipe path is never entered and `nimbus ask` interleaves between
+frames instead of evicting anything.
+
+### 8.2 Scheduling
 
 Scheduling is **not** in this slice. Automatic understanding on every sync is unbounded on first
 run — a photo library is tens of thousands of items at GPU-seconds each, unlike the
@@ -273,7 +453,24 @@ guessed.
 `WhisperSttProvider` (`voice/stt.ts`) already resolves `whisper-cli`, spawns it, and takes
 `spawn` / `which` overrides for tests. `stt/long-form-stt.ts` wraps it for file-length input
 (chunking, progress, wall-clock budget). **No new provider interface and no new decorator** — it is
-a subprocess, not a provider.
+a subprocess, not a provider, and it is **pinned local** (§ 7): there is no remote STT in this
+slice, so there is nothing for a decorator to ledger.
+
+### 9.1.1 Resolving the external binaries
+
+Transcoding needs ffmpeg. `resolveFfmpegBin` follows `resolveWhisperBin`'s existing shape exactly —
+explicit config path, then a `NIMBUS_FFMPEG_PATH` env override, then `Bun.which`, with injectable
+`which` / `spawn` for tests.
+
+**It does not go in `platform/`.** The PAL rule covers OS-*specific* logic reached through
+`PlatformServices`; resolving an external binary is not that, and both existing precedents keep the
+resolver next to its consumer — `resolveWhisperBin` lives in `voice/stt.ts`, and the browser lane's
+`chromium-path.ts` lives in `computer-use/cu-lanes/`. `resolveFfmpegBin` lives in `multimodal/stt/`
+for the same reason.
+
+A missing dependency must produce an actionable failure, not a bare non-zero exit: the pass reports
+which binary was missing and the platform-appropriate install line
+(`winget install Gyan.FFmpeg` / `brew install ffmpeg` / `apt install ffmpeg`).
 
 ### 9.2 Image — a new seam, because the existing one is text-only
 
@@ -283,6 +480,12 @@ agent hit — `LlmGenerateOptions` has no `tools` field either, which is why
 `wrapLedgeredMastraModel` exists as a *separate* decorator rather than a widening. Vision takes the
 same answer: a distinct `VlmProvider` with its own decorator. Four decorators for four seams is the
 established shape, not a proliferation.
+
+`ollama-vlm.ts`'s `isAvailable()` probes `/api/tags` and checks that a **vision-capable model is
+actually pulled** — not merely that an Ollama server is answering. A running Ollama with no VLM
+would otherwise pass an availability check and then fail per artifact across a whole pass, and
+"local model unavailable" is a *refusal* condition under § 3.4 step 4, so it must be detected once,
+up front, rather than a few hundred times.
 
 ### 9.3 Do not reintroduce `sharp`
 
@@ -308,6 +511,11 @@ reasoning rules out a linked dependency for frame extraction: ffmpeg (§ 12.1) i
 > supplied by a caller. Every remote send appends one `model`-class row **before** the request and
 > an append failure aborts it (fail-closed). Bytes are never written to disk and never appear in
 > `payload_summary`.
+
+**Scope note.** Because STT is local-only in this slice (§ 7, § 12.7), the only modality that can
+reach a non-local model today is images — the invariant is written generally and holds vacuously
+for audio. It is deliberately *not* narrowed to images in its wording: a remote STT tier added later
+should inherit this invariant rather than need a new one.
 
 Split across two rule families on purpose:
 
@@ -349,7 +557,24 @@ actually runs them — check what is *on* the runner images rather than assuming
 the macOS runner turned out to have Chrome preinstalled and caught a real `close()`/SingletonLock
 race.
 
-### 11.4 Fakes prove the ends, never the wire
+### 11.4 The embedding-routing set membership
+
+`routing.test.ts` already asserts `PROSE_HEAVY_TYPES` and `LOCAL_ONLY_PROSE_TYPES` are disjoint, so
+putting a derived type in both fails an **existing** test rather than shipping. What that test does
+not do is prove the types were registered at all, so add the positive assertion: both
+`nimbus:image_understanding` and `nimbus:video_understanding` are in `LOCAL_ONLY_PROSE_TYPES` and in
+neither case in `PROSE_HEAVY_TYPES`. Membership is the whole enforcement (§ 4), so it is the thing
+to pin.
+
+### 11.5 The scratch file is deleted on every exit path
+
+§ 5.4's ephemeral file is only acceptable if it always goes away. Test deletion on success, on a
+transcode failure, on a whisper non-zero exit, on cancellation, and on an exception thrown between
+creation and use — the `finally` is the contract, not the happy path. Assert the directory is empty
+afterwards rather than asserting the one known filename is gone, or a second leaked temp file passes
+unnoticed.
+
+### 11.6 Fakes prove the ends, never the wire
 
 A `VlmProvider` fake cannot catch a contract mismatch with Ollama's real response shape. One
 contract test against a recorded real response, and no `?? DEFAULT` on an injected dependency —
@@ -393,7 +618,39 @@ starts with `google_photos`, `google_drive`, `onedrive` and `zoom`; the rest fol
 cadence. The gateway-side capability is service-agnostic, so adding one later is a connector change
 alone.
 
-### 12.6 OCR quality is the VLM's
+### 12.6 Understanding output is embedded LOCALLY, always
+
+Because both derived types are in `LOCAL_ONLY_PROSE_TYPES` (§ 4), their embeddings are MiniLM-384
+even when a remote embedder is configured and even for an artifact that had a remote understanding
+grant. Retrieval quality on a long transcript is measurably worse than the 1536-dim remote
+embedder would give. That is the deliberate price, and it is the same price `nimbus:web_clip`
+already pays.
+
+### 12.7 There is no remote STT, at any tier
+
+Transcription is local-only across all four PRs (§ 7, § 9.1). A user with a frontier key and no
+usable local whisper cannot transcribe at all — the pass refuses rather than reaching for the
+cloud. Deliberate: it keeps I37 scoped to images, avoids a second provider interface and a fifth
+decorator, and keeps the strongest version of the privacy claim true for the modality where
+recordings of real conversations live. A remote STT tier is additive later and would need its own
+`wrapLedgeredStt` plus a D22 confinement rule.
+
+### 12.8 A sampled video is not a watched video
+
+Frame understanding samples a small fixed number of keyframes (§ 8). Anything that happens only
+between sampled frames is invisible, and no amount of transcript covers a silent visual change. The
+brief must say the video was sampled; presenting a sampled caption set as a description of the
+video would be the same class of overclaim § 12.3 guards against.
+
+### 12.9 Optimized cloud renditions are deferred to PR 3
+
+Several providers can serve an audio-only track or a low-resolution proxy instead of the original
+4K file, which would cut the fetched bytes by an order of magnitude. Every one of those is a
+per-connector change in `nimbus-mcp-servers` (§ 12.5), so PR 3 fetches whatever the connector
+offers and the rendition negotiation lands per connector afterwards. Until then `max_media_bytes`
+is what stands between a pass and a 2 GB download.
+
+### 12.10 OCR quality is the VLM's
 
 No dedicated OCR engine ships here. A VLM's text extraction on a dense screenshot is materially
 worse than a purpose-built OCR pass. Stated rather than implied; a tesseract-class pass is additive
@@ -405,10 +662,10 @@ later.
 
 | PR | Ships | New egress | New consent | Droppable |
 | --- | --- | --- | --- | --- |
-| 1 | Local media discovery, long-form STT, `video_understanding` items, `nimbus media understand`, **the gate with only its local arm** | none | none | — |
+| 1 | Local media discovery, long-form STT, `video_understanding` items, `nimbus media understand`, **V58** pass cursor, **the gate with only its local arm** | none | none | — |
 | 2 | `VlmProvider`, `wrapLedgeredVlm`, D22(g), local Ollama VLM, `image_understanding`, frame captions | none (local) | none | yes |
 | 3 | `fetchBytes` capability (D24), cloud byte-fetch over the existing host boundary | inbound, `sync` class | none | yes |
-| 4 | Remote arm, consent broker, V58 grants, **I37 + D27** | outbound, `model` class | per-artifact grant | yes |
+| 4 | Remote arm, consent broker, **V59** grants, batch granting, **I37 + D27** | outbound, `model` class | per-artifact grant | yes |
 
 Each PR is independently shippable and independently valuable. The riskiest is last and can be
 dropped without unpicking anything — the property that let the screen lane be deferred cleanly.
@@ -422,5 +679,8 @@ dropped without unpicking anything — the property that let the screen lane be 
 - `scripts/structure-audit/check-nimbus-invariants.ts` — D27 rules, D22(g).
 - `CLAUDE.md` + `GEMINI.md` — invariant ceiling, schema version, S2 row status. The `model`-class
   "no named exclusions" sentence must be re-read against PR 4, not assumed to survive it.
-- `docs/roadmap.md` — the S2 multimodal row, with § 12.1 and § 12.2 stated in it.
+- `docs/roadmap.md` — the S2 multimodal row, with §§ 12.1, 12.2 and 12.7 stated in it.
+- `packages/gateway/src/embedding/routing.ts` — both derived types into `LOCAL_ONLY_PROSE_TYPES`
+  (NOT `PROSE_HEAVY_TYPES`; § 4). `routing.test.ts` already pins the two sets disjoint, so a
+  mistake here fails an existing test rather than shipping.
 - `docs/architecture.md`, `docs/cli-reference.md`, `docs/CHANGELOG.md`.
