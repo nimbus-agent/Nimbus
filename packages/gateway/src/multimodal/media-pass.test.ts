@@ -149,6 +149,44 @@ describe("runMediaPass", () => {
     expect(cursor?.last_item_id ?? null).toBe(summary.lastItemId);
   });
 
+  test("advances the cursor on a SKIP, so a resumed pass does not restart on the same artifact", async () => {
+    addMediaFile("unreadable.mp4");
+    // roots: [] means every candidate refuses with path_outside_roots before the gate is reached.
+    const summary = await runMediaPass(deps({ roots: [] }));
+    expect(summary.understood).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(summary.lastItemId).not.toBeNull();
+
+    const cursor = db
+      .query<{ last_item_id: string }, []>("SELECT last_item_id FROM media_pass_cursor")
+      .get();
+    expect(cursor?.last_item_id ?? null).toBe(summary.lastItemId);
+  });
+
+  test("advances the cursor on a gate-refusal SKIP too — the second skip branch", async () => {
+    addMediaFile("unreadable.mp4");
+    // capability disabled means resolveLocalMediaPath succeeds but understandArtifact refuses —
+    // the OTHER skip branch, distinct from path_outside_roots above.
+    const summary = await runMediaPass(
+      deps({
+        gate: {
+          enabled: false,
+          capabilityDisabled: false,
+          sttFor: () => undefined,
+          gpu: { acquire: async () => () => undefined, touch: () => undefined },
+        },
+      }),
+    );
+    expect(summary.understood).toBe(0);
+    expect(summary.skippedByReason["no_local_model"]).toBe(1);
+    expect(summary.lastItemId).not.toBeNull();
+
+    const cursor = db
+      .query<{ last_item_id: string }, []>("SELECT last_item_id FROM media_pass_cursor")
+      .get();
+    expect(cursor?.last_item_id ?? null).toBe(summary.lastItemId);
+  });
+
   test("appends ZERO egress rows — this PR makes no outbound request", async () => {
     addMediaFile("a.mp4");
     await runMediaPass(deps());
