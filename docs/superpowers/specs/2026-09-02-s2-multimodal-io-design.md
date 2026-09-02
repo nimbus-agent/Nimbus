@@ -179,6 +179,20 @@ connector reported, in a column nothing can distinguish — and the next sync wo
 `modelDerived: true` flag on a separate row is what lets a brief say "model-derived caption"
 instead of citing it as authoritative. That is I31's concern applied to storage.
 
+### 4.0 The write path is `upsertIndexedItem`, not the sync wrapper
+
+`understanding-item.ts` calls `upsertIndexedItem(db, row)` **directly**. It does *not* call
+`upsertIndexedItemForSync`, which exists to apply a **connector's** configured index depth
+(`metadata_only` / `summary` / `full`) — and a Nimbus-derived item has no connector, so it has no
+depth to apply. Every existing derived-item writer does the same:
+`glossary/glossary-project.ts`, `briefs/brief-save.ts` and `clips/clip-ingest.ts` all call
+`upsertIndexedItem`. That function is the real SQL chokepoint regardless, so the derived
+`resolve_key` and the `bodyCapForItemType` clamp still apply.
+
+One consequence to wire explicitly: `scheduleItemEmbedding` is called by the sync wrapper, not by
+`upsertIndexedItem`. A derived item that is never scheduled is never embedded and never found by
+semantic search, so the pass schedules it by id after the upsert.
+
 ### 4.1 Re-understanding: the version must NOT be in the id
 
 The first draft put `understandingVersion` in the `externalId` and claimed old rows would be
