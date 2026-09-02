@@ -63,6 +63,15 @@ describe("resolveLocalMediaPath", () => {
     expect(out).toEqual({ ok: false, reason: "over_byte_cap" });
   });
 
+  test("refuses when the file on DISK is over the cap even though the indexed size is small", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-roots-"));
+    const file = join(root, "grew.mp4");
+    writeFileSync(file, "x".repeat(2_000));
+    // Indexed size is stale and under the cap; the live file is over it.
+    const out = resolveLocalMediaPath(candidate(file, 10), [root], 1_000);
+    expect(out).toEqual({ ok: false, reason: "over_byte_cap" });
+  });
+
   test("refuses a candidate with no local path", () => {
     const root = mkdtempSync(join(tmpdir(), "nimbus-roots-"));
     const out = resolveLocalMediaPath(candidate(null as unknown as string), [root], 1000);

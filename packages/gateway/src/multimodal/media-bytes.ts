@@ -71,21 +71,27 @@ export function resolveLocalMediaPath(
     return { ok: false, reason: "path_outside_roots" };
   }
 
-  // The byte cap is enforced against the INDEXED size when the index recorded one — that is the
-  // number the pass's summary counts against, and it must refuse before touching the file at all
-  // for an artifact the index already knows is oversized. Fall back to the on-disk size only when
-  // the index never recorded one.
-  let size: number;
-  if (candidate.sourceBytes !== null && candidate.sourceBytes !== undefined) {
-    size = candidate.sourceBytes;
-  } else {
-    try {
-      size = statSync(real).size;
-    } catch {
-      return { ok: false, reason: "fetch_miss" };
-    }
+  // The byte cap is checked against the INDEXED size first, as a cheap pre-filter that refuses
+  // without touching disk for an artifact the index already knows is oversized. But that indexed
+  // size is metadata from a past sync — it can be stale, and a file can grow after indexing — so
+  // it is never sufficient on its own. The cap exists to bound how many bytes get read into memory
+  // and handed to a transcoder, and the only size that actually bounds that is the size on disk
+  // NOW. Both checks run; either one exceeding the cap refuses.
+  if (
+    candidate.sourceBytes !== null &&
+    candidate.sourceBytes !== undefined &&
+    candidate.sourceBytes > maxBytes
+  ) {
+    return { ok: false, reason: "over_byte_cap" };
   }
-  if (size > maxBytes) {
+
+  let liveSize: number;
+  try {
+    liveSize = statSync(real).size;
+  } catch {
+    return { ok: false, reason: "fetch_miss" };
+  }
+  if (liveSize > maxBytes) {
     return { ok: false, reason: "over_byte_cap" };
   }
 
