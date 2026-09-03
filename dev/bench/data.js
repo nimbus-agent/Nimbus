@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788411248202,
+  "lastUpdate": 1788414539107,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4d2881d8cffba96c65690ca5f364ff0d72e25ae4",
-          "message": "docs+chore: status-drift sweep + status-drift/sha-pin gates + workflow hardening (#685)\n\nSingle PR consolidating the docs / skills / scripts / CI / workflow\nimprovements from this session's audits (kept to one PR by request).\n\n## 1. Docs & skills — kill the status drift\nThe repo had moved to **v0.11.2 / schema V42 / invariant I27 / Phase 6\nnearly complete**, but the docs lagged at v0.6.1 / V40 / I26.\n\n- **CLAUDE.md, GEMINI.md, README, SECURITY.md** —\nrelease/version/badges/supported-versions corrected.\n- **architecture.md** — verbose status block → one-line CHANGELOG\npointer (per convention); `I1–I26`→`I1–I27`; added static rules\n`D18–D21`; `WRITE_ROUTE_ALLOWLIST` 5→**6**; Tauri allowlist count →\n**94**; added the Share subsystem.\n- **SECURITY-INVARIANTS.md** — allowlist size `74`→**94**; \"Current\nceiling\" header; worked example `I18`→`I28`.\n- **cli-reference.md** — **new `nimbus share` (Sharing) section** (the\nwhole Slice-8 surface was undocumented); completed the LAN\nforbidden-namespace list.\n- **Skills** — new **`nimbus-share-virality`** skill; `nimbus-file-map`\ngains the Phase-6 subsystems + CLI rows; `nimbus-architecture` IPC\nnamespace table + phase line; fixed `I1–I23`→`I1–I27`;\n**`nimbus-preflight` now states the Sonar quality gate IS blocking** (it\nwas documented as non-blocking — it `exit 1`s on ERROR) + a \"can't\nreproduce locally\" guide.\n\nAll counts verified against code (`gateway_bridge.rs` = 94,\n`http-write-routes.ts` = 6, `CURRENT_SCHEMA_VERSION` = 42,\n`security-invariants.test.ts` max = I27).\n\n## 2. New preventive gates (wired into preflight fast tier + the static\nCI job)\n- **`audit:status-drift`** — keeps the doc status surfaces in sync with\nthe canonical invariant (`I<N>`) + schema (`V<N>`) read from code. *This\nprevents the exact drift this PR fixes from recurring.*\n- **`audit:action-sha-pins`** — asserts every third-party `uses:` is a\nfull 40-hex SHA. Guards the **org-level SHA-pinning requirement** so an\nunpinned ref is caught locally, not at run time.\n\nBoth ship with unit tests (10 new, all green); the preflight drift test\npasses.\n\n## 3. Real bug found en route\n`share` + `verify-share` are dispatched in `index.ts` but were **missing\nfrom `registry.ts`'s `COMMAND_NAMES`** — caught by `audit:readme-cli`\nonce the README referenced `nimbus share`. Now registered.\n\n## 4. Misc workflow hardening\n- Local convenience wrappers: `audit:secrets` (gitleaks), `audit:links`\n(lychee).\n- Pinned floating `ubuntu-latest` runners → `ubuntu-24.04`;\n`labeler.yml` `pull_request_target` guard comment.\n- Deleted dead scripts `bump-deps.ts`, `spike-darwin-sandbox-exec.sh`.\n\n## Deferred (higher-risk, noted for a focused follow-up)\nThe 26-leg `coverage-gates` matrix dedup, a per-OS-setup composite\naction, and the macOS/Windows runner **image** bumps — these carry real\nCI-behavior risk (and the matrix one could weaken coverage enforcement),\nso they're intentionally out of this otherwise-low-risk PR.\n\n## Verification\n`bun run preflight:fast` — **all 18 gates green** (incl. the 2 new\nones). Full `typecheck`, `lint`, `lint:markdown`, `audit:doc-refs`\nclean. New audit tests + `registry.test.ts` + share CLI tests pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n## Release Notes\n\n* **New Features**\n* Share & Virality subsystem shipped: `nimbus share` command for\ncreating session shares with redaction, signing, and owner-gated\npublication\n  * New share verification and records management capabilities\n\n* **Documentation**\n* Phase 6 progress updated (Slices 1–8 shipped, security invariants\nthrough I27, schema V42)\n  * Expanded CLI reference with complete sharing command documentation\n* Enhanced security policy covering outbound share gates and LAN access\ncontrols\n\n* **Chores**\n  * Updated CI/CD workflows to use Ubuntu 24.04\n  * Added audit tooling for status consistency and security scanning\n  * Removed legacy scripts\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-17T23:03:24+03:00",
-          "tree_id": "f93dd9b6b77a638f3605bb3ee0cee10e95a26cf0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4d2881d8cffba96c65690ca5f364ff0d72e25ae4"
-        },
-        "date": 1781727594575,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.197267450003,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.11195645000555,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 328.1524619,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b995a96b2c135fa19614123df49c82033254065e",
+          "message": "feat(multimodal): local audio/video understanding, indexed and searchable (S2 PR 1 of 4) (#1429)\n\nFirst of four slices for Spine S2's Multimodal I/O row. Turns local\nrecordings — which the index has until now held as a title and an empty\nbody — into searchable transcripts, without any of the audio or anything\nderived from it leaving the machine.\n\nDesign: `docs/superpowers/specs/2026-09-02-s2-multimodal-io-design.md`\nPlan: `docs/superpowers/plans/2026-09-02-multimodal-pr1-local-av.md`\n\n## What ships\n\n`nimbus media understand [--service|--modality|--limit|--since|--json]`\n— a budgeted, resumable pass over media files under\n`[[filesystem.roots]]`, discovered behind a new per-root `media_index`\ntoggle. Transcription is local `whisper-cli` over an `ffmpeg` transcode.\nOutput is a derived `nimbus:video_understanding` item, embedded and\nsearchable like any other.\n\n**Default off twice over:** `[multimodal] enabled` and the per-root\n`media_index`, both false. Enabling the capability does not silently\nstart walking every configured root for large binaries.\n\nSchema **V58** adds `media_pass_cursor`. No new security invariant.\n\n## Two structural properties worth reading\n\n**Derived text is embedded locally, always.** Both understanding types\nare in `LOCAL_ONLY_PROSE_TYPES`, not `PROSE_HEAVY_TYPES`. Without that,\na fully local pass over private recordings would keep the audio on the\nmachine while shipping every word extracted from it to OpenAI's\nembedder, with no consent, through a completely different door than the\none guarding the media bytes. Set membership is the entire enforcement —\nthere is no second check downstream — and `routing.test.ts` pins the two\nsets disjoint.\n\n**The whole `media` namespace is denied over LAN**, alongside `exec` and\n`computer`. The method reads local files and spawns subprocesses; a\npaired peer must not be able to trigger that on the owner's machine.\nThis was found empirically during implementation: `FORBIDDEN_OVER_LAN`\nis a deny-list, so an unlisted namespace is reachable, and the method\nwas reachable by default the moment it was wired.\n\n## What did NOT ship\n\nStated rather than implied, because the roadmap row and `CLAUDE.md` now\nhave to be read alongside this:\n\n- **Image understanding.** No vision model exists. Image candidates are\nskipped as `unresolvable_modality`; `nimbus:image_understanding` is\nregistered in embedding routing but nothing writes one.\n- **Cloud artifacts.** No byte-fetch — local files only.\n- **Any remote model**, including remote STT. Transcription refuses\nrather than reaching for the cloud when no local model is available.\n- **Diarization.** `whisper-cli` cannot do it.\n- **Phase 14's Core acceptance criterion is therefore NOT met.** It\nrequires a `video_understanding` row with a transcript AND at least one\nframe caption. Frame captions need the vision model plus ffmpeg frame\nextraction — both PR 2.\n\n## Known bound: org policy is inert here\n\n`capabilityDisabled` is hardcoded `false` at the dispatcher because no\nIPC-reachable `EnforcedPolicy` accessor exists yet — that wiring lives\nin `platform/assemble.ts`. So an org policy disabling\n`multimodal_input`, a real `AI_V2_CAPABILITIES` member, does **not**\ndisable this capability today. Only the local `[multimodal] enabled`\nkill switch is real, and unlike the I33 and I35 paths there is no\nconsent gate behind it. Closing this is a prerequisite for PR 4.\n\nIt was disclosed only in a code comment; it is now in the roadmap row\nand the CLI reference.\n\n## Notable design decisions\n\n**The understanding item's external id carries no version.** `item` is\n`UNIQUE(service, external_id)` and upserts `ON CONFLICT(id)`, so\nembedding the version would create a second row per artifact per version\nrather than replacing — duplicate FTS hits and duplicate context in\nevery agent. The id is stable and `understandingVersion` lives in\nmetadata, which is what makes a future model upgrade a re-run rather\nthan a migration.\n\n**The scratch WAV is a narrowed rule, not an absolute one.** The design\noriginally said bytes are never written to disk. That is not\nimplementable: `WhisperSttProvider` takes a path and wants 16 kHz PCM.\nSo the rule is now per-arm — nothing is written for the image path, no\nnew bytes for local audio, and one 0600 gateway-owned scratch file for\ntranscodes, deleted in a `finally` and swept at pass start for files a\ndead process left behind. `finally` does not survive a SIGINT, and on\nWindows a SIGTERM is `TerminateProcess`.\n\n**The pass reports skips by reason.** A bare \"understood 42 of 108\"\ncannot tell you whether the other 66 were absent, too large, or refused.\n\n## Defects found during implementation\n\nRecorded because several were in the plan rather than the code, and the\npattern is worth seeing:\n\n- The byte cap trusted the **indexed** file size, so a file that was 1\nKB at index time and 2 GB now passed it. Now checks both the recorded\nsize as a cheap pre-filter and the live size before proceeding.\n- Discovery applied `LIMIT` in SQL and filtered modality afterwards in\nJS, so `--modality av` over a library whose first page is images\nreturned zero and looked like an empty queue. The filter is now in the\nSQL.\n- The subprocess timeout awaited `proc.exited` inside its own `finally`,\ndeadlocking the very call meant to bound a hang.\n- `media-pass-state.ts` wrote via `db.run()` directly, violating\ninvariant **I14** / static rule **D12**. Now uses `dbRun`.\n- Several tests passed whether or not the property they named held — the\ngate's ordering, the GPU lease on the success path, the cursor advancing\non skips. Each was red-proved by removing the property and confirming\nthe test fails.\n\n## Verification\n\n`bun run preflight` green, including `audit:coverage-floor` at 0\nviolations with no exclusions added. The zero-egress claim is tested\ncontrol-first: a positive control proves the pass genuinely reaches the\nunderstander and writes a row, so the zero-row assertion that follows\nmeans something rather than passing vacuously.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01H4jmnwjpSC516vdEBYFfZC\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added `nimbus media understand` for resumable, budgeted local\naudio/video transcription.\n- Supports service, modality, date, and processing-limit filters, plus\nJSON output and skip-reason summaries.\n- Media indexing can be enabled per filesystem root and is disabled by\ndefault.\n- Successful results are stored as searchable derived items and embedded\nlocally.\n\n- **Security & Privacy**\n- Processing uses local models only; remote providers and LAN access are\nblocked.\n\n- **Documentation**\n- Added CLI guidance, architecture details, changelog entries, roadmap\nupdates, and documented limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-03T08:39:51+03:00",
+          "tree_id": "3a1de073dc8c41512a3ed02e7b041c25eda59862",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b995a96b2c135fa19614123df49c82033254065e"
+        },
+        "date": 1788414536779,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 245.50129174999893,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 245.94779374999197,
             "unit": "ms"
           }
         ]
