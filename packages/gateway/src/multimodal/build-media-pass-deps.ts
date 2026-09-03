@@ -9,15 +9,13 @@
  * skipped as `unresolvable_modality` rather than mis-handed to the STT path. PR 2 adds that arm.
  */
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
-import { stripComment } from "../config/toml-primitives.ts";
 import { GpuArbiter } from "../llm/gpu-arbiter.ts";
 import { WhisperSttProvider } from "../voice/stt.ts";
 import type { LocalUnderstander } from "./media-gate.ts";
 import type { MediaPassDeps } from "./media-pass.ts";
 import type { MediaModality } from "./media-types.ts";
+import { loadMultimodalConfig } from "./multimodal-config.ts";
 import { resolveFfmpegBin } from "./stt/ffmpeg-bin.ts";
 import { createLongFormStt } from "./stt/long-form-stt.ts";
 
@@ -150,59 +148,9 @@ export function resolveMediaRoots(configDir: string | undefined): string[] {
 }
 
 /**
- * `[multimodal] enabled` — DEFAULT OFF, matching every other S2 capability toggle
- * (`[code_execution] enabled`, `[computer_use] enabled`). Absent section, absent key, absent
- * `nimbus.toml`, or no `configDir` at all (the test/embedded shape) all read as `false` — a
- * missing or malformed config must never read as "on".
- *
- * Hand-rolled rather than routed through `nimbus-toml.ts`, mirroring
- * `connectors/openapi-indexer-config.ts`'s standalone section reader: one boolean key does not
- * warrant a shared parser's full section-table machinery. Reuses `stripComment` from the
- * dependency-free `toml-primitives.ts` so a value like `enabled = true # turn on locally` is
- * read correctly.
+ * Kept as a named re-export so `ipc/server/dispatchers.ts` keeps compiling while Task 8 moves it
+ * to the full config object. Delete when that task lands.
  */
 export function resolveMultimodalEnabled(configDir: string | undefined): boolean {
-  if (configDir === undefined) {
-    return false;
-  }
-  const tomlPath = join(configDir, "nimbus.toml");
-  if (!existsSync(tomlPath)) {
-    return false;
-  }
-  try {
-    return parseMultimodalEnabled(readFileSync(tomlPath, "utf8"));
-  } catch {
-    return false;
-  }
-}
-
-function parseMultimodalEnabled(raw: string): boolean {
-  let inSection = false;
-  for (const rawLine of raw.split(/\r?\n/)) {
-    const line = stripComment(rawLine).trim();
-    if (line === "") {
-      continue;
-    }
-    if (line.startsWith("[")) {
-      inSection = line === "[multimodal]";
-      continue;
-    }
-    if (!inSection) {
-      continue;
-    }
-    const eq = line.indexOf("=");
-    if (eq <= 0) {
-      continue;
-    }
-    if (line.slice(0, eq).trim() !== "enabled") {
-      continue;
-    }
-    const val = line
-      .slice(eq + 1)
-      .trim()
-      .toLowerCase();
-    if (val === "true") return true;
-    if (val === "false") return false;
-  }
-  return false;
+  return loadMultimodalConfig(configDir).enabled;
 }
