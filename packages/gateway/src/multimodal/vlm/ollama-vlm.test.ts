@@ -18,10 +18,10 @@ describe("createOllamaVlm", () => {
     const calls: string[] = [];
     const vlm = createOllamaVlm({
       model: "qwen2.5vl:7b",
-      fetchImpl: ((input: string | URL | Request) => {
+      fetchImpl: (input) => {
         calls.push(String(input));
         return Promise.resolve(jsonResponse({ capabilities: ["completion", "vision"] }));
-      }) as unknown as typeof fetch,
+      },
     });
     expect(await vlm.isAvailable()).toBe(true);
     expect(calls[0]).toContain("/api/show");
@@ -29,42 +29,47 @@ describe("createOllamaVlm", () => {
 
   test("a pulled model WITHOUT the vision capability is unavailable", async () => {
     const vlm = createOllamaVlm({
-      fetchImpl: (() =>
-        Promise.resolve(jsonResponse({ capabilities: ["completion"] }))) as unknown as typeof fetch,
+      fetchImpl: () => Promise.resolve(jsonResponse({ capabilities: ["completion"] })),
+    });
+    expect(await vlm.isAvailable()).toBe(false);
+  });
+
+  test("an EMPTY capabilities array is unavailable and must NOT fall through to the families heuristic", async () => {
+    // Load-bearing precedence case: an empty `capabilities` array is still a REAL answer ("no
+    // vision"), authoritative over the legacy `details.families` fallback below. `details.families`
+    // is deliberately populated with a vision-looking family here too: a regression like
+    // `Array.isArray(caps) && caps.length > 0` would treat `[]` as "field absent" and fall through
+    // to this families heuristic, which would then wrongly report available. Without a
+    // vision-looking family present, that regression would coincidentally still return `false`
+    // (nothing to fall through TO) and this test would pass for the wrong reason.
+    const vlm = createOllamaVlm({
+      fetchImpl: () =>
+        Promise.resolve(jsonResponse({ capabilities: [], details: { families: ["clip"] } })),
     });
     expect(await vlm.isAvailable()).toBe(false);
   });
 
   test("legacy Ollama with no capabilities field falls back to the families check", async () => {
     const withClip = createOllamaVlm({
-      fetchImpl: (() =>
-        Promise.resolve(
-          jsonResponse({ details: { families: ["llama", "clip"] } }),
-        )) as unknown as typeof fetch,
+      fetchImpl: () => Promise.resolve(jsonResponse({ details: { families: ["llama", "clip"] } })),
     });
     expect(await withClip.isAvailable()).toBe(true);
 
     const textOnly = createOllamaVlm({
-      fetchImpl: (() =>
-        Promise.resolve(
-          jsonResponse({ details: { families: ["llama"] } }),
-        )) as unknown as typeof fetch,
+      fetchImpl: () => Promise.resolve(jsonResponse({ details: { families: ["llama"] } })),
     });
     expect(await textOnly.isAvailable()).toBe(false);
   });
 
   test("a 404 from /api/show — model not pulled — is unavailable, not a throw", async () => {
     const vlm = createOllamaVlm({
-      fetchImpl: (() =>
-        Promise.resolve(new Response("not found", { status: 404 }))) as unknown as typeof fetch,
+      fetchImpl: () => Promise.resolve(new Response("not found", { status: 404 })),
     });
     expect(await vlm.isAvailable()).toBe(false);
   });
 
   test("an unreachable daemon is unavailable, not a throw", async () => {
-    const vlm = createOllamaVlm({
-      fetchImpl: (() => Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch,
-    });
+    const vlm = createOllamaVlm({ fetchImpl: () => Promise.reject(new Error("ECONNREFUSED")) });
     expect(await vlm.isAvailable()).toBe(false);
   });
 
@@ -72,10 +77,10 @@ describe("createOllamaVlm", () => {
     let body: unknown;
     const vlm = createOllamaVlm({
       model: "qwen2.5vl:7b",
-      fetchImpl: ((_input: string | URL | Request, init?: RequestInit) => {
+      fetchImpl: (_input, init) => {
         body = JSON.parse(String(init?.body));
         return Promise.resolve(jsonResponse({ response: "A slide titled Q3 roadmap." }));
-      }) as unknown as typeof fetch,
+      },
     });
     const res = await vlm.describe({
       bytes: new Uint8Array([1, 2, 3]),
@@ -92,16 +97,14 @@ describe("createOllamaVlm", () => {
 
   test("a non-200 from /api/generate throws, so the gate records transcribe_failed", async () => {
     const vlm = createOllamaVlm({
-      fetchImpl: (() =>
-        Promise.resolve(new Response("boom", { status: 500 }))) as unknown as typeof fetch,
+      fetchImpl: () => Promise.resolve(new Response("boom", { status: 500 })),
     });
     await expect(vlm.describe({ bytes: new Uint8Array([1]), prompt: "p" })).rejects.toThrow(/500/);
   });
 
   test("a malformed body throws rather than yielding an empty caption", async () => {
     const vlm = createOllamaVlm({
-      fetchImpl: (() =>
-        Promise.resolve(jsonResponse({ unexpected: true }))) as unknown as typeof fetch,
+      fetchImpl: () => Promise.resolve(jsonResponse({ unexpected: true })),
     });
     await expect(vlm.describe({ bytes: new Uint8Array([1]), prompt: "p" })).rejects.toThrow();
   });

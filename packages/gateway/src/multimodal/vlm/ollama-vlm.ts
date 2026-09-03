@@ -19,18 +19,34 @@ import { isLoopbackBaseUrl } from "../../llm/base-url-locality.ts";
 import { DEFAULT_VLM_BASE_URL, DEFAULT_VLM_MODEL } from "../multimodal-config.ts";
 import type { VlmDescribeInput, VlmDescribeResult, VlmProvider } from "./vlm-types.ts";
 
+/**
+ * The injected `fetch` seam, typed STRUCTURALLY rather than as `typeof fetch`.
+ *
+ * Bun's `fetch` carries static members (`preconnect`), so `typeof fetch` rejects a plain test
+ * lambda and forces every fake through an `as unknown as` cast — which then routes around the
+ * checker entirely, so a change to how this provider CALLS fetch would no longer be caught by
+ * the tests standing in for it. A structural signature accepts the real `fetch` (extra static
+ * members are fine) and a bare lambda alike, with both still type-checked.
+ */
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 export interface OllamaVlmOptions {
   readonly baseUrl?: string;
   readonly model?: string;
   /** Injected so tests never need a daemon. `mock.module` is process-global; DI is the house rule. */
-  readonly fetchImpl?: typeof fetch;
+  readonly fetchImpl?: FetchLike;
   readonly timeoutMs?: number;
 }
 
 /** A caption on a cold model can take a while; this bounds a HANG, not slowness. */
 const DEFAULT_VLM_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** `unknown` narrowing, never an `as` cast: this is external JSON (Non-Negotiable #7). */
+/**
+ * Narrows `unknown` down to a plain record via a runtime guard, then narrows the type alongside
+ * it — the cast below is reached only once `typeof === "object"`, non-null, non-array has been
+ * checked, so it restates what the guard already proved rather than asserting over raw external
+ * data (Non-Negotiable #7).
+ */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
