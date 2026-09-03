@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788462220996,
+  "lastUpdate": 1788463540589,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5613f7d337ca67080ec61d35400f1b4204b65bd1",
-          "message": "docs: launch & community readiness — root README, launch plan, demo spec, SECURITY policy (#690)\n\n## What & why\n\nPublic-launch readiness for Nimbus. A readiness audit found the **code\nand messaging are launch-ready; the public surfaces weren't** — chiefly\nno root README, no zero-config try-it path, and the security policy not\nsurfaced. This PR closes the documentation/surface gaps so we can launch\nwithout burning first impressions.\n\n## Changes\n\n- **`README.md` (new, root)** — the keystone repo landing page.\nCLI-first (desktop is deferred to Phase 13), with tagline, quickstart\n(signed install per OS), a fully-offline-with-Ollama path, the\nthree-pillar positioning, security/trust, community links, and AGPL/MIT\nlicensing. Install commands + tagline mirror the live docs.\n- **`.github/SECURITY.md` (new)** — short stub so GitHub actually\nsurfaces the Security policy (it credits root/`.github/`, not `docs/`).\nLinks to the full `docs/SECURITY.md` + `nimbus-security`; no internal\nlinks broken, no content duplicated.\n- **`docs/superpowers/specs/2026-06-18-launch-and-community-plan.md`** —\nthe strategy: fix-then-fire sequencing, Phases 0–3, per-audience angles,\nmetrics. Flags the docs' desktop-vs-CLI inconsistency to resolve before\nposting.\n- **`docs/superpowers/specs/2026-06-18-demo-mode-design.md`** — design\nfor a zero-config `nimbus demo` (sample-data, offline, retrieval-only\nLLM fallback) so the local-first pitch is true on first run. (Spec only;\nnot implemented.)\n- **`docs/superpowers/specs/2026-06-18-launch-posts.md`** — tailored,\nready-to-queue posts (Show HN, Product Hunt, per-sub Reddit, Lobsters,\nX/Mastodon, dev.to).\n\n## Already live (org-side, separate from this PR)\n\n- Org-wide default community-health files added to\n`nimbus-agent/.github` (SECURITY/CoC/CONTRIBUTING/PR template + issue\nconfig) — all repos now inherit them.\n- MIT licenses + discoverability topics added to `homebrew-tap` /\n`scoop-bucket` / `linux-repo`.\n\n## Notes\n\n- Docs-only; no code touched. `markdownlint-cli2` passes on all changed\nfiles.\n- Private ecosystem repos are intentionally staying private (per\ndecision), so no public surface links to them.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Documentation**\n  * Added a security policy and vulnerability reporting guidelines\n* Expanded the README with product overview, install instructions,\nrelease verification guidance, and connector setup\n  * Added a “nimbus demo” zero-config try-it path design specification\n* Added launch and community plan documentation and a multi-channel\nlaunch posts playbook\n* **Chores**\n* Updated link-check exclusions to reduce intermittent timeouts for\ncertain cast page URLs\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-18T14:38:11+03:00",
-          "tree_id": "bc07b452729d3981d8b6d0318b450e33d9c009f8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5613f7d337ca67080ec61d35400f1b4204b65bd1"
-        },
-        "date": 1781783384340,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 276.91323760000193,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 280.145951449994,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 315.5627446499966,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6fe52402b34a2be90dc86a6ab1dd0407246dca6e",
+          "message": "fix(sonar): raw path literals, media flag validators, and the two findings the last pass added (#1437)\n\nFourth Sonar pass, and the first one that had to correct the previous\nones.\n\n## A correction to #1434's description\n\nChecking the board rather than my own tally showed #1434 removed **16**\nissues,\nnot the 23 it claimed. I had counted edits rather than resolved\nfindings: the\n`coerce` change alone cleared five S6571s, while several other edits\nshared one\nissue between them. Rule by rule: S6571 -5, S7786 -3, S6582 -2, and one\neach of\nS1854, S6551, S6557, S7763, S7776, S7781.\n\nIt also **added three**, which this PR repays.\n\n## Repaying them\n\n`cdp-session.ts` gained an S3776 at complexity 17, and that one was\nmine. The\n`CdpError` message fix in #1434 replaced a one-line `String(...)` with a\nbranching block inside `#onMessage` — a method already carrying the\nparse,\ndispatch and listener fan-out branches. The derivation is now\n`cdpErrorMessage`, whose docstring says outright that the extraction is\nthe fix\nfor what the inline version cost rather than a separate concern.\n\nThe two S1874s are `z.ZodTypeAny`, deprecated by the zod 4.5.4 bump in\n#1432.\nThey are now `z.core.$ZodType`.\n\nThat migration is worth a note, because it is the same edit attempted at\nthe\nvery start of this sweep and reverted. It failed then with TS2322 — but\nnot\nbecause the call site was wrong. `@modelcontextprotocol/sdk` still\nresolved\nzod 4.4.3 while the workspace had moved to 4.5.4, so the two `$ZodType`s\nwere\nstructurally distinct types and nothing crossing that seam could\ntypecheck.\nPinning zod in `overrides` collapsed the tree onto one copy, which is\nwhat makes\nthe migration correct now for exactly the reason it was wrong then.\nReverting it\nat the time was the right call.\n\n## Also in this PR\n\n- Ten S7780 findings: Windows path literals as `String.raw`. Already the\nidiom\nhere — 47 files use it — and none of these literals contains a backtick,\na\n`${`, or a trailing backslash, which are the three things that would\nmake a\n  raw template behave differently from the quoted form.\n- One S3776: `parseMediaArgs` had four flags' validation inline in one\nswitch.\n`parseModality`, `parseLimit` and `parseSinceDays` are named functions\nnow.\nNothing is lost by that split, which is why it was worth doing — there\nis no\n  ordering property and no invariant in the branch structure, just four\nvalidations that arrived one at a time. The `--modality image` refusal\nkeeps\nits reasoning and gains a sentence explaining why it is refused by name\nrather\n  than falling through to the generic message.\n\n## One attempted and reverted\n\n`connector-sync-test-helpers`' capability dispatch resists extraction:\n`buildSyncCapabilities` is generic over the service id and returns\n`SyncCapabilities<S>`, so the chained ternary's two casts express\nsomething a\nnon-generic helper cannot. Making the helper generic to satisfy a style\nrule, in\na test helper, would leave the code worse. That finding stays open on\npurpose.\n\n## Verification\n\n`preflight:fast` 33/33. 122 MCP tests, 18 cdp-session tests, 23\nmedia-cmd tests.\nBecause this ran on Windows, the platform-specific `chromium-path` and\n`terminal-shells` tests actually executed rather than skipping.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01GZCGCkVMD9JaKuiKvqRdAb\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-03T22:15:44+03:00",
+          "tree_id": "e3d08e9630178aa5643bbef68777baced53fb716",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6fe52402b34a2be90dc86a6ab1dd0407246dca6e"
+        },
+        "date": 1788463537583,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 227.18145259999727,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 217.9071044999946,
             "unit": "ms"
           }
         ]
