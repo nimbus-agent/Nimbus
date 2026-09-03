@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788454183327,
+  "lastUpdate": 1788459004143,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "18131cf9d9499614d20b10421e5c511086942618",
-          "message": "feat(share): Phase 6 Slice 8d — sovereign-mesh referral (forwarding, provenance, V43 inbox) (#687)\n\n## Phase 6 Slice 8d — Sovereign-Mesh Referral (forwarding)\n\nCloses Slice 8 and **Phase 6 (Team)**. A paired gateway owner can\nforward a received share to their own peers over the existing\nauthenticated, peer-pubkey-pinned federation NaCl wire, with an\nimmutable, origin-verifiable provenance hop-chain, an attribution chip,\nand a deferred-reveal inbox that drains on first pair.\n\nSpec:\n`docs/superpowers/specs/2026-06-15-slice8-share-virality-design.md` §9 ·\nPlan: `docs/superpowers/plans/2026-06-17-slice8d-referral.md` (15-task\nTDD, subagent-driven; each task individually reviewed + an opus\nwhole-branch review).\n\n### Security model — reuses I27, **no new invariant**\n- **Two outbound-share chokepoints, both behind the owner's\n`share.publish` HITL** (I2 frozen set): `createShare` (origin emit) and\nthe new `forwardShare` (re-forward). A deny/timeout forwards + queues\nnothing (fail-closed).\n- **Static D21 extended** (not a new invariant): a new\n`D21-forwardshare-callsite` rule confines `forwardShare` to\n`share-forward.ts` + `ipc/federation-rpc.ts`, and `share.publish` may be\nnamed in `share-forward.ts`. Invariant range stays **I1–I27**.\n- **Immutable inner / advisory envelope:** a forwarder never mutates\n`body`/`sig` (byte-identical across hops). Each hop signs `contentHash\n++ its own label+pubkey ++ prior-chain` with the gateway's **own Ed25519\nshare key** (no new Vault key). A tampered hop fails its own sig while\ncontent verification stays valid.\n- **Inbound is inert:** `receiveForwardedShare` only sig-verifies +\nstores into `share_inbox` — no execution, no index-merge, no embedding,\nno HITL. A forged-body inbound share is rejected.\n- `federation.shareForward` is **LAN-forbidden** (local-only);\n`federation.shareReceive` is **answerable**.\n\n### What's included\n- `share/share-forwarding.ts` (hop append/verify),\n`share/share-forward.ts` (`forwardShare` + `receiveForwardedShare`),\n`share/share-inbox-store.ts`, `share/attribution.ts`\n- **V43 `share_inbox`** migration (additive; deferred-reveal queue +\ninert received inbox)\n- `federation.shareForward` / `federation.shareReceive` / `share.inbox`\nIPC; `nimbus share forward|inbox` CLI; `share.inbox` on the Tauri\nallowlist (read-only, count 94→95)\n- Drain-on-first-pair via a fully-guarded `PeerPairing.onPairComplete`\nseam (a drain failure never crashes pairing)\n- `verify-share` surfaces an advisory `forwarding` chain result without\naffecting content validity\n- Real-NaCl-wire e2e (two in-process gateways) proving forward → inert\nreceive → attribution → chain-verify, plus the pairing-driven drain seam\n\n### Verification (all green, pre-push)\ntsc (gw+cli) · biome · static invariants (D21+D12) · security-invariants\n83/83 · structure-audit · integration 354/0-fail · share e2e 9/0 ·\n**coverage-floor OK, 0 baselined (Docker-Linux authoritative — every new\nfile ≥80% line+branch)** · CI-jscpd <5% · js-licenses · cross-platform ·\nlychee · doc-refs · readme-cli · markdown · status-drift ·\naction-sha-pins.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n## Release Notes\n\n* **New Features**\n* Share forwarding over the federation wire with cryptographic hop-chain\nverification and fail-closed behavior.\n* New **Share inbox** to view inert (replayable) received forwarded\nartifacts.\n* CLI updates: added `nimbus share forward`, `nimbus share inbox`, and\nimproved share verification output.\n\n* **Documentation**\n* Updated security invariant and architecture specs for forwarding,\napproval gating, and LAN restrictions.\n  * Phase 6 (Team) marked complete; changelog/roadmap updated.\n\n* **Chores**\n* Upgraded local database to **schema v43** with `share_inbox` storage\nand migrations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-18T11:51:49+03:00",
-          "tree_id": "0dead459455343ff196756c454b4a326b8edd6f6",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/18131cf9d9499614d20b10421e5c511086942618"
-        },
-        "date": 1781773717092,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 286.9105905999968,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 288.5339495999906,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 247.69277930001226,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "450b8a19fb398ace72225620bfa886e59c08a4ff",
+          "message": "chore: maintenance sweep — deps, dead code, doc-citation rot, comment-strip safety, phase3 split (#1432)\n\nMaintenance sweep across deps, dead code, docs, comments, duplication,\nfile\nsplits and coverage. Seven commits, each green on `preflight:fast` at\n33/33, and\ncoverage verified on a Docker/Linux run rather than the host.\n\nNo user-facing behaviour changes. Nothing here requires an existing user\nto do\nanything, so the title is `chore` and no version signal is spent.\n\n## What landed\n\n| Commit | Category |\n| --- | --- |\n| `build(deps)` | astro, zod, biome, jscpd, knip, js-yaml + a zod\n`overrides` pin |\n| `fix(cleanup)` | strip-comments no longer edits program data |\n| `test(structure-audit)` | dead D19/D20 allow-list entries retired; D19\nred-proved |\n| `chore(deps)` | 13 unused dependencies removed; knip config repaired |\n| `docs(http)` | `READ_ONLY_HTTP_ROUTES` alias retired; citations\ncorrected |\n| `feat(cleanup)` | comment stripping refuses attested files and\nrequires opt-in |\n| `refactor(lazy-mesh)` | `phase3-config.ts` split into per-domain spawn\nmodules |\n\n## The findings worth reviewing\n\n**The zod bump broke typecheck, and the call site was not at fault.**\n`@modelcontextprotocol/sdk`\nkept resolving `zod@4.4.3` while the workspace moved to `4.5.4`; two\ncopies means two\nstructurally distinct `$ZodType`, so nothing crossing that seam could\ntype. Fixed with a root\n`overrides` pin and zero source changes. Worth knowing: a plain `bun\ninstall` does NOT apply a\nnewly added override when the lock is already satisfied - it reports \"no\nchanges\" - so this\nneeded `bun install --force`.\n\n**D17 was cleaned during the v3.0.0 connector extraction; its two\nsiblings were not.** D19 and\nD20 still exempted eleven `packages/mcp-connectors/*/src/server.ts`\npaths that `git ls-files` no\nlonger returns. Harmless for security - an allow-list entry for a file\nthat does not exist only\ntightens confinement - but auditing them surfaced the real gap: D20\nships seven test cases and\nD19 had none, so nothing proved `checkTribalKbWriteInvariant` could fail\nat all. Six added,\nred-proved by neutering the regex.\n\n**`audit:doc-refs` validates that a cited line EXISTS, never what is on\nit.** So `file:line`\nattestations in `docs/SECURITY-INVARIANTS.md` rot invisibly. Two\ninstances found:\n`http-routes.ts:5,13` described \"the comment at\" lines in a file that\nhad no comments at all,\nand nine `phase3-config.ts` rows of which SEVEN already pointed at\nnon-comment lines - `:424`\nread `sandboxCwd: string,` while claiming to attest the Azure spawn\nsite, which was at `:209`.\nOnly splitting the file, pushing the numbers past EOF, made the gate\nfail. The nine collapse\ninto one row citing D10, the rule that actually enforces the property\nper site, following the\nprecedent already set for the 27 per-connector I2 rows.\n\n**The comment sweep did not run.** Dry-running `strip-comments.ts`\nshowed it would rewrite 1830\nof 2943 files and delete 3.8MB, about 18% of source bytes - including\n152 attested comments and\n1303 the repo's own surveyor classifies as load-bearing. It now refuses\nthose, fails closed if\nthe invariant doc cannot be parsed, and a bare invocation rewrites\nnothing. The guard is a\nmarker heuristic and this repo outruns it: `agents/negotiate.ts` alone\nwould have lost 25KB\nexplaining why a `graph-only` subject is structurally zero for every\nlane except ownership.\n\n**I15 shaped the file split.** D10 accepts a file-local `wrap` alias\nonly in a file that also\ndeclares it delegating to `wrapServerSpec`, so each group module copies\nthe delegation rather\nthan importing one; an imported alias would leave all 63 spawn sites\nunrecognised. Verified by\nbreaking it: neutering one module's delegation makes the auditor fire on\nevery site in that\nfile.\n\n## Verification\n\n- `preflight:fast` green at 33/33 on every commit.\n- 260 existing `phase3-config` tests pass unedited; no consumer moved.\n- Coverage from `scripts/coverage-floor/reseed-docker.sh`, which matches\nthe CI job's\nlibsecret/dbus setup: `coverage-floor: ok`, 1156 files scanned, 0\nviolations. All seven new\nmodules are present in the lcov at 100% line and 94-100% branch, so this\nis a real pass and\n  not an absent-file one.\n\n## Deliberately not done\n\nThe 142 unused exports and 254 unused exported types knip reports are\nleft reported and\nuntouched - mostly exports used only within their own file, and churning\n~400 call sites is not\nthis PR's business.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01GZCGCkVMD9JaKuiKvqRdAb\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added support for connecting to numerous cloud, data, delivery,\nobservability, security, workplace, and business services.\n* Connectors now use saved credentials, validate required settings, and\napply appropriate sandbox and network permissions.\n\n* **Bug Fixes**\n* Improved comment cleanup to preserve important tooling directives,\ncode literals, and protected invariant files.\n* Added safer controls for scoped cleanup operations and clearer refusal\nreporting.\n\n* **Documentation**\n* Updated HTTP route and security invariant guidance to reflect the\ncurrent route registry and connector structure.\n\n* **Tests**\n* Expanded coverage for protected comments, cleanup behavior, and\nsecurity invariant enforcement.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-03T20:57:04+03:00",
+          "tree_id": "0a9f44801f0ce016192fc7062c6408d2b2622db3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/450b8a19fb398ace72225620bfa886e59c08a4ff"
+        },
+        "date": 1788459001282,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 335.323094749996,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 338.42215339999746,
             "unit": "ms"
           }
         ]
