@@ -47,9 +47,9 @@ export async function performActuation(
     // printed nothing within the first-byte window may have finished silently or may still be
     // running, and saying "it produced no output" without saying which would assert the one thing
     // this driver cannot know.
-    return r.settled === "quiet"
-      ? r.output
-      : `${r.output}\n[nimbus: output collection ended by ${r.settled}${r.truncated ? ", truncated" : ""}]`;
+    if (r.settled === "quiet") return r.output;
+    const truncatedNote = r.truncated ? ", truncated" : "";
+    return `${r.output}\n[nimbus: output collection ended by ${r.settled}${truncatedNote}]`;
   }
 
   if (req.kind === "terminal_write") {

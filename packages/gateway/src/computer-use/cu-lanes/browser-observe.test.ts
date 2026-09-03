@@ -127,9 +127,9 @@ describe("parseObservedNode — a REAL guard over renderer-supplied data", () =>
   });
 
   test("a non-string accessibleName becomes null rather than reaching the prompt as an object", () => {
-    expect(parseObservedNode({ ...honest, accessibleName: { toString: 1 } })?.accessibleName).toBe(
-      null,
-    );
+    expect(
+      parseObservedNode({ ...honest, accessibleName: { toString: 1 } })?.accessibleName,
+    ).toBeNull();
   });
 });
 

@@ -453,10 +453,10 @@ describe("ChatOps end-to-end: real buildChatopsBoot wires an agent command throu
     // a stray second post could still be in flight, not merely past the first.
     await boot.service.stop();
 
-    expect(posts.length).toBe(1); // still the only post: the ledger and the wire agree
+    expect(posts).toHaveLength(1); // still the only post: the ledger and the wire agree
     const rows = listEgress(db, { limit: 10 });
     // ONE row, from PR 1's post appender. NOT two: the invoker deliberately appends nothing.
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.method).toBe("chatops.agentBrief");
   });
 

@@ -78,7 +78,7 @@ describe("wrapLedgeredBrowserContext", () => {
     await h.fire(fakeRoute("https://example.com/a", "document", cap));
     await h.fire(fakeRoute("https://example.com/b", "image", cap));
     await h.fire(fakeRoute("https://example.com/c", "image", cap));
-    expect(rows(h.db).length).toBe(1);
+    expect(rows(h.db)).toHaveLength(1);
     expect(cap.continued).toBe(3);
   });
 

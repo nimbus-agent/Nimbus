@@ -1021,7 +1021,7 @@ test("an ANONYMOUS default export still yields no symbol", async () => {
   const rows = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`)
     .all() as Array<{ title: string }>;
-  expect(rows.length).toBe(0);
+  expect(rows).toHaveLength(0);
 });
 
 // ── excerptWithStartLine: flat fallback fits within maxChars (no truncation) ──

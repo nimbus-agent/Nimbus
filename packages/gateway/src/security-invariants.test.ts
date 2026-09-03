@@ -2849,7 +2849,7 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // The SAME binding, not a rebuild: both `openLane` calls take the prepared object. A
     // `buildLaunchPolicy` call inside an `openLane` argument would typecheck and silently
     // reintroduce the drift this replaced, so it must appear nowhere in that position.
-    expect((gate.match(/launch: prepared\.launch/g) ?? []).length).toBe(2);
+    expect(gate.match(/launch: prepared\.launch/g) ?? []).toHaveLength(2);
     expect(gate).not.toMatch(/openLane\([^)]*buildLaunchPolicy/);
 
     // And each driver spawns what it was handed, verbatim.

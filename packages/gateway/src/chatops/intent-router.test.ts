@@ -133,7 +133,7 @@ describe("IntentRouter", () => {
     });
     await r.handle(msg("@nimbus agent why ref=a.ts"));
     // Asserting the refusal alone would pass against an implementation that refused AFTER running.
-    expect(agentCalls.length).toBe(0);
+    expect(agentCalls).toHaveLength(0);
     expect(replies).toContainEqual({ text: "You are not enrolled for this channel." });
   });
 

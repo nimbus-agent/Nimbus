@@ -60,7 +60,7 @@ describe("TerminalLineBuffer", () => {
     b.append("x".repeat(MAX_TERMINAL_LINE_UNITS - 1));
     const r = b.append("yy");
     expect(r.status).toBe("refused");
-    expect(b.pending().length).toBe(MAX_TERMINAL_LINE_UNITS - 1);
+    expect(b.pending()).toHaveLength(MAX_TERMINAL_LINE_UNITS - 1);
   });
 
   test("a tab is ordinary text, not a control character", () => {
