@@ -104,11 +104,13 @@ Findings from [`…-review.md`](./2026-09-03-multimodal-pr2-image-understanding-
 `resolveMultimodalEnabled` hand-parses one boolean. PR 2 needs four values, so the parser becomes a small section reader — still standalone rather than routed through `nimbus-toml.ts`, matching `connectors/openapi-indexer-config.ts`.
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/multimodal-config.ts`
 - Test: `packages/gateway/src/multimodal/multimodal-config.test.ts`
 - Modify: `packages/gateway/src/multimodal/build-media-pass-deps.ts` (delete `resolveMultimodalEnabled` + `parseMultimodalEnabled`, re-export from the new module)
 
 **Interfaces:**
+
 - Consumes: `stripComment` from `../config/toml-primitives.ts`.
 - Produces: `interface MultimodalConfig { readonly enabled: boolean; readonly vlmBaseUrl: string; readonly vlmModel: string; readonly maxFrames: number }` and `loadMultimodalConfig(configDir: string | undefined): MultimodalConfig`, plus `DEFAULT_VLM_BASE_URL`, `DEFAULT_VLM_MODEL`, `DEFAULT_MAX_FRAMES`.
 
@@ -338,12 +340,15 @@ git commit -m "feat(multimodal): read the whole [multimodal] section, not just e
 `LlmGenerateOptions` is `{ task, prompt: string, … }` with no image field, and widening it would push image bytes through `wrapLedgeredProvider` and every text caller. This is the same fork the Mastra engine agent hit over `tools`, and it takes the same answer: a distinct provider with its own decorator (spec § 9.2).
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/vlm/vlm-types.ts`, `packages/gateway/src/multimodal/vlm/ollama-vlm.ts`
 - Test: `packages/gateway/src/multimodal/vlm/ollama-vlm.test.ts`
 
 **Interfaces:**
+
 - Consumes: `isLoopbackBaseUrl` from `../../llm/base-url-locality.ts` (I34).
 - Produces:
+
   ```ts
   interface VlmDescribeInput { readonly bytes: Uint8Array; readonly prompt: string; readonly egressMethod?: string }
   interface VlmDescribeResult { readonly text: string }
@@ -659,11 +664,13 @@ git commit -m "feat(multimodal): a VlmProvider seam and the Ollama vision provid
 The `model` egress class is already `per-call` and carries no named exclusions. A vision provider that generated without a row would re-open one — and it would be the worst-shaped kind, because a remote VLM call carries the *image itself*. The decorator ships now, before any remote VLM exists, for the same reason PR 1 shipped the gate with only its local arm.
 
 **Files:**
+
 - Create: `packages/gateway/src/egress/vlm-egress.ts`, `packages/gateway/src/egress/vlm-egress.test.ts`
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts`
 - Modify: `packages/gateway/src/security-invariants.test.ts`
 
 **Interfaces:**
+
 - Consumes: `VlmProvider` (Task 2); `appendEgressEntry` from `./egress-ledger.ts`; `redactEgressSummary` from `./egress-record.ts`; `EgressAppendFailedError` from `./model-egress.ts`.
 - Produces: `wrapLedgeredVlm(db: Database, provider: VlmProvider, now?: () => number): VlmProvider`; exported audit check `checkVlmAppenderConfinement(files): Violation[]`.
 
@@ -1037,6 +1044,7 @@ bun run audit:invariants
 bun run audit:doc-refs
 bun run preflight:fast
 ```
+
 Expected: all green.
 
 - [ ] **Step 11: Commit**
@@ -1057,10 +1065,12 @@ git commit -m "feat(egress): ledger every non-local VLM describe (D22(g))"
 The gate consumes `LocalUnderstander`, whose `understand(path)` returns text. An image adapter reads the file into memory and asks the VLM for a caption plus verbatim visible text in one call. The dep's name stops being accurate the moment it serves images, so it is renamed in the same task.
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/vlm/caption-prompts.ts`, `packages/gateway/src/multimodal/vlm/image-understander.ts`, `packages/gateway/src/multimodal/vlm/image-understander.test.ts`
 - Modify: `packages/gateway/src/multimodal/media-gate.ts`, `packages/gateway/src/multimodal/media-gate.test.ts`, `packages/gateway/src/multimodal/build-media-pass-deps.ts`, `packages/gateway/src/multimodal/build-media-pass-deps.test.ts`
 
 **Interfaces:**
+
 - Consumes: `VlmProvider` (Task 2); `LocalUnderstander` from `../media-gate.ts`.
 - Produces: `IMAGE_CAPTION_PROMPT`, `FRAME_CAPTION_PROMPT`; `createImageUnderstander(deps: { vlm: VlmProvider; readFile?: (p: string) => Promise<Uint8Array> }): LocalUnderstander`.
 
@@ -1284,6 +1294,7 @@ And in `understandArtifact`, `const provider = deps.understanderFor(candidate.mo
 ```bash
 grep -rn "sttFor" packages/gateway/src packages/cli/src scripts
 ```
+
 Expected sites: `media-gate.ts`, `media-gate.test.ts`, `build-media-pass-deps.ts`, `build-media-pass-deps.test.ts`. Rename all; leave no alias behind.
 
 **(b) The return type.** `understand` returns `Promise<string>` today, and a string cannot carry the frame-sampling counts Task 7 puts on the derived row — so those counts would be permanently `undefined` in production while a unit test on `buildUnderstandingRow` proved the mapping "works". Add to `media-types.ts`, beside `UnderstandOutcome`:
@@ -1387,6 +1398,7 @@ Reuse whatever `candidate` / deps fixtures `media-gate.test.ts` already defines 
 bun test packages/gateway/src/multimodal
 bun run typecheck
 ```
+
 Expected: PASS, and no remaining `sttFor` matches.
 
 - [ ] **Step 7: Commit**
@@ -1401,12 +1413,15 @@ git commit -m "feat(multimodal): caption a still image through the media gate"
 ## Task 5: Frame extraction, in memory
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/frames/frame-extract.ts`, `packages/gateway/src/multimodal/frames/frame-extract.test.ts`
 - Modify: `packages/gateway/src/multimodal/stt/ffmpeg-bin.ts` (export `withProcessTimeout`)
 
 **Interfaces:**
+
 - Consumes: `extensionProcessEnv` from `../../extensions/spawn-env.ts`; `processEnvGet` from `../../platform/env-access.ts`; `withProcessTimeout` from `../stt/ffmpeg-bin.ts`.
 - Produces:
+
   ```ts
   resolveFfprobeBin(configuredPath?: string, which?: (n: string) => string | null): string
   probeDurationSeconds(input: string, opts: ProbeOptions): Promise<number | null>
@@ -1858,9 +1873,11 @@ git commit -m "feat(multimodal): extract sampled video frames to memory, never t
 ## Task 6: The composite AV understander
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/frames/av-understander.ts`, `packages/gateway/src/multimodal/frames/av-understander.test.ts`
 
 **Interfaces:**
+
 - Consumes: `LongFormStt` from `../stt/long-form-stt.ts`; `VlmProvider` (Task 2); `frameTimestamps` / `probeDurationSeconds` / `extractFrameJpeg` (Task 5); `FRAME_CAPTION_PROMPT` (Task 4).
 - Produces: `createAvUnderstander(deps: AvUnderstanderDeps): LocalUnderstander`; `AV_SAMPLING_DISCLOSURE`; `FRAME_HEADING`; `TRANSCRIPT_HEADING`.
 
@@ -2235,9 +2252,11 @@ git commit -m "feat(multimodal): caption sampled frames alongside the transcript
 ## Task 7: Version bump, sampling metadata, and the production wiring
 
 **Files:**
+
 - Modify: `packages/gateway/src/multimodal/media-types.ts`, `packages/gateway/src/multimodal/understanding-item.ts`, `packages/gateway/src/multimodal/understanding-item.test.ts`, `packages/gateway/src/multimodal/build-media-pass-deps.ts`, `packages/gateway/src/multimodal/build-media-pass-deps.test.ts`, `packages/gateway/src/multimodal/media-discovery.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 1–6.
 - Produces: `UNDERSTANDING_VERSION = 2`; `MULTIMODAL_CAPABILITY = "multimodal_input"`; `BuildMediaPassDepsInput` gains `vlmBaseUrl?`, `vlmModel?`, `maxFrames?`, `ffprobeBin?`, `vlmFetch?`.
 
@@ -2418,6 +2437,7 @@ bun test packages/gateway/src/multimodal packages/gateway/src/egress
 bun run audit:invariants
 bun run typecheck
 ```
+
 Expected: green, including D22(g) — which now has a real production site to approve.
 
 - [ ] **Step 8: Commit**
@@ -2434,10 +2454,12 @@ git commit -m "feat(multimodal): wire the vision arm into the pass and bump to u
 `multimodal_input` is a real `AI_V2_CAPABILITIES` member, the gate already honours a `capabilityDisabled` boolean, and the dispatcher hardcodes it `false` — so an org policy disabling this capability currently does nothing. `code_execution` and `computer_use` each get a live `enforced` getter wired at boot; this gives media the same, and fails CLOSED when the accessor is absent rather than defaulting to permissive.
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/media-rpc.ts`, `packages/gateway/src/ipc/server/options.ts`, `packages/gateway/src/ipc/server/dispatchers.ts`, `packages/gateway/src/platform/assemble.ts`
 - Test: `packages/gateway/src/multimodal/media-policy-wiring.test.ts` (create), `packages/gateway/src/security-invariants.test.ts` (modify)
 
 **Interfaces:**
+
 - Consumes: `EnforcedPolicy` from `../policy/policy-gate.ts`; `MULTIMODAL_CAPABILITY` (Task 7).
 - Produces: `interface MediaRpcCtx { readonly enforced: Pick<EnforcedPolicy, "capabilitiesDisabled"> }`.
 
@@ -2571,6 +2593,7 @@ Remove `resolveMultimodalEnabled` from `build-media-pass-deps.ts` (Task 1 Step 4
 ```bash
 grep -rn "resolveMultimodalEnabled" packages/
 ```
+
 Expected: no matches.
 
 - [ ] **Step 7: Wire boot**
@@ -2625,6 +2648,7 @@ Then sweep for any other construction site that reaches `media.understand`:
 ```bash
 grep -rn "media.understand" packages/gateway packages/cli --include=*.ts | grep -v "src/multimodal\|src/ipc/media-rpc"
 ```
+
 Add the ctx to each; never reintroduce a permissive default to make a fixture pass.
 
 - [ ] **Step 10: Run the gates**
@@ -2634,6 +2658,7 @@ bun test packages/gateway/src/multimodal packages/gateway/src/ipc packages/gatew
 bun run typecheck
 bun run preflight:fast
 ```
+
 Expected: green. If an e2e or integration test constructs server options without `mediaRpcCtx` and calls `media.understand`, it now gets an explicit refusal — add the ctx to that fixture rather than reintroducing a permissive default.
 
 - [ ] **Step 11: Commit**
@@ -2651,6 +2676,7 @@ git commit -m "fix(multimodal): honour an org policy disabling multimodal_input"
 Docs are part of the change, not a follow-up: the triple rule is wiring + docs + test in the same commit.
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/multimodal/vlm-live.test.ts`
 - Modify: `docs/SECURITY-INVARIANTS.md`, `CLAUDE.md`, `GEMINI.md`, `docs/roadmap.md`, `docs/architecture.md`, `docs/cli-reference.md`, `docs/CHANGELOG.md`, `docs/superpowers/specs/2026-09-02-s2-multimodal-io-design.md`
 
@@ -2718,11 +2744,13 @@ Add a `## 15. Amendments (PR 2, 2026-09-03)` section to `docs/superpowers/specs/
 ```bash
 grep -n "D22(g)\|wrapLedgeredVlm" docs/SECURITY-INVARIANTS.md
 ```
+
 Expected: the `(g)` row exists. If it does not, Task 3 was incomplete — add it now rather than shipping the branch with a wired-but-undocumented rule.
 
 - [ ] **Step 5: Update `CLAUDE.md` and `GEMINI.md`**
 
 Both files, identically:
+
 - The I29 entry: D22 now has SEVEN rules; add the vision appender to the `model`-class appender enumeration (there are now four: provider, Mastra model, embedder, VLM). **Re-derive the enumeration; do not just change a count.**
 - The § Status paragraph's multimodal sentence: PR 2 of 4 shipped 2026-09-03 — image understanding via a local Ollama VLM, sampled frame captions, Phase 14 Core acceptance now MET. Remove the "no VLM / image candidates are skipped" claim and the "`nimbus:image_understanding` is registered but nothing writes one" claim; both are now false.
 - The "org policy is INERT here" sentence must GO, replaced by the wired state. This is the specific line that becomes a false attestation the moment Task 8 lands.
@@ -2745,6 +2773,7 @@ bun run audit:doc-refs
 bun run audit:status-drift
 bun run preflight:fast
 ```
+
 Expected: green. `audit:doc-refs` resolves every path cited in `docs/` and `.claude/commands/`, so a wrong path in the spec amendment fails here rather than rotting.
 
 - [ ] **Step 9: Full preflight**
@@ -2752,6 +2781,7 @@ Expected: green. `audit:doc-refs` resolves every path cited in `docs/` and `.cla
 ```bash
 bun run preflight
 ```
+
 Expected: green. If the coverage floor flags a new file, remember it is CI-Linux-authoritative — reproduce with `bun run verify:docker --changed` rather than trusting a Windows run.
 
 - [ ] **Step 10: Commit**
@@ -2776,6 +2806,7 @@ bun test packages/gateway packages/cli scripts
 That last command is the whole-repo, one-process shape the push matrix uses — `mock.module` is process-global, so a per-package run does not have the same mocks in play and can be green where the push leg is red. Two known local traps in this worktree: three exec/sandbox tests fail without the git-ignored `nimbus-sandbox-helper` build (compare the built `.exe`, not the runner), and `typecheck:tests` is advisory on Windows with a Linux-authoritative baseline.
 
 State explicitly in the PR body:
+
 - whether the live VLM test was ever run opted-in, or only skipped;
 - that D22(g) was red-proved by reverting (Task 3 Step 7), with the failing output;
 - that Phase 14 Core acceptance is met, and on what evidence — a real `video_understanding` row carrying both a transcript and at least one frame caption, not a fixture.

@@ -24,18 +24,21 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
 ### 2.1 Disconnected Frame Sampling Metadata in Production (`UnderstandOutcome` vs `LocalUnderstander`)
 
 * **Context:** In **Task 7 Step 3 & 4**, `UnderstandOutcome` is extended with optional fields `framesSampled?: number` and `framesCaptioned?: number`, and `buildUnderstandingRow` spreads these into `item.metadata`. Unit tests are added to verify this mapping.
-* **Issue:** 
+* **Issue:**
   1. In `media-gate.ts` (and Task 4), `LocalUnderstander.understand(path)` returns `Promise<string>`.
   2. In `understandArtifact` (`media-gate.ts`), the outcome is constructed as:
+
      ```ts
      const text = await provider.understand(path);
      return { ok: true, outcome: { text, model: provider.model, isLocal: provider.isLocal } };
      ```
+
   3. In Task 6, `createAvUnderstander.understand(path)` returns a `Promise<string>` (the concatenated Markdown).
   4. Consequently, `understandArtifact` **never receives nor attaches `framesSampled` or `framesCaptioned`** to `UnderstandOutcome`.
   5. In production, `outcome.framesSampled` and `outcome.framesCaptioned` will **always be `undefined`**, and `item.metadata` will never contain the frame sampling counts.
 * **Fix:**
   Widen `LocalUnderstander.understand` to optionally return structured detail:
+
   ```ts
   export interface UnderstandDetail {
     readonly text: string;
@@ -50,7 +53,9 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
     understand(path: string): Promise<string | UnderstandDetail>;
   }
   ```
+
   In `understandArtifact` (`media-gate.ts`):
+
   ```ts
   const res = await provider.understand(path);
   const detail = typeof res === "string" ? { text: res } : res;
@@ -65,6 +70,7 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
     },
   };
   ```
+
   In `createAvUnderstander` (`av-understander.ts`):
   Return `{ text: sections.join("\n\n"), framesSampled: stamps.length, framesCaptioned: captions.length }`.
 
@@ -73,6 +79,7 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
 ### 2.2 `probeDurationSeconds` Hangs Indefinitely on Wedged `ffprobe` Subprocess
 
 * **Context:** In **Task 5 Step 4** (`packages/gateway/src/multimodal/frames/frame-extract.ts` lines 1501–1506):
+
   ```ts
   const out = await new Response(proc.stdout).text();
   const code = await withProcessTimeout(
@@ -81,13 +88,15 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
     `ffprobe ${input}`,
   );
   ```
-* **Issue:** 
+
+* **Issue:**
   * `new Response(proc.stdout).text()` asynchronously consumes the readable stream to EOF.
   * If `ffprobe` wedges, deadlocks, or hangs on a corrupt media container without exiting, `proc.stdout` is never closed.
   * Because `await new Response(proc.stdout).text()` is executed **before** `withProcessTimeout` is called, the execution blocks on reading `stdout` indefinitely. The timeout race in `withProcessTimeout` is never initiated.
   * *(Note: In `extractFrameJpeg`, this was correctly handled by creating `const collect = readBounded(proc.stdout)` as a pending promise and awaiting `withProcessTimeout` first).*
 * **Fix:**
   Do not await `stdout` before the timeout guard:
+
   ```ts
   const outPromise = new Response(proc.stdout).text();
   const code = await withProcessTimeout(
@@ -104,7 +113,7 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
 ### 2.3 Static Invariant Anchor Missing in `scripts/structure-audit/check-nimbus-invariants.ts`
 
 * **Context:** In **Task 3 Step 5 & 6**, static audit rule D22(g) (`checkVlmAppenderConfinement`) is added to check that `wrapLedgeredVlm` and `createOllamaVlm` are confined to their allow-lists.
-* **Issue:** 
+* **Issue:**
   * `check-nimbus-invariants.ts` maintains `RULE_ANCHORS` (lines 1600–1646) which validates that every policed subsystem file is actually present in the scanned file set. If a policed directory drops out of the scanner glob, `assertScanIsMeaningful` aborts with exit code 2.
   * Task 3 omits adding an anchor for D22(g) to `RULE_ANCHORS`. Without an anchor, if `multimodal/` were ever omitted from `iterateSourceFiles()`, D22(g) would report green vacuously.
 * **Fix:**
@@ -115,6 +124,7 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
 ### 2.4 Existing `dispatchers.test.ts` Suite Breaks on Task 8
 
 * **Context:** In **Task 8 Step 5**, `tryDispatchMediaRpc` in `dispatchers.ts` is updated to require `mediaRpcCtx` and fail closed with `-32603`:
+
   ```ts
   const mediaCtx = ctx.options.mediaRpcCtx;
   if (mediaCtx === undefined) {
@@ -124,6 +134,7 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
     );
   }
   ```
+
 * **Issue:** In [`packages/gateway/src/ipc/server/dispatchers.test.ts`](../../../packages/gateway/src/ipc/server/dispatchers.test.ts#L1119), the existing test `"media.understand hit through chain"` initializes context via `makeCtx({ localIndex, dataDir })` without passing `mediaRpcCtx`. Running `bun test packages/gateway/src/ipc` will fail immediately.
 * **Fix:** Update Task 8 Step 10 / checklist to explicitly include adding `mediaRpcCtx: { enforced: { capabilitiesDisabled: new Set() } }` to the `dispatchers.test.ts` fixture.
 
@@ -135,6 +146,7 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
 
 * **Observation:** In `image-understander.ts`, `read(path)` loads raw bytes into memory. If a zero-byte image exists on disk (e.g. placeholder file), passing `images: [""]` to Ollama `/api/generate` will trigger an unhandled 400/500 error from Ollama.
 * **Recommendation:** Explicitly guard against empty byte arrays before calling the model:
+
   ```ts
   const bytes = await read(path);
   if (bytes.byteLength === 0) {
@@ -146,12 +158,15 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
 
 * **Observation:** For videos with no audio track or silent audio (e.g. screen captures, silent instructional clips), `whisper-cli` returns an empty transcript (`""`).
 * **Issue:** `av-understander.ts` formats this as:
+
   ```markdown
   ## Transcript
 
   
   ```
+
 * **Recommendation:** Fall back to a descriptive marker when `transcript` is empty:
+
   ```ts
   const cleanTranscript = transcript === "" ? "(No speech detected)" : transcript;
   sections.push(`${TRANSCRIPT_HEADING}\n\n${cleanTranscript}`);
@@ -183,9 +198,9 @@ This review identifies **4 critical implementation blockers/bugs** (including a 
 
 ## 5. Summary Checklist of Plan Edits
 
-- [ ] **Task 5:** Fix `probeDurationSeconds` stream reading order to prevent unhandled hang on wedged `ffprobe`.
-- [ ] **Task 6 & 7:** Widen `LocalUnderstander.understand` return type to pass `framesSampled` and `framesCaptioned` up through `media-gate.ts` into `UnderstandOutcome` and `item.metadata`.
-- [ ] **Task 3:** Add `"packages/gateway/src/multimodal/build-media-pass-deps.ts"` to `RULE_ANCHORS` in `check-nimbus-invariants.ts`.
-- [ ] **Task 8:** Add `mediaRpcCtx` fixture to `packages/gateway/src/ipc/server/dispatchers.test.ts`.
-- [ ] **Task 4:** Add zero-byte file guard in `createImageUnderstander`.
-- [ ] **Task 6:** Fall back to `"(No speech detected)"` for empty transcripts in `createAvUnderstander`.
+* [ ] **Task 5:** Fix `probeDurationSeconds` stream reading order to prevent unhandled hang on wedged `ffprobe`.
+* [ ] **Task 6 & 7:** Widen `LocalUnderstander.understand` return type to pass `framesSampled` and `framesCaptioned` up through `media-gate.ts` into `UnderstandOutcome` and `item.metadata`.
+* [ ] **Task 3:** Add `"packages/gateway/src/multimodal/build-media-pass-deps.ts"` to `RULE_ANCHORS` in `check-nimbus-invariants.ts`.
+* [ ] **Task 8:** Add `mediaRpcCtx` fixture to `packages/gateway/src/ipc/server/dispatchers.test.ts`.
+* [ ] **Task 4:** Add zero-byte file guard in `createImageUnderstander`.
+* [ ] **Task 6:** Fall back to `"(No speech detected)"` for empty transcripts in `createAvUnderstander`.
