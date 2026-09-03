@@ -554,7 +554,9 @@ export function syncFilesystemMediaForRoot(
 
   for (const file of files) {
     let sizeBytes: number | null = null;
-    let modifiedAt = now;
+    // Not seeded with `now`: the catch below `continue`s, so nothing downstream can
+    // observe a pre-stat value and seeding one only hides a missing assignment.
+    let modifiedAt: number;
     try {
       const st = statSync(file.path);
       sizeBytes = st.size;

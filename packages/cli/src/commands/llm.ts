@@ -100,7 +100,7 @@ function printRouteTable(routes: RouteStatus[]): void {
 function requireRoutesArray(res: unknown): unknown[] {
   const routes = (res as { routes?: unknown } | null | undefined)?.routes;
   if (!Array.isArray(routes)) {
-    throw new Error(
+    throw new TypeError(
       "llm.status returned an unexpected payload: no `routes` array. " +
         "The gateway is likely a different version than this CLI.",
     );

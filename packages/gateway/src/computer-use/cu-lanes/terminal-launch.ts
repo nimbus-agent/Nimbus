@@ -64,7 +64,7 @@ export function buildTerminalLaunchPolicy(opts: {
   // read — and on Linux bwrap binds the resolved target, so the grant and the prompt would describe
   // different directories. REFUSED rather than normalised, matching this file's posture everywhere
   // else: silently rewriting a caller's path grants something they did not type.
-  if (opts.cwd.split("\\").join("/").split("/").includes("..")) {
+  if (opts.cwd.replaceAll("\\", "/").split("/").includes("..")) {
     throw new CuLaunchPolicyError(
       "ERR_CU_TERMINAL_TRAVERSAL_CWD",
       `the terminal lane's working directory must not contain a ".." segment: ${opts.cwd}`,

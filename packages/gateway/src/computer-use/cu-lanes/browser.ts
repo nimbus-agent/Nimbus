@@ -276,12 +276,12 @@ export async function openBrowserLane(
     const created = await conn.send("Target.createTarget", { url: "about:blank" });
     const targetId = created["targetId"];
     if (typeof targetId !== "string") {
-      throw new Error("browser did not return a target id for the lane's page");
+      throw new TypeError("browser did not return a target id for the lane's page");
     }
     const attached = await conn.send("Target.attachToTarget", { targetId, flatten: true });
     const sessionId = attached["sessionId"];
     if (typeof sessionId !== "string") {
-      throw new Error("browser did not return a CDP session id for the lane's page");
+      throw new TypeError("browser did not return a CDP session id for the lane's page");
     }
 
     // Track the page's own origin from protocol events, because `BrowserLane.currentOrigin()` is
