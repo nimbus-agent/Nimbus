@@ -14,7 +14,7 @@ import type { Database } from "bun:sqlite";
 import { resolveLocalMediaPath } from "./media-bytes.ts";
 import { findCandidates } from "./media-discovery.ts";
 import { type MediaGateDeps, understandArtifact } from "./media-gate.ts";
-import { writeCursor } from "./media-pass-state.ts";
+import { clearCursor, readCursor, writeCursor } from "./media-pass-state.ts";
 import type { MediaModality, SkipReason } from "./media-types.ts";
 import { sweepStaleScratchFiles } from "./stt/ffmpeg-bin.ts";
 import { writeUnderstanding } from "./understanding-item.ts";
@@ -63,12 +63,16 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
     sweepStaleScratchFiles(deps.scratchDir, deps.nowMs());
   }
 
+  // An explicit afterItemId always wins (a caller override); otherwise resume from the stored
+  // cursor for this passId, which is what makes an interrupted run resumable at all (spec § 6.2).
+  const afterItemId = deps.afterItemId ?? readCursor(deps.db, deps.passId) ?? undefined;
+
   const candidates = findCandidates(deps.db, {
     limit: deps.limit,
     ...(deps.service === undefined ? {} : { service: deps.service }),
     ...(deps.modality === undefined ? {} : { modality: deps.modality }),
     ...(deps.sinceMs === undefined ? {} : { sinceMs: deps.sinceMs }),
-    ...(deps.afterItemId === undefined ? {} : { afterItemId: deps.afterItemId }),
+    ...(afterItemId === undefined ? {} : { afterItemId }),
   });
 
   const reasons = emptyReasons();
@@ -98,6 +102,16 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
     writeUnderstanding(deps.db, candidate, result.outcome, deps.nowMs(), deps.scheduleEmbedding);
     understood += 1;
     advance(deps, lastItemId, understood + skipped);
+  }
+
+  // Fewer candidates than the limit means discovery reached the end of the queue: nothing more
+  // sorts after this point. Clear the cursor so the NEXT run starts from the top rather than
+  // resuming forward forever — that is what gives a SKIPPED artifact (as opposed to one already
+  // understood, which discovery's version comparison filters out cheaply) another chance. Do
+  // this at the END, after the loop: clearing before drain-completion would let an interruption
+  // mid-drain lose the cursor a resume still needs.
+  if (candidates.length < deps.limit) {
+    clearCursor(deps.db, deps.passId);
   }
 
   return { understood, skipped, skippedByReason: reasons, lastItemId };

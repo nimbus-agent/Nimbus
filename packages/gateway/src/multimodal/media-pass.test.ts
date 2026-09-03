@@ -9,6 +9,8 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { findCandidates } from "./media-discovery.ts";
 import type { MediaPassDeps } from "./media-pass.ts";
 import { runMediaPass } from "./media-pass.ts";
+import { writeCursor } from "./media-pass-state.ts";
+import { understandingExternalId } from "./understanding-item.ts";
 
 let db: Database;
 let root: string;
@@ -142,7 +144,12 @@ describe("runMediaPass", () => {
 
   test("advances the cursor so an interrupted pass resumes", async () => {
     addMediaFile("a.mp4");
-    const summary = await runMediaPass(deps());
+    // A second candidate the limit does not reach: this run is genuinely INTERRUPTED (more work
+    // remains), distinct from a drained run — which, correctly, clears the cursor instead (see
+    // "runMediaPass — cursor resume" below). limit:1 is what keeps candidates.length < limit
+    // false, so the cursor this run wrote is not cleared out from under the assertion.
+    addMediaFile("zz-remainder.mp4");
+    const summary = await runMediaPass(deps({ limit: 1 }));
     expect(summary.lastItemId).not.toBeNull();
     const cursor = db
       .query<{ last_item_id: string }, []>("SELECT last_item_id FROM media_pass_cursor")
@@ -152,8 +159,12 @@ describe("runMediaPass", () => {
 
   test("advances the cursor on a SKIP, so a resumed pass does not restart on the same artifact", async () => {
     addMediaFile("unreadable.mp4");
+    // A second candidate + limit:1 keeps this run from draining the queue (see above) — the
+    // property under test is the mid-run advance, not the drain-clear this same run would
+    // otherwise also trigger.
+    addMediaFile("zz-remainder.mp4");
     // roots: [] means every candidate refuses with path_outside_roots before the gate is reached.
-    const summary = await runMediaPass(deps({ roots: [] }));
+    const summary = await runMediaPass(deps({ roots: [], limit: 1 }));
     expect(summary.understood).toBe(0);
     expect(summary.skipped).toBe(1);
     expect(summary.lastItemId).not.toBeNull();
@@ -166,10 +177,14 @@ describe("runMediaPass", () => {
 
   test("advances the cursor on a gate-refusal SKIP too — the second skip branch", async () => {
     addMediaFile("unreadable.mp4");
+    // Same reason as the two tests above: a second candidate + limit:1 keeps this an interrupted
+    // (not drained) run.
+    addMediaFile("zz-remainder.mp4");
     // capability disabled means resolveLocalMediaPath succeeds but understandArtifact refuses —
     // the OTHER skip branch, distinct from path_outside_roots above.
     const summary = await runMediaPass(
       deps({
+        limit: 1,
         gate: {
           enabled: false,
           capabilityDisabled: false,
@@ -308,5 +323,69 @@ describe("runMediaPass — scratch sweep", () => {
     addMediaFile("a.mp4");
     const summary = await runMediaPass(deps());
     expect(summary.understood).toBe(1);
+  });
+});
+
+describe("runMediaPass — cursor resume", () => {
+  test("resumes from the stored cursor when afterItemId is not explicitly supplied", async () => {
+    addMediaFile("a.mp4");
+    addMediaFile("b.mp4");
+    addMediaFile("c.mp4");
+    const [first] = findCandidates(db, { limit: 1 });
+    if (first === undefined) throw new Error("expected a candidate");
+    // Seed the cursor exactly as an earlier, interrupted run would have left it — WITHOUT
+    // running a pass first, so this isolates the READ half of resumability from the WRITE half
+    // (already covered by the "advances the cursor" tests above).
+    writeCursor(db, "default", { lastItemId: first.itemId, processedCount: 1, nowMs: 5000 });
+
+    const summary = await runMediaPass(deps());
+
+    // Two candidates sort after the seeded cursor — the first is not reprocessed.
+    expect(summary.understood).toBe(2);
+    const understoodFirst = db
+      .query<{ n: number }, [string]>(
+        "SELECT COUNT(*) AS n FROM item WHERE service='nimbus' AND external_id = ?",
+      )
+      .get(understandingExternalId(first.itemId));
+    expect(understoodFirst?.n).toBe(0);
+  });
+
+  test("an explicit afterItemId overrides the stored cursor", async () => {
+    addMediaFile("a.mp4");
+    addMediaFile("b.mp4");
+    addMediaFile("c.mp4");
+    const candidates = findCandidates(db, { limit: 3 });
+    const [first, second] = candidates;
+    if (first === undefined || second === undefined) throw new Error("expected two candidates");
+    // Seed the cursor at the SECOND item. If the caller's explicit afterItemId did not win, this
+    // run would resume from "second" and understand only the third candidate.
+    writeCursor(db, "default", { lastItemId: second.itemId, processedCount: 2, nowMs: 5000 });
+
+    const summary = await runMediaPass(deps({ afterItemId: first.itemId }));
+
+    // afterItemId=first makes both second and third eligible — proof the caller's explicit
+    // value won over the stored (further-along) cursor.
+    expect(summary.understood).toBe(2);
+  });
+
+  test("a drained run clears the cursor, so a subsequent run retries a previously skipped artifact", async () => {
+    addMediaFile("unreadable.mp4");
+    // roots: [] means the single candidate is skipped with path_outside_roots and never
+    // understood — a transient-failure stand-in.
+    const first = await runMediaPass(deps({ roots: [] }));
+    expect(first.understood).toBe(0);
+    expect(first.skipped).toBe(1);
+
+    // Fewer candidates than the limit (1 of 100) means the queue drained — the cursor must be
+    // gone, not merely unread, or the next run would resume PAST the skipped artifact forever.
+    const cursorAfterDrain = db
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM media_pass_cursor")
+      .get();
+    expect(cursorAfterDrain?.n).toBe(0);
+
+    // A second run, now with a working root, retries the same artifact from the top rather than
+    // resuming past it — proof the cursor was actually cleared, not merely left unread.
+    const second = await runMediaPass(deps());
+    expect(second.understood).toBe(1);
   });
 });
