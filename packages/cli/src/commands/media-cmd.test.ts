@@ -40,17 +40,16 @@ describe("parseMediaArgs", () => {
 
   test("rejects an invalid --modality value", () => {
     expect(() => parseMediaArgs(["understand", "--modality", "audio"])).toThrow(
-      /--modality must be "av"/,
+      /--modality must be "image" or "av"/,
     );
   });
 
-  test("refuses --modality image with the reason, rather than running a pass that finds nothing", () => {
-    // `image` is a real modality with a real registry entry, so it parses as a value — but no
-    // vision model ships in this slice, so every image candidate is skipped. Accepting the flag
-    // would print "Understood 0 of 0" and let a user conclude they have no images.
-    expect(() => parseMediaArgs(["understand", "--modality", "image"])).toThrow(
-      /not available yet .* audio and video only/s,
-    );
+  test("parses --modality image (S2 PR 2: image captioning via the local VLM)", () => {
+    // Both modalities are understood as of PR 2 — `image` is no longer refused at the CLI.
+    expect(parseMediaArgs(["understand", "--modality", "image"])).toEqual({
+      kind: "understand",
+      params: { modality: "image" },
+    });
   });
 
   test("parses --since as a number of days", () => {

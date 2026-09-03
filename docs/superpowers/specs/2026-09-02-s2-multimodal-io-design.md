@@ -272,9 +272,14 @@ The resolution is to narrow the rule to what is true, per arm:
 
 - **Images — the rule holds completely.** Bytes go to an Ollama-served VLM as base64 over HTTP.
   Nothing is written, on either the local or the cloud arm.
-- **Local audio/video — no *new* bytes are written.** The already-validated path (§ 5.1) is passed
-  to ffmpeg directly, which also keeps the file seekable (see below). Only the transcoded WAV is
-  new.
+- **Sampled video frames (PR 2, § 15 decision 2) — the rule holds completely too.** Each frame is
+  its own `ffmpeg -ss <t> -frames:v 1 -f image2 -vcodec mjpeg pipe:1` invocation; the single JPEG is
+  read off stdout and handed straight to the VLM. This strengthens the rule rather than merely
+  extending it: "nothing is written on the image path" now covers video frames as well, and the one
+  0600 scratch WAV described below remains the ONLY file this subsystem writes, on any arm.
+- **Local audio/video — no *new* bytes are written beyond that one scratch WAV.** The
+  already-validated path (§ 5.1) is passed to ffmpeg directly, which also keeps the file seekable
+  (see below). Only the transcoded WAV is new; frame extraction (above) adds none.
 - **Cloud audio/video, and every transcode — one gateway-owned ephemeral scratch file**, created
   mode 0600 under a Nimbus-owned directory, deleted in a `finally`, never indexed, never in a
   user-visible location, and never reused as a cache.
@@ -434,9 +439,10 @@ problem (a large recovery pass over an existing index that must survive interrup
 
 - **Discovery**: an item whose `(service, type)` is in `media-source-registry.ts` and which has no
   derived understanding item at the current `understandingVersion`.
-- **GPU contention**: `GpuArbiter` (`llm/gpu-arbiter.ts`, already shipped) is acquired and released
-  around **each individual model call** — per frame and per audio chunk, not per artifact and
-  certainly not per pass. § 8.1 explains why the granularity matters more than it looks.
+- **GPU contention**: `GpuArbiter` (`llm/gpu-arbiter.ts`, already shipped) is acquired **once per
+  ARTIFACT** — one `understandArtifact` call, covering the transcript AND every sampled frame
+  caption on that artifact — never per pass, and, per the amendment below, never re-acquired per
+  frame either. § 8.1 explains why a heartbeat, not the lease's narrowness, is what makes that safe.
 - **Frame sampling is capped.** A 30-minute video holds tens of thousands of frames; understanding
   samples a small fixed maximum (default 8) of uniformly spaced keyframes. The cap is a config
   value, and the brief discloses that a video was sampled rather than watched.
@@ -474,6 +480,16 @@ heartbeat is exactly what distinguishes that case from a slow one.
 
 The interval must be cleared in a `finally`. A live interval outlives the call, and in `bun test`
 that presents as a suite that hangs rather than one that fails.
+
+**Amended by PR 2 (§ 15, decision 3): the lease is per ARTIFACT, not per model call.** The
+reasoning above (per-call leasing needs a heartbeat because one call can be the whole file) is
+still correct, but PR 2 went one step further than this section originally proposed: rather than
+re-acquiring the lease before every frame caption and releasing it after, `understandArtifact`
+takes **one lease with one heartbeat for the whole artifact** — the transcript call AND every
+sampled frame caption share it. Re-acquiring per frame would add a queue round-trip per frame and
+let another caller take the GPU mid-artifact, leaving a half-captioned video whose partial state
+nothing records. The heartbeat is what defuses the idle-eviction hazard either way, so nothing
+about the safety argument above changes — only the granularity at which the lease is held.
 
 ### 8.2 Scheduling
 
@@ -520,11 +536,18 @@ agent hit — `LlmGenerateOptions` has no `tools` field either, which is why
 same answer: a distinct `VlmProvider` with its own decorator. Four decorators for four seams is the
 established shape, not a proliferation.
 
-`ollama-vlm.ts`'s `isAvailable()` probes `/api/tags` and checks that a **vision-capable model is
-actually pulled** — not merely that an Ollama server is answering. A running Ollama with no VLM
-would otherwise pass an availability check and then fail per artifact across a whole pass, and
-"local model unavailable" is a *refusal* condition under § 3.4 step 4, so it must be detected once,
-up front, rather than a few hundred times.
+`ollama-vlm.ts`'s `isAvailable()` checks that a **vision-capable model is actually pulled** — not
+merely that an Ollama server is answering. A running Ollama with no VLM would otherwise pass an
+availability check and then fail per artifact across a whole pass, and "local model unavailable" is
+a *refusal* condition under § 3.4 step 4, so it must be detected once, up front, rather than a few
+hundred times.
+
+**Amended by PR 2 (§ 15, decision 1): the probe is `POST /api/show`, not `/api/tags`.** `/api/tags`
+returns names and `details.families`; inferring vision from name fragments (`llava`, `qwen2-vl`,
+`gemma3`) breaks on every new model and on any custom tag. `/api/show` returns an explicit
+`capabilities` array and answers the real question once, up front, rather than guessing from a
+string. A legacy daemon that predates the `capabilities` field falls back to a `families` check for
+`clip`/`mllama`; when neither says vision, this reports UNAVAILABLE — a refusal, never a guess.
 
 ### 9.3 Do not reintroduce `sharp`
 
@@ -567,6 +590,15 @@ Split across two rule families on purpose:
 - **D27** — two rules: (a) the model-contact primitives (`describeBytes` / `transcribeBytes`) are
   confined to `media-gate.ts` plus their own definitions, no aliased import anywhere else; (b) a
   grant is readable only through `media-grant-store.ts`, so no caller can synthesize one.
+
+  **Amended by PR 2 (§ 15, decision 6): rule (a) as worded above does not match what shipped, and
+  PR 4 must write it against the real shape or it will enforce nothing.** There are no
+  `describeBytes` / `transcribeBytes` free functions. Model contact for vision is a **provider
+  method**, `VlmProvider.describe`, reached through the D22(g)-confined decorator
+  `wrapLedgeredVlm` — egress completeness, not a fresh confinement target. When PR 4 adds the
+  remote arm and I37 becomes reachable, rule (a) needs to confine whatever the ACTUAL remote-contact
+  call site is by then (most likely `VlmProvider.describe` and the STT equivalent, if PR 4 adds
+  one), not the two free-function names this section originally guessed at.
 
 Wiring, docs entry and enforcement test land in the **same commit** — the triple rule. Retiring any
 of it means deleting the row, never leaving drift.
@@ -627,12 +659,21 @@ that is what makes an injected fake silently stand in for a broken wire.
 
 ## 12. Known bounds — documented, not glossed
 
-### 12.1 PR 1 alone does not satisfy Phase 14's Core acceptance criterion
+### 12.1 PR 1 alone does not satisfy Phase 14's Core acceptance criterion — PR 2 does
 
 That criterion requires a `video_understanding` row with a non-empty transcript **and at least one
-frame caption**. Frame captions need the VLM (PR 2) *plus* frame extraction via ffmpeg — a third
-external binary with its own platform-availability story. The criterion is met at **PR 2**, not
-PR 1. Recorded here so the roadmap does not claim it a PR early.
+frame caption**. Frame captions need the VLM (PR 2) *plus* frame extraction via ffmpeg and a
+duration probe via ffprobe — a third external binary with its own platform-availability story. The
+criterion is met at **PR 2**, not PR 1, and PR 2 shipped 2026-09-03. Recorded here so the roadmap
+does not claim it a PR early.
+
+**Amended by PR 2: the criterion is now MET, with a stated bound.** Frame captions are present only
+when a vision model AND a working duration probe are both available on the machine — either one
+missing degrades the artifact to transcript-only, with the absence stated in the row's body rather
+than silently thinner. A machine with neither still gets a `video_understanding` row with a
+non-empty transcript; it simply carries no frame captions, and would not by itself satisfy the
+criterion. The criterion is met when both dependencies are present, which is the common case on a
+machine that opted into `[multimodal] enabled` and pulled a vision model, not universally.
 
 ### 12.2 Diarization is scoped out, not deferred quietly
 
@@ -727,3 +768,53 @@ dropped without unpicking anything — the property that let the screen lane be 
   (NOT `PROSE_HEAVY_TYPES`; § 4). `routing.test.ts` already pins the two sets disjoint, so a
   mistake here fails an existing test rather than shipping.
 - `docs/architecture.md`, `docs/cli-reference.md`, `docs/CHANGELOG.md`.
+
+---
+
+## 15. Amendments (PR 2, 2026-09-03)
+
+PR 2's implementation plan made six deliberate, recorded deviations from this spec's first draft.
+Each is a considered choice, not an oversight — this section records what changed and why, and the
+sections above have been corrected in place to match rather than left to disagree with this one.
+
+1. **Vision capability is detected via `POST /api/show`, not by matching model names in
+   `/api/tags`.** § 9.2 said `isAvailable()` probes `/api/tags` and confirms a vision-capable model
+   is pulled by name. `/api/tags` returns names and `details.families` only; inferring vision from
+   name fragments (`llava`, `qwen2-vl`, `gemma3`) breaks on every new model and on any custom tag.
+   `/api/show` returns an explicit `capabilities` array and answers the real question once, up
+   front, instead of guessing from a string. A legacy Ollama with no `capabilities` field falls back
+   to a `families` check for `clip`/`mllama`; when neither is present the provider reports
+   unavailable, which the gate turns into a `no_local_model` refusal rather than a guess.
+
+2. **Frame bytes never touch disk.** § 5.4 anticipated frame extraction writing scratch files.
+   Instead each frame is a separate `ffmpeg -ss <t> -i <in> -frames:v 1 -f image2 -vcodec mjpeg
+   pipe:1` invocation whose single JPEG is read off stdout. One spawn per frame (8 by default)
+   against a fast input seek is cheap next to the VLM call that follows. This **strengthens**
+   § 5.4's disk rule rather than amending it: "nothing is written on the image path" now also
+   covers video frames, and the one 0600 scratch WAV for audio transcode remains the only file the
+   subsystem writes.
+
+3. **One GPU lease per artifact, not per frame.** § 8 worded the lease as "per frame and per audio
+   chunk". PR 1 already ships one `acquire()` + heartbeat per `understandArtifact` call, and the
+   heartbeat — not the lease's narrowness — is what defuses `GpuArbiter`'s idle-eviction hazard
+   (§ 8.1). Re-acquiring per frame would add N queue round-trips per video and let another caller
+   take the GPU mid-artifact, leaving a half-captioned video whose partial state nothing records.
+   The existing shape is kept and § 8's wording is corrected to match.
+
+4. **`UNDERSTANDING_VERSION` goes to `2`.** `media-discovery.ts` re-offers any row whose
+   `metadata.understandingVersion` is below the current constant, so the bump makes every
+   already-transcribed video re-run and gain captions. Correct per § 4.1 (one stable row per
+   artifact, version advances in place) and cheap in practice: PR 1 is default-off and one day old
+   at PR 2's ship date.
+
+5. **Frame captions are composed BEFORE the transcript in the body.** `bodyCapForItemType` clamps
+   `video_understanding` at `BODY_MAX_PROSE` (16,384) and `item-store.ts` sets `body_complete = 0`
+   automatically when the clamp bites. Captions-first means a long transcript loses its tail rather
+   than the captions vanishing, and the truncation is already disclosed by `body_complete`.
+
+6. **PR 4's static rule D27(a) must be re-derived, not copied.** § 10 wrote D27(a) as confining
+   free functions named `describeBytes` / `transcribeBytes` to `media-gate.ts`. PR 2's model
+   contact is a **provider method** (`VlmProvider.describe`) reached through a confined decorator
+   (`wrapLedgeredVlm`, D22(g)), so a rule scanning for those two free-function identifiers would
+   pass over the real shape and enforce nothing. Recorded here so PR 4 writes D27(a) against what
+   actually exists by then.

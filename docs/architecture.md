@@ -1747,6 +1747,49 @@ const streamReq: JSONRPCRequest = {
 // `THIS_BINARY_COVERAGE.browser` is `"per-run"`, raised from `"none"` in the same commit as that
 // caller, appending one row per (destination origin, verdict) BEFORE each request proceeds.
 // `THIS_BINARY_COVERAGE.browser: "none"`, not `per-run`, until a driver gives it something to wrap.
+
+// --- Multimodal I/O (Spine S2; local media understanding, V58 `media_pass_cursor`) -------------
+// media.understand — the ONLY transport into the pass (`multimodal/media-pass.ts`). Owner-invoked,
+//   budgeted, resumable, shaped after `nimbus index rebody`. Reads local files and spawns
+//   subprocesses (whisper-cli, ffmpeg, ffprobe), so — like `exec.*` and `computer.*` — the WHOLE
+//   `media` namespace is FORBIDDEN_OVER_LAN (I5) and absent from the Tauri `ALLOWED_METHODS` (I7).
+//   Refuses BEFORE any work when `[multimodal] enabled` is false, OR when the caller's
+//   `mediaRpcCtx` is absent (`ctx.options.mediaRpcCtx.enforced.capabilitiesDisabled` lists
+//   `multimodal_input` — a real `AI_V2_CAPABILITIES` member, I22): an absent accessor is a
+//   REFUSAL, never a silent `false`, which is what made this capability's org-policy lockoff inert
+//   through PR 1. `roots`/`enabled`/`capabilityDisabled` are all re-read on every call, so a
+//   `[[filesystem.roots]]` edit, a `[multimodal]` edit, or a newly installed org policy applies
+//   without a gateway restart.
+//
+// `multimodal/` shape (PR 1, 2026-09-02; vision arm PR 2, 2026-09-03): `media-gate.ts` is the one
+//   chokepoint every `LocalUnderstander` implementation goes through — it owns the per-artifact
+//   `GpuArbiter` lease + heartbeat (§ 8.1 of the design spec) and the local-vs-remote decision
+//   (I37 territory, not yet reachable — no remote arm ships before PR 4). `multimodal-config.ts`
+//   is the whole `[multimodal]` section reader (standalone, mirroring
+//   `connectors/openapi-indexer-config.ts` rather than routing through `nimbus-toml.ts`) — FOUR
+//   keys, all DEFAULT OFF or defaulted: `enabled` (bool, default false), `vlm_base_url` (default
+//   `http://127.0.0.1:11434`), `vlm_model` (default `qwen2.5vl:7b` — a tag the USER must have
+//   pulled; nothing here downloads a model), and `max_frames` (default 8, clamped 1–64). `stt/`
+//   (PR 1) resolves and spawns `whisper-cli`/`ffmpeg` for local transcription. `vlm/` (PR 2) is the
+//   new vision seam: `vlm-types.ts`'s `VlmProvider` is DELIBERATELY NOT a widened `LlmProvider` —
+//   `LlmGenerateOptions` is `{ task, prompt: string, ... }` with no image field, and widening it
+//   would push image bytes through `wrapLedgeredProvider` and every text caller, the same fork
+//   `wrapLedgeredMastraModel` hit over `tools`. `ollama-vlm.ts`'s `createOllamaVlm` is the one real
+//   provider: `isAvailable()` probes `POST /api/show` for a `capabilities` array containing
+//   `"vision"` (a `families`/`clip`/`mllama` fallback covers legacy daemons; neither present is a
+//   REFUSAL — `no_local_model` — never a guess), never a name match over `/api/tags`. `frames/`
+//   (PR 2) holds `frame-extract.ts` (one `ffmpeg -ss <t> -frames:v 1` spawn per sampled frame, JPEG
+//   bytes read off stdout — no scratch file, strengthening PR 1's disk rule rather than amending
+//   it) and `av-understander.ts` (the composite `LocalUnderstander`: transcript via the PR 1 STT
+//   path, then up to `max_frames` captions via the VLM, transcript-only with a stated reason when
+//   the VLM or `ffprobe` is unavailable — never a silent thinner row).
+//
+// Egress: vision's own I29 `model`-class decorator, `egress/vlm-egress.ts`'s `wrapLedgeredVlm`
+//   (static D22(g)), ships ahead of any remote `VlmProvider` in production — the shipped Ollama
+//   adapter is local BY DEFAULT (`isLocal` derived from its resolved base URL, I34), not by
+//   construction, so a caller pointing `vlm_base_url` off-box gets a WRAPPED provider that does
+//   append. Transcription stays local-only in this slice — no `SttProvider` routing, no decorator,
+//   by construction rather than by check, mirroring `LOCAL_ONLY_SYNC_SERVICES`.
 ```
 
 ### AbortController scope in `engine.cancelStream`
@@ -1941,6 +1984,11 @@ nimbus/
 │   │       ├── chatops/         ← Bidirectional Slack/Teams @nimbus bot (I23) (Phase 6)
 │   │       ├── tribal/          ← Repeat-question detection + owner-HITL KB capture (I25) (Phase 6)
 │   │       ├── share/           ← Outbound share gate (I27), keypair, redaction, recipes (Phase 6)
+│   │       ├── multimodal/      ← Local media understanding (S2): media-gate.ts (the chokepoint
+│   │       │                      every understander goes through), multimodal-config.ts (the
+│   │       │                      [multimodal] section), vlm/ (VlmProvider seam + the Ollama
+│   │       │                      adapter, PR 2), frames/ (frame extraction + the audio/video
+│   │       │                      composite understander, PR 2), stt/ (whisper-cli + ffmpeg, PR 1)
 │   │       └── ipc/            ← JSON-RPC 2.0 server, consent channel,
 │   │                              http-server.ts (read-only HTTP API, SQLITE_OPEN_READONLY),
 │   │                              metrics-server.ts (Prometheus endpoint, localhost only),

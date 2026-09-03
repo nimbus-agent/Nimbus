@@ -1311,9 +1311,12 @@ Only `false` carries meaning, matching `nimbus exec`'s lockoff.
 
 ### `nimbus media understand`
 
-Transcribe local audio and video already in the index, and store the transcript as a
-searchable derived item. **Local models only** — there is no remote transcription tier,
-so the pass refuses rather than reaching for the cloud when no local model is available.
+Transcribe local audio/video already in the index, caption local still images, and — as
+of PR 2 (2026-09-03) — caption a small number of uniformly sampled frames from each video
+alongside its transcript. Output is stored as searchable derived items
+(`nimbus:video_understanding`, `nimbus:image_understanding`). **Local models only** — both
+the STT and the vision model run on this machine; there is no remote tier for either, so
+the pass refuses rather than reaching for the cloud when no local model is available.
 Schema **V58**.
 
 **Off by default, twice.** Both switches must be set:
@@ -1330,13 +1333,27 @@ media_index = true        # DEFAULT false — per root
 `media_index` is per-root and separate on purpose: enabling the capability should not
 silently start walking every configured root for large binaries.
 
-**Requires two external binaries on PATH:** `ffmpeg` (transcode) and `whisper-cli`.
-Override with `NIMBUS_FFMPEG_PATH` / `NIMBUS_WHISPER_PATH`.
+**The whole `[multimodal]` section — four keys, all optional:**
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | The capability kill switch, above. |
+| `vlm_base_url` | `http://127.0.0.1:11434` | The Ollama base URL the vision model is served from. Accepts a remote host — pointing this off-box makes the provider non-local (I34) and its calls append to the egress ledger. |
+| `vlm_model` | `qwen2.5vl:7b` | The Ollama model tag to caption with. **You must pull this yourself** (`ollama pull qwen2.5vl:7b` or your own tag) — nothing in this pass downloads a model. A daemon that is up but has not pulled a vision-capable model reports unavailable, and the pass refuses images/frames with `no_local_model` rather than guessing. |
+| `max_frames` | `8` | The maximum keyframes sampled per video, clamped to 1–64. Actual sampling is also density-capped at one frame per 2 seconds of video, so a short clip samples fewer than the maximum. |
+
+**Requires three external binaries on PATH:** `ffmpeg` (transcode + frame extraction) and
+`whisper-cli` (transcription) are required for audio/video; `ffprobe` (video duration,
+needed to place sampled frames) is required for frame captions specifically — a video
+still transcribes without it, just with no frame captions and the absence stated in the
+row's body. Override with `NIMBUS_FFMPEG_PATH` / `NIMBUS_WHISPER_PATH` /
+`NIMBUS_FFPROBE_PATH`.
 
 ```bash
 nimbus media understand                        # up to 50 candidates
 nimbus media understand --limit 10             # bound the run
 nimbus media understand --service filesystem   # one service
+nimbus media understand --modality image       # still images only
 nimbus media understand --modality av          # audio/video only
 nimbus media understand --since 30             # modified within 30 days
 nimbus media understand --json                 # machine-readable summary
@@ -1344,7 +1361,9 @@ nimbus media understand --json                 # machine-readable summary
 
 **Resumable.** Progress is a cursor in `media_pass_cursor`, advanced on skips as well as
 successes, so an interrupted run resumes past the artifact it stopped on rather than
-retrying it forever.
+retrying it forever. The understanding-format version bumped to 2 with PR 2, so a video
+already transcribed under PR 1 is re-offered once and gains frame captions on its next
+pass.
 
 **The summary reports skips by reason, not just a total:**
 
@@ -1356,19 +1375,28 @@ Skipped:
 ```
 
 A bare count would not tell you whether the other 66 were absent, too large, or refused.
+The same discipline applies inside a `video_understanding` row's body: a caption count
+("6 of 8 sampled frames captioned") and any reason frame captions are entirely absent
+("no vision model was available", "the video duration could not be determined") are
+stated in the text itself, not only in metadata — the text is what an agent's context
+actually sees.
 
-**What it does NOT do in this slice:** images (there is no vision model — image candidates
-are skipped), cloud-hosted media (local files only), and speaker diarization
-(`whisper-cli` cannot do it). Transcripts are embedded **locally** even when a remote
-embedder is configured, so the text extracted from a private recording is never sent to a
-remote embedding service.
+**What it does NOT do in this slice:** no dedicated OCR engine (a VLM's text extraction on
+a dense screenshot is worse than a purpose-built OCR pass), cloud-hosted media (local
+files only — PR 3), and speaker diarization (`whisper-cli` cannot do it). A sampled video
+is not a watched video: anything happening only between sampled frames goes undescribed,
+and a caption is a model's guess, not an observation — nothing here stores a confidence
+number. Transcripts and captions are embedded **locally** even when a remote embedder is
+configured, so text and image descriptions extracted from a private recording are never
+sent to a remote embedding service.
 
 **Not reachable over LAN.** The whole `media` namespace is denied to paired peers,
 alongside `exec` and `computer` — the command reads local files and spawns subprocesses.
 
-**Known bound:** org policy does not yet gate this capability. `[policy.capabilities.ai_v2]`
-lists `multimodal_input`, but no policy accessor is wired to this path, so setting it has
-no effect today. The `[multimodal] enabled` switch above is the only real control.
+**Org policy gates this capability.** `[policy.capabilities.ai_v2]`'s `multimodal_input`
+flag is read live on every call (invariant I22); setting it disables `media.understand`
+even when `[multimodal] enabled = true` locally, and the command also refuses fail-closed
+if the policy accessor itself is unavailable rather than silently proceeding.
 
 ---
 
