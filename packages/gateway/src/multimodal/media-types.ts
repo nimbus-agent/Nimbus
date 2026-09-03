@@ -72,8 +72,19 @@ export interface UnderstandDetail {
 /**
  * Bumped when a better model or a changed prompt means existing understanding should be redone.
  *
+ * V2 (PR 2): `video_understanding` now carries sampled frame captions alongside the transcript,
+ * and `image_understanding` rows exist for the first time. `media-discovery.ts` re-offers any row
+ * below this number, so the bump is what makes a PR 1 transcript gain captions on the next pass.
+ *
  * It lives in item METADATA and never in an `externalId`: `item` is UNIQUE(service, external_id),
  * so a version in the id would create a second row per artifact per version rather than replacing
  * the first — duplicate FTS hits and duplicate agent context (spec § 4.1).
  */
-export const UNDERSTANDING_VERSION = 1;
+export const UNDERSTANDING_VERSION = 2;
+
+/**
+ * The `AI_V2_CAPABILITIES` member (`policy/types.ts`) an org policy disables to turn this
+ * capability off gateway-wide (invariant I22). Exported so a test can pin it against that frozen
+ * list rather than repeating the string — a typo here would read as "never disabled".
+ */
+export const MULTIMODAL_CAPABILITY = "multimodal_input";

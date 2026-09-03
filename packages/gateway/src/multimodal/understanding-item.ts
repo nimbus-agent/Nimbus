@@ -70,6 +70,12 @@ export function buildUnderstandingRow(
       isLocal: outcome.isLocal,
       sourceMime: candidate.sourceMime,
       sourceBytes: candidate.sourceBytes,
+      // Conditional spread, not `?? 0`: writing a zero for an artifact that never reached sampling
+      // would be indistinguishable from one whose every frame failed.
+      ...(outcome.framesSampled === undefined ? {} : { framesSampled: outcome.framesSampled }),
+      ...(outcome.framesCaptioned === undefined
+        ? {}
+        : { framesCaptioned: outcome.framesCaptioned }),
     },
   };
 }

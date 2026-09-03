@@ -65,11 +65,34 @@ describe("buildUnderstandingRow", () => {
     expect(row.metadata["modelDerived"]).toBe(true);
     expect(row.metadata["model"]).toBe("whisper-base");
     expect(row.metadata["isLocal"]).toBe(true);
-    expect(row.metadata["understandingVersion"]).toBe(1);
+    expect(row.metadata["understandingVersion"]).toBe(2);
     expect(row.metadata["derivedFrom"]).toBe("filesystem:/m/standup.mp4");
     expect(row.metadata["sourceMime"]).toBe("video/mp4");
     expect(row.metadata["sourceBytes"]).toBe(4096);
   });
+});
+
+test("understandingVersion is 2, so PR 1 rows are re-offered for captioning", () => {
+  const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 1_700_000_000_000);
+  expect(row.metadata["understandingVersion"]).toBe(2);
+});
+
+test("frame sampling is recorded in metadata when the outcome carries it", () => {
+  const row = buildUnderstandingRow(
+    CANDIDATE,
+    { ...OUTCOME, framesSampled: 8, framesCaptioned: 6 },
+    1_700_000_000_000,
+  );
+  expect(row.metadata["framesSampled"]).toBe(8);
+  expect(row.metadata["framesCaptioned"]).toBe(6);
+});
+
+test("an outcome with no frame data omits the keys rather than writing zeros", () => {
+  const image: MediaCandidate = { ...CANDIDATE, modality: "image", type: "media_image" };
+  const row = buildUnderstandingRow(image, OUTCOME, 1_700_000_000_000);
+  expect(row.type).toBe("image_understanding");
+  // A zero would be indistinguishable from a video whose every frame failed.
+  expect("framesSampled" in row.metadata).toBe(false);
 });
 
 describe("writeUnderstanding", () => {

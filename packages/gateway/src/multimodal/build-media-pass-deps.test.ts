@@ -1,7 +1,7 @@
 // packages/gateway/src/multimodal/build-media-pass-deps.test.ts
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
@@ -32,7 +32,7 @@ describe("buildMediaPassDeps", () => {
     expect(deps.roots).toEqual(["/a", "/b"]);
   });
 
-  test("supplies an AV understander and none for image — PR 1 has no VLM", () => {
+  test("understanderFor resolves BOTH modalities now that a VLM exists", () => {
     const deps = buildMediaPassDeps({
       db: db(),
       roots: [],
@@ -41,7 +41,18 @@ describe("buildMediaPassDeps", () => {
       scratchDir: "/scratch",
     });
     expect(deps.gate.understanderFor("av")).toBeDefined();
-    expect(deps.gate.understanderFor("image")).toBeUndefined();
+    expect(deps.gate.understanderFor("image")).toBeDefined();
+  });
+
+  test("the image understander is the LEDGERED provider, not a bare one", () => {
+    // A loopback default makes the wrapper an identity, so this asserts the WIRING is present
+    // rather than the row: D22(g) is what proves the wrap cannot be dropped.
+    const src = readFileSync("packages/gateway/src/multimodal/build-media-pass-deps.ts", "utf8");
+    const wrapAt = src.indexOf("wrapLedgeredVlm(");
+    const ctorAt = src.indexOf("createOllamaVlm(");
+    expect(wrapAt).toBeGreaterThan(-1);
+    // The constructor call is textually INSIDE the wrapper's argument list.
+    expect(ctorAt).toBeGreaterThan(wrapAt);
   });
 
   test("the AV understander declares itself LOCAL", () => {

@@ -5,19 +5,29 @@
  * be tested without a whisper binary, an arbiter or a config. This is the one place that knows
  * what the real implementations are.
  *
- * `understanderFor("image")` returns undefined DELIBERATELY: PR 1 ships no VLM, so an image candidate is
- * skipped as `unresolvable_modality` rather than mis-handed to the STT path. PR 2 adds that arm.
+ * `understanderFor` resolves BOTH modalities: PR 2 adds the vision arm alongside PR 1's transcript
+ * arm, so an image or video candidate no longer falls through to `unresolvable_modality` here.
  */
 import type { Database } from "bun:sqlite";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
+import { wrapLedgeredVlm } from "../egress/vlm-egress.ts";
 import { GpuArbiter } from "../llm/gpu-arbiter.ts";
 import { WhisperSttProvider } from "../voice/stt.ts";
+import { createAvUnderstander } from "./frames/av-understander.ts";
+import { resolveFfprobeBin } from "./frames/frame-extract.ts";
 import type { LocalUnderstander } from "./media-gate.ts";
 import type { MediaPassDeps } from "./media-pass.ts";
 import type { MediaModality } from "./media-types.ts";
-import { loadMultimodalConfig } from "./multimodal-config.ts";
+import {
+  DEFAULT_MAX_FRAMES,
+  DEFAULT_VLM_BASE_URL,
+  DEFAULT_VLM_MODEL,
+  loadMultimodalConfig,
+} from "./multimodal-config.ts";
 import { resolveFfmpegBin } from "./stt/ffmpeg-bin.ts";
 import { createLongFormStt } from "./stt/long-form-stt.ts";
+import { createImageUnderstander } from "./vlm/image-understander.ts";
+import { createOllamaVlm } from "./vlm/ollama-vlm.ts";
 
 export interface BuildMediaPassDepsInput {
   readonly db: Database;
@@ -32,6 +42,12 @@ export interface BuildMediaPassDepsInput {
   readonly ffmpegBin?: string;
   /** Wall-clock bound on the whisper call itself. See {@link DEFAULT_TRANSCRIBE_TIMEOUT_MS}. */
   readonly transcribeTimeoutMs?: number;
+  readonly vlmBaseUrl?: string;
+  readonly vlmModel?: string;
+  readonly maxFrames?: number;
+  readonly ffprobeBin?: string;
+  /** Injected only by tests; production uses the global `fetch`. */
+  readonly vlmFetch?: typeof fetch;
 }
 
 /** 250 MB (spec § 5.3 `max_media_bytes`). */
@@ -105,6 +121,27 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
 
   const arbiter = input.gpu ?? new GpuArbiter();
 
+  // THE ONLY production site that may name `createOllamaVlm` or `wrapLedgeredVlm` (static rule
+  // D22(g)). The constructor sits INSIDE the wrapper's argument list so an unwrapped provider is
+  // not representable here: the audit checks that association, not merely that both names appear.
+  const vlm = wrapLedgeredVlm(
+    input.db,
+    createOllamaVlm({
+      baseUrl: input.vlmBaseUrl ?? DEFAULT_VLM_BASE_URL,
+      model: input.vlmModel ?? DEFAULT_VLM_MODEL,
+      ...(input.vlmFetch === undefined ? {} : { fetchImpl: input.vlmFetch }),
+    }),
+  );
+
+  const imageUnderstander = createImageUnderstander({ vlm });
+  const avUnderstander = createAvUnderstander({
+    stt,
+    vlm,
+    maxFrames: input.maxFrames ?? DEFAULT_MAX_FRAMES,
+    ffmpegBin: resolveFfmpegBin(input.ffmpegBin),
+    ffprobeBin: resolveFfprobeBin(input.ffprobeBin),
+  });
+
   return {
     db: input.db,
     roots: input.roots,
@@ -116,7 +153,7 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
       enabled: input.enabled,
       capabilityDisabled: input.capabilityDisabled,
       understanderFor: (modality: MediaModality): LocalUnderstander | undefined =>
-        modality === "av" ? stt : undefined,
+        modality === "av" ? avUnderstander : imageUnderstander,
       gpu: {
         acquire: (id: string) => arbiter.acquire(id),
         // Load-bearing: a multi-minute transcription without a heartbeat is evicted by the
