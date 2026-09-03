@@ -53,13 +53,13 @@ function gate(isLocal: boolean, onCall: () => void): MediaGateDeps {
   return {
     enabled: true,
     capabilityDisabled: false,
-    sttFor: () => ({
+    understanderFor: () => ({
       isLocal,
       model: isLocal ? "whisper-base" : "remote-stt",
       isAvailable: async () => true,
       understand: async () => {
         onCall();
-        return "transcript";
+        return { text: "transcript" };
       },
     }),
     gpu: { acquire: async () => () => undefined, touch: () => undefined },
