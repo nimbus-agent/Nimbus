@@ -33,13 +33,18 @@ describe("loadMultimodalConfig", () => {
       [
         "[multimodal]",
         "enabled = true # on locally",
-        'vlm_base_url = "http://127.0.0.1:11434"',
+        // Deliberately non-loopback and distinct from DEFAULT_VLM_BASE_URL: proves the key
+        // is actually read (not just defaulted through), and documents that a remote VLM host
+        // is accepted here — the later locality invariant derives isLocal from this resolved
+        // URL, never from the vendor/model name.
+        'vlm_base_url = "http://gpu-box.lan:11434"',
         'vlm_model = "qwen2.5vl:7b"',
         "max_frames = 4",
       ].join("\n"),
     );
     const cfg = loadMultimodalConfig(dir);
     expect(cfg.enabled).toBe(true);
+    expect(cfg.vlmBaseUrl).toBe("http://gpu-box.lan:11434");
     expect(cfg.vlmModel).toBe("qwen2.5vl:7b");
     expect(cfg.maxFrames).toBe(4);
   });
@@ -62,5 +67,16 @@ describe("loadMultimodalConfig", () => {
   test("a malformed file reads as OFF, never as on", () => {
     const dir = withToml("[multimodal\nenabled = true\n");
     expect(loadMultimodalConfig(dir).enabled).toBe(false);
+  });
+
+  test("a configDir with no nimbus.toml at all is OFF with defaults", () => {
+    // No writeFileSync here, deliberately: an empty dir exercises the
+    // `!existsSync(tomlPath)` branch, distinct from every other test's withToml-created file.
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-cfg-"));
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
+    expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
+    expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
   });
 });
