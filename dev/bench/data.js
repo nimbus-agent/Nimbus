@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788460544707,
+  "lastUpdate": 1788462220996,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1cb4e63123e762959b9009df37b5b5c48d442f5d",
-          "message": "refactor(dedup): big-PR duplication reduction — 10 clusters + coverage-infra fix + gate ratchet (#688)\n\n## Summary\n\nOne-big-PR continuation of the jscpd duplication-reduction program.\nExtracts 10 high-leverage duplicate clusters into the correct home per\ndependency rules, fixes a coverage-instrumentation gap, and ratchets the\nCI duplication gate.\n\n**Strict `bunx jscpd packages` (min-lines 5 / threshold): 4.83% →\n4.41%** (568 clones, ~550 dup-lines removed). Program-wide: 5.51% (Stage\nA start) → 4.41%.\n\n> **Scope note (deliberate):** the standing target is **< 3%**, but the\nresidual is dominated by (a) parts deferred for behavior-fidelity and\n(b) connector-template parallelism the project already treats as\nintentional (Sonar-CPD-excluded), plus one documented un-dedupable twin\n(`gateway-process` ↔ `gw-state-helpers`). Reaching < 3% requires\nwholesale connector-template restructuring — a separate future project.\nThis PR therefore **ratchets** the gate at the achieved strict % rather\nthan tightening to the not-yet-met < 3%.\n\n## What landed\n\n**Wave 0 — coverage-infra fix:** `scripts/coverage/instrument-scope.ts`\nnever instrumented `mcp-connectors/shared/` (regex required a `/src/`\nsegment), so shared-helper coverage reported 0% to SonarCloud — the gate\nthat reddened #678. One-line fix mirroring the sibling `GHA_SRC`.\n\n**10 dedup clusters (pure dedup, zero behavior change — every existing\nconnector/sync/command test stays green unedited):**\n\n| Cluster | Extraction | Home |\n| --- | --- | --- |\n| C1 | identical agent-brief types | `@nimbus-dev/sdk` |\n| C2 | gateway email-mapping `clamp`/`parseDateMs` | gateway `_lib` |\n| C3 | CLI-shell single-pass sync (cloud-logging, vertex-ai) | gateway\n`_lib` |\n| C3b | per-app build-poll sync (bitrise, codemagic, testflight) |\ngateway `_lib` |\n| C4 | cli `awaitAgentBrief`/`renderAgentBrief` + flag-parsing | cli\n`lib` |\n| C5 | federation consent gate-commons + `auth` string-helper | gateway\n`federation/_lib` (I17/D13-safe) |\n| C6 | IMAP/JMAP email tool-kit (imap, protonmail, fastmail) |\n`mcp-connectors/shared/` |\n| C7 | REST fetch helper (github, github-actions, gmail, outlook) |\n`mcp-connectors/shared/` |\n| C8 | data-profile parsing (gateway↔mcp) | `@nimbus-dev/sdk` |\n| C9 | fastmail JMAP request/response parsing (~88L, largest pair) |\n`@nimbus-dev/sdk` |\n| C10 | flux-cd + storybook parsing | `@nimbus-dev/sdk` |\n\n**Gate ratchet:** CI `pr-quality-duplication` now runs `bunx jscpd\npackages` (reads `.jscpd.json` — min-lines 5, so local == CI), threshold\nratcheted `3 → 4.5` (catches regressions; stricter than the prior\nmin-lines-10/threshold-5 gate; lowered as further dedup lands).\n\n## Deferred (behavior-fidelity / no-force-fit — documented, not lost)\ncloudwatch/sagemaker/athena sync (async per-item enrichment breaks\nbyte-accounting); onedrive/gitlab REST (divergent auth); the\nimap/protonmail server `*Client` class bodies (different interfaces);\ngoogle-meet/photos sync (GET-param vs POST-body); localdb\n`collectSqlFiles` (file I/O).\n\n## Verification\n- Per-cluster TDD with a fresh implementer + reviewer gate each (9\ncluster reviews + a whole-branch integration review = **SHIP**).\n- I17/D13 independently verified (static audit exit 0,\nsecurity-invariants 83 pass, `gate-commons` imports no\n`item-list-query`).\n- SDK purity verified (no fs/network/process in hoisted modules; I/O\nstays in callers). No `any`. No new jscpd ignores. Dep rules intact (no\nsdk→gateway/cli; mcp→sdk only).\n- Strict email-tsconfig tsc loop green for every `shared/` change; full\n`bun run typecheck` clean; biome clean.\n- Coverage-floor (Docker-Linux): the one real regression\n(`data-profile-mapping.ts` branch, from C8) fixed with a co-located\ntest; remaining floor warnings are the known false-local I/O-shell\nfiles.\n- Docs gates (markdownlint + lychee) green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Consolidated shared CLI agent utilities for consistent brief handling\nand error reporting.\n* Added shared data-profiling and JMAP/email connector libraries to\nreduce duplication.\n\n* **Refactor**\n* Simplified CLI commands by moving common helpers to shared libraries.\n  * Reorganized connector sync implementations to use reusable patterns.\n* Migrated core type definitions to SDK for consistency across packages.\n\n* **Documentation**\n* Added comprehensive deduplication initiative plan and design\nspecifications.\n\n* **Tests**\n* Added extensive test coverage for new shared utilities and CLI\nbehaviors.\n\n* **Chores**\n  * Updated CI duplication scanning to use centralized configuration.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-18T12:56:31+03:00",
-          "tree_id": "4c94bcc770db56dcf711404a6d5607783bc81f68",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1cb4e63123e762959b9009df37b5b5c48d442f5d"
-        },
-        "date": 1781777425378,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.8316753499941,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 301.81688375000596,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 331.8031883499945,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d1900c6e5a679cf520053f33fd02e7fbbad280b4",
+          "message": "fix(sonar): specific matchers and named decisions, minus two arity assertions (#1436)\n\nThird Sonar pass: 17 S5906 assertion findings and 3 S3358 nested-ternary\nfindings. Takes this repo from 52 open to roughly 32.\n\n## Assertions\n\n`expect(x.length).toBe(n)` becomes `toHaveLength(n)`, plus one\n`toBe(null)` to\n`toBeNull()`. Not cosmetic: on failure `toHaveLength` prints the\ncollection,\nwhere the old form prints two integers and leaves you working out which\narray\nit was.\n\n## The two left alone\n\nTwo of the nineteen are untouched, and they are why this was not a blind\nrewrite. `classifyTerminalAction.length` in `cu-classify.test.ts` and\n`security-invariants.test.ts` is **not a collection length — it is\nfunction\narity**. The comment above one reads:\n\n> provable by SIGNATURE: the function takes ONE parameter, so a\nmodel-supplied\n> description cannot even be passed to it, let alone read. I3\ntransplanted,\n> enforced by arity.\n\nThat is the I35 property those tests exist to pin.\n`expect(classifyTerminalAction).toHaveLength(1)` is valid and would\nsatisfy the\nrule, but it reads as \"this function has one element\" and buries what is\nbeing\nproven. The suggestion improves the failure report and degrades the\nmeaning.\n\n## Named decisions\n\nThe three ternary changes name a decision rather than restructuring\nlogic:\n\n- `cu-gate.ts` — the mid-flight termination reason is now\n`policyRefusalReason`.\nThat string is what the audit row and the owner both see, and its arms\nare\nORDERED: local config, then org policy, then the lane. Guarded returns\nput\n  that ordering into the shape of the function.\n\n  Typing it turned up something worth keeping. My first version took\n`CuGateDeps` and failed to compile: the call site only holds `CuRunDeps`\n—\nthe I35 split that keeps lane construction out of the deps the\nmodel-facing\n  tool layer holds. The helper takes the narrower type and records why.\n\n- `why.ts` — three-arm subject resolution becomes `resolveArm`, with the\nordering documented as load-bearing: PR before item before the ref\nfallback,\n  so the fallback is genuinely a fallback and not a fourth case.\n\n- `cu-actuate.ts` — a ternary inside a template literal inside a\nternary; the\n  truncation suffix is a named const.\n\n## Not done\n\nThe remaining four S3358 findings are chained dispatch conditionals\nwhere the\n`const` binding is worth keeping and an `if`/`else` would cost it. They\nwant the\nsame extract-and-name treatment rather than a mechanical rewrite, and\ndeserve a\npass that can give each one that.\n\n## Verification\n\n`preflight:fast` 33/33, including the whole-repo test run.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01GZCGCkVMD9JaKuiKvqRdAb\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Refactor**\n- Improved internal handling of input resolution, policy termination\nmessages, and terminal output formatting.\n  - Existing behavior remains unchanged.\n\n- **Tests**\n- Standardized collection-size assertions across gateway, ChatOps,\nbrowser, connector, egress, IPC, and security test coverage.\n- Preserved existing test expectations while improving assertion\nconsistency and readability.\n- Updated formatting in browser observation tests without changing\ncoverage or behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-03T21:51:47+03:00",
+          "tree_id": "aded73d12af7eb0d734cda415e1d82faeb20908a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d1900c6e5a679cf520053f33fd02e7fbbad280b4"
+        },
+        "date": 1788462218260,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 316.27652569999884,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 315.5627446499966,
             "unit": "ms"
           }
         ]
