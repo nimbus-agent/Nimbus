@@ -24,7 +24,7 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
 ### 2.1 Production Connector Sync Wiring Missing in Task 4 (`createFilesystemV2Syncable`)
 
 * **Context:** In **Task 4**, `collectMediaFiles` and `upsertMediaFiles` are implemented and tested against in-memory databases in `filesystem-v2-media.test.ts`.
-* **Issue:** In [`packages/gateway/src/connectors/filesystem-v2-sync.ts`](file:///C:/gitrep/Nimbus/packages/gateway/src/connectors/filesystem-v2-sync.ts#L600-L625), `createFilesystemV2Syncable.sync()` iterates over configured filesystem roots and invokes sync operations for `gitAware`, `dependencyGraph`, and `codeIndex`. However:
+* **Issue:** In [`packages/gateway/src/connectors/filesystem-v2-sync.ts`](../../../packages/gateway/src/connectors/filesystem-v2-sync.ts), `createFilesystemV2Syncable.sync()` iterates over configured filesystem roots and invokes sync operations for `gitAware`, `dependencyGraph`, and `codeIndex`. However:
   1. `collectMediaFiles` / `upsertMediaFiles` is **never wired into `createFilesystemV2Syncable.sync()`** in Task 4.
   2. `upsertMediaFiles` is signature-typed with `db: Database`, whereas `sync()` operates through `ctx: SyncContext` (`ctx.upsertItem(...)`), which does not expose the raw `db` handle (enforcing D24).
   3. Consequently, running `nimbus sync` in production will never index media files into the `item` table, causing `findCandidates` in `nimbus media understand` to return 0 candidates on real user databases.
@@ -44,7 +44,7 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
   }
   ```
 
-* **Issue:** The existing code file walk in `filesystem-v2-sync.ts` ([lines 407–414](file:///C:/gitrep/Nimbus/packages/gateway/src/connectors/filesystem-v2-sync.ts#L407-L414)) evaluates both entry names and relative paths using `isExcluded(rel, exclude)`:
+* **Issue:** The existing code file walk in `filesystem-v2-sync.ts` ([lines 407–414](../../../packages/gateway/src/connectors/filesystem-v2-sync.ts)) evaluates both entry names and relative paths using `isExcluded(rel, exclude)`:
 
   ```ts
   const rel = relative(root, full);
@@ -75,7 +75,7 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
   ```
 
 * **Issue:** In Bun's runtime, `proc.stderr` returned by `Bun.spawn` is a `ReadableStream<Uint8Array>`, not a `Response`.
-  * Wrapping `proc.stderr` in `new Response(proc.stderr)` works when `proc.stderr` is a `ReadableStream`, but in Task 6 Step 1's mock test ([line 1006](file:///C:/gitrep/Nimbus/docs/superpowers/plans/2026-09-02-multimodal-pr1-local-av.md#L1006)), the test mock supplies `stderr: new Response("boom")` (an actual `Response` instance).
+  * Wrapping `proc.stderr` in `new Response(proc.stderr)` works when `proc.stderr` is a `ReadableStream`, but in Task 6 Step 1's mock test ([line 1006](./2026-09-02-multimodal-pr1-local-av.md)), the test mock supplies `stderr: new Response("boom")` (an actual `Response` instance).
   * Passing a `Response` object into `new Response(proc.stderr as unknown as BodyInit)` causes runtime type confusion.
 * **Fix:** Standardize the signature in `ffmpeg-bin.ts`:
 
@@ -124,7 +124,7 @@ This review identifies **4 critical implementation blockers/gaps**, **4 operatio
   }
   ```
 
-* **Risk:** In [`packages/gateway/src/llm/gpu-arbiter.ts`](file:///C:/gitrep/Nimbus/packages/gateway/src/llm/gpu-arbiter.ts#L8-L32), `GpuArbiter` enforces a hardcoded default idle watchdog timeout of **30 seconds** (`timeoutMs = 30_000`):
+* **Risk:** In [`packages/gateway/src/llm/gpu-arbiter.ts`](../../../packages/gateway/src/llm/gpu-arbiter.ts), `GpuArbiter` enforces a hardcoded default idle watchdog timeout of **30 seconds** (`timeoutMs = 30_000`):
 
   ```ts
   if (this.locked && Date.now() - this.lastActivityAt > this.timeoutMs) {
