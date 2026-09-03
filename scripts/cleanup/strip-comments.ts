@@ -7,18 +7,71 @@ import { readFile, writeFile } from "node:fs/promises";
 import ts from "typescript-compiler-api";
 import { iterateSourceFiles, REPO_ROOT, relPath } from "./lib.ts";
 
+// Machine-read directives. A comment is data when a tool parses it, so stripping one
+// changes behaviour rather than tidying prose. Rationale per entry: scripts/cleanup/README.md.
 const PRESERVE_PRAGMAS = [
+  // TypeScript
   "@ts-expect-error",
   "@ts-ignore",
   "@ts-nocheck",
+  "<reference ",
+  // Linters and formatters
   "biome-ignore",
   "eslint-disable",
+  "oxlint-disable",
   "dprint-ignore",
   "prettier-ignore",
+  // Static analysis this repo gates on
+  "NOSONAR",
   "cross-platform-ok",
   "audit-ignore-next-line",
-  "<reference ",
+  // Coverage instrumentation
+  "c8 ignore",
+  "v8 ignore",
+  "istanbul ignore",
+  // Release and build tooling
+  "x-release-please-version",
+  "@license",
+  "@preserve",
+  "@__PURE__",
+  "sourceMappingURL",
+  // Test-runner docblocks
+  "@vitest-environment",
+  "@jest-environment",
 ];
+
+// Literals whose interior is program data, not layout: collapsing blank runs inside one
+// edits a runtime string. TemplateExpression is protected whole — its `${}` gaps need no
+// collapsing, and covering the span is cheaper than tracking Head/Middle/Tail tokens.
+const PROTECTED_LITERAL_KINDS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.StringLiteral,
+  ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+  ts.SyntaxKind.TemplateExpression,
+  ts.SyntaxKind.RegularExpressionLiteral,
+  ts.SyntaxKind.JsxText,
+]);
+
+/** Collapses 3+ newline runs to one blank line, skipping any run touching protected bytes. */
+function collapseBlankRuns(text: string, isProtected: Uint8Array): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "\n") {
+      out.push(text[i] as string);
+      i++;
+      continue;
+    }
+    let j = i;
+    let guarded = false;
+    while (j < text.length && text[j] === "\n") {
+      if (isProtected[j] === 1) guarded = true;
+      j++;
+    }
+    out.push(j - i >= 3 && !guarded ? "\n\n" : text.slice(i, j));
+    i = j;
+  }
+  return out.join("");
+}
 
 // Both published MIT packages (@nimbus-dev/sdk, @nimbus-dev/client) now live in
 // their own repos; no monorepo-tree source ships as published JSDoc.
@@ -42,6 +95,8 @@ export function stripTsSource(source: string, opts: { keepJsdoc: boolean }): str
   const visitedScans = new Set<string>();
   const emittedStarts = new Set<number>();
 
+  const isProtected = new Uint8Array(source.length);
+
   function scanCommentsAtPosition(pos: number, isLeading: boolean): void {
     const key = `${pos}:${isLeading ? "L" : "T"}`;
     if (visitedScans.has(key)) return;
@@ -53,11 +108,17 @@ export function stripTsSource(source: string, opts: { keepJsdoc: boolean }): str
     for (const r of ranges) {
       if (emittedStarts.has(r.pos)) continue;
       const text = source.slice(r.pos, r.end);
-      if (shouldPreserveComment(text)) continue;
+      if (shouldPreserveComment(text)) {
+        // A preserved block comment carries its own interior blank lines.
+        for (let i = r.pos; i < r.end; i++) isProtected[i] = 1;
+        continue;
+      }
       if (opts.keepJsdoc && isJsdoc(text)) continue;
       const start = r.pos;
       let end = r.end;
-      if (r.hasTrailingNewLine) end = Math.min(source.length, end + 1);
+      // Only a leading comment owns its line terminator. Eating a trailing comment's
+      // newline welds the next statement onto this line.
+      if (r.hasTrailingNewLine && isLeading) end = Math.min(source.length, end + 1);
       removals.push({ start, end });
       emittedStarts.add(r.pos);
     }
@@ -66,24 +127,66 @@ export function stripTsSource(source: string, opts: { keepJsdoc: boolean }): str
   function walk(node: ts.Node): void {
     scanCommentsAtPosition(node.getFullStart(), true);
     scanCommentsAtPosition(node.getEnd(), false);
+    if (PROTECTED_LITERAL_KINDS.has(node.kind)) {
+      const end = node.getEnd();
+      for (let i = node.getStart(sf); i < end; i++) isProtected[i] = 1;
+    }
     node.forEachChild(walk);
   }
   walk(sf);
 
-  removals.sort((a, b) => b.start - a.start);
-  let out = source;
-  for (const { start, end } of removals) {
-    out = out.slice(0, start) + out.slice(end);
+  removals.sort((a, b) => a.start - b.start);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const r of removals) {
+    const last = merged.at(-1);
+    if (last !== undefined && r.start <= last.end) last.end = Math.max(last.end, r.end);
+    else merged.push({ ...r });
   }
+
+  const pieces: string[] = [];
+  const masks: Uint8Array[] = [];
+  const keep = (start: number, end: number): void => {
+    if (end <= start) return;
+    pieces.push(source.slice(start, end));
+    masks.push(isProtected.subarray(start, end));
+  };
+  let cursor = 0;
+  for (const r of merged) {
+    keep(cursor, r.start);
+    cursor = Math.max(cursor, r.end);
+  }
+  keep(cursor, source.length);
+
+  let out = pieces.join("");
+  let outMask = new Uint8Array(out.length);
+  let offset = 0;
+  for (const m of masks) {
+    outMask.set(m, offset);
+    offset += m.length;
+  }
+
   if (source.startsWith("#!") && !out.startsWith("#!")) {
     const nl = source.indexOf("\n");
-    if (nl > 0) out = source.slice(0, nl + 1) + out;
+    if (nl > 0) {
+      const shebang = source.slice(0, nl + 1);
+      out = shebang + out;
+      const shifted = new Uint8Array(out.length);
+      shifted.set(outMask, shebang.length);
+      outMask = shifted;
+    }
   }
-  return out.replace(/\n{3,}/g, "\n\n");
+  return collapseBlankRuns(out, outMask);
 }
 
 export function stripRustSource(source: string): { stripped: string; abstained: boolean } {
   const out: string[] = [];
+  // Parallel to `out`: 1 marks a piece whose interior newlines are program data
+  // (string, raw string, char literal) or a preserved pragma.
+  const guarded: number[] = [];
+  const emit = (text: string, isGuarded: boolean): void => {
+    out.push(text);
+    guarded.push(isGuarded ? 1 : 0);
+  };
   let i = 0;
   let abstained = false;
   while (i < source.length) {
@@ -105,7 +208,7 @@ export function stripRustSource(source: string): { stripped: string; abstained: 
           abstained = true;
           break;
         }
-        out.push(source.slice(i, end + terminator.length));
+        emit(source.slice(i, end + terminator.length), true);
         i = end + terminator.length;
         continue;
       }
@@ -125,7 +228,7 @@ export function stripRustSource(source: string): { stripped: string; abstained: 
         }
         i++;
       }
-      out.push(source.slice(start, i));
+      emit(source.slice(start, i), true);
       continue;
     }
 
@@ -140,12 +243,15 @@ export function stripRustSource(source: string): { stripped: string; abstained: 
         i++;
       }
       if (source[i] === "'") i++;
-      out.push(source.slice(start, i));
+      emit(source.slice(start, i), true);
       continue;
     }
 
     if (c === "/" && c2 === "/") {
+      const start = i;
       while (i < source.length && source[i] !== "\n") i++;
+      const text = source.slice(start, i);
+      if (shouldPreserveComment(text)) emit(text, true);
       continue;
     }
 
@@ -155,15 +261,26 @@ export function stripRustSource(source: string): { stripped: string; abstained: 
         abstained = true;
         break;
       }
+      const text = source.slice(i, end + 2);
+      if (shouldPreserveComment(text)) emit(text, true);
       i = end + 2;
       continue;
     }
 
-    out.push(c);
+    emit(c, false);
     i++;
   }
   if (abstained) return { stripped: source, abstained: true };
-  return { stripped: out.join("").replace(/\n{3,}/g, "\n\n"), abstained: false };
+
+  const text = out.join("");
+  const isProtected = new Uint8Array(text.length);
+  let offset = 0;
+  for (let k = 0; k < out.length; k++) {
+    const len = (out[k] as string).length;
+    if (guarded[k] === 1) isProtected.fill(1, offset, offset + len);
+    offset += len;
+  }
+  return { stripped: collapseBlankRuns(text, isProtected), abstained: false };
 }
 
 export async function stripFile(
