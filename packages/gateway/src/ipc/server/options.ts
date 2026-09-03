@@ -36,6 +36,7 @@ import type { ExecRpcCtx } from "../exec-rpc.ts";
 import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
+import type { MediaRpcCtx } from "../media-rpc.ts";
 import type { PolicyRpcCtx } from "../policy-rpc.ts";
 import type { ClientSession } from "../session.ts";
 import type { ShareRpcCtx } from "../share-rpc.ts";
@@ -149,6 +150,12 @@ export type CreateIpcServerOptions = {
   // owner's answer channel. Present only when assembled at boot; the dispatcher skips cleanly when
   // unset. The whole namespace is RCE-class: NOT Tauri-exposed (I7), and LAN-forbidden (I5).
   computerRpcCtx?: ComputerRpcCtx;
+  // Multimodal I/O (S2). The boot-assembled org-policy accessor behind media.understand. Present
+  // only when assembled at boot; the dispatcher REFUSES rather than skipping when unset, because a
+  // permissive default is exactly the inert state this seam exists to remove. The whole namespace
+  // is LAN-forbidden (I5) and absent from the Tauri allowlist (I7) — it reads local files and
+  // spawns subprocesses, the exec.* posture.
+  mediaRpcCtx?: MediaRpcCtx;
   // Egress Ledger. The dependency seam behind the egress.* IPC namespace (list, verify, head,
   // proveWindow, prune). egress.prune gates through requestPruneApproval (owner HITL, I2, fail-closed).
   // Present only when assembled at boot; the dispatcher skips cleanly when unset. egress.prune is

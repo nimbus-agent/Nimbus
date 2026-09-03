@@ -1116,7 +1116,14 @@ describe("tryDispatchPhase4Rpc", () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const dataDir = mkdtempSync(join(tmpdir(), "disp-media-data-"));
-    const { ctx } = makeCtx({ localIndex, dataDir });
+    const { ctx } = makeCtx({
+      localIndex,
+      dataDir,
+      // An EMPTY disabled set — the capability is permitted, and the pass still returns an empty
+      // summary because `[multimodal] enabled` is false in this fixture. Supplying the accessor is
+      // the point: without it the dispatcher now refuses, which is the intended fail-closed shape.
+      mediaRpcCtx: { enforced: { capabilitiesDisabled: new Set<string>() } },
+    });
     const out = await tryDispatchPhase4Rpc(ctx, "media.understand", {}, "c1");
     // The regression this guards against: deleting the PHASE4_PLATFORM_DISPATCHERS entry makes
     // this come back `phase4RpcSkipped` instead of a real MediaPassSummary — every other suite

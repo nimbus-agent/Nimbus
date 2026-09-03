@@ -9,6 +9,23 @@
  */
 import type { MediaPassSummary } from "../multimodal/media-pass.ts";
 import type { MediaModality } from "../multimodal/media-types.ts";
+import type { EnforcedPolicy } from "../policy/policy-gate.ts";
+
+/**
+ * The boot-assembled seam behind `media.understand`.
+ *
+ * `enforced` is the live org-policy accessor (invariant I22), matching `ExecGateDeps.enforced` and
+ * `CuGateDeps.enforced`. It is a GETTER at the wiring site rather than a snapshot, so a policy
+ * installed after boot tightens the next pass rather than the next restart.
+ *
+ * REQUIRED, not optional-with-a-default. `media.understand` refuses when this ctx is absent: a
+ * `?? false` fallback would silently restore the state where an org policy disabling
+ * `multimodal_input` did nothing, and nothing in the suite would go red. Same reasoning as
+ * `MediaGateDeps.gpu.touch` being required rather than defaulted.
+ */
+export interface MediaRpcCtx {
+  readonly enforced: Pick<EnforcedPolicy, "capabilitiesDisabled">;
+}
 
 export interface MediaRpcDeps {
   readonly runPass: (opts: {

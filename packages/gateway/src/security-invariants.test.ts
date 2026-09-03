@@ -1739,6 +1739,16 @@ code_execution=true
     expect(gate.enforced().retentionDays).toBe(7);
     expect(gate.enforced().hitlRequired.has("git.force_push_main")).toBe(true);
   });
+
+  test("I22: multimodal_input is enforced, not merely listed", async () => {
+    // Through PR 1 this capability was a real AI_V2_CAPABILITIES member whose lockoff did
+    // nothing, because the dispatcher hardcoded `capabilityDisabled: false`. All five members
+    // must now reach a gate.
+    const dispatchers = await Bun.file("packages/gateway/src/ipc/server/dispatchers.ts").text();
+    expect(dispatchers).toContain("capabilitiesDisabled.has(MULTIMODAL_CAPABILITY)");
+    const assemble = await Bun.file("packages/gateway/src/platform/assemble.ts").text();
+    expect(assemble).toContain("ipcOpts.mediaRpcCtx");
+  });
 });
 
 describe("I26 — connector writes (warehouse/BI ∪ GitOps/ML) are confined to the local I2 path; federated gate rejects them", () => {

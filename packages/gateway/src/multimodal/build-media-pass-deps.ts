@@ -22,7 +22,6 @@ import {
   DEFAULT_MAX_FRAMES,
   DEFAULT_VLM_BASE_URL,
   DEFAULT_VLM_MODEL,
-  loadMultimodalConfig,
 } from "./multimodal-config.ts";
 import { resolveFfmpegBin } from "./stt/ffmpeg-bin.ts";
 import { createLongFormStt } from "./stt/long-form-stt.ts";
@@ -182,12 +181,4 @@ export function resolveMediaRoots(configDir: string | undefined): string[] {
   return loadNimbusFilesystemRootsFromConfigDir(configDir)
     .filter((r) => r.mediaIndex)
     .map((r) => r.path);
-}
-
-/**
- * Kept as a named re-export so `ipc/server/dispatchers.ts` keeps compiling while Task 8 moves it
- * to the full config object. Delete when that task lands.
- */
-export function resolveMultimodalEnabled(configDir: string | undefined): boolean {
-  return loadMultimodalConfig(configDir).enabled;
 }

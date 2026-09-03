@@ -16,12 +16,10 @@ import { appendPreflightAudit, defaultRunCommand } from "../../federation/prefli
 import { writeScimBearer } from "../../identity/identity-vault.ts";
 import { isOperatorValid } from "../../identity/verifier.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
-import {
-  buildMediaPassDeps,
-  resolveMediaRoots,
-  resolveMultimodalEnabled,
-} from "../../multimodal/build-media-pass-deps.ts";
+import { buildMediaPassDeps, resolveMediaRoots } from "../../multimodal/build-media-pass-deps.ts";
 import { runMediaPass } from "../../multimodal/media-pass.ts";
+import { MULTIMODAL_CAPABILITY } from "../../multimodal/media-types.ts";
+import { loadMultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
@@ -643,13 +641,12 @@ export async function tryDispatchIndexRebodyRpc(
  * `FORBIDDEN_OVER_LAN`) and absent from the Tauri allowlist — see `media-rpc.ts`'s own doc
  * comment; it reads local files and spawns subprocesses, the `exec.*` posture.
  *
- * `roots` and `enabled` are re-read from `nimbus.toml` on every call (matching `ownershipRoots`
- * in `ownership/ownership-target.ts`), so a `[[filesystem.roots]]` or `[multimodal]` edit applies
- * without a gateway restart. `capabilityDisabled` is hardcoded `false`: the org-policy half of
- * this capability (`multimodal_input`, `policy/types.ts` `AI_V2_CAPABILITIES`) has no
- * IPC-reachable `EnforcedPolicy` accessor yet — `code_execution`/`computer_use` each got their
- * own `gateDeps.enforced` getter wired at boot (`platform/assemble.ts`); this slice ships only
- * the local `[multimodal] enabled` kill switch (default off).
+ * `roots`, `enabled` and `capabilityDisabled` are all re-read on every call, so a
+ * `[[filesystem.roots]]` edit, a `[multimodal]` edit, or a newly installed org policy applies
+ * without a gateway restart. The org-policy half reads `ctx.options.mediaRpcCtx.enforced`
+ * (invariant I22) — the same live accessor `code_execution` and `computer_use` use. When that ctx
+ * is absent the method REFUSES: defaulting to `false` is what made this capability's policy
+ * lockoff inert through PR 1.
  */
 export async function tryDispatchMediaRpc(
   ctx: ServerCtx,
@@ -665,12 +662,23 @@ export async function tryDispatchMediaRpc(
   if (ctx.options.dataDir === undefined) {
     throw new RpcMethodError(-32603, "media.understand requires dataDir");
   }
+  const mediaCtx = ctx.options.mediaRpcCtx;
+  if (mediaCtx === undefined) {
+    throw new RpcMethodError(
+      -32603,
+      "media.understand requires mediaRpcCtx (the org-policy accessor)",
+    );
+  }
+  const mmConfig = loadMultimodalConfig(ctx.options.configDir);
   const deps = buildMediaPassDeps({
     db: ctx.options.localIndex.getDatabase(),
     roots: resolveMediaRoots(ctx.options.configDir),
-    enabled: resolveMultimodalEnabled(ctx.options.configDir),
-    capabilityDisabled: false,
+    enabled: mmConfig.enabled,
+    capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
     scratchDir: join(ctx.options.dataDir, "multimodal-scratch"),
+    vlmBaseUrl: mmConfig.vlmBaseUrl,
+    vlmModel: mmConfig.vlmModel,
+    maxFrames: mmConfig.maxFrames,
   });
   const out = await dispatchMediaRpc(method, params, {
     runPass: (opts) => runMediaPass({ ...deps, ...opts }),

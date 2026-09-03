@@ -3431,6 +3431,16 @@ export async function assemblePlatformServices(
     },
   };
 
+  // Multimodal I/O (S2). Only the org-policy accessor: the local `[multimodal] enabled` switch and
+  // the roots are re-read per call in the dispatcher. LAZY through `policyGate.enforced()` rather
+  // than snapshotted, so a policy installed after boot tightens the next pass rather than the next
+  // restart — the same shape as execRpcCtx and computerRpcCtx above.
+  ipcOpts.mediaRpcCtx = {
+    get enforced() {
+      return policyGate.enforced();
+    },
+  };
+
   // Snapshot retention (Task 15, spec § 8.4): the same daily-cadence sidecar shape as
   // `startToolCallLogRetention` above, driven by `[computer_use] snapshot_retention_days`. NULLs
   // `dom_before`/`dom_after` on `cu_action` rows past the window; the row itself and its

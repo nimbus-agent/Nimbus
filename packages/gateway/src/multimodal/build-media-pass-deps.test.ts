@@ -10,9 +10,9 @@ import { GpuArbiter } from "../llm/gpu-arbiter.ts";
 import {
   buildMediaPassDeps,
   resolveMediaRoots,
-  resolveMultimodalEnabled,
   withTranscribeTimeout,
 } from "./build-media-pass-deps.ts";
+import { loadMultimodalConfig } from "./multimodal-config.ts";
 
 function db(): Database {
   const d = new Database(":memory:");
@@ -245,15 +245,15 @@ describe("resolveMediaRoots", () => {
   });
 });
 
-describe("resolveMultimodalEnabled", () => {
+describe("loadMultimodalConfig(...).enabled", () => {
   test("reads false with no configDir — the test/embedded shape", () => {
-    expect(resolveMultimodalEnabled(undefined)).toBe(false);
+    expect(loadMultimodalConfig(undefined).enabled).toBe(false);
   });
 
   test("reads false when nimbus.toml is absent", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
+      expect(loadMultimodalConfig(dir).enabled).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -263,7 +263,7 @@ describe("resolveMultimodalEnabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
       writeFileSync(join(dir, "nimbus.toml"), '[other]\nfoo = "bar"\n');
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
+      expect(loadMultimodalConfig(dir).enabled).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -273,7 +273,7 @@ describe("resolveMultimodalEnabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
       writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nother_key = true\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
+      expect(loadMultimodalConfig(dir).enabled).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -283,7 +283,7 @@ describe("resolveMultimodalEnabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
       writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = true\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(true);
+      expect(loadMultimodalConfig(dir).enabled).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -293,7 +293,7 @@ describe("resolveMultimodalEnabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
       writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = false\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
+      expect(loadMultimodalConfig(dir).enabled).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -303,7 +303,7 @@ describe("resolveMultimodalEnabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
       writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = true # turn on locally\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(true);
+      expect(loadMultimodalConfig(dir).enabled).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -313,7 +313,7 @@ describe("resolveMultimodalEnabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
       writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = maybe\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
+      expect(loadMultimodalConfig(dir).enabled).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -323,7 +323,7 @@ describe("resolveMultimodalEnabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
       writeFileSync(join(dir, "nimbus.toml"), "[other]\nenabled = true\n\n[multimodal]\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
+      expect(loadMultimodalConfig(dir).enabled).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -335,7 +335,7 @@ describe("resolveMultimodalEnabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
     try {
       mkdirSync(join(dir, "nimbus.toml"));
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
+      expect(loadMultimodalConfig(dir).enabled).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
