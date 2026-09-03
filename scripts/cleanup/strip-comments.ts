@@ -6,6 +6,7 @@ import { readFile, writeFile } from "node:fs/promises";
 // maintainers label unstable. Everything else in the repo typechecks with 7.
 import ts from "typescript-compiler-api";
 import { iterateSourceFiles, REPO_ROOT, relPath } from "./lib.ts";
+import { loadInvariantCitedFiles, protectionFor } from "./protected-comments.ts";
 
 // Machine-read directives. A comment is data when a tool parses it, so stripping one
 // changes behaviour rather than tidying prose. Rationale per entry: scripts/cleanup/README.md.
@@ -307,15 +308,63 @@ export async function stripFile(
   return { before: source.length, after: next.length, abstained };
 }
 
+/**
+ * Repo-relative path prefixes this run is allowed to rewrite, from `--paths a,b,c`.
+ *
+ * A bare invocation selects NOTHING. That default is the finding of the 2026-09 sweep, not
+ * caution for its own sake: the protected-set guard below is a marker heuristic, and this
+ * repo's comments are load-bearing well beyond the twelve markers it knows. The largest
+ * single candidate for stripping, `agents/negotiate.ts`, would have lost 25KB explaining why
+ * a `graph-only` subject is structurally zero for every lane except ownership - reasoning the
+ * code cannot restate and no marker matches. So the guard is a floor, never a licence: a
+ * human names the paths, having read them.
+ */
+function selectedPaths(argv: readonly string[]): string[] {
+  const flag = argv.find((a) => a.startsWith("--paths="));
+  if (flag === undefined) return [];
+  return flag
+    .slice("--paths=".length)
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
+  const paths = selectedPaths(process.argv);
+  if (!dryRun && paths.length === 0) {
+    console.error(
+      [
+        "strip-comments: refusing to rewrite the whole repo.",
+        "  --dry-run                 report what WOULD change, touching nothing",
+        "  --paths=<a,b>             rewrite only files under these repo-relative prefixes",
+        "Comments here are load-bearing by default; name the paths you have read.",
+      ].join("\n"),
+    );
+    process.exitCode = 2;
+    return;
+  }
+  // Fail-closed: if the attested-comment set cannot be built, strip nothing. An empty
+  // protected set is indistinguishable from "this repo has no attested comments", and
+  // acting on that reading is how 152 documented citations would be deleted silently.
+  const citedFiles = await loadInvariantCitedFiles();
   let totalBefore = 0,
     totalAfter = 0,
     fileCount = 0,
     changed = 0,
-    abstained = 0;
+    abstained = 0,
+    refused = 0;
+  const refusedByReason = new Map<string, number>();
   for await (const file of iterateSourceFiles(REPO_ROOT)) {
     fileCount++;
+    const rel = relPath(file);
+    if (paths.length > 0 && !paths.some((p) => rel === p || rel.startsWith(`${p}/`))) continue;
+    const verdict = protectionFor(rel, await readFile(file, "utf8"), citedFiles);
+    if (verdict.protected) {
+      refused++;
+      refusedByReason.set(verdict.reason, (refusedByReason.get(verdict.reason) ?? 0) + 1);
+      continue;
+    }
     if (dryRun) {
       const source = await readFile(file, "utf8");
       let nextText: string;
@@ -341,8 +390,11 @@ async function main() {
     }
   }
   console.log(
-    `${dryRun ? "[dry-run] " : ""}Files: ${fileCount}, changed: ${changed}, abstained: ${abstained}, bytes: ${totalBefore} -> ${totalAfter}`,
+    `${dryRun ? "[dry-run] " : ""}Files: ${fileCount}, refused: ${refused}, changed: ${changed}, abstained: ${abstained}, bytes: ${totalBefore} -> ${totalAfter}`,
   );
+  for (const [reason, n] of [...refusedByReason.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`  refused ${String(n)} — ${reason}`);
+  }
   if (abstained > 0) {
     console.warn(
       `[!] ${abstained} .rs files were left untouched due to raw-string ambiguity. Audit them manually.`,
