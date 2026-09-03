@@ -82,9 +82,11 @@ export const I15_EXEMPT: readonly string[] = [
 ];
 
 /**
- * A `ServerSpec` literal. Every spawn site under lazy-mesh opens with this spread — 78 of them
- * across `connector-spawns.ts`, `phase3-config.ts` and `chatops-bot-spawn.ts` — which makes it
- * the marker a PER-SITE rule can key on.
+ * A `ServerSpec` literal. Every spawn site under lazy-mesh opens with this spread, which makes
+ * it the marker a PER-SITE rule can key on. They live in `connector-spawns.ts`,
+ * `chatops-bot-spawn.ts` and the `phase3-*.ts` spawn modules. The count is deliberately not
+ * stated here: it moves with every connector, and the figure this comment used to carry
+ * (78) was already three off when it was next checked.
  */
 const I15_SPEC_LITERAL_RE = /\.\.\.\s*connectorSpawn\s*\(/g;
 /** The wrapper itself — always accepted, wherever it appears. */
@@ -92,9 +94,12 @@ const I15_WRAPPER_CALLEE = "wrapServerSpec";
 /**
  * The file-local alias, accepted ONLY in a file that defines it as a delegation to the wrapper.
  *
- * `connector-spawns.ts` and `phase3-config.ts` each declare
+ * `connector-spawns.ts`, `phase3-shared.ts` and each `phase3-<group>.ts` declare
  * `function wrap(spec, serviceId, ctx) { return wrapServerSpec(spec, …); }` and route their specs
- * through it, so the alias has to be accepted or the rule is unusable. But accepting the NAME
+ * through it, so the alias has to be accepted or the rule is unusable. That per-file declaration
+ * is also why splitting `phase3-config.ts` into group modules had to copy the delegation into
+ * each one rather than import a shared `wrap`: an imported alias leaves every site in the
+ * importing file unrecognised, and the rule would fail closed on all of them. But accepting the NAME
  * alone means a new file declaring `function wrap(s: ServerSpec) { return s; }` makes every site
  * in that file compliant — the guard would be checking that a call is spelled `wrap`, not that the
  * spec reaches the sandbox. So the alias is bound to the reason it exists: the delegation must be

@@ -1055,15 +1055,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/connectors/lazy-mesh/mesh.test.ts:396` | I15 | mesh.test.ts verifies sandbox wrapper env vars are correctly set |
 | `packages/gateway/src/connectors/lazy-mesh/mesh.ts:82` | I15 | mesh.ts spawn site routes through wrapServerSpec |
 | `packages/gateway/src/connectors/lazy-mesh/phase3-config.test.ts:12` | I15 | phase3-config.test.ts verifies I15 wiring for phase3-config.ts spawn sites |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:14` | I15 | Phase-3 wrap() helper routes each Phase-3 ServerSpec through wrapServerSpec |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:137` | I15 | phase3-config AWS spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:424` | I15 | phase3-config Azure spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:450` | I15 | phase3-config GCP spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:503` | I15 | phase3-config IaC spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:533` | I15 | phase3-config observability (Grafana/Sentry) spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:566` | I15 | phase3-config observability (New Relic/Datadog) spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:595` | I15 | phase3-config additional spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:804` | I15 | phase3-config additional spawn site routes through wrap() |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | I15 | Every Phase-3 spawn site routes through the file-local `wrap()` delegation, enforced PER SITE by static rule D10 rather than by this table. This replaced nine rows citing `lazy-mesh/phase3-config.ts:<line>`. Seven of them were already pointing at non-comment lines before that file was split into `phase3-<group>.ts` modules - `:424` read `sandboxCwd: string,` while claiming to attest the Azure spawn site, which was at `:209`. `audit:doc-refs` checks only that a cited line is in range, so the drift stayed invisible until the split pushed the numbers past EOF. A hand-maintained list of line numbers cannot track a file that changes every time a connector lands; D10 can, and fails the build when a site stops delegating. |
 | `packages/gateway/src/connectors/lazy-mesh/slot.ts:27` | I15 | MeshSpawnContext.sandboxCwd is the working-directory anchor for every I15-wrapped spawn |
 | `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:15` | I15 | user-mcp.ts spawn site routes through wrapServerSpec |
 | `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:74` | I15 | user-mcp ensureUserMcpClient uses wrapServerSpec for user-installed MCP servers |
