@@ -58,6 +58,24 @@ interface PendingCommand {
  * mid-action surfaces as a prompt failure the gate can classify (`terminated_target_lost`) rather
  * than as a promise that never settles. That property is why `BrowserLane.isAlive()` exists at all.
  */
+/**
+ * The human-readable half of a CDP error object.
+ *
+ * Only a string `message` is used verbatim. `String(someObject)` yields "[object Object]",
+ * which is worse than saying nothing — a CDP error whose `message` is structured would produce
+ * a diagnostic that names no cause, from the layer whose entire job is explaining why the
+ * browser refused. Falls back to the serialised error so the caller still gets the fields.
+ *
+ * Lifted out of `#onMessage` rather than inlined there: that method already carries the parse,
+ * dispatch and listener fan-out branches, and adding this one pushed it past the cognitive
+ * complexity limit. The extraction is the fix for that, not a second concern.
+ */
+function cdpErrorMessage(err: Record<string, unknown>): string {
+  const raw = err["message"];
+  if (typeof raw === "string" && raw !== "") return raw;
+  return JSON.stringify(err) || "unknown error";
+}
+
 export class CdpConnection {
   #nextId = 0;
   #closed = false;
@@ -175,18 +193,7 @@ export class CdpConnection {
       clearTimeout(pending.timer);
       const err = asRecord(msg["error"]);
       if (err !== undefined) {
-        // Only a string message is used verbatim. `String(someObject)` yields
-        // "[object Object]", which is worse than saying nothing — a CDP error whose
-        // `message` is structured would produce a diagnostic that names no cause.
-        const rawMessage = err["message"];
-        pending.reject(
-          new CdpError(
-            pending.method,
-            typeof rawMessage === "string" && rawMessage !== ""
-              ? rawMessage
-              : JSON.stringify(err) || "unknown error",
-          ),
-        );
+        pending.reject(new CdpError(pending.method, cdpErrorMessage(err)));
         return;
       }
       pending.resolve(asRecord(msg["result"]) ?? {});
