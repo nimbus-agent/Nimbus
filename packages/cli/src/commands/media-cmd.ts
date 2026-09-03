@@ -40,6 +40,47 @@ export interface ParsedMediaArgs {
   };
 }
 
+/**
+ * `--modality`, which accepts exactly one value today.
+ *
+ * `image` is a real MediaModality and a real registry entry, but this slice ships no vision
+ * model: every image candidate is skipped as `unresolvable_modality`. Accepting the flag would
+ * return "understood 0 of 0" and let a user conclude they have no images, when in fact nothing
+ * can read one yet. So it is refused BY NAME with the reason, rather than falling through to
+ * the generic "must be av" message, which would describe the restriction without explaining it.
+ */
+function parseModality(value: string): "av" {
+  if (value === "image") {
+    throw new Error(
+      "nimbus media: --modality image is not available yet — this release understands " +
+        "audio and video only. Image captioning needs a local vision model, which ships in " +
+        "a later slice.",
+    );
+  }
+  if (value !== "av") {
+    throw new Error('nimbus media: --modality must be "av"');
+  }
+  return value;
+}
+
+/** `--limit`: a positive integer, so `0`, `-1` and `1.5` are all refused rather than clamped. */
+function parseLimit(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error("nimbus media: --limit must be a positive integer");
+  }
+  return n;
+}
+
+/** `--since`: a non-negative number of days. Fractional is fine; NaN and Infinity are not. */
+function parseSinceDays(value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error("nimbus media: --since must be a non-negative number of days");
+  }
+  return n;
+}
+
 export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
   const sub = argv[0];
   if (sub !== "understand") {
@@ -57,38 +98,14 @@ export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
         params.service = value;
         break;
       case "--modality":
-        // `image` is a real MediaModality and a real registry entry, but this slice ships no
-        // vision model: every image candidate is skipped as `unresolvable_modality`. Accepting
-        // the flag would return "understood 0 of 0" and let a user conclude they have no images,
-        // when in fact nothing can read one yet. Refuse with the reason instead.
-        if (value === "image") {
-          throw new Error(
-            "nimbus media: --modality image is not available yet — this release understands " +
-              "audio and video only. Image captioning needs a local vision model, which ships in " +
-              "a later slice.",
-          );
-        }
-        if (value !== "av") {
-          throw new Error('nimbus media: --modality must be "av"');
-        }
-        params.modality = value;
+        params.modality = parseModality(value);
         break;
-      case "--limit": {
-        const n = Number(value);
-        if (!Number.isInteger(n) || n <= 0) {
-          throw new Error("nimbus media: --limit must be a positive integer");
-        }
-        params.limit = n;
+      case "--limit":
+        params.limit = parseLimit(value);
         break;
-      }
-      case "--since": {
-        const n = Number(value);
-        if (!Number.isFinite(n) || n < 0) {
-          throw new Error("nimbus media: --since must be a non-negative number of days");
-        }
-        params.sinceDays = n;
+      case "--since":
+        params.sinceDays = parseSinceDays(value);
         break;
-      }
       default:
         throw new Error(`nimbus media: unknown flag "${flag ?? ""}"`);
     }
