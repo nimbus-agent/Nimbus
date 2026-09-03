@@ -161,6 +161,59 @@ describe("buildMediaPassDeps — optional overrides", () => {
   });
 });
 
+describe("buildMediaPassDeps — the input->provider hop (second-hop wiring)", () => {
+  // A prior round pinned the DISPATCHER->INPUT hop by value. Nothing pinned INPUT->PROVIDER: a
+  // refactor that quietly dropped `input.vlmBaseUrl ?? DEFAULT_VLM_BASE_URL` /
+  // `input.vlmModel ?? DEFAULT_VLM_MODEL` / `input.maxFrames ?? DEFAULT_MAX_FRAMES` in favor of the
+  // bare defaults left the FULL suite green — a user's `vlm_model = "llava:13b"` would be parsed,
+  // validated, clamped, and then silently ignored. Each assertion below is RED-PROVEN by reverting
+  // its `input.X ??` read to the bare default one at a time (see the fix report for the exact
+  // observations); this is not merely a green assertion that happens to pass either way.
+  test("input.vlmModel reaches the constructed VLM, observed via the AV understander's composite model id", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vlmModel: "custom-vision:9b",
+    });
+    // `av-understander.ts`'s `model` field is `${stt.model}+${vlm.model}` — "whisper-cli" is the
+    // STT leg's fixed model id, so a non-default suffix here can only have come from `input.vlmModel`.
+    expect(deps.gate.understanderFor("av")?.model).toBe("whisper-cli+custom-vision:9b");
+  });
+
+  test("input.vlmBaseUrl reaches the constructed VLM, observed via non-loopback flipping isLocal false", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vlmBaseUrl: "http://gpu-box.lan:11434",
+    });
+    // `isLocal` is DERIVED (I34) from the provider's resolved base URL via `isLoopbackBaseUrl`, so
+    // a non-loopback `input.vlmBaseUrl` can only surface here if it actually reached
+    // `createOllamaVlm`'s `baseUrl` option. Checked on both understanders: the image understander
+    // mirrors the VLM's `isLocal` directly, and the AV understander ANDs it with the STT leg's (see
+    // `av-understander.ts`), so a dropped `input.vlmBaseUrl` read would leave BOTH `true`.
+    expect(deps.gate.understanderFor("image")?.isLocal).toBe(false);
+    expect(deps.gate.understanderFor("av")?.isLocal).toBe(false);
+  });
+
+  // `input.maxFrames` has NO observable assertion at this seam without adding new production
+  // surface. `AvUnderstanderDeps.maxFrames` is consumed only inside `av-understander.ts`'s private
+  // `understand()` closure (`frameTimestamps(duration, deps.maxFrames)`) — it is never exposed on
+  // the constructed `LocalUnderstander`, and `buildMediaPassDeps` wires the AV understander to the
+  // REAL `probeDurationSeconds`/`extractFrameJpeg` (no injection hooks), so exercising `understand()`
+  // here would need a real ffprobe/ffmpeg and a real video file, which is exactly the kind of
+  // production-surface widening this fix is not meant to introduce. `av-understander.test.ts`
+  // already pins that `createAvUnderstander` itself honors `deps.maxFrames`; what is NOT pinned
+  // anywhere is that `buildMediaPassDeps` forwards `input.maxFrames` into that `deps.maxFrames`
+  // rather than silently using `DEFAULT_MAX_FRAMES`. Stated here rather than covered with an
+  // assertion that cannot actually fail.
+});
+
 describe("withTranscribeTimeout", () => {
   test("forwards the result when transcribe settles before the bound", async () => {
     const bounded = withTranscribeTimeout(async (wavPath) => ({ text: `heard:${wavPath}` }), 5000);

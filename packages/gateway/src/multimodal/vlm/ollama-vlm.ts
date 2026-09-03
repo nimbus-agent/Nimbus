@@ -11,9 +11,12 @@
  * gives names and `details.families`; matching `llava` / `qwen2-vl` / `gemma3` fragments breaks on
  * every new model and on any custom tag, and a running daemon with no VLM pulled would pass a
  * bare "is Ollama up" check and then fail per artifact across a whole pass. `/api/show` answers
- * the real question once, up front. Legacy daemons that predate the `capabilities` field fall back
- * to `families`; when neither says vision, this reports UNAVAILABLE, which the gate turns into a
- * `no_local_model` refusal (spec § 3.4 step 4) rather than a guess.
+ * the real question directly rather than guessing from a name — ONCE PER ARTIFACT (`media-gate.ts`
+ * calls `isAvailable()` once per `understandArtifact`, and `av-understander.ts` calls it again once
+ * per video before it samples any frames), never once for the whole pass and never once per frame.
+ * Legacy daemons that predate the `capabilities` field fall back to `families`; when neither says
+ * vision, this reports UNAVAILABLE, which the gate turns into a `no_local_model` refusal (spec
+ * § 3.4 step 4) rather than a guess.
  */
 import { isLoopbackBaseUrl } from "../../llm/base-url-locality.ts";
 import { DEFAULT_VLM_BASE_URL, DEFAULT_VLM_MODEL } from "../multimodal-config.ts";

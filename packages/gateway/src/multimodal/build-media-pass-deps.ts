@@ -26,6 +26,7 @@ import {
 import { resolveFfmpegBin } from "./stt/ffmpeg-bin.ts";
 import { createLongFormStt } from "./stt/long-form-stt.ts";
 import { createImageUnderstander } from "./vlm/image-understander.ts";
+import type { FetchLike } from "./vlm/ollama-vlm.ts";
 import { createOllamaVlm } from "./vlm/ollama-vlm.ts";
 
 export interface BuildMediaPassDepsInput {
@@ -45,8 +46,15 @@ export interface BuildMediaPassDepsInput {
   readonly vlmModel?: string;
   readonly maxFrames?: number;
   readonly ffprobeBin?: string;
-  /** Injected only by tests; production uses the global `fetch`. */
-  readonly vlmFetch?: typeof fetch;
+  /**
+   * Injected only by tests; production uses the global `fetch`.
+   *
+   * Typed as `FetchLike` (STRUCTURAL), never `typeof fetch` — Bun's `fetch` carries static
+   * members (`preconnect`), so `typeof fetch` rejects a plain test lambda and forces every test
+   * double through an `as unknown as` cast that routes around the type checker (see
+   * `ollama-vlm.ts`'s `FetchLike`, which exists precisely to avoid that).
+   */
+  readonly vlmFetch?: FetchLike;
 }
 
 /** 250 MB (spec § 5.3 `max_media_bytes`). */

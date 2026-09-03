@@ -124,8 +124,12 @@ describe("extractFrameJpeg", () => {
     expect(cmd).toContain("-frames:v");
     // No output path argument: nothing on this path touches disk. Positive form: the LAST
     // argument is exactly the stdout sink, and nothing after the input path looks like a
-    // filesystem destination — `toContain("pipe:1")` above only proves presence, not
-    // exclusivity, so a regression that ALSO wrote a file alongside `pipe:1` would still pass it.
+    // filesystem destination bearing a dotted extension (e.g. `.jpg`) — `toContain("pipe:1")`
+    // above only proves presence, not exclusivity, so a regression that ALSO wrote a file
+    // alongside `pipe:1` would still pass it. NARROWER than "no filesystem destination at all":
+    // an inserted EXTENSIONLESS output path (no `.` in it) still satisfies this check and would
+    // not be caught here — see the dedicated `.jpg`/`.jpeg` check below for that gap's partial
+    // cover.
     expect(cmd.at(-1)).toBe("pipe:1");
     const afterInput = cmd.slice(cmd.indexOf("-i") + 2);
     expect(afterInput.every((a) => a === "pipe:1" || a.startsWith("-") || !a.includes("."))).toBe(

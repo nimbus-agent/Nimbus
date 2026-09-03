@@ -539,14 +539,16 @@ established shape, not a proliferation.
 `ollama-vlm.ts`'s `isAvailable()` checks that a **vision-capable model is actually pulled** — not
 merely that an Ollama server is answering. A running Ollama with no VLM would otherwise pass an
 availability check and then fail per artifact across a whole pass, and "local model unavailable" is
-a *refusal* condition under § 3.4 step 4, so it must be detected once, up front, rather than a few
-hundred times.
+a *refusal* condition under § 3.4 step 4, so it must be detected directly, per artifact — not once
+for the whole pass (which would miss a daemon that goes down mid-pass) and not once per sampled
+frame (which would be a few hundred redundant probes across one long video).
 
 **Amended by PR 2 (§ 15, decision 1): the probe is `POST /api/show`, not `/api/tags`.** `/api/tags`
 returns names and `details.families`; inferring vision from name fragments (`llava`, `qwen2-vl`,
 `gemma3`) breaks on every new model and on any custom tag. `/api/show` returns an explicit
-`capabilities` array and answers the real question once, up front, rather than guessing from a
-string. A legacy daemon that predates the `capabilities` field falls back to a `families` check for
+`capabilities` array and answers the real question directly — once per artifact, as above — rather
+than guessing from a string. A legacy daemon that predates the `capabilities` field falls back to a
+`families` check for
 `clip`/`mllama`; when neither says vision, this reports UNAVAILABLE — a refusal, never a guess.
 
 ### 9.3 Do not reintroduce `sharp`

@@ -1764,7 +1764,8 @@ const streamReq: JSONRPCRequest = {
 // `multimodal/` shape (PR 1, 2026-09-02; vision arm PR 2, 2026-09-03): `media-gate.ts` is the one
 //   chokepoint every `LocalUnderstander` implementation goes through — it owns the per-artifact
 //   `GpuArbiter` lease + heartbeat (§ 8.1 of the design spec) and the local-vs-remote decision
-//   (I37 territory, not yet reachable — no remote arm ships before PR 4). `multimodal-config.ts`
+//   (the design spec's planned I37 — CLAUDE.md's ceiling stops at I36 and no I37 row exists in
+//   SECURITY-INVARIANTS.md; not yet reachable, since no remote arm ships before PR 4). `multimodal-config.ts`
 //   is the whole `[multimodal]` section reader (standalone, mirroring
 //   `connectors/openapi-indexer-config.ts` rather than routing through `nimbus-toml.ts`) — FOUR
 //   keys, all DEFAULT OFF or defaulted: `enabled` (bool, default false), `vlm_base_url` (default
@@ -1787,9 +1788,14 @@ const streamReq: JSONRPCRequest = {
 // Egress: vision's own I29 `model`-class decorator, `egress/vlm-egress.ts`'s `wrapLedgeredVlm`
 //   (static D22(g)), ships ahead of any remote `VlmProvider` in production — the shipped Ollama
 //   adapter is local BY DEFAULT (`isLocal` derived from its resolved base URL, I34), not by
-//   construction, so a caller pointing `vlm_base_url` off-box gets a WRAPPED provider that does
-//   append. Transcription stays local-only in this slice — no `SttProvider` routing, no decorator,
-//   by construction rather than by check, mirroring `LOCAL_ONLY_SYNC_SERVICES`.
+//   construction, so a caller pointing `vlm_base_url` off-box gets a provider `wrapLedgeredVlm`
+//   WOULD wrap and append for. That is the decorator's CONTRACT, not a reachable outcome today:
+//   `media-gate.ts` refuses a non-local provider outright with `no_remote_grant` before `describe`
+//   is ever called, since the per-artifact remote grant that would permit it does not land before
+//   PR 4 — so a non-loopback `vlm_base_url` produces zero egress rows AND zero understanding
+//   (image or video), never a ledgered remote call. Transcription stays local-only in this slice —
+//   no `SttProvider` routing, no decorator, by construction rather than by check, mirroring
+//   `LOCAL_ONLY_SYNC_SERVICES`.
 ```
 
 ### AbortController scope in `engine.cancelStream`

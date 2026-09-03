@@ -186,12 +186,27 @@ export async function extractFrameJpeg(
   // Read stdout CONCURRENTLY with waiting on exit. ffmpeg blocks once the pipe buffer fills, so
   // awaiting `exited` first would deadlock on any frame larger than that buffer.
   const collect = readBounded(proc.stdout, maxBytes);
-  const code = await withProcessTimeout(
-    proc,
-    opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS,
-    `ffmpeg frame ${atSeconds}s of ${input}`,
-  );
+  let code: number;
+  try {
+    code = await withProcessTimeout(
+      proc,
+      opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS,
+      `ffmpeg frame ${atSeconds}s of ${input}`,
+    );
+  } catch (err) {
+    // The timeout fired. `collect` is still pending on a stream that will never close, and a
+    // pending read keeps `bun test` alive past the last assertion — a hanging suite rather than a
+    // failing one. Cancel it explicitly; a no-op on a stream already at EOF. Same shape as
+    // `probeDurationSeconds`'s timeout arm — the two must not diverge.
+    void proc.stdout.cancel().catch(() => undefined);
+    void collect.catch(() => undefined);
+    throw err;
+  }
   if (code !== 0) {
+    // Non-zero exit still leaves `collect` reading a stream ffmpeg may not have closed cleanly.
+    // Same cancellation as the timeout arm above, for the same reason.
+    void proc.stdout.cancel().catch(() => undefined);
+    void collect.catch(() => undefined);
     const err = await new Response(proc.stderr).text().catch(() => "");
     throw new Error(
       `ffmpeg exited ${code} extracting frame at ${atSeconds}s: ${err.slice(0, 400)}`,

@@ -1338,7 +1338,7 @@ silently start walking every configured root for large binaries.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | The capability kill switch, above. |
-| `vlm_base_url` | `http://127.0.0.1:11434` | The Ollama base URL the vision model is served from. Accepts a remote host — pointing this off-box makes the provider non-local (I34) and its calls append to the egress ledger. |
+| `vlm_base_url` | `http://127.0.0.1:11434` | The Ollama base URL the vision model is served from. Accepts a remote host, which makes the provider non-local (I34) — but **in this slice that does not "just" append to the egress ledger, it breaks the capability outright.** There is no per-artifact remote grant yet (it lands in a later PR), so `media-gate.ts` REFUSES every artifact with `no_remote_grant` the moment this is non-loopback — including video, because `av-understander.ts` computes `isLocal` as `stt.isLocal && vlm.isLocal`, so a non-local VLM also disables the audio transcription that works today. Leave this at its default until the remote grant ships; the wrapper that WOULD ledger a non-local call (`wrapLedgeredVlm`) exists, but the gate never lets it run in this slice. |
 | `vlm_model` | `qwen2.5vl:7b` | The Ollama model tag to caption with. **You must pull this yourself** (`ollama pull qwen2.5vl:7b` or your own tag) — nothing in this pass downloads a model. A daemon that is up but has not pulled a vision-capable model reports unavailable, and the pass refuses images/frames with `no_local_model` rather than guessing. |
 | `max_frames` | `8` | The maximum keyframes sampled per video, clamped to 1–64. Actual sampling is also density-capped at one frame per 2 seconds of video, so a short clip samples fewer than the maximum. |
 
