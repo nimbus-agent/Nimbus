@@ -72,7 +72,7 @@ describe("buildUnderstandingRow", () => {
   });
 });
 
-test("understandingVersion is 2, so PR 1 rows are re-offered for captioning", () => {
+test("buildUnderstandingRow stamps the current understandingVersion", () => {
   const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 1_700_000_000_000);
   expect(row.metadata["understandingVersion"]).toBe(2);
 });

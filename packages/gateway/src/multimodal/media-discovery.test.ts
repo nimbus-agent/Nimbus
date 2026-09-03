@@ -52,6 +52,22 @@ describe("findCandidates", () => {
     expect(findCandidates(db, { limit: 10 })).toHaveLength(1);
   });
 
+  // fix round 1: pins the v1 -> v2 boundary specifically, not just "some older version". A row
+  // written by the PREVIOUS release carries `understandingVersion: 1` (PR 1's own value, never
+  // 0) -- the v0 test above proves the mechanism re-offers SOME older version, but a bound
+  // hardcoded to the literal `1` in the SQL would still pass that test while silently never
+  // re-offering a real v1 row again.
+  test("RE-INCLUDES an item understood at version 1 — the value a PR 1 row actually carries", () => {
+    addMedia("/m/a.mp4");
+    const [c] = findCandidates(db, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    writeUnderstanding(db, c, { text: "t", model: "m", isLocal: true }, 2000);
+    db.run(
+      "UPDATE item SET metadata = json_set(metadata, '$.understandingVersion', 1) WHERE type = 'video_understanding'",
+    );
+    expect(findCandidates(db, { limit: 10 })).toHaveLength(1);
+  });
+
   test("ignores non-media item types", () => {
     upsertIndexedItem(db, {
       service: "slack",
