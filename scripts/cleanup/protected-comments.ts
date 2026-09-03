@@ -25,6 +25,7 @@
 // two readers. The same shape the gateway uses for I31's disclosure anchors.
 
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { REPO_ROOT } from "./lib.ts";
 
 /**
@@ -116,7 +117,7 @@ export async function loadInvariantCitedFiles(
 ): Promise<Set<string>> {
   let text: string;
   try {
-    text = await readDoc(`${REPO_ROOT}/${INVARIANT_DOC}`);
+    text = await readDoc(join(REPO_ROOT, INVARIANT_DOC));
   } catch (cause) {
     throw new ProtectedSetUnavailableError(
       `Cannot read ${INVARIANT_DOC}; refusing to strip comments without knowing which are attested.`,
