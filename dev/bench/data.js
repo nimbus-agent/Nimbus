@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788414539107,
+  "lastUpdate": 1788454183327,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "90dbf13769cbef10204022d41244139c767b905c",
-          "message": "chore: housekeeping bundle — architecture.md drift + @mastra/core 1.43 + dep hygiene (#686)\n\n## Summary\n\nA low-risk housekeeping bundle from a docs/tech/architecture audit.\nThree buckets: documentation drift, dependency hygiene, and stale test\nfixtures. No production code behavior changes.\n\n### Docs (`docs/architecture.md`)\n- Promote the **Data Warehouse / Orchestration / BI & ML** section from\n\"Phase 5/6 — planned\" → \"Phase 6 Slice 7 — shipped\"; name the live\nconnector roster (delivery dates stay in `CHANGELOG.md` per convention).\n- Replace the placeholder write-tool names (`warehouse.job.trigger`, …)\nwith the **12 real wired warehouse/BI HITL action types**\n(`snowflake.tag.set` … `bigeye.issue.resolve`), pointing at\n`WAREHOUSE_BI_WRITES` / `HITL_REQUIRED_BACKING` in `engine/executor.ts`.\n\n### Dependencies\n- **`@mastra/core` 1.40.0 → 1.43.0**, **`@mastra/mcp` 1.9.1 → 1.10.0**\n(root `overrides` + gateway aligned). Resolves a silent conflict where\nthe override pinned a version *below* the gateway's declared `^1.41.0`,\nso the gateway was resolving 1.40.0 despite asking for ≥1.41.0.\n- **`@types/bun`: `\"latest\"` → `\"^1.3.14\"`** across\ngateway/cli/sdk/client — removes an unpinned surface that can redden CI\non a clean install with zero source change.\n- **astro** docs floor `^6.4.4` → `^6.4.7`; **esbuild**\n(vscode-extension) `^0.28.0` → `^0.28.1` — align declared floors with\nthe enforced override.\n\n### Test fixtures\n- Refresh stale model ids: `claude-opus-4-7` → `claude-opus-4-8`;\n`claude-3-5-sonnet-20241022` / `claude-3` → `claude-sonnet-4-6`.\nCosmetic; round-trip assertions preserved.\n\n## Verification\n- `bun run preflight` (full): typecheck (all packages) ✅, build ✅, **all\n18 static gates** ✅ (incl. `audit:doc-refs`, `audit:status-drift`), 666\ntargeted tests (engine+agents 518, config/fixtures 148) ✅.\n- Mastra 1.40→1.43 is clean — our `anthropic/<model>` string interface\ninsulates us from the AI-SDK v5/v6 provider churn underneath.\n- **One known non-blocking flake:** the full local `test:ci` recorded a\nsingle timeout in an unrelated connector-OAuth test (`auth.test.ts`) at\n~5012ms under full-suite load. It passes **14/14 @ ~200ms in isolation**\n(3× confirmed); root cause is the pre-existing Windows full-suite\ntimeout flake (`run-tests.ts` runs `bun test <paths>`, which doesn't\nhonor bunfig's `timeout=30000` — see PR #541). Unrelated to this diff;\nLinux CI runs with proper timeouts.\n\n## Risk\nDocs + `package.json`/lockfile + test-fixture strings only. The sole\nruntime-affecting change is the Mastra minor bump, verified above.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated architecture documentation to reflect that Data Warehouse,\nOrchestration, BI & ML connectors are now live and production-ready.\n\n* **Chores**\n  * Updated core and MCP dependencies to latest compatible versions.\n* Pinned development dependencies for improved build stability across\nmultiple packages.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-18T08:52:05+03:00",
-          "tree_id": "f716e88d0af97a43c461bd70ad3d76a5f7b36b04",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/90dbf13769cbef10204022d41244139c767b905c"
-        },
-        "date": 1781762643291,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.60598839999875,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 305.8665765500024,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 245.94779374999197,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "45082d3772b57da336be21a01fe9d946dd8d60f5",
+          "message": "chore: release main (#1431)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.8.0</summary>\n\n##\n[7.8.0](https://github.com/nimbus-agent/Nimbus/compare/v7.7.0...v7.8.0)\n(2026-09-03)\n\n\n### Features\n\n* **multimodal:** local audio/video understanding, indexed and\nsearchable (S2 PR 1 of 4)\n([#1429](https://github.com/nimbus-agent/Nimbus/issues/1429))\n([b995a96](https://github.com/nimbus-agent/Nimbus/commit/b995a96b2c135fa19614123df49c82033254065e))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-03T19:40:17+03:00",
+          "tree_id": "03b7638b7543df68f38e34ef733decc84febfb73",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/45082d3772b57da336be21a01fe9d946dd8d60f5"
+        },
+        "date": 1788454180141,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 249.72136355000438,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 247.69277930001226,
             "unit": "ms"
           }
         ]
