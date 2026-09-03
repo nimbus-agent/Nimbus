@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788459004143,
+  "lastUpdate": 1788460544707,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3860f91eabec5a8a7804c5fc8d8b0868006b9ad4",
-          "message": "chore(main): release 0.13.0 (#689)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.13.0](https://github.com/nimbus-agent/Nimbus/compare/v0.12.0...v0.13.0)\n(2026-06-18)\n\n\n### Features\n\n* **share:** Phase 6 Slice 8d — sovereign-mesh referral (forwarding,\nprovenance, V43 inbox)\n([#687](https://github.com/nimbus-agent/Nimbus/issues/687))\n([18131cf](https://github.com/nimbus-agent/Nimbus/commit/18131cf9d9499614d20b10421e5c511086942618))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added share functionality\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-18T12:26:21+03:00",
-          "tree_id": "931b3d3377b08ed4712f594980b29fa54346ed69",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3860f91eabec5a8a7804c5fc8d8b0868006b9ad4"
-        },
-        "date": 1781775457627,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 288.7711030000035,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 290.498602700005,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 338.42215339999746,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "64d50af67ddf196c742da5492e6005a7b745b9e0",
+          "message": "fix(sonar): clear 23 findings, and document five that should not be applied (#1434)\n\nClears 23 of the 75 open SonarCloud issues on this repo. Every finding\nwas read\nagainst the code before being applied — which mattered, because five of\nthe ones\nI looked at should NOT be applied, and two of those would have\nintroduced bugs.\n\n## The two that would have broken things\n\nS7747 flags `for (const x of [...collection])` as an unnecessary array\nconversion. In both places the spread is load-bearing:\n\n- `llm/route-availability.ts` iterates `[...this.cache.keys()]` and\ncalls\n`this.cache.delete()` inside the loop. Dropping the spread mutates a Map\n  during its own iteration.\n- `computer-use/cu-lanes/cdp-session.ts` copies `#listeners` before\ninvoking\n  them, so a listener that unsubscribes itself cannot corrupt the walk.\n\n## The three others left alone\n\n- S6353 wants `[A-Za-z0-9_]` written as `\\w` in `index/item-store.ts`.\nEquivalent\nin JavaScript, but that regex is an injection guard on a value heading\nfor SQL\nidentifier handling, and `\\w` reads as unicode-aware to plenty of people\nwhen\n  it is not. Explicit wins in a security check.\n- The fourth S7786, at `cu-lanes/browser.ts:413`, throws \"no element\nmatched\nselector\". That is a not-found condition; the `typeof` guard on the box\n  coordinates is incidental, and `TypeError` would misdescribe it.\n- S6564 on `ProviderId = string`. Its doc comment says it names \"a place\ndata can\ngo\" and that it reaches the egress ledger as `destination`. Deleting a\ndomain\n  alias to satisfy a rule erases meaning from an egress-relevant type.\n\n## What actually changed\n\nFour of these are more than tidying — in each case a type or a\nhuman-facing string was saying less than the code meant:\n\n- `agent-commands/parse-agent-command.ts` — `coerce` returned\n`unknown | { error: string }`, which collapses to plain `unknown`. The\nerror\n  arm told the type system nothing, so the single caller narrowed with a\nhand-written `\"error\" in v` guard, which also could not tell a failure\nfrom a\nsuccessfully coerced value carrying an `error` key. No current `kind`\nreturns\nan object, so it never misfired — a fact about the arms, not a\nguarantee. Now\n  a discriminated result; the guard is deleted.\n- `cli/src/commands/llm.ts` — `RouteReason`'s `| string` arm swallowed\nits four\nliterals, so the known reasons stopped being suggested and a typo in one\nstopped being visible. `(string & {})` keeps the openness the comment\nasks for\n  while keeping the members.\n- `cu-lanes/cdp-session.ts` — `CdpError` built its message with\n`String(err[\"message\"] ?? …)`, which yields \"[object Object]\" for a\nstructured\n  CDP error: a diagnostic naming no cause, from the layer whose job is\n  explaining why the browser refused.\n- `connectors/connector-sync-test-helpers.ts` — a Set instead of an\narray, which\nalso removed the `as LocalOnlySyncServiceId` cast its `includes` call\nneeded —\n  a cast asserting the very thing the check was testing.\n\nThe rest are mechanical: `replaceAll` over `split().join()`, a genuinely\ndead\n`modifiedAt = now` initialiser (the catch below it `continue`s, so\nnothing could\nread it), an anchored `/^- \\*\\*/` regex expressed as `startsWith`, two\noptional\nchains, three `TypeError`s where the guard really is a type check, and a\npure\nre-export tidied to `export type … from`.\n\n## Verification\n\n`preflight:fast` 33/33. 1006 tests pass across the touched areas.\n\nOne correction I made to myself along the way: the first `RouteReason`\nversion\ncarried a `biome-ignore` for `noBannedTypes`, a rule that does not fire\nthere.\n`--error-on-warnings` rejected the unused suppression, correctly.\n\nRemaining after this: 52. The largest groups are 19 S5906\nassertion-strictness\nfindings in tests, 12 CRITICAL cognitive-complexity refactors, and 9\n`String.raw`\nfindings in escape-handling code. The 12 are worth doing one at a time\nrather\nthan as a batch — restructuring complex functions is where a sweep can\ndo real\ndamage.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01GZCGCkVMD9JaKuiKvqRdAb\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved error reporting for LLM and computer-use operations,\nincluding clearer messages for structured, empty, or unexpected errors.\n* Strengthened command parsing so successful and failed results are\nhandled consistently.\n* Improved path traversal detection across Windows and Unix-style paths.\n* Prevented stale timestamps from being used when files disappear or\ncannot be inspected.\n* Preserved glossary and reserved-section detection behavior while\nimproving reliability.\n* **Refactor**\n* Improved internal handling of local-only service checks and shared\ntype exports without changing user-facing behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-03T21:21:05+03:00",
+          "tree_id": "becaa1c88cc3da019fee9d8130ed51819bf06d8c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/64d50af67ddf196c742da5492e6005a7b745b9e0"
+        },
+        "date": 1788460541313,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 333.77921275000335,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 331.8031883499945,
             "unit": "ms"
           }
         ]
