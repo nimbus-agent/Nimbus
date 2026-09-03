@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788321077497,
+  "lastUpdate": 1788409721822,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8535f4db75a68806806813131e7fb0a34327fba7",
-          "message": "feat(share): Phase 6 Slice 8c — replay (verify-share --replay, recipe-runner) (#684)\n\n## Phase 6 Slice 8c — Replay\n\nAdds **`nimbus verify-share <file|url> --replay`**: a deterministic,\nLLM-free local re-execution of a shared recipe's (or a transcript\nshare's) tool calls, classifying each step against the shared original\ninto a divergence report — *\"watch what ran on their data run on\nyours.\"*\n\nPer-step outcomes: `match` / `diverged` / `missing-connector` /\n`skipped-non-read` / `error`, plus a summary.\n\nImplements spec §8\n(`docs/superpowers/specs/2026-06-15-slice8-share-virality-design.md`);\nrealizes the spec's `share verify --replay` intent via the\nalready-shipped `verify-share` command (no duplicate verify surface).\nPlan: `docs/superpowers/plans/2026-06-17-slice8c-replay.md`.\n\n### What's new\n- **`share/read-tool-registry.ts`** — the security-load-bearing\n**POSITIVE** read-only allowlist (`isReadOnlyToolId`): a step runs only\nif its tool is positively classified read-only by connector read-verb\nnaming (`*_list`/`*_get`/`*_query`/`*_search` + a curated read surface),\n**never** by \"absent from `HITL_REQUIRED_BACKING`.\" A write tool missing\nfrom the HITL set is still skipped.\n- **`share/recipe-runner.ts`** — `stepsFromShare` (normalizes recipe or\ntranscript → ordered steps; fail-safe on malformed input),\n`replayRecipe` (per-step classification, executor invoked only past the\nread-only gate, never consults `dependsOn`), `replayShare` (entry\npoint).\n- **`share.replay` RPC** + `verify-share` loader/parse helpers\n(`loadShareBytes`, `parseShareFile`); mesh-backed `listReplayTools` ctx\ndep wired in `assemble.ts`.\n- **CLI** `verify-share --replay` + a pure `formatReplayReport`\nrenderer.\n- **E2E** recipe-replay round-trip (create `--as-recipe` → approve →\nreplay).\n\n### Safety / scope\n- **No new invariant, no migration** (schema stays V42). **I27/D21\nuntouched** — no new `share.publish` / `share.signing.privkey` /\n`createShare` references; `security-invariants` 83/83 unchanged.\n- Replay is **read-only + LLM-free**: never re-invokes the LLM, never\nfires a write/HITL action. The read-only guarantee is proven by a unit\nsecurity test (real classifier; both a HITL-absent write `acme_destroy`\nand a HITL-present write `snowflake_tag_set` are skipped, only\n`gmail_get` executes) and the e2e.\n- Deterministic: same share + same connector outcomes → identical\nreport.\n\n### Verification (all green before first push)\ngateway+cli tsc 0 · biome clean · structure-audit (D21) exit 0 ·\nsecurity-invariants 83/83 · unit (share/registry/runner/rpc) green ·\nintegration 354 pass / 0 fail · e2e 4/4 · cross-platform clean ·\nmarkdownlint 0 · CI-jscpd 3.18% (<5%) · js-licenses ✅ · lychee ✅ ·\n**Docker-Linux coverage-floor: ok** (new files clear ≥80% line+branch) ·\nwhole-branch opus review = ready-to-merge.\n\nBuilt subagent-driven (fresh implementer + two-stage review per task +\nopus whole-branch review). Deferred-Minor follow-ups (test-comment\npolish, etc.) tracked in the plan; the 3 FIX-NOW review items\n(parseShareFile `sig` null-guard, e2e handler cleanup,\nreverse-divergence assertion) are applied.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `--replay` to `nimbus verify-share <file|url>` to\ndeterministically re-run shared recipe/transcript tool calls locally and\nprint signature validity/expiry plus a per-step divergence report\n(`match`, `diverged`, `missing-connector`, `skipped-non-read`, `error`).\n* Implemented `share.replay` gateway support with read-only enforcement\nvia a positive allowlist.\n* **Bug Fixes**\n* Improved CLI robustness for local share loading (graceful failures and\ncorrect exit codes).\n* **Documentation**\n* Updated Phase 6 (Slice 8c) changelog and architecture/spec/review\nnotes for replay.\n* **Tests**\n* Added unit and end-to-end coverage for replay reporting,\nparsing/loading, dispatcher behavior, and read-only classification.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-17T18:20:07Z",
-          "tree_id": "c1afcd41577dbe35bee2df6dc0e222151b89fa26",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8535f4db75a68806806813131e7fb0a34327fba7"
-        },
-        "date": 1781721290410,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.99145104999695,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 299.9659380500005,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 327.7653633499925,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d3ba71dd3d3513e828da301bd59472fdb2dfc456",
+          "message": "feat(agents): publish the gateway version on the roster response (#1428)\n\n## Summary\n\n`GET /v1/agents` now returns `{ agents, version }` instead of `{ agents\n}`. One additive field, and it unblocks a client feature that is already\nmerged and currently dark on every gateway.\n\n**A NAME does not imply an ARM, which is the whole reason this exists.**\n`why`, `expert` and `ownership` have been published for releases; the\n`itemUrl` arms #1421 added to them have not. So a client deciding\nwhether to offer an item-scoped lane cannot learn what it needs from the\nname list — it has to ask a version question, and nothing on the HTTP\nsurface answered one: `GET /v1/health` returns `{ status, gateway:\n\"read_only_http\" }`, and `HTTP_ROUTES` carried no version route at all.\n\n**Why it rides on the roster response**, rather than taking a route of\nits own or going on `/v1/health`:\n\n- It is the request such a client already makes at the moment it needs\nthe answer, so both facts arrive in one round trip.\n- It is bearer-authed under the `agents` scope the caller already holds;\n`/v1/health` is tokenless.\n- The alternative — read a version at pair time and cache it — goes\nstale the first time an owner upgrades their gateway without re-pairing,\nand the symptom is a client's lanes staying dark forever with nothing on\nscreen to explain it.\n\n**The consumer is [`nimbus-web-clipper`\n#96](https://github.com/nimbus-agent/nimbus-web-clipper/pull/96),\nmerged**, whose `meetsFloor` fails **closed** on an absent version.\nUntil this ships in a release, that client's three item lanes are\nwithheld on every gateway — its own developers included, since a local\nbuild reports no version rather than `0.0.0` and so never reaches the\ndevelopment-build allowance. That is why an additive field gets its own\ndelivery-log entry.\n\n**Publishing each agent's *arms* would retire the question** instead of\nproxying it through a release number, and is the better long-run shape.\nDeliberately not done here: the arms live inside each handler's param\ntypes, so deriving them honestly is real work, and hand-listing them is\nexactly the drift `EXTERNAL_AGENT_NAMES` is derived to prevent. Recorded\nas an addendum to §4.5 of\n`2026-08-31-agents-for-items-and-files-design.md` — that document owns\nthis wire and did not mention a version field — so the trade does not\nhave to be rediscovered.\n\n## Related Issue\n\nNo issue. Relates to nimbus-agent/nimbus-web-clipper#96, which is the\nconsumer and is already merged and waiting on this.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] Documentation only *(partly — the design addendum and the\ndelivery-log entry)*\n\nAdditive: an existing response object gains a field. No route added, no\nauth change, no allowlist edit, no config key.\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — gateway **16080 pass / 0\nfail** across 1151 files; `scripts` **1660 pass / 0 fail**\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — n/a, no platform code touched\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable — untouched\n- [x] `docs/README.md` not touched\n\n## Coverage (if engine/ or vault/ was changed)\n\nNeither was changed.\n\n## Testing\n\nWritten test-first. The new case in\n`packages/gateway/src/agent-runs/agent-http-e2e.test.ts` failed before\nthe change:\n\n```\nerror: expect(received).toBe(expected)\nExpected: \"7.6.0\"\nReceived: undefined\n```\n\nand passes after. It asserts against the imported `GATEWAY_VERSION`\nrather than a literal, so the release-please bump cannot drift it.\n\nFull runs after the change:\n\n```\nbun run typecheck   →  clean\nbun run lint        →  exit 0\nbun run lint:markdown → 0 issues in 0 files\nbun test packages/gateway → 16080 pass, 56 skip, 0 fail (1151 files)\nbun test scripts    → 1660 pass, 27 skip, 0 fail (118 files)\n```\n\n## Notes for Reviewers\n\nThe existing test `GET /v1/agents publishes exactly the invokable set`\nis untouched and still asserts `toHaveLength(11)` and the four\nexclusions — destructuring `{ agents }` from a body that now has a\nsecond key is unaffected, which is the point of an additive change.\n\n`markdownlint-cli2` was run because two docs files changed; this repo's\ngate over `docs/` is easy to miss locally.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_015bqLXtgadH9pbDCDodmXb5\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- The `GET /v1/agents` endpoint now includes the gateway version\nalongside the available agent roster.\n- Consumers can use the returned version information when processing\nagent roster responses and performing compatibility checks.\n\n- **Documentation**\n- Updated the changelog and design documentation to describe the new\nversion field and client behavior.\n\n- **Tests**\n- Added end-to-end coverage verifying that agent roster responses\ninclude the gateway version.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-03T04:15:59Z",
+          "tree_id": "d87af1bfbdbeb2628be7d1c223cf72dcec06ac97",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d3ba71dd3d3513e828da301bd59472fdb2dfc456"
+        },
+        "date": 1788409718610,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 333.33206379999973,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 332.22340564999615,
             "unit": "ms"
           }
         ]
