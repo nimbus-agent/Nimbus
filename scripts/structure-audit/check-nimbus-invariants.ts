@@ -1403,14 +1403,27 @@ export function checkEmbeddingConstructorConfinement(files: readonly FileEntry[]
 //
 // Two allow-lists, mirroring D22(f): the DECORATOR (so a stray reference is caught) and the
 // CONSTRUCTOR (so a new construction site that never mentions the decorator at all is caught
-// too -- the gap that rule's second half exists to close).
+// too -- the gap that rule's second half exists to close). The constructor half mirrors
+// `checkEmbeddingConstructorConfinement` exactly, for the same reason: an EARLIER version of
+// this rule skipped an allow-listed file wholesale once its path matched, so a SECOND, unwrapped
+// `createOllamaVlm(...)` planted beside a legitimate wrapped call in an already-approved file was
+// invisible to every guard -- the decorator half above only trips on `wrapLedgeredVlm`'s
+// ABSENCE, never on a second, unrelated construction sharing the file with a real one. That is
+// the exact I29 regression D22(f)'s own second allow-list exists to prevent, so "the file is
+// approved" can no longer stand in for "this call is wrapped": an approved file's calls are now
+// paren-matched against every `wrapLedgeredVlm(...)` call in the file, and a call is clean only
+// when its `createOllamaVlm(` sits inside one of those argument lists -- proving association, not
+// mere co-occurrence.
 const D22_VLM_WRAP_RE = /\bwrapLedgeredVlm\b/;
 const D22_VLM_WRAP_ALLOWED: readonly string[] = [
   "packages/gateway/src/egress/vlm-egress.ts",
   "packages/gateway/src/multimodal/build-media-pass-deps.ts",
 ];
-const D22_VLM_CTOR_RE = /\bcreateOllamaVlm\s*\(/;
+const D22_VLM_CTOR_CALL_RE = /\bcreateOllamaVlm\s*\(/;
+const D22_VLM_WRAP_CALL_RE = /\bwrapLedgeredVlm\s*\(/;
+/** Where `createOllamaVlm` is DECLARED -- exempt outright; there is nothing to wrap here. */
 const D22_VLM_CTOR_DEFINITION = "packages/gateway/src/multimodal/vlm/ollama-vlm.ts";
+/** The one known construction call site -- checked for wrapping, never skipped wholesale. */
 const D22_VLM_CTOR_ALLOWED: readonly string[] = [
   "packages/gateway/src/multimodal/build-media-pass-deps.ts",
 ];
@@ -1420,10 +1433,13 @@ export function checkVlmAppenderConfinement(files: readonly FileEntry[]): Violat
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
     if (!f.relPath.startsWith("packages/gateway/src/")) continue;
-    const stripped = stripComments(f.contents);
     const original = f.contents.split("\n");
 
+    // DECORATOR half: a stray `wrapLedgeredVlm` reference (import or call) outside its two
+    // allow-listed homes. Comments blanked only -- a bare identifier reference, not a call, is
+    // what this half looks for, so string-literal stripping is not needed here.
     if (!D22_VLM_WRAP_ALLOWED.includes(f.relPath)) {
+      const stripped = stripComments(f.contents);
       const re = new RegExp(D22_VLM_WRAP_RE.source, "g");
       for (const m of stripped.matchAll(re)) {
         const line = stripped.slice(0, m.index).split("\n").length;
@@ -1436,17 +1452,45 @@ export function checkVlmAppenderConfinement(files: readonly FileEntry[]): Violat
       }
     }
 
-    if (f.relPath !== D22_VLM_CTOR_DEFINITION && !D22_VLM_CTOR_ALLOWED.includes(f.relPath)) {
-      const re = new RegExp(D22_VLM_CTOR_RE.source, "g");
-      for (const m of stripped.matchAll(re)) {
-        const line = stripped.slice(0, m.index).split("\n").length;
-        out.push({
-          rule: "vlm-constructor-confined",
-          file: f.relPath,
-          line,
-          snippet: (original[line - 1] ?? "").trim(),
-        });
-      }
+    // CONSTRUCTOR half. Comments AND string/template literals blanked (length-preserving), so
+    // neither a comment nor a string body can fake a match or desync the paren depth count below.
+    if (f.relPath === D22_VLM_CTOR_DEFINITION) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    const snippetAt = (index: number): Violation => {
+      const line = code.slice(0, index).split("\n").length;
+      return {
+        rule: "vlm-constructor-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      };
+    };
+
+    const ctorRe = new RegExp(D22_VLM_CTOR_CALL_RE.source, "g");
+    const ctorMatches = [...code.matchAll(ctorRe)];
+    if (ctorMatches.length === 0) continue;
+
+    if (!D22_VLM_CTOR_ALLOWED.includes(f.relPath)) {
+      // A brand-new call site outside the allow-list trips regardless of wrapping -- it demands
+      // a deliberate allow-list addition (and the review that goes with one), not a silent pass
+      // just because it happens to already be wrapped.
+      for (const m of ctorMatches) out.push(snippetAt(m.index ?? 0));
+      continue;
+    }
+
+    // Approved call site: every `createOllamaVlm(` must be textually nested inside a
+    // `wrapLedgeredVlm(...)` call's argument list -- association, not co-occurrence.
+    const wrapSpans: Array<[number, number]> = [];
+    const wrapRe = new RegExp(D22_VLM_WRAP_CALL_RE.source, "g");
+    for (const m of code.matchAll(wrapRe)) {
+      const openIdx = (m.index ?? 0) + m[0].length - 1;
+      const closeIdx = findMatchingParenClose(code, openIdx);
+      if (closeIdx !== -1) wrapSpans.push([openIdx, closeIdx]);
+    }
+    for (const m of ctorMatches) {
+      const idx = m.index ?? 0;
+      const wrapped = wrapSpans.some(([open, close]) => idx > open && idx < close);
+      if (!wrapped) out.push(snippetAt(idx));
     }
   }
   return out;

@@ -86,11 +86,24 @@ describe("wrapLedgeredVlm", () => {
   test("no image bytes and no prompt reach the payload summary", async () => {
     const d = db();
     const wrapped = wrapLedgeredVlm(d, fakeVlm(false));
-    await wrapped.describe({ bytes: new Uint8Array([0xde, 0xad, 0xbe, 0xef]), prompt: "secret" });
+    const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+    await wrapped.describe({ bytes, prompt: "secret" });
     const summary = String(listEgress(d, {})[0]?.payloadSummary ?? "");
     expect(summary).not.toContain("secret");
-    expect(summary).not.toContain("dead");
     expect(summary).toContain("qwen2.5vl:7b");
+    // `not.toContain("dead")` alone cannot fail: `redactEgressSummary` JSON-serializes, so a
+    // `Uint8Array` never renders as the string "dead" (it becomes an index-keyed object or a
+    // base64 string), and neither of those forms contains that substring even if the bytes DID
+    // leak. Assert positively on the summary's SHAPE instead — the exact key set, nothing more —
+    // plus a targeted negative check against the one encoding an accidental leak would actually
+    // take (base64), which together can fail if a future edit widens the payload.
+    const parsed: unknown = JSON.parse(summary);
+    expect(parsed).not.toBeNull();
+    expect(typeof parsed).toBe("object");
+    expect(Object.keys(parsed as Record<string, unknown>).sort()).toEqual(
+      ["imageBytes", "model"].sort(),
+    );
+    expect(summary).not.toContain(Buffer.from(bytes).toString("base64"));
   });
 
   test("locality is read off the provider, so a caller cannot fabricate or suppress rows", () => {
