@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { HTTP_ROUTES, READ_ONLY_HTTP_ROUTES } from "./http-routes.ts";
+import { HTTP_ROUTES } from "./http-routes.ts";
 
 describe("HTTP_ROUTES", () => {
   it("includes the canonical read-only endpoints plus POST /v1/deployments", () => {
@@ -33,9 +33,5 @@ describe("HTTP_ROUTES", () => {
 
   it("is frozen (immutable)", () => {
     expect(Object.isFrozen(HTTP_ROUTES)).toBe(true);
-  });
-
-  it("exposes a back-compat alias READ_ONLY_HTTP_ROUTES that is the same array", () => {
-    expect(READ_ONLY_HTTP_ROUTES).toBe(HTTP_ROUTES);
   });
 });

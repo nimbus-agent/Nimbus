@@ -131,7 +131,7 @@ When a new POST/PUT/DELETE genuinely needs to live on the HTTP API (not the IPC 
 
 ## OpenAPI Drift
 
-[`scripts/structure-audit/check-openapi-drift.ts`](../../scripts/structure-audit/check-openapi-drift.ts) compares `v1.yaml`'s declared paths against `READ_ONLY_HTTP_ROUTES` (and, by transitivity, against the live handler set). It's wired as `bun run audit:openapi-drift` and runs in the structure-audit CI gate. The write surface is small enough that drift here means *someone added a route and forgot the schema* — easy to fix, but the gate catches it before merge.
+[`scripts/structure-audit/check-openapi-drift.ts`](../../scripts/structure-audit/check-openapi-drift.ts) compares `v1.yaml`'s declared paths against `HTTP_ROUTES` (and, by transitivity, against the live handler set). It's wired as `bun run audit:openapi-drift` and runs in the structure-audit CI gate. The write surface is small enough that drift here means *someone added a route and forgot the schema* — easy to fix, but the gate catches it before merge.
 
 ## Anti-Patterns
 
