@@ -42,8 +42,12 @@ export const DEFAULT_TRANSCODE_TIMEOUT_MS = 10 * 60 * 1000;
  *
  * `clearTimeout` runs on every path — an outstanding timer keeps `bun test` alive past the last
  * assertion, which shows up as a suite that hangs rather than one that fails.
+ *
+ * Exported for `frames/frame-extract.ts`, which spawns ffmpeg once per sampled frame and needs
+ * the identical kill-then-reap behaviour. One implementation rather than two: a second copy would
+ * be the place the reap gets forgotten.
  */
-async function withProcessTimeout(
+export async function withProcessTimeout(
   proc: { exited: Promise<number>; kill: () => void },
   timeoutMs: number,
   label: string,
