@@ -171,10 +171,6 @@
     "clean": "bun run --filter '*' clean && rm -rf node_modules"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "@nimbus-dev/client": "^0.17.3",
-    "@nimbus-dev/sdk": "^1.31.0",
-    "astro": "^7.2.10",
     "zod": "^4.5.4"
   },
   "devDependencies": {
@@ -183,7 +179,6 @@
     "@babel/preset-typescript": "8.0.1",
     "@biomejs/biome": "^2.5.11",
     "@conventional-commits/parser": "^0.4.1",
-    "@hughescr/stryker-bun-runner": "1.3.8",
     "@resvg/resvg-js": "^2.6.2",
     "@stryker-mutator/core": "10.0.0",
     "@types/babel__core": "7.20.5",
