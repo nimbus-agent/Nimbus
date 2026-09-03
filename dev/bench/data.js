@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788409721822,
+  "lastUpdate": 1788411248202,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3cc765d43521ecf8c86da23de2d8c3bdfff2f96c",
-          "message": "chore(main): release 0.12.0 (#682)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.12.0](https://github.com/nimbus-agent/Nimbus/compare/v0.11.2...v0.12.0)\n(2026-06-17)\n\n\n### Features\n\n* **share:** Phase 6 Slice 8b — recipe (--as-recipe declarative DAG, V42\nparams) ([#679](https://github.com/nimbus-agent/Nimbus/issues/679))\n([97573bd](https://github.com/nimbus-agent/Nimbus/commit/97573bdc2423d8687a974ccc08ad4d5f26da15df))\n* **share:** Phase 6 Slice 8c — replay (verify-share --replay,\nrecipe-runner)\n([#684](https://github.com/nimbus-agent/Nimbus/issues/684))\n([8535f4d](https://github.com/nimbus-agent/Nimbus/commit/8535f4db75a68806806813131e7fb0a34327fba7))\n\n\n### Bug Fixes\n\n* **sonar:** clear last 2 S7735 negated-condition smells\n([#683](https://github.com/nimbus-agent/Nimbus/issues/683))\n([e6cbfff](https://github.com/nimbus-agent/Nimbus/commit/e6cbfff9b4fdb173b3f650e8f1f98c494b985c43))\n* **test:** add --timeout 30000 to all coverage shards (Windows flake)\n([#681](https://github.com/nimbus-agent/Nimbus/issues/681))\n([93270ca](https://github.com/nimbus-agent/Nimbus/commit/93270cad4eae8c14330ca67c09947d692ecc18e8))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Two new features added to v0.12.0.\n* **Bug Fixes**\n  * Two bug fixes included in v0.12.0 release.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-17T22:49:32+03:00",
-          "tree_id": "089e24157d426874ee3a1af83ac464a145abb0ec",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3cc765d43521ecf8c86da23de2d8c3bdfff2f96c"
-        },
-        "date": 1781726503967,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 284.9386581500024,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 285.2832019000074,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 332.22340564999615,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "044c9c04e4c10619c4af89d73a9ae0d4fa5b7b22",
+          "message": "chore: release main (#1430)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.7.0</summary>\n\n##\n[7.7.0](https://github.com/nimbus-agent/Nimbus/compare/v7.6.0...v7.7.0)\n(2026-09-03)\n\n\n### Features\n\n* **agents:** publish the gateway version on the roster response\n([#1428](https://github.com/nimbus-agent/Nimbus/issues/1428))\n([d3ba71d](https://github.com/nimbus-agent/Nimbus/commit/d3ba71dd3d3513e828da301bd59472fdb2dfc456))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-03T04:40:25Z",
+          "tree_id": "3d78846c5dd9c63cd793bba404437d30a266ef18",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/044c9c04e4c10619c4af89d73a9ae0d4fa5b7b22"
+        },
+        "date": 1788411244810,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 325.7947999999975,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 328.1524619,
             "unit": "ms"
           }
         ]
