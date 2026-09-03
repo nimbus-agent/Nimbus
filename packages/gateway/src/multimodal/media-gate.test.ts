@@ -20,7 +20,7 @@ function understander(over: Partial<LocalUnderstander> = {}): LocalUnderstander 
     isLocal: true,
     model: "whisper-base",
     isAvailable: async () => true,
-    understand: async () => "transcript text",
+    understand: async () => ({ text: "transcript text" }),
     ...over,
   };
 }
@@ -29,7 +29,7 @@ function deps(over: Partial<MediaGateDeps> = {}): MediaGateDeps {
   return {
     enabled: true,
     capabilityDisabled: false,
-    sttFor: () => understander(),
+    understanderFor: () => understander(),
     gpu: { acquire: async () => () => undefined, touch: () => undefined },
     ...over,
   };
@@ -40,7 +40,7 @@ describe("understandArtifact — ordered refusals", () => {
     let touched = false;
     const out = await understandArtifact(CANDIDATE, "/m/a.mp4", {
       ...deps({ enabled: false }),
-      sttFor: () => {
+      understanderFor: () => {
         touched = true;
         return understander();
       },
@@ -53,7 +53,7 @@ describe("understandArtifact — ordered refusals", () => {
     let touched = false;
     const out = await understandArtifact(CANDIDATE, "/m/a.mp4", {
       ...deps({ capabilityDisabled: true }),
-      sttFor: () => {
+      understanderFor: () => {
         touched = true;
         return understander();
       },
@@ -63,7 +63,11 @@ describe("understandArtifact — ordered refusals", () => {
   });
 
   test("refuses an unresolvable modality rather than guessing", async () => {
-    const out = await understandArtifact(CANDIDATE, "/m/a.mp4", deps({ sttFor: () => undefined }));
+    const out = await understandArtifact(
+      CANDIDATE,
+      "/m/a.mp4",
+      deps({ understanderFor: () => undefined }),
+    );
     expect(out).toEqual({ ok: false, reason: "unresolvable_modality" });
   });
 
@@ -71,7 +75,7 @@ describe("understandArtifact — ordered refusals", () => {
     const out = await understandArtifact(
       CANDIDATE,
       "/m/a.mp4",
-      deps({ sttFor: () => understander({ isAvailable: async () => false }) }),
+      deps({ understanderFor: () => understander({ isAvailable: async () => false }) }),
     );
     expect(out).toEqual({ ok: false, reason: "no_local_model" });
   });
@@ -80,7 +84,7 @@ describe("understandArtifact — ordered refusals", () => {
     const out = await understandArtifact(
       CANDIDATE,
       "/m/a.mp4",
-      deps({ sttFor: () => understander({ isLocal: false }) }),
+      deps({ understanderFor: () => understander({ isLocal: false }) }),
     );
     expect(out).toEqual({ ok: false, reason: "no_remote_grant" });
   });
@@ -98,7 +102,7 @@ describe("understandArtifact — ordered refusals", () => {
       CANDIDATE,
       "/m/a.mp4",
       deps({
-        sttFor: () =>
+        understanderFor: () =>
           understander({
             understand: async () => {
               throw new Error("whisper died");
@@ -113,7 +117,7 @@ describe("understandArtifact — ordered refusals", () => {
     let released = 0;
     await understandArtifact(CANDIDATE, "/m/a.mp4", {
       ...deps({
-        sttFor: () =>
+        understanderFor: () =>
           understander({
             understand: async () => {
               throw new Error("boom");
@@ -179,10 +183,12 @@ describe("understandArtifact — ordered refusals", () => {
 
     expect(await acquireCount({ enabled: false })).toBe(0);
     expect(await acquireCount({ capabilityDisabled: true })).toBe(0);
-    expect(await acquireCount({ sttFor: () => undefined })).toBe(0);
-    expect(await acquireCount({ sttFor: () => understander({ isLocal: false }) })).toBe(0);
+    expect(await acquireCount({ understanderFor: () => undefined })).toBe(0);
+    expect(await acquireCount({ understanderFor: () => understander({ isLocal: false }) })).toBe(0);
     expect(
-      await acquireCount({ sttFor: () => understander({ isAvailable: async () => false }) }),
+      await acquireCount({
+        understanderFor: () => understander({ isAvailable: async () => false }),
+      }),
     ).toBe(0);
   });
 
@@ -194,11 +200,11 @@ describe("understandArtifact — ordered refusals", () => {
     let touches = 0;
     const out = await understandArtifact(CANDIDATE, "/m/a.mp4", {
       ...deps({
-        sttFor: () =>
+        understanderFor: () =>
           understander({
             understand: async () => {
               await Bun.sleep(60);
-              return "slow transcript";
+              return { text: "slow transcript" };
             },
           }),
       }),
@@ -229,5 +235,35 @@ describe("understandArtifact — ordered refusals", () => {
     const after = touches;
     await Bun.sleep(60);
     expect(touches).toBe(after);
+  });
+
+  test("understandArtifact carries frame counts from the understander onto the outcome", async () => {
+    const res = await understandArtifact(CANDIDATE, "/m/a.mp4", {
+      ...deps(),
+      understanderFor: () => ({
+        isLocal: true,
+        model: "m",
+        isAvailable: () => Promise.resolve(true),
+        understand: () => Promise.resolve({ text: "t", framesSampled: 8, framesCaptioned: 6 }),
+      }),
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.outcome.framesSampled).toBe(8);
+      expect(res.outcome.framesCaptioned).toBe(6);
+    }
+  });
+
+  test("an understander reporting no counts leaves them absent, not zero", async () => {
+    const res = await understandArtifact(CANDIDATE, "/m/a.png", {
+      ...deps(),
+      understanderFor: () => ({
+        isLocal: true,
+        model: "m",
+        isAvailable: () => Promise.resolve(true),
+        understand: () => Promise.resolve({ text: "t" }),
+      }),
+    });
+    if (res.ok) expect("framesSampled" in res.outcome).toBe(false);
   });
 });

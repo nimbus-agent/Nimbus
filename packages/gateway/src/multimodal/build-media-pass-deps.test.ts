@@ -40,8 +40,8 @@ describe("buildMediaPassDeps", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
     });
-    expect(deps.gate.sttFor("av")).toBeDefined();
-    expect(deps.gate.sttFor("image")).toBeUndefined();
+    expect(deps.gate.understanderFor("av")).toBeDefined();
+    expect(deps.gate.understanderFor("image")).toBeUndefined();
   });
 
   test("the AV understander declares itself LOCAL", () => {
@@ -52,7 +52,7 @@ describe("buildMediaPassDeps", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
     });
-    expect(deps.gate.sttFor("av")?.isLocal).toBe(true);
+    expect(deps.gate.understanderFor("av")?.isLocal).toBe(true);
   });
 
   test("propagates the disabled flags into the gate, so the gate refuses", () => {

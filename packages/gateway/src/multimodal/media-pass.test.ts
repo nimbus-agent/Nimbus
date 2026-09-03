@@ -42,11 +42,11 @@ function deps(over: Partial<MediaPassDeps> = {}): MediaPassDeps {
     gate: {
       enabled: true,
       capabilityDisabled: false,
-      sttFor: () => ({
+      understanderFor: () => ({
         isLocal: true,
         model: "whisper-base",
         isAvailable: async () => true,
-        understand: async () => "transcript",
+        understand: async () => ({ text: "transcript" }),
       }),
       gpu: { acquire: async () => () => undefined, touch: () => undefined },
     },
@@ -98,14 +98,14 @@ describe("runMediaPass", () => {
         gate: {
           enabled: true,
           capabilityDisabled: false,
-          sttFor: () => ({
+          understanderFor: () => ({
             isLocal: true,
             model: "m",
             isAvailable: async () => true,
             understand: async () => {
               calls += 1;
               if (calls === 1) throw new Error("first one fails");
-              return "ok";
+              return { text: "ok" };
             },
           }),
           gpu: { acquire: async () => () => undefined, touch: () => undefined },
@@ -133,7 +133,7 @@ describe("runMediaPass", () => {
         gate: {
           enabled: false,
           capabilityDisabled: false,
-          sttFor: () => undefined,
+          understanderFor: () => undefined,
           gpu: { acquire: async () => () => undefined, touch: () => undefined },
         },
       }),
@@ -188,7 +188,7 @@ describe("runMediaPass", () => {
         gate: {
           enabled: false,
           capabilityDisabled: false,
-          sttFor: () => undefined,
+          understanderFor: () => undefined,
           gpu: { acquire: async () => () => undefined, touch: () => undefined },
         },
       }),
@@ -218,11 +218,11 @@ describe("runMediaPass", () => {
         gate: {
           enabled: true,
           capabilityDisabled: false,
-          sttFor: () => ({
+          understanderFor: () => ({
             isLocal: true,
             model: "m",
             isAvailable: async () => true,
-            understand: async () => long,
+            understand: async () => ({ text: long }),
           }),
           gpu: { acquire: async () => () => undefined, touch: () => undefined },
         },

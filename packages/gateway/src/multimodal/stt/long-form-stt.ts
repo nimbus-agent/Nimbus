@@ -7,6 +7,7 @@
  * Everything is injected rather than constructed here: `mock.module` is process-global and leaks
  * across the combined CI test run, so DI is the house rule for anything spawning a subprocess.
  */
+import type { UnderstandDetail } from "../media-types.ts";
 import { transcodeToWav, withScratchFile } from "./ffmpeg-bin.ts";
 
 export interface LongFormSttDeps {
@@ -27,7 +28,7 @@ export interface LongFormStt {
   readonly isLocal: true;
   readonly model: string;
   isAvailable(): Promise<boolean>;
-  understand(path: string): Promise<string>;
+  understand(path: string): Promise<UnderstandDetail>;
 }
 
 export function createLongFormStt(deps: LongFormSttDeps): LongFormStt {
@@ -35,7 +36,7 @@ export function createLongFormStt(deps: LongFormSttDeps): LongFormStt {
     isLocal: true,
     model: deps.model,
     isAvailable: deps.isAvailable,
-    async understand(path: string): Promise<string> {
+    async understand(path: string): Promise<UnderstandDetail> {
       const wav = await transcodeToWav(path, {
         ffmpegBin: deps.ffmpegBin,
         scratchDir: deps.scratchDir,
@@ -43,7 +44,7 @@ export function createLongFormStt(deps: LongFormSttDeps): LongFormStt {
       });
       return withScratchFile(wav, async (p) => {
         const res = await deps.transcribe(p);
-        return res.text;
+        return { text: res.text };
       });
     },
   };

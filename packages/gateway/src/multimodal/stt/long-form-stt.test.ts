@@ -26,7 +26,7 @@ describe("createLongFormStt", () => {
 
   test("transcodes then transcribes, returning the text", async () => {
     const stt = createLongFormStt(deps());
-    expect(await stt.understand("/in/demo.mp4")).toBe("hello world");
+    expect(await stt.understand("/in/demo.mp4")).toEqual({ text: "hello world" });
   });
 
   test("passes the TRANSCODED wav to whisper, not the original", async () => {

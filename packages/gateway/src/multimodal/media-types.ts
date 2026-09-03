@@ -42,6 +42,31 @@ export interface UnderstandOutcome {
    * Recorded on the derived item so a reader can tell where the understanding came from.
    */
   readonly isLocal: boolean;
+  /**
+   * Present only for a video that reached frame sampling. Recorded so a reader can tell a video
+   * whose frames all failed (`framesCaptioned: 0`) from one that was never sampled at all (both
+   * absent) — the body states the same thing in prose (spec § 12.8), and these are the
+   * machine-readable half.
+   */
+  readonly framesSampled?: number;
+  readonly framesCaptioned?: number;
+}
+
+/**
+ * What an understander RETURNS, as opposed to {@link UnderstandOutcome} which is what the gate
+ * RECORDS. The gate adds `model` and `isLocal` from the provider — those are derived, never
+ * reported by the understander (I34) — and carries the rest through.
+ *
+ * A structured type rather than `string | UnderstandDetail`: a union leaves a `typeof` narrow at
+ * the gate forever, and it makes "this understander forgot to report its counts" and "this
+ * understander has no counts to report" the same value. Total, the compiler names every implementer
+ * when a field is added. There are three implementers and one caller, all inside `multimodal/`, so
+ * there is no compatibility argument for the looser type.
+ */
+export interface UnderstandDetail {
+  readonly text: string;
+  readonly framesSampled?: number;
+  readonly framesCaptioned?: number;
 }
 
 /**

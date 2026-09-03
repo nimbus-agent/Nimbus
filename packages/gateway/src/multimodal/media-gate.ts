@@ -14,6 +14,7 @@ import type {
   MediaCandidate,
   MediaModality,
   SkipReason,
+  UnderstandDetail,
   UnderstandOutcome,
 } from "./media-types.ts";
 
@@ -22,7 +23,7 @@ export interface LocalUnderstander {
   readonly isLocal: boolean;
   readonly model: string;
   isAvailable(): Promise<boolean>;
-  understand(path: string): Promise<string>;
+  understand(path: string): Promise<UnderstandDetail>;
 }
 
 /**
@@ -35,7 +36,12 @@ export interface MediaGateDeps {
   readonly enabled: boolean;
   /** Resolved org policy (I22) disabling the capability. Checked BEFORE any model work. */
   readonly capabilityDisabled: boolean;
-  readonly sttFor: (modality: MediaModality) => LocalUnderstander | undefined;
+  /**
+   * Resolves the understander for a modality. Named for what it does rather than for STT: since
+   * PR 2 the `image` modality resolves to a VLM-backed understander, and `av` to a composite of
+   * transcription and frame captions.
+   */
+  readonly understanderFor: (modality: MediaModality) => LocalUnderstander | undefined;
   /**
    * `touch` is REQUIRED, not optional: a production wiring that forgets it would compile and
    * silently lose the heartbeat — exactly the multi-minute-eviction failure this file exists to
@@ -67,7 +73,7 @@ export async function understandArtifact(
 
   // 1. Resolve the provider for this modality. Absent means SKIP, never a default: guessing the
   //    modality means handing bytes to the wrong model.
-  const provider = deps.sttFor(candidate.modality);
+  const provider = deps.understanderFor(candidate.modality);
   if (provider === undefined) {
     return { ok: false, reason: "unresolvable_modality" };
   }
@@ -104,8 +110,21 @@ export async function understandArtifact(
     deps.gpu.touch();
   }, deps.heartbeatMs ?? GPU_HEARTBEAT_MS);
   try {
-    const text = await provider.understand(path);
-    return { ok: true, outcome: { text, model: provider.model, isLocal: provider.isLocal } };
+    const detail = await provider.understand(path);
+    return {
+      ok: true,
+      outcome: {
+        text: detail.text,
+        // Both DERIVED from the provider, never reported by the understander (I34).
+        model: provider.model,
+        isLocal: provider.isLocal,
+        // Conditional spread: absent counts must stay absent, not become 0. See UnderstandDetail.
+        ...(detail.framesSampled === undefined ? {} : { framesSampled: detail.framesSampled }),
+        ...(detail.framesCaptioned === undefined
+          ? {}
+          : { framesCaptioned: detail.framesCaptioned }),
+      },
+    };
   } catch {
     return { ok: false, reason: "transcribe_failed" };
   } finally {

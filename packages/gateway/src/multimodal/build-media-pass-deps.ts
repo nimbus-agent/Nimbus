@@ -5,7 +5,7 @@
  * be tested without a whisper binary, an arbiter or a config. This is the one place that knows
  * what the real implementations are.
  *
- * `sttFor("image")` returns undefined DELIBERATELY: PR 1 ships no VLM, so an image candidate is
+ * `understanderFor("image")` returns undefined DELIBERATELY: PR 1 ships no VLM, so an image candidate is
  * skipped as `unresolvable_modality` rather than mis-handed to the STT path. PR 2 adds that arm.
  */
 import type { Database } from "bun:sqlite";
@@ -115,7 +115,7 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     gate: {
       enabled: input.enabled,
       capabilityDisabled: input.capabilityDisabled,
-      sttFor: (modality: MediaModality): LocalUnderstander | undefined =>
+      understanderFor: (modality: MediaModality): LocalUnderstander | undefined =>
         modality === "av" ? stt : undefined,
       gpu: {
         acquire: (id: string) => arbiter.acquire(id),
