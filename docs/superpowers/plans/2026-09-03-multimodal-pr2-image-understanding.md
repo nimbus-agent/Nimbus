@@ -37,6 +37,26 @@ Each is a deliberate, recorded deviation — Task 9 writes them back into the sp
 5. **Frame captions are composed BEFORE the transcript in the body.** `bodyCapForItemType` clamps `video_understanding` at `BODY_MAX_PROSE` (16,384) and `item-store.ts` sets `body_complete = 0` automatically when the clamp bites. Captions-first means a long transcript loses its tail rather than the captions vanishing, and the truncation is already disclosed by `body_complete`.
 6. **PR 4's static rule D27(a) must be re-derived, not copied.** The spec writes D27(a) as confining free functions named `describeBytes` / `transcribeBytes` to `media-gate.ts`. This PR's model contact is a **provider method** (`VlmProvider.describe`) reached through a confined decorator, so a rule scanning for those two identifiers would pass over the real shape and enforce nothing. Task 9 records this so PR 4 writes a rule against what exists.
 
+### Review dispositions (2026-09-03)
+
+Findings from [`…-review.md`](./2026-09-03-multimodal-pr2-image-understanding-review.md), each verified against the codebase before being acted on.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| 2.1 | Frame-sampling metadata never reaches production — `understand()` returns a bare `string`, so `framesSampled`/`framesCaptioned` are always `undefined` | **Fixed, with a different mechanism.** Confirmed: the unit test on `buildUnderstandingRow` would have passed on a fixture while production wrote nothing. Task 4 Step 5(b) now returns a total `UnderstandDetail`, not the reviewer's `string \| UnderstandDetail` union — see below. |
+| 2.2 | `probeDurationSeconds` awaits stdout to EOF **before** the timeout guard, so a wedged `ffprobe` hangs forever | **Fixed** (Task 5 Step 4) + a red-provable test. `extractFrameJpeg` had it right and `probeDurationSeconds` did not, in the same file. |
+| 2.3 | No `RULE_ANCHORS` entry for D22(g), so it would report clean vacuously if `multimodal/` left the scan | **Fixed** (Task 3 Step 7), anchored on `build-media-pass-deps.ts` — a file the rule scans and permits — matching the D23 and D22(f) precedents. |
+| 2.4 | `dispatchers.test.ts`'s `"media.understand hit through chain"` builds no `mediaRpcCtx` and breaks on Task 8's refusal | **Fixed** (Task 8 Step 9), by supplying the fixture, not by weakening the refusal. |
+| 3.1 | Zero-byte image sends `images: [""]` and buys a 400 | **Fixed** (Task 4), guarded before the call so the skip reason stays precise. |
+| 3.2 | Empty transcript renders a bare `## Transcript` heading | **Fixed and extended** (Task 6): `"(No speech detected.)"` when there are captions — **and a throw when transcript and captions are both empty**, which the review did not raise. A row whose entire body is disclosure notes understands nothing, and writing one is the overclaim the rest of this plan guards against. |
+| 3.3 | Live VLM output may wrap `Visible text:` in markdown; don't assert on it with fragile regex | **No change needed.** The live test (Task 9) asserts only `text.trim().length > 0`. Noted rather than actioned. |
+| 3.4 | Sequential frame captioning takes 20–40 s/video | **No change.** The review verifies the 10 s heartbeat covers the whole `understand()` call, which is the same conclusion decision 3 reached independently. |
+| Q1 | A 2 s clip sampled 8 times gives near-identical captions ~220 ms apart | **Fixed** (Task 5): `frameTimestamps` clamps to one frame per `MIN_FRAME_INTERVAL_SECONDS` (2), floored at one. Real GPU waste, cheap to prevent. |
+| Q2 | Should STT and VLM contend on separate arbiter keys? | **No change.** One lock is correct: they contend for the same VRAM, so separate keys would let both run at once — the failure the arbiter exists to prevent. |
+| Q3 | Other legacy vision projector families beyond `clip`/`mllama`? | **Open, and deliberately fail-closed.** An unrecognised family reports unavailable, which refuses rather than guessing. Recorded as a known bound in Task 9's spec amendment; widen the list only against an observed real daemon, never speculatively. |
+
+**Why not the union return type (2.1).** The review proposed `understand(path): Promise<string \| UnderstandDetail>` with a `typeof res === "string"` narrow at the gate. Verified the blast radius first: `understand` has three implementers and one caller, all inside `multimodal/`, and `LongFormStt` has exactly one consumer — so there is no compatibility argument for the looser type. A union would leave that narrow at the gate permanently and, worse, makes "this understander forgot to report its counts" and "this understander has no counts to report" the same value. A total type puts every implementer in front of the compiler when a field is added.
+
 ### Already satisfied by PR 1 — do not re-do
 
 - **Spec § 11.4, embedding-routing set membership.** `nimbus:image_understanding` is *already* in `LOCAL_ONLY_PROSE_TYPES` (`embedding/routing.ts`) and `routing.test.ts` already pins the two sets disjoint, so the first `image_understanding` row this PR writes is embedded locally with no edit here. That is the property from § 4 that matters most — a scanned private document is as exposed by its OCR text as by its pixels — so verify it still holds (`bun test packages/gateway/src/embedding/routing.test.ts`) rather than assuming, but expect no change.
@@ -916,7 +936,28 @@ In the same file, immediately after the `checkEmbeddingConstructorConfinement` b
   }
 ```
 
-- [ ] **Step 7: Red-prove the rule by REVERTING, not by trusting green**
+- [ ] **Step 7: Anchor the rule, so it cannot report clean while scanning nothing**
+
+`RULE_ANCHORS` (same file, ~line 1600) lists one file per policed subsystem, and `assertScanIsMeaningful` exits **2** — distinct from a violation's 1 — when any anchor is missing from the scanned set. Without an anchor of its own, D22(g) would report green vacuously the moment `iterateSourceFiles()` stopped reaching `multimodal/`, while the D10–D22 anchors kept the run looking healthy. D23 and D22(f) each carry an anchor for exactly this reason; follow their shape and anchor on a file the rule **scans and then permits**, not on a definition file it skips:
+
+```ts
+  // D22(g) — anchored on the ONE production construction site, a file the rule SCANS (it is on
+  // both allow-lists, so it is read and then permitted) rather than `vlm/ollama-vlm.ts`, which the
+  // constructor rule skips as its own definition and whose presence would therefore prove nothing.
+  // Same shape as the D23 and D22(f) anchors above.
+  "packages/gateway/src/multimodal/build-media-pass-deps.ts",
+```
+
+Verify the anchor is load-bearing rather than decorative:
+
+```bash
+bun run audit:invariants   # exit 0
+# Temporarily add "packages/gateway/src/multimodal/does-not-exist.ts" to RULE_ANCHORS
+bun run audit:invariants; echo "exit=$?"   # MUST be exit=2, not 1 and not 0
+# Revert that line.
+```
+
+- [ ] **Step 8: Red-prove the rule by REVERTING, not by trusting green**
 
 A guard that has never rejected anything is not known to work. Prove it both ways:
 
@@ -935,7 +976,7 @@ bun run audit:invariants   # green again
 
 Expected: the middle run exits non-zero with `vlm-constructor-confined`. If it passes, the rule is not wired — fix that before continuing.
 
-- [ ] **Step 8: Add the enforcement test and update the appender enumeration**
+- [ ] **Step 9: Add the enforcement test and update the appender enumeration**
 
 In `packages/gateway/src/security-invariants.test.ts`, inside the existing `describe("I29 — egress-ledger completeness over the executor chokepoint")` block:
 
@@ -978,7 +1019,7 @@ In `packages/gateway/src/security-invariants.test.ts`, inside the existing `desc
 
 Then find the `model`-class appender enumeration (the comment near line 2165 listing `wrapLedgeredProvider`, `wrapLedgeredMastraModel` and `wrapLedgeredEmbedder`) and add the vision appender. **Re-derive the list, do not just bump a count** — a total that is still right can hide an enumeration that is wrong.
 
-- [ ] **Step 9: Run the gates**
+- [ ] **Step 10: Run the gates**
 
 ```bash
 bun test packages/gateway/src/egress packages/gateway/src/security-invariants.test.ts
@@ -987,7 +1028,7 @@ bun run preflight:fast
 ```
 Expected: all green.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add packages/gateway/src/egress/vlm-egress.ts \
@@ -1059,8 +1100,11 @@ describe("createImageUnderstander", () => {
       vlm: spy.provider,
       readFile: () => Promise.resolve(bytes),
     });
-    const text = await u.understand("/photos/board.png");
-    expect(text).toBe("A whiteboard.\nVisible text: none");
+    const detail = await u.understand("/photos/board.png");
+    expect(detail.text).toBe("A whiteboard.\nVisible text: none");
+    // An image was never sampled, so it reports no frame counts at all — distinct from a video
+    // whose every frame failed, which reports `0 of N`.
+    expect(detail.framesSampled).toBeUndefined();
     expect(spy.calls).toHaveLength(1);
     expect(spy.calls[0]?.bytes).toBe(bytes);
     expect(spy.calls[0]?.prompt).toBe(IMAGE_CAPTION_PROMPT);
@@ -1080,7 +1124,20 @@ describe("createImageUnderstander", () => {
       vlm: vlmSpy("   ").provider,
       readFile: () => Promise.resolve(new Uint8Array([1])),
     });
-    await expect(u.understand("/photos/x.png")).rejects.toThrow(/empty/i);
+    await expect(u.understand("/photos/x.png")).rejects.toThrow(/empty caption/i);
+  });
+
+  test("a zero-byte file REJECTS before the model is contacted", async () => {
+    // `Buffer.from(new Uint8Array()).toString("base64")` is `""`, so this would POST
+    // `images: [""]` and spend a round-trip earning a 400 that surfaces as the vaguer
+    // `transcribe_failed`. Refusing here keeps the reason precise and the call unmade.
+    const spy = vlmSpy();
+    const u = createImageUnderstander({
+      vlm: spy.provider,
+      readFile: () => Promise.resolve(new Uint8Array()),
+    });
+    await expect(u.understand("/photos/empty.png")).rejects.toThrow(/empty/i);
+    expect(spy.calls).toHaveLength(0);
   });
 
   test("isAvailable delegates to the provider", async () => {
@@ -1145,6 +1202,7 @@ export const FRAME_CAPTION_PROMPT = [
  */
 import { readFile as fsReadFile } from "node:fs/promises";
 import type { LocalUnderstander } from "../media-gate.ts";
+import type { UnderstandDetail } from "../media-types.ts";
 import { IMAGE_CAPTION_PROMPT } from "./caption-prompts.ts";
 import type { VlmProvider } from "./vlm-types.ts";
 
@@ -1165,8 +1223,13 @@ export function createImageUnderstander(deps: ImageUnderstanderDeps): LocalUnder
     },
     model: deps.vlm.model,
     isAvailable: () => deps.vlm.isAvailable(),
-    async understand(path: string): Promise<string> {
+    async understand(path: string): Promise<UnderstandDetail> {
       const bytes = await read(path);
+      if (bytes.byteLength === 0) {
+        // Base64 of nothing is `""`, so this would POST `images: [""]` and buy a 400 that reaches
+        // the user as the vaguer `transcribe_failed`. Refuse before the call, not after it.
+        throw new Error(`image file is empty: ${path}`);
+      }
       const { text } = await deps.vlm.describe({
         bytes,
         prompt: IMAGE_CAPTION_PROMPT,
@@ -1179,7 +1242,9 @@ export function createImageUnderstander(deps: ImageUnderstanderDeps): LocalUnder
         // Writing an empty-bodied row instead would claim an understanding that did not happen.
         throw new Error(`vlm returned an empty caption for ${path}`);
       }
-      return caption;
+      // No frame counts: an image was never sampled. Omitting them is what lets a reader tell that
+      // apart from a video whose every frame failed, which reports `framesCaptioned: 0`.
+      return { text: caption };
     },
   };
 }
@@ -1187,9 +1252,11 @@ export function createImageUnderstander(deps: ImageUnderstanderDeps): LocalUnder
 
 > `LocalUnderstander.isLocal` is declared `readonly isLocal: boolean`. A getter satisfies a readonly property in TypeScript, so this compiles; it is a getter rather than a snapshot so a provider swapped behind the adapter cannot leave a stale locality behind.
 
-- [ ] **Step 5: Rename the gate dep**
+- [ ] **Step 5: Rename the gate dep AND widen the understander's return type**
 
-In `media-gate.ts`, rename the field and update its doc line:
+Two changes to one interface, done together because both touch every implementer.
+
+**(a) The rename.** In `media-gate.ts`:
 
 ```ts
   /**
@@ -1202,12 +1269,105 @@ In `media-gate.ts`, rename the field and update its doc line:
 
 And in `understandArtifact`, `const provider = deps.understanderFor(candidate.modality);`.
 
-Then update every reference:
-
 ```bash
 grep -rn "sttFor" packages/gateway/src packages/cli/src scripts
 ```
-Expected sites: `media-gate.ts`, `media-gate.test.ts`, `build-media-pass-deps.ts`, `build-media-pass-deps.test.ts`. Rename all of them; leave no alias behind.
+Expected sites: `media-gate.ts`, `media-gate.test.ts`, `build-media-pass-deps.ts`, `build-media-pass-deps.test.ts`. Rename all; leave no alias behind.
+
+**(b) The return type.** `understand` returns `Promise<string>` today, and a string cannot carry the frame-sampling counts Task 7 puts on the derived row — so those counts would be permanently `undefined` in production while a unit test on `buildUnderstandingRow` proved the mapping "works". Add to `media-types.ts`, beside `UnderstandOutcome`:
+
+```ts
+/**
+ * What an understander RETURNS, as opposed to {@link UnderstandOutcome} which is what the gate
+ * RECORDS. The gate adds `model` and `isLocal` from the provider — those are derived, never
+ * reported by the understander (I34) — and carries the rest through.
+ *
+ * A structured type rather than `string | UnderstandDetail`: a union leaves a `typeof` narrow at
+ * the gate forever, and it makes "this understander forgot to report its counts" and "this
+ * understander has no counts to report" the same value. Total, the compiler names every implementer
+ * when a field is added. There are three implementers and one caller, all inside `multimodal/`, so
+ * there is no compatibility argument for the looser type.
+ */
+export interface UnderstandDetail {
+  readonly text: string;
+  readonly framesSampled?: number;
+  readonly framesCaptioned?: number;
+}
+```
+
+`UnderstandOutcome` gains the same two optional fields **in this task**, not in Task 7 — the gate below spreads them, so deferring them would not compile:
+
+```ts
+export interface UnderstandOutcome {
+  readonly text: string;
+  readonly model: string;
+  readonly isLocal: boolean;
+  /**
+   * Present only for a video that reached frame sampling. Recorded so a reader can tell a video
+   * whose frames all failed (`framesCaptioned: 0`) from one that was never sampled at all (both
+   * absent) — the body states the same thing in prose (spec § 12.8), and these are the
+   * machine-readable half.
+   */
+  readonly framesSampled?: number;
+  readonly framesCaptioned?: number;
+}
+```
+
+In `media-gate.ts`, `understand(path: string): Promise<UnderstandDetail>;` on `LocalUnderstander`, and in `understandArtifact` replace the success arm:
+
+```ts
+    const detail = await provider.understand(path);
+    return {
+      ok: true,
+      outcome: {
+        text: detail.text,
+        // Both DERIVED from the provider, never reported by the understander (I34).
+        model: provider.model,
+        isLocal: provider.isLocal,
+        // Conditional spread: absent counts must stay absent, not become 0. See UnderstandDetail.
+        ...(detail.framesSampled === undefined ? {} : { framesSampled: detail.framesSampled }),
+        ...(detail.framesCaptioned === undefined ? {} : { framesCaptioned: detail.framesCaptioned }),
+      },
+    };
+```
+
+In `stt/long-form-stt.ts`, change `LongFormStt.understand` to `Promise<UnderstandDetail>` and its body's last line to `return { text: res.text };`. It has exactly one consumer (`build-media-pass-deps.ts`), so this is contained.
+
+Add a gate test pinning the wire, since this is the defect that made the counts fictional:
+
+```ts
+test("understandArtifact carries frame counts from the understander onto the outcome", async () => {
+  const res = await understandArtifact(candidate, "/m/a.mp4", {
+    ...baseDeps,
+    understanderFor: () => ({
+      isLocal: true,
+      model: "m",
+      isAvailable: () => Promise.resolve(true),
+      understand: () => Promise.resolve({ text: "t", framesSampled: 8, framesCaptioned: 6 }),
+    }),
+  });
+  expect(res.ok).toBe(true);
+  if (res.ok) {
+    expect(res.outcome.framesSampled).toBe(8);
+    expect(res.outcome.framesCaptioned).toBe(6);
+  }
+});
+
+test("an understander reporting no counts leaves them absent, not zero", async () => {
+  const res = await understandArtifact(candidate, "/m/a.png", {
+    ...baseDeps,
+    understanderFor: () => ({
+      isLocal: true,
+      model: "m",
+      isAvailable: () => Promise.resolve(true),
+      understand: () => Promise.resolve({ text: "t" }),
+    }),
+  });
+  if (res.ok) expect("framesSampled" in res.outcome).toBe(false);
+});
+```
+
+Reuse whatever `candidate` / deps fixtures `media-gate.test.ts` already defines rather than inventing new ones.
 
 - [ ] **Step 6: Run the affected suites**
 
@@ -1301,6 +1461,16 @@ describe("frameTimestamps", () => {
     expect(frameTimestamps(Number.NaN, 8)).toEqual([]);
     expect(frameTimestamps(-5, 8)).toEqual([]);
   });
+
+  test("sampling density is clamped: a short clip gets fewer frames, not 8 near-identical ones", () => {
+    // A 2s clip sampled 8 times is 8 VLM calls ~220ms apart — near-duplicate captions at full
+    // GPU cost. At most one frame per MIN_FRAME_INTERVAL_SECONDS.
+    expect(frameTimestamps(2, 8)).toHaveLength(1);
+    expect(frameTimestamps(10, 8)).toHaveLength(5);
+    // The clamp never raises the count above maxFrames, and never drops below one frame.
+    expect(frameTimestamps(3600, 8)).toHaveLength(8);
+    expect(frameTimestamps(0.5, 8)).toHaveLength(1);
+  });
 });
 
 describe("probeDurationSeconds", () => {
@@ -1327,6 +1497,23 @@ describe("probeDurationSeconds", () => {
         ffprobeBin: "ffprobe",
         spawn: fakeSpawn({ stdout: "N/A\n" }),
       }),
+    ).toBeNull();
+  });
+
+  test("a wedged ffprobe whose stdout never closes still rejects within the bound", async () => {
+    // The hazard this pins: awaiting `new Response(stdout).text()` BEFORE the timeout guard blocks
+    // forever, because that promise resolves only at EOF and a hung process never closes the pipe.
+    // The timeout race would then never be constructed at all. Red-prove it by moving the await
+    // back above `withProcessTimeout` — this test must hang-then-fail, not pass.
+    const neverClosing = new ReadableStream<Uint8Array>({ start() {} });
+    const spawn = (() => ({
+      exited: new Promise<number>(() => {}),
+      stdout: neverClosing,
+      stderr: new Response("").body,
+      kill: () => {},
+    })) as unknown as typeof Bun.spawn;
+    expect(
+      await probeDurationSeconds("/v/clip.mp4", { ffprobeBin: "ffprobe", timeoutMs: 20, spawn }),
     ).toBeNull();
   });
 });
@@ -1498,14 +1685,18 @@ export async function probeDurationSeconds(
       ],
       { stdout: "pipe", stderr: "pipe", env: extensionProcessEnv({}) },
     ) as unknown as SpawnedProc;
-    const out = await new Response(proc.stdout).text();
+    // Start the read but do NOT await it before the timeout guard. `new Response(stream).text()`
+    // resolves only at EOF, and a wedged ffprobe never closes stdout — awaiting here would block
+    // forever and the timeout race below would never even be constructed. `extractFrameJpeg` has
+    // the same hazard and the same shape; the two must not diverge.
+    const outPromise = new Response(proc.stdout).text();
     const code = await withProcessTimeout(
       proc,
       opts.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       `ffprobe ${input}`,
     );
     if (code !== 0) return null;
-    const seconds = Number.parseFloat(out.trim());
+    const seconds = Number.parseFloat((await outPromise).trim());
     // `N/A` and an empty line both land here. A NaN duration would produce NaN timestamps and an
     // ffmpeg invocation with a garbage `-ss`.
     return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
@@ -1514,16 +1705,26 @@ export async function probeDurationSeconds(
   }
 }
 
+/** At most one sampled frame per this many seconds of video. See {@link frameTimestamps}. */
+const MIN_FRAME_INTERVAL_SECONDS = 2;
+
 /**
- * Uniformly spaced timestamps strictly INSIDE the clip.
+ * Uniformly spaced timestamps strictly INSIDE the clip, at a density bounded from BOTH ends.
  *
  * `(i + 1) / (n + 1)` rather than `i / n`: frame 0 of a video is very often a black or title
  * frame, and the final instant is often a fade. Sampling the open interval spends the budget on
  * frames that carry content.
+ *
+ * The density clamp is the other half. `maxFrames` alone would sample a 2-second clip eight times
+ * at ~220 ms apart — eight VLM calls producing near-identical captions, at full GPU cost, for a
+ * clip one frame describes. Frames are therefore capped at one per
+ * {@link MIN_FRAME_INTERVAL_SECONDS} as well as at `maxFrames`, and floored at one so a short clip
+ * still gets a caption rather than none.
  */
 export function frameTimestamps(durationSeconds: number, maxFrames: number): number[] {
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || maxFrames < 1) return [];
-  const n = Math.max(1, Math.floor(maxFrames));
+  const byDensity = Math.floor(durationSeconds / MIN_FRAME_INTERVAL_SECONDS);
+  const n = Math.max(1, Math.min(Math.floor(maxFrames), byDensity));
   const out: number[] = [];
   for (let i = 0; i < n; i += 1) {
     out.push((durationSeconds * (i + 1)) / (n + 1));
@@ -1617,7 +1818,7 @@ async function readBounded(stream: ReadableStream<Uint8Array>, maxBytes: number)
 - [ ] **Step 5: Run the test**
 
 Run: `bun test packages/gateway/src/multimodal/frames/frame-extract.test.ts`
-Expected: PASS (13 tests).
+Expected: PASS (14 tests).
 
 - [ ] **Step 6: Commit**
 
@@ -1656,7 +1857,7 @@ function stt(text = "hello from the recording"): LocalUnderstander {
     isLocal: true,
     model: "whisper-cli",
     isAvailable: () => Promise.resolve(true),
-    understand: () => Promise.resolve(text),
+    understand: () => Promise.resolve({ text }),
   };
 }
 
@@ -1686,22 +1887,60 @@ function deps(over: Partial<Parameters<typeof createAvUnderstander>[0]> = {}) {
   });
 }
 
+/** Every assertion below is on the body text; the counts are asserted separately. */
+async function bodyOf(u: ReturnType<typeof createAvUnderstander>, p = "/v/clip.mp4"): Promise<string> {
+  return (await u.understand(p)).text;
+}
+
 describe("createAvUnderstander", () => {
   test("captions come FIRST, then the transcript", async () => {
-    const body = await deps().understand("/v/clip.mp4");
+    const body = await bodyOf(deps());
     expect(body.indexOf(FRAME_HEADING)).toBeLessThan(body.indexOf(TRANSCRIPT_HEADING));
     expect(body).toContain("hello from the recording");
     expect(body).toContain("a slide");
   });
 
   test("the sampling disclosure is always present when any frame was captioned", async () => {
-    expect(await deps().understand("/v/clip.mp4")).toContain(AV_SAMPLING_DISCLOSURE);
+    expect(await bodyOf(deps())).toContain(AV_SAMPLING_DISCLOSURE);
   });
 
   test("each caption is timestamped so a reader can locate it in the video", async () => {
-    const body = await deps().understand("/v/clip.mp4");
+    const body = await bodyOf(deps());
     expect(body).toContain("[00:00:30]");
     expect(body).toContain("[00:01:00]");
+  });
+
+  test("the frame counts are RETURNED, not only rendered into prose", async () => {
+    // The defect this pins: counts that exist only in the body never reach `item.metadata`,
+    // because the gate builds `UnderstandOutcome` from what the understander returns.
+    const detail = await deps().understand("/v/clip.mp4");
+    expect(detail.framesSampled).toBe(2);
+    expect(detail.framesCaptioned).toBe(2);
+  });
+
+  test("a video that never reached sampling reports NO counts, not zeros", async () => {
+    const detail = await deps({ probeDuration: () => Promise.resolve(null) }).understand("/v/c.mp4");
+    expect(detail.framesSampled).toBeUndefined();
+    expect(detail.framesCaptioned).toBeUndefined();
+  });
+
+  test("sampled-but-all-failed reports 0 captioned, distinct from never-sampled", async () => {
+    const detail = await deps({ vlm: vlm({ fail: true }) }).understand("/v/clip.mp4");
+    expect(detail.framesSampled).toBe(2);
+    expect(detail.framesCaptioned).toBe(0);
+  });
+
+  test("a silent video says so rather than rendering an empty transcript heading", async () => {
+    const body = await bodyOf(deps({ stt: stt("") }));
+    expect(body).toContain("(No speech detected.)");
+    expect(body).toContain("a slide");
+    expect(body).not.toMatch(/## Transcript\n\n\s*$/);
+  });
+
+  test("no speech AND no captions REJECTS — an all-disclosure body understands nothing", async () => {
+    await expect(
+      deps({ stt: stt(""), vlm: vlm({ fail: true }) }).understand("/v/silent.mp4"),
+    ).rejects.toThrow(/no speech and no frame captions/);
   });
 
   test("model names BOTH contributors, so the derived row records what produced it", () => {
@@ -1721,36 +1960,36 @@ describe("createAvUnderstander", () => {
   });
 
   test("no VLM: transcript only, and the body says why there are no captions", async () => {
-    const body = await deps({
-      vlm: { ...vlm(), isAvailable: () => Promise.resolve(false) },
-    }).understand("/v/clip.mp4");
+    const body = await bodyOf(deps({ vlm: { ...vlm(), isAvailable: () => Promise.resolve(false) } }));
     expect(body).toContain("hello from the recording");
     expect(body).not.toContain(FRAME_HEADING);
     expect(body).toMatch(/no vision model/i);
   });
 
   test("no duration (ffprobe missing): transcript only, with the reason stated", async () => {
-    const body = await deps({ probeDuration: () => Promise.resolve(null) }).understand("/v/c.mp4");
+    const body = await bodyOf(deps({ probeDuration: () => Promise.resolve(null) }), "/v/c.mp4");
     expect(body).toContain("hello from the recording");
     expect(body).toMatch(/duration could not be determined/i);
   });
 
   test("a per-frame failure NEVER aborts the artifact and is disclosed by count", async () => {
     let n = 0;
-    const body = await deps({
+    const u = deps({
       extractFrame: () => {
         n += 1;
         return n === 1
           ? Promise.reject(new Error("bad frame"))
           : Promise.resolve(new Uint8Array([0xff]));
       },
-    }).understand("/v/clip.mp4");
-    expect(body).toContain("hello from the recording");
-    expect(body).toContain("1 of 2");
+    });
+    const detail = await u.understand("/v/clip.mp4");
+    expect(detail.text).toContain("hello from the recording");
+    expect(detail.text).toContain("1 of 2");
+    expect(detail.framesCaptioned).toBe(1);
   });
 
   test("every frame failing still yields the transcript, with the count disclosed", async () => {
-    const body = await deps({ vlm: vlm({ fail: true }) }).understand("/v/clip.mp4");
+    const body = await bodyOf(deps({ vlm: vlm({ fail: true }) }));
     expect(body).toContain("hello from the recording");
     expect(body).toContain("0 of 2");
   });
@@ -1809,6 +2048,7 @@ Expected: FAIL — module not found.
  * records as partial.
  */
 import type { LocalUnderstander } from "../media-gate.ts";
+import type { UnderstandDetail } from "../media-types.ts";
 import { FRAME_CAPTION_PROMPT } from "../vlm/caption-prompts.ts";
 import type { VlmProvider } from "../vlm/vlm-types.ts";
 import { extractFrameJpeg, frameTimestamps, probeDurationSeconds } from "./frame-extract.ts";
@@ -1868,14 +2108,16 @@ export function createAvUnderstander(deps: AvUnderstanderDeps): LocalUnderstande
      */
     isAvailable: () => deps.stt.isAvailable(),
 
-    async understand(path: string): Promise<string> {
+    async understand(path: string): Promise<UnderstandDetail> {
       // A throw here propagates: the gate records `transcribe_failed` and a re-run retries this
       // artifact. Swallowing it and shipping captions alone would store a `video_understanding`
       // row whose transcript is silently absent.
-      const transcript = (await deps.stt.understand(path)).trim();
+      const transcript = (await deps.stt.understand(path)).text.trim();
 
       const sections: string[] = [];
       const notes: string[] = [];
+      let sampled = 0;
+      let captioned = 0;
 
       if (!(await deps.vlm.isAvailable())) {
         notes.push(
@@ -1907,6 +2149,8 @@ export function createAvUnderstander(deps: AvUnderstanderDeps): LocalUnderstande
               // a silent skip would leave a body claiming completeness it does not have.
             }
           }
+          sampled = stamps.length;
+          captioned = captions.length;
           if (captions.length > 0) {
             sections.push(`${FRAME_HEADING}\n\n${captions.join("\n\n")}`);
           }
@@ -1916,11 +2160,30 @@ export function createAvUnderstander(deps: AvUnderstanderDeps): LocalUnderstande
         }
       }
 
+      // A video with no audio track, or only silence, transcribes to "". That is a legitimate
+      // artifact — a screen capture with eight good frame captions is worth storing — but the
+      // section must SAY so rather than render an empty heading that reads as a lost transcript.
+      if (transcript === "" && captioned === 0) {
+        // Nothing was understood at all: no speech and no caption. Writing a row here would be a
+        // `video_understanding` item whose entire body is an apology. Throw instead, so the gate
+        // records `transcribe_failed`, the pass discloses it by reason, and a re-run retries it
+        // once a vision model or a working probe exists.
+        throw new Error(`no speech and no frame captions for ${path}`);
+      }
+
       if (notes.length > 0) {
         sections.push(notes.join("\n\n"));
       }
-      sections.push(`${TRANSCRIPT_HEADING}\n\n${transcript}`);
-      return sections.join("\n\n");
+      sections.push(
+        `${TRANSCRIPT_HEADING}\n\n${transcript === "" ? "(No speech detected.)" : transcript}`,
+      );
+
+      return {
+        text: sections.join("\n\n"),
+        // Reported only when sampling actually happened, so "never sampled" and "sampled, all
+        // failed" stay distinguishable on the row (see `UnderstandDetail`).
+        ...(sampled === 0 ? {} : { framesSampled: sampled, framesCaptioned: captioned }),
+      };
     },
   };
 }
@@ -1929,7 +2192,7 @@ export function createAvUnderstander(deps: AvUnderstanderDeps): LocalUnderstande
 - [ ] **Step 4: Run the test**
 
 Run: `bun test packages/gateway/src/multimodal/frames/av-understander.test.ts`
-Expected: PASS (12 tests).
+Expected: PASS (17 tests).
 
 > The `1 of 2` / `0 of 2` assertions require the note to be emitted even when no caption survived — that is why `notes.push` sits outside the `captions.length > 0` guard. If those two tests fail, that is the line to look at.
 
@@ -2041,22 +2304,7 @@ export const UNDERSTANDING_VERSION = 2;
 export const MULTIMODAL_CAPABILITY = "multimodal_input";
 ```
 
-Then extend `UnderstandOutcome` with the two optional counts:
-
-```ts
-export interface UnderstandOutcome {
-  readonly text: string;
-  readonly model: string;
-  readonly isLocal: boolean;
-  /**
-   * Present only for a video that reached frame sampling. Recorded so a reader can tell a video
-   * whose frames were all unreadable from one that was never sampled at all — the body states the
-   * same thing in prose (spec § 12.8), and these are the machine-readable half.
-   */
-  readonly framesSampled?: number;
-  readonly framesCaptioned?: number;
-}
-```
+`UnderstandOutcome`'s two optional count fields already landed in **Task 4 Step 5(b)**, along with the gate code that populates them — nothing to add here. This step is the version bump and the capability constant only.
 
 - [ ] **Step 4: Carry the counts onto the row**
 
@@ -2331,7 +2579,29 @@ In `security-invariants.test.ts`, inside the I22 describe block:
   });
 ```
 
-- [ ] **Step 9: Run the gates**
+- [ ] **Step 9: Update the dispatcher test fixture that this fail-closed change breaks**
+
+`packages/gateway/src/ipc/server/dispatchers.test.ts` (~line 1115) has `"media.understand hit through chain (returns a MediaPassSummary, not a skip)"`, which builds its context with `makeCtx({ localIndex, dataDir })` — no `mediaRpcCtx` — and asserts a real summary comes back. Step 5's refusal breaks it. Supply the ctx rather than weakening the refusal; the test's purpose (proving the `PHASE4_PLATFORM_DISPATCHERS` entry exists, so deleting it doesn't silently return `phase4RpcSkipped`) is preserved either way:
+
+```ts
+    const { ctx } = makeCtx({
+      localIndex,
+      dataDir,
+      // An EMPTY disabled set — the capability is permitted, and the pass still returns an empty
+      // summary because `[multimodal] enabled` is false in this fixture. Supplying the accessor is
+      // the point: without it the dispatcher now refuses, which is the intended fail-closed shape.
+      mediaRpcCtx: { enforced: { capabilitiesDisabled: new Set<string>() } },
+    });
+```
+
+Then sweep for any other construction site that reaches `media.understand`:
+
+```bash
+grep -rn "media.understand" packages/gateway packages/cli --include=*.ts | grep -v "src/multimodal\|src/ipc/media-rpc"
+```
+Add the ctx to each; never reintroduce a permissive default to make a fixture pass.
+
+- [ ] **Step 10: Run the gates**
 
 ```bash
 bun test packages/gateway/src/multimodal packages/gateway/src/ipc packages/gateway/src/security-invariants.test.ts
@@ -2340,7 +2610,7 @@ bun run preflight:fast
 ```
 Expected: green. If an e2e or integration test constructs server options without `mediaRpcCtx` and calls `media.understand`, it now gets an explicit refusal — add the ctx to that fixture rather than reintroducing a permissive default.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add packages/gateway/src/ipc/ packages/gateway/src/platform/assemble.ts \
