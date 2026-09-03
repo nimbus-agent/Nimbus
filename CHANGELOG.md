@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.6.0](https://github.com/nimbus-agent/Nimbus/compare/v7.5.0...v7.6.0) (2026-09-02)
+
+
+### Features
+
+* **agents:** resolve a forge file coordinate to the reader's checkout ([#1424](https://github.com/nimbus-agent/Nimbus/issues/1424)) ([4770bdf](https://github.com/nimbus-agent/Nimbus/commit/4770bdffbcff9b7962f209e890d3b96f324dbb9b))
+* **computer-use:** the terminal lane — a confined shell where nothing runs before the owner approves the whole line ([#1426](https://github.com/nimbus-agent/Nimbus/issues/1426)) ([9ad2be9](https://github.com/nimbus-agent/Nimbus/commit/9ad2be9c1d398c1eb1636115ae495e2869775d00))
+
 ## [7.5.0](https://github.com/nimbus-agent/Nimbus/compare/v7.4.0...v7.5.0) (2026-09-01)
 
 

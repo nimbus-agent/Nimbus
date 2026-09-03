@@ -28,6 +28,7 @@ import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
 import type { TargetedFetchOutcome } from "../sync/targeted-fetch.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { GATEWAY_VERSION } from "../version.ts";
 import { contentTypeFor, resolveConsoleAsset, safeAssetPath } from "./admin-console-assets.ts";
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
 import { EXTERNAL_AGENT_NAMES } from "./agents-rpc.ts";
@@ -852,7 +853,18 @@ async function handleAgentsList(req: Request, opts: ReadOnlyHttpServerOptions): 
   const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_AGENTS_LIST);
   if (!auth.ok) return auth.response;
   // Derived from AGENTS_RPC_HANDLERS, so it cannot advertise a name that POST would then 404.
-  return json({ agents: [...EXTERNAL_AGENT_NAMES] }, 200);
+  //
+  // `version` rides along because a NAME does not imply an ARM. `why`, `expert` and `ownership`
+  // have been published for releases and their `itemUrl` arms have not, so a client gating on the
+  // arm cannot learn what it needs from the name list alone. It goes HERE rather than on a route
+  // of its own, or on `GET /v1/health`, because this is the request such a client already makes at
+  // the moment it needs the answer: both facts arrive in one round trip, and there is no version
+  // to cache and then serve stale after the owner upgrades without re-pairing.
+  //
+  // The web clipper is the first consumer (`agents-capability.ts`'s `meetsFloor`): it withholds
+  // its item-scoped lanes below a floor and fails CLOSED when no version is reported, so an
+  // absent field here is not cosmetic — it keeps those lanes dark on every gateway.
+  return json({ agents: [...EXTERNAL_AGENT_NAMES], version: GATEWAY_VERSION }, 200);
 }
 
 async function handleAgentRunGet(

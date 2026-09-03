@@ -9,6 +9,33 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 ## Post-Phase-6 deliveries
 
 - **2026-09-02 — Multimodal I/O, PR 1 of 4: local audio/video transcription, indexed as searchable derived items.** `nimbus media understand` runs a budgeted, resumable pass (V58 `media_pass_cursor`) over media files under `[[filesystem.roots]]`, discovered behind a new per-root `media_index` toggle. Transcription is local `whisper-cli` over an `ffmpeg` transcode; the decoded WAV is one 0600 gateway-owned scratch file deleted in a `finally`, with a start-of-pass sweep for files a dead process left behind — `finally` does not survive a SIGINT, and on Windows a SIGTERM is `TerminateProcess`. Output is a derived `nimbus:video_understanding` item whose external id is STABLE (the version lives in metadata, so a better model later replaces rather than accumulates duplicate rows in FTS and agent context) and which carries `modelDerived: true` — a transcript is a model'"'"'s assertion, not an observation. The pass reports skips BY REASON rather than a bare total. **DEFAULT OFF twice over:** `[multimodal] enabled` and `media_index`, both false. **Two structural properties:** both understanding types sit in `LOCAL_ONLY_PROSE_TYPES`, so derived text is embedded locally even when a remote embedder is configured — without that, a fully local pass would keep the audio on the machine while shipping everything extracted from it to OpenAI; and the whole `media` namespace is LAN-denied alongside `exec` and `computer`, since the method reads local files and spawns subprocesses. **NOT shipped:** image understanding (no vision model), cloud byte-fetch, any remote model including remote STT, and diarization. **Phase 14 Core acceptance is NOT met** — it wants a frame caption, which needs PR 2. **Known bound:** org policy `multimodal_input` is currently INERT against this capability (no IPC-reachable `EnforcedPolicy` accessor); only the local kill switch is real. Schema **V58**; no new invariant.
+- **2026-09-02 — `GET /v1/agents` publishes the gateway's version alongside the names, because a
+  NAME does not imply an ARM.** One additive field, and it unblocks a client feature that is
+  already shipped and currently dark. `why`, `expert` and `ownership` have been published for
+  releases; the `itemUrl` arms added to them the day before have not — so a client deciding
+  whether to offer an item-scoped lane cannot learn what it needs from the name list, and nothing
+  on the HTTP surface answered a version question: `GET /v1/health` returns
+  `{ status, gateway: "read_only_http" }` and `HTTP_ROUTES` carried no version route at all.
+
+  **It rides on the roster response rather than taking a route of its own, or going on
+  `/v1/health`.** That is the request such a client already makes at the moment it needs the
+  answer, so both facts arrive in one round trip; and it is bearer-authed under the `agents` scope
+  the caller already holds, where `/v1/health` is tokenless. The alternative — read a version at
+  pair time and cache it — goes stale the first time an owner upgrades their gateway without
+  re-pairing, and the symptom is a client's lanes staying dark forever with nothing on screen to
+  explain it.
+
+  **The consumer is `nimbus-web-clipper` PR #96**, whose `meetsFloor` fails **closed** on an
+  absent version: until this ships in a release, that client's three item lanes are withheld on
+  every gateway, its own developers included — a local build reports no version rather than
+  `0.0.0`, so its development-build allowance never fires either. That is why an additive field is
+  worth its own delivery entry.
+
+  **The better long-run shape is for this route to publish each agent's ARMS** rather than a
+  version, retiring the question instead of proxying it through a release number. Not done here:
+  the arms live inside each handler's param types, so deriving them honestly is real work, and
+  hand-listing them is exactly the drift `EXTERNAL_AGENT_NAMES` is derived to prevent. Recorded in
+  the design's § 4.5 addendum so the next reader does not have to rediscover the trade.
 
 - **2026-09-01 — The computer-use TERMINAL lane shipped: a sandboxed, line-oriented shell in which no byte reaches the child process before the owner has approved the whole command.** Slice 2 of 3 per the design's own sequencing (§ 14). It reuses the browser lane's chokepoint entirely — `cu-gate.ts`'s `openSession`/`runAction` stay the only path to the host, and the fix rounds recorded in `runActionExclusive`'s comments were inherited rather than re-derived. What generalised is the gate's browser-shaped parts: `CuEnvelope` and `OpenSessionRequest` became discriminated unions on `lane`, `LiveSession` holds a tagged `CuLaneHandle`, and `performActuation` stays the ONE actuation primitive with a per-lane switch. `nimbus computer terminal --cwd <dir> [--shell <id>]`. **DEFAULT OFF**, with `allowed_lanes` still empty by default — `enabled = true` alone grants nothing. **No new config keys, no migration: V57 is reused as-is.**
 
