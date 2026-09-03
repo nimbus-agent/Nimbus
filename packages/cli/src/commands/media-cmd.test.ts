@@ -40,7 +40,16 @@ describe("parseMediaArgs", () => {
 
   test("rejects an invalid --modality value", () => {
     expect(() => parseMediaArgs(["understand", "--modality", "audio"])).toThrow(
-      /--modality must be "image" or "av"/,
+      /--modality must be "av"/,
+    );
+  });
+
+  test("refuses --modality image with the reason, rather than running a pass that finds nothing", () => {
+    // `image` is a real modality with a real registry entry, so it parses as a value — but no
+    // vision model ships in this slice, so every image candidate is skipped. Accepting the flag
+    // would print "Understood 0 of 0" and let a user conclude they have no images.
+    expect(() => parseMediaArgs(["understand", "--modality", "image"])).toThrow(
+      /not available yet .* audio and video only/s,
     );
   });
 
@@ -184,13 +193,13 @@ describe("runMediaCmd", () => {
       return true;
     }) as typeof process.stdout.write;
     try {
-      await runMediaCmd(["understand", "--service", "filesystem", "--modality", "image"]);
+      await runMediaCmd(["understand", "--service", "filesystem", "--modality", "av"]);
     } finally {
       process.stdout.write = origWrite;
     }
     expect(ipc.calls[0]).toEqual({
       method: "media.understand",
-      params: { service: "filesystem", modality: "image" },
+      params: { service: "filesystem", modality: "av" },
     });
     expect(stdoutBuf).toContain("Understood 5 of 6");
     expect(stdoutBuf).toContain("over_byte_cap: 1");

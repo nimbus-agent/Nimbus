@@ -57,8 +57,19 @@ export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
         params.service = value;
         break;
       case "--modality":
-        if (value !== "image" && value !== "av") {
-          throw new Error('nimbus media: --modality must be "image" or "av"');
+        // `image` is a real MediaModality and a real registry entry, but this slice ships no
+        // vision model: every image candidate is skipped as `unresolvable_modality`. Accepting
+        // the flag would return "understood 0 of 0" and let a user conclude they have no images,
+        // when in fact nothing can read one yet. Refuse with the reason instead.
+        if (value === "image") {
+          throw new Error(
+            "nimbus media: --modality image is not available yet — this release understands " +
+              "audio and video only. Image captioning needs a local vision model, which ships in " +
+              "a later slice.",
+          );
+        }
+        if (value !== "av") {
+          throw new Error('nimbus media: --modality must be "av"');
         }
         params.modality = value;
         break;
@@ -109,14 +120,17 @@ function printMediaHelp(): void {
 
 Usage:
   nimbus media understand [--service <name>]
-                           [--modality image|av]
+                           [--modality av]
                            [--since <days>]
                            [--limit N]           (default 50)
                            [--json]
 
-Runs the budgeted, resumable understanding pass over indexed local media (images, audio, video):
-transcribes/captions artifacts that have not been understood yet and writes the result back into
-the index so it becomes searchable and available to agents.
+Runs the budgeted, resumable understanding pass over indexed local AUDIO AND VIDEO: transcribes
+recordings that have not been understood yet and writes the transcript back into the index so it
+becomes searchable and available to agents.
+
+Images are NOT understood in this release. There is no local vision model yet, so image files are
+discovered and then skipped; captioning ships in a later slice.
 
   * Local-models-only: this pass runs entirely on-device (spec § 3.4) — it makes no outbound
     network request, so it needs no --yes confirmation the way "nimbus index rebody" does.

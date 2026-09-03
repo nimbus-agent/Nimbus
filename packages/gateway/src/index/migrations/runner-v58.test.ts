@@ -1,9 +1,41 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { CURRENT_SCHEMA_VERSION } from "../local-index.ts";
-import { runIndexedSchemaMigrations } from "./runner.ts";
+import { readIndexedUserVersion, runIndexedSchemaMigrations } from "./runner.ts";
 
 describe("V58 — media_pass_cursor", () => {
+  /**
+   * Migrating to the literal 58 rather than `CURRENT_SCHEMA_VERSION` is the point: this proves the
+   * 57→58 STEP is registered and applies. Migrating to the constant would keep passing if the step
+   * were deleted and the constant lowered back to 57 — the table would simply never be created and
+   * the assertion would move with it.
+   */
+  test("the 57→58 step is registered: user_version advances and the table appears", () => {
+    const db = new Database(":memory:");
+
+    runIndexedSchemaMigrations(db, 57);
+    expect(readIndexedUserVersion(db)).toBe(57);
+    expect(
+      db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='media_pass_cursor'",
+        )
+        .get(),
+    ).toBeNull();
+
+    runIndexedSchemaMigrations(db, 58);
+    expect(readIndexedUserVersion(db)).toBe(58);
+    expect(
+      db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='media_pass_cursor'",
+        )
+        .get()?.name,
+    ).toBe("media_pass_cursor");
+
+    db.close();
+  });
+
   test("creates the cursor table and reaches version 58", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
