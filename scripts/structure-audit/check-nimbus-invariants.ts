@@ -606,11 +606,10 @@ export function checkPreflightRunnerInvariant(files: readonly FileEntry[]): Viol
 // sole gateway-side invocation, where the destination comes from local config) and the two
 // connector definition sites. Any other reference would let a caller drive an arbitrary KB write,
 // bypassing the local owner's HITL gate + config-only destination.
-const TRIBAL_KB_WRITE_ALLOWED = [
-  "packages/gateway/src/tribal/tribal-write-gate.ts",
-  "packages/mcp-connectors/notion/src/server.ts",
-  "packages/mcp-connectors/confluence/src/server.ts",
-];
+// The two connector definition sites that used to need an exemption here
+// (`packages/mcp-connectors/{notion,confluence}/src/server.ts`) left this repo in the v3.0.0
+// extraction to nimbus-mcp-servers, so the gateway write-gate is now the only site in this repo.
+const TRIBAL_KB_WRITE_ALLOWED = ["packages/gateway/src/tribal/tribal-write-gate.ts"];
 const TRIBAL_KB_WRITE_RE = /\b(?:notion_kb_append|confluence_kb_append)\b/;
 
 export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violation[] {
@@ -639,20 +638,15 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
 // route a write outside the local executor I2 gate. Also requires answerFederatedInvoke
 // (federation/invoke-gate.ts) to consult the write-id predicate (isWriteForbiddenToolId) so a
 // federated peer can never trigger a connector write.
+// The nine connector definition sites that used to need an exemption here
+// (`packages/mcp-connectors/{snowflake,tableau,looker,powerbi,monte-carlo,bigeye,argocd,flux,mlflow}/src/server.ts`)
+// left this repo in the v3.0.0 extraction to nimbus-mcp-servers, so only the gateway-side
+// registry, transport and dispatch sites remain to exempt.
 const CONNECTOR_WRITE_ALLOWED = [
   "packages/gateway/src/connectors/warehouse-write-tools.ts",
   "packages/gateway/src/connectors/gitops-ml-write-tools.ts",
   "packages/gateway/src/connectors/connector-write-transport.ts",
   "packages/gateway/src/connectors/connector-write-dispatch.ts",
-  "packages/mcp-connectors/snowflake/src/server.ts",
-  "packages/mcp-connectors/tableau/src/server.ts",
-  "packages/mcp-connectors/looker/src/server.ts",
-  "packages/mcp-connectors/powerbi/src/server.ts",
-  "packages/mcp-connectors/monte-carlo/src/server.ts",
-  "packages/mcp-connectors/bigeye/src/server.ts",
-  "packages/mcp-connectors/argocd/src/server.ts",
-  "packages/mcp-connectors/flux/src/server.ts",
-  "packages/mcp-connectors/mlflow/src/server.ts",
 ];
 const CONNECTOR_WRITE_RE =
   /\b(?:snowflake_tag_set|snowflake_comment_set|tableau_datasource_refresh|tableau_workbook_refresh|looker_datagroup_trigger|looker_schedule_run_once|powerbi_dataset_refresh|powerbi_dataflow_refresh|montecarlo_incident_acknowledge|montecarlo_incident_resolve|bigeye_issue_acknowledge|bigeye_issue_resolve|argocd_app_sync|argocd_app_rollback|flux_kustomization_reconcile|flux_helmrelease_reconcile|mlflow_model_promote|mlflow_model_transition_stage)\b/;
