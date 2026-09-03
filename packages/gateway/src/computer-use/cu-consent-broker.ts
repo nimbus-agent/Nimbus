@@ -1,5 +1,5 @@
 import { ConsentBroker } from "../util/consent-broker.ts";
-import type { CuActionClass, CuEnvelope } from "./cu-types.ts";
+import type { CuActionClass } from "./cu-types.ts";
 
 /**
  * The DISCRIMINANT that routes an approval request to its broker.
@@ -95,4 +95,4 @@ export class CuActionConsentBroker extends ConsentBroker<CuActionApprovalInput> 
 export const cuEnvelopeConsent = new CuEnvelopeConsentBroker();
 export const cuActionConsent = new CuActionConsentBroker();
 
-export type { CuEnvelope };
+export type { CuEnvelope } from "./cu-types.ts";

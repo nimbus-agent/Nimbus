@@ -175,7 +175,18 @@ export class CdpConnection {
       clearTimeout(pending.timer);
       const err = asRecord(msg["error"]);
       if (err !== undefined) {
-        pending.reject(new CdpError(pending.method, String(err["message"] ?? "unknown error")));
+        // Only a string message is used verbatim. `String(someObject)` yields
+        // "[object Object]", which is worse than saying nothing — a CDP error whose
+        // `message` is structured would produce a diagnostic that names no cause.
+        const rawMessage = err["message"];
+        pending.reject(
+          new CdpError(
+            pending.method,
+            typeof rawMessage === "string" && rawMessage !== ""
+              ? rawMessage
+              : JSON.stringify(err) || "unknown error",
+          ),
+        );
         return;
       }
       pending.resolve(asRecord(msg["result"]) ?? {});
