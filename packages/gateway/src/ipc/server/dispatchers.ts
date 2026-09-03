@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import pino from "pino";
 import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-runner.ts";
@@ -16,10 +17,14 @@ import { appendPreflightAudit, defaultRunCommand } from "../../federation/prefli
 import { writeScimBearer } from "../../identity/identity-vault.ts";
 import { isOperatorValid } from "../../identity/verifier.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
-import { buildMediaPassDeps, resolveMediaRoots } from "../../multimodal/build-media-pass-deps.ts";
+import {
+  type BuildMediaPassDepsInput,
+  buildMediaPassDeps,
+  resolveMediaRoots,
+} from "../../multimodal/build-media-pass-deps.ts";
 import { runMediaPass } from "../../multimodal/media-pass.ts";
 import { MULTIMODAL_CAPABILITY } from "../../multimodal/media-types.ts";
-import { loadMultimodalConfig } from "../../multimodal/multimodal-config.ts";
+import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
@@ -637,6 +642,39 @@ export async function tryDispatchIndexRebodyRpc(
 }
 
 /**
+ * The pure mapping from the loaded `[multimodal]` config + the resolved capability verdict to the
+ * exact `BuildMediaPassDepsInput` the `media.understand` dispatcher below passes to
+ * `buildMediaPassDeps`.
+ *
+ * Extracted and exported for ONE reason: `vlmBaseUrl`/`vlmModel`/`maxFrames` are OPTIONAL on
+ * `BuildMediaPassDepsInput` and default internally, so a caller that forgets to forward them fails
+ * NOTHING at the type level and NOTHING at the `media.understand` result level (the pass still
+ * runs, still returns a summary) — the exact "parses, validates, silently ignored" shape this
+ * whole task exists to close for the org-policy flag, now closed for these three keys too. A
+ * source-text grep for the forwarding lines cannot catch a field SWAP (`vlmModel`'s value forwarded
+ * into `vlmBaseUrl`); a unit test asserting on this function's return VALUES can. See
+ * `media-policy-wiring.test.ts` / `dispatchers.test.ts`.
+ */
+export function buildMediaPassDepsInput(input: {
+  readonly db: Database;
+  readonly configDir: string | undefined;
+  readonly dataDir: string;
+  readonly config: MultimodalConfig;
+  readonly capabilityDisabled: boolean;
+}): BuildMediaPassDepsInput {
+  return {
+    db: input.db,
+    roots: resolveMediaRoots(input.configDir),
+    enabled: input.config.enabled,
+    capabilityDisabled: input.capabilityDisabled,
+    scratchDir: join(input.dataDir, "multimodal-scratch"),
+    vlmBaseUrl: input.config.vlmBaseUrl,
+    vlmModel: input.config.vlmModel,
+    maxFrames: input.config.maxFrames,
+  };
+}
+
+/**
  * `media.understand` (S2 multimodal I/O, PR 1). LAN-FORBIDDEN (`lan-rpc.ts`'s
  * `FORBIDDEN_OVER_LAN`) and absent from the Tauri allowlist — see `media-rpc.ts`'s own doc
  * comment; it reads local files and spawns subprocesses, the `exec.*` posture.
@@ -670,16 +708,15 @@ export async function tryDispatchMediaRpc(
     );
   }
   const mmConfig = loadMultimodalConfig(ctx.options.configDir);
-  const deps = buildMediaPassDeps({
-    db: ctx.options.localIndex.getDatabase(),
-    roots: resolveMediaRoots(ctx.options.configDir),
-    enabled: mmConfig.enabled,
-    capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
-    scratchDir: join(ctx.options.dataDir, "multimodal-scratch"),
-    vlmBaseUrl: mmConfig.vlmBaseUrl,
-    vlmModel: mmConfig.vlmModel,
-    maxFrames: mmConfig.maxFrames,
-  });
+  const deps = buildMediaPassDeps(
+    buildMediaPassDepsInput({
+      db: ctx.options.localIndex.getDatabase(),
+      configDir: ctx.options.configDir,
+      dataDir: ctx.options.dataDir,
+      config: mmConfig,
+      capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
+    }),
+  );
   const out = await dispatchMediaRpc(method, params, {
     runPass: (opts) => runMediaPass({ ...deps, ...opts }),
   });

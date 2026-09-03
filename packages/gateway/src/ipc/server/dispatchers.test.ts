@@ -15,6 +15,7 @@ import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { LlmRegistry } from "../../llm/registry.ts";
 import type { LlmProvider } from "../../llm/types.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
+import type { MultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
@@ -37,6 +38,7 @@ import {
   sessionRpcSkipped,
 } from "./context.ts";
 import {
+  buildMediaPassDepsInput,
   extractKbPageRef,
   tryDispatchAdminRpc,
   tryDispatchAgentsRpc,
@@ -1135,6 +1137,36 @@ describe("tryDispatchPhase4Rpc", () => {
       lastItemId: null,
       skippedByReason: expect.any(Object),
     });
+  });
+  test("buildMediaPassDepsInput forwards vlmBaseUrl/vlmModel/maxFrames by VALUE, not just by shape", () => {
+    // Task 8 fix round 1: `vlmBaseUrl`/`vlmModel`/`maxFrames` are OPTIONAL on
+    // `BuildMediaPassDepsInput` and default internally inside `buildMediaPassDeps`, so deleting the
+    // three forwarding lines here fails no type check and no `media.understand` result — the exact
+    // "parses, validates, silently ignored" shape the org-policy fix itself closed. This asserts on
+    // the returned VALUES, and uses three DISTINCT non-default values so a field SWAP (e.g.
+    // forwarding `vlmModel`'s value into the `vlmBaseUrl` slot) is caught too, not just a deletion.
+    const db = trackedDb();
+    const config: MultimodalConfig = {
+      enabled: true,
+      vlmBaseUrl: "http://198.51.100.7:9999",
+      vlmModel: "distinctly-non-default-vlm-model",
+      maxFrames: 37,
+    };
+    const out = buildMediaPassDepsInput({
+      db,
+      configDir: undefined,
+      dataDir: "/tmp",
+      config,
+      capabilityDisabled: true,
+    });
+    expect(out.vlmBaseUrl).toBe("http://198.51.100.7:9999");
+    expect(out.vlmModel).toBe("distinctly-non-default-vlm-model");
+    expect(out.maxFrames).toBe(37);
+    expect(out.capabilityDisabled).toBe(true);
+    expect(out.enabled).toBe(true);
+    // The three values are pairwise distinct, so any two-field swap among them is independently
+    // observable by the three equality assertions above — none would pass by accident.
+    expect(new Set([out.vlmBaseUrl, out.vlmModel, String(out.maxFrames)]).size).toBe(3);
   });
   test("an unregistered method through the same path still 404s (negative control)", async () => {
     const { ctx } = makeCtx();
