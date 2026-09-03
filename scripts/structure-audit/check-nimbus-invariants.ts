@@ -1396,6 +1396,62 @@ export function checkEmbeddingConstructorConfinement(files: readonly FileEntry[]
   return out;
 }
 
+// D22 (g): the VISION appender. `egress/vlm-egress.ts`'s `wrapLedgeredVlm` is the I29
+// `model`-class appender for a `VlmProvider`. A file that constructs a VLM without it puts an
+// unrecorded egress path in the understanding pass -- and the payload on that path is the image
+// itself, which makes it the worst-shaped false zero in the ledger.
+//
+// Two allow-lists, mirroring D22(f): the DECORATOR (so a stray reference is caught) and the
+// CONSTRUCTOR (so a new construction site that never mentions the decorator at all is caught
+// too -- the gap that rule's second half exists to close).
+const D22_VLM_WRAP_RE = /\bwrapLedgeredVlm\b/;
+const D22_VLM_WRAP_ALLOWED: readonly string[] = [
+  "packages/gateway/src/egress/vlm-egress.ts",
+  "packages/gateway/src/multimodal/build-media-pass-deps.ts",
+];
+const D22_VLM_CTOR_RE = /\bcreateOllamaVlm\s*\(/;
+const D22_VLM_CTOR_DEFINITION = "packages/gateway/src/multimodal/vlm/ollama-vlm.ts";
+const D22_VLM_CTOR_ALLOWED: readonly string[] = [
+  "packages/gateway/src/multimodal/build-media-pass-deps.ts",
+];
+
+export function checkVlmAppenderConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const stripped = stripComments(f.contents);
+    const original = f.contents.split("\n");
+
+    if (!D22_VLM_WRAP_ALLOWED.includes(f.relPath)) {
+      const re = new RegExp(D22_VLM_WRAP_RE.source, "g");
+      for (const m of stripped.matchAll(re)) {
+        const line = stripped.slice(0, m.index).split("\n").length;
+        out.push({
+          rule: "vlm-appender-confined",
+          file: f.relPath,
+          line,
+          snippet: (original[line - 1] ?? "").trim(),
+        });
+      }
+    }
+
+    if (f.relPath !== D22_VLM_CTOR_DEFINITION && !D22_VLM_CTOR_ALLOWED.includes(f.relPath)) {
+      const re = new RegExp(D22_VLM_CTOR_RE.source, "g");
+      for (const m of stripped.matchAll(re)) {
+        const line = stripped.slice(0, m.index).split("\n").length;
+        out.push({
+          rule: "vlm-constructor-confined",
+          file: f.relPath,
+          line,
+          snippet: (original[line - 1] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -1643,6 +1699,11 @@ export const RULE_ANCHORS: readonly string[] = [
   // directory, `computer-use/cu-lanes/`, now holds the raw-CDP driver, so
   // there is no allowed file on disk to point at — see the rule's own comment.
   "packages/gateway/src/computer-use/cu-actuate.ts",
+  // D22(g) — anchored on the ONE production construction site, a file the rule SCANS (it is on
+  // both allow-lists, so it is read and then permitted) rather than `vlm/ollama-vlm.ts`, which the
+  // constructor rule skips as its own definition and whose presence would therefore prove nothing.
+  // Same shape as the D23 and D22(f) anchors above.
+  "packages/gateway/src/multimodal/build-media-pass-deps.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -1888,6 +1949,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D22(f) createOpenAIEmbedder constructed outside the three construction sites/its own definition — a NEW remote embedder built without the wrapLedgeredEmbedder decorator; I29 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkVlmAppenderConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D22(g) a VlmProvider constructed or wrapped outside egress/vlm-egress.ts + build-media-pass-deps.ts — an unrecorded vision egress path; I29 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
