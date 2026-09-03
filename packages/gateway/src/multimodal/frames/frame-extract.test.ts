@@ -122,8 +122,69 @@ describe("extractFrameJpeg", () => {
     expect(cmd.indexOf("-ss")).toBeLessThan(cmd.indexOf("-i"));
     expect(cmd).toContain("pipe:1");
     expect(cmd).toContain("-frames:v");
-    // No output path argument: nothing on this path touches disk.
+    // No output path argument: nothing on this path touches disk. Positive form: the LAST
+    // argument is exactly the stdout sink, and nothing after the input path looks like a
+    // filesystem destination — `toContain("pipe:1")` above only proves presence, not
+    // exclusivity, so a regression that ALSO wrote a file alongside `pipe:1` would still pass it.
+    expect(cmd.at(-1)).toBe("pipe:1");
+    const afterInput = cmd.slice(cmd.indexOf("-i") + 2);
+    expect(afterInput.every((a) => a === "pipe:1" || a.startsWith("-") || !a.includes("."))).toBe(
+      true,
+    );
+    // Kept as well as the positive check above — belt and braces on the property this task exists
+    // to guarantee.
     expect(cmd.some((a) => a.endsWith(".jpg") || a.endsWith(".jpeg"))).toBe(false);
+  });
+
+  test("stdout is read CONCURRENTLY with awaiting exit (await-exit-first would deadlock)", async () => {
+    // fakeSpawn's stdout is `new Response(body).body` — a fully pre-buffered stream with no
+    // backpressure, so it can never observe read ORDER. A real OS pipe with real ffmpeg writing a
+    // multi-MB frame is nothing like that: it blocks once the pipe buffer fills, and an
+    // await-exit-first implementation would deadlock on it forever. This fake makes read order
+    // observable instead: `exited` resolves ONLY once stdout has actually been pulled, so an
+    // implementation that awaits exit before reading can never satisfy it and hits the timeout.
+    let pulled!: () => void;
+    const firstPull = new Promise<void>((resolve) => {
+      pulled = resolve;
+    });
+    let chunks = 0;
+    const stdout = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          // Only ever runs when a reader actively pulls. That is the signal — but ONLY with the
+          // explicit highWaterMark:0 strategy below. A default-strategy ReadableStream (implicit
+          // highWaterMark 1) calls `pull` once, eagerly, at construction to prime its internal
+          // queue, with no reader attached at all — verified against this runtime. Without the
+          // override this fake's `exited` resolves regardless of read order and the test is
+          // worthless in exactly the arrangement it exists to catch (confirmed: see the red-prove
+          // notes in the task report).
+          chunks += 1;
+          if (chunks === 1) {
+            controller.enqueue(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
+            pulled();
+          } else {
+            controller.close();
+          }
+        },
+      },
+      new ByteLengthQueuingStrategy({ highWaterMark: 0 }),
+    );
+    const spawn = (() => ({
+      // Resolves ONLY after the stream has been pulled — i.e. only if the caller read stdout
+      // concurrently. An implementation that awaits exit before reading can never satisfy this
+      // and will hit the timeout instead.
+      exited: firstPull.then(() => 0),
+      stdout,
+      stderr: new Response("").body,
+      kill: () => {},
+    })) as unknown as typeof Bun.spawn;
+
+    const bytes = await extractFrameJpeg("/v/clip.mp4", 1, {
+      ffmpegBin: "ffmpeg",
+      spawn,
+      timeoutMs: 2_000,
+    });
+    expect(Array.from(bytes)).toEqual([0xff, 0xd8, 0xff, 0xd9]);
   });
 
   test("a non-zero exit throws with the stderr tail", async () => {
