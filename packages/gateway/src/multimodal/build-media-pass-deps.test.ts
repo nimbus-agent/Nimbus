@@ -11,6 +11,7 @@ import {
   buildMediaPassDeps,
   resolveMediaRoots,
   resolveMultimodalEnabled,
+  withTranscribeTimeout,
 } from "./build-media-pass-deps.ts";
 
 function db(): Database {
@@ -144,6 +145,53 @@ describe("buildMediaPassDeps — optional overrides", () => {
         capabilityDisabled: false,
         scratchDir: "/scratch",
         whisperBin: "/usr/local/bin/whisper-cli",
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("withTranscribeTimeout", () => {
+  test("forwards the result when transcribe settles before the bound", async () => {
+    const bounded = withTranscribeTimeout(async (wavPath) => ({ text: `heard:${wavPath}` }), 5000);
+    await expect(bounded("/scratch/a.wav")).resolves.toEqual({ text: "heard:/scratch/a.wav" });
+  });
+
+  test("rejects with a clear error when transcribe never settles — bounded in MS, not minutes", async () => {
+    const neverSettles = () => new Promise<{ text: string }>(() => undefined);
+    const bounded = withTranscribeTimeout(neverSettles, 20);
+    await expect(bounded("/scratch/wedged.wav")).rejects.toThrow(/timed out.*20ms/);
+  });
+
+  test("propagates a real transcribe rejection unchanged, not a timeout error", async () => {
+    const bounded = withTranscribeTimeout(async () => {
+      throw new Error("whisper-cli exited 1");
+    }, 5000);
+    await expect(bounded("/scratch/bad.wav")).rejects.toThrow("whisper-cli exited 1");
+  });
+
+  test("a late resolution after expiry does not throw an unhandled rejection", async () => {
+    let releaseLate: (() => void) | undefined;
+    const late = () =>
+      new Promise<{ text: string }>((resolve) => {
+        releaseLate = () => resolve({ text: "too late" });
+      });
+    const bounded = withTranscribeTimeout(late, 10);
+    await expect(bounded("/scratch/late.wav")).rejects.toThrow(/timed out/);
+    // Settling the underlying promise after the caller already saw the timeout must be inert.
+    expect(() => releaseLate?.()).not.toThrow();
+  });
+});
+
+describe("buildMediaPassDeps — transcribeTimeoutMs", () => {
+  test("accepts an explicit transcribeTimeoutMs override without throwing", () => {
+    expect(() =>
+      buildMediaPassDeps({
+        db: db(),
+        roots: [],
+        enabled: true,
+        capabilityDisabled: false,
+        scratchDir: "/scratch",
+        transcribeTimeoutMs: 30_000,
       }),
     ).not.toThrow();
   });

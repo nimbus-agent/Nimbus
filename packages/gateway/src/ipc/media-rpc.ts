@@ -73,5 +73,14 @@ function readSinceMs(v: unknown, nowMs: () => number): number | undefined {
   if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
     throw new Error("media.understand: sinceDays must be a non-negative number");
   }
-  return nowMs() - v * DAY_MS;
+  const floorMs = nowMs() - v * DAY_MS;
+  // A huge sinceDays (e.g. Number.MAX_SAFE_INTEGER) produces a floor before the Unix epoch —
+  // silently nonsensical, or even negative-overflowed — rather than "no since bound". Reject it
+  // instead of handing runPass() a floor that means something other than what the caller asked.
+  if (!Number.isFinite(floorMs) || floorMs < 0) {
+    throw new Error(
+      "media.understand: sinceDays is too large — the resulting floor predates the Unix epoch",
+    );
+  }
+  return floorMs;
 }

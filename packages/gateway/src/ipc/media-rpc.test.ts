@@ -60,6 +60,47 @@ describe("dispatchMediaRpc", () => {
     expect(seen.sinceMs).toBe(1_000_000_000 - 2 * 86_400_000);
   });
 
+  test("accepts a sinceDays that lands exactly on the Unix epoch", async () => {
+    let seen: { sinceMs?: number } = {};
+    await dispatchMediaRpc(
+      "media.understand",
+      { sinceDays: 2 },
+      {
+        runPass: async (o) => {
+          seen = o;
+          return SUMMARY;
+        },
+        // Chosen so `nowMs() - sinceDays * DAY_MS === 0` exactly — the boundary itself must still
+        // be accepted, not just values comfortably above it.
+        nowMs: () => 2 * 86_400_000,
+      },
+    );
+    expect(seen.sinceMs).toBe(0);
+  });
+
+  test("rejects a sinceDays that lands one millisecond before the Unix epoch", async () => {
+    await expect(
+      dispatchMediaRpc(
+        "media.understand",
+        { sinceDays: 2 },
+        {
+          runPass: async () => SUMMARY,
+          nowMs: () => 2 * 86_400_000 - 1,
+        },
+      ),
+    ).rejects.toThrow(/epoch/);
+  });
+
+  test("rejects Number.MAX_SAFE_INTEGER sinceDays rather than producing a nonsensical floor", async () => {
+    await expect(
+      dispatchMediaRpc(
+        "media.understand",
+        { sinceDays: Number.MAX_SAFE_INTEGER },
+        { runPass: async () => SUMMARY },
+      ),
+    ).rejects.toThrow(/epoch/);
+  });
+
   test("rejects a non-numeric limit rather than coercing it", async () => {
     await expect(
       dispatchMediaRpc("media.understand", { limit: "lots" }, { runPass: async () => SUMMARY }),

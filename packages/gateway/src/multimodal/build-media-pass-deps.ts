@@ -32,10 +32,58 @@ export interface BuildMediaPassDepsInput {
   readonly gpu?: GpuArbiter;
   readonly whisperBin?: string;
   readonly ffmpegBin?: string;
+  /** Wall-clock bound on the whisper call itself. See {@link DEFAULT_TRANSCRIBE_TIMEOUT_MS}. */
+  readonly transcribeTimeoutMs?: number;
 }
 
 /** 250 MB (spec § 5.3 `max_media_bytes`). */
 const DEFAULT_MAX_MEDIA_BYTES = 250 * 1024 * 1024;
+
+/**
+ * Generous for the same reason as ffmpeg-bin.ts's `DEFAULT_TRANSCODE_TIMEOUT_MS`: a long
+ * recording on a slow CPU is legitimate. This bounds a HANG, not slowness.
+ */
+export const DEFAULT_TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Bounds a whisper transcription call by wall clock, WITHOUT touching `WhisperSttProvider` —
+ * that provider is shared with the voice subsystem, which has its own (interactive) tolerance for
+ * how long to wait. Without a bound here, a wedged `whisper-cli` hangs the whole understanding
+ * pass indefinitely: `transcodeToWav` has its own timeout, but nothing bounded the transcription
+ * call that follows it.
+ *
+ * On expiry this REJECTS rather than resolving. `understandArtifact` (media-gate.ts) already wraps
+ * `provider.understand()` in a try/catch that turns any rejection into the `transcribe_failed`
+ * skip reason and moves on to the next candidate — so rejecting here is what keeps the pass going
+ * rather than aborting it, not a special case this function has to implement itself.
+ *
+ * Unlike `ffmpeg-bin.ts`'s `withProcessTimeout`, this owns no handle to the underlying process —
+ * only the injected `transcribe` promise-returning function — so a real whisper-cli process is not
+ * killed on expiry, only waited on no longer. Exported (rather than kept private) so a test can
+ * exercise the timeout arm directly with a never-resolving fake and a millisecond-scale bound,
+ * instead of waiting out {@link DEFAULT_TRANSCRIBE_TIMEOUT_MS} against a real binary.
+ */
+export function withTranscribeTimeout(
+  transcribe: (wavPath: string) => Promise<{ text: string }>,
+  timeoutMs: number,
+): (wavPath: string) => Promise<{ text: string }> {
+  return (wavPath: string) =>
+    new Promise<{ text: string }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`whisper transcription timed out after ${timeoutMs}ms for ${wavPath}`));
+      }, timeoutMs);
+      transcribe(wavPath).then(
+        (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        (err: unknown) => {
+          clearTimeout(timer);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        },
+      );
+    });
+}
 
 export type BuiltMediaPassDeps = Omit<
   MediaPassDeps,
@@ -47,7 +95,10 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     input.whisperBin === undefined ? {} : { whisperBin: input.whisperBin },
   );
   const stt = createLongFormStt({
-    transcribe: (wavPath: string) => whisper.transcribe(wavPath),
+    transcribe: withTranscribeTimeout(
+      (wavPath: string) => whisper.transcribe(wavPath),
+      input.transcribeTimeoutMs ?? DEFAULT_TRANSCRIBE_TIMEOUT_MS,
+    ),
     isAvailable: () => whisper.isAvailable(),
     ffmpegBin: resolveFfmpegBin(input.ffmpegBin),
     scratchDir: input.scratchDir,

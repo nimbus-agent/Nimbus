@@ -9,8 +9,9 @@
  * `PlatformServices`. Both existing precedents keep the resolver beside its consumer —
  * `resolveWhisperBin` in `voice/stt.ts` and `computer-use/cu-lanes/chromium-path.ts`.
  */
-import { chmodSync, readdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, closeSync, openSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { processEnvGet } from "../../platform/env-access.ts";
 
 export function resolveFfmpegBin(
@@ -80,6 +81,16 @@ async function withProcessTimeout(
 export async function transcodeToWav(input: string, opts: TranscodeOptions): Promise<string> {
   const spawn = opts.spawn ?? Bun.spawn;
   const out = join(opts.scratchDir, `nimbus-stt-${crypto.randomUUID()}.wav`);
+  // Owner-only from the moment the inode exists, so decoded audio never sits on disk with
+  // default permissions even for the brief window between ffmpeg's first write and the
+  // post-write chmod below. `-y` (below) then has ffmpeg overwrite this empty file rather than
+  // prompt. No-op on Windows, which is why it is not asserted cross-platform.
+  try {
+    closeSync(openSync(out, "w", 0o600));
+  } catch {
+    // A filesystem that rejects the mode still lets ffmpeg create the file itself via `-y`; the
+    // post-write chmod below is the remaining backstop.
+  }
   const cmd = [
     opts.ffmpegBin,
     "-nostdin",
@@ -97,7 +108,12 @@ export async function transcodeToWav(input: string, opts: TranscodeOptions): Pro
     "-y",
     out,
   ];
-  const proc = spawn(cmd, { stdout: "pipe", stderr: "pipe" }) as unknown as {
+  const proc = spawn(cmd, {
+    stdout: "pipe",
+    stderr: "pipe",
+    // I1: scope the child's env rather than let it inherit the gateway's whole process.env.
+    env: extensionProcessEnv({}),
+  }) as unknown as {
     exited: Promise<number>;
     // What Bun.spawn({stderr:"pipe"}) actually gives: a byte stream, NOT a Response.
     stderr: ReadableStream<Uint8Array>;
@@ -117,7 +133,10 @@ export async function transcodeToWav(input: string, opts: TranscodeOptions): Pro
     throw new Error(`ffmpeg exited ${code} for ${input}: ${err.slice(0, 400)}`);
   }
   try {
-    // Owner-only. No-op on Windows, which is why it is not asserted cross-platform.
+    // Belt-and-braces: the pre-create above already opened `out` at 0600, so this is normally a
+    // no-op. Kept so the file is still restricted even if the pre-create above failed (its own
+    // catch) or something along the way recreated the inode with different permissions. No-op on
+    // Windows, which is why it is not asserted cross-platform.
     chmodSync(out, 0o600);
   } catch {
     // A filesystem that rejects chmod does not invalidate the transcode.
