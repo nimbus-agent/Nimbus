@@ -1,5 +1,10 @@
 # Implementation Plan Review: Multimodal PR 1 — Local Audio/Video Understanding (2026-09-02)
 
+> **HISTORICAL — superseded.** This review was written against an earlier draft of the plan and is
+> kept for the reasoning trail. Every finding below was dispositioned before implementation, and the
+> items it lists as open — the ffmpeg stderr stream type and the CLI command runner among them —
+> were implemented. Read the plan, and the shipped code, ahead of this document.
+
 **Date:** 2026-09-02  
 **Review Target:** [`2026-09-02-multimodal-pr1-local-av.md`](./2026-09-02-multimodal-pr1-local-av.md)  
 **Status:** Review Complete  

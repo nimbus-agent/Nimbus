@@ -1,5 +1,10 @@
 # Design Review: S2 — Multimodal I/O (Local-First Media Understanding)
 
+> **HISTORICAL — superseded.** This review was written against an earlier draft of the design and is
+> kept for the reasoning trail, not as a description of the current design. Every finding below was
+> dispositioned in `2026-09-02-s2-multimodal-io-design.md`; where this document proposes an
+> alternative, the design records which was chosen and why. Read the design first.
+
 **Date:** 2026-09-02  
 **Reviewer:** Antigravity (AI Coding Assistant)  
 **Status:** Under Review  

@@ -1,7 +1,10 @@
 # S2 — Multimodal I/O (local-first media understanding)
 
-> **Status:** design, 2026-09-02. Not implemented. Reserves invariant **I37**, static rule **D27**
-> (plus a new **D22(g)** in I29's existing rule family), and schemas **V58** + **V59**.
+> **Status:** PR 1 of 4 SHIPPED 2026-09-02 (PR #1429); PRs 2-4 remain design-only. Schema **V58**
+> is live. Invariant **I37**, static rule **D27**, the new **D22(g)** in I29's existing rule family,
+> and schema **V59** are all still RESERVED — they govern the remote arm, which lands in PR 4 and
+> does not exist yet. Read § 13 for the per-PR split; anything outside PR 1's row there is a plan,
+> not a description of the code.
 >
 > **Slot:** [Spine S2 — Local Compute Fleet](../../roadmap.md#active). Detail source:
 > [Phase 14 § Core — Multimodal I/O](../../roadmap.md#phase-14--agent-evolution--ai-v2). It is the
@@ -545,8 +548,12 @@ reasoning rules out a linked dependency for frame extraction: ffmpeg (§ 12.1) i
 > gate **refuses** rather than degrading to remote; a local provider that is unavailable likewise
 > refuses rather than falling back. Locality is DERIVED from `provider.isLocal` (I34) and never
 > supplied by a caller. Every remote send appends one `model`-class row **before** the request and
-> an append failure aborts it (fail-closed). Bytes are never written to disk and never appear in
-> `payload_summary`.
+> an append failure aborts it (fail-closed). Media bytes never appear in `payload_summary`, and
+> the DISK rule is the narrowed one stated in § 5.4 rather than an absolute: nothing is written on
+> the image path, no new bytes are written for local audio, and a transcode writes exactly one
+> 0600 gateway-owned scratch file that is deleted in a `finally` and swept at pass start. An
+> earlier draft of this line said bytes are never written to disk at all, which § 5.4 contradicts
+> and which the implementation cannot honour -- `whisper-cli` takes a path.
 
 **Scope note.** Because STT is local-only in this slice (§ 7, § 12.7), the only modality that can
 reach a non-local model today is images — the invariant is written generally and holds vacuously
