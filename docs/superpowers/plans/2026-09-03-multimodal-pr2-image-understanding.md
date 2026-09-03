@@ -1019,11 +1019,22 @@ In `packages/gateway/src/security-invariants.test.ts`, inside the existing `desc
 
 Then find the `model`-class appender enumeration (the comment near line 2165 listing `wrapLedgeredProvider`, `wrapLedgeredMastraModel` and `wrapLedgeredEmbedder`) and add the vision appender. **Re-derive the list, do not just bump a count** — a total that is still right can hide an enumeration that is wrong.
 
+- [ ] **Step 9b: Write the D22(g) docs entry IN THIS COMMIT**
+
+CLAUDE.md's triple rule: wiring + docs + test land together, and retiring a rule means deleting its row rather than leaving drift. In `docs/SECURITY-INVARIANTS.md`, extend I29's D22 rule list from six rules to **seven** with `(g)`:
+
+- `wrapLedgeredVlm` confined to `egress/vlm-egress.ts` + `multimodal/build-media-pass-deps.ts`; `createOllamaVlm` confined to its own definition + that one construction site. The constructor half is what catches a new construction site that never mentions the decorator at all — the same gap D22(f)'s second allow-list exists to close.
+- State that the `model` class still carries **no named exclusions**: a LOCAL VLM is returned unchanged and appends nothing, derived from `provider.isLocal` (I34), exactly as a local embedder is.
+- State that **no new coverage class** is added — vision rides the existing `model` class, which is already `per-call`.
+
+Re-derive the rule count from the list rather than incrementing it. `CLAUDE.md` / `GEMINI.md` / roadmap / CHANGELOG stay in Task 9: those describe the PR's status, not this invariant's own docs entry.
+
 - [ ] **Step 10: Run the gates**
 
 ```bash
 bun test packages/gateway/src/egress packages/gateway/src/security-invariants.test.ts
 bun run audit:invariants
+bun run audit:doc-refs
 bun run preflight:fast
 ```
 Expected: all green.
@@ -1034,7 +1045,8 @@ Expected: all green.
 git add packages/gateway/src/egress/vlm-egress.ts \
         packages/gateway/src/egress/vlm-egress.test.ts \
         scripts/structure-audit/check-nimbus-invariants.ts \
-        packages/gateway/src/security-invariants.test.ts
+        packages/gateway/src/security-invariants.test.ts \
+        docs/SECURITY-INVARIANTS.md
 git commit -m "feat(egress): ledger every non-local VLM describe (D22(g))"
 ```
 
@@ -1690,12 +1702,26 @@ export async function probeDurationSeconds(
     // forever and the timeout race below would never even be constructed. `extractFrameJpeg` has
     // the same hazard and the same shape; the two must not diverge.
     const outPromise = new Response(proc.stdout).text();
-    const code = await withProcessTimeout(
-      proc,
-      opts.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
-      `ffprobe ${input}`,
-    );
-    if (code !== 0) return null;
+    let code: number;
+    try {
+      code = await withProcessTimeout(
+        proc,
+        opts.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+        `ffprobe ${input}`,
+      );
+    } catch (err) {
+      // The timeout fired. `outPromise` is still pending on a stream that will never close, and a
+      // pending read keeps `bun test` alive past the last assertion — a hanging suite rather than
+      // a failing one. Cancel it explicitly; a no-op on a stream already at EOF.
+      void proc.stdout.cancel().catch(() => undefined);
+      void outPromise.catch(() => undefined);
+      throw err;
+    }
+    if (code !== 0) {
+      void proc.stdout.cancel().catch(() => undefined);
+      void outPromise.catch(() => undefined);
+      return null;
+    }
     const seconds = Number.parseFloat((await outPromise).trim());
     // `N/A` and an empty line both land here. A NaN duration would produce NaN timestamps and an
     // ffmpeg invocation with a garbage `-ss`.
@@ -2685,9 +2711,14 @@ Add a `## 15. Amendments (PR 2, 2026-09-03)` section to `docs/superpowers/specs/
 - § 10 — D27(a) as worded (confining `describeBytes` / `transcribeBytes`) does not match what shipped: model contact is `VlmProvider.describe`, reached through the D22(g)-confined decorator. PR 4 must write D27(a) against that shape, or it will enforce nothing.
 - § 12.1 — Phase 14 Core acceptance is met at PR 2, and note that frame captions are present only when a vision model AND a duration probe are both available; a machine with neither still gets a transcript, with the absence stated in the body.
 
-- [ ] **Step 4: Update `docs/SECURITY-INVARIANTS.md`**
+- [ ] **Step 4: Verify the D22(g) docs entry landed in Task 3, not here**
 
-Extend I29's D22 rule list to SEVEN rules with `(g)`: `wrapLedgeredVlm` confined to `egress/vlm-egress.ts` + `multimodal/build-media-pass-deps.ts`, and `createOllamaVlm` confined to its own definition + that one construction site — the constructor half being what catches a new site that never mentions the decorator. State plainly that the `model` class still carries no named exclusions, and that a LOCAL VLM appends nothing (derived from `provider.isLocal`, I34) for the same reason a local embedder does. Note that no new coverage class is added: vision rides the existing `model` class.
+`docs/SECURITY-INVARIANTS.md`'s D22(g) entry is written in **Task 3 Step 9b**, so that rule's wiring, docs and test share one commit per CLAUDE.md's triple rule. Confirm it is present and that the rule list reads as seven rules; do not write a second copy here.
+
+```bash
+grep -n "D22(g)\|wrapLedgeredVlm" docs/SECURITY-INVARIANTS.md
+```
+Expected: the `(g)` row exists. If it does not, Task 3 was incomplete — add it now rather than shipping the branch with a wired-but-undocumented rule.
 
 - [ ] **Step 5: Update `CLAUDE.md` and `GEMINI.md`**
 
