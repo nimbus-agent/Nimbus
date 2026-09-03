@@ -90,7 +90,7 @@ const SH_SHELL: CuShell = {
 const CMD_SHELL: CuShell = {
   id: "cmd",
   detect: (exists = existsSync) => {
-    const p = join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "cmd.exe");
+    const p = join(process.env["SystemRoot"] ?? String.raw`C:\Windows`, "System32", "cmd.exe");
     return exists(p) ? p : null;
   },
   /**

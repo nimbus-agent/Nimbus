@@ -14,7 +14,7 @@ export interface ChromiumEnv {
  * Where a Chromium-family browser lives on `platform`, in preference order.
  *
  * A FUNCTION of `(platform, env)` rather than a module-level constant, and that is not a style
- * choice. As a constant it read `process.env[...] ?? "C:\\Program Files"` inline, which is
+ * choice. As a constant it read `process.env[...] ?? String.raw`C:\Program Files`` inline, which is
  * unreachable-by-half on every runner: on Linux only the fallback side of each `??` ever executes,
  * on a Windows box only the env side. So the WINDOWS candidate ORDER — the part with real decisions
  * in it (Chrome before Edge; the per-user `%LOCALAPPDATA%` install that is the default when Chrome
@@ -33,20 +33,22 @@ export interface ChromiumEnv {
  * installed should get Chrome.
  */
 export function chromiumCandidates(platform: string, env: ChromiumEnv): readonly string[] {
-  const programFiles = env.programFiles ?? "C:\\Program Files";
-  const programFilesX86 = env.programFilesX86 ?? "C:\\Program Files (x86)";
+  const programFiles = env.programFiles ?? String.raw`C:\Program Files`;
+  const programFilesX86 = env.programFilesX86 ?? String.raw`C:\Program Files (x86)`;
   const localAppData = env.localAppData ?? "";
   switch (platform) {
     case "win32":
       return [
-        join(programFiles, "Google\\Chrome\\Application\\chrome.exe"),
-        join(programFilesX86, "Google\\Chrome\\Application\\chrome.exe"),
+        join(programFiles, String.raw`Google\Chrome\Application\chrome.exe`),
+        join(programFilesX86, String.raw`Google\Chrome\Application\chrome.exe`),
         // The per-user install. `localAppData` can be absent, which yields a RELATIVE path here —
         // harmless because every candidate is existence-checked before use, and `resolveChromiumPath`
         // additionally skips an empty one.
-        localAppData === "" ? "" : join(localAppData, "Google\\Chrome\\Application\\chrome.exe"),
-        join(programFilesX86, "Microsoft\\Edge\\Application\\msedge.exe"),
-        join(programFiles, "Microsoft\\Edge\\Application\\msedge.exe"),
+        localAppData === ""
+          ? ""
+          : join(localAppData, String.raw`Google\Chrome\Application\chrome.exe`),
+        join(programFilesX86, String.raw`Microsoft\Edge\Application\msedge.exe`),
+        join(programFiles, String.raw`Microsoft\Edge\Application\msedge.exe`),
       ];
     case "darwin":
       return [

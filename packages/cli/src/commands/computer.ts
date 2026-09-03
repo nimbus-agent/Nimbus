@@ -469,7 +469,7 @@ const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
     "nimbus: the browser failed to launch after the owner approved the session.",
   ERR_CU_NO_SHELL:
     "nimbus: no usable shell was found for the terminal lane. On Windows that means cmd.exe was " +
-    "not found under %SystemRoot%\\System32; elsewhere, /usr/bin/sh or /bin/sh.",
+    String.raw`not found under %SystemRoot%\System32; elsewhere, /usr/bin/sh or /bin/sh.`,
   ERR_CU_UNKNOWN_SHELL:
     "nimbus: --shell named an id this build does not register. Supported ids: sh (POSIX), cmd " +
     "(Windows). Omit --shell to use the platform default.",
