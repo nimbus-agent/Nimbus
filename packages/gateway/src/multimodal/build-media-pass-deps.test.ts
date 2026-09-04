@@ -47,7 +47,11 @@ describe("buildMediaPassDeps", () => {
   test("the image understander is the LEDGERED provider, not a bare one", () => {
     // A loopback default makes the wrapper an identity, so this asserts the WIRING is present
     // rather than the row: D22(g) is what proves the wrap cannot be dropped.
-    const src = readFileSync("packages/gateway/src/multimodal/build-media-pass-deps.ts", "utf8");
+    //
+    // Resolved relative to THIS FILE, never to the process working directory: CI's coverage job
+    // `cd`s into `packages/gateway` before running `bun test`, where a CWD-relative
+    // `"packages/gateway/src/..."` throws ENOENT. Same reasoning as `llm/local-definition.test.ts`.
+    const src = readFileSync(join(import.meta.dir, "build-media-pass-deps.ts"), "utf8");
     const wrapAt = src.indexOf("wrapLedgeredVlm(");
     const ctorAt = src.indexOf("createOllamaVlm(");
     expect(wrapAt).toBeGreaterThan(-1);
