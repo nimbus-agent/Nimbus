@@ -850,13 +850,27 @@ The gateway-side capability is still service-agnostic, so a connector whose sync
 
 ### 16.2 Placement
 
+**Amended on landing — what shipped differs from what this section originally proposed. See § 17.10.**
+
 - `multimodal/cloud-bytes.ts` — **new.** Owns dispatch, the byte caps, the scratch-file lifecycle
-  and the egress append. The cloud analogue of `media-bytes.ts`'s local arm.
-- `media-bytes.ts` — gains the cloud arm alongside `resolveLocalMediaPath`, so the gate keeps ONE
-  byte-acquisition collaborator rather than branching on modality at the call site.
-- Per-service URL resolution + rendition selection lives **next to each connector's sync**, where
-  the auth and API knowledge already is, reached through a `fetchBytes` capability minted in
-  `sync/sync-capabilities.ts` (the sole D24 exemption, per § 5.2).
+  and the byte-fetch egress append (`method='media.fetchBytes'`). The cloud analogue of
+  `media-bytes.ts`'s local arm.
+- `multimodal/cloud-url-resolver.ts` — **new**, and NOT in the original plan. Per-service byte-URL
+  resolution lives here, in the multimodal directory, not next to each connector's sync: the three
+  services differ only in one URL template and one response field, so the logic is a few lines per
+  service and splitting it across three connector packages would have bought nothing but distance.
+  It takes its collaborators as injected functions (`bearerFor`, `fetchFn`, `appendEgress`), which
+  is what lets the credential rule of § 16.4 be tested with no network and no vault. It appends its
+  OWN `sync` row (`method='media.resolveByteUrl'`) before the credentialed round-trip.
+- `multimodal/cloud-renditions.ts` — **new.** The pure half of URL construction (§ 16.8's rendition
+  suffixes), split out precisely so it can be tested without a transport.
+- `media-bytes.ts` — **unchanged.** It keeps only `resolveLocalMediaPath`; the gate branches on
+  `candidate.sourcePath === null` in `media-pass.ts` instead. The "ONE byte-acquisition
+  collaborator" idea was not built.
+- There is **no `fetchBytes` capability** and **no D24 exemption**. `sync/sync-capabilities.ts`
+  mints nothing of the sort, and D24's SyncContext capability boundary was never opened. The cloud
+  arm reaches providers through its own injected `fetchFn` (`util/safe-fetch.ts`'s
+  `safeFetchFollowing`), wired in `multimodal/build-media-pass-deps.ts`.
 
 `MediaCandidate` needs no change: `sourcePath: string | null` already carries "null for a cloud
 artifact (PR 3)", and `sourceMime` / `sourceBytes` are already there.
@@ -1026,8 +1040,11 @@ gigabytes over someone's connection and quota; § 6.4's principle — a budgeted
 approved once, up front — applies to bandwidth as much as to consent. The cost is that a first run
 against a large library fails once before it works, which is the point.
 
-Per-modality caps (§ 5.3, `max_image_bytes` / `max_media_bytes`) are unchanged and still **refuse
-rather than truncate**; they bound a single artifact, `fetch_budget_bytes` bounds a run.
+The per-artifact cap still **refuses rather than truncates**; it bounds a single artifact,
+`fetch_budget_bytes` bounds a run. **Amended on landing:** § 5.3's per-modality split
+(`max_image_bytes` / `max_media_bytes`) was not built. What shipped is ONE hardcoded 250 MiB value
+for both modalities — `DEFAULT_MAX_MEDIA_BYTES` in `multimodal/build-media-pass-deps.ts` — with no
+config key and no flag. See § 17.10.
 
 New config keys, both under `[multimodal]`:
 
@@ -1045,16 +1062,32 @@ recording it per-item would misreport artifacts that were never attempted as art
 
 ### 16.11 Egress: no new class, but I29's enumeration widens
 
-Each byte-fetch appends one `sync`-class row **before** the request, through
-`egress/sync-egress.ts`'s existing appender, fail-closed — an append failure aborts the fetch.
-`payload_summary` records byte length, mime and modality; never pixels, never transcript text.
+Each outbound request appends one `sync`-class row **before** it fires, through
+`egress/sync-egress.ts`'s existing appender, fail-closed — an append failure aborts the request.
 `nimbus prove` needs no new vocabulary.
 
-But I29 currently documents the `sync` class as *"`sync/scheduler.ts` appends one row per scheduled
-sync RUN and `sync/targeted-fetch.ts` appends one row per targeted single-item fetch"*. This makes
-it **three** appenders. Per the sweep-enumerations rule, the fix is to re-derive the list and not
-merely bump a count, in all three places that carry it: `CLAUDE.md`, `docs/SECURITY-INVARIANTS.md`
-and the `nimbus-egress` skill.
+**Amended on landing — `payload_summary` carries the METHOD ONLY.** This section originally said it
+records byte length, mime and modality. It does not, and cannot: `recordSyncEgress` builds
+`payload_summary` as `redactEgressSummary({ method })`, and the append happens BEFORE the request,
+where the byte length is genuinely unknown — a `content-length` header has not been seen yet and
+may never arrive. Recording a size there would mean either appending after the transfer (which
+breaks the fail-closed ordering that is the whole point) or writing a number the gateway guessed.
+Mime and modality are known at append time, but were not added: they describe the artifact, not the
+egress, and `method` plus `destination` already answer "what left, to whom". Pixels and transcript
+text were never in scope and are not recorded.
+
+**Amended on landing — the enumeration goes to FOUR, not three.** I29 documented the `sync` class as
+*"`sync/scheduler.ts` appends one row per scheduled sync RUN and `sync/targeted-fetch.ts` appends
+one row per targeted single-item fetch"*. The cloud arm adds TWO appenders, not one: a Photos or
+OneDrive candidate makes two real outbound requests — the credentialed byte-URL RESOLVE round-trip
+(`multimodal/cloud-url-resolver.ts`, `method='media.resolveByteUrl'`) and the byte fetch itself
+(`multimodal/cloud-bytes.ts`, `method='media.fetchBytes'`) — and each appends its own row. Google
+Drive constructs its byte URL with no round-trip and so appends only the second. Per the
+sweep-enumerations rule the fix is to re-derive the list, not bump a count, in every place that
+carries it: `CLAUDE.md`, `GEMINI.md`, `docs/SECURITY-INVARIANTS.md`, `docs/architecture.md`, the
+`nimbus-egress` skill, `egress/sync-egress.ts`, `egress/egress-coverage.ts` (+ its test),
+`platform/assemble.ts`, `security-invariants.test.ts`, and `cli/src/commands/prove.ts`'s
+user-facing `sync` scope label (+ its assertion in `prove-format.test.ts`).
 
 **No `I37` in this PR.** I37 governs a media body reaching a non-local model; PR 3 adds no remote
 model, so the invariant would have nothing to bite on and shipping it here would leave it documented
@@ -1133,13 +1166,23 @@ safety net stays a no-op:
 
 ```sql
 AND (
-  src.type IN ('media_av', 'media_image')
+  ((src.service = ? AND src.type = ?) OR (src.service = ? AND src.type = ?))
   OR (
-    src.service IN ('google_drive', 'onedrive', 'google_photos')
-    AND json_extract(src.metadata, '$.mimeType') LIKE :mimePrefix
+    src.service IN (?, ?, ?)
+    AND json_extract(src.metadata, '$.mimeType') LIKE ?
   )
 )
 ```
+
+**Amended on landing — arm 1 is pair-keyed, not type-keyed.** This snippet originally read
+`src.type IN ('media_av', 'media_image')`. A later fix round ruled against that and replaced it
+with OR'd `(service, type)` equalities, because a bare type match admits that type across every
+OTHER service too — a future `zoom:recording` pair would catch an unrelated service's
+`type: "recording"`, which the JS loop then drops for lacking a registered pair, under-filling the
+page and re-creating the very truncation § 17.1 exists to fix. `buildModalityPredicate`
+(`media-discovery.ts`) builds both arms and drops an EMPTY arm from the clause entirely rather than
+emitting `src.type IN ()` or `AND ()`, both of which are SQLite syntax errors. Every literal above
+is a bound parameter (I9); none is concatenated.
 
 `:mimePrefix` is derived from the requested modality (`image/%`, or the video/audio pair for `av`),
 never string-concatenated — I9. A row whose metadata carries no `mimeType` is excluded by the
@@ -1308,3 +1351,18 @@ Folded into § 16.12: redirect-hop re-validation (a 302 to `127.0.0.1` is refuse
 target refused at hop 0 and at hop N, the paging test the review specifies (100 `google_drive`
 `type: "file"` rows of which only #70–#75 are media, asserting the pass does not clear its cursor at
 page 1), and a size-resolution test covering Drive's string-typed `size`.
+
+### 17.10 Deviations ratified on landing, recorded here because § 16 was written before the code
+
+Task 8 ratified each of these when the code landed, but the sections that describe them were never
+updated — so a reader following § 16 alone would look for files and mechanisms that do not exist.
+Each is a deliberate choice, not an omission:
+
+| § | What the section said | What shipped | Why |
+| --- | --- | --- | --- |
+| 16.2 | Byte acquisition lands in `media-bytes.ts` | `media-bytes.ts` is **unchanged**; the cloud arm is `multimodal/cloud-bytes.ts` and `media-pass.ts` branches on `candidate.sourcePath === null` | One collaborator with two unrelated failure vocabularies is harder to read than two collaborators with one each |
+| 16.2 | Per-service URL resolution lives next to each connector's sync, reached through a `fetchBytes` capability minted in `sync/sync-capabilities.ts` — "the sole D24 exemption" | `multimodal/cloud-url-resolver.ts`, with injected `bearerFor`/`fetchFn`/`appendEgress`. **No such capability exists and D24 was never opened** | The per-service difference is one URL template and one response field; splitting a few lines across three connector packages would have bought distance, not cohesion — and opening D24's capability boundary for it would have been a real security-surface change bought for nothing |
+| 16.9 | Per-modality caps `max_image_bytes` / `max_media_bytes` (§ 5.3) | ONE hardcoded 250 MiB `DEFAULT_MAX_MEDIA_BYTES`, no config key, no flag | Neither key was built; the split bought nothing while `fetch_budget_bytes` (which IS configurable) is the bound that actually binds a run |
+| 16.11 | `payload_summary` records byte length, mime and modality | `method` only | The append precedes the request, where the byte length is unknowable without either breaking the fail-closed ordering or guessing |
+| 16.11 | The `sync` enumeration becomes **three** appenders | **Four** | The resolve round-trip is a second real credentialed request per Photos/OneDrive candidate and appends its own row — see § 16.11 |
+| 17.1 | Arm 1 of the discovery predicate is `src.type IN (...)` | OR'd `(service, type)` equalities | A bare type match crosses service boundaries — see § 17.1 |
