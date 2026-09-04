@@ -1398,12 +1398,15 @@ Skipped:
   no_local_model: 15
 ```
 
-`over_byte_cap` covers **two different bounds**, not one: the per-artifact cap
-(`max_image_bytes`/`max_media_bytes`) AND, for a cloud candidate whose declared size alone
-exceeds the entire per-run `fetch_budget_bytes`, the permanent run-budget case described
-above. Seeing a nonzero `over_byte_cap` does not by itself say which knob to raise — check
-whether the skipped candidates are cloud-backed before assuming the per-artifact cap is the
-one to change.
+`over_byte_cap` covers **two different bounds**, not one: the per-artifact cap AND, for a
+cloud candidate whose declared size alone exceeds the entire per-run `fetch_budget_bytes`,
+the permanent run-budget case described above. Only ONE of those two is tunable. The
+per-artifact cap is a hardcoded 250 MiB (`DEFAULT_MAX_MEDIA_BYTES` in
+`multimodal/build-media-pass-deps.ts`), one value for images and audio/video alike — there is
+no config key and no flag for it, so raising it means changing the code. `fetch_budget_bytes`
+IS a `[multimodal]` config key. So a nonzero `over_byte_cap` is worth reading before acting:
+check whether the skipped candidates are cloud-backed, because only that half of the count has
+a knob at all.
 
 A bare count would not tell you whether the other 66 were absent, too large, or refused.
 The same discipline applies inside a `video_understanding` row's body: a caption count

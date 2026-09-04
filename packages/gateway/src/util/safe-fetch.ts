@@ -125,6 +125,16 @@ const DEFAULT_MAX_HOPS = 5;
  * fails SAFE when a caller adds a new credential header later — it is dropped by default rather
  * than forwarded until someone remembers to add it to a deny-list. Everything not named here is
  * dropped on a cross-origin hop; every header is kept unchanged on a same-origin hop.
+ *
+ * **`range` is allow-listed and `if-range` deliberately is NOT, and the two are coupled.** A
+ * resumed byte-range request pairs `Range` with `If-Range` so the server can tell it the
+ * representation changed (200 with the whole body) instead of splicing a fresh file's bytes onto a
+ * stale prefix; dropping `If-Range` on a cross-origin hop while keeping `Range` turns that
+ * safeguard off and makes a silently corrupt resume possible. Nothing in this repo issues a `Range`
+ * request today, so there is no live corruption path — but `range` sitting in this list is exactly
+ * what will let the next author assume resume already works. Adding `if-range` here is a behaviour
+ * change, so it is NOT made pre-emptively: make it in the same change that first issues a `Range`,
+ * and verify the pair survives together.
  */
 const CROSS_ORIGIN_SAFE_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "accept",

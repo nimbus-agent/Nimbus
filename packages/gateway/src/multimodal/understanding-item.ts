@@ -55,7 +55,14 @@ export function buildUnderstandingRow(
   candidate: MediaCandidate,
   outcome: UnderstandOutcome,
   nowMs: number,
-  rendition: RenditionMode = "original",
+  /**
+   * REQUIRED, with no default. This field is a DISCLOSURE — it decides whether the body says
+   * "Understood from the original file." or names a downsized rendition — so a default silently
+   * writes the wrong sentence for a caller that simply forgot to thread it, which is the one
+   * failure mode a disclosure must not have. Every other field this arm added for disclosure is
+   * non-optional for the same reason; a missing argument is a compile error, not a wrong claim.
+   */
+  rendition: RenditionMode,
 ): UnderstandingRow {
   const isAv = candidate.modality === "av";
   return {
@@ -106,8 +113,12 @@ export function writeUnderstanding(
   candidate: MediaCandidate,
   outcome: UnderstandOutcome,
   nowMs: number,
-  scheduleEmbedding?: (itemId: string) => void,
-  rendition: RenditionMode = "original",
+  /**
+   * Explicitly `| undefined` rather than optional (`?`), so that `rendition` after it can be
+   * REQUIRED — see {@link buildUnderstandingRow}'s note on why that disclosure takes no default.
+   */
+  scheduleEmbedding: ((itemId: string) => void) | undefined,
+  rendition: RenditionMode,
 ): string {
   const row = buildUnderstandingRow(candidate, outcome, nowMs, rendition);
   upsertIndexedItem(db, {

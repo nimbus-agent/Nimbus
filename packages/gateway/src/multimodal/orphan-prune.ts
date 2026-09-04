@@ -8,8 +8,11 @@
  * A row whose `derivedFrom` is absent is KEPT. Treating a missing key as a missing source would
  * make a metadata-shape change delete every derived row at once.
  *
- * Bound-parameter free (no user input reaches this statement) and I9-safe: every identifier is a
- * literal in the source.
+ * I9-safe: every identifier is a literal in the source, and the two values that ARE bound
+ * (`UNDERSTANDING_TYPES`) are internal constants from this module, not caller input — the statement
+ * takes no argument from anywhere outside it. Bound rather than interpolated even so: an internal
+ * literal spliced into SQL is one refactor away from a caller-supplied one, and the `?` costs
+ * nothing.
  */
 import type { Database } from "bun:sqlite";
 import { dbStmtRun } from "../db/write.ts";

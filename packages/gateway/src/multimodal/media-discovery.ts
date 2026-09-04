@@ -48,8 +48,11 @@ export interface ModalityPredicate {
  * Builds the two-arm modality predicate, or `null` when NEITHER arm has anything to admit — a
  * caller must treat `null` as "return no candidates", never as "emit an empty WHERE".
  *
- * `src.type IN ()` and an empty `OR`-list are both SQLite syntax errors, so an empty arm is
- * dropped from the clause entirely rather than emitted empty; symmetrically, a caller must NOT
+ * An empty `OR`-list and an empty `IN (...)` are both SQLite syntax errors, so an empty arm is
+ * dropped from the clause entirely rather than emitted empty. (Arm 1 has been OR'd `(service,
+ * type)` equalities since fix round 2 — `src.type IN ()` was the hazard when it was type-keyed and
+ * is named here only because the shape of the hazard is unchanged: an arm with nothing to admit
+ * must not be emitted at all.) symmetrically, a caller must NOT
  * bail out just because ONE arm is empty — `pairs` alone going empty (a modality no LOCAL type
  * carries) must not short-circuit discovery while the mime arm can still return a page. That
  * premise ("no local pairs means nothing to select") held before the mime arm existed and does

@@ -76,7 +76,14 @@ describe("findCandidates", () => {
     addMedia("/m/a.mp4");
     const [c] = findCandidates(db, { limit: 10 });
     if (c === undefined) throw new Error("expected a candidate");
-    writeUnderstanding(db, c, { text: "t", model: "m", isLocal: true }, 2000);
+    writeUnderstanding(
+      db,
+      c,
+      { text: "t", model: "m", isLocal: true },
+      2000,
+      undefined,
+      "original",
+    );
     expect(findCandidates(db, { limit: 10 })).toHaveLength(0);
   });
 
@@ -84,7 +91,14 @@ describe("findCandidates", () => {
     addMedia("/m/a.mp4");
     const [c] = findCandidates(db, { limit: 10 });
     if (c === undefined) throw new Error("expected a candidate");
-    writeUnderstanding(db, c, { text: "t", model: "m", isLocal: true }, 2000);
+    writeUnderstanding(
+      db,
+      c,
+      { text: "t", model: "m", isLocal: true },
+      2000,
+      undefined,
+      "original",
+    );
     db.run(
       "UPDATE item SET metadata = json_set(metadata, '$.understandingVersion', 0) WHERE type = 'video_understanding'",
     );
@@ -100,7 +114,14 @@ describe("findCandidates", () => {
     addMedia("/m/a.mp4");
     const [c] = findCandidates(db, { limit: 10 });
     if (c === undefined) throw new Error("expected a candidate");
-    writeUnderstanding(db, c, { text: "t", model: "m", isLocal: true }, 2000);
+    writeUnderstanding(
+      db,
+      c,
+      { text: "t", model: "m", isLocal: true },
+      2000,
+      undefined,
+      "original",
+    );
     db.run(
       "UPDATE item SET metadata = json_set(metadata, '$.understandingVersion', 1) WHERE type = 'video_understanding'",
     );
