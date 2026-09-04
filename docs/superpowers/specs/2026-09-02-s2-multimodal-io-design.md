@@ -924,6 +924,10 @@ the wrong model" rule: a mime type is the **provider's own declaration**, not ou
 with no mime, or a mime outside the registry, is still skipped as `unresolvable_modality`.
 `google_photos:photo` keeps the type-keyed lookup and reads mime only to split image from video.
 
+**The mime filter MUST run in SQL, not in the JS loop** — see § 17.1. Filtering it in JS would
+silently terminate the pass after one page on exactly the two connectors this section exists to
+support.
+
 ### 16.6 Photos re-resolves rather than trusting the indexed URL
 
 A Google Photos `baseUrl` expires roughly an hour after issue, so the indexed one is dead in almost
@@ -985,6 +989,12 @@ A pre-flight total alone would be dishonest, because the sizes are not uniformly
 and OneDrive index a byte size, **Google Photos does not** — its `mediaMetadata` carries width and
 height and no byte count. Printing an inferred total for a photo library would present an estimate
 as a measurement, which is the failure mode this document's honesty rules exist to prevent.
+
+**And the two sizes that do exist are not currently readable — see § 17.7.** `media-discovery.ts`
+populates `sourceBytes` from `metadata.sizeBytes`, a key neither connector writes: Drive writes
+`size` as a **string** (the Drive API returns int64 as a string) and OneDrive writes `size` as a
+number. So `sourceBytes` is `null` for every cloud candidate today, on two independent counts. PR 3
+must resolve the size through a per-service accessor before the pre-flight layer means anything.
 
 Two layers instead:
 
@@ -1065,7 +1075,228 @@ and inert — the exact failure § 5.4 was written to avoid. I37 and D27 stay wi
 
 ### 16.13 Docs to update on landing
 
-Beyond § 14's list: `CLAUDE.md` and `docs/roadmap.md` both carry the "only file this subsystem
-writes" sentence (§ 16.3) and the I29 `sync`-appender enumeration (§ 16.11). Both are restatements
-of a fact changed here, and a correction that lands at only one of them is the drift this project
-has hit repeatedly.
+Beyond § 14's list: `CLAUDE.md`, `GEMINI.md` (which mirrors it) and `docs/roadmap.md` all carry the
+"only file this subsystem writes" sentence (§ 16.3) and the I29 `sync`-appender enumeration
+(§ 16.11). Each is a restatement of a fact changed here, and a correction that lands at only one of
+them is the drift this project has hit repeatedly. `docs/SECURITY-INVARIANTS.md` and the
+`nimbus-egress` skill carry the appender enumeration too.
+
+---
+
+## 17. Review disposition (PR 3 design review, 2026-09-04)
+
+External review: [`2026-09-04-s2-multimodal-io-design-review.md`](./2026-09-04-s2-multimodal-io-design-review.md)
+(Antigravity). Every finding was checked against the shipped code before being accepted; the
+verdicts below record what was verified, what was rejected, and one defect the review did not
+find.
+
+| # | Finding | Verdict |
+| --- | --- | --- |
+| 2.1 | Cursor starvation on `type: "file"` connectors | **Accepted** — § 17.1 |
+| 2.2 | Modality split for `google_photos:photo` | **Accepted**, same fix — § 17.1 |
+| 2.3 | Redirect handling, bearer leakage, SSRF | **Partly accepted** — § 17.2 |
+| 2.4 | Stream-level budget, abort, summary fields | **Accepted** — § 17.3 |
+| 2.5 | Scratch sweeper patterns | **Finding accepted, fix rejected** — § 17.4 |
+| 2.6 | 429 backoff | **Accepted** — § 17.5 |
+| 3.1 | I29 appender enumeration | Already § 16.11; `GEMINI.md` added to § 16.13 |
+| 3.2 | I37 / D27(a)(b) formulation | **Deferred to PR 4** — § 17.6 |
+| 3.3 | Embedding isolation audit | No action — verified sound, no change |
+| 3.4 | Orphan pruning of derived rows | **Accepted, and it is a PR 1 gap** — § 17.6 |
+| 4.1 | CLI mutual exclusivity, `--budget` | **Accepted** — § 17.8 |
+| 4.2 | Summary formatting | **Accepted** — § 17.3 |
+| — | `sourceBytes` is unreadable for both cloud services | **Found during review, not by it** — § 17.7 |
+
+### 17.1 Discovery must filter mime in SQL, or the pass terminates after one page
+
+**Verified.** `media-discovery.ts` applies `LIMIT` in SQL and then filters in JS
+(`modalityForItem(...) === undefined → continue`). Today that JS filter can never drop a row,
+because the type list it pages by comes from the same registry map — it is a no-op safety net.
+§ 16.5's mime-keyed arm breaks that equivalence: `google_drive:file` enters the type list, and a
+page of 50 PDFs yields zero candidates. `media-pass.ts:113` then reads `candidates.length <
+deps.limit` as "discovery reached the end of the queue" and calls `clearCursor`.
+
+The consequence is not a slow pass but a **silently truncated** one: a Drive with 40,000 files and
+6 videos deep in the id ordering would report a clean, complete run having understood nothing. The
+same shape applies to `google_photos:photo` under `--modality av`, since stills and videos share
+one item type (finding 2.2).
+
+**Fix — the predicate moves into SQL,** so the page and the JS result agree again and the existing
+safety net stays a no-op:
+
+```sql
+AND (
+  src.type IN ('media_av', 'media_image')
+  OR (
+    src.service IN ('google_drive', 'onedrive', 'google_photos')
+    AND json_extract(src.metadata, '$.mimeType') LIKE :mimePrefix
+  )
+)
+```
+
+`:mimePrefix` is derived from the requested modality (`image/%`, or the video/audio pair for `av`),
+never string-concatenated — I9. A row whose metadata carries no `mimeType` is excluded by the
+predicate rather than fetched and dropped.
+
+**The review's second recommendation — make `findCandidates` loop until `limit` candidates
+accumulate — is rejected.** It changes `limit` from "rows examined" to "rows returned", which makes
+a bounded pass unbounded in work: a `--limit 50` against a 40,000-file Drive with no media would
+scan the whole table before returning. The budget and the resumable cursor both assume one page is
+one bounded unit of work. Fixing the predicate keeps that true; looping breaks it.
+
+**`json_extract` guard.** `json_extract` raises on malformed JSON rather than returning NULL. The
+existing query already relies on `metadata` being connector-written and therefore well-formed
+(`upsertIndexedItem` serialises it), and the same argument covers `src.metadata` — but the
+predicate must tolerate a NULL `metadata` column, which `json_extract` handles and a bare
+`LIKE` on the raw column would not.
+
+### 17.2 Transport: manual redirects and the existing SSRF helper
+
+The review's two risks are not equally live, and the difference was settled empirically rather than
+assumed.
+
+**Bearer leakage across a redirect — not reproducible on the shipped runtime.** A probe against
+Bun 1.3.14 (a 302 from one loopback port to another, which is an origin crossing) shows the
+`Authorization` header is **stripped** by `fetch` itself. So the review's first risk does not exist
+today.
+
+It is still designed against, for a reason unrelated to the risk being real: relying on it makes a
+security property depend on undocumented third-party runtime behaviour that a Bun upgrade could
+change without anyone noticing. **The cloud arm uses `redirect: "manual"` and follows hops itself**
+(bounded at 5), which removes the dependency entirely and is what makes the next paragraph possible.
+
+**SSRF — real, and only half-covered by what exists.** `share/safe-fetch.ts` already ships
+`assertSafeUrl` / `isPrivateAddress` / `safeFetch`, covering IPv4 and IPv6 private ranges, IPv4-mapped
+IPv6, and a DNS resolution check. PR 3 **reuses it rather than writing a second one** — a duplicate
+private-range table is exactly the kind of thing that drifts.
+
+But `safeFetch` validates only the URL it is handed: it passes `init` to `fetch`, which follows
+redirects on its own, so a 302 to `127.0.0.1` is followed unchecked. Manual redirect handling closes
+that: **every hop is re-validated through `assertSafeUrl`, not just the first.** This matters more
+here than in `share/`, whose sink host is config-pinned, because a provider-returned download URL is
+not pinned to anything — and the most interesting loopback target on this machine is the gateway's
+own HTTP API (the I13 write surface), the same target I33's scope note names.
+
+`safe-fetch.ts` moves from `share/` to `util/` in this PR. It is a general helper with no static
+rule confining it, and a `multimodal/ → share/` import would read as a subsystem dependency that
+does not exist.
+
+**Known limitation, inherited and restated:** `safeFetch`'s own doc records a DNS-rebind TOCTOU it
+does not close (resolution happens twice, and pinning the IP would break TLS verification in Bun).
+That bound applies here too and is not re-litigated by this PR.
+
+### 17.3 Budget enforcement is stream-level, and the summary must say so
+
+Three sub-points, all accepted.
+
+1. **Check during the stream, not after it.** Bytes are counted as they arrive and the budget is
+   evaluated per chunk. Downloading 300 MB to discover 50 MB of budget remained wastes the exact
+   resource the budget exists to conserve.
+2. **An overrun aborts through `AbortController`**, severing the connection, and the partial scratch
+   file is removed in a `finally` — the same unwinding the transcode path already uses.
+3. **`MediaPassSummary` gains two fields.** It currently carries `understood` / `skipped` /
+   `skippedByReason` / `lastItemId` and has no way to express "stopped early but healthy":
+
+   ```ts
+   readonly stopReason: "completed" | "budget_exhausted" | "rate_limited";
+   readonly cloudBytesFetched: number;
+   ```
+
+   Without `stopReason` a budget stop is indistinguishable from a completed run, which would make the
+   CLI's resume guidance unprintable and — worse — would let a truncated pass report as a finished
+   one. That is the same disclosure failure § 8 forbids for skip counts.
+
+`budget_exhausted` deliberately does **not** join `SkipReason` (§ 16.10): a budget stop ends the run,
+and recording it per-item would report artifacts that were never attempted as artifacts that failed.
+
+### 17.4 Scratch sweeper — finding accepted, proposed fix rejected
+
+**Verified:** `sweepStaleScratchFiles` (`stt/ffmpeg-bin.ts:181`) matches only
+`nimbus-stt-*.wav` (line 194), so a cloud download scratch file left by a killed process is never
+reclaimed.
+
+The review's fix enumerates extensions — `.tmp`, `.wav`, `.mp4`. **Rejected:** a cloud download's
+extension is whatever the artifact happens to be (`.mov`, `.mkv`, `.m4a`, `.webm`, …), so that list
+is guaranteed to drift and will fail exactly on the formats nobody thought of. Extension is the
+wrong key.
+
+**Instead the prefix is the key, and it is the only key.** Cloud downloads are named
+`nimbus-media-<uuid>` with **no extension at all** — nothing downstream needs one, since ffmpeg
+probes content rather than trusting a suffix. The sweeper matches `nimbus-stt-` (existing, extension
+retained for compatibility with in-flight files) or `nimbus-media-` (new), both age-bounded exactly
+as today. A pattern that cannot be extended by a new media format cannot rot.
+
+### 17.5 429 handling stops the run rather than burning the candidate list
+
+**Accepted.** Treating a 429 as a per-item skip means a quota-limited album produces one 429 per
+candidate and risks account-level throttling — the pass would do maximum damage precisely when the
+provider is asking it to stop.
+
+Bounded retry with jitter, honouring `Retry-After` where present; on persistent limiting the run
+**stops** with `stopReason: "rate_limited"` and a resumable cursor. This matches the existing
+precedent in `zoom-sync.ts`, which calls a 429 a "graceful break" rather than a skip.
+
+### 17.6 Two items that are not PR 3's, and are recorded rather than absorbed
+
+**I37 / D27 (finding 3.2) stay with PR 4.** The review's formulation — D27(a) confines the
+grant check to `media-gate.ts`, D27(b) confines `media_grant` writes to `media-grant-store.ts` — is
+sharper than § 10's original and supersedes it, which § 15 decision 6 already anticipated. It is
+recorded here and written in PR 4, when a remote provider exists for it to bite on. Shipping it now
+would produce a rule guarding nothing.
+
+**Orphan pruning (finding 3.4) is a PR 1 gap, and § 4.2 currently overstates.** Verified:
+`understanding-item.ts:64` writes `derivedFrom`, and **nothing in the codebase reads it** — there is
+no cascade in `deleteItemByServiceExternal`, no orphan query, nothing. So § 4.2's "Deleting a source
+item deletes its derived understanding row" describes behaviour that does not exist. That is the
+documented-but-inert failure this document elsewhere goes out of its way to avoid, and leaving it
+stated as fact is worse than the missing feature.
+
+PR 3 closes it, because it is small and it is this PR that makes orphans common (a cloud item can
+leave the index without any local file being touched): one age-independent orphan `DELETE` at pass
+start, alongside the scratch sweep that already runs there. Keyed on `derivedFrom` having no
+surviving source row. Cheaper than a cascade in every delete path, and it self-heals rows orphaned
+before it shipped.
+
+### 17.7 The defect the review did not find: `sourceBytes` is null for every cloud candidate
+
+`media-discovery.ts` populates `sourceBytes` from `metadata.sizeBytes` via `numberOrNull`. Neither
+target connector writes that key:
+
+| Service | Key written | Type written | Read as `sizeBytes: number` |
+| --- | --- | --- | --- |
+| `google_drive` | `size` (line 180) | **string** — the Drive API returns int64 as a string | `null` — wrong key *and* wrong type |
+| `onedrive` | `size` (line 72) | number | `null` — wrong key |
+| `google_photos` | — | — | `null` — genuinely absent |
+
+`sizeBytes` belongs to a different subsystem entirely (`data-profile-sync.ts`), which is how the
+mismatch survived: the key exists, so nothing looked wrong.
+
+This matters because § 16.9's pre-flight layer is built on knowing sizes. Uncorrected, **every**
+cloud candidate reports unknown size, the pre-flight price is always `0 known / N unknown`, the
+budget refusal never fires, and the whole first layer is decoration — leaving only the running-total
+abort, which was designed as the backstop rather than the whole mechanism.
+
+**Fix:** resolve size through a per-service accessor in `media-source-registry.ts` that names the
+metadata key and coerces, with the Drive string case handled explicitly and commented — a numeric
+read of a string field returning `null` is silent, and a silent `null` here degrades a safety
+mechanism rather than breaking anything visibly. Read at discovery rather than normalised at index
+time, so already-indexed rows are covered without a re-sync.
+
+### 17.8 CLI
+
+- `--renditions` and `--originals` are **mutually exclusive**, rejected at parse with a message
+  naming both, never resolved by precedence. A silent override on a flag pair that controls
+  bandwidth is the kind of thing a user discovers from their data cap.
+- **`--budget <size>`** (accepting `4GB` / `500MB` / a raw byte count) overrides
+  `fetch_budget_bytes` for one run. Not scope creep: § 16.9 makes refusal the default, and without
+  this the only way past a refusal while keeping originals is editing `nimbus.toml` — which
+  re-creates the discoverability problem § 16.8 exists to solve.
+- The run summary reports understood/skipped-by-reason (existing), plus bytes fetched, the rendition
+  mode in force, the counterfactual for the other mode, and `stopReason` with resume guidance when
+  the run stopped early.
+
+### 17.9 Testing additions
+
+Folded into § 16.12: redirect-hop re-validation (a 302 to `127.0.0.1` is refused), a private-IP
+target refused at hop 0 and at hop N, the paging test the review specifies (100 `google_drive`
+`type: "file"` rows of which only #70–#75 are media, asserting the pass does not clear its cursor at
+page 1), and a size-resolution test covering Drive's string-typed `size`.
